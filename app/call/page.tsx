@@ -1,18 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import CallStage from "@/components/CallStage";
 
+type Line = { role: string; text: string };
+
 export default function CallPage() {
-  const [room] = useState(
-    () => `lc-${Math.random().toString(36).slice(2, 8)}`
-  );
+  const [room] = useState(() => `lc-${Math.random().toString(36).slice(2, 8)}`);
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
+  const [lines, setLines] = useState<Line[]>([]);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [lines]);
 
   const joinLink = origin ? `${origin}/join/${room}` : "";
 
@@ -23,13 +31,17 @@ export default function CallPage() {
     setTimeout(() => setCopied(false), 1500);
   };
 
+  const onFinalTranscript = useCallback((role: string, text: string) => {
+    setLines((prev) => [...prev, { role, text }]);
+  }, []);
+
   return (
-    <main className="relative z-10 mx-auto max-w-[900px] px-5 py-10">
+    <main className="relative z-10 mx-auto max-w-[1100px] px-5 py-10">
       <h1 className="font-display text-[2.4rem] leading-none tracking-tight text-bone">
         <span className="italic text-amber">Live</span>Coach · call test
       </h1>
       <p className="mt-2 mb-7 font-mono text-xs uppercase tracking-[0.25em] text-muted">
-        stage A · two-party audio
+        stage B · labelled transcript
       </p>
 
       <div className="mb-6 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
@@ -49,12 +61,58 @@ export default function CallPage() {
           </button>
         </div>
         <p className="mt-3 font-mono text-[0.65rem] text-muted">
-          To test alone: open this link on your phone (use headphones to avoid
-          echo), join here on your laptop.
+          Solo test: open this on your phone (headphones), join here on your laptop.
         </p>
       </div>
 
-      <CallStage room={room} identity="Interviewer" role="interviewer" />
+      <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+        <CallStage
+          room={room}
+          identity="Interviewer"
+          role="interviewer"
+          onFinalTranscript={onFinalTranscript}
+        />
+
+        <section className="flex min-h-[340px] flex-col rounded-2xl border border-edge bg-panel/50">
+          <div className="border-b border-edge px-6 py-3.5">
+            <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-muted">
+              Labelled transcript
+            </h2>
+          </div>
+          <div
+            ref={scrollRef}
+            className="flex-1 space-y-3 overflow-y-auto px-6 py-5"
+          >
+            {lines.length === 0 ? (
+              <p className="font-mono text-sm text-muted">
+                Both join and start talking — each line is tagged with who said it.
+              </p>
+            ) : (
+              lines.map((l, i) => (
+                <p key={i} className="font-mono text-sm leading-relaxed">
+                  <span
+                    className={
+                      l.role === "interviewer"
+                        ? "text-amber"
+                        : l.role === "candidate"
+                        ? "text-sage"
+                        : "text-muted"
+                    }
+                  >
+                    {l.role === "interviewer"
+                      ? "Interviewer"
+                      : l.role === "candidate"
+                      ? "Candidate"
+                      : l.role}
+                    :
+                  </span>{" "}
+                  <span className="text-bone/90">{l.text}</span>
+                </p>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
     </main>
   );
 }
