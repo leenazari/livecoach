@@ -5,107 +5,120 @@ import { extractTextFromPDF } from "@/lib/pdf-extract";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Load all knowledge docs from Supabase storage for a session.
-// Reads files, extracts text (PDF or plain text), concatenates and returns.
-// Client holds this context and passes it to /suggest, where it rides in a
-// cached system block.
+const BUCKET = "knowledge_docs";
+
+async function listFiles(prefix: string) {
+  const { data, error } = await supabaseAdmin.storage
+    .from(BUCKET)
+    .list(prefix, {
+      limit: 100,
+      sortBy: { column: "created_at", order: "desc" },
+    });
+  if (error || !data) return [];
+  return data;
+}
+
+async function downloadText(path: string): Promise<string> {
+  const { data, error } = await supabaseAdmin.storage
+    .from(BUCKET)
+    .download(path);
+  if (error || !data) return "";
+  if (path.toLowerCase().endsWith(".pdf")) {
+    try {
+      const buf = new Uint8Array(await data.arrayBuffer());
+      return await extractTextFromPDF(buf);
+    } catch (e) {
+      console.error("PDF extract failed:", path, e);
+      return "";
+    }
+  }
+  return await data.text();
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { candidate } = await req.json();
 
-    let allContent = "";
+    let context = "";
     const sources: string[] = [];
 
-    // Load global framework docs
-    const { data: globalFiles, error: globalError } = await supabaseAdmin.storage
-      .from("knowledge_docs")
-      .list("framework/global", { limit: 100 });
-
-    if (!globalError && globalFiles) {
-      for (const file of globalFiles) {
-        if (file.name.startsWith(".")) continue;
-
-        const { data: fileData, error: readError } = await supabaseAdmin.storage
-          .from("knowledge_docs")
-          .download(`framework/global/${file.name}`);
-
-        if (readError || !fileData) continue;
-
-        let text = "";
-        if (file.name.endsWith(".pdf")) {
-          const buffer = Buffer.from(await fileData.arrayBuffer());
-          text = await extractTextFromPDF(buffer);
-        } else {
-          text = await fileData.text();
-        }
-
-        allContent += `### QUESTION FRAMEWORK (${file.name})\n${text}\n\n`;
-        sources.push(`${file.name} (framework)`);
+    // 1. Frameworks — always loaded for every session.
+    const frameworks = await listFiles("framework/global");
+    for (const f of frameworks) {
+      if (!f.name || f.id === null) continue;
+      const t = await downloadText(`framework/global/${f.name}`);
+      if (t.trim()) {
+        context += `### QUESTION FRAMEWORK (${f.name})\n${t}\n\n`;
+        sources.push(`${f.name} (framework)`);
       }
     }
 
-    // Load candidate-specific docs (CV, summaries)
-    if (candidate) {
-      // CV docs
-      const { data: cvFiles } = await supabaseAdmin.storage
-        .from("knowledge_docs")
-        .list(`cv/${candidate}`, { limit: 100 });
+    // 2. CVs — tolerant: prefer candidate's folder, else most recent CV anywhere.
+    const cvRoot = await listFiles("cv");
+    const folders = cvRoot.filter((e) => e.id === null).map((e) => e.name);
+    const directFiles = cvRoot.filter((e) => e.id !== null);
 
-      if (cvFiles) {
-        for (const file of cvFiles) {
-          if (file.name.startsWith(".")) continue;
+    const matchedFolder = candidate
+      ? folders.find(
+          (f) => f.toLowerCase() === String(candidate).toLowerCase()
+        )
+      : undefined;
 
-          const { data: fileData, error: readError } = await supabaseAdmin.storage
-            .from("knowledge_docs")
-            .download(`cv/${candidate}/${file.name}`);
+    let chosenCvPaths: string[] = [];
 
-          if (readError || !fileData) continue;
-
-          let text = "";
-          if (file.name.endsWith(".pdf")) {
-            const buffer = Buffer.from(await fileData.arrayBuffer());
-            text = await extractTextFromPDF(buffer);
-          } else {
-            text = await fileData.text();
+    if (matchedFolder) {
+      const files = await listFiles(`cv/${matchedFolder}`);
+      chosenCvPaths = files
+        .filter((f) => f.id !== null)
+        .map((f) => `cv/${matchedFolder}/${f.name}`);
+    } else {
+      // Fallback: gather every CV across all folders, pick the most recent.
+      const all: { path: string; created: string }[] = [];
+      for (const folder of folders) {
+        const files = await listFiles(`cv/${folder}`);
+        for (const f of files) {
+          if (f.id !== null) {
+            all.push({
+              path: `cv/${folder}/${f.name}`,
+              created: (f as any).created_at || "",
+            });
           }
-
-          allContent += `### CANDIDATE CV (${file.name})\n${text}\n\n`;
-          sources.push(`${file.name} (cv)`);
         }
       }
+      for (const f of directFiles) {
+        all.push({
+          path: `cv/${f.name}`,
+          created: (f as any).created_at || "",
+        });
+      }
+      all.sort((a, b) => (b.created > a.created ? 1 : -1));
+      if (all.length) chosenCvPaths = [all[0].path];
+    }
 
-      // Summary docs
-      const { data: summaryFiles } = await supabaseAdmin.storage
-        .from("knowledge_docs")
-        .list(`summary/${candidate}`, { limit: 100 });
+    for (const p of chosenCvPaths) {
+      const t = await downloadText(p);
+      if (t.trim()) {
+        const name = p.split("/").pop();
+        context += `### CANDIDATE CV (${name})\n${t}\n\n`;
+        sources.push(`${name} (cv)`);
+      }
+    }
 
-      if (summaryFiles) {
-        for (const file of summaryFiles) {
-          if (file.name.startsWith(".")) continue;
-
-          const { data: fileData, error: readError } = await supabaseAdmin.storage
-            .from("knowledge_docs")
-            .download(`summary/${candidate}/${file.name}`);
-
-          if (readError || !fileData) continue;
-
-          let text = "";
-          if (file.name.endsWith(".pdf")) {
-            const buffer = Buffer.from(await fileData.arrayBuffer());
-            text = await extractTextFromPDF(buffer);
-          } else {
-            text = await fileData.text();
-          }
-
-          allContent += `### PREVIOUS SUMMARY (${file.name})\n${text}\n\n`;
-          sources.push(`${file.name} (summary)`);
+    // 3. Previous summary — only when we matched a specific candidate.
+    if (matchedFolder) {
+      const summaries = await listFiles(`summary/${matchedFolder}`);
+      for (const f of summaries) {
+        if (f.id === null) continue;
+        const t = await downloadText(`summary/${matchedFolder}/${f.name}`);
+        if (t.trim()) {
+          context += `### PREVIOUS SUMMARY (${f.name})\n${t}\n\n`;
+          sources.push(`${f.name} (summary)`);
         }
       }
     }
 
     return NextResponse.json({
-      context:
-        allContent || "No knowledge base documents found for this session.",
+      context,
       sources,
       chunkCount: sources.length,
     });
