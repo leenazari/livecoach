@@ -35,12 +35,11 @@ export default function CallStage({
   const roomRef = useRef<Room | null>(null);
   const audioContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Deepgram transcription refs (local mic)
   const dgWsRef = useRef<WebSocket | null>(null);
   const dgRecRef = useRef<MediaRecorder | null>(null);
   const dgStreamRef = useRef<MediaStream | null>(null);
+  const mutedRef = useRef(false); // gates what reaches Deepgram
 
-  // callbacks via refs to avoid stale closures
   const onFinalRef = useRef(onFinalTranscript);
   const onTurnRef = useRef(onCandidateTurnEnd);
   useEffect(() => {
@@ -79,7 +78,6 @@ export default function CallStage({
     setPeople(list);
   }, []);
 
-  // Handle a finalised transcript line — from local mic OR remote data channel.
   const handleLine = useCallback(
     (lineRole: string, text: string, speechFinal: boolean) => {
       if (!text.trim()) return;
@@ -91,7 +89,6 @@ export default function CallStage({
     []
   );
 
-  // Publish a local transcript line to the room over the data channel.
   const publishTranscript = useCallback(
     (text: string, speechFinal: boolean) => {
       const r = roomRef.current;
@@ -104,7 +101,6 @@ export default function CallStage({
     [role]
   );
 
-  // Start transcribing the local mic via Deepgram (proven raw-key flow).
   const startTranscription = useCallback(async () => {
     try {
       const key = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
@@ -134,6 +130,8 @@ export default function CallStage({
         const rec = new MediaRecorder(stream, { mimeType: "audio/webm" });
         dgRecRef.current = rec;
         rec.ondataavailable = (e) => {
+          // HARD GATE: while muted, send nothing to Deepgram.
+          if (mutedRef.current) return;
           if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
             ws.send(e.data);
           }
@@ -143,12 +141,13 @@ export default function CallStage({
 
       ws.onmessage = (msg) => {
         try {
+          // Defensive: ignore anything that arrives while muted.
+          if (mutedRef.current) return;
           const data = JSON.parse(msg.data);
           const alt = data?.channel?.alternatives?.[0];
           const text: string = alt?.transcript || "";
           if (!text || !data.is_final) return;
           const speechFinal = !!data.speech_final;
-          // Share with the room, and handle locally (interviewer display/coaching).
           publishTranscript(text, speechFinal);
           handleLine(role, text, speechFinal);
         } catch {
@@ -223,10 +222,11 @@ export default function CallStage({
 
       await room.connect(data.url, data.token);
       await room.localParticipant.setMicrophoneEnabled(true);
+      mutedRef.current = false;
+      setMuted(false);
       setJoined(true);
       refreshPeople(new Set());
 
-      // Start our own transcription once we're in.
       startTranscription();
     } catch (e: any) {
       setError(e.message || "Could not join call");
@@ -243,11 +243,22 @@ export default function CallStage({
     setPeople([]);
   }, [stopTranscription]);
 
+  // ONE mute control gating BOTH the call track AND the transcriber.
   const toggleMute = useCallback(async () => {
     const r = roomRef.current;
-    if (!r) return;
     const next = !muted;
-    await r.localParticipant.setMicrophoneEnabled(!next);
+
+    // 1. Gate Deepgram FIRST so nothing leaks during the toggle.
+    mutedRef.current = next;
+    const rec = dgRecRef.current;
+    if (rec) {
+      if (next && rec.state === "recording") rec.pause();
+      else if (!next && rec.state === "paused") rec.resume();
+    }
+
+    // 2. Gate the LiveKit call track.
+    if (r) await r.localParticipant.setMicrophoneEnabled(!next);
+
     setMuted(next);
   }, [muted]);
 
@@ -266,42 +277,48 @@ export default function CallStage({
       {!joined ? (
         <div className="flex flex-col items-start gap-4">
           <p className="font-mono text-xs uppercase tracking-[0.25em] text-muted">
-            Room: {roomName} · joining as {role}
+            Room: {roomName} - joining as {role}
           </p>
           <button
             onClick={join}
             disabled={connecting}
             className="rounded-full bg-amber px-7 py-3 font-mono text-sm font-medium uppercase tracking-wider text-ink transition hover:bg-amberglow disabled:opacity-50"
           >
-            {connecting ? "connecting…" : "● Join call"}
+            {connecting ? "connecting..." : "Join call"}
           </button>
-          {error && <p className="font-mono text-xs text-rust">⚠︎ {error}</p>}
+          {error && <p className="font-mono text-xs text-rust">{error}</p>}
         </div>
       ) : (
         <div className="flex flex-col gap-5">
           <div className="flex items-center justify-between">
             <span className="font-mono text-xs uppercase tracking-[0.25em] text-sage">
-              ● connected · {roomName}
+              connected - {roomName}
             </span>
             <div className="flex gap-2">
               <button
                 onClick={toggleMute}
                 className={`rounded-full border px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider transition ${
                   muted
-                    ? "border-rust text-rust hover:bg-rust hover:text-ink"
+                    ? "border-rust bg-rust/10 text-rust hover:bg-rust hover:text-ink"
                     : "border-edge text-bone hover:border-amber/60"
                 }`}
               >
-                {muted ? "🔇 unmute" : "🎙 mute"}
+                {muted ? "MUTED - tap to talk" : "Mute"}
               </button>
               <button
                 onClick={leave}
                 className="rounded-full border border-rust px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-rust transition hover:bg-rust hover:text-ink"
               >
-                ■ leave
+                Leave
               </button>
             </div>
           </div>
+
+          {muted && (
+            <p className="font-mono text-[0.7rem] text-rust">
+              You are muted - nothing is sent to the call or the transcript.
+            </p>
+          )}
 
           <div className="grid gap-2">
             {people.map((p, i) => (
