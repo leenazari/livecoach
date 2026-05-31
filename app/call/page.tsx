@@ -23,6 +23,7 @@ export default function CallPage() {
   }, [lines]);
 
   const joinLink = origin ? `${origin}/join/${room}` : "";
+  const botLink = origin ? `${origin}/candidate-bot/${room}` : "";
 
   const copy = async () => {
     if (!joinLink) return;
@@ -44,25 +45,41 @@ export default function CallPage() {
         stage B · labelled transcript
       </p>
 
-      <div className="mb-6 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
-        <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-          Send this link to the candidate
-        </p>
-        <div className="flex flex-wrap items-center gap-3">
-          <code className="break-all rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone">
-            {joinLink || "preparing link…"}
-          </code>
-          <button
-            onClick={copy}
-            disabled={!joinLink}
-            className="rounded-full border border-amber/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/10 disabled:opacity-40"
-          >
-            {copied ? "copied ✓" : "copy"}
-          </button>
+      <div className="mb-6 grid gap-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
+        <div>
+          <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
+            Real candidate — send this link
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <code className="break-all rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone">
+              {joinLink || "preparing…"}
+            </code>
+            <button
+              onClick={copy}
+              disabled={!joinLink}
+              className="rounded-full border border-amber/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/10 disabled:opacity-40"
+            >
+              {copied ? "copied ✓" : "copy"}
+            </button>
+          </div>
         </div>
-        <p className="mt-3 font-mono text-[0.65rem] text-muted">
-          Solo test: open this on your phone (headphones), join here on your laptop.
-        </p>
+
+        <div className="border-t border-edge/50 pt-3">
+          <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-sage">
+            Test solo — open the candidate bot in a new tab
+          </p>
+          
+            href={botLink || "#"}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block rounded-full border border-sage/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/10"
+          >
+            ↗ open candidate bot (same room)
+          </a>
+          <p className="mt-2 font-mono text-[0.65rem] text-muted">
+            Use headphones so your interviewer mic doesn’t pick up the bot’s voice.
+          </p>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
@@ -85,7 +102,8 @@ export default function CallPage() {
           >
             {lines.length === 0 ? (
               <p className="font-mono text-sm text-muted">
-                Both join and start talking — each line is tagged with who said it.
+                Join, open the bot tab and join it too, then talk / play lines —
+                each line is tagged with who said it.
               </p>
             ) : (
               lines.map((l, i) => (
