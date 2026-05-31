@@ -4,17 +4,14 @@ import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-// LIVE coaching engine. Knowledge is cached; only the new transcript varies.
-// Hardened against two failure modes seen in testing:
-//   1. Re-suggesting a question the interviewer ALREADY asked (it's in the transcript).
-//   2. Rewording a suggestion it already gave moments ago.
-// Both are handled in the prompt because semantic duplicates can't be caught
-// reliably by string matching on the client.
+// LIVE coaching engine, fired on the candidate's turn-end.
+// Reads a SPEAKER-LABELLED transcript, so "never re-suggest a question the
+// interviewer already asked" is reliable (not inferred).
 export async function POST(req: NextRequest) {
   try {
     const {
       knowledgeContext,
-      recentWindow,
+      transcript,
       latest,
       role,
       previousSuggestions,
@@ -29,24 +26,27 @@ export async function POST(req: NextRequest) {
     }
 
     const holdRule = allowHold
-      ? `\n\nHOLD RULE: If the only next question you can think of would repeat — or merely reword — something already asked in the transcript OR something in your recent suggestions, respond with exactly: HOLD\nReturning HOLD is correct and expected whenever the conversation has not opened genuinely new ground. Do not force a suggestion.`
+      ? `\n\nHOLD RULE: If the only next question you can give would repeat - or merely reword - something already on an "Interviewer:" line in the transcript, OR any of your recent suggestions, respond with exactly: HOLD. Returning HOLD is correct whenever there is no genuinely new ground to open.`
       : "";
 
-    const instructions = `You are a live interview-coaching assistant whispering in the interviewer's ear during a real-time interview${role ? ` for the role: ${role}` : ""}.
+    const instructions = `You are a live interview-coaching assistant whispering in the INTERVIEWER's ear during a real-time interview${role ? ` for the role: ${role}` : ""}.
 
-Your job: suggest the single best NEXT question for the interviewer to ask — to unlock new signal about this candidate's fit.
+The transcript is labelled by speaker:
+- "Interviewer:" lines are questions or remarks the interviewer has ALREADY said.
+- "Candidate:" lines are the candidate's answers.
 
-CRITICAL — avoid repetition:
-- The transcript contains questions the interviewer has ALREADY asked. NEVER suggest a question that has already been asked, and never reword one that was already asked. If you see your suggested question (or a paraphrase of it) already in the transcript, it is forbidden — pick different ground.
+Your job: suggest the single best NEXT question for the INTERVIEWER to ask the candidate, to unlock new signal about their fit.
+
+CRITICAL - no repetition:
+- NEVER suggest a question that already appears on an "Interviewer:" line, and never reword one that does. If it is already asked, it is forbidden - pick different ground.
 - NEVER repeat or reword any of your own recent suggestions (listed below).
-- "Reword" means same underlying ask with different words. e.g. "walk me through a time you spotted a gap…" and "describe a specific moment you identified an opportunity…" are the SAME question — not allowed.
 
 Output rules:
-- ONE suggestion. Maximum two short sentences.
-- Build on what the candidate just SAID; advance the conversation, don't restart it.
+- ONE question. Maximum two short sentences.
+- Build on the candidate's LATEST answer; advance the conversation, do not restart it.
 - Favour questions exposing depth, ownership, and concrete examples.
-- If the last answer was vague, sharpen on that — but only if you haven't already.
-- If a competency is well-covered, pivot to an uncovered one from the framework.
+- If the last answer was vague, sharpen on it (if not already done).
+- If a competency is well covered, pivot to an uncovered one from the framework.
 - No preamble. Just the question, optionally a 3-5 word reason in brackets.${holdRule}`;
 
     const system: any[] = [
@@ -60,18 +60,18 @@ Output rules:
 
     const recent =
       Array.isArray(previousSuggestions) && previousSuggestions.length
-        ? `\n\nYOUR RECENT SUGGESTIONS — do NOT repeat or reword any of these:\n${previousSuggestions
+        ? `\n\nYOUR RECENT SUGGESTIONS - do NOT repeat or reword any of these:\n${previousSuggestions
             .map((s: string) => `- ${s}`)
             .join("\n")}`
         : "";
 
-    const userMsg = `TRANSCRIPT so far (this includes questions the interviewer has ALREADY asked — do not suggest any of them again):
-${recentWindow || "(interview just started)"}
+    const userMsg = `TRANSCRIPT so far (speaker-labelled):
+${transcript || "(interview just started)"}
 
-Candidate's latest words:
+Candidate's latest answer:
 "${latest}"${recent}
 
-Give the single best NEW next question — or HOLD if there isn't genuinely new ground to cover.`;
+Give the single best NEW next question for the interviewer - or HOLD if there is no genuinely new ground.`;
 
     const claudeStream = await anthropic.messages.stream({
       model: CLAUDE_MODEL_LIVE,
