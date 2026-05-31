@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 type Uploaded = {
   source: string;
   doc_type: string;
-  chunks: number;
+  candidate: string | null;
 };
 
 const DOC_TYPES = [
@@ -14,7 +14,13 @@ const DOC_TYPES = [
   { value: "framework", label: "Question framework" },
 ];
 
-export default function KnowledgePanel({ candidate }: { candidate: string }) {
+export default function KnowledgePanel({
+  candidate,
+  onUploaded,
+}: {
+  candidate: string;
+  onUploaded?: (detectedName: string | null, docType: string) => void;
+}) {
   const [docType, setDocType] = useState("cv");
   const [busy, setBusy] = useState(false);
   const [uploaded, setUploaded] = useState<Uploaded[]>([]);
@@ -28,7 +34,6 @@ export default function KnowledgePanel({ candidate }: { candidate: string }) {
       const form = new FormData();
       form.append("file", file);
       form.append("doc_type", docType);
-      // CVs and summaries are scoped to the candidate; frameworks are global.
       if (docType !== "framework" && candidate) {
         form.append("candidate", candidate);
       }
@@ -41,9 +46,12 @@ export default function KnowledgePanel({ candidate }: { candidate: string }) {
       if (!res.ok) throw new Error(data.error || "Upload failed");
 
       setUploaded((prev) => [
-        { source: data.source, doc_type: data.doc_type, chunks: data.chunks },
+        { source: data.source, doc_type: data.doc_type, candidate: data.candidate },
         ...prev,
       ]);
+
+      // Let the console auto-fill the candidate name + know docs are ready.
+      onUploaded?.(data.candidate || null, data.doc_type);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -98,15 +106,18 @@ export default function KnowledgePanel({ candidate }: { candidate: string }) {
           />
         </div>
 
-        {docType !== "framework" && (
+        {docType === "cv" && (
           <p className="font-mono text-[0.7rem] text-muted">
-            {candidate
-              ? `scoped to: ${candidate}`
-              : "⚠︎ enter a candidate name above to scope this doc"}
+            the candidate name is read from the CV automatically
+          </p>
+        )}
+        {docType === "summary" && !candidate && (
+          <p className="font-mono text-[0.7rem] text-muted">
+            ⚠︎ upload the CV first so this attaches to the right candidate
           </p>
         )}
         {busy && (
-          <span className="thinking font-display text-base">embedding…</span>
+          <span className="thinking font-display text-base">processing…</span>
         )}
       </div>
 
@@ -121,7 +132,8 @@ export default function KnowledgePanel({ candidate }: { candidate: string }) {
               key={i}
               className="rounded-full border border-sage/40 bg-sage/10 px-3 py-1.5 font-mono text-[0.7rem] text-sage"
             >
-              {u.source} · {u.doc_type} · {u.chunks} chunks
+              {u.source} · {u.doc_type}
+              {u.candidate ? ` · ${u.candidate}` : ""}
             </span>
           ))}
         </div>
