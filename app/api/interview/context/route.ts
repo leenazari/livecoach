@@ -1,58 +1,113 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { extractTextFromPDF } from "@/lib/pdf-extract";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
-// Loads ALL knowledge for a session ONCE at start:
-//   - the candidate's CV + previous summary (scoped by name)
-//   - every global question framework (candidate IS NULL)
-// The client holds this and passes it to /suggest each call, where it
-// rides in a CACHED system block — so we don't re-search or re-send-at-full-price
-// every 5 seconds. This is the single biggest cost lever for the live loop.
+// Load all knowledge docs from Supabase storage for a session.
+// Reads files, extracts text (PDF or plain text), concatenates and returns.
+// Client holds this context and passes it to /suggest, where it rides in a
+// cached system block.
 export async function POST(req: NextRequest) {
   try {
     const { candidate } = await req.json();
 
-    let query = supabaseAdmin
+    let allContent = "";
+    const sources: string[] = [];
+
+    // Load global framework docs
+    const { data: globalFiles, error: globalError } = await supabaseAdmin.storage
       .from("knowledge_docs")
-      .select("content, doc_type, source, candidate")
-      .order("doc_type", { ascending: true });
+      .list("framework/global", { limit: 100 });
 
-    // candidate docs + global frameworks
+    if (!globalError && globalFiles) {
+      for (const file of globalFiles) {
+        if (file.name.startsWith(".")) continue;
+
+        const { data: fileData, error: readError } = await supabaseAdmin.storage
+          .from("knowledge_docs")
+          .download(`framework/global/${file.name}`);
+
+        if (readError || !fileData) continue;
+
+        let text = "";
+        if (file.name.endsWith(".pdf")) {
+          const buffer = Buffer.from(await fileData.arrayBuffer());
+          text = await extractTextFromPDF(buffer);
+        } else {
+          text = await fileData.text();
+        }
+
+        allContent += `### QUESTION FRAMEWORK (${file.name})\n${text}\n\n`;
+        sources.push(`${file.name} (framework)`);
+      }
+    }
+
+    // Load candidate-specific docs (CV, summaries)
     if (candidate) {
-      query = query.or(`candidate.eq.${candidate},candidate.is.null`);
-    } else {
-      query = query.is("candidate", null);
+      // CV docs
+      const { data: cvFiles } = await supabaseAdmin.storage
+        .from("knowledge_docs")
+        .list(`cv/${candidate}`, { limit: 100 });
+
+      if (cvFiles) {
+        for (const file of cvFiles) {
+          if (file.name.startsWith(".")) continue;
+
+          const { data: fileData, error: readError } = await supabaseAdmin.storage
+            .from("knowledge_docs")
+            .download(`cv/${candidate}/${file.name}`);
+
+          if (readError || !fileData) continue;
+
+          let text = "";
+          if (file.name.endsWith(".pdf")) {
+            const buffer = Buffer.from(await fileData.arrayBuffer());
+            text = await extractTextFromPDF(buffer);
+          } else {
+            text = await fileData.text();
+          }
+
+          allContent += `### CANDIDATE CV (${file.name})\n${text}\n\n`;
+          sources.push(`${file.name} (cv)`);
+        }
+      }
+
+      // Summary docs
+      const { data: summaryFiles } = await supabaseAdmin.storage
+        .from("knowledge_docs")
+        .list(`summary/${candidate}`, { limit: 100 });
+
+      if (summaryFiles) {
+        for (const file of summaryFiles) {
+          if (file.name.startsWith(".")) continue;
+
+          const { data: fileData, error: readError } = await supabaseAdmin.storage
+            .from("knowledge_docs")
+            .download(`summary/${candidate}/${file.name}`);
+
+          if (readError || !fileData) continue;
+
+          let text = "";
+          if (file.name.endsWith(".pdf")) {
+            const buffer = Buffer.from(await fileData.arrayBuffer());
+            text = await extractTextFromPDF(buffer);
+          } else {
+            text = await fileData.text();
+          }
+
+          allContent += `### PREVIOUS SUMMARY (${file.name})\n${text}\n\n`;
+          sources.push(`${file.name} (summary)`);
+        }
+      }
     }
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const rows = data || [];
-    const sources = Array.from(
-      new Set(rows.map((r) => `${r.source} (${r.doc_type})`))
-    );
-
-    // Group into labelled sections so Claude knows what it's reading.
-    const byType: Record<string, string[]> = {};
-    for (const r of rows) {
-      (byType[r.doc_type] ||= []).push(r.content);
-    }
-
-    const labels: Record<string, string> = {
-      cv: "CANDIDATE CV",
-      summary: "PREVIOUS INTERVIEW SUMMARY",
-      framework: "QUESTION FRAMEWORK",
-    };
-
-    const context = Object.entries(byType)
-      .map(([type, chunks]) => `### ${labels[type] || type.toUpperCase()}\n${chunks.join("\n")}`)
-      .join("\n\n");
 
     return NextResponse.json({
-      context: context || "No knowledge base documents found for this session.",
+      context:
+        allContent || "No knowledge base documents found for this session.",
       sources,
-      chunkCount: rows.length,
+      chunkCount: sources.length,
     });
   } catch (err: any) {
     console.error("Context load error:", err);
