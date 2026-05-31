@@ -1,0 +1,41 @@
+INTERVIEW QUESTION FRAMEWORK — competency-based screening
+
+This framework guides which competencies to probe and how to deepen weak or
+vague answers. Use it to suggest the next best question.
+
+COMPETENCY 1 — OWNERSHIP & IMPACT
+Look for evidence the candidate drove outcomes, not just participated.
+- "Walk me through a project where you owned the outcome end to end."
+- "What would have happened if you hadn't been on that project?"
+- Probe if vague: "What specifically did YOU decide, versus the team?"
+- Probe for impact: "How did you measure success? What was the number before
+  and after?"
+
+COMPETENCY 2 — TECHNICAL DEPTH
+Test the floor of their knowledge, then push one level past comfort.
+- "Take me through the hardest technical decision you made recently."
+- "What was the trade-off, and what did you give up by choosing that?"
+- Probe if shallow: "Why that approach over the obvious alternative?"
+- Stress test: "Where would that solution break at 10x the scale?"
+
+COMPETENCY 3 — PROBLEM SOLVING UNDER AMBIGUITY
+- "Tell me about a time the requirements were unclear. What did you do first?"
+- "How did you decide what to build when no one could tell you the answer?"
+- Probe: "What did you get wrong in that process, and how did you catch it?"
+
+COMPETENCY 4 — COLLABORATION & CONFLICT
+- "Describe a disagreement with a colleague about an important decision."
+- "How did it resolve? Looking back, were you right?"
+- Probe for self-awareness: "What would the other person say about you?"
+
+COMPETENCY 5 — LEARNING & GROWTH
+- "What's something you believed strongly a year ago that you've since changed
+  your mind on?"
+- "How do you get better at things outside of your day job?"
+
+GENERAL PROBING PRINCIPLES
+- If an answer is generic, ask for a specific recent example with names, numbers,
+  and dates.
+- If an answer is impressive, verify ownership: separate "I" from "we".
+- If a competency is already well-evidenced, move on — don't over-mine one area.
+- Always prefer questions that build on what the candidate just said.
