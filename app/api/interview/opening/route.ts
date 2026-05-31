@@ -5,8 +5,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 // Generates the opening interview questions BEFORE anyone speaks,
-// purely from the candidate's CV + the job title. No transcript needed.
-// Returns a JSON array of question strings.
+// purely from the candidate's CV + the job title.
 export async function POST(req: NextRequest) {
   try {
     const { knowledgeContext, role } = await req.json();
@@ -20,13 +19,15 @@ export async function POST(req: NextRequest) {
 
     const system = `You are an expert interviewer preparing to interview a candidate${role ? ` for the role: ${role}` : ""}.
 
-Using ONLY the candidate's CV and any question framework provided, write the 3 best OPENING questions to start the interview — the ones that quickly probe the most relevant, role-critical parts of their background.
+Using ONLY the candidate's CV and any question framework provided, write the 3 best OPENING questions to start the interview - the ones that quickly probe the most relevant, role-critical parts of their background.
 
-Rules:
-- Tailor each question to something specific in THIS candidate's CV against the role.
-- Favour questions that open up depth and concrete examples, not yes/no.
-- Each question one or two sentences max.
-- Output ONLY a JSON array of 3 strings. No markdown, no preamble, no keys.
+HOW EACH QUESTION MUST SOUND (this matters most):
+- Each question asks ONE thing only. No multi-part or compound questions. No lists of options (do NOT write "did you track X, Y, or Z").
+- Natural and spoken - the way a real interviewer talks out loud. Short and conversational.
+- One sentence is ideal. No em-dashes, no semicolons, no clauses stitched together with "and".
+- Open them up (not yes/no), tailored to something specific in THIS candidate's CV against the role.
+
+Output ONLY a JSON array of 3 strings. No markdown, no preamble, no keys.
 Example format: ["question one", "question two", "question three"]`;
 
     const userMsg = `Role: ${role || "(not specified)"}
@@ -34,7 +35,7 @@ Example format: ["question one", "question two", "question three"]`;
 KNOWLEDGE (candidate CV / framework):
 ${knowledgeContext}
 
-Return the JSON array of 3 opening questions now.`;
+Return the JSON array of 3 opening questions now - each ONE natural, spoken question.`;
 
     const msg = await anthropic.messages.create({
       model: CLAUDE_MODEL_LIVE,
@@ -49,7 +50,6 @@ Return the JSON array of 3 opening questions now.`;
       .join("")
       .trim();
 
-    // Parse the JSON array; fall back to splitting lines if needed.
     let questions: string[] = [];
     try {
       const cleaned = raw.replace(/```json|```/g, "").trim();
