@@ -143,11 +143,12 @@ export default function InterviewConsole() {
         interim_results: "true",
         endpointing: "300",
         language: "en",
-        token: access_token,
       });
 
+      // Browser auth: temporary JWT token uses the "bearer" subprotocol.
       const ws = new WebSocket(
-        `wss://api.deepgram.com/v1/listen?${params.toString()}`
+        `wss://api.deepgram.com/v1/listen?${params.toString()}`,
+        ["bearer", access_token]
       );
       wsRef.current = ws;
 
