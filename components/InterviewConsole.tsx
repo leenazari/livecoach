@@ -31,6 +31,7 @@ export default function InterviewConsole() {
   const [cost, setCost] = useState<CostBreakdown | null>(null);
   const [contextNote, setContextNote] = useState("");
   const [prepping, setPrepping] = useState(false);
+  const [docsReady, setDocsReady] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -50,6 +51,10 @@ export default function InterviewConsole() {
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const suggestTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // auto-fire control
+  const autoFiredKeyRef = useRef("");
+  const autoFireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     transcriptRef.current = transcript;
   }, [transcript]);
@@ -63,13 +68,10 @@ export default function InterviewConsole() {
   function normalise(s: string) {
     return s.trim().toLowerCase().replace(/\s+/g, " ");
   }
-
   function countWords(s: string) {
     const t = s.trim();
-    if (!t) return 0;
-    return t.split(/\s+/).length;
+    return t ? t.split(/\s+/).length : 0;
   }
-
   function isDuplicate(text: string) {
     const n = normalise(text);
     if (!n) return true;
@@ -78,7 +80,6 @@ export default function InterviewConsole() {
     return false;
   }
 
-  // Load CV + framework once. Returns the context string.
   const loadContext = useCallback(async () => {
     const ctxRes = await fetch("/api/interview/context", {
       method: "POST",
@@ -90,12 +91,11 @@ export default function InterviewConsole() {
     setContextNote(
       ctx.chunkCount
         ? `loaded ${ctx.chunkCount} chunk${ctx.chunkCount === 1 ? "" : "s"}`
-        : "no docs — upload some first"
+        : "no docs found"
     );
     return knowledgeRef.current;
   }, [candidate]);
 
-  // Generate opening questions from CV vs role — no mic / call needed.
   const generateOpening = useCallback(async () => {
     const res = await fetch("/api/interview/opening", {
       method: "POST",
@@ -118,14 +118,11 @@ export default function InterviewConsole() {
       pending: false,
       kind: "opening" as const,
     }));
-
-    // Seed them, and remember them so the live loop won't repeat them.
     setSuggestions((prev) => [...cards.reverse(), ...prev]);
     recentTextsRef.current = [...qs, ...recentTextsRef.current].slice(0, 6);
     if (qs.length) lastShownRef.current = qs[qs.length - 1];
   }, [role]);
 
-  // Standalone prep (button) — solo-testable without starting a call.
   const prepOpening = useCallback(async () => {
     setPrepping(true);
     setStatus("prepping questions…");
@@ -134,11 +131,50 @@ export default function InterviewConsole() {
       await generateOpening();
       setStatus("questions ready");
     } catch (e: any) {
-      setStatus(`error: ${e.message}`);
+      const msg = e.message || "";
+      // Calm, non-scary handling of the "not ready yet" case.
+      if (/cv|role|upload/i.test(msg)) {
+        setStatus("waiting for a CV + role…");
+      } else {
+        setStatus(`error: ${msg}`);
+      }
     } finally {
       setPrepping(false);
     }
   }, [loadContext, generateOpening]);
+
+  // Auto-fire opening questions once a CV is uploaded AND a role is set —
+  // in either order. Debounced so typing the role doesn't spam calls.
+  useEffect(() => {
+    if (recording) return;
+    if (!docsReady) return;
+    if (!role.trim()) return;
+    const key = `${candidate}|${role}`;
+    if (autoFiredKeyRef.current === key) return;
+
+    if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
+    autoFireTimerRef.current = setTimeout(() => {
+      autoFiredKeyRef.current = key;
+      prepOpening();
+    }, 900);
+
+    return () => {
+      if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
+    };
+  }, [candidate, role, docsReady, recording, prepOpening]);
+
+  const handleUploaded = useCallback(
+    (detectedName: string | null, docType: string) => {
+      if (detectedName) setCandidate(detectedName);
+      setDocsReady(true);
+      setStatus(
+        docType === "cv" && detectedName
+          ? `CV loaded · ${detectedName}`
+          : "doc loaded"
+      );
+    },
+    []
+  );
 
   const requestSuggestion = useCallback(
     async (opts?: { force?: boolean }) => {
@@ -221,12 +257,14 @@ export default function InterviewConsole() {
       setStatus("loading knowledge…");
       await loadContext();
 
-      // Seed opening questions if we haven't prepped already.
       setStatus("prepping opening questions…");
       try {
-        await generateOpening();
+        // Only seed if we haven't already auto-prepped this combo.
+        if (autoFiredKeyRef.current !== `${candidate}|${role}`) {
+          await generateOpening();
+        }
       } catch {
-        /* non-fatal — carry on into the live session */
+        /* non-fatal */
       }
 
       setStatus("getting microphone…");
@@ -309,7 +347,7 @@ export default function InterviewConsole() {
       setStatus(`error: ${e.message}`);
       setRecording(false);
     }
-  }, [loadContext, generateOpening, requestSuggestion]);
+  }, [candidate, role, loadContext, generateOpening, requestSuggestion]);
 
   const stopTimers = useCallback(() => {
     if (suggestTimerRef.current) clearInterval(suggestTimerRef.current);
@@ -375,8 +413,8 @@ export default function InterviewConsole() {
       {setupOpen && (
         <div className="fade-up mb-7 grid gap-4 rounded-2xl border border-edge bg-panel/60 p-5 md:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
           <Field
-            label="Candidate"
-            placeholder="e.g. Priya Sharma"
+            label="Candidate (auto-filled from CV)"
+            placeholder="upload a CV to fill this"
             value={candidate}
             onChange={setCandidate}
           />
@@ -392,10 +430,10 @@ export default function InterviewConsole() {
               disabled={prepping || recording}
               className="rounded-lg border border-amber/50 bg-amber/10 px-4 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {prepping ? "prepping…" : "✦ Prep opening questions"}
+              {prepping ? "prepping…" : "✦ Re-roll questions"}
             </button>
             <p className="font-mono text-[0.65rem] leading-relaxed text-muted">
-              Generates first questions from the CV vs role — no call needed.
+              Questions auto-generate once a CV + role are set. Button re-rolls.
             </p>
           </div>
         </div>
@@ -417,8 +455,8 @@ export default function InterviewConsole() {
               </p>
             ) : (
               <p className="text-muted">
-                Prep opening questions from the CV, or start a session. A new live
-                cue fires once the conversation advances by ~{MIN_NEW_WORDS} words.
+                Upload a CV and set a role — opening questions appear on the
+                right automatically. Start a session to go live.
               </p>
             )}
           </div>
@@ -441,7 +479,7 @@ export default function InterviewConsole() {
 
             {suggestions.length === 0 && (
               <p className="font-mono text-sm text-muted">
-                Prep opening questions to see the first cues here.
+                Upload a CV + set a role to see opening questions here.
               </p>
             )}
 
@@ -483,7 +521,7 @@ export default function InterviewConsole() {
         />
       )}
 
-      <KnowledgePanel candidate={candidate} />
+      <KnowledgePanel candidate={candidate} onUploaded={handleUploaded} />
     </div>
   );
 }
