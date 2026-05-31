@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import CallStage from "@/components/CallStage";
 
 type Line = { role: string; text: string };
@@ -10,17 +10,10 @@ export default function CallPage() {
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [lines]);
 
   const joinLink = origin ? `${origin}/join/${room}` : "";
   const botLink = origin ? `${origin}/candidate-bot/${room}` : "";
@@ -32,9 +25,25 @@ export default function CallPage() {
     setTimeout(() => setCopied(false), 1500);
   };
 
+  // Merge consecutive same-speaker finals into one turn entry.
+  // A new entry starts only when the OTHER speaker takes the floor.
   const onFinalTranscript = useCallback((role: string, text: string) => {
-    setLines((prev) => [...prev, { role, text }]);
+    setLines((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === role) {
+        const merged = [...prev];
+        merged[merged.length - 1] = {
+          ...last,
+          text: `${last.text} ${text}`.trim(),
+        };
+        return merged;
+      }
+      return [...prev, { role, text }];
+    });
   }, []);
+
+  // Newest turn first, so there's no scrolling to follow the conversation.
+  const ordered = [...lines].reverse();
 
   return (
     <main className="relative z-10 mx-auto max-w-[1100px] px-5 py-10">
@@ -93,20 +102,17 @@ export default function CallPage() {
         <section className="flex min-h-[340px] flex-col rounded-2xl border border-edge bg-panel/50">
           <div className="border-b border-edge px-6 py-3.5">
             <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-muted">
-              Labelled transcript
+              Labelled transcript - newest first
             </h2>
           </div>
-          <div
-            ref={scrollRef}
-            className="flex-1 space-y-3 overflow-y-auto px-6 py-5"
-          >
-            {lines.length === 0 ? (
+          <div className="flex-1 space-y-3 overflow-y-auto px-6 py-5">
+            {ordered.length === 0 ? (
               <p className="font-mono text-sm text-muted">
                 Join, open the bot tab and join it too, then talk or play lines.
-                Each line is tagged with who said it.
+                Each turn is tagged with who said it.
               </p>
             ) : (
-              lines.map((l, i) => (
+              ordered.map((l, i) => (
                 <p key={i} className="font-mono text-sm leading-relaxed">
                   <span
                     className={
