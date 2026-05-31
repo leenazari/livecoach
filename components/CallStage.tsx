@@ -13,11 +13,19 @@ type Props = {
   room: string;
   identity: string;
   role: "interviewer" | "candidate";
+  onFinalTranscript?: (role: string, text: string) => void;
+  onCandidateTurnEnd?: () => void;
 };
 
 type Person = { label: string; role: string; speaking: boolean };
 
-export default function CallStage({ room: roomName, identity, role }: Props) {
+export default function CallStage({
+  room: roomName,
+  identity,
+  role,
+  onFinalTranscript,
+  onCandidateTurnEnd,
+}: Props) {
   const [joined, setJoined] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
@@ -26,6 +34,21 @@ export default function CallStage({ room: roomName, identity, role }: Props) {
 
   const roomRef = useRef<Room | null>(null);
   const audioContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Deepgram transcription refs (local mic)
+  const dgWsRef = useRef<WebSocket | null>(null);
+  const dgRecRef = useRef<MediaRecorder | null>(null);
+  const dgStreamRef = useRef<MediaStream | null>(null);
+
+  // callbacks via refs to avoid stale closures
+  const onFinalRef = useRef(onFinalTranscript);
+  const onTurnRef = useRef(onCandidateTurnEnd);
+  useEffect(() => {
+    onFinalRef.current = onFinalTranscript;
+  }, [onFinalTranscript]);
+  useEffect(() => {
+    onTurnRef.current = onCandidateTurnEnd;
+  }, [onCandidateTurnEnd]);
 
   const parseRole = (p: Participant) => {
     try {
@@ -54,6 +77,101 @@ export default function CallStage({ room: roomName, identity, role }: Props) {
       });
     });
     setPeople(list);
+  }, []);
+
+  // Handle a finalised transcript line — from local mic OR remote data channel.
+  const handleLine = useCallback(
+    (lineRole: string, text: string, speechFinal: boolean) => {
+      if (!text.trim()) return;
+      onFinalRef.current?.(lineRole, text);
+      if (lineRole === "candidate" && speechFinal) {
+        onTurnRef.current?.();
+      }
+    },
+    []
+  );
+
+  // Publish a local transcript line to the room over the data channel.
+  const publishTranscript = useCallback(
+    (text: string, speechFinal: boolean) => {
+      const r = roomRef.current;
+      if (!r) return;
+      const payload = new TextEncoder().encode(
+        JSON.stringify({ type: "transcript", role, text, speechFinal })
+      );
+      r.localParticipant.publishData(payload, { reliable: true });
+    },
+    [role]
+  );
+
+  // Start transcribing the local mic via Deepgram (proven raw-key flow).
+  const startTranscription = useCallback(async () => {
+    try {
+      const key = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
+      if (!key) {
+        console.error("Missing NEXT_PUBLIC_DEEPGRAM_API_KEY");
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      dgStreamRef.current = stream;
+
+      const params = new URLSearchParams({
+        model: "nova-2",
+        smart_format: "true",
+        punctuate: "true",
+        interim_results: "true",
+        endpointing: "300",
+        language: "en",
+      });
+
+      const ws = new WebSocket(
+        `wss://api.deepgram.com/v1/listen?${params.toString()}`,
+        ["token", key]
+      );
+      dgWsRef.current = ws;
+
+      ws.onopen = () => {
+        const rec = new MediaRecorder(stream, { mimeType: "audio/webm" });
+        dgRecRef.current = rec;
+        rec.ondataavailable = (e) => {
+          if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+            ws.send(e.data);
+          }
+        };
+        rec.start(250);
+      };
+
+      ws.onmessage = (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          const alt = data?.channel?.alternatives?.[0];
+          const text: string = alt?.transcript || "";
+          if (!text || !data.is_final) return;
+          const speechFinal = !!data.speech_final;
+          // Share with the room, and handle locally (interviewer display/coaching).
+          publishTranscript(text, speechFinal);
+          handleLine(role, text, speechFinal);
+        } catch {
+          /* ignore keepalive frames */
+        }
+      };
+
+      ws.onerror = (e) => console.error("Deepgram WS error:", e);
+    } catch (e) {
+      console.error("Transcription start failed:", e);
+    }
+  }, [role, publishTranscript, handleLine]);
+
+  const stopTranscription = useCallback(() => {
+    if (dgRecRef.current?.state === "recording") dgRecRef.current.stop();
+    if (dgWsRef.current && dgWsRef.current.readyState === WebSocket.OPEN) {
+      dgWsRef.current.send(JSON.stringify({ type: "CloseStream" }));
+      dgWsRef.current.close();
+    }
+    dgStreamRef.current?.getTracks().forEach((t) => t.stop());
+    dgRecRef.current = null;
+    dgWsRef.current = null;
+    dgStreamRef.current = null;
   }, []);
 
   const join = useCallback(async () => {
@@ -88,6 +206,16 @@ export default function CallStage({ room: roomName, identity, role }: Props) {
         .on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
           refreshPeople(new Set(speakers.map((s) => s.identity)));
         })
+        .on(RoomEvent.DataReceived, (payload: Uint8Array) => {
+          try {
+            const msg = JSON.parse(new TextDecoder().decode(payload));
+            if (msg.type === "transcript") {
+              handleLine(msg.role, msg.text, !!msg.speechFinal);
+            }
+          } catch {
+            /* ignore */
+          }
+        })
         .on(RoomEvent.Disconnected, () => {
           setJoined(false);
           setPeople([]);
@@ -97,19 +225,23 @@ export default function CallStage({ room: roomName, identity, role }: Props) {
       await room.localParticipant.setMicrophoneEnabled(true);
       setJoined(true);
       refreshPeople(new Set());
+
+      // Start our own transcription once we're in.
+      startTranscription();
     } catch (e: any) {
       setError(e.message || "Could not join call");
     } finally {
       setConnecting(false);
     }
-  }, [roomName, identity, role, refreshPeople]);
+  }, [roomName, identity, role, refreshPeople, handleLine, startTranscription]);
 
   const leave = useCallback(async () => {
+    stopTranscription();
     await roomRef.current?.disconnect();
     roomRef.current = null;
     setJoined(false);
     setPeople([]);
-  }, []);
+  }, [stopTranscription]);
 
   const toggleMute = useCallback(async () => {
     const r = roomRef.current;
@@ -121,9 +253,10 @@ export default function CallStage({ room: roomName, identity, role }: Props) {
 
   useEffect(
     () => () => {
+      stopTranscription();
       roomRef.current?.disconnect();
     },
-    []
+    [stopTranscription]
   );
 
   return (
@@ -142,9 +275,7 @@ export default function CallStage({ room: roomName, identity, role }: Props) {
           >
             {connecting ? "connecting…" : "● Join call"}
           </button>
-          {error && (
-            <p className="font-mono text-xs text-rust">⚠︎ {error}</p>
-          )}
+          {error && <p className="font-mono text-xs text-rust">⚠︎ {error}</p>}
         </div>
       ) : (
         <div className="flex flex-col gap-5">
@@ -196,10 +327,6 @@ export default function CallStage({ room: roomName, identity, role }: Props) {
               </div>
             ))}
           </div>
-          <p className="font-mono text-[0.65rem] text-muted">
-            Green dot = currently speaking. This is Stage A — call + audio only.
-            Transcription and coaching come next.
-          </p>
         </div>
       )}
     </div>
