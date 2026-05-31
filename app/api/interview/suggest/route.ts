@@ -5,7 +5,9 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 // LIVE coaching engine, fired on the candidate's turn-end.
-// Output is a GLANCEABLE one-line whisper - read mid-conversation.
+// Returns a glanceable PRIMARY question, optionally followed by ONE deeper
+// follow-up probe, separated by the marker ||FOLLOWUP|| so the client can
+// render two tiers. Streams token-by-token.
 export async function POST(req: NextRequest) {
   try {
     const {
@@ -25,7 +27,7 @@ export async function POST(req: NextRequest) {
     }
 
     const holdRule = allowHold
-      ? `\n\nHOLD RULE: If the only next question would repeat or reword something already on an "Interviewer:" line, or any recent suggestion, respond with exactly: HOLD.`
+      ? `\n\nHOLD RULE: If the only question would repeat or reword something already on an "Interviewer:" line, or any recent suggestion, respond with exactly: HOLD.`
       : "";
 
     const instructions = `You are a live interview-coaching assistant whispering in the INTERVIEWER's ear during a real-time interview${role ? ` for the role: ${role}` : ""}.
@@ -34,16 +36,15 @@ The transcript is labelled by speaker:
 - "Interviewer:" lines = what the interviewer already said.
 - "Candidate:" lines = the candidate's answers.
 
-OUTPUT FORMAT - this is a glanceable whisper the interviewer reads WHILE talking:
-- ONE short line only. Ideally under 15 words. Readable in a single glance and sayable out loud.
-- PLAIN TEXT ONLY. No markdown, no bold, no asterisks, no headings, no line breaks.
-- NO meta-commentary. Never say "I need to flag", "this is a coaching suggestion", "the interview cannot continue", or describe what you are doing. Just give the cue itself.
-- Ask ONE thing. No compound questions, no lists of options, no "and".
-- You may end with a 2-4 word reason in square brackets. Nothing more.
-
-IF SOMETHING IS GENUINELY WRONG (e.g. the answer contradicts the CV):
-- Flag it, but in ONE terse line. Example: "Answer doesn't match the CV - ask which background is theirs. [mismatch]"
-- Never an essay. One line, same as any other cue.
+OUTPUT FORMAT (strict - this is read mid-conversation):
+- Give a MAIN question. Then, if a natural deeper probe exists, append the marker ||FOLLOWUP|| and ONE short follow-up question.
+- Your entire output is ONE of these two shapes:
+    What metric told you onboarding was the problem? ||FOLLOWUP|| Did that show up in revenue?
+  or just:
+    What metric told you onboarding was the problem?
+- MAIN question: ONE thing, under 15 words, plain text, sayable out loud. No markdown, no bold, no lists, no "and", no meta-commentary.
+- FOLLOW-UP (optional): also ONE short question - the natural next probe if they answer the main one well. Omit it (and the marker) if there isn't a clean one.
+- If something is genuinely wrong (e.g. answer contradicts the CV), make the MAIN line a terse flag, e.g.: Answer doesn't match the CV - ask which background is theirs.
 
 CRITICAL - no repetition:
 - NEVER suggest a question already on an "Interviewer:" line, or a reword of one.
@@ -75,11 +76,11 @@ ${transcript || "(interview just started)"}
 Candidate's latest answer:
 "${latest}"${recent}
 
-Give ONE short, glanceable, spoken question (under 15 words) - or HOLD.`;
+Give the MAIN question (under 15 words) plus an optional ||FOLLOWUP|| probe - or HOLD.`;
 
     const claudeStream = await anthropic.messages.stream({
       model: CLAUDE_MODEL_LIVE,
-      max_tokens: 60,
+      max_tokens: 80,
       system,
       messages: [{ role: "user", content: userMsg }],
     });
