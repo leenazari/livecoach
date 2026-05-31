@@ -1,17 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { chunkText } from "@/lib/chunk";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Accepts a PDF or text doc, extracts + chunks it, stores it in Supabase.
-//
-// POC note: we store raw text chunks only (no embedding). The live loop
-// loads them whole via /context and caches them — cheaper and simpler than
-// vector search for a single interview. When knowledge bases get large
-// (e.g. the sales template with many brochures), re-enable embeddings here
-// using lib/embeddings.ts + the match_knowledge_docs function in schema.sql.
+// Upload PDF or text file to Supabase storage.
+// Text extraction happens asynchronously when /api/interview/context loads it.
+// This matches VoiceReach pattern: upload → process in background.
 //
 // Form fields:
 //   file      - PDF or .txt
@@ -28,45 +23,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
-    // ---- Extract text ----
-    let text = "";
-    if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-      const buffer = Buffer.from(await file.arrayBuffer());
-      const pdfParse = (await import("pdf-parse")).default;
-      const parsed = await pdfParse(buffer);
-      text = parsed.text;
-    } else {
-      text = await file.text();
-    }
+    // Generate a safe filename with timestamp to avoid collisions
+    const timestamp = Date.now();
+    const safeName = `${timestamp}-${file.name
+      .replace(/[^a-z0-9.-]/gi, "_")
+      .toLowerCase()}`;
+    const storagePath = `${docType}/${candidate || "global"}/${safeName}`;
 
-    if (!text.trim()) {
-      return NextResponse.json(
-        { error: "Could not extract any text from the file" },
-        { status: 422 }
-      );
-    }
+    // Upload to Supabase storage (not database)
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from("knowledge_docs")
+      .upload(storagePath, file);
 
-    // ---- Chunk + store (no embedding in the POC) ----
-    const chunks = chunkText(text);
-    const rows = chunks.map((content) => ({
-      content,
-      doc_type: docType,
-      candidate,
-      source: file.name,
-    }));
-
-    const { error } = await supabaseAdmin.from("knowledge_docs").insert(rows);
-    if (error) throw error;
+    if (uploadError) throw uploadError;
 
     return NextResponse.json({
       ok: true,
       source: file.name,
       doc_type: docType,
       candidate,
-      chunks: chunks.length,
+      storagePath,
+      message: "File uploaded. Processing in background...",
     });
   } catch (err: any) {
-    console.error("Knowledge upload error:", err);
+    console.error("Upload error:", err);
     return NextResponse.json(
       { error: err?.message || "Upload failed" },
       { status: 500 }
