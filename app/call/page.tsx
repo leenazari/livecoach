@@ -1,15 +1,43 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import CallStage from "@/components/CallStage";
+import KnowledgePanel from "@/components/KnowledgePanel";
 
 type Line = { role: string; text: string };
+type Suggestion = {
+  id: number;
+  text: string;
+  at: string;
+  pending: boolean;
+  kind: "opening" | "live";
+};
+
+function timeNow() {
+  return new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
 
 export default function CallPage() {
   const [room] = useState(() => `lc-${Math.random().toString(36).slice(2, 8)}`);
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
+
+  const [candidate, setCandidate] = useState("");
+  const [role, setRole] = useState("");
+  const [prepping, setPrepping] = useState(false);
+  const [docsReady, setDocsReady] = useState(false);
+  const [status, setStatus] = useState("");
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+
+  const knowledgeRef = useRef("");
+  const suggestIdRef = useRef(0);
+  const autoFiredKeyRef = useRef("");
+  const autoFireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -26,11 +54,10 @@ export default function CallPage() {
   };
 
   // Merge consecutive same-speaker finals into one turn entry.
-  // A new entry starts only when the OTHER speaker takes the floor.
-  const onFinalTranscript = useCallback((role: string, text: string) => {
+  const onFinalTranscript = useCallback((r: string, text: string) => {
     setLines((prev) => {
       const last = prev[prev.length - 1];
-      if (last && last.role === role) {
+      if (last && last.role === r) {
         const merged = [...prev];
         merged[merged.length - 1] = {
           ...last,
@@ -38,23 +65,150 @@ export default function CallPage() {
         };
         return merged;
       }
-      return [...prev, { role, text }];
+      return [...prev, { role: r, text }];
     });
   }, []);
 
-  // Newest turn first, so there's no scrolling to follow the conversation.
   const ordered = [...lines].reverse();
 
-  return (
-    <main className="relative z-10 mx-auto max-w-[1100px] px-5 py-10">
-      <h1 className="font-display text-[2.4rem] leading-none tracking-tight text-bone">
-        <span className="italic text-amber">Live</span>Coach - call test
-      </h1>
-      <p className="mt-2 mb-7 font-mono text-xs uppercase tracking-[0.25em] text-muted">
-        stage B - labelled transcript
-      </p>
+  const loadContext = useCallback(async () => {
+    const res = await fetch("/api/interview/context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidate: candidate || null }),
+    });
+    const ctx = await res.json();
+    knowledgeRef.current = ctx.context || "";
+    return knowledgeRef.current;
+  }, [candidate]);
 
-      <div className="mb-6 grid gap-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
+  const generateOpening = useCallback(async () => {
+    const res = await fetch("/api/interview/opening", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        knowledgeContext: knowledgeRef.current,
+        role: role || null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to prep questions");
+    const qs: string[] = Array.isArray(data.questions) ? data.questions : [];
+    const cards: Suggestion[] = qs.map((q) => ({
+      id: ++suggestIdRef.current,
+      text: q,
+      at: timeNow(),
+      pending: false,
+      kind: "opening" as const,
+    }));
+    setSuggestions((prev) => [...cards.reverse(), ...prev]);
+  }, [role]);
+
+  const prepOpening = useCallback(async () => {
+    setPrepping(true);
+    setStatus("prepping questions...");
+    try {
+      await loadContext();
+      await generateOpening();
+      setStatus("questions ready");
+    } catch (e: any) {
+      const msg = e.message || "";
+      setStatus(
+        /cv|role|upload/i.test(msg)
+          ? "waiting for a CV + role..."
+          : `error: ${msg}`
+      );
+    } finally {
+      setPrepping(false);
+    }
+  }, [loadContext, generateOpening]);
+
+  // Auto-generate opening questions once a CV is uploaded AND a role is set.
+  useEffect(() => {
+    if (!docsReady || !role.trim()) return;
+    const key = `${candidate}|${role}`;
+    if (autoFiredKeyRef.current === key) return;
+    if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
+    autoFireTimerRef.current = setTimeout(() => {
+      autoFiredKeyRef.current = key;
+      prepOpening();
+    }, 900);
+    return () => {
+      if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
+    };
+  }, [candidate, role, docsReady, prepOpening]);
+
+  const handleUploaded = useCallback(
+    (detectedName: string | null, docType: string) => {
+      if (detectedName) setCandidate(detectedName);
+      setDocsReady(true);
+      setStatus(
+        docType === "cv" && detectedName
+          ? `CV loaded - ${detectedName}`
+          : "doc loaded"
+      );
+    },
+    []
+  );
+
+  return (
+    <main className="relative z-10 mx-auto max-w-[1200px] px-5 py-10">
+      <header className="mb-7 flex flex-wrap items-end justify-between gap-4 border-b border-edge pb-5">
+        <div>
+          <h1 className="font-display text-[2.4rem] leading-none tracking-tight text-bone">
+            <span className="italic text-amber">Live</span>Coach
+          </h1>
+          <p className="mt-2 font-mono text-xs uppercase tracking-[0.25em] text-muted">
+            stage C - hosted interview
+          </p>
+        </div>
+        {status && (
+          <span className="rounded-full border border-edge bg-ink/60 px-4 py-2 font-mono text-xs lowercase tracking-wide text-muted">
+            {status}
+          </span>
+        )}
+      </header>
+
+      <div className="mb-6 grid gap-4 rounded-2xl border border-edge bg-panel/60 p-5 md:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
+        <label className="block">
+          <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted">
+            Candidate (auto-filled from CV)
+          </span>
+          <input
+            value={candidate}
+            placeholder="upload a CV to fill this"
+            onChange={(e) => setCandidate(e.target.value)}
+            className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted">
+            Role
+          </span>
+          <input
+            value={role}
+            placeholder="e.g. Senior Backend Engineer"
+            onChange={(e) => setRole(e.target.value)}
+            className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+          />
+        </label>
+        <div className="flex flex-col justify-end gap-2">
+          <button
+            onClick={prepOpening}
+            disabled={prepping}
+            className="rounded-lg border border-amber/50 bg-amber/10 px-4 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {prepping ? "prepping..." : "Re-roll questions"}
+          </button>
+          <p className="font-mono text-[0.65rem] leading-relaxed text-muted">
+            Auto-generates once a CV + role are set.
+          </p>
+        </div>
+      </div>
+
+      <KnowledgePanel candidate={candidate} onUploaded={handleUploaded} />
+
+      <div className="my-6 grid gap-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
         <div>
           <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
             Real candidate - send this link
@@ -72,7 +226,6 @@ export default function CallPage() {
             </button>
           </div>
         </div>
-
         <div className="border-t border-edge/50 pt-3">
           <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-sage">
             Test solo - open the candidate bot in a new tab
@@ -91,15 +244,17 @@ export default function CallPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+      <div className="mb-6">
         <CallStage
           room={room}
           identity="Interviewer"
           role="interviewer"
           onFinalTranscript={onFinalTranscript}
         />
+      </div>
 
-        <section className="flex min-h-[340px] flex-col rounded-2xl border border-edge bg-panel/50">
+      <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
+        <section className="flex min-h-[360px] flex-col rounded-2xl border border-edge bg-panel/50">
           <div className="border-b border-edge px-6 py-3.5">
             <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-muted">
               Labelled transcript - newest first
@@ -108,8 +263,8 @@ export default function CallPage() {
           <div className="flex-1 space-y-3 overflow-y-auto px-6 py-5">
             {ordered.length === 0 ? (
               <p className="font-mono text-sm text-muted">
-                Join, open the bot tab and join it too, then talk or play lines.
-                Each turn is tagged with who said it.
+                Join the call and start talking. Each turn is tagged with who
+                said it.
               </p>
             ) : (
               ordered.map((l, i) => (
@@ -132,6 +287,40 @@ export default function CallPage() {
                   </span>{" "}
                   <span className="text-bone/90">{l.text}</span>
                 </p>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="flex min-h-[360px] flex-col rounded-2xl border border-amber/40 bg-gradient-to-b from-amber/[0.07] to-transparent">
+          <div className="border-b border-edge px-6 py-3.5">
+            <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-amber">
+              Ask this next
+            </h2>
+          </div>
+          <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-5">
+            {suggestions.length === 0 ? (
+              <p className="font-mono text-sm text-muted">
+                Upload a CV + set a role to see opening questions here.
+              </p>
+            ) : (
+              suggestions.map((s) => (
+                <div
+                  key={s.id}
+                  className="rounded-xl border border-edge bg-ink/40 px-4 py-3.5"
+                >
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber/70">
+                      {s.at}
+                    </span>
+                    <span className="rounded-full border border-sage/40 bg-sage/10 px-2 py-0.5 font-mono text-[0.55rem] uppercase tracking-[0.2em] text-sage">
+                      {s.kind}
+                    </span>
+                  </div>
+                  <p className="font-display text-[1.1rem] leading-snug text-bone">
+                    {s.text}
+                  </p>
+                </div>
               ))
             )}
           </div>
