@@ -8,6 +8,7 @@ type Line = { role: string; text: string };
 type Suggestion = {
   id: number;
   text: string;
+  followup: string;
   at: string;
   pending: boolean;
   kind: "opening" | "live";
@@ -24,6 +25,16 @@ function timeNow() {
 
 function normalise(s: string) {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Split the streamed cue into main + optional follow-up on the marker.
+function splitCue(raw: string): { ask: string; followup: string } {
+  const idx = raw.indexOf("||FOLLOWUP||");
+  if (idx === -1) return { ask: raw.trim(), followup: "" };
+  return {
+    ask: raw.slice(0, idx).trim(),
+    followup: raw.slice(idx + "||FOLLOWUP||".length).trim(),
+  };
 }
 
 export default function CallPage() {
@@ -66,7 +77,6 @@ export default function CallPage() {
     setTimeout(() => setCopied(false), 1500);
   };
 
-  // Merge consecutive same-speaker finals into one turn entry.
   const onFinalTranscript = useCallback((r: string, text: string) => {
     setLines((prev) => {
       const last = prev[prev.length - 1];
@@ -90,7 +100,6 @@ export default function CallPage() {
     return false;
   };
 
-  // Fire a live cue when the candidate finishes a turn.
   const requestLiveSuggestion = useCallback(async () => {
     if (inFlightRef.current) return;
 
@@ -119,7 +128,15 @@ export default function CallPage() {
     const id = ++suggestIdRef.current;
     setSuggestions((prev) => [
       ...prev,
-      { id, text: "", at: timeNow(), pending: true, kind: "live", pinned: false },
+      {
+        id,
+        text: "",
+        followup: "",
+        at: timeNow(),
+        pending: true,
+        kind: "live",
+        pinned: false,
+      },
     ]);
 
     try {
@@ -145,19 +162,22 @@ export default function CallPage() {
         const { done, value } = await reader.read();
         if (done) break;
         acc += decoder.decode(value, { stream: true });
+        const { ask, followup } = splitCue(acc);
         setSuggestions((prev) =>
-          prev.map((s) => (s.id === id ? { ...s, text: acc } : s))
+          prev.map((s) => (s.id === id ? { ...s, text: ask, followup } : s))
         );
       }
-      const finalText = acc.trim();
-      const isHold = finalText.toUpperCase() === "HOLD";
-      if (isHold || isDuplicate(finalText)) {
+      const { ask, followup } = splitCue(acc);
+      const isHold = ask.toUpperCase() === "HOLD";
+      if (isHold || isDuplicate(ask)) {
         setSuggestions((prev) => prev.filter((s) => s.id !== id));
       } else {
-        lastShownRef.current = finalText;
-        recentTextsRef.current = [finalText, ...recentTextsRef.current].slice(0, 8);
+        lastShownRef.current = ask;
+        recentTextsRef.current = [ask, ...recentTextsRef.current].slice(0, 8);
         setSuggestions((prev) =>
-          prev.map((s) => (s.id === id ? { ...s, pending: false } : s))
+          prev.map((s) =>
+            s.id === id ? { ...s, text: ask, followup, pending: false } : s
+          )
         );
       }
     } catch (e: any) {
@@ -197,13 +217,13 @@ export default function CallPage() {
     const cards: Suggestion[] = qs.map((q) => ({
       id: ++suggestIdRef.current,
       text: q,
+      followup: "",
       at: timeNow(),
       pending: false,
       kind: "opening" as const,
       pinned: false,
     }));
     setSuggestions((prev) => [...prev, ...cards]);
-    // Seed so live cues never repeat the opening questions.
     recentTextsRef.current = [...qs, ...recentTextsRef.current].slice(0, 10);
   }, [role]);
 
@@ -276,15 +296,23 @@ export default function CallPage() {
           }`}
           title={s.pinned ? "unpin" : "pin"}
         >
-          {s.pinned ? "★" : "☆"}
+          {s.pinned ? "\u2605" : "\u2606"}
         </button>
       </div>
       {s.pending && !s.text ? (
         <span className="thinking font-display text-lg">reading the room...</span>
       ) : (
-        <p className="font-display text-[1.1rem] leading-snug text-bone">
-          {s.text}
-        </p>
+        <>
+          <p className="font-display text-[1.1rem] leading-snug text-bone">
+            {s.text}
+          </p>
+          {s.followup && (
+            <p className="mt-2 flex gap-2 font-sans text-sm text-muted">
+              <span className="text-amber/60">then probe:</span>
+              <span>{s.followup}</span>
+            </p>
+          )}
+        </>
       )}
     </div>
   );
