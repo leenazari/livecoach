@@ -5,13 +5,12 @@ export const runtime = "nodejs";
 
 // Mints a short-lived Deepgram token so the long-lived API key never
 // reaches the browser. The browser opens a WebSocket to Deepgram using
-// this temporary token (see components/InterviewConsole.tsx).
+// this temporary token.
 export async function GET() {
   try {
     const deepgram = createClient(process.env.DEEPGRAM_API_KEY!);
 
-    // grantToken issues a short-lived access token (default TTL ~30s),
-    // which is plenty of time to open the live WebSocket from the browser.
+    // grantToken issues a short-lived access token.
     const { result, error } = await deepgram.auth.grantToken();
 
     if (error || !result) {
