@@ -13,12 +13,10 @@ type Suggestion = {
   text: string;
   at: string;
   pending: boolean;
+  kind?: "opening" | "live";
 };
 
 const SUGGEST_INTERVAL_MS = 5000;
-// Minimum NEW words of transcript before an auto-suggestion fires.
-// More semantic than character counting — ~25 words ≈ one solid answer.
-// Raise to 50 or 100 for fewer, more spaced-out cues.
 const MIN_NEW_WORDS = 25;
 
 export default function InterviewConsole() {
@@ -32,6 +30,7 @@ export default function InterviewConsole() {
   const [setupOpen, setSetupOpen] = useState(true);
   const [cost, setCost] = useState<CostBreakdown | null>(null);
   const [contextNote, setContextNote] = useState("");
+  const [prepping, setPrepping] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -42,7 +41,6 @@ export default function InterviewConsole() {
   const inFlightRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // de-dupe / gating refs
   const lastFiredWordsRef = useRef(0);
   const lastShownRef = useRef("");
   const recentTextsRef = useRef<string[]>([]);
@@ -80,6 +78,68 @@ export default function InterviewConsole() {
     return false;
   }
 
+  // Load CV + framework once. Returns the context string.
+  const loadContext = useCallback(async () => {
+    const ctxRes = await fetch("/api/interview/context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidate: candidate || null }),
+    });
+    const ctx = await ctxRes.json();
+    knowledgeRef.current = ctx.context || "";
+    setContextNote(
+      ctx.chunkCount
+        ? `loaded ${ctx.chunkCount} chunk${ctx.chunkCount === 1 ? "" : "s"}`
+        : "no docs — upload some first"
+    );
+    return knowledgeRef.current;
+  }, [candidate]);
+
+  // Generate opening questions from CV vs role — no mic / call needed.
+  const generateOpening = useCallback(async () => {
+    const res = await fetch("/api/interview/opening", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        knowledgeContext: knowledgeRef.current,
+        role: role || null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to prep questions");
+
+    const qs: string[] = Array.isArray(data.questions) ? data.questions : [];
+    claudeCallsRef.current += 1;
+
+    const cards: Suggestion[] = qs.map((q) => ({
+      id: ++suggestIdRef.current,
+      text: q,
+      at: timeNow(),
+      pending: false,
+      kind: "opening" as const,
+    }));
+
+    // Seed them, and remember them so the live loop won't repeat them.
+    setSuggestions((prev) => [...cards.reverse(), ...prev]);
+    recentTextsRef.current = [...qs, ...recentTextsRef.current].slice(0, 6);
+    if (qs.length) lastShownRef.current = qs[qs.length - 1];
+  }, [role]);
+
+  // Standalone prep (button) — solo-testable without starting a call.
+  const prepOpening = useCallback(async () => {
+    setPrepping(true);
+    setStatus("prepping questions…");
+    try {
+      await loadContext();
+      await generateOpening();
+      setStatus("questions ready");
+    } catch (e: any) {
+      setStatus(`error: ${e.message}`);
+    } finally {
+      setPrepping(false);
+    }
+  }, [loadContext, generateOpening]);
+
   const requestSuggestion = useCallback(
     async (opts?: { force?: boolean }) => {
       const force = opts?.force === true;
@@ -87,9 +147,7 @@ export default function InterviewConsole() {
       const full = transcriptRef.current.trim();
       if (full.length < 12) return;
 
-      // Keep the gate in sync so the timer doesn't immediately re-fire.
       lastFiredWordsRef.current = countWords(full);
-
       inFlightRef.current = true;
       claudeCallsRef.current += 1;
 
@@ -98,7 +156,7 @@ export default function InterviewConsole() {
       const id = ++suggestIdRef.current;
 
       setSuggestions((prev) => [
-        { id, text: "", at: timeNow(), pending: true },
+        { id, text: "", at: timeNow(), pending: true, kind: "live" },
         ...prev,
       ]);
 
@@ -112,7 +170,7 @@ export default function InterviewConsole() {
             latest,
             role: role || null,
             previousSuggestions: recentTextsRef.current.slice(0, 3),
-            allowHold: !force, // manual "Suggest now" always returns something
+            allowHold: !force,
           }),
         });
 
@@ -137,11 +195,10 @@ export default function InterviewConsole() {
         const drop = isHold || (!force && isDuplicate(finalText));
 
         if (drop) {
-          // Silently remove the card — nothing new worth showing.
           setSuggestions((prev) => prev.filter((s) => s.id !== id));
         } else {
           lastShownRef.current = finalText;
-          recentTextsRef.current = [finalText, ...recentTextsRef.current].slice(0, 5);
+          recentTextsRef.current = [finalText, ...recentTextsRef.current].slice(0, 6);
           setSuggestions((prev) =>
             prev.map((s) => (s.id === id ? { ...s, pending: false } : s))
           );
@@ -162,18 +219,15 @@ export default function InterviewConsole() {
   const start = useCallback(async () => {
     try {
       setStatus("loading knowledge…");
-      const ctxRes = await fetch("/api/interview/context", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidate: candidate || null }),
-      });
-      const ctx = await ctxRes.json();
-      knowledgeRef.current = ctx.context || "";
-      setContextNote(
-        ctx.chunkCount
-          ? `loaded ${ctx.chunkCount} chunk${ctx.chunkCount === 1 ? "" : "s"}`
-          : "no docs — upload some first"
-      );
+      await loadContext();
+
+      // Seed opening questions if we haven't prepped already.
+      setStatus("prepping opening questions…");
+      try {
+        await generateOpening();
+      } catch {
+        /* non-fatal — carry on into the live session */
+      }
 
       setStatus("getting microphone…");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -192,8 +246,6 @@ export default function InterviewConsole() {
         language: "en",
       });
 
-      // POC browser auth: raw API key via "token" subprotocol.
-      // Revert to temp tokens + rotate this key before real users.
       const ws = new WebSocket(
         `wss://api.deepgram.com/v1/listen?${params.toString()}`,
         ["token", key]
@@ -205,10 +257,7 @@ export default function InterviewConsole() {
         setRecording(true);
         setSetupOpen(false);
         startedAtRef.current = Date.now();
-        claudeCallsRef.current = 0;
         lastFiredWordsRef.current = 0;
-        lastShownRef.current = "";
-        recentTextsRef.current = [];
 
         const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
         recorderRef.current = recorder;
@@ -219,7 +268,6 @@ export default function InterviewConsole() {
         };
         recorder.start(250);
 
-        // Auto-suggest, but only when enough NEW words have arrived.
         suggestTimerRef.current = setInterval(() => {
           const words = countWords(transcriptRef.current);
           if (words - lastFiredWordsRef.current < MIN_NEW_WORDS) return;
@@ -261,7 +309,7 @@ export default function InterviewConsole() {
       setStatus(`error: ${e.message}`);
       setRecording(false);
     }
-  }, [candidate, requestSuggestion]);
+  }, [loadContext, generateOpening, requestSuggestion]);
 
   const stopTimers = useCallback(() => {
     if (suggestTimerRef.current) clearInterval(suggestTimerRef.current);
@@ -338,10 +386,16 @@ export default function InterviewConsole() {
             value={role}
             onChange={setRole}
           />
-          <div className="flex items-end">
-            <p className="font-mono text-[0.7rem] leading-relaxed text-muted">
-              Candidate name scopes the CV &amp; summary loaded at start. Upload
-              docs below first. Framework docs load for every session.
+          <div className="flex flex-col justify-end gap-2">
+            <button
+              onClick={prepOpening}
+              disabled={prepping || recording}
+              className="rounded-lg border border-amber/50 bg-amber/10 px-4 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {prepping ? "prepping…" : "✦ Prep opening questions"}
+            </button>
+            <p className="font-mono text-[0.65rem] leading-relaxed text-muted">
+              Generates first questions from the CV vs role — no call needed.
             </p>
           </div>
         </div>
@@ -363,9 +417,8 @@ export default function InterviewConsole() {
               </p>
             ) : (
               <p className="text-muted">
-                Transcript appears here as you talk. A new cue fires once the
-                conversation advances by ~{MIN_NEW_WORDS} words — repeats are
-                filtered out.
+                Prep opening questions from the CV, or start a session. A new live
+                cue fires once the conversation advances by ~{MIN_NEW_WORDS} words.
               </p>
             )}
           </div>
@@ -387,7 +440,9 @@ export default function InterviewConsole() {
             </button>
 
             {suggestions.length === 0 && (
-              <p className="font-mono text-sm text-muted">Waiting for the first words…</p>
+              <p className="font-mono text-sm text-muted">
+                Prep opening questions to see the first cues here.
+              </p>
             )}
 
             {suggestions.map((s) => (
@@ -399,6 +454,11 @@ export default function InterviewConsole() {
                   <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber/70">
                     {s.at}
                   </span>
+                  {s.kind === "opening" && (
+                    <span className="rounded-full border border-sage/40 bg-sage/10 px-2 py-0.5 font-mono text-[0.55rem] uppercase tracking-[0.2em] text-sage">
+                      opening
+                    </span>
+                  )}
                 </div>
                 {s.pending && !s.text ? (
                   <span className="thinking font-display text-lg">
@@ -495,7 +555,7 @@ function CostBreakdownPanel({
           Session cost breakdown
         </h2>
         <span className="font-mono text-[0.65rem] uppercase tracking-wider text-muted">
-          {calls} suggestion call{calls === 1 ? "" : "s"}
+          {calls} claude call{calls === 1 ? "" : "s"}
         </span>
       </div>
       <div className="grid gap-2 font-mono text-sm">
