@@ -39,34 +39,34 @@ export default function CallPage() {
   return (
     <main className="relative z-10 mx-auto max-w-[1100px] px-5 py-10">
       <h1 className="font-display text-[2.4rem] leading-none tracking-tight text-bone">
-        <span className="italic text-amber">Live</span>Coach · call test
+        <span className="italic text-amber">Live</span>Coach - call test
       </h1>
       <p className="mt-2 mb-7 font-mono text-xs uppercase tracking-[0.25em] text-muted">
-        stage B · labelled transcript
+        stage B - labelled transcript
       </p>
 
       <div className="mb-6 grid gap-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
         <div>
           <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-            Real candidate — send this link
+            Real candidate - send this link
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <code className="break-all rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone">
-              {joinLink || "preparing…"}
+              {joinLink || "preparing..."}
             </code>
             <button
               onClick={copy}
               disabled={!joinLink}
               className="rounded-full border border-amber/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/10 disabled:opacity-40"
             >
-              {copied ? "copied ✓" : "copy"}
+              {copied ? "copied" : "copy"}
             </button>
           </div>
         </div>
 
         <div className="border-t border-edge/50 pt-3">
           <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-sage">
-            Test solo — open the candidate bot in a new tab
+            Test solo - open the candidate bot in a new tab
           </p>
           
             href={botLink || "#"}
@@ -74,10 +74,10 @@ export default function CallPage() {
             rel="noreferrer"
             className="inline-block rounded-full border border-sage/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/10"
           >
-            ↗ open candidate bot (same room)
+            Open candidate bot (same room)
           </a>
           <p className="mt-2 font-mono text-[0.65rem] text-muted">
-            Use headphones so your interviewer mic doesn’t pick up the bot’s voice.
+            Use headphones so your interviewer mic does not pick up the bot voice.
           </p>
         </div>
       </div>
@@ -102,8 +102,8 @@ export default function CallPage() {
           >
             {lines.length === 0 ? (
               <p className="font-mono text-sm text-muted">
-                Join, open the bot tab and join it too, then talk / play lines —
-                each line is tagged with who said it.
+                Join, open the bot tab and join it too, then talk or play lines.
+                Each line is tagged with who said it.
               </p>
             ) : (
               lines.map((l, i) => (
