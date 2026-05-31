@@ -16,6 +16,10 @@ type Suggestion = {
 };
 
 const SUGGEST_INTERVAL_MS = 5000;
+// Minimum NEW words of transcript before an auto-suggestion fires.
+// More semantic than character counting — ~25 words ≈ one solid answer.
+// Raise to 50 or 100 for fewer, more spaced-out cues.
+const MIN_NEW_WORDS = 25;
 
 export default function InterviewConsole() {
   const [candidate, setCandidate] = useState("");
@@ -38,6 +42,11 @@ export default function InterviewConsole() {
   const inFlightRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  // de-dupe / gating refs
+  const lastFiredWordsRef = useRef(0);
+  const lastShownRef = useRef("");
+  const recentTextsRef = useRef<string[]>([]);
+
   const startedAtRef = useRef(0);
   const claudeCallsRef = useRef(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -53,63 +62,102 @@ export default function InterviewConsole() {
     }
   }, [transcript, interim]);
 
-  const requestSuggestion = useCallback(async () => {
-    if (inFlightRef.current) return;
-    const full = transcriptRef.current.trim();
-    if (full.length < 12) return;
+  function normalise(s: string) {
+    return s.trim().toLowerCase().replace(/\s+/g, " ");
+  }
 
-    inFlightRef.current = true;
-    claudeCallsRef.current += 1;
+  function countWords(s: string) {
+    const t = s.trim();
+    if (!t) return 0;
+    return t.split(/\s+/).length;
+  }
 
-    const recentWindow = full.slice(-1000);
-    const latest = full.slice(-350);
-    const id = ++suggestIdRef.current;
+  function isDuplicate(text: string) {
+    const n = normalise(text);
+    if (!n) return true;
+    const last = normalise(lastShownRef.current);
+    if (last && (n === last || n.includes(last) || last.includes(n))) return true;
+    return false;
+  }
 
-    setSuggestions((prev) => [
-      { id, text: "", at: timeNow(), pending: true },
-      ...prev,
-    ]);
+  const requestSuggestion = useCallback(
+    async (opts?: { force?: boolean }) => {
+      const force = opts?.force === true;
+      if (inFlightRef.current) return;
+      const full = transcriptRef.current.trim();
+      if (full.length < 12) return;
 
-    try {
-      const res = await fetch("/api/interview/suggest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          knowledgeContext: knowledgeRef.current,
-          recentWindow,
-          latest,
-          role: role || null,
-        }),
-      });
+      // Keep the gate in sync so the timer doesn't immediately re-fire.
+      lastFiredWordsRef.current = countWords(full);
 
-      if (!res.ok || !res.body) {
-        throw new Error((await res.text()) || "Suggestion failed");
-      }
+      inFlightRef.current = true;
+      claudeCallsRef.current += 1;
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let acc = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        acc += decoder.decode(value, { stream: true });
+      const recentWindow = full.slice(-1000);
+      const latest = full.slice(-350);
+      const id = ++suggestIdRef.current;
+
+      setSuggestions((prev) => [
+        { id, text: "", at: timeNow(), pending: true },
+        ...prev,
+      ]);
+
+      try {
+        const res = await fetch("/api/interview/suggest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            knowledgeContext: knowledgeRef.current,
+            recentWindow,
+            latest,
+            role: role || null,
+            previousSuggestions: recentTextsRef.current.slice(0, 3),
+            allowHold: !force, // manual "Suggest now" always returns something
+          }),
+        });
+
+        if (!res.ok || !res.body) {
+          throw new Error((await res.text()) || "Suggestion failed");
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let acc = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          acc += decoder.decode(value, { stream: true });
+          setSuggestions((prev) =>
+            prev.map((s) => (s.id === id ? { ...s, text: acc } : s))
+          );
+        }
+
+        const finalText = acc.trim();
+        const isHold = finalText.toUpperCase() === "HOLD";
+        const drop = isHold || (!force && isDuplicate(finalText));
+
+        if (drop) {
+          // Silently remove the card — nothing new worth showing.
+          setSuggestions((prev) => prev.filter((s) => s.id !== id));
+        } else {
+          lastShownRef.current = finalText;
+          recentTextsRef.current = [finalText, ...recentTextsRef.current].slice(0, 5);
+          setSuggestions((prev) =>
+            prev.map((s) => (s.id === id ? { ...s, pending: false } : s))
+          );
+        }
+      } catch (e: any) {
         setSuggestions((prev) =>
-          prev.map((s) => (s.id === id ? { ...s, text: acc } : s))
+          prev.map((s) =>
+            s.id === id ? { ...s, text: `⚠︎ ${e.message}`, pending: false } : s
+          )
         );
+      } finally {
+        inFlightRef.current = false;
       }
-      setSuggestions((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, pending: false } : s))
-      );
-    } catch (e: any) {
-      setSuggestions((prev) =>
-        prev.map((s) =>
-          s.id === id ? { ...s, text: `⚠︎ ${e.message}`, pending: false } : s
-        )
-      );
-    } finally {
-      inFlightRef.current = false;
-    }
-  }, [role]);
+    },
+    [role]
+  );
 
   const start = useCallback(async () => {
     try {
@@ -144,9 +192,8 @@ export default function InterviewConsole() {
         language: "en",
       });
 
-      // Canonical Deepgram browser auth: raw API key via the "token" subprotocol.
-      // POC only — key is exposed in the browser. Revert to temp tokens before
-      // any real users, and rotate this key afterwards.
+      // POC browser auth: raw API key via "token" subprotocol.
+      // Revert to temp tokens + rotate this key before real users.
       const ws = new WebSocket(
         `wss://api.deepgram.com/v1/listen?${params.toString()}`,
         ["token", key]
@@ -159,6 +206,9 @@ export default function InterviewConsole() {
         setSetupOpen(false);
         startedAtRef.current = Date.now();
         claudeCallsRef.current = 0;
+        lastFiredWordsRef.current = 0;
+        lastShownRef.current = "";
+        recentTextsRef.current = [];
 
         const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
         recorderRef.current = recorder;
@@ -169,10 +219,12 @@ export default function InterviewConsole() {
         };
         recorder.start(250);
 
-        suggestTimerRef.current = setInterval(
-          requestSuggestion,
-          SUGGEST_INTERVAL_MS
-        );
+        // Auto-suggest, but only when enough NEW words have arrived.
+        suggestTimerRef.current = setInterval(() => {
+          const words = countWords(transcriptRef.current);
+          if (words - lastFiredWordsRef.current < MIN_NEW_WORDS) return;
+          requestSuggestion();
+        }, SUGGEST_INTERVAL_MS);
 
         tickRef.current = setInterval(() => {
           const elapsed = (Date.now() - startedAtRef.current) / 1000;
@@ -247,7 +299,7 @@ export default function InterviewConsole() {
             <span className="italic text-amber">Live</span>Coach
           </h1>
           <p className="mt-2 font-mono text-xs uppercase tracking-[0.25em] text-muted">
-            live suggestions every 5s · haiku tier
+            live suggestions · word-gated · haiku tier
           </p>
         </div>
 
@@ -256,7 +308,7 @@ export default function InterviewConsole() {
           <StatusPill recording={recording} status={status} />
           {!recording ? (
             <button
-              onClick={start}
+              onClick={() => start()}
               className="rounded-full bg-amber px-7 py-3 font-mono text-sm font-medium uppercase tracking-wider text-ink transition hover:bg-amberglow"
             >
               ● Start session
@@ -311,8 +363,9 @@ export default function InterviewConsole() {
               </p>
             ) : (
               <p className="text-muted">
-                Transcript appears here as you talk. Suggestions stream in every
-                five seconds, synced to the conversation — not waiting for a pause.
+                Transcript appears here as you talk. A new cue fires once the
+                conversation advances by ~{MIN_NEW_WORDS} words — repeats are
+                filtered out.
               </p>
             )}
           </div>
@@ -326,7 +379,7 @@ export default function InterviewConsole() {
           />
           <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-5">
             <button
-              onClick={requestSuggestion}
+              onClick={() => requestSuggestion({ force: true })}
               disabled={!recording && !transcript}
               className="mb-1 self-start rounded-full border border-amber/40 px-4 py-1.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/10 disabled:cursor-not-allowed disabled:opacity-30"
             >
@@ -471,7 +524,7 @@ function CostBreakdownPanel({
       {overBudget && (
         <p className="mt-3 font-mono text-[0.7rem] text-rust">
           ⚠︎ Pace exceeds the £{HOURLY_CEILING_GBP}/hr ceiling. Biggest lever:
-          slow the interval or keep the live track on Haiku (Sonnet is the pro tier).
+          raise MIN_NEW_WORDS or keep the live track on Haiku (Sonnet is the pro tier).
         </p>
       )}
     </section>
