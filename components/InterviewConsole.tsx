@@ -151,8 +151,7 @@ export default function InterviewConsole() {
       // If you get a 401 here, swap "token" for "bearer".
       const ws = new WebSocket(
         `wss://api.deepgram.com/v1/listen?${params.toString()}`,
-        ["token", access_token]
-      );
+      ["bearer", access_token]      );
       wsRef.current = ws;
 
       ws.onopen = () => {
