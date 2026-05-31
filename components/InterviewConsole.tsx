@@ -131,10 +131,9 @@ export default function InterviewConsole() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      setStatus("authorising transcription…");
-      const tokenRes = await fetch("/api/deepgram/token");
-      if (!tokenRes.ok) throw new Error("Could not get Deepgram token");
-      const { access_token } = await tokenRes.json();
+      setStatus("connecting…");
+      const key = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
+      if (!key) throw new Error("Missing NEXT_PUBLIC_DEEPGRAM_API_KEY");
 
       const params = new URLSearchParams({
         model: "nova-2",
@@ -145,10 +144,12 @@ export default function InterviewConsole() {
         language: "en",
       });
 
-      // Browser auth: temporary JWT token uses the "bearer" subprotocol.
+      // Canonical Deepgram browser auth: raw API key via the "token" subprotocol.
+      // POC only — key is exposed in the browser. Revert to temp tokens before
+      // any real users, and rotate this key afterwards.
       const ws = new WebSocket(
         `wss://api.deepgram.com/v1/listen?${params.toString()}`,
-        ["bearer", access_token]
+        ["token", key]
       );
       wsRef.current = ws;
 
@@ -200,7 +201,10 @@ export default function InterviewConsole() {
         console.error("WebSocket error:", e);
         setStatus("connection error");
       };
-      ws.onclose = () => stopTimers();
+      ws.onclose = (e) => {
+        console.log("WebSocket closed:", e.code, e.reason);
+        stopTimers();
+      };
     } catch (e: any) {
       setStatus(`error: ${e.message}`);
       setRecording(false);
