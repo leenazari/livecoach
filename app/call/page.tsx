@@ -11,6 +11,7 @@ type Suggestion = {
   at: string;
   pending: boolean;
   kind: "opening" | "live";
+  pinned: boolean;
 };
 
 function timeNow() {
@@ -19,6 +20,10 @@ function timeNow() {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function normalise(s: string) {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 export default function CallPage() {
@@ -35,13 +40,21 @@ export default function CallPage() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
   const knowledgeRef = useRef("");
+  const roleRef = useRef("");
+  const linesRef = useRef<Line[]>([]);
   const suggestIdRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const lastShownRef = useRef("");
+  const recentTextsRef = useRef<string[]>([]);
   const autoFiredKeyRef = useRef("");
   const autoFireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
+  useEffect(() => {
+    roleRef.current = role;
+  }, [role]);
 
   const joinLink = origin ? `${origin}/join/${room}` : "";
   const botLink = origin ? `${origin}/candidate-bot/${room}` : "";
@@ -57,19 +70,106 @@ export default function CallPage() {
   const onFinalTranscript = useCallback((r: string, text: string) => {
     setLines((prev) => {
       const last = prev[prev.length - 1];
+      let next: Line[];
       if (last && last.role === r) {
-        const merged = [...prev];
-        merged[merged.length - 1] = {
-          ...last,
-          text: `${last.text} ${text}`.trim(),
-        };
-        return merged;
+        next = [...prev];
+        next[next.length - 1] = { ...last, text: `${last.text} ${text}`.trim() };
+      } else {
+        next = [...prev, { role: r, text }];
       }
-      return [...prev, { role: r, text }];
+      linesRef.current = next;
+      return next;
     });
   }, []);
 
-  const ordered = [...lines].reverse();
+  const isDuplicate = (text: string) => {
+    const n = normalise(text);
+    if (!n) return true;
+    const last = normalise(lastShownRef.current);
+    if (last && (n === last || n.includes(last) || last.includes(n))) return true;
+    return false;
+  };
+
+  // Fire a live cue when the candidate finishes a turn.
+  const requestLiveSuggestion = useCallback(async () => {
+    if (inFlightRef.current) return;
+
+    const labelled = linesRef.current
+      .map(
+        (l) =>
+          `${
+            l.role === "interviewer"
+              ? "Interviewer"
+              : l.role === "candidate"
+              ? "Candidate"
+              : l.role
+          }: ${l.text}`
+      )
+      .join("\n");
+
+    const candidateTurns = linesRef.current.filter(
+      (l) => l.role === "candidate"
+    );
+    const latest = candidateTurns.length
+      ? candidateTurns[candidateTurns.length - 1].text.slice(-400)
+      : "";
+    if (!latest || latest.length < 8) return;
+
+    inFlightRef.current = true;
+    const id = ++suggestIdRef.current;
+    setSuggestions((prev) => [
+      ...prev,
+      { id, text: "", at: timeNow(), pending: true, kind: "live", pinned: false },
+    ]);
+
+    try {
+      const res = await fetch("/api/interview/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          knowledgeContext: knowledgeRef.current,
+          transcript: labelled.slice(-1600),
+          latest,
+          role: roleRef.current || null,
+          previousSuggestions: recentTextsRef.current.slice(0, 5),
+          allowHold: true,
+        }),
+      });
+      if (!res.ok || !res.body) {
+        throw new Error((await res.text()) || "Suggestion failed");
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        acc += decoder.decode(value, { stream: true });
+        setSuggestions((prev) =>
+          prev.map((s) => (s.id === id ? { ...s, text: acc } : s))
+        );
+      }
+      const finalText = acc.trim();
+      const isHold = finalText.toUpperCase() === "HOLD";
+      if (isHold || isDuplicate(finalText)) {
+        setSuggestions((prev) => prev.filter((s) => s.id !== id));
+      } else {
+        lastShownRef.current = finalText;
+        recentTextsRef.current = [finalText, ...recentTextsRef.current].slice(0, 8);
+        setSuggestions((prev) =>
+          prev.map((s) => (s.id === id ? { ...s, pending: false } : s))
+        );
+      }
+    } catch (e: any) {
+      setSuggestions((prev) =>
+        prev.map((s) =>
+          s.id === id ? { ...s, text: `! ${e.message}`, pending: false } : s
+        )
+      );
+    } finally {
+      inFlightRef.current = false;
+    }
+  }, []);
 
   const loadContext = useCallback(async () => {
     const res = await fetch("/api/interview/context", {
@@ -100,8 +200,11 @@ export default function CallPage() {
       at: timeNow(),
       pending: false,
       kind: "opening" as const,
+      pinned: false,
     }));
-    setSuggestions((prev) => [...cards.reverse(), ...prev]);
+    setSuggestions((prev) => [...prev, ...cards]);
+    // Seed so live cues never repeat the opening questions.
+    recentTextsRef.current = [...qs, ...recentTextsRef.current].slice(0, 10);
   }, [role]);
 
   const prepOpening = useCallback(async () => {
@@ -123,7 +226,6 @@ export default function CallPage() {
     }
   }, [loadContext, generateOpening]);
 
-  // Auto-generate opening questions once a CV is uploaded AND a role is set.
   useEffect(() => {
     if (!docsReady || !role.trim()) return;
     const key = `${candidate}|${role}`;
@@ -151,6 +253,42 @@ export default function CallPage() {
     []
   );
 
+  const togglePin = (id: number) => {
+    setSuggestions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, pinned: !s.pinned } : s))
+    );
+  };
+
+  const ordered = [...lines].reverse();
+  const pinned = suggestions.filter((s) => s.pinned);
+  const feed = suggestions.filter((s) => !s.pinned).reverse();
+
+  const renderCard = (s: Suggestion) => (
+    <div key={s.id} className="rounded-xl border border-edge bg-ink/40 px-4 py-3.5">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber/70">
+          {s.at} - {s.kind}
+        </span>
+        <button
+          onClick={() => togglePin(s.id)}
+          className={`font-mono text-sm transition ${
+            s.pinned ? "text-amber" : "text-muted hover:text-amber"
+          }`}
+          title={s.pinned ? "unpin" : "pin"}
+        >
+          {s.pinned ? "★" : "☆"}
+        </button>
+      </div>
+      {s.pending && !s.text ? (
+        <span className="thinking font-display text-lg">reading the room...</span>
+      ) : (
+        <p className="font-display text-[1.1rem] leading-snug text-bone">
+          {s.text}
+        </p>
+      )}
+    </div>
+  );
+
   return (
     <main className="relative z-10 mx-auto max-w-[1200px] px-5 py-10">
       <header className="mb-7 flex flex-wrap items-end justify-between gap-4 border-b border-edge pb-5">
@@ -159,7 +297,7 @@ export default function CallPage() {
             <span className="italic text-amber">Live</span>Coach
           </h1>
           <p className="mt-2 font-mono text-xs uppercase tracking-[0.25em] text-muted">
-            stage C - hosted interview
+            hosted interview - live cues
           </p>
         </div>
         {status && (
@@ -238,9 +376,6 @@ export default function CallPage() {
           >
             Open candidate bot (same room)
           </a>
-          <p className="mt-2 font-mono text-[0.65rem] text-muted">
-            Use headphones so your interviewer mic does not pick up the bot voice.
-          </p>
         </div>
       </div>
 
@@ -250,6 +385,7 @@ export default function CallPage() {
           identity="Interviewer"
           role="interviewer"
           onFinalTranscript={onFinalTranscript}
+          onCandidateTurnEnd={requestLiveSuggestion}
         />
       </div>
 
@@ -298,30 +434,24 @@ export default function CallPage() {
               Ask this next
             </h2>
           </div>
+
+          {pinned.length > 0 && (
+            <div className="border-b border-edge/60 px-5 py-4">
+              <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-amber/70">
+                Pinned
+              </p>
+              <div className="flex flex-col gap-2">{pinned.map(renderCard)}</div>
+            </div>
+          )}
+
           <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-5">
-            {suggestions.length === 0 ? (
+            {feed.length === 0 ? (
               <p className="font-mono text-sm text-muted">
-                Upload a CV + set a role to see opening questions here.
+                Upload a CV + set a role for opening questions. Live cues appear
+                as the candidate answers.
               </p>
             ) : (
-              suggestions.map((s) => (
-                <div
-                  key={s.id}
-                  className="rounded-xl border border-edge bg-ink/40 px-4 py-3.5"
-                >
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber/70">
-                      {s.at}
-                    </span>
-                    <span className="rounded-full border border-sage/40 bg-sage/10 px-2 py-0.5 font-mono text-[0.55rem] uppercase tracking-[0.2em] text-sage">
-                      {s.kind}
-                    </span>
-                  </div>
-                  <p className="font-display text-[1.1rem] leading-snug text-bone">
-                    {s.text}
-                  </p>
-                </div>
-              ))
+              feed.map(renderCard)
             )}
           </div>
         </section>
