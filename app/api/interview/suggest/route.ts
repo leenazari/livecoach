@@ -35,13 +35,18 @@ The transcript is labelled by speaker:
 - "Interviewer:" lines = what the interviewer already said.
 - "Candidate:" lines = the candidate's answers.
 
-TONE - sound like a warm, experienced interviewer, NOT an interrogator:
-- Phrase every cue the way a skilled, friendly interviewer would actually say it out loud - warm, curious, conversational.
-- Never blunt, accusatory, or gotcha-style. Soften any challenge.
-- For a discrepancy or gap, ask with genuine curiosity, never confrontation.
-    Bad: "Your CV shows eight years, not six - which is correct?"
-    Good: "I'd love to get the full picture of your time in EPOS - can you walk me through the journey?"
-- Invite them to open up; avoid closed yes/no phrasing.
+TONE (always - non-negotiable for this product):
+- Friendly, warm, encouraging, conversational. The way a kind, experienced interviewer actually speaks.
+- Never blunt, accusatory, interrogative, or gotcha-style. Always soften challenges.
+- For a discrepancy or gap, ask with genuine, friendly curiosity, never confrontation.
+
+FLOW (this matters as much as tone) - the cue must be the NATURAL next beat:
+- Build directly on what the candidate JUST said. Pick up a thread they actually raised.
+- Go ONE natural step deeper - do NOT leap to a narrow, specific detail they have not mentioned yet.
+- Early in the interview, stay broad and inviting (e.g. what's drawing them to the role, how they think). Save deep specifics for once a thread is genuinely open.
+- It must feel like a smooth follow-on, not a topic jump.
+    Clunky jump (avoid): candidate gives a high-level intro -> "What gaps in PayPoint's product did merchants ask you to solve most often?"
+    Natural next beat (good): candidate gives a high-level intro -> "What's drawing you from sales toward product?"
 
 OUTPUT SHAPE (strict). Your entire reply is one of:
   <main question> ||WHY|| <short why>
@@ -49,18 +54,16 @@ OUTPUT SHAPE (strict). Your entire reply is one of:
   HOLD
 
 Rules for each part:
-- MAIN question: ONE thing, under 18 words, plain text, sayable out loud. No markdown, no lists, no "and", no meta-commentary.
+- MAIN question: ONE thing, under 18 words, plain text, warm, sayable out loud. No markdown, no lists, no "and", no meta-commentary.
 - WHY: under 6 words, what this probes (e.g. "tests ownership"). Always include it.
-- FOLLOW-UP: optional, ONE short question - the natural next probe. Omit it (and its marker) if there isn't a clean one.
-- If something needs flagging (e.g. a CV/answer mismatch), make the MAIN line a SOFT, curious version of the question - never a blunt correction - and put the reason in WHY.
+- FOLLOW-UP: optional, ONE short question - the natural deeper probe for once they answer. Omit it (and its marker) if there isn't a clean one.
 
 CRITICAL - no repetition:
 - NEVER suggest a question already asked (see the ASKED list and any "Interviewer:" line), or a reword of one.
 - NEVER repeat or reword any recent suggestion (listed below).
 
 CONTENT:
-- Build on the candidate's LATEST answer. Favour depth, ownership, concrete examples.
-- If the answer was vague, sharpen on it. If a competency is well covered, pivot to an uncovered one.${holdRule}`;
+- Favour depth, ownership, concrete examples - but reach them gradually, following the conversation.${holdRule}`;
 
     const system: any[] = [
       { type: "text", text: instructions },
@@ -91,7 +94,7 @@ ${transcript || "(interview just started)"}
 Candidate's latest answer:
 "${latest}"${asked}${recent}
 
-Reply in the strict output shape - a WARM, natural MAIN question ||WHY|| why, plus optional ||FOLLOWUP|| - or HOLD.`;
+Give the natural next beat: a WARM, friendly MAIN question that flows from what they just said ||WHY|| why, plus optional ||FOLLOWUP|| - or HOLD.`;
 
     const claudeStream = await anthropic.messages.stream({
       model: CLAUDE_MODEL_LIVE,
