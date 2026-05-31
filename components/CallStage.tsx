@@ -35,9 +35,13 @@ export default function CallStage({
   const roomRef = useRef<Room | null>(null);
   const audioContainerRef = useRef<HTMLDivElement | null>(null);
 
+  // Deepgram transcription
   const dgWsRef = useRef<WebSocket | null>(null);
   const dgRecRef = useRef<MediaRecorder | null>(null);
   const dgStreamRef = useRef<MediaStream | null>(null);
+  const dgKeepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dgReconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dgClosingRef = useRef(false); // true when we intentionally close
   const mutedRef = useRef(false); // gates what reaches Deepgram
 
   const onFinalRef = useRef(onFinalTranscript);
@@ -101,68 +105,126 @@ export default function CallStage({
     [role]
   );
 
-  const startTranscription = useCallback(async () => {
-    try {
-      const key = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
-      if (!key) {
-        console.error("Missing NEXT_PUBLIC_DEEPGRAM_API_KEY");
-        return;
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      dgStreamRef.current = stream;
+  // Opens (or reopens) the Deepgram socket on the existing mic stream.
+  const openDeepgram = useCallback(() => {
+    const stream = dgStreamRef.current;
+    const key = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
+    if (!stream || !key) return;
 
-      const params = new URLSearchParams({
-        model: "nova-2",
-        smart_format: "true",
-        punctuate: "true",
-        interim_results: "true",
-        endpointing: "300",
-        language: "en",
-      });
+    const params = new URLSearchParams({
+      model: "nova-2",
+      smart_format: "true",
+      punctuate: "true",
+      interim_results: "true",
+      endpointing: "300",
+      language: "en",
+    });
 
-      const ws = new WebSocket(
-        `wss://api.deepgram.com/v1/listen?${params.toString()}`,
-        ["token", key]
-      );
-      dgWsRef.current = ws;
+    const ws = new WebSocket(
+      `wss://api.deepgram.com/v1/listen?${params.toString()}`,
+      ["token", key]
+    );
+    dgWsRef.current = ws;
 
-      ws.onopen = () => {
+    ws.onopen = () => {
+      // Fresh recorder on the persistent stream.
+      try {
         const rec = new MediaRecorder(stream, { mimeType: "audio/webm" });
         dgRecRef.current = rec;
         rec.ondataavailable = (e) => {
-          // HARD GATE: while muted, send nothing to Deepgram.
-          if (mutedRef.current) return;
+          if (mutedRef.current) return; // hard gate while muted
           if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
             ws.send(e.data);
           }
         };
         rec.start(250);
-      };
+      } catch (e) {
+        console.error("Recorder start failed:", e);
+      }
 
-      ws.onmessage = (msg) => {
-        try {
-          // Defensive: ignore anything that arrives while muted.
-          if (mutedRef.current) return;
-          const data = JSON.parse(msg.data);
-          const alt = data?.channel?.alternatives?.[0];
-          const text: string = alt?.transcript || "";
-          if (!text || !data.is_final) return;
-          const speechFinal = !!data.speech_final;
-          publishTranscript(text, speechFinal);
-          handleLine(role, text, speechFinal);
-        } catch {
-          /* ignore keepalive frames */
+      // Keepalive: survive silence + backgrounded tabs (Deepgram closes
+      // idle sockets after ~10s). Send a ping every 3s.
+      if (dgKeepAliveRef.current) clearInterval(dgKeepAliveRef.current);
+      dgKeepAliveRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "KeepAlive" }));
         }
-      };
+      }, 3000);
+    };
 
-      ws.onerror = (e) => console.error("Deepgram WS error:", e);
+    ws.onmessage = (msg) => {
+      try {
+        if (mutedRef.current) return;
+        const data = JSON.parse(msg.data);
+        const alt = data?.channel?.alternatives?.[0];
+        const text: string = alt?.transcript || "";
+        if (!text || !data.is_final) return;
+        const speechFinal = !!data.speech_final;
+        publishTranscript(text, speechFinal);
+        handleLine(role, text, speechFinal);
+      } catch {
+        /* ignore keepalive / non-JSON frames */
+      }
+    };
+
+    ws.onerror = (e) => console.error("Deepgram WS error:", e);
+
+    ws.onclose = () => {
+      if (dgKeepAliveRef.current) {
+        clearInterval(dgKeepAliveRef.current);
+        dgKeepAliveRef.current = null;
+      }
+      if (dgRecRef.current?.state === "recording") {
+        try {
+          dgRecRef.current.stop();
+        } catch {
+          /* ignore */
+        }
+      }
+      dgRecRef.current = null;
+
+      // Auto-reconnect unless we closed on purpose (leave/unmount).
+      if (!dgClosingRef.current && dgStreamRef.current) {
+        if (dgReconnectRef.current) clearTimeout(dgReconnectRef.current);
+        dgReconnectRef.current = setTimeout(() => {
+          if (!dgClosingRef.current) openDeepgram();
+        }, 600);
+      }
+    };
+  }, [role, publishTranscript, handleLine]);
+
+  const startTranscription = useCallback(async () => {
+    try {
+      if (!process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY) {
+        console.error("Missing NEXT_PUBLIC_DEEPGRAM_API_KEY");
+        return;
+      }
+      dgClosingRef.current = false;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      dgStreamRef.current = stream;
+      openDeepgram();
     } catch (e) {
       console.error("Transcription start failed:", e);
     }
-  }, [role, publishTranscript, handleLine]);
+  }, [openDeepgram]);
 
   const stopTranscription = useCallback(() => {
-    if (dgRecRef.current?.state === "recording") dgRecRef.current.stop();
+    dgClosingRef.current = true;
+    if (dgReconnectRef.current) {
+      clearTimeout(dgReconnectRef.current);
+      dgReconnectRef.current = null;
+    }
+    if (dgKeepAliveRef.current) {
+      clearInterval(dgKeepAliveRef.current);
+      dgKeepAliveRef.current = null;
+    }
+    if (dgRecRef.current?.state === "recording") {
+      try {
+        dgRecRef.current.stop();
+      } catch {
+        /* ignore */
+      }
+    }
     if (dgWsRef.current && dgWsRef.current.readyState === WebSocket.OPEN) {
       dgWsRef.current.send(JSON.stringify({ type: "CloseStream" }));
       dgWsRef.current.close();
@@ -248,17 +310,14 @@ export default function CallStage({
     const r = roomRef.current;
     const next = !muted;
 
-    // 1. Gate Deepgram FIRST so nothing leaks during the toggle.
-    mutedRef.current = next;
+    mutedRef.current = next; // gate Deepgram first
     const rec = dgRecRef.current;
     if (rec) {
       if (next && rec.state === "recording") rec.pause();
       else if (!next && rec.state === "paused") rec.resume();
     }
 
-    // 2. Gate the LiveKit call track.
     if (r) await r.localParticipant.setMicrophoneEnabled(!next);
-
     setMuted(next);
   }, [muted]);
 
