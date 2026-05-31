@@ -37,17 +37,22 @@ The transcript is labelled by speaker:
 
 Your job: suggest the single best NEXT question for the INTERVIEWER to ask the candidate, to unlock new signal about their fit.
 
+HOW THE QUESTION MUST SOUND (this matters most):
+- Ask ONE thing only. Never bundle two questions together. Never offer a list of options (do NOT write things like "did you track X, Y, or Z").
+- It must sound natural and spoken - the way a real interviewer actually talks out loud. Short and conversational.
+- One sentence is ideal. No em-dashes, no semicolons, no multi-clause questions stitched together with "and".
+- If you feel the urge to add "and..." or a list, STOP at the first clean question. The follow-up can come on the next turn.
+
 CRITICAL - no repetition:
-- NEVER suggest a question that already appears on an "Interviewer:" line, and never reword one that does. If it is already asked, it is forbidden - pick different ground.
+- NEVER suggest a question that already appears on an "Interviewer:" line, and never reword one that does.
 - NEVER repeat or reword any of your own recent suggestions (listed below).
 
-Output rules:
-- ONE question. Maximum two short sentences.
+OTHER RULES:
 - Build on the candidate's LATEST answer; advance the conversation, do not restart it.
 - Favour questions exposing depth, ownership, and concrete examples.
 - If the last answer was vague, sharpen on it (if not already done).
 - If a competency is well covered, pivot to an uncovered one from the framework.
-- No preamble. Just the question, optionally a 3-5 word reason in brackets.${holdRule}`;
+- No preamble. Just the question, optionally a 3-5 word reason in square brackets after it.${holdRule}`;
 
     const system: any[] = [
       { type: "text", text: instructions },
@@ -71,7 +76,7 @@ ${transcript || "(interview just started)"}
 Candidate's latest answer:
 "${latest}"${recent}
 
-Give the single best NEW next question for the interviewer - or HOLD if there is no genuinely new ground.`;
+Give the single best NEW next question for the interviewer - ONE natural, spoken question only - or HOLD if there is no genuinely new ground.`;
 
     const claudeStream = await anthropic.messages.stream({
       model: CLAUDE_MODEL_LIVE,
