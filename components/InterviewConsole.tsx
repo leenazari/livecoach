@@ -15,7 +15,7 @@ type Suggestion = {
   pending: boolean;
 };
 
-const SUGGEST_INTERVAL_MS = 5000; // live cadence
+const SUGGEST_INTERVAL_MS = 5000;
 
 export default function InterviewConsole() {
   const [candidate, setCandidate] = useState("");
@@ -38,7 +38,6 @@ export default function InterviewConsole() {
   const inFlightRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // cost tracking
   const startedAtRef = useRef(0);
   const claudeCallsRef = useRef(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -54,9 +53,8 @@ export default function InterviewConsole() {
     }
   }, [transcript, interim]);
 
-  // ---- One live suggestion (continuous, not pause-based) ----
   const requestSuggestion = useCallback(async () => {
-    if (inFlightRef.current) return; // don't stack calls if one is mid-flight
+    if (inFlightRef.current) return;
     const full = transcriptRef.current.trim();
     if (full.length < 12) return;
 
@@ -113,7 +111,6 @@ export default function InterviewConsole() {
     }
   }, [role]);
 
-  // ---- Start: load context once, open mic + Deepgram, begin 5s loop ----
   const start = useCallback(async () => {
     try {
       setStatus("loading knowledge…");
@@ -146,12 +143,12 @@ export default function InterviewConsole() {
         interim_results: "true",
         endpointing: "300",
         language: "en",
+        token: access_token,
       });
 
-      // If you get a 401 here, swap "token" for "bearer".
       const ws = new WebSocket(
-        `wss://api.deepgram.com/v1/listen?${params.toString()}`,
-      ["bearer", access_token]      );
+        `wss://api.deepgram.com/v1/listen?${params.toString()}`
+      );
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -170,13 +167,11 @@ export default function InterviewConsole() {
         };
         recorder.start(250);
 
-        // Continuous live suggestions every 5s.
         suggestTimerRef.current = setInterval(
           requestSuggestion,
           SUGGEST_INTERVAL_MS
         );
 
-        // Cost meter ticks every second.
         tickRef.current = setInterval(() => {
           const elapsed = (Date.now() - startedAtRef.current) / 1000;
           setCost(estimateCost(elapsed, claudeCallsRef.current));
@@ -200,7 +195,10 @@ export default function InterviewConsole() {
         }
       };
 
-      ws.onerror = () => setStatus("connection error");
+      ws.onerror = (e) => {
+        console.error("WebSocket error:", e);
+        setStatus("connection error");
+      };
       ws.onclose = () => stopTimers();
     } catch (e: any) {
       setStatus(`error: ${e.message}`);
@@ -223,7 +221,6 @@ export default function InterviewConsole() {
       wsRef.current.send(JSON.stringify({ type: "CloseStream" }));
       wsRef.current.close();
     }
-    // Final cost snapshot.
     if (startedAtRef.current) {
       const elapsed = (Date.now() - startedAtRef.current) / 1000;
       setCost(estimateCost(elapsed, claudeCallsRef.current));
@@ -272,8 +269,18 @@ export default function InterviewConsole() {
 
       {setupOpen && (
         <div className="fade-up mb-7 grid gap-4 rounded-2xl border border-edge bg-panel/60 p-5 md:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
-          <Field label="Candidate" placeholder="e.g. Priya Sharma" value={candidate} onChange={setCandidate} />
-          <Field label="Role" placeholder="e.g. Senior Backend Engineer" value={role} onChange={setRole} />
+          <Field
+            label="Candidate"
+            placeholder="e.g. Priya Sharma"
+            value={candidate}
+            onChange={setCandidate}
+          />
+          <Field
+            label="Role"
+            placeholder="e.g. Senior Backend Engineer"
+            value={role}
+            onChange={setRole}
+          />
           <div className="flex items-end">
             <p className="font-mono text-[0.7rem] leading-relaxed text-muted">
               Candidate name scopes the CV &amp; summary loaded at start. Upload
@@ -326,16 +333,23 @@ export default function InterviewConsole() {
             )}
 
             {suggestions.map((s) => (
-              <div key={s.id} className="fade-up rounded-xl border border-edge bg-ink/40 px-4 py-3.5">
+              <div
+                key={s.id}
+                className="fade-up rounded-xl border border-edge bg-ink/40 px-4 py-3.5"
+              >
                 <div className="mb-1.5 flex items-center justify-between">
                   <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber/70">
                     {s.at}
                   </span>
                 </div>
                 {s.pending && !s.text ? (
-                  <span className="thinking font-display text-lg">reading the room…</span>
+                  <span className="thinking font-display text-lg">
+                    reading the room…
+                  </span>
                 ) : (
-                  <p className="font-display text-[1.15rem] leading-snug text-bone">{s.text}</p>
+                  <p className="font-display text-[1.15rem] leading-snug text-bone">
+                    {s.text}
+                  </p>
                 )}
               </div>
             ))}
@@ -343,17 +357,18 @@ export default function InterviewConsole() {
         </section>
       </div>
 
-      {/* End-of-session cost breakdown */}
       {!recording && cost && claudeCallsRef.current > 0 && (
-        <CostBreakdownPanel cost={cost} calls={claudeCallsRef.current} overBudget={overBudget} />
+        <CostBreakdownPanel
+          cost={cost}
+          calls={claudeCallsRef.current}
+          overBudget={overBudget}
+        />
       )}
 
       <KnowledgePanel candidate={candidate} />
     </div>
   );
 }
-
-/* ---------------- helpers ---------------- */
 
 function timeNow() {
   return new Date().toLocaleTimeString([], {
@@ -363,9 +378,8 @@ function timeNow() {
   });
 }
 
-// Project the current spend rate out to a full hour, for the ceiling check.
 function projectHourly(gbpSoFar: number) {
-  return gbpSoFar; // estimateCost already returns absolute; meter shows /hr separately
+  return gbpSoFar;
 }
 
 function gbp(n: number) {
@@ -428,14 +442,23 @@ function CostBreakdownPanel({
       </div>
       <div className="grid gap-2 font-mono text-sm">
         {rows.map(([label, usd]) => (
-          <div key={label} className="flex justify-between border-b border-edge/50 pb-2">
+          <div
+            key={label}
+            className="flex justify-between border-b border-edge/50 pb-2"
+          >
             <span className="text-muted">{label}</span>
             <span className="text-bone">£{(usd * 0.79).toFixed(3)}</span>
           </div>
         ))}
         <div className="mt-1 flex justify-between">
-          <span className="font-display text-base text-bone">Total this session</span>
-          <span className={`font-display text-base ${overBudget ? "text-rust" : "text-sage"}`}>
+          <span className="font-display text-base text-bone">
+            Total this session
+          </span>
+          <span
+            className={`font-display text-base ${
+              overBudget ? "text-rust" : "text-sage"
+            }`}
+          >
             {gbp(cost.totalGBP)}
           </span>
         </div>
@@ -450,23 +473,49 @@ function CostBreakdownPanel({
   );
 }
 
-function StatusPill({ recording, status }: { recording: boolean; status: string }) {
+function StatusPill({
+  recording,
+  status,
+}: {
+  recording: boolean;
+  status: string;
+}) {
   return (
     <div className="flex items-center gap-2 rounded-full border border-edge bg-ink/60 px-4 py-2">
-      <span className={`h-2.5 w-2.5 rounded-full ${recording ? "rec-dot bg-rust" : "bg-muted"}`} />
-      <span className="font-mono text-xs lowercase tracking-wide text-muted">{status}</span>
+      <span
+        className={`h-2.5 w-2.5 rounded-full ${
+          recording ? "rec-dot bg-rust" : "bg-muted"
+        }`}
+      />
+      <span className="font-mono text-xs lowercase tracking-wide text-muted">
+        {status}
+      </span>
     </div>
   );
 }
 
-function PanelHeading({ kicker, note, accent }: { kicker: string; note?: string; accent?: boolean }) {
+function PanelHeading({
+  kicker,
+  note,
+  accent,
+}: {
+  kicker: string;
+  note?: string;
+  accent?: boolean;
+}) {
   return (
     <div className="flex items-center justify-between border-b border-edge px-6 py-3.5">
-      <h2 className={`font-mono text-xs uppercase tracking-[0.25em] ${accent ? "text-amber" : "text-muted"}`}>
+      <h2
+        className={`font-mono text-xs uppercase tracking-[0.25em] ${
+          accent ? "text-amber" : "text-muted"
+        }`}
+      >
         {kicker}
       </h2>
       {note && (
-        <span className="font-mono text-[0.65rem] uppercase tracking-wider text-muted">{note}</span>
+        <span className="font-mono text-[0.65rem] uppercase tracking-wider text-muted">
+          {note}
+        </span>
       )}
     </div>
   );
