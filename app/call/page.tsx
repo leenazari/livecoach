@@ -8,6 +8,7 @@ type Line = { role: string; text: string };
 type Suggestion = {
   id: number;
   text: string;
+  why: string;
   followup: string;
   at: string;
   pending: boolean;
@@ -27,14 +28,28 @@ function normalise(s: string) {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-// Split the streamed cue into main + optional follow-up on the marker.
-function splitCue(raw: string): { ask: string; followup: string } {
-  const idx = raw.indexOf("||FOLLOWUP||");
-  if (idx === -1) return { ask: raw.trim(), followup: "" };
-  return {
-    ask: raw.slice(0, idx).trim(),
-    followup: raw.slice(idx + "||FOLLOWUP||".length).trim(),
-  };
+// Parse the streamed cue: <ask> ||WHY|| <why> ||FOLLOWUP|| <followup>
+function splitCue(raw: string): { ask: string; why: string; followup: string } {
+  let ask = raw.trim();
+  let why = "";
+  let followup = "";
+  const wIdx = raw.indexOf("||WHY||");
+  const fIdx = raw.indexOf("||FOLLOWUP||");
+  if (wIdx !== -1) {
+    ask = raw.slice(0, wIdx).trim();
+    const after = raw.slice(wIdx + 7);
+    const f2 = after.indexOf("||FOLLOWUP||");
+    if (f2 !== -1) {
+      why = after.slice(0, f2).trim();
+      followup = after.slice(f2 + 12).trim();
+    } else {
+      why = after.trim();
+    }
+  } else if (fIdx !== -1) {
+    ask = raw.slice(0, fIdx).trim();
+    followup = raw.slice(fIdx + 12).trim();
+  }
+  return { ask, why, followup };
 }
 
 export default function CallPage() {
@@ -48,6 +63,7 @@ export default function CallPage() {
   const [prepping, setPrepping] = useState(false);
   const [docsReady, setDocsReady] = useState(false);
   const [status, setStatus] = useState("");
+  const [loadedDocs, setLoadedDocs] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
   const knowledgeRef = useRef("");
@@ -116,6 +132,10 @@ export default function CallPage() {
       )
       .join("\n");
 
+    const askedQuestions = linesRef.current
+      .filter((l) => l.role === "interviewer")
+      .map((l) => l.text);
+
     const candidateTurns = linesRef.current.filter(
       (l) => l.role === "candidate"
     );
@@ -131,6 +151,7 @@ export default function CallPage() {
       {
         id,
         text: "",
+        why: "",
         followup: "",
         at: timeNow(),
         pending: true,
@@ -145,10 +166,11 @@ export default function CallPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           knowledgeContext: knowledgeRef.current,
-          transcript: labelled.slice(-1600),
+          transcript: labelled.slice(-2400),
           latest,
           role: roleRef.current || null,
           previousSuggestions: recentTextsRef.current.slice(0, 5),
+          askedQuestions,
           allowHold: true,
         }),
       });
@@ -162,12 +184,14 @@ export default function CallPage() {
         const { done, value } = await reader.read();
         if (done) break;
         acc += decoder.decode(value, { stream: true });
-        const { ask, followup } = splitCue(acc);
+        const { ask, why, followup } = splitCue(acc);
         setSuggestions((prev) =>
-          prev.map((s) => (s.id === id ? { ...s, text: ask, followup } : s))
+          prev.map((s) =>
+            s.id === id ? { ...s, text: ask, why, followup } : s
+          )
         );
       }
-      const { ask, followup } = splitCue(acc);
+      const { ask, why, followup } = splitCue(acc);
       const isHold = ask.toUpperCase() === "HOLD";
       if (isHold || isDuplicate(ask)) {
         setSuggestions((prev) => prev.filter((s) => s.id !== id));
@@ -176,7 +200,9 @@ export default function CallPage() {
         recentTextsRef.current = [ask, ...recentTextsRef.current].slice(0, 8);
         setSuggestions((prev) =>
           prev.map((s) =>
-            s.id === id ? { ...s, text: ask, followup, pending: false } : s
+            s.id === id
+              ? { ...s, text: ask, why, followup, pending: false }
+              : s
           )
         );
       }
@@ -199,6 +225,7 @@ export default function CallPage() {
     });
     const ctx = await res.json();
     knowledgeRef.current = ctx.context || "";
+    setLoadedDocs(Array.isArray(ctx.sources) ? ctx.sources : []);
     return knowledgeRef.current;
   }, [candidate]);
 
@@ -213,10 +240,11 @@ export default function CallPage() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Failed to prep questions");
-    const qs: string[] = Array.isArray(data.questions) ? data.questions : [];
-    const cards: Suggestion[] = qs.map((q) => ({
+    const qs: any[] = Array.isArray(data.questions) ? data.questions : [];
+    const cards: Suggestion[] = qs.map((item) => ({
       id: ++suggestIdRef.current,
-      text: q,
+      text: typeof item === "string" ? item : item.q || "",
+      why: typeof item === "string" ? "" : item.why || "",
       followup: "",
       at: timeNow(),
       pending: false,
@@ -224,7 +252,10 @@ export default function CallPage() {
       pinned: false,
     }));
     setSuggestions((prev) => [...prev, ...cards]);
-    recentTextsRef.current = [...qs, ...recentTextsRef.current].slice(0, 10);
+    recentTextsRef.current = [
+      ...cards.map((c) => c.text),
+      ...recentTextsRef.current,
+    ].slice(0, 10);
   }, [role]);
 
   const prepOpening = useCallback(async () => {
@@ -306,6 +337,11 @@ export default function CallPage() {
           <p className="font-display text-[1.1rem] leading-snug text-bone">
             {s.text}
           </p>
+          {s.why && (
+            <p className="mt-1 font-mono text-[0.7rem] uppercase tracking-[0.15em] text-amber/60">
+              why: {s.why}
+            </p>
+          )}
           {s.followup && (
             <p className="mt-2 flex gap-2 font-sans text-sm text-muted">
               <span className="text-amber/60">then probe:</span>
@@ -335,7 +371,7 @@ export default function CallPage() {
         )}
       </header>
 
-      <div className="mb-6 grid gap-4 rounded-2xl border border-edge bg-panel/60 p-5 md:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
+      <div className="mb-3 grid gap-4 rounded-2xl border border-edge bg-panel/60 p-5 md:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
         <label className="block">
           <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted">
             Candidate (auto-filled from CV)
@@ -371,6 +407,12 @@ export default function CallPage() {
           </p>
         </div>
       </div>
+
+      {loadedDocs.length > 0 && (
+        <p className="mb-5 font-mono text-[0.7rem] text-muted">
+          in context: {loadedDocs.join(" \u00b7 ")}
+        </p>
+      )}
 
       <KnowledgePanel candidate={candidate} onUploaded={handleUploaded} />
 
