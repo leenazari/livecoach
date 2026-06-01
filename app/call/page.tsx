@@ -30,26 +30,33 @@ function normalise(s: string) {
 }
 
 function splitCue(raw: string): { ask: string; why: string; followup: string } {
-  let ask = raw.trim();
+  // Tolerant of spacing/case variants of the markers, and strips any strays
+  // so a literal ||FOLLOWUP|| can never show in the UI.
+  const WHY = /\|\|\s*WHY\s*\|\|/i;
+  const FUP = /\|\|\s*FOLLOWUP\s*\|\|/i;
+  const strip = (t: string) =>
+    t
+      .replace(/\|\|\s*(WHY|FOLLOWUP)\s*\|\|/gi, " ")
+      .replace(/\|\|/g, " ")
+      .trim();
+
+  let ask = raw;
   let why = "";
   let followup = "";
-  const wIdx = raw.indexOf("||WHY||");
-  const fIdx = raw.indexOf("||FOLLOWUP||");
-  if (wIdx !== -1) {
-    ask = raw.slice(0, wIdx).trim();
-    const after = raw.slice(wIdx + 7);
-    const f2 = after.indexOf("||FOLLOWUP||");
-    if (f2 !== -1) {
-      why = after.slice(0, f2).trim();
-      followup = after.slice(f2 + 12).trim();
-    } else {
-      why = after.trim();
-    }
-  } else if (fIdx !== -1) {
-    ask = raw.slice(0, fIdx).trim();
-    followup = raw.slice(fIdx + 12).trim();
+
+  const wParts = raw.split(WHY);
+  if (wParts.length > 1) {
+    ask = wParts[0];
+    const rest = wParts.slice(1).join(" ");
+    const fParts = rest.split(FUP);
+    why = fParts[0];
+    followup = fParts.slice(1).join(" ");
+  } else {
+    const fParts = raw.split(FUP);
+    ask = fParts[0];
+    followup = fParts.slice(1).join(" ");
   }
-  return { ask, why, followup };
+  return { ask: strip(ask), why: strip(why), followup: strip(followup) };
 }
 
 export default function CallPage() {
@@ -401,58 +408,105 @@ export default function CallPage() {
 
   // Cue card: question is the hero, why is a tiny tag, follow-up is a
   // clearly separated optional section.
-  const renderCard = (s: Suggestion) => (
-    <div
-      key={s.id}
-      className="overflow-hidden rounded-xl border border-edge bg-ink/40"
-    >
-      <div className="flex items-center justify-between px-4 pt-3">
-        <span className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber/60">
-          {s.at} · {s.kind}
-        </span>
-        <button
-          onClick={() => togglePin(s.id)}
-          className={`text-base leading-none transition ${
-            s.pinned ? "text-amber" : "text-muted hover:text-amber"
-          }`}
-          title={s.pinned ? "unpin" : "pin"}
-        >
-          {s.pinned ? "\u2605" : "\u2606"}
-        </button>
-      </div>
+  const cueType = (s: Suggestion): "opening" | "redirect" | "question" => {
+    if (s.kind === "opening") return "opening";
+    if (
+      /didn'?t\s+answer|didn'?t\s+address|off.?topic|changed the subject|redirect|not answer/i.test(
+        s.why
+      )
+    )
+      return "redirect";
+    return "question";
+  };
 
-      {s.pending && !s.text ? (
-        <div className="px-4 pb-4 pt-1">
-          <span className="thinking font-display text-lg">
-            reading the room...
-          </span>
-        </div>
-      ) : (
-        <>
-          <div className="px-4 pb-3.5 pt-1.5">
-            <p className="font-display text-[1.3rem] font-medium leading-snug text-bone">
-              {s.text}
-            </p>
-            {s.why && (
-              <p className="mt-2 font-mono text-[0.58rem] uppercase tracking-[0.22em] text-amber/50">
-                why · {s.why}
-              </p>
-            )}
+  const TYPE_META: Record<
+    string,
+    { border: string; badge: string; whyColor: string; label: string }
+  > = {
+    question: {
+      border: "border-amber/40",
+      badge: "border-amber/40 bg-amber/15 text-amber",
+      whyColor: "text-amber/60",
+      label: "ASK",
+    },
+    redirect: {
+      border: "border-rust/60",
+      badge: "border-rust/50 bg-rust/15 text-rust",
+      whyColor: "text-rust/75",
+      label: "REDIRECT",
+    },
+    opening: {
+      border: "border-sage/40",
+      badge: "border-sage/40 bg-sage/15 text-sage",
+      whyColor: "text-sage/70",
+      label: "OPENING",
+    },
+  };
+
+  const renderCard = (s: Suggestion) => {
+    const meta = TYPE_META[cueType(s)];
+    return (
+      <div
+        key={s.id}
+        className={`overflow-hidden rounded-xl border ${meta.border} bg-ink/40`}
+      >
+        <div className="flex items-center justify-between px-4 pt-3">
+          <div className="flex items-center gap-2">
+            <span
+              className={`rounded-full border px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-[0.2em] ${meta.badge}`}
+            >
+              {meta.label}
+            </span>
+            <span className="font-mono text-[0.6rem] uppercase tracking-[0.15em] text-muted">
+              {s.at}
+            </span>
           </div>
-          {s.followup && (
-            <div className="border-t border-edge/70 bg-ink/40 px-4 py-2.5">
-              <p className="mb-1 font-mono text-[0.55rem] uppercase tracking-[0.25em] text-sage/70">
-                if you want to go deeper
+          <button
+            onClick={() => togglePin(s.id)}
+            className={`text-lg leading-none transition ${
+              s.pinned ? "text-amber" : "text-muted hover:text-amber"
+            }`}
+            title={s.pinned ? "unpin" : "pin"}
+          >
+            {s.pinned ? "\u2605" : "\u2606"}
+          </button>
+        </div>
+
+        {s.pending && !s.text ? (
+          <div className="px-4 pb-4 pt-2">
+            <span className="thinking font-display text-lg">
+              reading the room...
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="px-4 pb-4 pt-2">
+              <p className="font-display text-[1.45rem] font-medium leading-snug text-bone">
+                {s.text}
               </p>
-              <p className="font-sans text-[0.9rem] leading-snug text-bone/70">
-                {s.followup}
-              </p>
+              {s.why && (
+                <p
+                  className={`mt-2.5 font-mono text-[0.62rem] uppercase tracking-[0.18em] ${meta.whyColor}`}
+                >
+                  {s.why}
+                </p>
+              )}
             </div>
-          )}
-        </>
-      )}
-    </div>
-  );
+            {s.followup && (
+              <div className="border-t border-edge/70 bg-ink/50 px-4 py-3">
+                <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.22em] text-sage/70">
+                  then go deeper
+                </p>
+                <p className="font-sans text-[1rem] leading-snug text-bone/85">
+                  {s.followup}
+                </p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
 
   return (
     <main className="relative z-10 mx-auto max-w-[1200px] px-5 py-10">
