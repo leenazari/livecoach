@@ -65,6 +65,102 @@ export default function PostCallSummary({
   candidate?: string;
   onClose?: () => void;
 }) {
+  const downloadPdf = async () => {
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const margin = 48;
+    const pageH = doc.internal.pageSize.getHeight();
+    const width = doc.internal.pageSize.getWidth() - margin * 2;
+    let y = margin;
+
+    const ensure = (space: number) => {
+      if (y + space > pageH - margin) {
+        doc.addPage();
+        y = margin;
+      }
+    };
+    const heading = (t: string) => {
+      ensure(26);
+      y += 6;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.setTextColor(20);
+      doc.text(t.toUpperCase(), margin, y);
+      y += 16;
+    };
+    const para = (t: string, size = 10, color = 40) => {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(size);
+      doc.setTextColor(color);
+      doc.splitTextToSize(t, width).forEach((ln: string) => {
+        ensure(size + 5);
+        doc.text(ln, margin, y);
+        y += size + 5;
+      });
+    };
+    const bullet = (t: string) => {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(40);
+      doc.splitTextToSize(t, width - 16).forEach((ln: string, i: number) => {
+        ensure(15);
+        if (i === 0) doc.text("-", margin, y);
+        doc.text(ln, margin + 14, y);
+        y += 15;
+      });
+    };
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(20);
+    doc.setTextColor(15);
+    doc.text("Interview Summary", margin, y);
+    y += 24;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(110);
+    const meta = [
+      candidate ? `Candidate: ${candidate}` : "",
+      `Date: ${new Date().toLocaleDateString()}`,
+    ]
+      .filter(Boolean)
+      .join("     ");
+    doc.text(meta, margin, y);
+    y += 14;
+
+    heading("Recommendation");
+    para(summary.recommendation || "-", 12, 20);
+    if (summary.headline) para(summary.headline, 10, 70);
+
+    if (summary.competencies && summary.competencies.length > 0) {
+      heading("Competencies");
+      summary.competencies.forEach((c) => {
+        const score = Math.max(0, Math.min(5, Math.round(c.score || 0)));
+        bullet(`${c.name}  -  ${score}/5${c.note ? `  -  ${c.note}` : ""}`);
+      });
+    }
+
+    const list = (title: string, items?: string[]) => {
+      if (items && items.length > 0) {
+        heading(title);
+        items.forEach((it) => bullet(it));
+      }
+    };
+    list("Strengths", summary.strengths);
+    list("Concerns", summary.concerns);
+    list("Not yet covered", summary.notCovered);
+
+    if (summary.styleProfile) {
+      heading("Interviewer style profile");
+      para(summary.styleProfile);
+    }
+
+    const safe = (candidate || "interview")
+      .replace(/[^a-z0-9]+/gi, "_")
+      .toLowerCase();
+    doc.save(`interview_summary_${safe}.pdf`);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/80 p-4 backdrop-blur-sm sm:p-8">
       <div className="my-auto w-full max-w-[760px] rounded-2xl border border-edge bg-panel shadow-2xl">
@@ -77,12 +173,20 @@ export default function PostCallSummary({
               </p>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-full border border-edge px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-muted transition hover:border-rust hover:text-rust"
-          >
-            close
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={downloadPdf}
+              className="rounded-full border border-amber/50 bg-amber/10 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20"
+            >
+              download pdf
+            </button>
+            <button
+              onClick={onClose}
+              className="rounded-full border border-edge px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-muted transition hover:border-rust hover:text-rust"
+            >
+              close
+            </button>
+          </div>
         </div>
 
         <div className="space-y-6 px-6 py-6">
