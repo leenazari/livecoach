@@ -1,165 +1,680 @@
-import { NextRequest } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+"use client";
 
-export const runtime = "nodejs";
-export const maxDuration = 30;
+import { useCallback, useEffect, useRef, useState } from "react";
+import CallStage from "@/components/CallStage";
+import KnowledgePanel from "@/components/KnowledgePanel";
+import PostCallSummary from "@/components/PostCallSummary";
 
-// LIVE coaching engine. Output shape:
-//   <main question> ||WHY|| <short why> ||FOLLOWUP|| <optional probe>
-export async function POST(req: NextRequest) {
-  try {
-    const {
-      knowledgeContext,
-      transcript,
-      latest,
-      role,
-      previousSuggestions,
-      askedQuestions,
-      lastQuestion,
-      competencies,
-      allowHold,
-    } = await req.json();
+type Line = { role: string; text: string };
+type Suggestion = {
+  id: number;
+  text: string;
+  why: string;
+  followup: string;
+  at: string;
+  pending: boolean;
+  kind: "opening" | "live";
+  pinned: boolean;
+};
 
-    if (!latest || typeof latest !== "string") {
-      return new Response(JSON.stringify({ error: "latest is required" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+function timeNow() {
+  return new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function normalise(s: string) {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function splitCue(raw: string): { ask: string; why: string; followup: string } {
+  let ask = raw.trim();
+  let why = "";
+  let followup = "";
+  const wIdx = raw.indexOf("||WHY||");
+  const fIdx = raw.indexOf("||FOLLOWUP||");
+  if (wIdx !== -1) {
+    ask = raw.slice(0, wIdx).trim();
+    const after = raw.slice(wIdx + 7);
+    const f2 = after.indexOf("||FOLLOWUP||");
+    if (f2 !== -1) {
+      why = after.slice(0, f2).trim();
+      followup = after.slice(f2 + 12).trim();
+    } else {
+      why = after.trim();
     }
+  } else if (fIdx !== -1) {
+    ask = raw.slice(0, fIdx).trim();
+    followup = raw.slice(fIdx + 12).trim();
+  }
+  return { ask, why, followup };
+}
 
-    const focusList =
-      Array.isArray(competencies) && competencies.length
-        ? competencies.join(", ")
-        : "";
+export default function CallPage() {
+  const [room] = useState(() => `lc-${Math.random().toString(36).slice(2, 8)}`);
+  const [origin, setOrigin] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [lines, setLines] = useState<Line[]>([]);
 
-    const holdRule = allowHold
-      ? `\n\nHOLD RULE: If the only question would repeat or reword something already asked, or any recent suggestion, respond with exactly: HOLD.`
+  const [candidate, setCandidate] = useState("");
+  const [role, setRole] = useState("");
+  const [prepping, setPrepping] = useState(false);
+  const [docsReady, setDocsReady] = useState(false);
+  const [status, setStatus] = useState("");
+  const [loadedDocs, setLoadedDocs] = useState<string[]>([]);
+  const [suggestedComps, setSuggestedComps] = useState<string[]>([]);
+  const [selectedComps, setSelectedComps] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [summary, setSummary] = useState<any>(null);
+  const [summarising, setSummarising] = useState(false);
+
+  const knowledgeRef = useRef("");
+  const roleRef = useRef("");
+  const selectedCompsRef = useRef<string[]>([]);
+  const linesRef = useRef<Line[]>([]);
+  const suggestIdRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const lastShownRef = useRef("");
+  const recentTextsRef = useRef<string[]>([]);
+  const autoFiredKeyRef = useRef("");
+  const autoFireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+  useEffect(() => {
+    roleRef.current = role;
+  }, [role]);
+  useEffect(() => {
+    selectedCompsRef.current = selectedComps;
+  }, [selectedComps]);
+
+  const joinLink = origin ? `${origin}/join/${room}` : "";
+  const botLink = origin ? `${origin}/candidate-bot/${room}` : "";
+
+  const copy = async () => {
+    if (!joinLink) return;
+    await navigator.clipboard.writeText(joinLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const onFinalTranscript = useCallback((r: string, text: string) => {
+    setLines((prev) => {
+      const last = prev[prev.length - 1];
+      let next: Line[];
+      if (last && last.role === r) {
+        next = [...prev];
+        next[next.length - 1] = { ...last, text: `${last.text} ${text}`.trim() };
+      } else {
+        next = [...prev, { role: r, text }];
+      }
+      linesRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const isDuplicate = (text: string) => {
+    const n = normalise(text);
+    if (!n) return true;
+    const last = normalise(lastShownRef.current);
+    if (last && (n === last || n.includes(last) || last.includes(n))) return true;
+    return false;
+  };
+
+  const requestLiveSuggestion = useCallback(async () => {
+    if (inFlightRef.current) return;
+
+    const labelled = linesRef.current
+      .map(
+        (l) =>
+          `${
+            l.role === "interviewer"
+              ? "Interviewer"
+              : l.role === "candidate"
+              ? "Candidate"
+              : l.role
+          }: ${l.text}`
+      )
+      .join("\n");
+
+    const interviewerTurns = linesRef.current.filter(
+      (l) => l.role === "interviewer"
+    );
+    const askedQuestions = interviewerTurns.map((l) => l.text);
+    const lastQuestion = interviewerTurns.length
+      ? interviewerTurns[interviewerTurns.length - 1].text
       : "";
 
-    const instructions = `You are a live interview-coaching assistant whispering in the INTERVIEWER's ear during a real-time interview${role ? ` for the role: ${role}` : ""}.
-
-The transcript is labelled by speaker:
-- "Interviewer:" lines = what the interviewer already said.
-- "Candidate:" lines = the candidate's answers.
-
-TONE (always - non-negotiable for this product):
-- Friendly, warm, encouraging, conversational. The way a kind, experienced interviewer actually speaks.
-- Never blunt, accusatory, interrogative, or gotcha-style. Always soften challenges.
-- For a discrepancy or gap, ask with genuine, friendly curiosity, never confrontation.
-
-FLOW (this matters as much as tone) - the cue must be the NATURAL next beat:
-- Build directly on what the candidate JUST said. Pick up a thread they actually raised.
-- Go ONE natural step deeper - do NOT leap to a narrow, specific detail they have not mentioned yet.
-- Early in the interview, stay broad and inviting (e.g. what's drawing them to the role, how they think). Save deep specifics for once a thread is genuinely open.
-- It must feel like a smooth follow-on, not a topic jump.
-    Clunky jump (avoid): candidate gives a high-level intro -> "What gaps in PayPoint's product did merchants ask you to solve most often?"
-    Natural next beat (good): candidate gives a high-level intro -> "What's drawing you from sales toward product?"
-
-USE THE STAR METHOD TO DRAW OUT FULL ANSWERS (supportive, never repetitive):
-- The goal is to help the candidate give their BEST, most complete answer - not to trip them up.
-- For the story or example the candidate is currently telling, notice which STAR elements are present and which are missing: Situation, Task, Action (what THEY personally did), Result (the outcome/impact).
-- Gently coax the MISSING element next, one step at a time. Candidates most often skip the specific Action or the Result - probe there.
-- NEVER re-ask for an element they already gave. Move forward through S -> T -> A -> R; do not loop or repeat.
-
-WATCH FOR OFF-TOPIC ANSWERS (important):
-- The interviewer's most recent question is given below. FIRST check whether the candidate's latest answer actually addresses THAT question.
-- If the candidate clearly did NOT answer it - they changed the subject, dodged, rambled elsewhere, or answered something different - your MAIN cue should WARMLY and politely steer back to what was asked (e.g. "I'd love to come back to X - how would you approach that specifically?"), and set WHY to "didn't answer the question" (or similar). Never accusatory - a gentle nudge to redirect.
-- If the answer DID address the question, ignore this and proceed normally to the best next question.
-
-FOCUS ON THE TARGET COMPETENCIES:
-${focusList ? `- This interview is assessing: ${focusList}. Steer questions toward gathering strong evidence on these. Once one is well covered, move to one not yet explored. Don't chase tangents outside them unless the candidate raises something clearly important.` : "- No specific competencies set; assess what's most relevant to the role."}
-
-OUTPUT SHAPE (strict). Your entire reply is one of:
-  <main question> ||WHY|| <short why>
-  <main question> ||WHY|| <short why> ||FOLLOWUP|| <one short follow-up question>
-  HOLD
-
-Rules for each part:
-- MAIN: this MUST contain the actual question to ask. A brief warm lead-in is fine (e.g. "That's a great shift -") but it MUST end in a clear question. NEVER make the main line only a statement or affirmation with the question pushed into the follow-up. Under 20 words, plain text, warm, sayable out loud. No markdown, no lists.
-- WHY: under 6 words, what this probes (e.g. "tests ownership"). Always include it.
-- FOLLOW-UP: optional, ONE short question under 15 words - the natural deeper probe for once they answer. Not compound. Omit it (and its marker) if there isn't a clean one.
-
-CRITICAL - no repetition:
-- NEVER suggest a question already asked (see the ASKED list and any "Interviewer:" line), or a reword of one.
-- NEVER repeat or reword any recent suggestion (listed below).
-
-CONTENT:
-- Favour depth, ownership, concrete examples - but reach them gradually, following the conversation.${holdRule}`;
-
-    const system: any[] = [
-      { type: "text", text: instructions },
-      {
-        type: "text",
-        text: `KNOWLEDGE BASE (candidate CV / previous summary / question framework):\n\n${knowledgeContext || "No knowledge base loaded."}`,
-        cache_control: { type: "ephemeral" },
-      },
-    ];
-
-    const recent =
-      Array.isArray(previousSuggestions) && previousSuggestions.length
-        ? `\n\nRECENT SUGGESTIONS - do NOT repeat or reword:\n${previousSuggestions
-            .map((s: string) => `- ${s}`)
-            .join("\n")}`
-        : "";
-
-    const asked =
-      Array.isArray(askedQuestions) && askedQuestions.length
-        ? `\n\nQUESTIONS THE INTERVIEWER HAS ALREADY ASKED - never suggest these or a reword of them:\n${askedQuestions
-            .map((q: string) => `- ${q}`)
-            .join("\n")}`
-        : "";
-
-    const userMsg = `TRANSCRIPT (speaker-labelled):
-${transcript || "(interview just started)"}
-
-Target competencies for this interview: ${focusList || "(not specified)"}
-
-The interviewer's most recent question was:
-"${lastQuestion || "(none yet)"}"
-
-Candidate's latest answer:
-"${latest}"${asked}${recent}
-
-Give the natural next beat: a WARM, friendly MAIN question that flows from what they just said ||WHY|| why, plus optional ||FOLLOWUP|| - or HOLD.`;
-
-    const claudeStream = await anthropic.messages.stream({
-      model: CLAUDE_MODEL_LIVE,
-      max_tokens: 110,
-      system,
-      messages: [{ role: "user", content: userMsg }],
-    });
-
-    const encoder = new TextEncoder();
-    const readable = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const event of claudeStream) {
-            if (
-              event.type === "content_block_delta" &&
-              event.delta.type === "text_delta"
-            ) {
-              controller.enqueue(encoder.encode(event.delta.text));
-            }
-          }
-        } catch (e) {
-          console.error("Stream error:", e);
-        } finally {
-          controller.close();
-        }
-      },
-    });
-
-    return new Response(readable, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-      },
-    });
-  } catch (err: any) {
-    console.error("Suggest route error:", err);
-    return new Response(
-      JSON.stringify({ error: err?.message || "Suggestion failed" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+    const candidateTurns = linesRef.current.filter(
+      (l) => l.role === "candidate"
     );
-  }
+    const latest = candidateTurns.length
+      ? candidateTurns[candidateTurns.length - 1].text.slice(-400)
+      : "";
+    if (!latest || latest.length < 8) return;
+
+    inFlightRef.current = true;
+    const id = ++suggestIdRef.current;
+    setSuggestions((prev) => [
+      ...prev,
+      {
+        id,
+        text: "",
+        why: "",
+        followup: "",
+        at: timeNow(),
+        pending: true,
+        kind: "live",
+        pinned: false,
+      },
+    ]);
+
+    try {
+      const res = await fetch("/api/interview/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          knowledgeContext: knowledgeRef.current,
+          transcript: labelled.slice(-2400),
+          latest,
+          role: roleRef.current || null,
+          previousSuggestions: recentTextsRef.current.slice(0, 5),
+          askedQuestions,
+          lastQuestion,
+          competencies: selectedCompsRef.current,
+          allowHold: true,
+        }),
+      });
+      if (!res.ok || !res.body) {
+        throw new Error((await res.text()) || "Suggestion failed");
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        acc += decoder.decode(value, { stream: true });
+        const { ask, why, followup } = splitCue(acc);
+        setSuggestions((prev) =>
+          prev.map((s) =>
+            s.id === id ? { ...s, text: ask, why, followup } : s
+          )
+        );
+      }
+      const { ask, why, followup } = splitCue(acc);
+      const isHold = ask.toUpperCase() === "HOLD";
+      if (isHold || isDuplicate(ask)) {
+        setSuggestions((prev) => prev.filter((s) => s.id !== id));
+      } else {
+        lastShownRef.current = ask;
+        recentTextsRef.current = [ask, ...recentTextsRef.current].slice(0, 8);
+        setSuggestions((prev) =>
+          prev.map((s) =>
+            s.id === id
+              ? { ...s, text: ask, why, followup, pending: false }
+              : s
+          )
+        );
+      }
+    } catch (e: any) {
+      setSuggestions((prev) =>
+        prev.map((s) =>
+          s.id === id ? { ...s, text: `! ${e.message}`, pending: false } : s
+        )
+      );
+    } finally {
+      inFlightRef.current = false;
+    }
+  }, []);
+
+  const loadContext = useCallback(async () => {
+    const res = await fetch("/api/interview/context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidate: candidate || null }),
+    });
+    const ctx = await res.json();
+    knowledgeRef.current = ctx.context || "";
+    setLoadedDocs(Array.isArray(ctx.sources) ? ctx.sources : []);
+    return knowledgeRef.current;
+  }, [candidate]);
+
+  const generateCompetencies = useCallback(async () => {
+    try {
+      const res = await fetch("/api/interview/competencies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: role || null,
+          knowledgeContext: knowledgeRef.current,
+        }),
+      });
+      const data = await res.json();
+      const comps: string[] = Array.isArray(data.competencies)
+        ? data.competencies
+        : [];
+      setSuggestedComps(comps);
+      // Pre-select the first 5 as a sensible default; user can refine.
+      setSelectedComps(comps.slice(0, 5));
+    } catch (e) {
+      console.error("Competencies fetch failed:", e);
+    }
+  }, [role]);
+
+  const generateOpening = useCallback(async () => {
+    const res = await fetch("/api/interview/opening", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        knowledgeContext: knowledgeRef.current,
+        role: role || null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to prep questions");
+    const qs: any[] = Array.isArray(data.questions) ? data.questions : [];
+    const cards: Suggestion[] = qs.map((item) => ({
+      id: ++suggestIdRef.current,
+      text: typeof item === "string" ? item : item.q || "",
+      why: typeof item === "string" ? "" : item.why || "",
+      followup: "",
+      at: timeNow(),
+      pending: false,
+      kind: "opening" as const,
+      pinned: false,
+    }));
+    setSuggestions((prev) => [...prev, ...cards]);
+    recentTextsRef.current = [
+      ...cards.map((c) => c.text),
+      ...recentTextsRef.current,
+    ].slice(0, 10);
+  }, [role]);
+
+  const prepOpening = useCallback(async () => {
+    setPrepping(true);
+    setStatus("prepping questions...");
+    try {
+      await loadContext();
+      await generateCompetencies();
+      await generateOpening();
+      setStatus("questions ready");
+    } catch (e: any) {
+      const msg = e.message || "";
+      setStatus(
+        /cv|role|upload/i.test(msg)
+          ? "waiting for a CV + role..."
+          : `error: ${msg}`
+      );
+    } finally {
+      setPrepping(false);
+    }
+  }, [loadContext, generateCompetencies, generateOpening]);
+
+  useEffect(() => {
+    if (!docsReady || !role.trim()) return;
+    const key = `${candidate}|${role}`;
+    if (autoFiredKeyRef.current === key) return;
+    if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
+    autoFireTimerRef.current = setTimeout(() => {
+      autoFiredKeyRef.current = key;
+      prepOpening();
+    }, 900);
+    return () => {
+      if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
+    };
+  }, [candidate, role, docsReady, prepOpening]);
+
+  const handleUploaded = useCallback(
+    (detectedName: string | null, docType: string) => {
+      if (detectedName) setCandidate(detectedName);
+      setDocsReady(true);
+      setStatus(
+        docType === "cv" && detectedName
+          ? `CV loaded - ${detectedName}`
+          : "doc loaded"
+      );
+    },
+    []
+  );
+
+  const endAndSummarise = useCallback(async () => {
+    const labelled = linesRef.current
+      .map(
+        (l) =>
+          `${
+            l.role === "interviewer"
+              ? "Interviewer"
+              : l.role === "candidate"
+              ? "Candidate"
+              : l.role
+          }: ${l.text}`
+      )
+      .join("\n");
+    if (labelled.length < 30) {
+      setStatus("not enough conversation yet to summarise");
+      return;
+    }
+    setSummarising(true);
+    setStatus("building summary...");
+    try {
+      const res = await fetch("/api/interview/summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: labelled,
+          knowledgeContext: knowledgeRef.current,
+          role: roleRef.current || null,
+          candidate: candidate || null,
+          competencies: selectedCompsRef.current,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Summary failed");
+      setSummary(data.summary);
+      setStatus("summary ready");
+    } catch (e: any) {
+      setStatus(`error: ${e.message}`);
+    } finally {
+      setSummarising(false);
+    }
+  }, [candidate]);
+
+  const toggleComp = (c: string) => {
+    setSelectedComps((prev) =>
+      prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
+    );
+  };
+
+  const togglePin = (id: number) => {
+    setSuggestions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, pinned: !s.pinned } : s))
+    );
+  };
+
+  const ordered = [...lines].reverse();
+  const pinned = suggestions.filter((s) => s.pinned);
+  const feed = suggestions.filter((s) => !s.pinned).reverse();
+
+  // Cue card: question is the hero, why is a tiny tag, follow-up is a
+  // clearly separated optional section.
+  const renderCard = (s: Suggestion) => (
+    <div
+      key={s.id}
+      className="overflow-hidden rounded-xl border border-edge bg-ink/40"
+    >
+      <div className="flex items-center justify-between px-4 pt-3">
+        <span className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber/60">
+          {s.at} · {s.kind}
+        </span>
+        <button
+          onClick={() => togglePin(s.id)}
+          className={`text-base leading-none transition ${
+            s.pinned ? "text-amber" : "text-muted hover:text-amber"
+          }`}
+          title={s.pinned ? "unpin" : "pin"}
+        >
+          {s.pinned ? "\u2605" : "\u2606"}
+        </button>
+      </div>
+
+      {s.pending && !s.text ? (
+        <div className="px-4 pb-4 pt-1">
+          <span className="thinking font-display text-lg">
+            reading the room...
+          </span>
+        </div>
+      ) : (
+        <>
+          <div className="px-4 pb-3.5 pt-1.5">
+            <p className="font-display text-[1.3rem] font-medium leading-snug text-bone">
+              {s.text}
+            </p>
+            {s.why && (
+              <p className="mt-2 font-mono text-[0.58rem] uppercase tracking-[0.22em] text-amber/50">
+                why · {s.why}
+              </p>
+            )}
+          </div>
+          {s.followup && (
+            <div className="border-t border-edge/70 bg-ink/40 px-4 py-2.5">
+              <p className="mb-1 font-mono text-[0.55rem] uppercase tracking-[0.25em] text-sage/70">
+                if you want to go deeper
+              </p>
+              <p className="font-sans text-[0.9rem] leading-snug text-bone/70">
+                {s.followup}
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <main className="relative z-10 mx-auto max-w-[1200px] px-5 py-10">
+      <header className="mb-7 flex flex-wrap items-end justify-between gap-4 border-b border-edge pb-5">
+        <div>
+          <h1 className="font-display text-[2.4rem] leading-none tracking-tight text-bone">
+            <span className="italic text-amber">Live</span>Coach
+          </h1>
+          <p className="mt-2 font-mono text-xs uppercase tracking-[0.25em] text-muted">
+            hosted interview - live cues
+          </p>
+        </div>
+        {status && (
+          <span className="rounded-full border border-edge bg-ink/60 px-4 py-2 font-mono text-xs lowercase tracking-wide text-muted">
+            {status}
+          </span>
+        )}
+      </header>
+
+      <div className="mb-3 grid gap-4 rounded-2xl border border-edge bg-panel/60 p-5 md:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
+        <label className="block">
+          <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted">
+            Candidate (auto-filled from CV)
+          </span>
+          <input
+            value={candidate}
+            placeholder="upload a CV to fill this"
+            onChange={(e) => setCandidate(e.target.value)}
+            className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted">
+            Role
+          </span>
+          <input
+            value={role}
+            placeholder="e.g. Senior Backend Engineer"
+            onChange={(e) => setRole(e.target.value)}
+            className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+          />
+        </label>
+        <div className="flex flex-col justify-end gap-2">
+          <button
+            onClick={prepOpening}
+            disabled={prepping}
+            className="rounded-lg border border-amber/50 bg-amber/10 px-4 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {prepping ? "prepping..." : "Re-roll questions"}
+          </button>
+          <p className="font-mono text-[0.65rem] leading-relaxed text-muted">
+            Auto-generates once a CV + role are set.
+          </p>
+        </div>
+      </div>
+
+      {loadedDocs.length > 0 && (
+        <p className="mb-3 font-mono text-[0.7rem] text-muted">
+          in context: {loadedDocs.join(" \u00b7 ")}
+        </p>
+      )}
+
+      {suggestedComps.length > 0 && (
+        <div className="mb-5 rounded-2xl border border-edge bg-panel/50 p-5">
+          <p className="mb-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
+            Interview focus
+          </p>
+          <p className="mb-3 font-mono text-[0.65rem] text-muted">
+            Tap the competencies that matter for this hire - cues will steer toward them.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {suggestedComps.map((c) => {
+              const on = selectedComps.includes(c);
+              return (
+                <button
+                  key={c}
+                  onClick={() => toggleComp(c)}
+                  className={`rounded-full border px-3.5 py-1.5 font-mono text-[0.7rem] uppercase tracking-wider transition ${
+                    on
+                      ? "border-amber bg-amber/15 text-amber"
+                      : "border-edge text-muted hover:border-amber/50 hover:text-bone"
+                  }`}
+                >
+                  {on ? "\u2713 " : ""}
+                  {c}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <KnowledgePanel candidate={candidate} onUploaded={handleUploaded} />
+
+      <div className="my-6 grid gap-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
+        <div>
+          <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
+            Real candidate - send this link
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <code className="break-all rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone">
+              {joinLink || "preparing..."}
+            </code>
+            <button
+              onClick={copy}
+              disabled={!joinLink}
+              className="rounded-full border border-amber/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/10 disabled:opacity-40"
+            >
+              {copied ? "copied" : "copy"}
+            </button>
+          </div>
+        </div>
+        <div className="border-t border-edge/50 pt-3">
+          <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-sage">
+            Test solo - open the candidate bot in a new tab
+          </p>
+          <a
+            href={botLink || "#"}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block rounded-full border border-sage/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/10"
+          >
+            Open candidate bot (same room)
+          </a>
+        </div>
+      </div>
+
+      <div className="mb-6">
+        <CallStage
+          room={room}
+          identity="Interviewer"
+          role="interviewer"
+          onFinalTranscript={onFinalTranscript}
+          onCandidateTurnEnd={requestLiveSuggestion}
+        />
+      </div>
+
+      <div className="mb-6 flex justify-center">
+        <button
+          onClick={endAndSummarise}
+          disabled={summarising}
+          className="rounded-full border border-amber/50 bg-amber/10 px-7 py-3 font-mono text-sm uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {summarising ? "summarising..." : "End interview & summarise"}
+        </button>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
+        <section className="flex min-h-[360px] flex-col rounded-2xl border border-edge bg-panel/50">
+          <div className="border-b border-edge px-6 py-3.5">
+            <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-muted">
+              Labelled transcript - newest first
+            </h2>
+          </div>
+          <div className="flex-1 space-y-3 overflow-y-auto px-6 py-5">
+            {ordered.length === 0 ? (
+              <p className="font-mono text-sm text-muted">
+                Join the call and start talking. Each turn is tagged with who
+                said it.
+              </p>
+            ) : (
+              ordered.map((l, i) => (
+                <p key={i} className="font-mono text-sm leading-relaxed">
+                  <span
+                    className={
+                      l.role === "interviewer"
+                        ? "text-amber"
+                        : l.role === "candidate"
+                        ? "text-sage"
+                        : "text-muted"
+                    }
+                  >
+                    {l.role === "interviewer"
+                      ? "Interviewer"
+                      : l.role === "candidate"
+                      ? "Candidate"
+                      : l.role}
+                    :
+                  </span>{" "}
+                  <span className="text-bone/90">{l.text}</span>
+                </p>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="flex min-h-[360px] flex-col rounded-2xl border border-amber/40 bg-gradient-to-b from-amber/[0.07] to-transparent">
+          <div className="border-b border-edge px-6 py-3.5">
+            <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-amber">
+              Ask this next
+            </h2>
+          </div>
+
+          {pinned.length > 0 && (
+            <div className="border-b border-edge/60 px-5 py-4">
+              <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-amber/70">
+                Pinned
+              </p>
+              <div className="flex flex-col gap-2">{pinned.map(renderCard)}</div>
+            </div>
+          )}
+
+          <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-5">
+            {feed.length === 0 ? (
+              <p className="font-mono text-sm text-muted">
+                Upload a CV + set a role for opening questions. Live cues appear
+                as the candidate answers.
+              </p>
+            ) : (
+              feed.map(renderCard)
+            )}
+          </div>
+        </section>
+      </div>
+
+      {summary && (
+        <PostCallSummary
+          summary={summary}
+          candidate={candidate}
+          onClose={() => setSummary(null)}
+        />
+      )}
+    </main>
+  );
 }
