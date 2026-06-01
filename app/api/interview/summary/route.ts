@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { supabaseAdmin } from "@/lib/supabase";
+import { createHash } from "crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -8,7 +10,7 @@ export const maxDuration = 60;
 // Returns a structured JSON summary + scorecard + interviewer style profile.
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, knowledgeContext, role, candidate, competencies } =
+    const { transcript, knowledgeContext, role, candidate, competencies, sessionId } =
       await req.json();
 
     if (!transcript || transcript.length < 30) {
@@ -22,6 +24,26 @@ export async function POST(req: NextRequest) {
       Array.isArray(competencies) && competencies.length
         ? competencies.filter((c: any) => typeof c === "string")
         : [];
+
+    const cacheKey = createHash("sha256")
+      .update(`${transcript}||${fixedComps.join(",")}||${role || ""}`)
+      .digest("hex");
+
+    // Durable cache: the same call (same transcript + competencies + role)
+    // returns the stored result, so it never regenerates or drifts - even
+    // after a refresh or days later.
+    try {
+      const { data: existing } = await supabaseAdmin
+        .from("interview_summaries")
+        .select("summary")
+        .eq("cache_key", cacheKey)
+        .maybeSingle();
+      if (existing?.summary) {
+        return NextResponse.json({ summary: existing.summary, cached: true });
+      }
+    } catch (e) {
+      console.error("Summary cache lookup failed:", e);
+    }
 
     const compInstruction = fixedComps.length
       ? `Score EXACTLY these competencies, using these EXACT names, in this order - do not add, remove, merge, or rename any:\n${fixedComps
@@ -98,6 +120,18 @@ Return the JSON assessment now.`;
         { error: "Could not parse the summary. Try again." },
         { status: 500 }
       );
+    }
+
+    try {
+      await supabaseAdmin.from("interview_summaries").insert({
+        cache_key: cacheKey,
+        session_id: sessionId || null,
+        candidate: candidate || null,
+        role: role || null,
+        summary,
+      });
+    } catch (e) {
+      console.error("Summary store failed:", e);
     }
 
     return NextResponse.json({ summary });
