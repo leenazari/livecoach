@@ -76,10 +76,13 @@ export default function CallPage() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [summary, setSummary] = useState<any>(null);
   const [summarising, setSummarising] = useState(false);
+  const [summaryTranscript, setSummaryTranscript] = useState("");
 
   const knowledgeRef = useRef("");
   const roleRef = useRef("");
   const selectedCompsRef = useRef<string[]>([]);
+  const cachedSummaryRef = useRef<any>(null);
+  const cachedSigRef = useRef("");
   const linesRef = useRef<Line[]>([]);
   const suggestIdRef = useRef(0);
   const inFlightRef = useRef(false);
@@ -365,6 +368,14 @@ export default function CallPage() {
       setStatus("not enough conversation yet to summarise");
       return;
     }
+    setSummaryTranscript(labelled);
+    const sig = `${labelled}||${selectedCompsRef.current.join(",")}`;
+    // Same call, already summarised -> just re-show the saved results.
+    if (cachedSummaryRef.current && cachedSigRef.current === sig) {
+      setSummary(cachedSummaryRef.current);
+      setStatus("showing saved summary");
+      return;
+    }
     setSummarising(true);
     setStatus("building summary...");
     try {
@@ -377,10 +388,13 @@ export default function CallPage() {
           role: roleRef.current || null,
           candidate: candidate || null,
           competencies: selectedCompsRef.current,
+          sessionId: room,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Summary failed");
+      cachedSummaryRef.current = data.summary;
+      cachedSigRef.current = sig;
       setSummary(data.summary);
       setStatus("summary ready");
     } catch (e: any) {
@@ -726,6 +740,7 @@ export default function CallPage() {
         <PostCallSummary
           summary={summary}
           candidate={candidate}
+          transcript={summaryTranscript}
           onClose={() => setSummary(null)}
         />
       )}
