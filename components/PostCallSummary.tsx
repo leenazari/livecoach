@@ -59,10 +59,12 @@ function SummaryList({
 export default function PostCallSummary({
   summary,
   candidate,
+  transcript,
   onClose,
 }: {
   summary: Summary;
   candidate?: string;
+  transcript?: string;
   onClose?: () => void;
 }) {
   const downloadPdf = async () => {
@@ -153,6 +155,13 @@ export default function PostCallSummary({
     if (summary.styleProfile) {
       heading("Interviewer style profile");
       para(summary.styleProfile);
+    }
+
+    if (transcript && transcript.trim()) {
+      heading("Full transcript");
+      transcript.split("\n").forEach((line) => {
+        if (line.trim()) para(line, 9, 60);
+      });
     }
 
     const safe = (candidate || "interview")
