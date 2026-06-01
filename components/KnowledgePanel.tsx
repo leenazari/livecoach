@@ -20,7 +20,7 @@ export default function KnowledgePanel({
   onUploaded,
 }: {
   candidate: string;
-  sessionId: string;
+  sessionId?: string;
   onUploaded?: (detectedName: string | null, docType: string) => void;
 }) {
   const [docType, setDocType] = useState("cv");
@@ -36,7 +36,7 @@ export default function KnowledgePanel({
       const form = new FormData();
       form.append("file", file);
       form.append("doc_type", docType);
-      form.append("sessionId", sessionId);
+      form.append("sessionId", sessionId || "");
 
       const res = await fetch("/api/knowledge/upload", {
         method: "POST",
