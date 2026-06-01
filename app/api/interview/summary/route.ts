@@ -8,7 +8,8 @@ export const maxDuration = 60;
 // Returns a structured JSON summary + scorecard + interviewer style profile.
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, knowledgeContext, role, candidate } = await req.json();
+    const { transcript, knowledgeContext, role, candidate, competencies } =
+      await req.json();
 
     if (!transcript || transcript.length < 30) {
       return NextResponse.json(
@@ -16,6 +17,17 @@ export async function POST(req: NextRequest) {
         { status: 422 }
       );
     }
+
+    const fixedComps =
+      Array.isArray(competencies) && competencies.length
+        ? competencies.filter((c: any) => typeof c === "string")
+        : [];
+
+    const compInstruction = fixedComps.length
+      ? `Score EXACTLY these competencies, using these EXACT names, in this order - do not add, remove, merge, or rename any:\n${fixedComps
+          .map((c: string) => `- ${c}`)
+          .join("\n")}`
+      : `Choose 3-6 role-relevant competencies to score.`;
 
     const system = `You are an expert interview assessor. You are given a speaker-labelled transcript of an interview${role ? ` for the role: ${role}` : ""}, plus the candidate's CV and any question framework.
 
@@ -34,10 +46,27 @@ Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
   "styleProfile": "2-3 sentences on the interviewer's speaking style and tone"
 }
 
-Rules: scores are 1-5 integers. 3-6 items per list. 3-6 role-relevant competencies. Keep every bullet tight.`;
+COMPETENCIES TO SCORE:
+${compInstruction}
+
+SCORING RUBRIC (apply consistently and literally, so the result is reproducible):
+- 5 = strong, specific, compelling evidence in the transcript
+- 4 = solid evidence, minor gaps
+- 3 = adequate, some evidence
+- 2 = weak or limited evidence
+- 1 = little or no evidence, or a clear concern
+- If a competency was NOT explored in the transcript, score it 1 or 2 and set its note to "not explored / insufficient evidence". NEVER inflate an unexplored competency.
+
+Base every score strictly on transcript evidence against this rubric - not on general impression - so that running this again on the same transcript yields the same scores.
+
+Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. Keep every bullet tight.`;
 
     const userMsg = `ROLE: ${role || "(not specified)"}
 CANDIDATE: ${candidate || "(unknown)"}
+
+COMPETENCIES TO SCORE (use these exact names if provided): ${
+      fixedComps.length ? fixedComps.join(", ") : "(assessor's choice)"
+    }
 
 CV / FRAMEWORK:
 ${knowledgeContext || "(none provided)"}
@@ -50,6 +79,7 @@ Return the JSON assessment now.`;
     const msg = await anthropic.messages.create({
       model: CLAUDE_MODEL_PRO,
       max_tokens: 1600,
+      temperature: 0,
       system,
       messages: [{ role: "user", content: userMsg }],
     });
