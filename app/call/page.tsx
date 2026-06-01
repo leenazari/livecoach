@@ -134,9 +134,13 @@ export default function CallPage() {
       )
       .join("\n");
 
-    const askedQuestions = linesRef.current
-      .filter((l) => l.role === "interviewer")
-      .map((l) => l.text);
+    const interviewerTurns = linesRef.current.filter(
+      (l) => l.role === "interviewer"
+    );
+    const askedQuestions = interviewerTurns.map((l) => l.text);
+    const lastQuestion = interviewerTurns.length
+      ? interviewerTurns[interviewerTurns.length - 1].text
+      : "";
 
     const candidateTurns = linesRef.current.filter(
       (l) => l.role === "candidate"
@@ -173,6 +177,7 @@ export default function CallPage() {
           role: roleRef.current || null,
           previousSuggestions: recentTextsRef.current.slice(0, 5),
           askedQuestions,
+          lastQuestion,
           allowHold: true,
         }),
       });
