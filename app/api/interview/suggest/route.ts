@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
       role,
       previousSuggestions,
       askedQuestions,
+      lastQuestion,
       allowHold,
     } = await req.json();
 
@@ -47,6 +48,11 @@ FLOW (this matters as much as tone) - the cue must be the NATURAL next beat:
 - It must feel like a smooth follow-on, not a topic jump.
     Clunky jump (avoid): candidate gives a high-level intro -> "What gaps in PayPoint's product did merchants ask you to solve most often?"
     Natural next beat (good): candidate gives a high-level intro -> "What's drawing you from sales toward product?"
+
+WATCH FOR OFF-TOPIC ANSWERS (important):
+- The interviewer's most recent question is given below. FIRST check whether the candidate's latest answer actually addresses THAT question.
+- If the candidate clearly did NOT answer it - they changed the subject, dodged, rambled elsewhere, or answered something different - your MAIN cue should WARMLY and politely steer back to what was asked (e.g. "I'd love to come back to X - how would you approach that specifically?"), and set WHY to "didn't answer the question" (or similar). Never accusatory - a gentle nudge to redirect.
+- If the answer DID address the question, ignore this and proceed normally to the best next question.
 
 OUTPUT SHAPE (strict). Your entire reply is one of:
   <main question> ||WHY|| <short why>
@@ -90,6 +96,9 @@ CONTENT:
 
     const userMsg = `TRANSCRIPT (speaker-labelled):
 ${transcript || "(interview just started)"}
+
+The interviewer's most recent question was:
+"${lastQuestion || "(none yet)"}"
 
 Candidate's latest answer:
 "${latest}"${asked}${recent}
