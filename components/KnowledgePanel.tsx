@@ -16,9 +16,11 @@ const DOC_TYPES = [
 
 export default function KnowledgePanel({
   candidate,
+  sessionId,
   onUploaded,
 }: {
   candidate: string;
+  sessionId: string;
   onUploaded?: (detectedName: string | null, docType: string) => void;
 }) {
   const [docType, setDocType] = useState("cv");
@@ -34,9 +36,7 @@ export default function KnowledgePanel({
       const form = new FormData();
       form.append("file", file);
       form.append("doc_type", docType);
-      if (docType !== "framework" && candidate) {
-        form.append("candidate", candidate);
-      }
+      form.append("sessionId", sessionId);
 
       const res = await fetch("/api/knowledge/upload", {
         method: "POST",
@@ -46,11 +46,13 @@ export default function KnowledgePanel({
       if (!res.ok) throw new Error(data.error || "Upload failed");
 
       setUploaded((prev) => [
-        { source: data.source, doc_type: data.doc_type, candidate: data.candidate },
+        {
+          source: data.source,
+          doc_type: data.doc_type,
+          candidate: data.candidate,
+        },
         ...prev,
       ]);
-
-      // Let the console auto-fill the candidate name + know docs are ready.
       onUploaded?.(data.candidate || null, data.doc_type);
     } catch (e: any) {
       setError(e.message);
@@ -61,7 +63,7 @@ export default function KnowledgePanel({
   }
 
   return (
-    <section className="mt-6 rounded-2xl border border-edge bg-panel/50">
+    <section className="rounded-2xl border border-edge bg-panel/50">
       <div className="flex items-center justify-between border-b border-edge px-6 py-3.5">
         <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-muted">
           Knowledge base
@@ -108,21 +110,16 @@ export default function KnowledgePanel({
 
         {docType === "cv" && (
           <p className="font-mono text-[0.7rem] text-muted">
-            the candidate name is read from the CV automatically
-          </p>
-        )}
-        {docType === "summary" && !candidate && (
-          <p className="font-mono text-[0.7rem] text-muted">
-            ⚠︎ upload the CV first so this attaches to the right candidate
+            scoped to this session - the candidate name is read from the CV
           </p>
         )}
         {busy && (
-          <span className="thinking font-display text-base">processing…</span>
+          <span className="thinking font-display text-base">processing...</span>
         )}
       </div>
 
       {error && (
-        <p className="px-6 pb-4 font-mono text-xs text-rust">⚠︎ {error}</p>
+        <p className="px-6 pb-4 font-mono text-xs text-rust">! {error}</p>
       )}
 
       {uploaded.length > 0 && (
@@ -132,8 +129,8 @@ export default function KnowledgePanel({
               key={i}
               className="rounded-full border border-sage/40 bg-sage/10 px-3 py-1.5 font-mono text-[0.7rem] text-sage"
             >
-              {u.source} · {u.doc_type}
-              {u.candidate ? ` · ${u.candidate}` : ""}
+              {u.source} - {u.doc_type}
+              {u.candidate ? ` - ${u.candidate}` : ""}
             </span>
           ))}
         </div>
