@@ -235,7 +235,7 @@ export default function CallPage() {
     const res = await fetch("/api/interview/context", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ candidate: candidate || null }),
+      body: JSON.stringify({ sessionId: room }),
     });
     const ctx = await res.json();
     knowledgeRef.current = ctx.context || "";
@@ -545,7 +545,7 @@ export default function CallPage() {
         </div>
       )}
 
-      <KnowledgePanel candidate={candidate} onUploaded={handleUploaded} />
+      <KnowledgePanel candidate={candidate} sessionId={room} onUploaded={handleUploaded} />
 
       <div className="my-6 grid gap-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
         <div>
