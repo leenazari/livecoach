@@ -1,151 +1,81 @@
-"use client";
+import { NextRequest, NextResponse } from "next/server";
+import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 
-type Comp = { name: string; score: number; note: string };
-type Summary = {
-  recommendation: string;
-  headline: string;
-  strengths: string[];
-  concerns: string[];
-  competencies: Comp[];
-  notCovered: string[];
-  styleProfile: string;
-};
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
-function Dots({ score }: { score: number }) {
-  const s = Math.max(0, Math.min(5, Math.round(score || 0)));
-  return (
-    <span className="flex gap-1">
-      {[1, 2, 3, 4, 5].map((n) => (
-        <span
-          key={n}
-          className={`h-2 w-2 rounded-full ${n <= s ? "bg-amber" : "bg-edge"}`}
-        />
-      ))}
-    </span>
-  );
+// END-OF-CALL assessment. One call, on the pro model (Sonnet) for quality.
+// Returns a structured JSON summary + scorecard + interviewer style profile.
+export async function POST(req: NextRequest) {
+  try {
+    const { transcript, knowledgeContext, role, candidate } = await req.json();
+
+    if (!transcript || transcript.length < 30) {
+      return NextResponse.json(
+        { error: "Not enough conversation to summarise yet." },
+        { status: 422 }
+      );
+    }
+
+    const system = `You are an expert interview assessor. You are given a speaker-labelled transcript of an interview${role ? ` for the role: ${role}` : ""}, plus the candidate's CV and any question framework.
+
+Produce a fair, evidence-based post-interview assessment. Base EVERY point on what was actually said in the transcript - never invent. Where the transcript is thin or a competency wasn't explored, say so rather than guessing or padding scores.
+
+Also extract a short STYLE PROFILE of the INTERVIEWER, drawn ONLY from the "Interviewer:" lines: their tone, how they phrase questions, formality, warmth, and typical sentence length. This will later be used to match future suggestion wording to their natural style.
+
+Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
+{
+  "recommendation": "one of: Strong, Lean yes, Mixed, Lean no, Too early to tell",
+  "headline": "one sentence overall read",
+  "strengths": ["short bullet", "..."],
+  "concerns": ["short bullet", "..."],
+  "competencies": [{"name": "competency", "score": 3, "note": "one short line of evidence"}],
+  "notCovered": ["an area or question not yet explored", "..."],
+  "styleProfile": "2-3 sentences on the interviewer's speaking style and tone"
 }
 
-function SummaryList({
-  title,
-  items,
-  tone,
-}: {
-  title: string;
-  items?: string[];
-  tone: "sage" | "rust" | "muted";
-}) {
-  if (!items || items.length === 0) return null;
-  const dot =
-    tone === "sage" ? "bg-sage" : tone === "rust" ? "bg-rust" : "bg-muted";
-  return (
-    <div>
-      <h3 className="mb-2 font-mono text-[0.7rem] uppercase tracking-[0.25em] text-muted">
-        {title}
-      </h3>
-      <ul className="space-y-1.5">
-        {items.map((it, i) => (
-          <li key={i} className="flex gap-2.5 font-sans text-sm text-bone/85">
-            <span
-              className={`mt-1.5 h-1.5 w-1.5 flex-none rounded-full ${dot}`}
-            />
-            <span>{it}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
+Rules: scores are 1-5 integers. 3-6 items per list. 3-6 role-relevant competencies. Keep every bullet tight.`;
 
-export default function PostCallSummary({
-  summary,
-  candidate,
-  onClose,
-}: {
-  summary: Summary;
-  candidate?: string;
-  onClose?: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/80 p-4 backdrop-blur-sm sm:p-8">
-      <div className="my-auto w-full max-w-[760px] rounded-2xl border border-edge bg-panel shadow-2xl">
-        <div className="flex items-center justify-between border-b border-edge px-6 py-4">
-          <div>
-            <h2 className="font-display text-2xl text-bone">Interview summary</h2>
-            {candidate && (
-              <p className="mt-0.5 font-mono text-xs uppercase tracking-[0.2em] text-muted">
-                {candidate}
-              </p>
-            )}
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-full border border-edge px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-muted transition hover:border-rust hover:text-rust"
-          >
-            close
-          </button>
-        </div>
+    const userMsg = `ROLE: ${role || "(not specified)"}
+CANDIDATE: ${candidate || "(unknown)"}
 
-        <div className="space-y-6 px-6 py-6">
-          <div className="rounded-xl border border-amber/40 bg-amber/[0.07] px-5 py-4">
-            <p className="font-mono text-[0.6rem] uppercase tracking-[0.25em] text-amber/70">
-              recommendation
-            </p>
-            <p className="mt-1 font-display text-xl text-bone">
-              {summary.recommendation}
-            </p>
-            {summary.headline && (
-              <p className="mt-2 font-sans text-sm text-bone/80">
-                {summary.headline}
-              </p>
-            )}
-          </div>
+CV / FRAMEWORK:
+${knowledgeContext || "(none provided)"}
 
-          {summary.competencies && summary.competencies.length > 0 && (
-            <div>
-              <h3 className="mb-3 font-mono text-[0.7rem] uppercase tracking-[0.25em] text-muted">
-                Competencies
-              </h3>
-              <div className="space-y-2.5">
-                {summary.competencies.map((c, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start justify-between gap-4"
-                  >
-                    <div>
-                      <p className="font-sans text-sm text-bone">{c.name}</p>
-                      {c.note && (
-                        <p className="font-sans text-xs text-muted">{c.note}</p>
-                      )}
-                    </div>
-                    <div className="flex-none pt-1">
-                      <Dots score={c.score} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+TRANSCRIPT:
+${transcript}
 
-          <SummaryList title="Strengths" items={summary.strengths} tone="sage" />
-          <SummaryList title="Concerns" items={summary.concerns} tone="rust" />
-          <SummaryList
-            title="Not yet covered"
-            items={summary.notCovered}
-            tone="muted"
-          />
+Return the JSON assessment now.`;
 
-          {summary.styleProfile && (
-            <div className="rounded-xl border border-edge bg-ink/40 px-5 py-4">
-              <p className="mb-1 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-muted">
-                interviewer style profile (for future cue matching)
-              </p>
-              <p className="font-sans text-sm text-bone/80">
-                {summary.styleProfile}
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+    const msg = await anthropic.messages.create({
+      model: CLAUDE_MODEL_PRO,
+      max_tokens: 1600,
+      system,
+      messages: [{ role: "user", content: userMsg }],
+    });
+
+    const raw = msg.content
+      .filter((b: any) => b.type === "text")
+      .map((b: any) => b.text)
+      .join("")
+      .trim();
+
+    let summary: any;
+    try {
+      summary = JSON.parse(raw.replace(/```json|```/g, "").trim());
+    } catch {
+      return NextResponse.json(
+        { error: "Could not parse the summary. Try again." },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ summary });
+  } catch (err: any) {
+    console.error("Summary route error:", err);
+    return NextResponse.json(
+      { error: err?.message || "Summary failed" },
+      { status: 500 }
+    );
+  }
 }
