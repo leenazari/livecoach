@@ -137,7 +137,7 @@ export default function CallStage({
             ws.send(e.data);
           }
         };
-        rec.start(250);
+        rec.start(100);
       } catch (e) {
         console.error("Recorder start failed:", e);
       }
