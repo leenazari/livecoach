@@ -64,6 +64,7 @@ Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
   "strengths": ["short bullet", "..."],
   "concerns": ["short bullet", "..."],
   "competencies": [{"name": "competency", "score": 3, "note": "one short line of evidence"}],
+  "questionReview": [{"question": "short version of what the interviewer asked", "answered": "yes", "note": "if not fully answered, say briefly how they dodged or deflected"}],
   "notCovered": ["an area or question not yet explored", "..."],
   "styleProfile": "2-3 sentences on the interviewer's speaking style and tone"
 }
@@ -81,7 +82,12 @@ SCORING RUBRIC (apply consistently and literally, so the result is reproducible)
 
 Base every score strictly on transcript evidence against this rubric - not on general impression - so that running this again on the same transcript yields the same scores.
 
-Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. Keep every bullet tight.`;
+QUESTION-BY-QUESTION REVIEW (questionReview):
+- Go through the substantive questions the interviewer actually asked, in order (skip greetings/filler).
+- For each: a short version of the question, whether the candidate actually answered it - "answered" is exactly one of "yes", "partial", or "no" - and a one-line note.
+- A confident, fluent reply that does not address what was asked is NOT a yes. If they changed the subject, deflected, or answered a different question, mark "no" (or "partial") and say briefly how (e.g. "pivoted to career instead of the family question"). Surfacing these dodges clearly is the most important part of this review - do not be charmed by smooth delivery.
+
+Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". Keep every bullet tight.`;
 
     const userMsg = `ROLE: ${role || "(not specified)"}
 CANDIDATE: ${candidate || "(unknown)"}
@@ -100,7 +106,7 @@ Return the JSON assessment now.`;
 
     const msg = await anthropic.messages.create({
       model: CLAUDE_MODEL_PRO,
-      max_tokens: 1600,
+      max_tokens: 2000,
       temperature: 0,
       system,
       messages: [{ role: "user", content: userMsg }],
