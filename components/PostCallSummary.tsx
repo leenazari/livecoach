@@ -1,12 +1,14 @@
 "use client";
 
 type Comp = { name: string; score: number; note: string };
+type QReview = { question: string; answered: string; note: string };
 type Summary = {
   recommendation: string;
   headline: string;
   strengths: string[];
   concerns: string[];
   competencies: Comp[];
+  questionReview: QReview[];
   notCovered: string[];
   styleProfile: string;
 };
@@ -142,6 +144,14 @@ export default function PostCallSummary({
       });
     }
 
+    if (summary.questionReview && summary.questionReview.length > 0) {
+      heading("Question by question");
+      summary.questionReview.forEach((q) => {
+        const tag = (q.answered || "").toUpperCase();
+        bullet(`[${tag}] ${q.question}${q.note ? `  -  ${q.note}` : ""}`);
+      });
+    }
+
     const list = (title: string, items?: string[]) => {
       if (items && items.length > 0) {
         heading(title);
@@ -235,6 +245,50 @@ export default function PostCallSummary({
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {summary.questionReview && summary.questionReview.length > 0 && (
+            <div>
+              <h3 className="mb-3 font-mono text-[0.7rem] uppercase tracking-[0.25em] text-muted">
+                Question by question
+              </h3>
+              <div className="space-y-2">
+                {summary.questionReview.map((q, i) => {
+                  const a = (q.answered || "").toLowerCase();
+                  const tone =
+                    a === "yes"
+                      ? { dot: "bg-sage", label: "text-sage", text: "answered" }
+                      : a === "partial"
+                      ? { dot: "bg-amber", label: "text-amber", text: "partial" }
+                      : { dot: "bg-rust", label: "text-rust", text: "dodged" };
+                  return (
+                    <div
+                      key={i}
+                      className="rounded-xl border border-edge bg-ink/40 px-4 py-3"
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <span
+                          className={`mt-1.5 h-1.5 w-1.5 flex-none rounded-full ${tone.dot}`}
+                        />
+                        <div>
+                          <p className="font-sans text-sm text-bone">
+                            {q.question}
+                          </p>
+                          <p className="mt-0.5 font-sans text-xs text-muted">
+                            <span
+                              className={`font-mono uppercase tracking-wider ${tone.label}`}
+                            >
+                              {tone.text}
+                            </span>
+                            {q.note ? ` - ${q.note}` : ""}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
