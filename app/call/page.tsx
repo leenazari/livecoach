@@ -69,6 +69,7 @@ export default function CallPage() {
   const [role, setRole] = useState("");
   const [prepping, setPrepping] = useState(false);
   const [docsReady, setDocsReady] = useState(false);
+  const [cvReady, setCvReady] = useState(false);
   const [status, setStatus] = useState("");
   const [loadedDocs, setLoadedDocs] = useState<string[]>([]);
   const [suggestedComps, setSuggestedComps] = useState<string[]>([]);
@@ -324,27 +325,32 @@ export default function CallPage() {
     }
   }, [loadContext, generateCompetencies, generateOpening]);
 
+  // Auto-generate the moment BOTH a CV and a role exist - whichever order they
+  // arrive in. Guarded so a given CV+role combo only generates once.
   useEffect(() => {
-    if (!docsReady || !role.trim()) return;
-    const key = `${candidate}|${role}`;
+    if (!cvReady || !role.trim()) return;
+    const key = `${candidate}|${role.trim()}`;
     if (autoFiredKeyRef.current === key) return;
     if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
     autoFireTimerRef.current = setTimeout(() => {
       autoFiredKeyRef.current = key;
       prepOpening();
-    }, 900);
+    }, 800);
     return () => {
       if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
     };
-  }, [candidate, role, docsReady, prepOpening]);
+  }, [candidate, role, cvReady, prepOpening]);
 
   const handleUploaded = useCallback(
     (detectedName: string | null, docType: string) => {
       if (detectedName) setCandidate(detectedName);
       setDocsReady(true);
+      if (docType === "cv") setCvReady(true);
       setStatus(
-        docType === "cv" && detectedName
-          ? `CV loaded - ${detectedName}`
+        docType === "cv"
+          ? detectedName
+            ? `CV loaded - ${detectedName}`
+            : "CV loaded"
           : "doc loaded"
       );
     },
