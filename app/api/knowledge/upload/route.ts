@@ -39,7 +39,8 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const file = form.get("file") as File | null;
     const docType = (form.get("doc_type") as string) || "framework";
-    const sessionId = (form.get("sessionId") as string) || "";
+    const qpSession = new URL(req.url).searchParams.get("sessionId") || "";
+    const sessionId = qpSession || ((form.get("sessionId") as string) || "");
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       source: file.name,
       doc_type: docType,
+      sessionId,
       candidate: docType === "cv" ? detectedName : null,
       detectedName,
       storagePath,
