@@ -38,10 +38,13 @@ export default function KnowledgePanel({
       form.append("doc_type", docType);
       form.append("sessionId", sessionId || "");
 
-      const res = await fetch("/api/knowledge/upload", {
-        method: "POST",
-        body: form,
-      });
+      const res = await fetch(
+        `/api/knowledge/upload?sessionId=${encodeURIComponent(sessionId || "")}`,
+        {
+          method: "POST",
+          body: form,
+        }
+      );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
 
@@ -69,7 +72,8 @@ export default function KnowledgePanel({
           Knowledge base
         </h2>
         <span className="font-mono text-[0.65rem] uppercase tracking-wider text-muted">
-          {uploaded.length} doc{uploaded.length === 1 ? "" : "s"} this session
+          session: {sessionId ? sessionId : "(none - open /call)"} ·{" "}
+          {uploaded.length} doc{uploaded.length === 1 ? "" : "s"}
         </span>
       </div>
 
