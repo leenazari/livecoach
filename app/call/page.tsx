@@ -73,6 +73,14 @@ export default function CallPage() {
   const [character, setCharacter] = useState("");
   const [callLive, setCallLive] = useState(false);
   const [expandSetup, setExpandSetup] = useState(false);
+  const [rightTab, setRightTab] = useState<"summary" | "transcript">("summary");
+  const [rightMin, setRightMin] = useState(false);
+  const [bullets, setBullets] = useState<{
+    context: string[];
+    signals: string[];
+    concerns: string[];
+  }>({ context: [], signals: [], concerns: [] });
+  const [summaryUpdating, setSummaryUpdating] = useState(false);
   const [prepping, setPrepping] = useState(false);
   const [docsReady, setDocsReady] = useState(false);
   const [cvReady, setCvReady] = useState(false);
@@ -99,6 +107,13 @@ export default function CallPage() {
   const focusChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const turnsSinceSummaryRef = useRef(0);
+  const summaryInFlightRef = useRef(false);
+  const bulletsRef = useRef<{
+    context: string[];
+    signals: string[];
+    concerns: string[];
+  }>({ context: [], signals: [], concerns: [] });
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -254,6 +269,64 @@ export default function CallPage() {
       inFlightRef.current = false;
     }
   }, []);
+
+  // Update the running summary from the conversation so far - themed bullets,
+  // incremental. Runs on a light cadence (see handleCandidateTurnEnd), off the
+  // cue's critical path, and guards against overlapping calls.
+  const updateRunningSummary = useCallback(async () => {
+    if (summaryInFlightRef.current) return;
+    const labelled = linesRef.current
+      .map(
+        (l) =>
+          `${l.role === "candidate" ? "Candidate" : "Interviewer"}: ${l.text}`
+      )
+      .join("\n");
+    if (!labelled.trim()) return;
+    summaryInFlightRef.current = true;
+    setSummaryUpdating(true);
+    try {
+      const res = await fetch("/api/interview/running-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: labelled,
+          previousBullets: bulletsRef.current,
+          focusAreas: suggestedCompsRef.current,
+          role: roleRef.current || null,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const next = {
+          context: Array.isArray(data.context) ? data.context : [],
+          signals: Array.isArray(data.signals) ? data.signals : [],
+          concerns: Array.isArray(data.concerns) ? data.concerns : [],
+        };
+        bulletsRef.current = next;
+        setBullets(next);
+      }
+    } catch (e) {
+      console.error("Running summary failed:", e);
+    } finally {
+      summaryInFlightRef.current = false;
+      setSummaryUpdating(false);
+    }
+  }, []);
+
+  // Fires on every candidate turn-end: always request a live cue, and update
+  // the running summary on a LIGHT cadence (first turn, then every 3rd) so we
+  // don't double the live model load.
+  const handleCandidateTurnEnd = useCallback(() => {
+    requestLiveSuggestion();
+    turnsSinceSummaryRef.current += 1;
+    const candCount = linesRef.current.filter(
+      (l) => l.role === "candidate"
+    ).length;
+    if (candCount === 1 || turnsSinceSummaryRef.current >= 3) {
+      turnsSinceSummaryRef.current = 0;
+      updateRunningSummary();
+    }
+  }, [requestLiveSuggestion, updateRunningSummary]);
 
   // Changing the interview focus mid-call should re-cue immediately against the
   // conversation so far - so the new focus is reflected right where we are now,
@@ -812,7 +885,7 @@ export default function CallPage() {
           identity="Interviewer"
           role="interviewer"
           onFinalTranscript={onFinalTranscript}
-          onCandidateTurnEnd={requestLiveSuggestion}
+          onCandidateTurnEnd={handleCandidateTurnEnd}
         />
       </div>
 
@@ -826,44 +899,156 @@ export default function CallPage() {
         </button>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1.7fr_1fr]">
-        <section className="flex min-h-[360px] flex-col rounded-2xl border border-edge bg-panel/50 lg:order-2">
-          <div className="border-b border-edge px-6 py-3.5">
-            <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-muted">
-              Labelled transcript - newest first
-            </h2>
-          </div>
-          <div className="flex-1 space-y-3 overflow-y-auto px-6 py-5">
-            {ordered.length === 0 ? (
-              <p className="font-mono text-sm text-muted">
-                Join the call and start talking. Each turn is tagged with who
-                said it.
-              </p>
-            ) : (
-              ordered.map((l, i) => (
-                <p key={i} className="font-mono text-sm leading-relaxed">
-                  <span
-                    className={
-                      l.role === "interviewer"
-                        ? "text-amber"
-                        : l.role === "candidate"
-                        ? "text-sage"
-                        : "text-muted"
-                    }
-                  >
-                    {l.role === "interviewer"
-                      ? "Interviewer"
-                      : l.role === "candidate"
-                      ? "Candidate"
-                      : l.role}
-                    :
-                  </span>{" "}
-                  <span className="text-bone/90">{l.text}</span>
+      {callLive && rightMin && (
+        <button
+          type="button"
+          onClick={() => setRightMin(false)}
+          className="mb-3 flex w-full items-center justify-end gap-2 rounded-xl border border-edge bg-panel/50 px-4 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:text-bone"
+        >
+          {"\u229E"} show summary / transcript
+        </button>
+      )}
+
+      <div className={`grid gap-6 ${rightMin ? "" : "lg:grid-cols-[1.7fr_1fr]"}`}>
+        {!rightMin && (
+          <section className="flex min-h-[360px] flex-col rounded-2xl border border-edge bg-panel/50 lg:order-2">
+            <div className="flex items-center border-b border-edge">
+              <button
+                type="button"
+                onClick={() => setRightTab("summary")}
+                className={`px-4 py-3 font-mono text-[0.62rem] uppercase tracking-[0.15em] transition ${
+                  rightTab === "summary"
+                    ? "border-b-2 border-amber text-amber"
+                    : "text-muted hover:text-bone"
+                }`}
+              >
+                Summary so far
+                {summaryUpdating && (
+                  <span className="ml-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sage align-middle" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setRightTab("transcript")}
+                className={`px-4 py-3 font-mono text-[0.62rem] uppercase tracking-[0.15em] transition ${
+                  rightTab === "transcript"
+                    ? "border-b-2 border-amber text-amber"
+                    : "text-muted hover:text-bone"
+                }`}
+              >
+                Transcript
+              </button>
+              <button
+                type="button"
+                onClick={() => setRightMin(true)}
+                title="minimise"
+                className="ml-auto px-4 py-3 font-mono text-sm text-muted transition hover:text-bone"
+              >
+                {"\u229F"}
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {rightTab === "summary" ? (
+                bullets.context.length +
+                  bullets.signals.length +
+                  bullets.concerns.length ===
+                0 ? (
+                  <p className="font-mono text-sm leading-relaxed text-muted">
+                    A running summary builds here as the conversation goes -
+                    grouped into context, signals, and concerns.
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {bullets.context.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-muted">
+                          Context
+                        </p>
+                        <ul className="space-y-1.5">
+                          {bullets.context.map((b, i) => (
+                            <li
+                              key={i}
+                              className="flex gap-2 font-sans text-[0.82rem] leading-snug text-bone/80"
+                            >
+                              <span className="text-muted">{"\u2013"}</span>
+                              <span>{b}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {bullets.signals.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-sage">
+                          Signals
+                        </p>
+                        <ul className="space-y-1.5">
+                          {bullets.signals.map((b, i) => (
+                            <li
+                              key={i}
+                              className="flex gap-2 font-sans text-[0.82rem] leading-snug text-bone/80"
+                            >
+                              <span className="text-sage">{"\u2013"}</span>
+                              <span>{b}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {bullets.concerns.length > 0 && (
+                      <div>
+                        <p className="mb-1.5 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-rust">
+                          Concerns
+                        </p>
+                        <ul className="space-y-1.5">
+                          {bullets.concerns.map((b, i) => (
+                            <li
+                              key={i}
+                              className="flex gap-2 font-sans text-[0.82rem] leading-snug text-bone/80"
+                            >
+                              <span className="text-rust">{"\u2013"}</span>
+                              <span>{b}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )
+              ) : ordered.length === 0 ? (
+                <p className="font-mono text-sm text-muted">
+                  Join the call and start talking. Each turn is tagged with who
+                  said it.
                 </p>
-              ))
-            )}
-          </div>
-        </section>
+              ) : (
+                <div className="space-y-3">
+                  {ordered.map((l, i) => (
+                    <p key={i} className="font-mono text-sm leading-relaxed">
+                      <span
+                        className={
+                          l.role === "interviewer"
+                            ? "text-amber"
+                            : l.role === "candidate"
+                            ? "text-sage"
+                            : "text-muted"
+                        }
+                      >
+                        {l.role === "interviewer"
+                          ? "Interviewer"
+                          : l.role === "candidate"
+                          ? "Candidate"
+                          : l.role}
+                        :
+                      </span>{" "}
+                      <span className="text-bone/90">{l.text}</span>
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         <section className="flex min-h-[360px] flex-col rounded-2xl border border-amber/40 bg-gradient-to-b from-amber/[0.07] to-transparent lg:order-1">
           <div className="border-b border-edge px-6 py-3.5">
