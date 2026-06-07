@@ -40,8 +40,10 @@ Rules:
 - A theme may be empty if nothing fits yet.
 - Judge signals and concerns against what the caller cares about (their focus areas), not generic positivity.
 
+Also rate COVERAGE: for EACH focus area provided, give a 0-100 score for how well the conversation SO FAR has actually addressed/explored it (0 = not touched at all, 100 = thoroughly covered with substance). Base it strictly on what has genuinely been said - do not be generous. Use the focus area's exact text as the key.
+
 Output ONLY valid JSON (no markdown, no preamble):
-{ "context": ["..."], "signals": ["..."], "concerns": ["..."] }`;
+{ "context": ["..."], "signals": ["..."], "concerns": ["..."], "coverage": { "<focus area>": 0-100 } }`;
 
     const user = `CALLER'S FOCUS AREAS (what matters most): ${
       Array.isArray(focusAreas) && focusAreas.length
@@ -83,10 +85,21 @@ Return the updated JSON bullets now.`;
         ? a.filter((x: any) => typeof x === "string" && x.trim()).slice(0, 5)
         : [];
 
+    const coverage: Record<string, number> = {};
+    if (out.coverage && typeof out.coverage === "object") {
+      for (const [k, v] of Object.entries(out.coverage)) {
+        const n = Math.round(Number(v));
+        if (typeof k === "string" && Number.isFinite(n)) {
+          coverage[k] = Math.max(0, Math.min(100, n));
+        }
+      }
+    }
+
     return NextResponse.json({
       context: clean(out.context),
       signals: clean(out.signals),
       concerns: clean(out.concerns),
+      coverage,
     });
   } catch (err: any) {
     console.error("Running summary error:", err);
