@@ -71,6 +71,8 @@ export default function CallPage() {
   const [role, setRole] = useState("");
   const [brief, setBrief] = useState("");
   const [character, setCharacter] = useState("");
+  const [callLive, setCallLive] = useState(false);
+  const [expandSetup, setExpandSetup] = useState(false);
   const [prepping, setPrepping] = useState(false);
   const [docsReady, setDocsReady] = useState(false);
   const [cvReady, setCvReady] = useState(false);
@@ -442,6 +444,11 @@ export default function CallPage() {
   const ordered = [...lines].reverse();
   const pinned = suggestions.filter((s) => s.pinned);
   const feed = suggestions.filter((s) => !s.pinned).reverse();
+  // The cue engine works down the ranked list, top first; the first active
+  // focus (in rank order) is the one currently being served.
+  const servingFocus =
+    suggestedComps.find((c) => selectedComps.includes(c)) || "";
+  const setupCollapsed = callLive && !expandSetup;
 
   // Cue card: question is the hero, why is a tiny tag, follow-up is a
   // clearly separated optional section.
@@ -563,8 +570,36 @@ export default function CallPage() {
         )}
       </header>
 
-      {/* PRE-CALL COCKPIT - set the call up; nothing builds until you confirm */}
-      <div className="mb-6 overflow-hidden rounded-2xl border border-edge bg-panel/60">
+      {setupCollapsed ? (
+        <button
+          type="button"
+          onClick={() => setExpandSetup(true)}
+          className="mb-6 flex w-full items-center gap-3 rounded-2xl border border-sage/30 bg-sage/[0.05] px-4 py-3 text-left transition hover:border-sage/50"
+        >
+          <span className="font-mono text-[0.6rem] uppercase tracking-[0.15em] text-sage">
+            plan
+          </span>
+          <span className="truncate font-mono text-[0.66rem] text-muted">
+            {candidate || "untitled"} · {selectedComps.length} focus active
+            {suggestedComps.length - selectedComps.length > 0
+              ? ` · ${suggestedComps.length - selectedComps.length} covered`
+              : ""}
+          </span>
+          <span className="ml-auto whitespace-nowrap font-mono text-[0.6rem] uppercase tracking-wider text-muted">
+            {"\u25B8"} expand setup
+          </span>
+        </button>
+      ) : (
+        <div className="mb-6 overflow-hidden rounded-2xl border border-edge bg-panel/60">
+          {callLive && (
+            <button
+              type="button"
+              onClick={() => setExpandSetup(false)}
+              className="flex w-full items-center justify-end gap-2 border-b border-edge bg-ink/40 px-4 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:text-bone"
+            >
+              {"\u25BE"} collapse setup
+            </button>
+          )}
         <div className="grid lg:grid-cols-2">
           {/* LEFT - inputs */}
           <div className="flex flex-col gap-4 border-edge p-5 lg:border-r">
@@ -681,20 +716,35 @@ export default function CallPage() {
               ? "Plan built. Rank your focus, then share the join link below to start. Rebuild refreshes character + questions only - your focus stays."
               : "Nothing generates until you build - no wasted calls while you type."}
           </p>
-          <button
-            onClick={prepOpening}
-            disabled={prepping || (!brief.trim() && !(cvReady && role.trim()))}
-            className="shrink-0 rounded-full border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {prepping
-              ? "building..."
-              : suggestedComps.length > 0
-              ? "Rebuild plan"
-              : "Confirm & build plan"}
-          </button>
+          <div className="flex shrink-0 gap-2">
+            <button
+              onClick={prepOpening}
+              disabled={prepping || (!brief.trim() && !(cvReady && role.trim()))}
+              className="rounded-full border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {prepping
+                ? "building..."
+                : suggestedComps.length > 0
+                ? "Rebuild plan"
+                : "Confirm & build plan"}
+            </button>
+            {suggestedComps.length > 0 && (
+              <button
+                onClick={() => {
+                  setExpandSetup(false);
+                  setCallLive(true);
+                }}
+                className="rounded-full border border-sage/60 bg-sage/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
+              >
+                Start call {"\u25B8"}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+        </div>
+      )}
 
+      {!callLive && (
       <div className="my-6 grid gap-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
         <div>
           <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
@@ -727,6 +777,34 @@ export default function CallPage() {
           </a>
         </div>
       </div>
+      )}
+
+      {callLive && suggestedComps.length > 0 && (
+        <div className="mb-3 flex items-center gap-2 overflow-x-auto rounded-2xl border border-edge bg-panel/50 px-4 py-2.5">
+          <span className="shrink-0 font-mono text-[0.58rem] uppercase tracking-[0.16em] text-muted">
+            focus
+          </span>
+          {suggestedComps.map((c) => {
+            const active = selectedComps.includes(c);
+            const serving = c === servingFocus;
+            return (
+              <span
+                key={c}
+                className={`whitespace-nowrap rounded-full border px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-wider ${
+                  serving
+                    ? "border-amber bg-amber/15 text-amber"
+                    : active
+                    ? "border-edge text-muted"
+                    : "border-sage/40 text-sage line-through opacity-70"
+                }`}
+              >
+                {serving ? "\u25B8 " : ""}
+                {c}
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       <div className="mb-6">
         <CallStage
@@ -748,8 +826,8 @@ export default function CallPage() {
         </button>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
-        <section className="flex min-h-[360px] flex-col rounded-2xl border border-edge bg-panel/50">
+      <div className="grid gap-6 lg:grid-cols-[1.7fr_1fr]">
+        <section className="flex min-h-[360px] flex-col rounded-2xl border border-edge bg-panel/50 lg:order-2">
           <div className="border-b border-edge px-6 py-3.5">
             <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-muted">
               Labelled transcript - newest first
@@ -787,7 +865,7 @@ export default function CallPage() {
           </div>
         </section>
 
-        <section className="flex min-h-[360px] flex-col rounded-2xl border border-amber/40 bg-gradient-to-b from-amber/[0.07] to-transparent">
+        <section className="flex min-h-[360px] flex-col rounded-2xl border border-amber/40 bg-gradient-to-b from-amber/[0.07] to-transparent lg:order-1">
           <div className="border-b border-edge px-6 py-3.5">
             <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-amber">
               Ask this next
