@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import CallStage from "@/components/CallStage";
 import KnowledgePanel from "@/components/KnowledgePanel";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
+import SortableFocusList from "@/components/SortableFocusList";
 import PostCallSummary from "@/components/PostCallSummary";
 
 type Line = { role: string; text: string };
@@ -301,8 +302,13 @@ export default function CallPage() {
     const focus: string[] = Array.isArray(data.focusAreas)
       ? data.focusAreas
       : [];
-    setSuggestedComps(focus); // ranked, most important first
-    setSelectedComps(focus); // all active to start, in rank order
+    // Lock the focus list once it exists: a regenerate only refreshes the
+    // character profile + opening questions and must NOT touch the focus the
+    // user has ranked/edited. Only seed it on the first build.
+    setSuggestedComps((prev) => (prev.length > 0 ? prev : focus));
+    setSelectedComps((prev) =>
+      prev.length > 0 || suggestedCompsRef.current.length > 0 ? prev : focus
+    );
     setCharacter(typeof data.character === "string" ? data.character : "");
 
     const qs: any[] = Array.isArray(data.openingQuestions)
@@ -437,14 +443,14 @@ export default function CallPage() {
     );
   };
 
-  const moveComp = (i: number, dir: -1 | 1) => {
-    setSuggestedComps((prev) => {
-      const j = i + dir;
-      if (j < 0 || j >= prev.length) return prev;
-      const next = [...prev];
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
+  const deleteComp = (c: string) => {
+    setSuggestedComps((prev) => prev.filter((x) => x !== c));
+    setSelectedComps((prev) => prev.filter((x) => x !== c));
+  };
+
+  const addComp = (c: string) => {
+    setSuggestedComps((prev) => (prev.includes(c) ? prev : [...prev, c]));
+    setSelectedComps((prev) => (prev.includes(c) ? prev : [...prev, c]));
   };
 
   const togglePin = (id: number) => {
@@ -657,65 +663,20 @@ export default function CallPage() {
             Interview focus <span className="text-muted">- priority order, top first</span>
           </p>
           <p className="mb-3 font-mono text-[0.65rem] leading-relaxed text-muted">
-            Reorder with the arrows - cues work down the list, top first. Mark
-            one <span className="text-sage">covered</span> when you're satisfied
-            and cues move to the next active focus. Covered focuses are still
-            scored; re-activate any time.
+            Drag (or use the arrows) to rank - cues work down the list, top
+            first. Delete with <span className="text-rust">\u00D7</span>, or add
+            your own. Mark one <span className="text-sage">covered</span> when
+            satisfied; covered focuses are still scored - re-activate any time.
+            Re-building the plan won't touch this list.
           </p>
-          <div className="flex flex-col gap-2">
-            {suggestedComps.map((c, i) => {
-              const active = selectedComps.includes(c);
-              return (
-                <div
-                  key={c}
-                  className={`flex items-center gap-3 rounded-lg border px-3 py-2 transition ${
-                    active
-                      ? "border-amber/40 bg-amber/[0.06]"
-                      : "border-edge bg-ink/30"
-                  }`}
-                >
-                  <div className="flex flex-col leading-none">
-                    <button
-                      onClick={() => moveComp(i, -1)}
-                      disabled={i === 0}
-                      title="move up"
-                      className="text-[0.7rem] text-muted transition hover:text-amber disabled:opacity-25"
-                    >
-                      {"\u25B2"}
-                    </button>
-                    <button
-                      onClick={() => moveComp(i, 1)}
-                      disabled={i === suggestedComps.length - 1}
-                      title="move down"
-                      className="text-[0.7rem] text-muted transition hover:text-amber disabled:opacity-25"
-                    >
-                      {"\u25BC"}
-                    </button>
-                  </div>
-                  <span className="w-4 font-mono text-[0.7rem] text-muted">
-                    {i + 1}
-                  </span>
-                  <span
-                    className={`flex-1 font-mono text-[0.78rem] uppercase tracking-wider ${
-                      active ? "text-bone" : "text-muted line-through"
-                    }`}
-                  >
-                    {c}
-                  </span>
-                  <button
-                    onClick={() => toggleComp(c)}
-                    className={`rounded-full border px-3 py-1 font-mono text-[0.6rem] uppercase tracking-wider transition ${
-                      active
-                        ? "border-amber/50 text-amber hover:bg-amber/10"
-                        : "border-sage/50 text-sage hover:bg-sage/10"
-                    }`}
-                  >
-                    {active ? "active" : "covered"}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+          <SortableFocusList
+            items={suggestedComps}
+            activeItems={selectedComps}
+            onReorder={setSuggestedComps}
+            onToggle={toggleComp}
+            onDelete={deleteComp}
+            onAdd={addComp}
+          />
         </div>
       )}
 
