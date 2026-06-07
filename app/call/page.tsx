@@ -85,6 +85,7 @@ export default function CallPage() {
   const knowledgeRef = useRef("");
   const roleRef = useRef("");
   const selectedCompsRef = useRef<string[]>([]);
+  const suggestedCompsRef = useRef<string[]>([]);
   const cachedSummaryRef = useRef<any>(null);
   const cachedSigRef = useRef("");
   const linesRef = useRef<Line[]>([]);
@@ -107,6 +108,9 @@ export default function CallPage() {
   useEffect(() => {
     selectedCompsRef.current = selectedComps;
   }, [selectedComps]);
+  useEffect(() => {
+    suggestedCompsRef.current = suggestedComps;
+  }, [suggestedComps]);
 
   const joinLink = origin ? `${origin}/join/${room}` : "";
   const botLink = origin ? `${origin}/candidate-bot/${room}` : "";
@@ -201,7 +205,9 @@ export default function CallPage() {
           previousSuggestions: recentTextsRef.current.slice(0, 5),
           askedQuestions,
           lastQuestion,
-          competencies: selectedCompsRef.current,
+          competencies: suggestedCompsRef.current.filter((c) =>
+            selectedCompsRef.current.includes(c)
+          ),
           allowHold: true,
         }),
       });
@@ -263,7 +269,7 @@ export default function CallPage() {
     return () => {
       if (focusChangeTimerRef.current) clearTimeout(focusChangeTimerRef.current);
     };
-  }, [selectedComps, requestLiveSuggestion]);
+  }, [selectedComps, suggestedComps, requestLiveSuggestion]);
 
   const loadContext = useCallback(async () => {
     const res = await fetch("/api/interview/context", {
@@ -386,7 +392,7 @@ export default function CallPage() {
       return;
     }
     setSummaryTranscript(labelled);
-    const sig = `${labelled}||${selectedCompsRef.current.join(",")}`;
+    const sig = `${labelled}||${suggestedCompsRef.current.join(",")}`;
     // Same call, already summarised -> just re-show the saved results.
     if (cachedSummaryRef.current && cachedSigRef.current === sig) {
       setSummary(cachedSummaryRef.current);
@@ -404,7 +410,7 @@ export default function CallPage() {
           knowledgeContext: knowledgeRef.current,
           role: roleRef.current || null,
           candidate: candidate || null,
-          competencies: selectedCompsRef.current,
+          competencies: suggestedCompsRef.current,
           sessionId: room,
         }),
       });
@@ -429,6 +435,16 @@ export default function CallPage() {
     setSelectedComps((prev) =>
       prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
     );
+  };
+
+  const moveComp = (i: number, dir: -1 | 1) => {
+    setSuggestedComps((prev) => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
   };
 
   const togglePin = (id: number) => {
@@ -638,26 +654,65 @@ export default function CallPage() {
       {suggestedComps.length > 0 && (
         <div className="mb-5 rounded-2xl border border-edge bg-panel/50 p-5">
           <p className="mb-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-            Interview focus <span className="text-muted">- in priority order</span>
+            Interview focus <span className="text-muted">- priority order, top first</span>
           </p>
-          <p className="mb-3 font-mono text-[0.65rem] text-muted">
-            Tap the competencies that matter for this hire - cues will steer toward them.
+          <p className="mb-3 font-mono text-[0.65rem] leading-relaxed text-muted">
+            Reorder with the arrows - cues work down the list, top first. Mark
+            one <span className="text-sage">covered</span> when you're satisfied
+            and cues move to the next active focus. Covered focuses are still
+            scored; re-activate any time.
           </p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2">
             {suggestedComps.map((c, i) => {
-              const on = selectedComps.includes(c);
+              const active = selectedComps.includes(c);
               return (
-                <button
+                <div
                   key={c}
-                  onClick={() => toggleComp(c)}
-                  className={`rounded-full border px-3.5 py-1.5 font-mono text-[0.7rem] uppercase tracking-wider transition ${
-                    on
-                      ? "border-amber bg-amber/15 text-amber"
-                      : "border-edge text-muted hover:border-amber/50 hover:text-bone line-through opacity-60"
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2 transition ${
+                    active
+                      ? "border-amber/40 bg-amber/[0.06]"
+                      : "border-edge bg-ink/30"
                   }`}
                 >
-                  <span className="opacity-60">{i + 1}.</span> {c}
-                </button>
+                  <div className="flex flex-col leading-none">
+                    <button
+                      onClick={() => moveComp(i, -1)}
+                      disabled={i === 0}
+                      title="move up"
+                      className="text-[0.7rem] text-muted transition hover:text-amber disabled:opacity-25"
+                    >
+                      {"\u25B2"}
+                    </button>
+                    <button
+                      onClick={() => moveComp(i, 1)}
+                      disabled={i === suggestedComps.length - 1}
+                      title="move down"
+                      className="text-[0.7rem] text-muted transition hover:text-amber disabled:opacity-25"
+                    >
+                      {"\u25BC"}
+                    </button>
+                  </div>
+                  <span className="w-4 font-mono text-[0.7rem] text-muted">
+                    {i + 1}
+                  </span>
+                  <span
+                    className={`flex-1 font-mono text-[0.78rem] uppercase tracking-wider ${
+                      active ? "text-bone" : "text-muted line-through"
+                    }`}
+                  >
+                    {c}
+                  </span>
+                  <button
+                    onClick={() => toggleComp(c)}
+                    className={`rounded-full border px-3 py-1 font-mono text-[0.6rem] uppercase tracking-wider transition ${
+                      active
+                        ? "border-amber/50 text-amber hover:bg-amber/10"
+                        : "border-sage/50 text-sage hover:bg-sage/10"
+                    }`}
+                  >
+                    {active ? "active" : "covered"}
+                  </button>
+                </div>
               );
             })}
           </div>
