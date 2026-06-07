@@ -94,8 +94,6 @@ export default function CallPage() {
   const inFlightRef = useRef(false);
   const lastShownRef = useRef("");
   const recentTextsRef = useRef<string[]>([]);
-  const autoFiredKeyRef = useRef("");
-  const autoFireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
@@ -346,24 +344,6 @@ export default function CallPage() {
     }
   }, [loadContext, generatePlan]);
 
-  // Auto-build the plan when there's enough to plan from: a written intent
-  // brief (the top driver) OR a CV + role. Whichever arrives, once per combo.
-  useEffect(() => {
-    const haveBrief = brief.trim().length > 15;
-    const haveCvRole = cvReady && role.trim().length > 0;
-    if (!haveBrief && !haveCvRole) return;
-    const key = `${brief.trim()}|${candidate}|${role.trim()}`;
-    if (autoFiredKeyRef.current === key) return;
-    if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
-    autoFireTimerRef.current = setTimeout(() => {
-      autoFiredKeyRef.current = key;
-      prepOpening();
-    }, 1200);
-    return () => {
-      if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
-    };
-  }, [brief, candidate, role, cvReady, prepOpening]);
-
   const handleUploaded = useCallback(
     (detectedName: string | null, docType: string) => {
       if (detectedName) setCandidate(detectedName);
@@ -583,104 +563,137 @@ export default function CallPage() {
         )}
       </header>
 
-      <div className="mb-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
-        <div className="mb-1.5 flex items-center justify-between gap-3">
-          <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-            What's this call for? (the intent - drives everything)
-          </span>
-          <VoiceNoteButton onText={appendBrief} />
-        </div>
-        <textarea
-          value={brief}
-          onChange={(e) => setBrief(e.target.value)}
-          rows={3}
-          placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
-          className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
-        />
-        <p className="mt-1.5 font-mono text-[0.65rem] leading-relaxed text-muted">
-          The brief is the top driver. A CV or job description (below) is
-          supporting context. With just this, you can plan a call from nothing.
-        </p>
-      </div>
+      {/* PRE-CALL COCKPIT - set the call up; nothing builds until you confirm */}
+      <div className="mb-6 overflow-hidden rounded-2xl border border-edge bg-panel/60">
+        <div className="grid lg:grid-cols-2">
+          {/* LEFT - inputs */}
+          <div className="flex flex-col gap-4 border-edge p-5 lg:border-r">
+            <div>
+              <div className="mb-1.5 flex items-center justify-between gap-3">
+                <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
+                  Intent - what's this call for?
+                </span>
+                <VoiceNoteButton onText={appendBrief} />
+              </div>
+              <textarea
+                value={brief}
+                onChange={(e) => setBrief(e.target.value)}
+                rows={3}
+                placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
+                className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+              />
+              <p className="mt-1.5 font-mono text-[0.62rem] leading-relaxed text-muted">
+                The top driver. A CV or job description is supporting context -
+                with just this, you can plan a call from nothing.
+              </p>
+            </div>
 
-      <div className="mb-3 grid gap-4 rounded-2xl border border-edge bg-panel/60 p-5 md:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted">
-            Candidate (auto-filled from CV)
-          </span>
-          <input
-            value={candidate}
-            placeholder="upload a CV to fill this"
-            onChange={(e) => setCandidate(e.target.value)}
-            className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
-          />
-        </label>
-        <label className="block">
-          <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted">
-            Role
-          </span>
-          <input
-            value={role}
-            placeholder="e.g. Senior Backend Engineer"
-            onChange={(e) => setRole(e.target.value)}
-            className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
-          />
-        </label>
-        <div className="flex flex-col justify-end gap-2">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1.5 block font-mono text-[0.6rem] uppercase tracking-[0.2em] text-muted">
+                  Candidate (auto from CV)
+                </span>
+                <input
+                  value={candidate}
+                  placeholder="upload a CV to fill"
+                  onChange={(e) => setCandidate(e.target.value)}
+                  className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block font-mono text-[0.6rem] uppercase tracking-[0.2em] text-muted">
+                  Role <span className="text-muted/60">(optional)</span>
+                </span>
+                <input
+                  value={role}
+                  placeholder="e.g. Senior PM"
+                  onChange={(e) => setRole(e.target.value)}
+                  className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+                />
+              </label>
+            </div>
+
+            <KnowledgePanel
+              candidate={candidate}
+              sessionId={room}
+              onUploaded={handleUploaded}
+            />
+
+            {loadedDocs.length > 0 && (
+              <p className="font-mono text-[0.66rem] text-muted">
+                in context: {loadedDocs.join(" \u00b7 ")}
+              </p>
+            )}
+          </div>
+
+          {/* RIGHT - the generated plan */}
+          <div className="flex flex-col gap-4 p-5">
+            {character ? (
+              <div className="rounded-xl border border-sage/40 bg-sage/[0.06] p-4">
+                <p className="mb-1 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
+                  Who you're looking for
+                </p>
+                <p className="font-sans text-sm leading-relaxed text-bone/85">
+                  {character}
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-edge p-7 text-center">
+                <p className="font-mono text-[0.66rem] uppercase tracking-wider text-muted">
+                  Your plan appears here
+                </p>
+                <p className="mt-1.5 font-mono text-[0.62rem] leading-relaxed text-muted/70">
+                  Add a brief (and optionally a CV + role), then build.
+                </p>
+              </div>
+            )}
+
+            {suggestedComps.length > 0 && (
+              <div>
+                <p className="mb-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
+                  Interview focus{" "}
+                  <span className="text-muted">- priority order</span>
+                </p>
+                <p className="mb-3 font-mono text-[0.6rem] leading-relaxed text-muted">
+                  Drag or arrows to rank. Delete with{" "}
+                  <span className="text-rust">{"\u00D7"}</span>, or add your
+                  own. Mark one <span className="text-sage">covered</span> when
+                  satisfied - still scored, re-activate any time. Rebuilding
+                  won't touch this list.
+                </p>
+                <SortableFocusList
+                  items={suggestedComps}
+                  activeItems={selectedComps}
+                  onReorder={setSuggestedComps}
+                  onToggle={toggleComp}
+                  onDelete={deleteComp}
+                  onAdd={addComp}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* CONFIRM BAR - the build gate */}
+        <div className="flex flex-col items-start gap-3 border-t border-edge bg-ink/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="font-mono text-[0.63rem] leading-relaxed text-muted">
+            {suggestedComps.length > 0
+              ? "Plan built. Rank your focus, then share the join link below to start. Rebuild refreshes character + questions only - your focus stays."
+              : "Nothing generates until you build - no wasted calls while you type."}
+          </p>
           <button
             onClick={prepOpening}
-            disabled={prepping}
-            className="rounded-lg border border-amber/50 bg-amber/10 px-4 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={prepping || (!brief.trim() && !(cvReady && role.trim()))}
+            className="shrink-0 rounded-full border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {prepping ? "building..." : "Build plan"}
+            {prepping
+              ? "building..."
+              : suggestedComps.length > 0
+              ? "Rebuild plan"
+              : "Confirm & build plan"}
           </button>
-          <p className="font-mono text-[0.65rem] leading-relaxed text-muted">
-            Auto-builds from a brief, or a CV + role.
-          </p>
         </div>
       </div>
-
-      {loadedDocs.length > 0 && (
-        <p className="mb-3 font-mono text-[0.7rem] text-muted">
-          in context: {loadedDocs.join(" \u00b7 ")}
-        </p>
-      )}
-
-      {character && (
-        <div className="mb-3 rounded-2xl border border-sage/40 bg-sage/[0.06] p-5">
-          <p className="mb-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-sage">
-            Who you're looking for
-          </p>
-          <p className="font-sans text-sm leading-relaxed text-bone/85">
-            {character}
-          </p>
-        </div>
-      )}
-
-      {suggestedComps.length > 0 && (
-        <div className="mb-5 rounded-2xl border border-edge bg-panel/50 p-5">
-          <p className="mb-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-            Interview focus <span className="text-muted">- priority order, top first</span>
-          </p>
-          <p className="mb-3 font-mono text-[0.65rem] leading-relaxed text-muted">
-            Drag (or use the arrows) to rank - cues work down the list, top
-            first. Delete with <span className="text-rust">\u00D7</span>, or add
-            your own. Mark one <span className="text-sage">covered</span> when
-            satisfied; covered focuses are still scored - re-activate any time.
-            Re-building the plan won't touch this list.
-          </p>
-          <SortableFocusList
-            items={suggestedComps}
-            activeItems={selectedComps}
-            onReorder={setSuggestedComps}
-            onToggle={toggleComp}
-            onDelete={deleteComp}
-            onAdd={addComp}
-          />
-        </div>
-      )}
-
-      <KnowledgePanel candidate={candidate} sessionId={room} onUploaded={handleUploaded} />
 
       <div className="my-6 grid gap-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
         <div>
