@@ -91,6 +91,9 @@ export default function CallPage() {
   const recentTextsRef = useRef<string[]>([]);
   const autoFiredKeyRef = useRef("");
   const autoFireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -241,6 +244,23 @@ export default function CallPage() {
       inFlightRef.current = false;
     }
   }, []);
+
+  // Changing the interview focus mid-call should re-cue immediately against the
+  // conversation so far - so the new focus is reflected right where we are now,
+  // not only on the next candidate turn. Debounced so toggling fires once.
+  useEffect(() => {
+    const hasCandidateTurn = linesRef.current.some(
+      (l) => l.role === "candidate"
+    );
+    if (!hasCandidateTurn || selectedComps.length === 0) return;
+    if (focusChangeTimerRef.current) clearTimeout(focusChangeTimerRef.current);
+    focusChangeTimerRef.current = setTimeout(() => {
+      requestLiveSuggestion();
+    }, 600);
+    return () => {
+      if (focusChangeTimerRef.current) clearTimeout(focusChangeTimerRef.current);
+    };
+  }, [selectedComps, requestLiveSuggestion]);
 
   const loadContext = useCallback(async () => {
     const res = await fetch("/api/interview/context", {
