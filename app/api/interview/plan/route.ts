@@ -20,7 +20,9 @@ There may be no CV or job description at all - in that case build the plan from 
 Produce a plan that drives the conversation toward the caller's intent:
 1. focusAreas: 6-9 topics/competencies to assess or explore, RANKED most-important-first for THIS intent. Short keyword labels (1-4 words), specific to the intent - not generic filler.
 2. character: 1-2 sentences describing the type of person / the outcome the caller is looking for, inferred from the intent (and JD if present).
-3. openingQuestions: exactly 3 natural opening questions that serve the intent, each as { "q": "...", "why": "short reason" }.
+3. openingQuestions: exactly 3 questions to OPEN the conversation, each as { "q": "...", "why": "short reason" }.
+   An opener should ease the person in and surface their MOTIVATION, context, and what they care about - the kind of question you'd genuinely start a conversation with. Warm and inviting, one clear question each.
+   Do NOT make openers hypothetical stress-tests, pressure scenarios (e.g. "how would you feel if I gave you X with no Y"), gotchas, or loaded multi-clause challenges - that kind of probing comes LATER in the conversation, never at the top. The first question especially must be the gentlest, most motivation-focused opener; order the three from gentlest to slightly more searching.
 
 Output ONLY valid JSON (no markdown, no preamble):
 { "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"..."}] }`;
