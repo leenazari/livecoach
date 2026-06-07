@@ -9,9 +9,9 @@ type Uploaded = {
 };
 
 const DOC_TYPES = [
-  { value: "cv", label: "Candidate CV" },
+  { value: "cv", label: "Context: person (CV / bio)" },
   { value: "summary", label: "Previous summary" },
-  { value: "framework", label: "Question framework" },
+  { value: "framework", label: "Context: framework / notes" },
 ];
 
 export default function KnowledgePanel({
@@ -69,7 +69,7 @@ export default function KnowledgePanel({
     <section className="rounded-2xl border border-edge bg-panel/50">
       <div className="flex items-center justify-between border-b border-edge px-6 py-3.5">
         <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-muted">
-          Knowledge base
+          Context (optional)
         </h2>
         <span className="font-mono text-[0.65rem] uppercase tracking-wider text-muted">
           session: {sessionId ? sessionId : "(none - open /call)"} ·{" "}
@@ -114,7 +114,7 @@ export default function KnowledgePanel({
 
         {docType === "cv" && (
           <p className="font-mono text-[0.7rem] text-muted">
-            scoped to this session - the candidate name is read from the CV
+            scoped to this session - a name is read from it when present
           </p>
         )}
         {busy && (
