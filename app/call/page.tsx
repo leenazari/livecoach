@@ -82,6 +82,7 @@ export default function CallPage() {
     concerns: string[];
   }>({ context: [], signals: [], concerns: [] });
   const [summaryUpdating, setSummaryUpdating] = useState(false);
+  const [coverage, setCoverage] = useState<Record<string, number>>({});
   const [prepping, setPrepping] = useState(false);
   const [docsReady, setDocsReady] = useState(false);
   const [cvReady, setCvReady] = useState(false);
@@ -307,6 +308,9 @@ export default function CallPage() {
         };
         bulletsRef.current = next;
         setBullets(next);
+        if (data.coverage && typeof data.coverage === "object") {
+          setCoverage(data.coverage as Record<string, number>);
+        }
       }
     } catch (e) {
       console.error("Running summary failed:", e);
@@ -553,6 +557,21 @@ export default function CallPage() {
   const servingFocus =
     suggestedComps.find((c) => selectedComps.includes(c)) || "";
   const setupCollapsed = callLive && !expandSetup;
+  // Overall progress toward the intent: rank-weighted average of how well each
+  // focus has been covered so far (top-ranked focuses count most). Page-side,
+  // so reordering focus re-weights it instantly without a new model call.
+  const intentPct = (() => {
+    if (!suggestedComps.length) return 0;
+    let wSum = 0;
+    let cSum = 0;
+    suggestedComps.forEach((c, i) => {
+      const w = suggestedComps.length - i;
+      const cov = Math.max(0, Math.min(100, coverage[c] ?? 0));
+      wSum += w;
+      cSum += w * cov;
+    });
+    return wSum ? Math.round(cSum / wSum) : 0;
+  })();
 
   // Cue card: question is the hero, why is a tiny tag, follow-up is a
   // clearly separated optional section.
@@ -600,6 +619,9 @@ export default function CallPage() {
       >
         <div className="flex items-center justify-between px-4 pt-3">
           <div className="flex items-center gap-2">
+            <span className="font-mono text-[0.7rem] font-medium tabular-nums text-bone/70">
+              #{s.id}
+            </span>
             <span
               className={`rounded-full border px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-[0.2em] ${meta.badge}`}
             >
@@ -884,6 +906,23 @@ export default function CallPage() {
       )}
 
       {callLive && suggestedComps.length > 0 && (
+        <div className="mb-3 flex items-center gap-3 rounded-2xl border border-edge bg-panel/50 px-4 py-3">
+          <span className="shrink-0 font-mono text-[0.58rem] uppercase tracking-[0.16em] text-muted">
+            intent
+          </span>
+          <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-ink/70">
+            <div
+              className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-amber/70 to-amber transition-all duration-700"
+              style={{ width: `${intentPct}%` }}
+            />
+          </div>
+          <span className="shrink-0 font-mono text-sm font-medium tabular-nums text-amber">
+            {intentPct}%
+          </span>
+        </div>
+      )}
+
+      {callLive && suggestedComps.length > 0 && (
         <div className="mb-3 flex items-center gap-2 overflow-x-auto rounded-2xl border border-edge bg-panel/50 px-4 py-2.5">
           <span className="shrink-0 font-mono text-[0.58rem] uppercase tracking-[0.16em] text-muted">
             focus
@@ -1013,16 +1052,57 @@ export default function CallPage() {
 
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {rightTab === "summary" ? (
-                bullets.context.length +
-                  bullets.signals.length +
-                  bullets.concerns.length ===
-                0 ? (
-                  <p className="font-mono text-sm leading-relaxed text-muted">
-                    A running summary builds here as the conversation goes -
-                    grouped into context, signals, and concerns.
-                  </p>
-                ) : (
-                  <div className="space-y-4">
+                <div className="space-y-4">
+                  {suggestedComps.length > 0 && (
+                    <div>
+                      <p className="mb-2 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-amber">
+                        Intent coverage
+                      </p>
+                      <div className="space-y-2">
+                        {suggestedComps.map((c) => {
+                          const cov = Math.max(
+                            0,
+                            Math.min(100, coverage[c] ?? 0)
+                          );
+                          const active = selectedComps.includes(c);
+                          return (
+                            <div key={c}>
+                              <div className="mb-0.5 flex items-center justify-between gap-2 font-mono text-[0.58rem] uppercase tracking-wider">
+                                <span
+                                  className={
+                                    active
+                                      ? "text-bone/80"
+                                      : "text-sage line-through opacity-70"
+                                  }
+                                >
+                                  {c}
+                                </span>
+                                <span className="shrink-0 tabular-nums text-muted">
+                                  {cov}%
+                                </span>
+                              </div>
+                              <div className="relative h-1.5 overflow-hidden rounded-full bg-ink/70">
+                                <div
+                                  className="absolute inset-y-0 left-0 rounded-full bg-amber/70 transition-all duration-700"
+                                  style={{ width: `${cov}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {bullets.context.length +
+                    bullets.signals.length +
+                    bullets.concerns.length ===
+                  0 ? (
+                    <p className="font-mono text-sm leading-relaxed text-muted">
+                      Bullets build here as the conversation goes - context,
+                      signals, and concerns.
+                    </p>
+                  ) : (
+                    <div className="space-y-4">
                     {bullets.context.length > 0 && (
                       <div>
                         <p className="mb-1.5 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-muted">
@@ -1078,7 +1158,8 @@ export default function CallPage() {
                       </div>
                     )}
                   </div>
-                )
+                  )}
+                </div>
               ) : ordered.length === 0 ? (
                 <p className="font-mono text-sm text-muted">
                   Join the call and start talking. Each turn is tagged with who
