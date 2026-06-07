@@ -321,15 +321,15 @@ export default function CallPage() {
   }, []);
 
   // Fires on every candidate turn-end: always request a live cue, and update
-  // the running summary on a LIGHT cadence (first turn, then every 3rd) so we
-  // don't double the live model load.
+  // the running summary on a LIGHT cadence (first turn, then every 2nd) so we
+  // don't triple the live model load.
   const handleCandidateTurnEnd = useCallback(() => {
     requestLiveSuggestion();
     turnsSinceSummaryRef.current += 1;
     const candCount = linesRef.current.filter(
       (l) => l.role === "candidate"
     ).length;
-    if (candCount === 1 || turnsSinceSummaryRef.current >= 3) {
+    if (candCount === 1 || turnsSinceSummaryRef.current >= 2) {
       turnsSinceSummaryRef.current = 0;
       updateRunningSummary();
     }
@@ -591,34 +591,53 @@ export default function CallPage() {
 
   const TYPE_META: Record<
     string,
-    { border: string; badge: string; whyColor: string; label: string }
+    {
+      border: string;
+      borderBright: string;
+      badge: string;
+      whyColor: string;
+      label: string;
+    }
   > = {
     question: {
       border: "border-amber/40",
+      borderBright: "border-amber ring-1 ring-amber/40",
       badge: "border-amber/40 bg-amber/15 text-amber",
       whyColor: "text-amber/60",
       label: "ASK",
     },
     redirect: {
       border: "border-rust/60",
+      borderBright: "border-rust ring-1 ring-rust/40",
       badge: "border-rust/50 bg-rust/15 text-rust",
       whyColor: "text-rust/75",
       label: "REDIRECT",
     },
     opening: {
       border: "border-sage/40",
+      borderBright: "border-sage ring-1 ring-sage/40",
       badge: "border-sage/40 bg-sage/15 text-sage",
       whyColor: "text-sage/70",
       label: "OPENING",
     },
   };
 
+  // The most recent LIVE cue stands out with a brighter, type-coloured border
+  // so a freshly-arrived suggestion is easy to catch mid-conversation.
+  const newestLiveId = suggestions.reduce(
+    (max, s) => (s.kind === "live" && s.id > max ? s.id : max),
+    -1
+  );
+
   const renderCard = (s: Suggestion) => {
     const meta = TYPE_META[cueType(s)];
+    const fresh = s.kind === "live" && s.id === newestLiveId;
     return (
       <div
         key={s.id}
-        className={`overflow-hidden rounded-xl border ${meta.border} bg-ink/40`}
+        className={`overflow-hidden rounded-xl border bg-ink/40 ${
+          fresh ? meta.borderBright : meta.border
+        }`}
       >
         <div className="flex items-center justify-between px-4 pt-3">
           <div className="flex items-center gap-2">
