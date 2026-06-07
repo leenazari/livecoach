@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import CallStage from "@/components/CallStage";
+import MeetStage from "@/components/MeetStage";
 import KnowledgePanel from "@/components/KnowledgePanel";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
 import SortableFocusList from "@/components/SortableFocusList";
@@ -73,6 +74,7 @@ export default function CallPage() {
   const [character, setCharacter] = useState("");
   const [callType, setCallType] = useState("general");
   const [callLive, setCallLive] = useState(false);
+  const [source, setSource] = useState<"inapp" | "meet">("inapp");
   const [expandSetup, setExpandSetup] = useState(false);
   const [rightTab, setRightTab] = useState<"summary" | "transcript">("summary");
   const [rightMin, setRightMin] = useState(false);
@@ -894,36 +896,78 @@ export default function CallPage() {
 
       {!callLive && (
       <div className="my-6 grid gap-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
-        <div>
-          <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-            Real candidate - send this link
-          </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <code className="break-all rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone">
-              {joinLink || "preparing..."}
-            </code>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
+            Call source
+          </span>
+          <div className="flex gap-2">
             <button
-              onClick={copy}
-              disabled={!joinLink}
-              className="rounded-full border border-amber/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/10 disabled:opacity-40"
+              type="button"
+              onClick={() => setSource("inapp")}
+              className={`rounded-full border px-3 py-1 font-mono text-[0.62rem] uppercase tracking-wider transition ${
+                source === "inapp"
+                  ? "border-amber bg-amber/15 text-amber"
+                  : "border-edge text-muted hover:text-bone"
+              }`}
             >
-              {copied ? "copied" : "copy"}
+              In-app (link / bot)
+            </button>
+            <button
+              type="button"
+              onClick={() => setSource("meet")}
+              className={`rounded-full border px-3 py-1 font-mono text-[0.62rem] uppercase tracking-wider transition ${
+                source === "meet"
+                  ? "border-amber bg-amber/15 text-amber"
+                  : "border-edge text-muted hover:text-bone"
+              }`}
+            >
+              Google Meet
             </button>
           </div>
         </div>
-        <div className="border-t border-edge/50 pt-3">
-          <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-sage">
-            Test solo - open the candidate bot in a new tab
-          </p>
-          <a
-            href={botLink || "#"}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-block rounded-full border border-sage/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/10"
-          >
-            Open candidate bot (same room)
-          </a>
-        </div>
+
+        {source === "inapp" ? (
+          <>
+            <div className="border-t border-edge/50 pt-3">
+              <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
+                Real candidate - send this link
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <code className="break-all rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone">
+                  {joinLink || "preparing..."}
+                </code>
+                <button
+                  onClick={copy}
+                  disabled={!joinLink}
+                  className="rounded-full border border-amber/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/10 disabled:opacity-40"
+                >
+                  {copied ? "copied" : "copy"}
+                </button>
+              </div>
+            </div>
+            <div className="border-t border-edge/50 pt-3">
+              <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-sage">
+                Test solo - open the candidate bot in a new tab
+              </p>
+              <a
+                href={botLink || "#"}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block rounded-full border border-sage/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/10"
+              >
+                Open candidate bot (same room)
+              </a>
+            </div>
+          </>
+        ) : (
+          <div className="border-t border-edge/50 pt-3">
+            <p className="font-mono text-[0.65rem] leading-relaxed text-muted">
+              Google Meet selected. Hit Start call, then paste the Meet link and
+              send the notetaker bot - the transcript flows in automatically and
+              cues, summary and scoring run exactly as on an in-app call.
+            </p>
+          </div>
+        )}
       </div>
       )}
 
@@ -1004,13 +1048,21 @@ export default function CallPage() {
       )}
 
       <div className="mb-6">
-        <CallStage
-          room={room}
-          identity="Interviewer"
-          role="interviewer"
-          onFinalTranscript={onFinalTranscript}
-          onCandidateTurnEnd={handleCandidateTurnEnd}
-        />
+        {source === "meet" ? (
+          <MeetStage
+            room={room}
+            onFinalTranscript={onFinalTranscript}
+            onCandidateTurnEnd={handleCandidateTurnEnd}
+          />
+        ) : (
+          <CallStage
+            room={room}
+            identity="Interviewer"
+            role="interviewer"
+            onFinalTranscript={onFinalTranscript}
+            onCandidateTurnEnd={handleCandidateTurnEnd}
+          />
+        )}
       </div>
 
       <div className="mb-6 flex justify-center">
