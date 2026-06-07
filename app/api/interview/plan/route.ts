@@ -11,28 +11,31 @@ export async function POST(req: NextRequest) {
   try {
     const { brief, role, knowledgeContext } = await req.json();
 
-    const system = `You are an expert interviewer and conversation planner. You are given the INTENT of an upcoming call plus any supporting context (a CV, job description, or notes).
+    const system = `You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
 
-The INTENT BRIEF is the TOP priority - it dictates what this call is really for and the kind of person or outcome the caller is driving toward. Supporting context (CV/JD) is secondary; when the brief and the context point in different directions, FOLLOW THE BRIEF.
+The INTENT BRIEF is the TOP priority - it dictates what this conversation is for and what the caller is driving toward. The conversation could be ANY kind: a job interview, a sales call, a customer/support call, a discovery chat, etc. The intent tells you which. Supporting context is secondary; when the brief and the context disagree, FOLLOW THE BRIEF.
 
-There may be no CV or job description at all - in that case build the plan from the intent alone.
+There may be no document at all - in that case build the plan from the intent alone.
 
 Produce a plan that drives the conversation toward the caller's intent:
 1. focusAreas: 6-9 topics/competencies to assess or explore, RANKED most-important-first for THIS intent. Short keyword labels (1-4 words), specific to the intent - not generic filler.
-2. character: 1-2 sentences describing the type of person / the outcome the caller is looking for, inferred from the intent (and JD if present).
+2. character: 1-2 sentences describing who/what the caller is looking for or the outcome they want from this conversation, inferred from the intent (and any document).
+   Also determine:
+   - callType: one of "interview", "sales", "support", or "general" - whichever best fits the intent.
+   - subjectName: the name of the person/party being spoken with, if discernible from the intent or context; otherwise "".
 3. openingQuestions: 6 CANDIDATE questions to open the conversation, each as { "q": "...", "why": "short reason", "opener": true|false }.
    A true opener eases the person in and surfaces their MOTIVATION, context, and what they care about - warm and inviting, one clear question. Tag these "opener": true.
    Tag "opener": false for anything that is a hypothetical stress-test, pressure scenario (e.g. "how would you feel if I gave you X with no Y"), gotcha, or loaded multi-clause challenge - that probing belongs LATER in the conversation, never at the top.
    Provide AT LEAST 3 strong openers (opener:true). List the opener:true questions first, ordered gentlest -> slightly more searching.
 
 Output ONLY valid JSON (no markdown, no preamble):
-{ "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}] }`;
+{ "callType": "interview|sales|support|general", "subjectName": "...", "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}] }`;
 
     const userMsg = `INTENT BRIEF (top priority): ${brief || "(none given)"}
 
 ROLE / TITLE: ${role || "(not specified)"}
 
-SUPPORTING CONTEXT (CV / job description / framework):
+OPTIONAL SUPPORTING CONTEXT (document / notes about the person or topic):
 ${knowledgeContext || "(none provided)"}
 
 Return the JSON plan now.`;
@@ -61,6 +64,12 @@ Return the JSON plan now.`;
       ? plan.focusAreas.filter((x: any) => typeof x === "string" && x.trim()).slice(0, 10)
       : [];
     const character = typeof plan.character === "string" ? plan.character : "";
+    const allowedTypes = ["interview", "sales", "support", "general"];
+    const callType = allowedTypes.includes(plan.callType)
+      ? plan.callType
+      : "general";
+    const subjectName =
+      typeof plan.subjectName === "string" ? plan.subjectName.trim() : "";
     // Filter opener candidates: keep only questions the model tagged as a real
     // opener AND that don't match an obvious stress-test / hypothetical pattern
     // (code-side safety net, so a mislabel still gets caught). Keep the top 3;
@@ -92,7 +101,13 @@ Return the JSON plan now.`;
         }));
     }
 
-    return NextResponse.json({ focusAreas, character, openingQuestions });
+    return NextResponse.json({
+      callType,
+      subjectName,
+      focusAreas,
+      character,
+      openingQuestions,
+    });
   } catch (err: any) {
     console.error("Plan error:", err);
     return NextResponse.json(
