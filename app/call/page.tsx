@@ -508,6 +508,24 @@ export default function CallPage() {
     setSelectedComps((prev) => (prev.includes(c) ? prev : [...prev, c]));
   };
 
+  // Mid-call strip controls: move a focus left (raise priority - the leftmost
+  // active focus is the one being served), and mark one done (covered) which
+  // sends it to the far right. Both re-cue immediately via the focus effect.
+  const moveFocusLeft = (c: string) => {
+    setSuggestedComps((prev) => {
+      const i = prev.indexOf(c);
+      if (i <= 0) return prev;
+      const next = [...prev];
+      [next[i - 1], next[i]] = [next[i], next[i - 1]];
+      return next;
+    });
+  };
+
+  const markDoneFocus = (c: string) => {
+    setSelectedComps((prev) => prev.filter((x) => x !== c));
+    setSuggestedComps((prev) => [...prev.filter((x) => x !== c), c]);
+  };
+
   const togglePin = (id: number) => {
     setSuggestions((prev) =>
       prev.map((s) => (s.id === id ? { ...s, pinned: !s.pinned } : s))
@@ -857,13 +875,13 @@ export default function CallPage() {
           <span className="shrink-0 font-mono text-[0.58rem] uppercase tracking-[0.16em] text-muted">
             focus
           </span>
-          {suggestedComps.map((c) => {
+          {suggestedComps.map((c, i) => {
             const active = selectedComps.includes(c);
             const serving = c === servingFocus;
             return (
               <span
                 key={c}
-                className={`whitespace-nowrap rounded-full border px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-wider ${
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-1 font-mono text-[0.6rem] uppercase tracking-wider ${
                   serving
                     ? "border-amber bg-amber/15 text-amber"
                     : active
@@ -871,8 +889,40 @@ export default function CallPage() {
                     : "border-sage/40 text-sage line-through opacity-70"
                 }`}
               >
-                {serving ? "\u25B8 " : ""}
-                {c}
+                <button
+                  type="button"
+                  onClick={() => moveFocusLeft(c)}
+                  disabled={i === 0}
+                  title="move left (raise priority)"
+                  className="text-current transition hover:opacity-100 disabled:opacity-20"
+                >
+                  {"\u2190"}
+                </button>
+                {serving && (
+                  <span className="text-rust" title="serving now">
+                    {"\u2665"}
+                  </span>
+                )}
+                <span>{c}</span>
+                {active ? (
+                  <button
+                    type="button"
+                    onClick={() => markDoneFocus(c)}
+                    title="mark done (covered)"
+                    className="text-current transition hover:text-rust"
+                  >
+                    {"\u00D7"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => toggleComp(c)}
+                    title="bring back into play"
+                    className="text-sage transition hover:opacity-100"
+                  >
+                    {"\u21BA"}
+                  </button>
+                )}
               </span>
             );
           })}
