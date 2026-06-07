@@ -71,6 +71,7 @@ export default function CallPage() {
   const [role, setRole] = useState("");
   const [brief, setBrief] = useState("");
   const [character, setCharacter] = useState("");
+  const [callType, setCallType] = useState("general");
   const [callLive, setCallLive] = useState(false);
   const [expandSetup, setExpandSetup] = useState(false);
   const [rightTab, setRightTab] = useState<"summary" | "transcript">("summary");
@@ -95,6 +96,7 @@ export default function CallPage() {
 
   const knowledgeRef = useRef("");
   const roleRef = useRef("");
+  const personLabelRef = useRef("Them");
   const selectedCompsRef = useRef<string[]>([]);
   const suggestedCompsRef = useRef<string[]>([]);
   const cachedSummaryRef = useRef<any>(null);
@@ -120,7 +122,8 @@ export default function CallPage() {
   }, []);
   useEffect(() => {
     roleRef.current = role;
-  }, [role]);
+    personLabelRef.current = candidate.trim() || "Them";
+  }, [role, candidate]);
   useEffect(() => {
     selectedCompsRef.current = selectedComps;
   }, [selectedComps]);
@@ -278,7 +281,7 @@ export default function CallPage() {
     const labelled = linesRef.current
       .map(
         (l) =>
-          `${l.role === "candidate" ? "Candidate" : "Interviewer"}: ${l.text}`
+          `${l.role === "candidate" ? personLabelRef.current : "You"}: ${l.text}`
       )
       .join("\n");
     if (!labelled.trim()) return;
@@ -383,6 +386,14 @@ export default function CallPage() {
       prev.length > 0 || suggestedCompsRef.current.length > 0 ? prev : focus
     );
     setCharacter(typeof data.character === "string" ? data.character : "");
+    if (typeof data.callType === "string") setCallType(data.callType);
+    if (
+      typeof data.subjectName === "string" &&
+      data.subjectName.trim() &&
+      !candidate.trim()
+    ) {
+      setCandidate(data.subjectName.trim());
+    }
 
     const qs: any[] = Array.isArray(data.openingQuestions)
       ? data.openingQuestions
@@ -472,6 +483,7 @@ export default function CallPage() {
           role: roleRef.current || null,
           candidate: candidate || null,
           competencies: suggestedCompsRef.current,
+          callType,
           sessionId: room,
         }),
       });
@@ -533,6 +545,7 @@ export default function CallPage() {
   };
 
   const ordered = [...lines].reverse();
+  const personLabel = candidate.trim() || "Them";
   const pinned = suggestions.filter((s) => s.pinned);
   const feed = suggestions.filter((s) => !s.pinned).reverse();
   // The cue engine works down the ranked list, top first; the first active
@@ -717,11 +730,11 @@ export default function CallPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1.5 block font-mono text-[0.6rem] uppercase tracking-[0.2em] text-muted">
-                  Candidate (auto from CV)
+                  Name <span className="text-muted/60">(optional)</span>
                 </span>
                 <input
                   value={candidate}
-                  placeholder="upload a CV to fill"
+                  placeholder="name, if you have one"
                   onChange={(e) => setCandidate(e.target.value)}
                   className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
                 />
@@ -777,7 +790,7 @@ export default function CallPage() {
             {suggestedComps.length > 0 && (
               <div>
                 <p className="mb-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-                  Interview focus{" "}
+                  Focus{" "}
                   <span className="text-muted">- priority order</span>
                 </p>
                 <p className="mb-3 font-mono text-[0.6rem] leading-relaxed text-muted">
@@ -1085,9 +1098,9 @@ export default function CallPage() {
                         }
                       >
                         {l.role === "interviewer"
-                          ? "Interviewer"
+                          ? "You"
                           : l.role === "candidate"
-                          ? "Candidate"
+                          ? personLabel
                           : l.role}
                         :
                       </span>{" "}
