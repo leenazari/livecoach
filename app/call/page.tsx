@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import CallStage from "@/components/CallStage";
 import KnowledgePanel from "@/components/KnowledgePanel";
+import VoiceNoteButton from "@/components/VoiceNoteButton";
 import PostCallSummary from "@/components/PostCallSummary";
 
 type Line = { role: string; text: string };
@@ -420,6 +421,10 @@ export default function CallPage() {
     }
   }, [candidate]);
 
+  const appendBrief = useCallback((t: string) => {
+    setBrief((prev) => (prev.trim() ? `${prev.trim()} ${t}` : t));
+  }, []);
+
   const toggleComp = (c: string) => {
     setSelectedComps((prev) =>
       prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
@@ -557,9 +562,12 @@ export default function CallPage() {
       </header>
 
       <div className="mb-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
-        <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-          What's this call for? (the intent - drives everything)
-        </span>
+        <div className="mb-1.5 flex items-center justify-between gap-3">
+          <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
+            What's this call for? (the intent - drives everything)
+          </span>
+          <VoiceNoteButton onText={appendBrief} />
+        </div>
         <textarea
           value={brief}
           onChange={(e) => setBrief(e.target.value)}
