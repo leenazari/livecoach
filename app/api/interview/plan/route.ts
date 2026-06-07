@@ -23,13 +23,18 @@ Produce a plan that drives the conversation toward the caller's intent:
    Also determine:
    - callType: one of "interview", "sales", "support", or "general" - whichever best fits the intent.
    - subjectName: the name of the person/party being spoken with, if discernible from the intent or context; otherwise "".
-3. openingQuestions: 6 CANDIDATE questions to open the conversation, each as { "q": "...", "why": "short reason", "opener": true|false }.
+3. approach: work out the SHAPE of the conversation so the live cues can follow a path, not just fire the destination question. Provide:
+   - goal: the caller's real underlying purpose, in one sentence (e.g. "get them to consider a project-manager role").
+   - premise: the assumption the goal depends on, AND whether it is established or unproven, in one sentence (e.g. "assumes they want to leave their current job - UNPROVEN, they have not said this"). If the goal assumes something the person has not actually signalled, say so explicitly.
+   - strategy: either "direct" or "warm-up-then-pivot". Choose "warm-up-then-pivot" when the premise is unproven or the goal is sensitive/persuasive (a job move, a sale, a concession) - discover and build rapport first, then pivot. Choose "direct" only when the brief clearly invites directness or the premise is already established. IF THE BRIEF STATES A PREFERENCE (e.g. "ease in", "warm them up", "be direct", "get to the point"), FOLLOW THE BRIEF.
+   - pathway: an ordered array of 3-5 short stage labels describing the route from rapport to purpose (e.g. ["build rapport", "surface what they value in their work", "probe ambitions / frustrations", "if a gap appears, introduce the alternative"]). The destination/purpose comes LAST, never first.
+4. openingQuestions: 6 CANDIDATE questions to open the conversation, each as { "q": "...", "why": "short reason", "opener": true|false }.
    A true opener eases the person in and surfaces their MOTIVATION, context, and what they care about - warm and inviting, one clear question. Tag these "opener": true.
    Tag "opener": false for anything that is a hypothetical stress-test, pressure scenario (e.g. "how would you feel if I gave you X with no Y"), gotcha, or loaded multi-clause challenge - that probing belongs LATER in the conversation, never at the top.
    Provide AT LEAST 3 strong openers (opener:true). List the opener:true questions first, ordered gentlest -> slightly more searching.
 
 Output ONLY valid JSON (no markdown, no preamble):
-{ "callType": "interview|sales|support|general", "subjectName": "...", "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}] }`;
+{ "callType": "interview|sales|support|general", "subjectName": "...", "approach": { "goal": "...", "premise": "...", "strategy": "direct|warm-up-then-pivot", "pathway": ["..."] }, "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}] }`;
 
     const userMsg = `INTENT BRIEF (top priority): ${brief || "(none given)"}
 
@@ -70,6 +75,23 @@ Return the JSON plan now.`;
       : "general";
     const subjectName =
       typeof plan.subjectName === "string" ? plan.subjectName.trim() : "";
+    const rawApproach =
+      plan.approach && typeof plan.approach === "object" ? plan.approach : {};
+    const approach = {
+      goal: typeof rawApproach.goal === "string" ? rawApproach.goal : "",
+      premise:
+        typeof rawApproach.premise === "string" ? rawApproach.premise : "",
+      strategy:
+        rawApproach.strategy === "direct" ||
+        rawApproach.strategy === "warm-up-then-pivot"
+          ? rawApproach.strategy
+          : "warm-up-then-pivot",
+      pathway: Array.isArray(rawApproach.pathway)
+        ? rawApproach.pathway
+            .filter((x: any) => typeof x === "string" && x.trim())
+            .slice(0, 6)
+        : [],
+    };
     // Filter opener candidates: keep only questions the model tagged as a real
     // opener AND that don't match an obvious stress-test / hypothetical pattern
     // (code-side safety net, so a mislabel still gets caught). Keep the top 3;
@@ -104,6 +126,7 @@ Return the JSON plan now.`;
     return NextResponse.json({
       callType,
       subjectName,
+      approach,
       focusAreas,
       character,
       openingQuestions,
