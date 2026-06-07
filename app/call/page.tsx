@@ -412,7 +412,10 @@ export default function CallPage() {
       kind: "opening" as const,
       pinned: false,
     }));
-    setSuggestions((prev) => [...prev, ...cards]);
+    // The feed renders newest-first (reversed), so insert the openers in
+    // reverse: the warm/gentlest one (created first) then lands at the TOP,
+    // gentle probe second, exploratory third - instead of scrolling off.
+    setSuggestions((prev) => [...prev, ...[...cards].reverse()]);
     recentTextsRef.current = [
       ...cards.map((c) => c.text),
       ...recentTextsRef.current,
