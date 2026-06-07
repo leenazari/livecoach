@@ -67,6 +67,8 @@ export default function CallPage() {
 
   const [candidate, setCandidate] = useState("");
   const [role, setRole] = useState("");
+  const [brief, setBrief] = useState("");
+  const [character, setCharacter] = useState("");
   const [prepping, setPrepping] = useState(false);
   const [docsReady, setDocsReady] = useState(false);
   const [cvReady, setCvReady] = useState(false);
@@ -274,40 +276,31 @@ export default function CallPage() {
     return knowledgeRef.current;
   }, [candidate]);
 
-  const generateCompetencies = useCallback(async () => {
-    try {
-      const res = await fetch("/api/interview/competencies", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role: role || null,
-          knowledgeContext: knowledgeRef.current,
-        }),
-      });
-      const data = await res.json();
-      const comps: string[] = Array.isArray(data.competencies)
-        ? data.competencies
-        : [];
-      setSuggestedComps(comps);
-      // Pre-select the first 5 as a sensible default; user can refine.
-      setSelectedComps(comps.slice(0, 5));
-    } catch (e) {
-      console.error("Competencies fetch failed:", e);
-    }
-  }, [role]);
-
-  const generateOpening = useCallback(async () => {
-    const res = await fetch("/api/interview/opening", {
+  // Intent-driven plan: brief (top priority) + CV/JD context -> ranked focus
+  // areas + character profile + opening questions, in one call.
+  const generatePlan = useCallback(async () => {
+    const res = await fetch("/api/interview/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        knowledgeContext: knowledgeRef.current,
+        brief: brief || null,
         role: role || null,
+        knowledgeContext: knowledgeRef.current,
       }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to prep questions");
-    const qs: any[] = Array.isArray(data.questions) ? data.questions : [];
+    if (!res.ok) throw new Error(data.error || "Failed to build plan");
+
+    const focus: string[] = Array.isArray(data.focusAreas)
+      ? data.focusAreas
+      : [];
+    setSuggestedComps(focus); // ranked, most important first
+    setSelectedComps(focus); // all active to start, in rank order
+    setCharacter(typeof data.character === "string" ? data.character : "");
+
+    const qs: any[] = Array.isArray(data.openingQuestions)
+      ? data.openingQuestions
+      : [];
     const cards: Suggestion[] = qs.map((item) => ({
       id: ++suggestIdRef.current,
       text: typeof item === "string" ? item : item.q || "",
@@ -323,43 +316,40 @@ export default function CallPage() {
       ...cards.map((c) => c.text),
       ...recentTextsRef.current,
     ].slice(0, 10);
-  }, [role]);
+  }, [brief, role]);
+
 
   const prepOpening = useCallback(async () => {
     setPrepping(true);
-    setStatus("prepping questions...");
+    setStatus("building plan...");
     try {
       await loadContext();
-      await generateCompetencies();
-      await generateOpening();
-      setStatus("questions ready");
+      await generatePlan();
+      setStatus("plan ready");
     } catch (e: any) {
-      const msg = e.message || "";
-      setStatus(
-        /cv|role|upload/i.test(msg)
-          ? "waiting for a CV + role..."
-          : `error: ${msg}`
-      );
+      setStatus(`error: ${e.message || "could not build plan"}`);
     } finally {
       setPrepping(false);
     }
-  }, [loadContext, generateCompetencies, generateOpening]);
+  }, [loadContext, generatePlan]);
 
-  // Auto-generate the moment BOTH a CV and a role exist - whichever order they
-  // arrive in. Guarded so a given CV+role combo only generates once.
+  // Auto-build the plan when there's enough to plan from: a written intent
+  // brief (the top driver) OR a CV + role. Whichever arrives, once per combo.
   useEffect(() => {
-    if (!cvReady || !role.trim()) return;
-    const key = `${candidate}|${role.trim()}`;
+    const haveBrief = brief.trim().length > 15;
+    const haveCvRole = cvReady && role.trim().length > 0;
+    if (!haveBrief && !haveCvRole) return;
+    const key = `${brief.trim()}|${candidate}|${role.trim()}`;
     if (autoFiredKeyRef.current === key) return;
     if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
     autoFireTimerRef.current = setTimeout(() => {
       autoFiredKeyRef.current = key;
       prepOpening();
-    }, 800);
+    }, 1200);
     return () => {
       if (autoFireTimerRef.current) clearTimeout(autoFireTimerRef.current);
     };
-  }, [candidate, role, cvReady, prepOpening]);
+  }, [brief, candidate, role, cvReady, prepOpening]);
 
   const handleUploaded = useCallback(
     (detectedName: string | null, docType: string) => {
@@ -566,6 +556,23 @@ export default function CallPage() {
         )}
       </header>
 
+      <div className="mb-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
+        <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
+          What's this call for? (the intent - drives everything)
+        </span>
+        <textarea
+          value={brief}
+          onChange={(e) => setBrief(e.target.value)}
+          rows={3}
+          placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
+          className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+        />
+        <p className="mt-1.5 font-mono text-[0.65rem] leading-relaxed text-muted">
+          The brief is the top driver. A CV or job description (below) is
+          supporting context. With just this, you can plan a call from nothing.
+        </p>
+      </div>
+
       <div className="mb-3 grid gap-4 rounded-2xl border border-edge bg-panel/60 p-5 md:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
         <label className="block">
           <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted">
@@ -595,10 +602,10 @@ export default function CallPage() {
             disabled={prepping}
             className="rounded-lg border border-amber/50 bg-amber/10 px-4 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {prepping ? "prepping..." : "Re-roll questions"}
+            {prepping ? "building..." : "Build plan"}
           </button>
           <p className="font-mono text-[0.65rem] leading-relaxed text-muted">
-            Auto-generates once a CV + role are set.
+            Auto-builds from a brief, or a CV + role.
           </p>
         </div>
       </div>
@@ -609,16 +616,27 @@ export default function CallPage() {
         </p>
       )}
 
+      {character && (
+        <div className="mb-3 rounded-2xl border border-sage/40 bg-sage/[0.06] p-5">
+          <p className="mb-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-sage">
+            Who you're looking for
+          </p>
+          <p className="font-sans text-sm leading-relaxed text-bone/85">
+            {character}
+          </p>
+        </div>
+      )}
+
       {suggestedComps.length > 0 && (
         <div className="mb-5 rounded-2xl border border-edge bg-panel/50 p-5">
           <p className="mb-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-            Interview focus
+            Interview focus <span className="text-muted">- in priority order</span>
           </p>
           <p className="mb-3 font-mono text-[0.65rem] text-muted">
             Tap the competencies that matter for this hire - cues will steer toward them.
           </p>
           <div className="flex flex-wrap gap-2">
-            {suggestedComps.map((c) => {
+            {suggestedComps.map((c, i) => {
               const on = selectedComps.includes(c);
               return (
                 <button
@@ -627,11 +645,10 @@ export default function CallPage() {
                   className={`rounded-full border px-3.5 py-1.5 font-mono text-[0.7rem] uppercase tracking-wider transition ${
                     on
                       ? "border-amber bg-amber/15 text-amber"
-                      : "border-edge text-muted hover:border-amber/50 hover:text-bone"
+                      : "border-edge text-muted hover:border-amber/50 hover:text-bone line-through opacity-60"
                   }`}
                 >
-                  {on ? "\u2713 " : ""}
-                  {c}
+                  <span className="opacity-60">{i + 1}.</span> {c}
                 </button>
               );
             })}
