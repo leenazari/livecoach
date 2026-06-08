@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     const endpoint = `https://${region}.recall.ai/api/v1/bot/`;
     const body = {
       meeting_url: meetingUrl,
-      bot_name: "LiveCoach Notetaker",
+      bot_name: "Lee's Transcriber",
       // session_id flows through here and comes back on every webhook,
       // so the worker knows which call each utterance belongs to.
       metadata: { session_id: String(sessionId) },
