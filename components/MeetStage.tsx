@@ -21,6 +21,16 @@ type Speaker = { name: string; lastRole: string };
 const PAUSE_MS = 1600; // they stopped talking
 const CHECKPOINT_EVERY = 4; // ...or mid-monologue, every N finalised chunks
 
+// Default "You" detection for the POC (single user = Lee). Becomes a per-user
+// account setting later. We match by NAME, not the meeting host, because the
+// coach often isn't the person who created the Meet.
+const COACH_HINTS = ["lee nazari", "l n"];
+function looksLikeCoach(name: string) {
+  const n = (name || "").trim().toLowerCase();
+  if (!n) return false;
+  return COACH_HINTS.some((h) => n === h || n.includes(h));
+}
+
 export default function MeetStage({
   room,
   onFinalTranscript,
@@ -59,7 +69,8 @@ export default function MeetStage({
   const mapRole = useCallback((speaker: string, recallRole: string) => {
     const c = coachRef.current;
     if (c) return speaker === c ? "interviewer" : "candidate";
-    return recallRole === "host" ? "interviewer" : "candidate";
+    if (looksLikeCoach(speaker)) return "interviewer";
+    return "candidate";
   }, []);
 
   const fireTurnEnd = useCallback(() => {
@@ -84,7 +95,7 @@ export default function MeetStage({
         if (prev.some((s) => s.name === speaker)) return prev;
         return [...prev, { name: speaker, lastRole: recallRole }];
       });
-      if (!coachRef.current && recallRole === "host" && speaker) {
+      if (!coachRef.current && looksLikeCoach(speaker)) {
         coachRef.current = speaker;
         setCoach(speaker);
       }
