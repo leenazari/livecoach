@@ -785,7 +785,7 @@ export default function CallPage() {
             <span className="italic text-amber">Live</span>Coach
           </h1>
           <p className="mt-2 font-mono text-xs uppercase tracking-[0.25em] text-muted">
-            hosted interview - live cues
+            live call coaching
           </p>
         </div>
         {status && (
