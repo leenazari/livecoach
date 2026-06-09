@@ -8,7 +8,7 @@ import VoiceNoteButton from "@/components/VoiceNoteButton";
 import SortableFocusList from "@/components/SortableFocusList";
 import PostCallSummary from "@/components/PostCallSummary";
 
-type Line = { role: string; text: string };
+type Line = { role: string; text: string; speaker?: string };
 type Suggestion = {
   id: number;
   text: string;
@@ -144,20 +144,30 @@ export default function CallPage() {
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const onFinalTranscript = useCallback((r: string, text: string) => {
-    setLines((prev) => {
-      const last = prev[prev.length - 1];
-      let next: Line[];
-      if (last && last.role === r) {
-        next = [...prev];
-        next[next.length - 1] = { ...last, text: `${last.text} ${text}`.trim() };
-      } else {
-        next = [...prev, { role: r, text }];
-      }
-      linesRef.current = next;
-      return next;
-    });
-  }, []);
+  const onFinalTranscript = useCallback(
+    (r: string, text: string, speaker?: string) => {
+      setLines((prev) => {
+        const last = prev[prev.length - 1];
+        let next: Line[];
+        if (
+          last &&
+          last.role === r &&
+          (last.speaker || "") === (speaker || "")
+        ) {
+          next = [...prev];
+          next[next.length - 1] = {
+            ...last,
+            text: `${last.text} ${text}`.trim(),
+          };
+        } else {
+          next = [...prev, { role: r, text, speaker }];
+        }
+        linesRef.current = next;
+        return next;
+      });
+    },
+    []
+  );
 
   const isDuplicate = (text: string) => {
     const n = normalise(text);
@@ -177,7 +187,7 @@ export default function CallPage() {
             l.role === "interviewer"
               ? "Interviewer"
               : l.role === "candidate"
-              ? "Candidate"
+              ? l.speaker || "Candidate"
               : l.role
           }: ${l.text}`
       )
@@ -194,9 +204,11 @@ export default function CallPage() {
     const candidateTurns = linesRef.current.filter(
       (l) => l.role === "candidate"
     );
-    const latest = candidateTurns.length
-      ? candidateTurns[candidateTurns.length - 1].text.slice(-400)
-      : "";
+    const lastCandidate = candidateTurns.length
+      ? candidateTurns[candidateTurns.length - 1]
+      : null;
+    const latest = lastCandidate ? lastCandidate.text.slice(-400) : "";
+    const latestSpeaker = lastCandidate?.speaker || "";
     if (!latest || latest.length < 8) return;
 
     inFlightRef.current = true;
@@ -223,6 +235,7 @@ export default function CallPage() {
           knowledgeContext: knowledgeRef.current,
           transcript: labelled.slice(-2400),
           latest,
+          latestSpeaker,
           role: roleRef.current || null,
           previousSuggestions: recentTextsRef.current.slice(0, 5),
           askedQuestions,
@@ -284,7 +297,7 @@ export default function CallPage() {
     const labelled = linesRef.current
       .map(
         (l) =>
-          `${l.role === "candidate" ? personLabelRef.current : "You"}: ${l.text}`
+          `${l.role === "candidate" ? l.speaker || personLabelRef.current : "You"}: ${l.text}`
       )
       .join("\n");
     if (!labelled.trim()) return;
@@ -463,7 +476,7 @@ export default function CallPage() {
             l.role === "interviewer"
               ? "Interviewer"
               : l.role === "candidate"
-              ? "Candidate"
+              ? l.speaker || "Candidate"
               : l.role
           }: ${l.text}`
       )
@@ -1116,9 +1129,18 @@ export default function CallPage() {
               </button>
               <button
                 type="button"
+                onClick={endAndSummarise}
+                disabled={summarising}
+                title="End the call and build the scorecard"
+                className="ml-auto px-4 py-3 font-mono text-[0.62rem] uppercase tracking-[0.15em] text-rust transition hover:text-bone disabled:opacity-40"
+              >
+                {summarising ? "ending\u2026" : "End session"}
+              </button>
+              <button
+                type="button"
                 onClick={() => setRightMin(true)}
                 title="minimise"
-                className="ml-auto px-4 py-3 font-mono text-sm text-muted transition hover:text-bone"
+                className="px-4 py-3 font-mono text-sm text-muted transition hover:text-bone"
               >
                 {"\u229F"}
               </button>
@@ -1255,7 +1277,7 @@ export default function CallPage() {
                         {l.role === "interviewer"
                           ? "You"
                           : l.role === "candidate"
-                          ? personLabel
+                          ? l.speaker || personLabel
                           : l.role}
                         :
                       </span>{" "}
