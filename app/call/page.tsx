@@ -96,8 +96,15 @@ export default function CallPage() {
   const [summary, setSummary] = useState<any>(null);
   const [summarising, setSummarising] = useState(false);
   const [summaryTranscript, setSummaryTranscript] = useState("");
+  const [playbook, setPlaybook] = useState<{ label: string; detail: string }[]>([]);
+  const [publicLink, setPublicLink] = useState("");
+  const [background, setBackground] = useState("");
+  const [researching, setResearching] = useState(false);
+  const [researchNote, setResearchNote] = useState("");
 
   const knowledgeRef = useRef("");
+  const backgroundRef = useRef("");
+  const callTypeRef = useRef("general");
   const roleRef = useRef("");
   const personLabelRef = useRef("Them");
   const selectedCompsRef = useRef<string[]>([]);
@@ -133,6 +140,9 @@ export default function CallPage() {
   useEffect(() => {
     suggestedCompsRef.current = suggestedComps;
   }, [suggestedComps]);
+  useEffect(() => {
+    callTypeRef.current = callType;
+  }, [callType]);
 
   const joinLink = origin ? `${origin}/join/${room}` : "";
   const botLink = origin ? `${origin}/candidate-bot/${room}` : "";
@@ -237,6 +247,7 @@ export default function CallPage() {
           latest,
           latestSpeaker,
           role: roleRef.current || null,
+          callType: callTypeRef.current,
           previousSuggestions: recentTextsRef.current.slice(0, 5),
           askedQuestions,
           lastQuestion,
@@ -388,7 +399,14 @@ export default function CallPage() {
       body: JSON.stringify({
         brief: brief || null,
         role: role || null,
-        knowledgeContext: knowledgeRef.current,
+        knowledgeContext: [
+          knowledgeRef.current,
+          backgroundRef.current
+            ? `PUBLIC PAGE RESEARCH (about the person / company):\n${backgroundRef.current}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       }),
     });
     const data = await res.json();
@@ -405,6 +423,13 @@ export default function CallPage() {
       prev.length > 0 || suggestedCompsRef.current.length > 0 ? prev : focus
     );
     setCharacter(typeof data.character === "string" ? data.character : "");
+    setPlaybook(
+      Array.isArray(data.playbook)
+        ? data.playbook.filter(
+            (p: any) => p && typeof p.label === "string" && typeof p.detail === "string"
+          )
+        : []
+    );
     if (typeof data.callType === "string") setCallType(data.callType);
     if (
       typeof data.subjectName === "string" &&
@@ -451,6 +476,34 @@ export default function CallPage() {
       setPrepping(false);
     }
   }, [loadContext, generatePlan]);
+
+  const research = useCallback(async () => {
+    const url = publicLink.trim();
+    if (!url) return;
+    setResearching(true);
+    setResearchNote("");
+    try {
+      const res = await fetch("/api/interview/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (res.ok && data.background) {
+        setBackground(data.background);
+        backgroundRef.current = data.background;
+        setResearchNote(`\u2713 added context from ${data.site || "the page"}`);
+      } else {
+        setResearchNote(
+          data.error || "couldn't read that page \u2013 carry on without it"
+        );
+      }
+    } catch {
+      setResearchNote("couldn't reach that page \u2013 carry on without it");
+    } finally {
+      setResearching(false);
+    }
+  }, [publicLink]);
 
   const handleUploaded = useCallback(
     (detectedName: string | null, docType: string) => {
@@ -773,14 +826,20 @@ export default function CallPage() {
             </button>
           )}
         <div className="grid lg:grid-cols-2">
-          {/* LEFT - inputs */}
-          <div className="flex flex-col gap-4 border-edge p-5 lg:border-r">
-            <div>
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-                  Intent - what's this call for?
+          {/* LEFT - stepped setup */}
+          <div className="flex flex-col border-edge lg:border-r">
+            {/* STEP 1 - Intent */}
+            <div className="border-b border-edge p-5">
+              <div className="mb-2 flex items-center gap-2.5">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-amber font-mono text-[0.6rem] text-amber">
+                  1
                 </span>
-                <VoiceNoteButton onText={appendBrief} />
+                <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-bone">
+                  Intent
+                </span>
+                <span className="ml-auto">
+                  <VoiceNoteButton onText={appendBrief} />
+                </span>
               </div>
               <textarea
                 value={brief}
@@ -790,102 +849,259 @@ export default function CallPage() {
                 className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
               />
               <p className="mt-1.5 font-mono text-[0.62rem] leading-relaxed text-muted">
-                The top driver. A CV or job description is supporting context -
-                with just this, you can plan a call from nothing.
+                The one thing that drives everything - the read, the cues, the
+                score. It also tells LiveCoach what kind of call this is.
               </p>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1.5 block font-mono text-[0.6rem] uppercase tracking-[0.2em] text-muted">
-                  Name <span className="text-muted/60">(optional)</span>
+            {/* STEP 2 - Who & context */}
+            <div className="border-b border-edge p-5">
+              <div className="mb-3 flex items-center gap-2.5">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-amber font-mono text-[0.6rem] text-amber">
+                  2
                 </span>
-                <input
-                  value={candidate}
-                  placeholder="name, if you have one"
-                  onChange={(e) => setCandidate(e.target.value)}
-                  className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block font-mono text-[0.6rem] uppercase tracking-[0.2em] text-muted">
-                  Role <span className="text-muted/60">(optional)</span>
+                <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-bone">
+                  Who &amp; context
                 </span>
-                <input
-                  value={role}
-                  placeholder="e.g. Senior PM"
-                  onChange={(e) => setRole(e.target.value)}
-                  className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+                <span className="ml-auto font-mono text-[0.58rem] text-muted">
+                  optional - sharpens the plan
+                </span>
+              </div>
+              <div className="flex flex-col gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1.5 block font-mono text-[0.58rem] uppercase tracking-[0.18em] text-muted">
+                      Name
+                    </span>
+                    <input
+                      value={candidate}
+                      placeholder="if you have one"
+                      onChange={(e) => setCandidate(e.target.value)}
+                      className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block font-mono text-[0.58rem] uppercase tracking-[0.18em] text-muted">
+                      Role / title
+                    </span>
+                    <input
+                      value={role}
+                      placeholder="e.g. Founder"
+                      onChange={(e) => setRole(e.target.value)}
+                      className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+                    />
+                  </label>
+                </div>
+                <div>
+                  <span className="mb-1.5 block font-mono text-[0.58rem] uppercase tracking-[0.18em] text-muted">
+                    Public link - website or public profile
+                  </span>
+                  <div className="flex gap-2">
+                    <input
+                      value={publicLink}
+                      placeholder="https://theircompany.com"
+                      onChange={(e) => setPublicLink(e.target.value)}
+                      className="min-w-0 flex-1 rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-sky/60"
+                    />
+                    <button
+                      type="button"
+                      onClick={research}
+                      disabled={researching || !publicLink.trim()}
+                      className="shrink-0 rounded-lg border border-sky/50 bg-sky/10 px-4 font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/20 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {researching ? "reading..." : "Research"}
+                    </button>
+                  </div>
+                  {researchNote && (
+                    <p className="mt-1.5 font-mono text-[0.6rem] leading-relaxed text-sky/90">
+                      {researchNote}
+                    </p>
+                  )}
+                  <p className="mt-1.5 font-mono text-[0.6rem] leading-relaxed text-muted">
+                    Public pages only - a company site, an about page. LiveCoach
+                    reads it and folds the background into your plan.
+                  </p>
+                </div>
+                <KnowledgePanel
+                  candidate={candidate}
+                  sessionId={room}
+                  onUploaded={handleUploaded}
                 />
-              </label>
+                {loadedDocs.length > 0 && (
+                  <p className="font-mono text-[0.66rem] text-muted">
+                    in context: {loadedDocs.join(" \u00b7 ")}
+                  </p>
+                )}
+              </div>
             </div>
 
-            <KnowledgePanel
-              candidate={candidate}
-              sessionId={room}
-              onUploaded={handleUploaded}
-            />
-
-            {loadedDocs.length > 0 && (
-              <p className="font-mono text-[0.66rem] text-muted">
-                in context: {loadedDocs.join(" \u00b7 ")}
-              </p>
-            )}
+            {/* STEP 3 - Call source */}
+            <div className="p-5">
+              <div className="mb-3 flex items-center gap-2.5">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-amber font-mono text-[0.6rem] text-amber">
+                  3
+                </span>
+                <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-bone">
+                  Call source
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSource("inapp")}
+                  className={`flex-1 rounded-lg border px-3 py-2 font-mono text-[0.62rem] uppercase tracking-wider transition ${
+                    source === "inapp"
+                      ? "border-amber bg-amber/15 text-amber"
+                      : "border-edge text-muted hover:text-bone"
+                  }`}
+                >
+                  In-app link / bot
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSource("meet")}
+                  className={`flex-1 rounded-lg border px-3 py-2 font-mono text-[0.62rem] uppercase tracking-wider transition ${
+                    source === "meet"
+                      ? "border-amber bg-amber/15 text-amber"
+                      : "border-edge text-muted hover:text-bone"
+                  }`}
+                >
+                  Google Meet
+                </button>
+              </div>
+              {source === "inapp" ? (
+                <div className="mt-3 flex flex-col gap-3">
+                  <div>
+                    <p className="mb-1.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-amber">
+                      Send this join link
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="min-w-0 flex-1 break-all rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-xs text-bone">
+                        {joinLink || "preparing..."}
+                      </code>
+                      <button
+                        onClick={copy}
+                        disabled={!joinLink}
+                        className="shrink-0 rounded-full border border-amber/50 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/10 disabled:opacity-40"
+                      >
+                        {copied ? "copied" : "copy"}
+                      </button>
+                    </div>
+                  </div>
+                  <a
+                    href={botLink || "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-block self-start rounded-full border border-sage/50 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage transition hover:bg-sage/10"
+                  >
+                    Open practice bot (same room)
+                  </a>
+                </div>
+              ) : (
+                <p className="mt-3 font-mono text-[0.62rem] leading-relaxed text-muted">
+                  Hit Start call, then paste your{" "}
+                  <code className="rounded bg-ink/60 px-1.5 py-0.5 text-bone">
+                    meet.google.com
+                  </code>{" "}
+                  link and send the notetaker bot - the transcript flows in
+                  automatically and cues, summary and scoring run exactly as on
+                  an in-app call.
+                </p>
+              )}
+            </div>
           </div>
 
           {/* RIGHT - the generated plan */}
-          <div className="flex flex-col gap-4 p-5">
-            {character ? (
-              <div className="rounded-xl border border-sage/40 bg-sage/[0.06] p-4">
-                <p className="mb-1 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
-                  Who you're looking for
+          <div className="flex flex-col gap-3.5 p-5">
+            {suggestedComps.length === 0 && !character && !background ? (
+              <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-edge p-7 text-center">
+                <p className="font-mono text-[0.66rem] uppercase tracking-wider text-bone">
+                  Your plan appears here
                 </p>
-                <p className="font-sans text-sm leading-relaxed text-bone/85">
-                  {character}
+                <p className="mt-1.5 max-w-[15rem] font-mono text-[0.62rem] leading-relaxed text-muted/70">
+                  Write the intent (and optionally a link), then Build plan -
+                  you'll get the background, a read on them, ranked focus, and a
+                  tailored playbook.
                 </p>
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-edge p-7 text-center">
-                <p className="font-mono text-[0.66rem] uppercase tracking-wider text-muted">
-                  Your plan appears here
-                </p>
-                <p className="mt-1.5 font-mono text-[0.62rem] leading-relaxed text-muted/70">
-                  Add a brief (and optionally a CV + role), then build.
-                </p>
-              </div>
-            )}
-
-            {suggestedComps.length > 0 && (
-              <div>
-                <p className="mb-1 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-                  Focus{" "}
-                  <span className="text-muted">- priority order</span>
-                </p>
-                <p className="mb-3 font-mono text-[0.6rem] leading-relaxed text-muted">
-                  Drag or arrows to rank. Delete with{" "}
-                  <span className="text-rust">{"\u00D7"}</span>, or add your
-                  own. Mark one <span className="text-sage">covered</span> when
-                  satisfied - still scored, re-activate any time. Rebuilding
-                  won't touch this list.
-                </p>
-                <SortableFocusList
-                  items={suggestedComps}
-                  activeItems={selectedComps}
-                  onReorder={setSuggestedComps}
-                  onToggle={toggleComp}
-                  onDelete={deleteComp}
-                  onAdd={addComp}
-                />
-              </div>
+              <>
+                {callType && callType !== "general" && (
+                  <span className="self-start rounded-full border border-amber px-3 py-1 font-mono text-[0.58rem] uppercase tracking-[0.12em] text-amber">
+                    {"\u25CF"} {callType} call
+                  </span>
+                )}
+                {background && (
+                  <div className="rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
+                    <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-sky">
+                      Background
+                    </p>
+                    <p className="font-sans text-sm leading-relaxed text-bone/85">
+                      {background}
+                    </p>
+                  </div>
+                )}
+                {character && (
+                  <div className="rounded-xl border border-sage/40 bg-sage/[0.06] p-4">
+                    <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-sage">
+                      Your read on them
+                    </p>
+                    <p className="font-sans text-sm leading-relaxed text-bone/85">
+                      {character}
+                    </p>
+                  </div>
+                )}
+                {suggestedComps.length > 0 && (
+                  <div>
+                    <p className="mb-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-amber">
+                      Focus <span className="text-muted">- priority order</span>
+                    </p>
+                    <p className="mb-3 font-mono text-[0.58rem] leading-relaxed text-muted">
+                      Drag or arrows to rank. Delete with{" "}
+                      <span className="text-rust">{"\u00D7"}</span>, or add your
+                      own. Mark one <span className="text-sage">covered</span>{" "}
+                      when satisfied - still scored, re-activate any time.
+                      Rebuilding won't touch this list.
+                    </p>
+                    <SortableFocusList
+                      items={suggestedComps}
+                      activeItems={selectedComps}
+                      onReorder={setSuggestedComps}
+                      onToggle={toggleComp}
+                      onDelete={deleteComp}
+                      onAdd={addComp}
+                    />
+                  </div>
+                )}
+                {playbook.length > 0 && (
+                  <div className="rounded-xl border border-edge bg-panel2/40 p-4">
+                    <p className="mb-2 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-amber">
+                      Playbook{" "}
+                      <span className="text-muted">- tailored to this call</span>
+                    </p>
+                    <ul className="flex flex-col gap-2">
+                      {playbook.map((p, i) => (
+                        <li
+                          key={i}
+                          className="font-sans text-[0.82rem] leading-snug text-bone/85"
+                        >
+                          <span className="text-bone">{p.label}:</span>{" "}
+                          {p.detail}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
 
-        {/* CONFIRM BAR - the build gate */}
+        {/* ACTION BAR - the build gate */}
         <div className="flex flex-col items-start gap-3 border-t border-edge bg-ink/40 p-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="font-mono text-[0.63rem] leading-relaxed text-muted">
             {suggestedComps.length > 0
-              ? "Plan built. Rank your focus, then share the join link below to start. Rebuild refreshes character + questions only - your focus stays."
+              ? "Plan built. Rank your focus, then Start call. Rebuild refreshes the read, background + playbook - your focus stays."
               : "Nothing generates until you build - no wasted calls while you type."}
           </p>
           <div className="flex shrink-0 gap-2">
@@ -898,7 +1114,7 @@ export default function CallPage() {
                 ? "building..."
                 : suggestedComps.length > 0
                 ? "Rebuild plan"
-                : "Confirm & build plan"}
+                : "Build plan"}
             </button>
             {suggestedComps.length > 0 && (
               <button
@@ -916,82 +1132,7 @@ export default function CallPage() {
         </div>
       )}
 
-      {!callLive && (
-      <div className="my-6 grid gap-3 rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-            Call source
-          </span>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setSource("inapp")}
-              className={`rounded-full border px-3 py-1 font-mono text-[0.62rem] uppercase tracking-wider transition ${
-                source === "inapp"
-                  ? "border-amber bg-amber/15 text-amber"
-                  : "border-edge text-muted hover:text-bone"
-              }`}
-            >
-              In-app (link / bot)
-            </button>
-            <button
-              type="button"
-              onClick={() => setSource("meet")}
-              className={`rounded-full border px-3 py-1 font-mono text-[0.62rem] uppercase tracking-wider transition ${
-                source === "meet"
-                  ? "border-amber bg-amber/15 text-amber"
-                  : "border-edge text-muted hover:text-bone"
-              }`}
-            >
-              Google Meet
-            </button>
-          </div>
-        </div>
-
-        {source === "inapp" ? (
-          <>
-            <div className="border-t border-edge/50 pt-3">
-              <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-                Real candidate - send this link
-              </p>
-              <div className="flex flex-wrap items-center gap-3">
-                <code className="break-all rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone">
-                  {joinLink || "preparing..."}
-                </code>
-                <button
-                  onClick={copy}
-                  disabled={!joinLink}
-                  className="rounded-full border border-amber/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/10 disabled:opacity-40"
-                >
-                  {copied ? "copied" : "copy"}
-                </button>
-              </div>
-            </div>
-            <div className="border-t border-edge/50 pt-3">
-              <p className="mb-2 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-sage">
-                Test solo - open the candidate bot in a new tab
-              </p>
-              <a
-                href={botLink || "#"}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-block rounded-full border border-sage/50 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/10"
-              >
-                Open candidate bot (same room)
-              </a>
-            </div>
-          </>
-        ) : (
-          <div className="border-t border-edge/50 pt-3">
-            <p className="font-mono text-[0.65rem] leading-relaxed text-muted">
-              Google Meet selected. Hit Start call, then paste the Meet link and
-              send the notetaker bot - the transcript flows in automatically and
-              cues, summary and scoring run exactly as on an in-app call.
-            </p>
-          </div>
-        )}
-      </div>
-      )}
+      {/* call source + join link now live inside setup step 3 above */}
 
       {callLive && suggestedComps.length > 0 && (
         <div className="mb-3 flex items-center gap-3 rounded-2xl border border-edge bg-panel/50 px-4 py-3">
