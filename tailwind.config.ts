@@ -1,5 +1,4 @@
 import type { Config } from "tailwindcss";
-
 const config: Config = {
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
@@ -13,19 +12,20 @@ const config: Config = {
         mono: ["'IBM Plex Mono'", "monospace"],
       },
       colors: {
-        ink: "#0e0d0b",
-        panel: "#16140f",
-        edge: "#2a261d",
-        bone: "#ece6d8",
-        muted: "#8c8472",
-        amber: "#e0a34a",
+        ink: "#0f1217",
+        panel: "#171b22",
+        panel2: "#1c212a",
+        edge: "#2a2f3a",
+        bone: "#e9e5db",
+        muted: "#8a909d",
+        amber: "#e0a458",
         amberglow: "#f5c97a",
-        sage: "#7e9b78",
-        rust: "#c06a4a",
+        sage: "#8bb89a",
+        rust: "#c97a5c",
+        sky: "#7fa8d0",
       },
     },
   },
   plugins: [],
 };
-
 export default config;
