@@ -2,12 +2,14 @@
 
 type Comp = { name: string; score: number; note: string };
 type QReview = { question: string; answered: string; note: string };
+type Contributor = { name: string; impact: string; note: string };
 type Summary = {
   recommendation: string;
   headline: string;
   strengths: string[];
   concerns: string[];
   competencies: Comp[];
+  contributors?: Contributor[];
   questionReview: QReview[];
   notCovered: string[];
   styleProfile: string;
@@ -56,6 +58,15 @@ function SummaryList({
       </ul>
     </div>
   );
+}
+
+// helped -> sage, blocked -> rust, mixed -> amber, neutral/other -> muted
+function impactTone(impact: string) {
+  const i = (impact || "").toLowerCase();
+  if (i === "helped") return { dot: "bg-sage", label: "text-sage" };
+  if (i === "blocked") return { dot: "bg-rust", label: "text-rust" };
+  if (i === "mixed") return { dot: "bg-amber", label: "text-amber" };
+  return { dot: "bg-muted", label: "text-muted" };
 }
 
 export default function PostCallSummary({
@@ -141,6 +152,14 @@ export default function PostCallSummary({
       summary.competencies.forEach((c) => {
         const score = Math.max(0, Math.min(5, Math.round(c.score || 0)));
         bullet(`${c.name}  -  ${score}/5${c.note ? `  -  ${c.note}` : ""}`);
+      });
+    }
+
+    if (summary.contributors && summary.contributors.length > 0) {
+      heading("Contributors");
+      summary.contributors.forEach((c) => {
+        const im = (c.impact || "neutral").toUpperCase();
+        bullet(`[${im}] ${c.name}${c.note ? `  -  ${c.note}` : ""}`);
       });
     }
 
@@ -245,6 +264,46 @@ export default function PostCallSummary({
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {summary.contributors && summary.contributors.length > 0 && (
+            <div>
+              <h3 className="mb-3 font-mono text-[0.7rem] uppercase tracking-[0.25em] text-muted">
+                Contributors
+              </h3>
+              <div className="space-y-2">
+                {summary.contributors.map((c, i) => {
+                  const tone = impactTone(c.impact);
+                  return (
+                    <div
+                      key={i}
+                      className="rounded-xl border border-edge bg-ink/40 px-4 py-3"
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <span
+                          className={`mt-1.5 h-1.5 w-1.5 flex-none rounded-full ${tone.dot}`}
+                        />
+                        <div>
+                          <p className="font-sans text-sm text-bone">
+                            {c.name}{" "}
+                            <span
+                              className={`ml-1 font-mono text-[0.58rem] uppercase tracking-wider ${tone.label}`}
+                            >
+                              {(c.impact || "neutral").toLowerCase()}
+                            </span>
+                          </p>
+                          {c.note && (
+                            <p className="mt-0.5 font-sans text-xs text-muted">
+                              {c.note}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
