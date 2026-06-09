@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 // END-OF-CALL assessment. One call, on the pro model (Sonnet) for quality.
-// Returns a structured JSON summary + scorecard + interviewer style profile.
+// Returns a structured JSON summary + scorecard + contributors + style profile.
 export async function POST(req: NextRequest) {
   try {
     const { transcript, knowledgeContext, role, candidate, competencies, sessionId } =
@@ -53,9 +53,11 @@ export async function POST(req: NextRequest) {
 
     const system = `You are an expert interview assessor. You are given a speaker-labelled transcript of an interview${role ? ` for the role: ${role}` : ""}, plus the candidate's CV and any question framework.
 
-Produce a fair, evidence-based post-interview assessment. Base EVERY point on what was actually said in the transcript - never invent. Where the transcript is thin or a competency wasn't explored, say so rather than guessing or padding scores.
+The transcript is labelled by speaker. One speaker is the INTERVIEWER (the person being coached - labelled "Interviewer:", "You:", or by their own name). There may be ONE OR MORE other participants, labelled "Candidate:" or by their real names (e.g. "Mark Darling:", "Jaykishan:"). Treat each named person as a distinct individual.
 
-Also extract a short STYLE PROFILE of the INTERVIEWER, drawn ONLY from the "Interviewer:" lines: their tone, how they phrase questions, formality, warmth, and typical sentence length. This will later be used to match future suggestion wording to their natural style.
+Produce a fair, evidence-based post-call assessment. The assessment scores the CALL AS A WHOLE against its target competencies/intent - you are not producing a separate scorecard per person. Base EVERY point on what was actually said in the transcript - never invent. Where the transcript is thin or a competency wasn't explored, say so rather than guessing or padding scores.
+
+Also extract a short STYLE PROFILE of the INTERVIEWER, drawn ONLY from the interviewer's own lines (the lines labelled "Interviewer:", "You:", or the interviewer's name - NOT the other participants): their tone, how they phrase questions, formality, warmth, and typical sentence length. This will later be used to match future suggestion wording to their natural style.
 
 Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
 {
@@ -64,6 +66,7 @@ Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
   "strengths": ["short bullet", "..."],
   "concerns": ["short bullet", "..."],
   "competencies": [{"name": "competency", "score": 3, "note": "one short line of evidence"}],
+  "contributors": [{"name": "participant name", "impact": "helped", "note": "the part they played and how it bore on the scoring"}],
   "questionReview": [{"question": "short version of what the interviewer asked", "answered": "yes", "note": "if not fully answered, say briefly how they dodged or deflected"}],
   "notCovered": ["an area or question not yet explored", "..."],
   "styleProfile": "2-3 sentences on the interviewer's speaking style and tone"
@@ -82,15 +85,22 @@ SCORING RUBRIC (apply consistently and literally, so the result is reproducible)
 
 Base every score strictly on transcript evidence against this rubric - not on general impression - so that running this again on the same transcript yields the same scores.
 
+CONTRIBUTORS (who moved the call toward or away from its intent):
+- The call is scored as a whole against the target competencies/intent above - you are NOT scoring individuals. This section simply credits who did what.
+- List each distinct participant who spoke meaningfully, using their name exactly as labelled in the transcript. You MAY include the interviewer (You) if their steering materially shaped the outcome.
+- For each, "impact" is EXACTLY one of: "helped", "blocked", "mixed", "neutral" - did they move the conversation toward the target competencies/intent, derail or stall it, a mix of both, or neither.
+- "note" is one short line: the part they played and how it bore on the scoring (e.g. "drove the problem-solving evidence with concrete detail on match scoring", "stalled ownership by never naming who owns the fix").
+- Base strictly on the transcript. If there is only one other participant, list just them. 2-6 contributors.
+
 QUESTION-BY-QUESTION REVIEW (questionReview):
 - Go through the substantive questions the interviewer actually asked, in order (skip greetings/filler).
-- For each: a short version of the question, whether the candidate actually answered it - "answered" is exactly one of "yes", "partial", or "no" - and a one-line note.
-- A confident, fluent reply that does not address what was asked is NOT a yes. If they changed the subject, deflected, or answered a different question, mark "no" (or "partial") and say briefly how (e.g. "pivoted to career instead of the family question"). Surfacing these dodges clearly is the most important part of this review - do not be charmed by smooth delivery.
+- For each: a short version of the question, whether it was actually answered - "answered" is exactly one of "yes", "partial", or "no" - and a one-line note.
+- A confident, fluent reply that does not address what was asked is NOT a yes. If someone changed the subject, deflected, or answered a different question, mark "no" (or "partial") and say briefly how (e.g. "pivoted to career instead of the family question"). Surfacing these dodges clearly is the most important part of this review - do not be charmed by smooth delivery.
 
-Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". Keep every bullet tight.`;
+Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Keep every bullet tight.`;
 
     const userMsg = `ROLE: ${role || "(not specified)"}
-CANDIDATE: ${candidate || "(unknown)"}
+CANDIDATE / SUBJECT: ${candidate || "(unknown)"}
 
 COMPETENCIES TO SCORE (use these exact names if provided): ${
       fixedComps.length ? fixedComps.join(", ") : "(assessor's choice)"
