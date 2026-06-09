@@ -469,6 +469,15 @@ export default function CallPage() {
   );
 
   const endAndSummarise = useCallback(async () => {
+    // Stop any Meet bot tied to this session so it can't linger billing - works
+    // by session id, so it doesn't matter that the browser holds no bot id.
+    // No-op for in-app calls (no active bot for this room). Fire and forget.
+    fetch("/api/meet/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: room }),
+    }).catch(() => {});
+
     const labelled = linesRef.current
       .map(
         (l) =>
