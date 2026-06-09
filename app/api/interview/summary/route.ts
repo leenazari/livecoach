@@ -10,7 +10,7 @@ export const maxDuration = 60;
 // Returns a structured JSON summary + scorecard + contributors + style profile.
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, knowledgeContext, role, candidate, competencies, sessionId } =
+    const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId } =
       await req.json();
 
     if (!transcript || transcript.length < 30) {
@@ -51,7 +51,22 @@ export async function POST(req: NextRequest) {
           .join("\n")}`
       : `Choose 3-6 role-relevant competencies to score.`;
 
-    const system = `You are an expert interview assessor. You are given a speaker-labelled transcript of an interview${role ? ` for the role: ${role}` : ""}, plus the candidate's CV and any question framework.
+    const typeName =
+      callType && ["interview", "sales", "support"].includes(callType)
+        ? callType
+        : "";
+
+    const system = `You are an expert conversation assessor. You are given a speaker-labelled transcript of a ${typeName || "call"}${role ? ` (role / title in play: ${role})` : ""}, plus any supporting context (CV, notes, framework).
+
+This is NOT necessarily an interview. ${
+      typeName === "sales"
+        ? "It is a sales / discovery call - read it for needs surfaced, qualification (budget / authority / timeline), objections, and how close it moved to a next step."
+        : typeName === "support"
+        ? "It is a support call - read it for problem clarity, progress toward resolution, and whether the issue was actually resolved."
+        : typeName === "interview"
+        ? "It is an interview - read it for evidence against the target competencies."
+        : "Read it against the intent and target focus areas, whatever the conversation type."
+    } The recommendation should be the overall read for THIS kind of call (for a sale: how ready/likely; for support: resolved or not; for an interview: the hire signal).
 
 The transcript is labelled by speaker. One speaker is the INTERVIEWER (the person being coached - labelled "Interviewer:", "You:", or by their own name). There may be ONE OR MORE other participants, labelled "Candidate:" or by their real names (e.g. "Mark Darling:", "Jaykishan:"). Treat each named person as a distinct individual.
 
