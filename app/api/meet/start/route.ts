@@ -1,5 +1,6 @@
 // FIRST LINE MARKER (route): app/api/meet/start/route.ts  — exports POST, no JSX
 import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabase";
 
 // Public Railway worker that receives Recall's transcript webhooks.
 // Override in Vercel env with MEET_WORKER_URL if the domain ever changes.
@@ -89,6 +90,19 @@ export async function POST(req: NextRequest) {
     }
 
     const data = JSON.parse(raw);
+
+    // Record the bot so it can be stopped by session_id later, even if the
+    // browser tab that started it is gone. Non-fatal if it fails.
+    try {
+      await supabaseAdmin.from("meet_bots").insert({
+        session_id: String(sessionId),
+        bot_id: data.id,
+        status: "active",
+      });
+    } catch (e) {
+      console.error("meet_bots insert failed:", e);
+    }
+
     return NextResponse.json({ botId: data.id, status: "joining" });
   } catch (e: any) {
     return NextResponse.json(
