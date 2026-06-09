@@ -11,7 +11,7 @@ const WORKER_WS =
 
 type Props = {
   room: string;
-  onFinalTranscript: (role: string, text: string) => void;
+  onFinalTranscript: (role: string, text: string, speaker?: string) => void;
   onCandidateTurnEnd: () => void;
 };
 
@@ -100,7 +100,7 @@ export default function MeetStage({
         setCoach(speaker);
       }
 
-      onFinalRef.current(role, text);
+      onFinalRef.current(role, text, speaker);
 
       if (role === "candidate") {
         sawCandidateRef.current = true;
@@ -141,7 +141,7 @@ export default function MeetStage({
         if (cancelled || !Array.isArray(d.utterances)) return;
         for (const u of d.utterances) {
           const role = mapRole(u.speaker || "", u.role || "");
-          onFinalRef.current(role, (u.text || "").trim());
+          onFinalRef.current(role, (u.text || "").trim(), u.speaker);
         }
       } catch {
         /* no backfill is fine */
