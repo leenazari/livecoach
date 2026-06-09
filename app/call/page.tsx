@@ -815,7 +815,7 @@ export default function CallPage() {
           </span>
         </button>
       ) : (
-        <div className="mb-6 overflow-hidden rounded-2xl border border-edge bg-panel/60">
+        <div className="mx-auto mb-6 w-full max-w-5xl overflow-hidden rounded-2xl border border-edge bg-panel/60">
           {callLive && (
             <button
               type="button"
@@ -825,11 +825,11 @@ export default function CallPage() {
               {"\u25BE"} collapse setup
             </button>
           )}
-        <div className="grid lg:grid-cols-2">
+        <div className="grid md:grid-cols-2">
           {/* LEFT - stepped setup */}
-          <div className="flex flex-col border-edge lg:border-r">
+          <div className="flex flex-col border-edge md:border-r">
             {/* STEP 1 - Intent */}
-            <div className="border-b border-edge p-5">
+            <div className="border-b border-edge px-5 py-3.5">
               <div className="mb-2 flex items-center gap-2.5">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-amber font-mono text-[0.6rem] text-amber">
                   1
@@ -844,9 +844,9 @@ export default function CallPage() {
               <textarea
                 value={brief}
                 onChange={(e) => setBrief(e.target.value)}
-                rows={3}
+                rows={2}
                 placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
-                className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+                className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
               />
               <p className="mt-1.5 font-mono text-[0.62rem] leading-relaxed text-muted">
                 The one thing that drives everything - the read, the cues, the
@@ -855,7 +855,7 @@ export default function CallPage() {
             </div>
 
             {/* STEP 2 - Who & context */}
-            <div className="border-b border-edge p-5">
+            <div className="border-b border-edge px-5 py-3.5">
               <div className="mb-3 flex items-center gap-2.5">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-amber font-mono text-[0.6rem] text-amber">
                   2
@@ -867,8 +867,8 @@ export default function CallPage() {
                   optional - sharpens the plan
                 </span>
               </div>
-              <div className="flex flex-col gap-3">
-                <div className="grid gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-2.5">
+                <div className="grid gap-2.5 sm:grid-cols-2">
                   <label className="block">
                     <span className="mb-1.5 block font-mono text-[0.58rem] uppercase tracking-[0.18em] text-muted">
                       Name
@@ -877,7 +877,7 @@ export default function CallPage() {
                       value={candidate}
                       placeholder="if you have one"
                       onChange={(e) => setCandidate(e.target.value)}
-                      className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+                      className="w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
                     />
                   </label>
                   <label className="block">
@@ -888,7 +888,7 @@ export default function CallPage() {
                       value={role}
                       placeholder="e.g. Founder"
                       onChange={(e) => setRole(e.target.value)}
-                      className="w-full rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
+                      className="w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-amber/60"
                     />
                   </label>
                 </div>
@@ -901,7 +901,7 @@ export default function CallPage() {
                       value={publicLink}
                       placeholder="https://theircompany.com"
                       onChange={(e) => setPublicLink(e.target.value)}
-                      className="min-w-0 flex-1 rounded-lg border border-edge bg-ink/60 px-3.5 py-2.5 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-sky/60"
+                      className="min-w-0 flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-sky/60"
                     />
                     <button
                       type="button"
@@ -936,7 +936,7 @@ export default function CallPage() {
             </div>
 
             {/* STEP 3 - Call source */}
-            <div className="p-5">
+            <div className="px-5 py-3.5">
               <div className="mb-3 flex items-center gap-2.5">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-amber font-mono text-[0.6rem] text-amber">
                   3
@@ -970,7 +970,7 @@ export default function CallPage() {
                 </button>
               </div>
               {source === "inapp" ? (
-                <div className="mt-3 flex flex-col gap-3">
+                <div className="mt-3 flex flex-col gap-2.5">
                   <div>
                     <p className="mb-1.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-amber">
                       Send this join link
@@ -1012,9 +1012,9 @@ export default function CallPage() {
           </div>
 
           {/* RIGHT - the generated plan */}
-          <div className="flex flex-col gap-3.5 p-5">
+          <div className="flex flex-col gap-3 px-5 py-4">
             {suggestedComps.length === 0 && !character && !background ? (
-              <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-edge p-7 text-center">
+              <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-edge p-6 text-center">
                 <p className="font-mono text-[0.66rem] uppercase tracking-wider text-bone">
                   Your plan appears here
                 </p>
@@ -1032,7 +1032,7 @@ export default function CallPage() {
                   </span>
                 )}
                 {background && (
-                  <div className="rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
+                  <div className="rounded-xl border border-sky/40 bg-sky/[0.06] p-3.5">
                     <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-sky">
                       Background
                     </p>
@@ -1042,7 +1042,7 @@ export default function CallPage() {
                   </div>
                 )}
                 {character && (
-                  <div className="rounded-xl border border-sage/40 bg-sage/[0.06] p-4">
+                  <div className="rounded-xl border border-sage/40 bg-sage/[0.06] p-3.5">
                     <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-sage">
                       Your read on them
                     </p>
@@ -1074,7 +1074,7 @@ export default function CallPage() {
                   </div>
                 )}
                 {playbook.length > 0 && (
-                  <div className="rounded-xl border border-edge bg-panel2/40 p-4">
+                  <div className="rounded-xl border border-edge bg-panel2/40 p-3.5">
                     <p className="mb-2 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-amber">
                       Playbook{" "}
                       <span className="text-muted">- tailored to this call</span>
@@ -1098,7 +1098,7 @@ export default function CallPage() {
         </div>
 
         {/* ACTION BAR - the build gate */}
-        <div className="flex flex-col items-start gap-3 border-t border-edge bg-ink/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col items-start gap-3 border-t border-edge bg-ink/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="font-mono text-[0.63rem] leading-relaxed text-muted">
             {suggestedComps.length > 0
               ? "Plan built. Rank your focus, then Start call. Rebuild refreshes the read, background + playbook - your focus stays."
