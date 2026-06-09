@@ -1098,9 +1098,9 @@ export default function CallPage() {
         </button>
       )}
 
-      <div className={`grid gap-6 ${rightMin ? "" : "lg:grid-cols-[1.7fr_1fr]"}`}>
+      <div className={`grid gap-6 ${rightMin ? "" : "lg:grid-cols-2"}`}>
         {!rightMin && (
-          <section className="flex min-h-[360px] flex-col rounded-2xl border border-edge bg-panel/50 lg:order-2">
+          <section className="flex min-h-[72vh] flex-col rounded-2xl border border-edge bg-panel/50 lg:order-2">
             <div className="flex items-center border-b border-edge">
               <button
                 type="button"
@@ -1290,17 +1290,20 @@ export default function CallPage() {
           </section>
         )}
 
-        <section className="flex min-h-[360px] flex-col rounded-2xl border border-amber/40 bg-gradient-to-b from-amber/[0.07] to-transparent lg:order-1">
+        <section className="flex min-h-[72vh] flex-col rounded-2xl border border-amber/40 bg-gradient-to-b from-amber/[0.07] to-transparent lg:order-1">
           <div className="border-b border-edge px-6 py-3.5">
             <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-amber">
               Ask this next
             </h2>
+            <p className="mt-1 font-mono text-[0.58rem] tracking-wide text-muted">
+              {"\u2606"} favourite a cue to keep it in the Bulletin
+            </p>
           </div>
 
           {pinned.length > 0 && (
             <div className="border-b border-edge/60 px-5 py-4">
               <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-amber/70">
-                Pinned
+                Bulletin
               </p>
               <div className="flex flex-col gap-2">{pinned.map(renderCard)}</div>
             </div>
