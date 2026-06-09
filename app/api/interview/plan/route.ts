@@ -32,9 +32,15 @@ Produce a plan that drives the conversation toward the caller's intent:
    A true opener eases the person in and surfaces their MOTIVATION, context, and what they care about - warm and inviting, one clear question. Tag these "opener": true.
    Tag "opener": false for anything that is a hypothetical stress-test, pressure scenario (e.g. "how would you feel if I gave you X with no Y"), gotcha, or loaded multi-clause challenge - that probing belongs LATER in the conversation, never at the top.
    Provide AT LEAST 3 strong openers (opener:true). List the opener:true questions first, ordered gentlest -> slightly more searching.
+5. playbook: 4-6 concrete, in-the-moment TACTICS tailored to THIS call type and intent - the practical moves the caller should be ready to make on the call. Each item is { "label": "short tactic name", "detail": "one specific, actionable line" }. Adapt the tactics to the call type:
+   - sales / discovery: an opening discovery move, how to qualify (budget / authority / timeline), the single most likely objection and how to handle it, a buying-signal vs mere-politeness signal to watch for.
+   - support: how to triage the issue, how to de-escalate if it turns tense, how to confirm the resolution actually landed.
+   - interview: what "good" looks like for the top focus, a STAR probe to draw out real evidence, a common dodge to watch for.
+   - general: how to build rapport, the key thing to clarify early, how to steer toward the goal without forcing it.
+   Ground every tactic in the ACTUAL intent and context - never generic advice.
 
 Output ONLY valid JSON (no markdown, no preamble):
-{ "callType": "interview|sales|support|general", "subjectName": "...", "approach": { "goal": "...", "premise": "...", "strategy": "direct|warm-up-then-pivot", "pathway": ["..."] }, "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}] }`;
+{ "callType": "interview|sales|support|general", "subjectName": "...", "approach": { "goal": "...", "premise": "...", "strategy": "direct|warm-up-then-pivot", "pathway": ["..."] }, "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}], "playbook": [{"label":"...","detail":"..."}] }`;
 
     const userMsg = `INTENT BRIEF (top priority): ${brief || "(none given)"}
 
@@ -47,7 +53,7 @@ Return the JSON plan now.`;
 
     const msg = await anthropic.messages.create({
       model: CLAUDE_MODEL_LIVE,
-      max_tokens: 1000,
+      max_tokens: 1400,
       system,
       messages: [{ role: "user", content: userMsg }],
     });
@@ -123,6 +129,20 @@ Return the JSON plan now.`;
         }));
     }
 
+    const playbook = Array.isArray(plan.playbook)
+      ? plan.playbook
+          .filter(
+            (p: any) =>
+              p &&
+              typeof p.label === "string" &&
+              typeof p.detail === "string" &&
+              p.label.trim() &&
+              p.detail.trim()
+          )
+          .slice(0, 6)
+          .map((p: any) => ({ label: p.label, detail: p.detail }))
+      : [];
+
     return NextResponse.json({
       callType,
       subjectName,
@@ -130,6 +150,7 @@ Return the JSON plan now.`;
       focusAreas,
       character,
       openingQuestions,
+      playbook,
     });
   } catch (err: any) {
     console.error("Plan error:", err);
