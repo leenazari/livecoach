@@ -9,7 +9,6 @@ import SortableFocusList from "@/components/SortableFocusList";
 import PostCallSummary from "@/components/PostCallSummary";
 import CostMeter from "@/components/CostMeter";
 import MatrixRain from "@/components/MatrixRain";
-import MatrixBackground from "@/components/MatrixBackground";
 import {
   estimateCost,
   knowledgeTokensFromText,
@@ -880,8 +879,6 @@ export default function CallPage() {
   };
 
   return (
-    <>
-    <MatrixBackground />
     <main className="relative z-10 mx-auto max-w-[1200px] px-5 py-10">
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
         <h1 className="font-display text-[1.55rem] leading-none tracking-tight text-bone">
@@ -1629,6 +1626,5 @@ export default function CallPage() {
         />
       )}
     </main>
-    </>
   );
 }
