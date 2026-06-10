@@ -2,17 +2,20 @@
 
 import type { CostBreakdown } from "@/lib/costs";
 
-// Compact, always-visible live cost meter for the call screen. Shows the
-// running session cost and turns rust when the projected hourly pace crosses
-// the ceiling. Hover for the per-component breakdown.
+// Compact, always-visible live cost meter. Shows running session cost and the
+// projected hourly pace, turning rust when the pace crosses the ceiling. Hover
+// for the per-component breakdown (incl. the transport line — LiveKit or
+// Recall.ai — depending on the call type).
 export default function CostMeter({
   cost,
   overBudget,
   projectedHourly,
+  transportLabel = "Transport",
 }: {
   cost: CostBreakdown | null;
   overBudget: boolean;
   projectedHourly?: number;
+  transportLabel?: string;
 }) {
   if (!cost) return null;
 
@@ -20,8 +23,9 @@ export default function CostMeter({
   const gbp3 = (usd: number) => `£${(usd * 0.79).toFixed(3)}`;
 
   const title = [
-    `Deepgram: ${gbp3(cost.deepgram)}`,
-    `Claude: ${gbp3(cost.claude)}`,
+    `Deepgram (transcription): ${gbp3(cost.deepgram)}`,
+    `${transportLabel} (transport): ${gbp3(cost.transport)}`,
+    `Claude (cues + scorecard): ${gbp3(cost.claude)}`,
     `Vercel: ${gbp3(cost.vercel)}`,
     `Supabase: ${gbp3(cost.supabase)}`,
     projectedHourly && projectedHourly > 0
