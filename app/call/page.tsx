@@ -8,6 +8,8 @@ import VoiceNoteButton from "@/components/VoiceNoteButton";
 import SortableFocusList from "@/components/SortableFocusList";
 import PostCallSummary from "@/components/PostCallSummary";
 import CostMeter from "@/components/CostMeter";
+import MatrixRain from "@/components/MatrixRain";
+import MatrixBackground from "@/components/MatrixBackground";
 import {
   estimateCost,
   knowledgeTokensFromText,
@@ -676,6 +678,14 @@ export default function CallPage() {
     }
   }, [candidate]);
 
+  const briefRef = useRef<HTMLTextAreaElement | null>(null);
+  // Auto-follow: keep the newest text in view as the brief grows (e.g. while a
+  // voice note streams in).
+  useEffect(() => {
+    const el = briefRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [brief]);
+
   const appendBrief = useCallback((t: string) => {
     setBrief((prev) => (prev.trim() ? `${prev.trim()} ${t}` : t));
   }, []);
@@ -870,6 +880,8 @@ export default function CallPage() {
   };
 
   return (
+    <>
+    <MatrixBackground />
     <main className="relative z-10 mx-auto max-w-[1200px] px-5 py-10">
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
         <h1 className="font-display text-[1.55rem] leading-none tracking-tight text-bone">
@@ -946,11 +958,12 @@ export default function CallPage() {
                 </span>
               </div>
               <textarea
+                ref={briefRef}
                 value={brief}
                 onChange={(e) => setBrief(e.target.value)}
-                rows={4}
+                rows={7}
                 placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
-                className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+                className="max-h-[40vh] min-h-[9rem] w-full resize-y overflow-y-auto rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
               />
               <p className="mt-1.5 font-mono text-[0.62rem] leading-relaxed text-muted">
                 The one thing that drives everything - the read, the cues, the
@@ -1116,8 +1129,18 @@ export default function CallPage() {
           </div>
 
           {/* RIGHT - the generated plan */}
-          <div className="flex flex-col gap-3 px-5 py-4">
-            {suggestedComps.length === 0 && !character && !background ? (
+          <div className="relative flex flex-col gap-3 px-5 py-4">
+            {prepping ? (
+              <MatrixRain
+                messages={[
+                  "reading the brief",
+                  "folding in the document",
+                  "shaping the approach",
+                  "ranking focus areas",
+                  "writing the playbook",
+                ]}
+              />
+            ) : suggestedComps.length === 0 && !character && !background ? (
               <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-edge p-6 text-center">
                 <p className="font-mono text-[0.66rem] uppercase tracking-wider text-bone">
                   Your plan appears here
@@ -1599,5 +1622,6 @@ export default function CallPage() {
         />
       )}
     </main>
+    </>
   );
 }
