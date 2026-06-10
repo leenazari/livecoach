@@ -60,22 +60,29 @@ export default function MatrixRain({
     ro.observe(wrap);
 
     let raf = 0;
-    function frame() {
-      const w = wrap!.clientWidth;
-      const h = wrap!.clientHeight;
-      // Trailing fade.
-      ctx!.fillStyle = "rgba(10, 10, 12, 0.12)";
-      ctx!.fillRect(0, 0, w, h);
-      ctx!.font = `${fontSize}px "IBM Plex Mono", monospace`;
-      for (let i = 0; i < cols; i++) {
-        const ch = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
-        const x = i * fontSize;
-        const y = drops[i] * fontSize;
-        // Bright leading glyph, dimmer trail.
-        ctx!.fillStyle = Math.random() > 0.975 ? "#FBE4BE" : color;
-        ctx!.fillText(ch, x, y);
-        if (y > h && Math.random() > 0.975) drops[i] = 0;
-        drops[i]++;
+    let last = 0;
+    // Throttle to ~70% of the 60fps fall speed (advance every ~24ms instead of
+    // every frame) so the rain falls more slowly.
+    const STEP_MS = 1000 / 60 / 0.7;
+    function frame(now: number) {
+      if (now - last >= STEP_MS) {
+        last = now;
+        const w = wrap!.clientWidth;
+        const h = wrap!.clientHeight;
+        // Trailing fade.
+        ctx!.fillStyle = "rgba(10, 10, 12, 0.12)";
+        ctx!.fillRect(0, 0, w, h);
+        ctx!.font = `${fontSize}px "IBM Plex Mono", monospace`;
+        for (let i = 0; i < cols; i++) {
+          const ch = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+          const x = i * fontSize;
+          const y = drops[i] * fontSize;
+          // Bright leading glyph, dimmer trail.
+          ctx!.fillStyle = Math.random() > 0.975 ? "#FBE4BE" : color;
+          ctx!.fillText(ch, x, y);
+          if (y > h && Math.random() > 0.975) drops[i] = 0;
+          drops[i]++;
+        }
       }
       raf = requestAnimationFrame(frame);
     }
