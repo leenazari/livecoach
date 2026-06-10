@@ -111,11 +111,15 @@ export default function CallPage() {
   const [researchNote, setResearchNote] = useState("");
   const [cost, setCost] = useState<CostBreakdown | null>(null);
   const [overBudget, setOverBudget] = useState(false);
+  const [meterOn, setMeterOn] = useState(false);
 
   const knowledgeRef = useRef("");
   const claudeCallsRef = useRef(0);
   const callStartedAtRef = useRef(0);
   const costTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sonnetCallsRef = useRef(0);
+  const callLiveRef = useRef(false);
+  const sourceRef = useRef<"inapp" | "meet">("inapp");
   const backgroundRef = useRef("");
   const callTypeRef = useRef("general");
   const roleRef = useRef("");
@@ -144,28 +148,37 @@ export default function CallPage() {
     setOrigin(window.location.origin);
   }, []);
 
-  // Live cost meter: while the call is live, re-estimate every 5s using the
-  // ACTUAL loaded knowledge size, and flag if the projected hourly pace crosses
-  // the ceiling.
+  // Cost meter. Turns on the moment a plan is built OR a call goes live
+  // (whichever first), so the cost is visible from the first billable action.
+  // Claude cost (plan + cues + scorecard) accrues from call counts; Deepgram +
+  // transport + infra only accrue while actually transcribing (call live), so
+  // sitting on the plan screen doesn't run the meter up on transport you're not
+  // using yet.
   useEffect(() => {
-    if (!callLive) return;
-    if (!callStartedAtRef.current) callStartedAtRef.current = Date.now();
+    if (!meterOn) return;
     const tick = () => {
-      const elapsed = (Date.now() - callStartedAtRef.current) / 1000;
-      const c = estimateCost(
-        elapsed,
-        claudeCallsRef.current,
-        knowledgeTokensFromText(knowledgeRef.current)
-      );
+      const transcribing =
+        callLiveRef.current && callStartedAtRef.current
+          ? (Date.now() - callStartedAtRef.current) / 1000
+          : 0;
+      const meet = sourceRef.current === "meet";
+      const c = estimateCost(transcribing, claudeCallsRef.current, {
+        knowledgeTokens: knowledgeTokensFromText(knowledgeRef.current),
+        deepgramStreams: meet ? 0 : 2,
+        transport: meet ? "recall" : "livekit",
+        sonnetCalls: sonnetCallsRef.current,
+      });
       setCost(c);
-      setOverBudget(projectHourlyGBP(c.totalGBP, elapsed) > HOURLY_CEILING_GBP);
+      setOverBudget(
+        projectHourlyGBP(c.totalGBP, transcribing) > HOURLY_CEILING_GBP
+      );
     };
     tick();
-    costTickRef.current = setInterval(tick, 5000);
+    costTickRef.current = setInterval(tick, 4000);
     return () => {
       if (costTickRef.current) clearInterval(costTickRef.current);
     };
-  }, [callLive]);
+  }, [meterOn]);
   useEffect(() => {
     roleRef.current = role;
     personLabelRef.current = candidate.trim() || "Them";
@@ -179,6 +192,14 @@ export default function CallPage() {
   useEffect(() => {
     callTypeRef.current = callType;
   }, [callType]);
+  useEffect(() => {
+    callLiveRef.current = callLive;
+    if (callLive && !callStartedAtRef.current) callStartedAtRef.current = Date.now();
+    if (callLive) setMeterOn(true);
+  }, [callLive]);
+  useEffect(() => {
+    sourceRef.current = source;
+  }, [source]);
 
   const joinLink = origin ? `${origin}/join/${room}` : "";
   const botLink = origin ? `${origin}/candidate-bot/${room}` : "";
@@ -509,6 +530,7 @@ export default function CallPage() {
 
   const prepOpening = useCallback(async () => {
     setPrepping(true);
+    setMeterOn(true);
     setStatus("building plan...");
     try {
       await loadContext();
@@ -627,7 +649,7 @@ export default function CallPage() {
     setSummarising(true);
     setStatus("building summary...");
     try {
-      claudeCallsRef.current += 1;
+      sonnetCallsRef.current += 1;
       const res = await fetch("/api/interview/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1169,6 +1191,13 @@ export default function CallPage() {
 
         {/* ACTION BAR - the build gate */}
         <div className="flex flex-col items-start gap-3 border-t border-edge bg-ink/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          {cost && (
+            <CostMeter
+              cost={cost}
+              overBudget={overBudget}
+              transportLabel={source === "meet" ? "Recall.ai" : "LiveKit"}
+            />
+          )}
           <p className="font-mono text-[0.63rem] leading-relaxed text-muted">
             {suggestedComps.length > 0
               ? "Plan built. Rank your focus, then Start call. Rebuild refreshes the read, background + playbook - your focus stays."
@@ -1222,8 +1251,9 @@ export default function CallPage() {
           <CostMeter
             cost={cost}
             overBudget={overBudget}
+            transportLabel={source === "meet" ? "Recall.ai" : "LiveKit"}
             projectedHourly={
-              cost
+              cost && callStartedAtRef.current
                 ? projectHourlyGBP(
                     cost.totalGBP,
                     (Date.now() - callStartedAtRef.current) / 1000
