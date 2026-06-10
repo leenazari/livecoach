@@ -88,7 +88,7 @@ Return the JSON plan now.`;
     let modelOk = false;
     for (let attempt = 0; attempt < 2 && !modelOk; attempt++) {
       try {
-        const msg = await callModelWithTimeout(system, userMsg, 22000);
+        const msg = await callModelWithTimeout(system, userMsg, 55000);
         raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
