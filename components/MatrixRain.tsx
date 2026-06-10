@@ -1,42 +1,51 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-// Ambient classic-green "digital rain" behind the whole console. Fixed,
-// full-viewport, pointer-events-none, low opacity, sitting at z-1: above the
-// warm gradient (body::before, z-0) and below the content (<main>, z-10), so it
-// frames the design in the margins without hurting readability.
-export default function MatrixBackground({
-  color = "#2BE06A", // classic matrix green
-  opacity = 0.16,
+// Matrix-style "digital rain" shown while a plan is building. Self-contained:
+// a canvas animation tinted to the brand (amber, not green) plus a cycling
+// status caption. Cleans up its animation frame + interval on unmount.
+export default function MatrixRain({
+  messages = ["building plan"],
+  color = "#E8A33D", // amber
 }: {
+  messages?: string[];
   color?: string;
-  opacity?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [msgIdx, setMsgIdx] = useState(0);
 
+  // Cycle the caption.
+  useEffect(() => {
+    if (messages.length < 2) return;
+    const id = setInterval(
+      () => setMsgIdx((i) => (i + 1) % messages.length),
+      1400
+    );
+    return () => clearInterval(id);
+  }, [messages.length]);
+
+  // Canvas rain.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const reduce = window.matchMedia?.(
-      "(prefers-reduced-motion: reduce)"
-    )?.matches;
-
     const GLYPHS =
-      "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホ0123456789:.\"=*+-<>";
-    const fontSize = 16;
+      "アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789<>/\\{}[]=+*ABCDEFGHJKLMNPQRSTUVWXYZ";
     let dpr = Math.min(window.devicePixelRatio || 1, 2);
     let cols = 0;
     let drops: number[] = [];
+    const fontSize = 16;
 
     function resize() {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas!.width = Math.floor(w * dpr);
-      canvas!.height = Math.floor(h * dpr);
+      const w = wrap!.clientWidth;
+      const h = wrap!.clientHeight;
+      canvas!.width = Math.max(1, Math.floor(w * dpr));
+      canvas!.height = Math.max(1, Math.floor(h * dpr));
       canvas!.style.width = w + "px";
       canvas!.style.height = h + "px";
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -46,51 +55,55 @@ export default function MatrixBackground({
         .map(() => Math.floor((Math.random() * h) / fontSize));
     }
     resize();
-    window.addEventListener("resize", resize);
+
+    const ro = new ResizeObserver(resize);
+    ro.observe(wrap);
 
     let raf = 0;
-    let last = 0;
-    function frame(now: number) {
-      // ~20fps is plenty for a background and saves battery.
-      if (now - last > 50) {
-        last = now;
-        const w = window.innerWidth;
-        const h = window.innerHeight;
-        ctx!.fillStyle = "rgba(14, 13, 11, 0.10)";
-        ctx!.fillRect(0, 0, w, h);
-        ctx!.font = `${fontSize}px "IBM Plex Mono", monospace`;
-        for (let i = 0; i < cols; i++) {
-          const ch = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
-          const x = i * fontSize;
-          const y = drops[i] * fontSize;
-          ctx!.fillStyle = Math.random() > 0.985 ? "#CFFFE0" : color;
-          ctx!.fillText(ch, x, y);
-          if (y > h && Math.random() > 0.975) drops[i] = 0;
-          drops[i]++;
-        }
+    function frame() {
+      const w = wrap!.clientWidth;
+      const h = wrap!.clientHeight;
+      // Trailing fade.
+      ctx!.fillStyle = "rgba(10, 10, 12, 0.12)";
+      ctx!.fillRect(0, 0, w, h);
+      ctx!.font = `${fontSize}px "IBM Plex Mono", monospace`;
+      for (let i = 0; i < cols; i++) {
+        const ch = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+        const x = i * fontSize;
+        const y = drops[i] * fontSize;
+        // Bright leading glyph, dimmer trail.
+        ctx!.fillStyle = Math.random() > 0.975 ? "#FBE4BE" : color;
+        ctx!.fillText(ch, x, y);
+        if (y > h && Math.random() > 0.975) drops[i] = 0;
+        drops[i]++;
       }
       raf = requestAnimationFrame(frame);
     }
-
-    if (!reduce) raf = requestAnimationFrame(frame);
+    raf = requestAnimationFrame(frame);
 
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
+      ro.disconnect();
     };
   }, [color]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      aria-hidden="true"
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 1,
-        pointerEvents: "none",
-        opacity,
-      }}
-    />
+    <div
+      ref={wrapRef}
+      className="relative h-full min-h-[460px] w-full overflow-hidden rounded-xl border border-amber/30 bg-ink"
+    >
+      <canvas ref={canvasRef} className="absolute inset-0" />
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2">
+        <div className="rounded-full border border-amber/40 bg-ink/70 px-5 py-2 backdrop-blur-sm">
+          <span className="font-mono text-[0.7rem] uppercase tracking-[0.3em] text-amber">
+            {messages[msgIdx]}
+            <span className="ml-1 animate-pulse">_</span>
+          </span>
+        </div>
+        <span className="font-mono text-[0.55rem] uppercase tracking-[0.25em] text-amber/50">
+          livecoach
+        </span>
+      </div>
+    </div>
   );
 }
