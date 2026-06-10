@@ -7,6 +7,14 @@ import KnowledgePanel from "@/components/KnowledgePanel";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
 import SortableFocusList from "@/components/SortableFocusList";
 import PostCallSummary from "@/components/PostCallSummary";
+import CostMeter from "@/components/CostMeter";
+import {
+  estimateCost,
+  knowledgeTokensFromText,
+  projectHourlyGBP,
+  HOURLY_CEILING_GBP,
+  type CostBreakdown,
+} from "@/lib/costs";
 
 type Line = { role: string; text: string; speaker?: string };
 type Suggestion = {
@@ -63,7 +71,7 @@ function splitCue(raw: string): { ask: string; why: string; followup: string } {
 }
 
 export default function CallPage() {
-  const [room, setRoom] = useState("");
+  const [room] = useState(() => `lc-${Math.random().toString(36).slice(2, 8)}`);
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
@@ -101,8 +109,13 @@ export default function CallPage() {
   const [background, setBackground] = useState("");
   const [researching, setResearching] = useState(false);
   const [researchNote, setResearchNote] = useState("");
+  const [cost, setCost] = useState<CostBreakdown | null>(null);
+  const [overBudget, setOverBudget] = useState(false);
 
   const knowledgeRef = useRef("");
+  const claudeCallsRef = useRef(0);
+  const callStartedAtRef = useRef(0);
+  const costTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const backgroundRef = useRef("");
   const callTypeRef = useRef("general");
   const roleRef = useRef("");
@@ -129,10 +142,30 @@ export default function CallPage() {
 
   useEffect(() => {
     setOrigin(window.location.origin);
-    // Generate the room id on the client only, to avoid an SSR/client
-    // hydration mismatch (Math.random() differs between server and client).
-    setRoom((r) => r || `lc-${Math.random().toString(36).slice(2, 8)}`);
   }, []);
+
+  // Live cost meter: while the call is live, re-estimate every 5s using the
+  // ACTUAL loaded knowledge size, and flag if the projected hourly pace crosses
+  // the ceiling.
+  useEffect(() => {
+    if (!callLive) return;
+    if (!callStartedAtRef.current) callStartedAtRef.current = Date.now();
+    const tick = () => {
+      const elapsed = (Date.now() - callStartedAtRef.current) / 1000;
+      const c = estimateCost(
+        elapsed,
+        claudeCallsRef.current,
+        knowledgeTokensFromText(knowledgeRef.current)
+      );
+      setCost(c);
+      setOverBudget(projectHourlyGBP(c.totalGBP, elapsed) > HOURLY_CEILING_GBP);
+    };
+    tick();
+    costTickRef.current = setInterval(tick, 5000);
+    return () => {
+      if (costTickRef.current) clearInterval(costTickRef.current);
+    };
+  }, [callLive]);
   useEffect(() => {
     roleRef.current = role;
     personLabelRef.current = candidate.trim() || "Them";
@@ -241,6 +274,7 @@ export default function CallPage() {
     ]);
 
     try {
+      claudeCallsRef.current += 1;
       const res = await fetch("/api/interview/suggest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -318,6 +352,7 @@ export default function CallPage() {
     summaryInFlightRef.current = true;
     setSummaryUpdating(true);
     try {
+      claudeCallsRef.current += 1;
       const res = await fetch("/api/interview/running-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -396,6 +431,7 @@ export default function CallPage() {
   // Intent-driven plan: brief (top priority) + CV/JD context -> ranked focus
   // areas + character profile + opening questions, in one call.
   const generatePlan = useCallback(async () => {
+    claudeCallsRef.current += 1;
     const res = await fetch("/api/interview/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -464,9 +500,10 @@ export default function CallPage() {
       ...recentTextsRef.current,
     ].slice(0, 10);
 
-    // Signal whether a real plan came back so the caller doesn't show a false
-    // "plan ready" over an empty panel.
-    return focus.length > 0 || suggestedCompsRef.current.length > 0;
+    // Report whether a real plan came back, and whether it's the generic
+    // fallback, so the status line stays honest.
+    const ok = focus.length > 0 || suggestedCompsRef.current.length > 0;
+    return { ok, degraded: data.degraded === true };
   }, [brief, role]);
 
 
@@ -475,11 +512,13 @@ export default function CallPage() {
     setStatus("building plan...");
     try {
       await loadContext();
-      const built = await generatePlan();
+      const { ok, degraded } = await generatePlan();
       setStatus(
-        built
-          ? "plan ready"
-          : "no plan came back - tap Build plan to try again"
+        !ok
+          ? "no plan came back - tap Build plan to try again"
+          : degraded
+          ? "plan ready (generic - rebuild for a tailored plan)"
+          : "plan ready"
       );
     } catch (e: any) {
       setStatus(`error: ${e.message || "could not build plan"}`);
@@ -588,6 +627,7 @@ export default function CallPage() {
     setSummarising(true);
     setStatus("building summary...");
     try {
+      claudeCallsRef.current += 1;
       const res = await fetch("/api/interview/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1179,6 +1219,18 @@ export default function CallPage() {
           <span className="shrink-0 font-mono text-sm font-medium tabular-nums text-amber">
             {intentPct}%
           </span>
+          <CostMeter
+            cost={cost}
+            overBudget={overBudget}
+            projectedHourly={
+              cost
+                ? projectHourlyGBP(
+                    cost.totalGBP,
+                    (Date.now() - callStartedAtRef.current) / 1000
+                  )
+                : 0
+            }
+          />
         </div>
       )}
 
