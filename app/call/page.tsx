@@ -63,7 +63,7 @@ function splitCue(raw: string): { ask: string; why: string; followup: string } {
 }
 
 export default function CallPage() {
-  const [room] = useState(() => `lc-${Math.random().toString(36).slice(2, 8)}`);
+  const [room, setRoom] = useState("");
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
@@ -129,6 +129,9 @@ export default function CallPage() {
 
   useEffect(() => {
     setOrigin(window.location.origin);
+    // Generate the room id on the client only, to avoid an SSR/client
+    // hydration mismatch (Math.random() differs between server and client).
+    setRoom((r) => r || `lc-${Math.random().toString(36).slice(2, 8)}`);
   }, []);
   useEffect(() => {
     roleRef.current = role;
@@ -460,6 +463,10 @@ export default function CallPage() {
       ...cards.map((c) => c.text),
       ...recentTextsRef.current,
     ].slice(0, 10);
+
+    // Signal whether a real plan came back so the caller doesn't show a false
+    // "plan ready" over an empty panel.
+    return focus.length > 0 || suggestedCompsRef.current.length > 0;
   }, [brief, role]);
 
 
@@ -468,8 +475,12 @@ export default function CallPage() {
     setStatus("building plan...");
     try {
       await loadContext();
-      await generatePlan();
-      setStatus("plan ready");
+      const built = await generatePlan();
+      setStatus(
+        built
+          ? "plan ready"
+          : "no plan came back - tap Build plan to try again"
+      );
     } catch (e: any) {
       setStatus(`error: ${e.message || "could not build plan"}`);
     } finally {
@@ -863,7 +874,7 @@ export default function CallPage() {
               <textarea
                 value={brief}
                 onChange={(e) => setBrief(e.target.value)}
-                rows={2}
+                rows={4}
                 placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
                 className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
               />
