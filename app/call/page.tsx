@@ -109,7 +109,7 @@ export default function CallPage() {
   const [background, setBackground] = useState("");
   const [researching, setResearching] = useState(false);
   const [researchNote, setResearchNote] = useState("");
-  const [cost, setCost] = useState<CostBreakdown | null>(null);
+  const [cost, setCost] = useState<CostBreakdown>(() => estimateCost(0, 0));
   const [overBudget, setOverBudget] = useState(false);
   const [meterOn, setMeterOn] = useState(false);
 
@@ -871,15 +871,10 @@ export default function CallPage() {
 
   return (
     <main className="relative z-10 mx-auto max-w-[1200px] px-5 py-10">
-      <header className="mb-7 flex flex-wrap items-end justify-between gap-4 border-b border-edge pb-5">
-        <div>
-          <h1 className="font-display text-[2.4rem] leading-none tracking-tight text-bone">
-            <span className="italic text-amber">Live</span>Coach
-          </h1>
-          <p className="mt-2 font-mono text-xs uppercase tracking-[0.25em] text-muted">
-            live call coaching
-          </p>
-        </div>
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
+        <h1 className="font-display text-[1.55rem] leading-none tracking-tight text-bone">
+          <span className="italic text-amber">Live</span>Coach
+        </h1>
         <div className="flex items-center gap-3">
           {cost && (
             <CostMeter
@@ -1208,13 +1203,6 @@ export default function CallPage() {
 
         {/* ACTION BAR - the build gate */}
         <div className="flex flex-col items-start gap-3 border-t border-edge bg-ink/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          {cost && (
-            <CostMeter
-              cost={cost}
-              overBudget={overBudget}
-              transportLabel={source === "meet" ? "Recall.ai" : "LiveKit"}
-            />
-          )}
           <p className="font-mono text-[0.63rem] leading-relaxed text-muted">
             {suggestedComps.length > 0
               ? "Plan built. Rank your focus, then Start call. Rebuild refreshes the read, background + playbook - your focus stays."
