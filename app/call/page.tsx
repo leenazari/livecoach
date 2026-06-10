@@ -894,12 +894,19 @@ export default function CallPage() {
               overBudget={overBudget}
               transportLabel={source === "meet" ? "Recall.ai" : "LiveKit"}
               projectedHourly={
-                cost && callStartedAtRef.current
+                callLive && callStartedAtRef.current
                   ? projectHourlyGBP(
                       cost.totalGBP,
                       (Date.now() - callStartedAtRef.current) / 1000
                     )
-                  : 0
+                  : estimateCost(3600, 25, {
+                      knowledgeTokens: knowledgeTokensFromText(
+                        knowledgeRef.current
+                      ),
+                      deepgramStreams: source === "meet" ? 0 : 2,
+                      transport: source === "meet" ? "recall" : "livekit",
+                      sonnetCalls: 1,
+                    }).totalGBP
               }
             />
           )}
