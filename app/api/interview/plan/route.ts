@@ -2,14 +2,45 @@ import { NextRequest, NextResponse } from "next/server";
 import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // Turns the INTENT of a call (the top-priority input) plus any supporting
-// context (CV / JD / notes) into a plan: ranked focus areas, the character /
-// outcome being sought, and opening questions. The brief drives everything.
+// context (CV / JD / notes / researched background) into a plan: ranked focus
+// areas, the character/outcome being sought, opening questions, and a playbook.
+// Hardened so a slow or failed model call degrades to a usable plan instead of
+// a 500 (which would blank the page).
+
+// Cap supporting context so a big CV + researched background can't bloat the
+// prompt and push the call past the time/size budget. The brief is never
+// trimmed; only the secondary context is.
+const MAX_CONTEXT_CHARS = 8000;
+
+async function callModelWithTimeout(system: string, userMsg: string, ms: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await anthropic.messages.create(
+      {
+        model: CLAUDE_MODEL_LIVE,
+        max_tokens: 1200,
+        system,
+        messages: [{ role: "user", content: userMsg }],
+      },
+      { signal: controller.signal }
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { brief, role, knowledgeContext } = await req.json();
+
+    let context = typeof knowledgeContext === "string" ? knowledgeContext : "";
+    if (context.length > MAX_CONTEXT_CHARS) {
+      context = context.slice(0, MAX_CONTEXT_CHARS) + "\n[context truncated]";
+    }
 
     const system = `You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
 
@@ -47,22 +78,27 @@ Output ONLY valid JSON (no markdown, no preamble):
 ROLE / TITLE: ${role || "(not specified)"}
 
 OPTIONAL SUPPORTING CONTEXT (document / notes about the person or topic):
-${knowledgeContext || "(none provided)"}
+${context || "(none provided)"}
 
 Return the JSON plan now.`;
 
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL_LIVE,
-      max_tokens: 1400,
-      system,
-      messages: [{ role: "user", content: userMsg }],
-    });
-
-    const raw = msg.content
-      .filter((b: any) => b.type === "text")
-      .map((b: any) => b.text)
-      .join("")
-      .trim();
+    // Try the model with a timeout; one quick retry on any failure. If both
+    // attempts fail, fall through to a minimal plan rather than 500.
+    let raw = "";
+    let modelOk = false;
+    for (let attempt = 0; attempt < 2 && !modelOk; attempt++) {
+      try {
+        const msg = await callModelWithTimeout(system, userMsg, 22000);
+        raw = msg.content
+          .filter((b: any) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("")
+          .trim();
+        modelOk = true;
+      } catch (e) {
+        console.error(`Plan model attempt ${attempt + 1} failed:`, e);
+      }
+    }
 
     let plan: any = {};
     try {
@@ -72,7 +108,9 @@ Return the JSON plan now.`;
     }
 
     const focusAreas = Array.isArray(plan.focusAreas)
-      ? plan.focusAreas.filter((x: any) => typeof x === "string" && x.trim()).slice(0, 10)
+      ? plan.focusAreas
+          .filter((x: any) => typeof x === "string" && x.trim())
+          .slice(0, 10)
       : [];
     const character = typeof plan.character === "string" ? plan.character : "";
     const allowedTypes = ["interview", "sales", "support", "general"];
@@ -98,10 +136,7 @@ Return the JSON plan now.`;
             .slice(0, 6)
         : [],
     };
-    // Filter opener candidates: keep only questions the model tagged as a real
-    // opener AND that don't match an obvious stress-test / hypothetical pattern
-    // (code-side safety net, so a mislabel still gets caught). Keep the top 3;
-    // if none pass, fall back to the first candidates rather than return empty.
+
     const STRESS_PATTERN =
       /(if i (gave|give|asked|put|threw|handed)|how would (you|that) feel|how does that (make you )?feel|what if\b|imagine (you|that|a|having)|suppose (you|that)|hypothetical|what would you do if|picture (yourself|a))/i;
 
@@ -121,12 +156,10 @@ Return the JSON plan now.`;
       .map(({ q, why }) => ({ q, why }));
 
     if (openingQuestions.length === 0) {
-      openingQuestions = candidates
-        .slice(0, 3)
-        .map((q: any) => ({
-          q: q.q,
-          why: typeof q.why === "string" ? q.why : "",
-        }));
+      openingQuestions = candidates.slice(0, 3).map((q: any) => ({
+        q: q.q,
+        why: typeof q.why === "string" ? q.why : "",
+      }));
     }
 
     const playbook = Array.isArray(plan.playbook)
@@ -140,7 +173,7 @@ Return the JSON plan now.`;
               p.detail.trim()
           )
           .slice(0, 6)
-          .map((p: any) => ({ label: p.label, detail: p.detail }))
+          .map((p: any) => ({ label: String(p.label), detail: String(p.detail) }))
       : [];
 
     return NextResponse.json({
@@ -153,10 +186,18 @@ Return the JSON plan now.`;
       playbook,
     });
   } catch (err: any) {
+    // Never 500 the page: return an empty-but-valid plan shape so the client
+    // renders gracefully instead of throwing.
     console.error("Plan error:", err);
-    return NextResponse.json(
-      { error: err?.message || "Failed to build plan" },
-      { status: 500 }
-    );
+    return NextResponse.json({
+      callType: "general",
+      subjectName: "",
+      approach: { goal: "", premise: "", strategy: "warm-up-then-pivot", pathway: [] },
+      focusAreas: [],
+      character: "",
+      openingQuestions: [],
+      playbook: [],
+      degraded: true,
+    });
   }
 }
