@@ -1,92 +1,418 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
-import { extractTextFromPDF } from "@/lib/pdf-extract";
+import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const BUCKET = "knowledge_docs";
+// Turns the INTENT of a call (the top-priority input) plus any supporting
+// context (CV / JD / notes / researched background) into a plan: ranked focus
+// areas, the character/outcome being sought, opening questions, and a playbook.
+// Hardened so a slow or failed model call degrades to a usable plan instead of
+// a 500 (which would blank the page).
 
-async function listFiles(prefix: string) {
-  const { data, error } = await supabaseAdmin.storage
-    .from(BUCKET)
-    .list(prefix, {
-      limit: 100,
-      sortBy: { column: "created_at", order: "desc" },
-    });
-  if (error || !data) return [];
-  return data;
+// Cap supporting context so a big CV + researched background can't bloat the
+// prompt and push the call past the time/size budget. The brief is never
+// trimmed; only the secondary context is.
+const MAX_CONTEXT_CHARS = 12000;
+
+async function callModelWithTimeout(system: string, userMsg: string, ms: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await anthropic.messages.create(
+      {
+        model: CLAUDE_MODEL_LIVE,
+        // Generous budget: the full JSON plan (approach + 6-9 focus areas +
+        // 6 questions + 6 playbook tactics) overran the old 1200-token cap and
+        // truncated mid-object, which made JSON.parse fail and returned an
+        // EMPTY plan (the "plan ready but blank panel" bug). 2400 leaves room.
+        max_tokens: 2400,
+        system,
+        messages: [{ role: "user", content: userMsg }],
+      },
+      { signal: controller.signal }
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-async function downloadText(path: string): Promise<string> {
-  const { data, error } = await supabaseAdmin.storage
-    .from(BUCKET)
-    .download(path);
-  if (error || !data) return "";
-  if (path.toLowerCase().endsWith(".pdf")) {
+// Tolerant JSON extraction. Haiku occasionally adds a prose preamble, wraps the
+// JSON in ```fences```, or (if it ever truncates) leaves the tail unclosed.
+// The old parser only stripped fences, so a preamble or truncation silently
+// produced {} -> empty focusAreas -> blank plan panel. This recovers from all
+// three: strip fences, slice to the outermost braces, parse; if that fails,
+// trim the tail and rebalance brackets until it parses.
+function extractPlan(raw: string): any {
+  if (!raw) return null;
+  let t = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  const core = start >= 0 && end > start ? t.slice(start, end + 1) : t;
+
+  try {
+    return JSON.parse(core);
+  } catch {
+    /* fall through to salvage */
+  }
+
+  // Tail-trim salvage for a truncated object: walk back from the end,
+  // rebalancing any open [ and { , until a fragment parses.
+  for (let cut = core.length; cut > 0; cut -= 1) {
+    let frag = core.slice(0, cut).replace(/,\s*$/, "");
+    const ob = (frag.match(/\{/g) || []).length;
+    const cb = (frag.match(/\}/g) || []).length;
+    const oa = (frag.match(/\[/g) || []).length;
+    const ca = (frag.match(/\]/g) || []).length;
+    frag += "]".repeat(Math.max(0, oa - ca)) + "}".repeat(Math.max(0, ob - cb));
     try {
-      const buf = new Uint8Array(await data.arrayBuffer());
-      return await extractTextFromPDF(buf);
-    } catch (e) {
-      console.error("PDF extract failed:", path, e);
-      return "";
+      return JSON.parse(frag);
+    } catch {
+      /* keep trimming */
     }
   }
-  return await data.text();
+  return null;
+}
+
+// Last-resort: pull the focusAreas array out by regex even if the surrounding
+// object can't be parsed at all. focusAreas gates the whole panel, so getting
+// it back matters most.
+function salvageFocusAreas(raw: string): string[] {
+  const m = raw.match(/"focusAreas"\s*:\s*\[([^\]]*)\]/);
+  if (!m) return [];
+  return m[1]
+    .split(",")
+    .map((x) => x.trim().replace(/^["']|["']$/g, "").trim())
+    .filter(Boolean);
+}
+
+// Deterministic, no-model fallback so a plan ALWAYS builds - even if the model
+// is unreachable (bad key, quota, timeout). Generic by design; the UI flags it
+// as degraded so the user knows to rebuild for a tailored plan.
+function inferCallType(
+  brief: string
+): "interview" | "sales" | "support" | "general" {
+  const b = (brief || "").toLowerCase();
+  if (
+    /(sell|sale|sales|buyer|deal|pricing|quote|demo|prospect|client|customer|pipeline|close|proposal|vendor|discovery)/.test(
+      b
+    )
+  )
+    return "sales";
+  if (
+    /(interview|candidate|hire|hiring|cv|resume|competenc|applicant|recruit)/.test(
+      b
+    )
+  )
+    return "interview";
+  if (
+    /(support|issue|bug|ticket|complaint|broken|error|troubleshoot|outage|fault)/.test(
+      b
+    )
+  )
+    return "support";
+  return "general";
+}
+
+function buildFallback(brief: string, role: string, callTypeIn: string) {
+  const callType =
+    callTypeIn && callTypeIn !== "general"
+      ? (callTypeIn as "interview" | "sales" | "support" | "general")
+      : inferCallType(brief);
+
+  const FOCUS: Record<string, string[]> = {
+    sales: [
+      "pain points",
+      "current solution",
+      "budget",
+      "decision process",
+      "timeline",
+      "success criteria",
+      "objections",
+    ],
+    interview: [
+      "motivation",
+      "relevant experience",
+      "ownership & impact",
+      "problem solving",
+      "collaboration",
+      "role fit",
+      "communication",
+    ],
+    support: [
+      "issue summary",
+      "impact & severity",
+      "steps to reproduce",
+      "what's been tried",
+      "environment",
+      "desired outcome",
+      "urgency",
+    ],
+    general: [
+      "context",
+      "goals",
+      "priorities",
+      "constraints",
+      "decision criteria",
+      "next steps",
+      "open questions",
+    ],
+  };
+
+  const PLAYBOOK: Record<string, { label: string; detail: string }[]> = {
+    sales: [
+      { label: "Open with discovery", detail: "Ask what prompted them to look now - surface the real trigger before pitching." },
+      { label: "Qualify", detail: "Confirm budget, who decides, and timeline early so you don't chase a dead deal." },
+      { label: "Handle the likely objection", detail: "Pre-empt 'too expensive / not now' by anchoring on the cost of their current pain." },
+      { label: "Watch for buying signals", detail: "Specific next-step or implementation questions = real interest, not politeness." },
+    ],
+    interview: [
+      { label: "Define good", detail: "Know what a strong answer on the top focus looks like before you ask." },
+      { label: "STAR probe", detail: "When they give a result, ask what THEY personally did to get it." },
+      { label: "Watch for dodges", detail: "Vague 'we' answers - gently redirect to their specific contribution." },
+      { label: "Stay warm", detail: "Lead with curiosity, not interrogation - you get fuller answers." },
+    ],
+    support: [
+      { label: "Triage first", detail: "Pin down impact and severity before diving into fixes." },
+      { label: "De-escalate", detail: "Acknowledge the frustration explicitly before troubleshooting." },
+      { label: "Reproduce", detail: "Get exact steps and environment so the fix is real, not a guess." },
+      { label: "Confirm resolution", detail: "Verify with the user that it actually landed before closing." },
+    ],
+    general: [
+      { label: "Build rapport", detail: "Open warm and let them set context before you steer." },
+      { label: "Clarify early", detail: "Pin down the one thing that matters most to them up front." },
+      { label: "Steer gently", detail: "Move toward your goal without forcing it - follow their threads." },
+      { label: "Land next steps", detail: "Close with a concrete, agreed next action." },
+    ],
+  };
+
+  const OPENERS: Record<string, { q: string; why: string }[]> = {
+    sales: [
+      { q: "What prompted you to start looking into this now?", why: "surfaces the trigger" },
+      { q: "How are you handling this today?", why: "maps the status quo" },
+      { q: "What would a good outcome look like for you?", why: "defines success" },
+    ],
+    interview: [
+      { q: "What's drawing you to this role?", why: "motivation" },
+      { q: "Walk me through what you're working on now.", why: "context" },
+      { q: "What kind of work do you do your best in?", why: "fit" },
+    ],
+    support: [
+      { q: "Can you walk me through what's happening?", why: "issue summary" },
+      { q: "When did you first notice it?", why: "scope & timeline" },
+      { q: "What were you trying to do when it went wrong?", why: "reproduce" },
+    ],
+    general: [
+      { q: "What's the main thing you're hoping to get out of this?", why: "goal" },
+      { q: "Can you give me a bit of background?", why: "context" },
+      { q: "What matters most to you here?", why: "priorities" },
+    ],
+  };
+
+  const PATHWAY: Record<string, string[]> = {
+    sales: ["build rapport", "discover the pain", "qualify fit & budget", "introduce the solution"],
+    interview: ["build rapport", "explore motivation", "probe experience & ownership", "assess role fit"],
+    support: ["acknowledge & calm", "understand the issue", "diagnose", "confirm resolution"],
+    general: ["build rapport", "understand context", "surface priorities", "steer toward the goal"],
+  };
+
+  const character =
+    role && role.trim()
+      ? `A ${callType} conversation${role ? ` around ${role.trim()}` : ""}. (Generic plan - rebuild for one tailored to your brief.)`
+      : `A ${callType} conversation. (Generic plan - rebuild for one tailored to your brief.)`;
+
+  return {
+    callType,
+    subjectName: "",
+    approach: {
+      goal: brief ? String(brief).slice(0, 160) : "",
+      premise: "Built without the planner model - treat as a starting point.",
+      strategy: "warm-up-then-pivot" as const,
+      pathway: PATHWAY[callType],
+    },
+    focusAreas: FOCUS[callType],
+    character,
+    openingQuestions: OPENERS[callType],
+    playbook: PLAYBOOK[callType],
+  };
 }
 
 export async function POST(req: NextRequest) {
+  let brief = "";
+  let role = "";
   try {
-    const { sessionId } = await req.json();
+    const body = await req.json();
+    brief = typeof body.brief === "string" ? body.brief : "";
+    role = typeof body.role === "string" ? body.role : "";
+    const knowledgeContext = body.knowledgeContext;
 
-    let context = "";
-    const sources: string[] = [];
+    let context = typeof knowledgeContext === "string" ? knowledgeContext : "";
+    if (context.length > MAX_CONTEXT_CHARS) {
+      context = context.slice(0, MAX_CONTEXT_CHARS) + "\n[context truncated]";
+    }
 
-    // 1. Frameworks - always (reusable, global).
-    const frameworks = await listFiles("framework/global");
-    for (const f of frameworks) {
-      if (!f.name || f.id === null) continue;
-      const t = await downloadText(`framework/global/${f.name}`);
-      if (t.trim()) {
-        context += `### QUESTION FRAMEWORK (${f.name})\n${t}\n\n`;
-        sources.push(`${f.name} (framework)`);
+    const system = `You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
+
+The INTENT BRIEF defines the GOAL of the call and what KIND of call it is (interview, sales, support, discovery, general). Use it to set the goal, the call type, and the caller's angle.
+
+Any SUPPORTING CONTEXT below - an uploaded document, a researched page, notes - is the SUBSTANCE the conversation is actually about. When a document is provided, it almost always contains the specific idea, product, company, or person at the centre of this call. TREAT THE DOCUMENT AS PRIMARY SUBJECT MATTER: weave its concrete specifics - real names, the actual idea/product, its claims, numbers and details - directly into the focus areas, the read, and especially the playbook. Do NOT produce generic call advice that ignores the document; a reader should be able to tell the plan was built for THIS document and no other. The brief often refers to the idea only vaguely (e.g. "his idea", "the thing we discussed") - the DOCUMENT is where that idea is actually defined, so connect the two. Only override a document detail when it directly contradicts the brief's stated intent.
+
+There may be no document at all - in that case build the plan from the intent alone.
+
+Produce a plan that drives the conversation toward the caller's intent:
+1. focusAreas: 6-9 topics/competencies to assess or explore, RANKED most-important-first for THIS intent. Short keyword labels (1-4 words), specific to the intent AND to the uploaded document's specifics - not generic filler.
+2. character: 1-2 sentences describing who/what the caller is looking for or the outcome they want from this conversation, inferred from the intent (and any document).
+   Also determine:
+   - callType: one of "interview", "sales", "support", or "general" - whichever best fits the intent.
+   - subjectName: the name of the person/party being spoken with, if discernible from the intent or context; otherwise "".
+3. approach: work out the SHAPE of the conversation so the live cues can follow a path, not just fire the destination question. Provide:
+   - goal: the caller's real underlying purpose, in one sentence (e.g. "get them to consider a project-manager role").
+   - premise: the assumption the goal depends on, AND whether it is established or unproven, in one sentence (e.g. "assumes they want to leave their current job - UNPROVEN, they have not said this"). If the goal assumes something the person has not actually signalled, say so explicitly.
+   - strategy: either "direct" or "warm-up-then-pivot". Choose "warm-up-then-pivot" when the premise is unproven or the goal is sensitive/persuasive (a job move, a sale, a concession) - discover and build rapport first, then pivot. Choose "direct" only when the brief clearly invites directness or the premise is already established. IF THE BRIEF STATES A PREFERENCE (e.g. "ease in", "warm them up", "be direct", "get to the point"), FOLLOW THE BRIEF.
+   - pathway: an ordered array of 3-5 short stage labels describing the route from rapport to purpose (e.g. ["build rapport", "surface what they value in their work", "probe ambitions / frustrations", "if a gap appears, introduce the alternative"]). The destination/purpose comes LAST, never first.
+4. openingQuestions: 6 CANDIDATE questions to open the conversation, each as { "q": "...", "why": "short reason", "opener": true|false }.
+   A true opener eases the person in and surfaces their MOTIVATION, context, and what they care about - warm and inviting, one clear question. Tag these "opener": true.
+   Tag "opener": false for anything that is a hypothetical stress-test, pressure scenario (e.g. "how would you feel if I gave you X with no Y"), gotcha, or loaded multi-clause challenge - that probing belongs LATER in the conversation, never at the top.
+   Provide AT LEAST 3 strong openers (opener:true). List the opener:true questions first, ordered gentlest -> slightly more searching.
+5. playbook: 4-6 concrete, in-the-moment TACTICS tailored to THIS call type and intent - the practical moves the caller should be ready to make on the call. Each item is { "label": "short tactic name", "detail": "one specific, actionable line" }. Adapt the tactics to the call type:
+   - sales / discovery: an opening discovery move, how to qualify (budget / authority / timeline), the single most likely objection and how to handle it, a buying-signal vs mere-politeness signal to watch for.
+   - support: how to triage the issue, how to de-escalate if it turns tense, how to confirm the resolution actually landed.
+   - interview: what "good" looks like for the top focus, a STAR probe to draw out real evidence, a common dodge to watch for.
+   - general: how to build rapport, the key thing to clarify early, how to steer toward the goal without forcing it.
+   Ground every tactic in the ACTUAL intent AND the specifics of the uploaded document - reference the real idea/product/person by name. Never generic advice that could apply to any call.
+
+Output ONLY valid JSON (no markdown, no preamble):
+{ "callType": "interview|sales|support|general", "subjectName": "...", "approach": { "goal": "...", "premise": "...", "strategy": "direct|warm-up-then-pivot", "pathway": ["..."] }, "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}], "playbook": [{"label":"...","detail":"..."}] }`;
+
+    const userMsg = `INTENT BRIEF (top priority): ${brief || "(none given)"}
+
+ROLE / TITLE: ${role || "(not specified)"}
+
+SUPPORTING CONTEXT - uploaded document(s) / researched background / notes. This is the substance of what the call is about; use it heavily and specifically:
+${context || "(none provided)"}
+
+Return the JSON plan now.`;
+
+    // Two attempts, ~28s each, so a retry still fits inside the 60s function
+    // cap. (The previous single 55s attempt left no room to retry: one slow
+    // call ate the whole budget.)
+    let raw = "";
+    let modelOk = false;
+    for (let attempt = 0; attempt < 2 && !modelOk; attempt++) {
+      try {
+        const msg = await callModelWithTimeout(system, userMsg, 28000);
+        raw = msg.content
+          .filter((b: any) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("")
+          .trim();
+        if (raw) modelOk = true;
+      } catch (e) {
+        console.error(`Plan model attempt ${attempt + 1} failed:`, e);
       }
     }
 
-    // 2. CV + summary - ONLY for this session. No global fallback, so an
-    //    empty session loads no candidate context and cues stay generic.
-    if (sessionId) {
-      const cvs = await listFiles(`session/${sessionId}/cv`);
-      for (const f of cvs) {
-        if (!f.name || f.id === null) continue;
-        const t = await downloadText(`session/${sessionId}/cv/${f.name}`);
-        if (t.trim()) {
-          context += `### UPLOADED DOCUMENT (${f.name}) - subject matter for this call\n${t}\n\n`;
-          sources.push(`${f.name} (cv)`);
-        }
-      }
+    const plan: any = extractPlan(raw) || {};
 
-      const summaries = await listFiles(`session/${sessionId}/summary`);
-      for (const f of summaries) {
-        if (!f.name || f.id === null) continue;
-        const t = await downloadText(`session/${sessionId}/summary/${f.name}`);
-        if (t.trim()) {
-          context += `### PREVIOUS SUMMARY (${f.name})\n${t}\n\n`;
-          sources.push(`${f.name} (summary)`);
-        }
-      }
+    let focusAreas = Array.isArray(plan.focusAreas)
+      ? plan.focusAreas
+          .filter((x: any) => typeof x === "string" && x.trim())
+          .slice(0, 10)
+      : [];
+    // If parsing dropped the array, try to recover it directly from the text.
+    if (focusAreas.length === 0) {
+      focusAreas = salvageFocusAreas(raw).slice(0, 10);
+    }
+
+    const character = typeof plan.character === "string" ? plan.character : "";
+    const allowedTypes = ["interview", "sales", "support", "general"];
+    const callType = allowedTypes.includes(plan.callType)
+      ? plan.callType
+      : "general";
+    const subjectName =
+      typeof plan.subjectName === "string" ? plan.subjectName.trim() : "";
+    const rawApproach =
+      plan.approach && typeof plan.approach === "object" ? plan.approach : {};
+    const approach = {
+      goal: typeof rawApproach.goal === "string" ? rawApproach.goal : "",
+      premise:
+        typeof rawApproach.premise === "string" ? rawApproach.premise : "",
+      strategy:
+        rawApproach.strategy === "direct" ||
+        rawApproach.strategy === "warm-up-then-pivot"
+          ? rawApproach.strategy
+          : "warm-up-then-pivot",
+      pathway: Array.isArray(rawApproach.pathway)
+        ? rawApproach.pathway
+            .filter((x: any) => typeof x === "string" && x.trim())
+            .slice(0, 6)
+        : [],
+    };
+
+    const STRESS_PATTERN =
+      /(if i (gave|give|asked|put|threw|handed)|how would (you|that) feel|how does that (make you )?feel|what if\b|imagine (you|that|a|having)|suppose (you|that)|hypothetical|what would you do if|picture (yourself|a))/i;
+
+    const candidates: any[] = Array.isArray(plan.openingQuestions)
+      ? plan.openingQuestions.filter((q: any) => q && typeof q.q === "string")
+      : [];
+
+    const graded = candidates.map((q: any) => ({
+      q: q.q as string,
+      why: typeof q.why === "string" ? q.why : "",
+      isOpener: q.opener !== false && !STRESS_PATTERN.test(q.q),
+    }));
+
+    let openingQuestions = graded
+      .filter((q) => q.isOpener)
+      .slice(0, 3)
+      .map(({ q, why }) => ({ q, why }));
+
+    if (openingQuestions.length === 0) {
+      openingQuestions = candidates.slice(0, 3).map((q: any) => ({
+        q: q.q,
+        why: typeof q.why === "string" ? q.why : "",
+      }));
+    }
+
+    const playbook = Array.isArray(plan.playbook)
+      ? plan.playbook
+          .filter(
+            (p: any) =>
+              p &&
+              typeof p.label === "string" &&
+              typeof p.detail === "string" &&
+              p.label.trim() &&
+              p.detail.trim()
+          )
+          .slice(0, 6)
+          .map((p: any) => ({ label: String(p.label), detail: String(p.detail) }))
+      : [];
+
+    // GUARANTEE a usable plan. If the model gave us nothing parseable, fall
+    // back to a deterministic, call-type-aware plan so the panel always
+    // renders. degraded:true tells the client it's the generic safety net.
+    if (focusAreas.length === 0) {
+      const fb = buildFallback(brief, role, callType);
+      return NextResponse.json({ ...fb, degraded: true });
     }
 
     return NextResponse.json({
-      context,
-      sources,
-      chunkCount: sources.length,
+      callType,
+      subjectName,
+      approach,
+      focusAreas,
+      character,
+      openingQuestions,
+      playbook,
+      degraded: false,
     });
   } catch (err: any) {
-    console.error("Context load error:", err);
-    return NextResponse.json(
-      { error: err?.message || "Failed to load context" },
-      { status: 500 }
-    );
+    // Never 500 the page: return an empty-but-valid plan shape so the client
+    // renders gracefully instead of throwing.
+    console.error("Plan error:", err);
+    // Even on an unexpected error, hand back a usable generic plan rather than
+    // an empty one, so the page never dead-ends on "no plan".
+    const fb = buildFallback(brief, role, "general");
+    return NextResponse.json({ ...fb, degraded: true });
   }
 }
