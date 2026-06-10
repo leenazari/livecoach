@@ -1,262 +1,118 @@
-import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+// ============================================================
+// Cost model — single source of truth for the running-cost meter.
+// All rates in USD. Edit here if pricing changes.
+// Verified rates (May 2026):
+//   Deepgram streaming (Nova): $0.0077 / min
+//   Claude Haiku 4.5:  $1 / M input,  $5 / M output
+//   Claude Sonnet 4.6: $3 / M input, $15 / M output
+//   Prompt cache read: ~0.1x input rate;  cache write: ~1.25x input rate
+//   Voyage embeddings (voyage-3-lite): $0.02 / M  (not used in live loop)
+// ============================================================
 
-export const runtime = "nodejs";
-export const maxDuration = 60;
+export const USD_TO_GBP = 0.79; // rough; update as needed
 
-// Turns the INTENT of a call (the top-priority input) plus any supporting
-// context (CV / JD / notes / researched background) into a plan: ranked focus
-// areas, the character/outcome being sought, opening questions, and a playbook.
-// Hardened so a slow or failed model call degrades to a usable plan instead of
-// a 500 (which would blank the page).
+export const RATES = {
+  deepgramPerMin: 0.0077,
 
-// Cap supporting context so a big CV + researched background can't bloat the
-// prompt and push the call past the time/size budget. The brief is never
-// trimmed; only the secondary context is.
-const MAX_CONTEXT_CHARS = 8000;
+  // Haiku 4.5 (live track)
+  haikuInPerM: 1.0,
+  haikuOutPerM: 5.0,
+  haikuCacheReadPerM: 0.1, // 0.1x input
+  haikuCacheWritePerM: 1.25, // 1.25x input
 
-async function callModelWithTimeout(system: string, userMsg: string, ms: number) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  try {
-    return await anthropic.messages.create(
-      {
-        model: CLAUDE_MODEL_LIVE,
-        // Generous budget: the full JSON plan (approach + 6-9 focus areas +
-        // 6 questions + 6 playbook tactics) overran the old 1200-token cap and
-        // truncated mid-object, which made JSON.parse fail and returned an
-        // EMPTY plan (the "plan ready but blank panel" bug). 2400 leaves room.
-        max_tokens: 2400,
-        system,
-        messages: [{ role: "user", content: userMsg }],
-      },
-      { signal: controller.signal }
-    );
-  } finally {
-    clearTimeout(timer);
-  }
+  // Rough infra overheads at ~720 calls/hr (1 user). Estimates, not billed exactly.
+  vercelPerHour: 0.2,
+  supabasePerHour: 0.02,
+};
+
+// Per-suggestion token assumptions for the live track.
+export const TOKENS = {
+  knowledgeCached: 3000, // CV + framework, cached after first call
+  transcriptWindow: 320, // uncached new tokens per call
+  instructions: 220, // uncached system instructions
+  output: 120, // typical suggestion length
+};
+
+// Estimate Claude cost for ONE live suggestion call (with caching warm).
+export function claudeCallCostUSD(
+  cachingWarm: boolean,
+  knowledgeTokens: number = TOKENS.knowledgeCached
+): number {
+  const inUncached = TOKENS.transcriptWindow + TOKENS.instructions;
+  const knowledgeCost = cachingWarm
+    ? (knowledgeTokens / 1_000_000) * RATES.haikuInPerM * RATES.haikuCacheReadPerM
+    : (knowledgeTokens / 1_000_000) * RATES.haikuInPerM;
+  const inputCost = (inUncached / 1_000_000) * RATES.haikuInPerM + knowledgeCost;
+  const outputCost = (TOKENS.output / 1_000_000) * RATES.haikuOutPerM;
+  return inputCost + outputCost;
 }
 
-// Tolerant JSON extraction. Haiku occasionally adds a prose preamble, wraps the
-// JSON in ```fences```, or (if it ever truncates) leaves the tail unclosed.
-// The old parser only stripped fences, so a preamble or truncation silently
-// produced {} -> empty focusAreas -> blank plan panel. This recovers from all
-// three: strip fences, slice to the outermost braces, parse; if that fails,
-// trim the tail and rebalance brackets until it parses.
-function extractPlan(raw: string): any {
-  if (!raw) return null;
-  let t = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
-  const start = t.indexOf("{");
-  const end = t.lastIndexOf("}");
-  const core = start >= 0 && end > start ? t.slice(start, end + 1) : t;
+export type CostBreakdown = {
+  deepgram: number;
+  claude: number;
+  vercel: number;
+  supabase: number;
+  totalUSD: number;
+  totalGBP: number;
+};
 
-  try {
-    return JSON.parse(core);
-  } catch {
-    /* fall through to salvage */
+// Live running estimate given elapsed seconds and number of Claude calls made.
+export function estimateCost(
+  elapsedSeconds: number,
+  claudeCalls: number,
+  knowledgeTokens: number = TOKENS.knowledgeCached
+): CostBreakdown {
+  const minutes = elapsedSeconds / 60;
+  const deepgram = minutes * RATES.deepgramPerMin;
+
+  // First call is a cache write, the rest are warm cache reads. knowledgeTokens
+  // reflects the ACTUAL loaded knowledge base (CV + framework + any uploaded
+  // doc), so a bigger upload shows up in the meter instead of a fixed guess.
+  let claude = 0;
+  if (claudeCalls > 0) {
+    const writeCost =
+      (knowledgeTokens / 1_000_000) *
+        RATES.haikuInPerM *
+        RATES.haikuCacheWritePerM +
+      ((TOKENS.transcriptWindow + TOKENS.instructions) / 1_000_000) *
+        RATES.haikuInPerM +
+      (TOKENS.output / 1_000_000) * RATES.haikuOutPerM;
+    claude += writeCost;
+    claude += (claudeCalls - 1) * claudeCallCostUSD(true, knowledgeTokens);
   }
 
-  // Tail-trim salvage for a truncated object: walk back from the end,
-  // rebalancing any open [ and { , until a fragment parses.
-  for (let cut = core.length; cut > 0; cut -= 1) {
-    let frag = core.slice(0, cut).replace(/,\s*$/, "");
-    const ob = (frag.match(/\{/g) || []).length;
-    const cb = (frag.match(/\}/g) || []).length;
-    const oa = (frag.match(/\[/g) || []).length;
-    const ca = (frag.match(/\]/g) || []).length;
-    frag += "]".repeat(Math.max(0, oa - ca)) + "}".repeat(Math.max(0, ob - cb));
-    try {
-      return JSON.parse(frag);
-    } catch {
-      /* keep trimming */
-    }
-  }
-  return null;
+  const hours = elapsedSeconds / 3600;
+  const vercel = hours * RATES.vercelPerHour;
+  const supabase = hours * RATES.supabasePerHour;
+
+  const totalUSD = deepgram + claude + vercel + supabase;
+  return {
+    deepgram,
+    claude,
+    vercel,
+    supabase,
+    totalUSD,
+    totalGBP: totalUSD * USD_TO_GBP,
+  };
 }
 
-// Last-resort: pull the focusAreas array out by regex even if the surrounding
-// object can't be parsed at all. focusAreas gates the whole panel, so getting
-// it back matters most.
-function salvageFocusAreas(raw: string): string[] {
-  const m = raw.match(/"focusAreas"\s*:\s*\[([^\]]*)\]/);
-  if (!m) return [];
-  return m[1]
-    .split(",")
-    .map((x) => x.trim().replace(/^["']|["']$/g, "").trim())
-    .filter(Boolean);
+export const HOURLY_CEILING_GBP = 3;
+
+
+// Rough token estimate from raw text (~4 chars/token). Used to feed the meter
+// the real size of the loaded knowledge base.
+export function knowledgeTokensFromText(text: string): number {
+  if (!text) return 0;
+  return Math.round(text.length / 4);
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const { brief, role, knowledgeContext } = await req.json();
-
-    let context = typeof knowledgeContext === "string" ? knowledgeContext : "";
-    if (context.length > MAX_CONTEXT_CHARS) {
-      context = context.slice(0, MAX_CONTEXT_CHARS) + "\n[context truncated]";
-    }
-
-    const system = `You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
-
-The INTENT BRIEF is the TOP priority - it dictates what this conversation is for and what the caller is driving toward. The conversation could be ANY kind: a job interview, a sales call, a customer/support call, a discovery chat, etc. The intent tells you which. Supporting context is secondary; when the brief and the context disagree, FOLLOW THE BRIEF.
-
-There may be no document at all - in that case build the plan from the intent alone.
-
-Produce a plan that drives the conversation toward the caller's intent:
-1. focusAreas: 6-9 topics/competencies to assess or explore, RANKED most-important-first for THIS intent. Short keyword labels (1-4 words), specific to the intent - not generic filler.
-2. character: 1-2 sentences describing who/what the caller is looking for or the outcome they want from this conversation, inferred from the intent (and any document).
-   Also determine:
-   - callType: one of "interview", "sales", "support", or "general" - whichever best fits the intent.
-   - subjectName: the name of the person/party being spoken with, if discernible from the intent or context; otherwise "".
-3. approach: work out the SHAPE of the conversation so the live cues can follow a path, not just fire the destination question. Provide:
-   - goal: the caller's real underlying purpose, in one sentence (e.g. "get them to consider a project-manager role").
-   - premise: the assumption the goal depends on, AND whether it is established or unproven, in one sentence (e.g. "assumes they want to leave their current job - UNPROVEN, they have not said this"). If the goal assumes something the person has not actually signalled, say so explicitly.
-   - strategy: either "direct" or "warm-up-then-pivot". Choose "warm-up-then-pivot" when the premise is unproven or the goal is sensitive/persuasive (a job move, a sale, a concession) - discover and build rapport first, then pivot. Choose "direct" only when the brief clearly invites directness or the premise is already established. IF THE BRIEF STATES A PREFERENCE (e.g. "ease in", "warm them up", "be direct", "get to the point"), FOLLOW THE BRIEF.
-   - pathway: an ordered array of 3-5 short stage labels describing the route from rapport to purpose (e.g. ["build rapport", "surface what they value in their work", "probe ambitions / frustrations", "if a gap appears, introduce the alternative"]). The destination/purpose comes LAST, never first.
-4. openingQuestions: 6 CANDIDATE questions to open the conversation, each as { "q": "...", "why": "short reason", "opener": true|false }.
-   A true opener eases the person in and surfaces their MOTIVATION, context, and what they care about - warm and inviting, one clear question. Tag these "opener": true.
-   Tag "opener": false for anything that is a hypothetical stress-test, pressure scenario (e.g. "how would you feel if I gave you X with no Y"), gotcha, or loaded multi-clause challenge - that probing belongs LATER in the conversation, never at the top.
-   Provide AT LEAST 3 strong openers (opener:true). List the opener:true questions first, ordered gentlest -> slightly more searching.
-5. playbook: 4-6 concrete, in-the-moment TACTICS tailored to THIS call type and intent - the practical moves the caller should be ready to make on the call. Each item is { "label": "short tactic name", "detail": "one specific, actionable line" }. Adapt the tactics to the call type:
-   - sales / discovery: an opening discovery move, how to qualify (budget / authority / timeline), the single most likely objection and how to handle it, a buying-signal vs mere-politeness signal to watch for.
-   - support: how to triage the issue, how to de-escalate if it turns tense, how to confirm the resolution actually landed.
-   - interview: what "good" looks like for the top focus, a STAR probe to draw out real evidence, a common dodge to watch for.
-   - general: how to build rapport, the key thing to clarify early, how to steer toward the goal without forcing it.
-   Ground every tactic in the ACTUAL intent and context - never generic advice.
-
-Output ONLY valid JSON (no markdown, no preamble):
-{ "callType": "interview|sales|support|general", "subjectName": "...", "approach": { "goal": "...", "premise": "...", "strategy": "direct|warm-up-then-pivot", "pathway": ["..."] }, "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}], "playbook": [{"label":"...","detail":"..."}] }`;
-
-    const userMsg = `INTENT BRIEF (top priority): ${brief || "(none given)"}
-
-ROLE / TITLE: ${role || "(not specified)"}
-
-OPTIONAL SUPPORTING CONTEXT (document / notes about the person or topic):
-${context || "(none provided)"}
-
-Return the JSON plan now.`;
-
-    // Two attempts, ~28s each, so a retry still fits inside the 60s function
-    // cap. (The previous single 55s attempt left no room to retry: one slow
-    // call ate the whole budget.)
-    let raw = "";
-    let modelOk = false;
-    for (let attempt = 0; attempt < 2 && !modelOk; attempt++) {
-      try {
-        const msg = await callModelWithTimeout(system, userMsg, 28000);
-        raw = msg.content
-          .filter((b: any) => b.type === "text")
-          .map((b: any) => b.text)
-          .join("")
-          .trim();
-        if (raw) modelOk = true;
-      } catch (e) {
-        console.error(`Plan model attempt ${attempt + 1} failed:`, e);
-      }
-    }
-
-    const plan: any = extractPlan(raw) || {};
-
-    let focusAreas = Array.isArray(plan.focusAreas)
-      ? plan.focusAreas
-          .filter((x: any) => typeof x === "string" && x.trim())
-          .slice(0, 10)
-      : [];
-    // If parsing dropped the array, try to recover it directly from the text.
-    if (focusAreas.length === 0) {
-      focusAreas = salvageFocusAreas(raw).slice(0, 10);
-    }
-
-    const character = typeof plan.character === "string" ? plan.character : "";
-    const allowedTypes = ["interview", "sales", "support", "general"];
-    const callType = allowedTypes.includes(plan.callType)
-      ? plan.callType
-      : "general";
-    const subjectName =
-      typeof plan.subjectName === "string" ? plan.subjectName.trim() : "";
-    const rawApproach =
-      plan.approach && typeof plan.approach === "object" ? plan.approach : {};
-    const approach = {
-      goal: typeof rawApproach.goal === "string" ? rawApproach.goal : "",
-      premise:
-        typeof rawApproach.premise === "string" ? rawApproach.premise : "",
-      strategy:
-        rawApproach.strategy === "direct" ||
-        rawApproach.strategy === "warm-up-then-pivot"
-          ? rawApproach.strategy
-          : "warm-up-then-pivot",
-      pathway: Array.isArray(rawApproach.pathway)
-        ? rawApproach.pathway
-            .filter((x: any) => typeof x === "string" && x.trim())
-            .slice(0, 6)
-        : [],
-    };
-
-    const STRESS_PATTERN =
-      /(if i (gave|give|asked|put|threw|handed)|how would (you|that) feel|how does that (make you )?feel|what if\b|imagine (you|that|a|having)|suppose (you|that)|hypothetical|what would you do if|picture (yourself|a))/i;
-
-    const candidates: any[] = Array.isArray(plan.openingQuestions)
-      ? plan.openingQuestions.filter((q: any) => q && typeof q.q === "string")
-      : [];
-
-    const graded = candidates.map((q: any) => ({
-      q: q.q as string,
-      why: typeof q.why === "string" ? q.why : "",
-      isOpener: q.opener !== false && !STRESS_PATTERN.test(q.q),
-    }));
-
-    let openingQuestions = graded
-      .filter((q) => q.isOpener)
-      .slice(0, 3)
-      .map(({ q, why }) => ({ q, why }));
-
-    if (openingQuestions.length === 0) {
-      openingQuestions = candidates.slice(0, 3).map((q: any) => ({
-        q: q.q,
-        why: typeof q.why === "string" ? q.why : "",
-      }));
-    }
-
-    const playbook = Array.isArray(plan.playbook)
-      ? plan.playbook
-          .filter(
-            (p: any) =>
-              p &&
-              typeof p.label === "string" &&
-              typeof p.detail === "string" &&
-              p.label.trim() &&
-              p.detail.trim()
-          )
-          .slice(0, 6)
-          .map((p: any) => ({ label: String(p.label), detail: String(p.detail) }))
-      : [];
-
-    // Tell the client when we couldn't produce a real plan, so it can show a
-    // clear "try again" instead of a silent empty panel that says "plan ready".
-    const degraded = focusAreas.length === 0;
-
-    return NextResponse.json({
-      callType,
-      subjectName,
-      approach,
-      focusAreas,
-      character,
-      openingQuestions,
-      playbook,
-      degraded,
-    });
-  } catch (err: any) {
-    // Never 500 the page: return an empty-but-valid plan shape so the client
-    // renders gracefully instead of throwing.
-    console.error("Plan error:", err);
-    return NextResponse.json({
-      callType: "general",
-      subjectName: "",
-      approach: { goal: "", premise: "", strategy: "warm-up-then-pivot", pathway: [] },
-      focusAreas: [],
-      character: "",
-      openingQuestions: [],
-      playbook: [],
-      degraded: true,
-    });
-  }
+// Project the current spend to an hourly rate so the ceiling check is
+// meaningful early in a call (not only after a full hour has elapsed).
+export function projectHourlyGBP(
+  totalGBP: number,
+  elapsedSeconds: number
+): number {
+  if (elapsedSeconds < 30) return 0; // too little signal to project
+  const hours = elapsedSeconds / 3600;
+  return totalGBP / hours;
 }
