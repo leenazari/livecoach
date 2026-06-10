@@ -477,6 +477,25 @@ export default function CallPage() {
     }
   }, [loadContext, generatePlan]);
 
+  const persistSession = useCallback(() => {
+    // Fire-and-forget: record the call's intent server-side so a scorecard can
+    // be produced even if the call ends without the End button (e.g. a Meet
+    // call where the tab is closed). Failure here must never block the call.
+    fetch("/api/interview/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: room,
+        brief,
+        role,
+        callType,
+        competencies: suggestedComps.filter((c) => selectedComps.includes(c)),
+        candidate,
+        source,
+      }),
+    }).catch(() => {});
+  }, [room, brief, role, callType, suggestedComps, selectedComps, candidate, source]);
+
   const research = useCallback(async () => {
     const url = publicLink.trim();
     if (!url) return;
@@ -1119,6 +1138,7 @@ export default function CallPage() {
             {suggestedComps.length > 0 && (
               <button
                 onClick={() => {
+                  persistSession();
                   setExpandSetup(false);
                   setCallLive(true);
                 }}
