@@ -22,7 +22,11 @@ async function callModelWithTimeout(system: string, userMsg: string, ms: number)
     return await anthropic.messages.create(
       {
         model: CLAUDE_MODEL_LIVE,
-        max_tokens: 1200,
+        // Generous budget: the full JSON plan (approach + 6-9 focus areas +
+        // 6 questions + 6 playbook tactics) overran the old 1200-token cap and
+        // truncated mid-object, which made JSON.parse fail and returned an
+        // EMPTY plan (the "plan ready but blank panel" bug). 2400 leaves room.
+        max_tokens: 2400,
         system,
         messages: [{ role: "user", content: userMsg }],
       },
@@ -31,6 +35,55 @@ async function callModelWithTimeout(system: string, userMsg: string, ms: number)
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Tolerant JSON extraction. Haiku occasionally adds a prose preamble, wraps the
+// JSON in ```fences```, or (if it ever truncates) leaves the tail unclosed.
+// The old parser only stripped fences, so a preamble or truncation silently
+// produced {} -> empty focusAreas -> blank plan panel. This recovers from all
+// three: strip fences, slice to the outermost braces, parse; if that fails,
+// trim the tail and rebalance brackets until it parses.
+function extractPlan(raw: string): any {
+  if (!raw) return null;
+  let t = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  const core = start >= 0 && end > start ? t.slice(start, end + 1) : t;
+
+  try {
+    return JSON.parse(core);
+  } catch {
+    /* fall through to salvage */
+  }
+
+  // Tail-trim salvage for a truncated object: walk back from the end,
+  // rebalancing any open [ and { , until a fragment parses.
+  for (let cut = core.length; cut > 0; cut -= 1) {
+    let frag = core.slice(0, cut).replace(/,\s*$/, "");
+    const ob = (frag.match(/\{/g) || []).length;
+    const cb = (frag.match(/\}/g) || []).length;
+    const oa = (frag.match(/\[/g) || []).length;
+    const ca = (frag.match(/\]/g) || []).length;
+    frag += "]".repeat(Math.max(0, oa - ca)) + "}".repeat(Math.max(0, ob - cb));
+    try {
+      return JSON.parse(frag);
+    } catch {
+      /* keep trimming */
+    }
+  }
+  return null;
+}
+
+// Last-resort: pull the focusAreas array out by regex even if the surrounding
+// object can't be parsed at all. focusAreas gates the whole panel, so getting
+// it back matters most.
+function salvageFocusAreas(raw: string): string[] {
+  const m = raw.match(/"focusAreas"\s*:\s*\[([^\]]*)\]/);
+  if (!m) return [];
+  return m[1]
+    .split(",")
+    .map((x) => x.trim().replace(/^["']|["']$/g, "").trim())
+    .filter(Boolean);
 }
 
 export async function POST(req: NextRequest) {
@@ -82,36 +135,37 @@ ${context || "(none provided)"}
 
 Return the JSON plan now.`;
 
-    // Try the model with a timeout; one quick retry on any failure. If both
-    // attempts fail, fall through to a minimal plan rather than 500.
+    // Two attempts, ~28s each, so a retry still fits inside the 60s function
+    // cap. (The previous single 55s attempt left no room to retry: one slow
+    // call ate the whole budget.)
     let raw = "";
     let modelOk = false;
     for (let attempt = 0; attempt < 2 && !modelOk; attempt++) {
       try {
-        const msg = await callModelWithTimeout(system, userMsg, 55000);
+        const msg = await callModelWithTimeout(system, userMsg, 28000);
         raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
           .join("")
           .trim();
-        modelOk = true;
+        if (raw) modelOk = true;
       } catch (e) {
         console.error(`Plan model attempt ${attempt + 1} failed:`, e);
       }
     }
 
-    let plan: any = {};
-    try {
-      plan = JSON.parse(raw.replace(/```json|```/g, "").trim());
-    } catch {
-      plan = {};
-    }
+    const plan: any = extractPlan(raw) || {};
 
-    const focusAreas = Array.isArray(plan.focusAreas)
+    let focusAreas = Array.isArray(plan.focusAreas)
       ? plan.focusAreas
           .filter((x: any) => typeof x === "string" && x.trim())
           .slice(0, 10)
       : [];
+    // If parsing dropped the array, try to recover it directly from the text.
+    if (focusAreas.length === 0) {
+      focusAreas = salvageFocusAreas(raw).slice(0, 10);
+    }
+
     const character = typeof plan.character === "string" ? plan.character : "";
     const allowedTypes = ["interview", "sales", "support", "general"];
     const callType = allowedTypes.includes(plan.callType)
@@ -176,6 +230,10 @@ Return the JSON plan now.`;
           .map((p: any) => ({ label: String(p.label), detail: String(p.detail) }))
       : [];
 
+    // Tell the client when we couldn't produce a real plan, so it can show a
+    // clear "try again" instead of a silent empty panel that says "plan ready".
+    const degraded = focusAreas.length === 0;
+
     return NextResponse.json({
       callType,
       subjectName,
@@ -184,6 +242,7 @@ Return the JSON plan now.`;
       character,
       openingQuestions,
       playbook,
+      degraded,
     });
   } catch (err: any) {
     // Never 500 the page: return an empty-but-valid plan shape so the client
