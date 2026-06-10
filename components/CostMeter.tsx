@@ -19,7 +19,11 @@ export default function CostMeter({
 }) {
   if (!cost) return null;
 
-  const gbp = (n: number) => `£${n.toFixed(2)}`;
+  // Sub-penny amounts (e.g. a plan build ~£0.004) would round to £0.00 at two
+  // decimals, making the meter look stuck on zero. Show 3 decimals while under
+  // a penny so small spend is visible; 2 decimals once it crosses £0.01.
+  const gbp = (n: number) =>
+    n > 0 && n < 0.01 ? `£${n.toFixed(3)}` : `£${n.toFixed(2)}`;
   const gbp3 = (usd: number) => `£${(usd * 0.79).toFixed(3)}`;
 
   const title = [
