@@ -880,11 +880,28 @@ export default function CallPage() {
             live call coaching
           </p>
         </div>
-        {status && (
-          <span className="rounded-full border border-edge bg-ink/60 px-4 py-2 font-mono text-xs lowercase tracking-wide text-muted">
-            {status}
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {cost && (
+            <CostMeter
+              cost={cost}
+              overBudget={overBudget}
+              transportLabel={source === "meet" ? "Recall.ai" : "LiveKit"}
+              projectedHourly={
+                cost && callStartedAtRef.current
+                  ? projectHourlyGBP(
+                      cost.totalGBP,
+                      (Date.now() - callStartedAtRef.current) / 1000
+                    )
+                  : 0
+              }
+            />
+          )}
+          {status && (
+            <span className="rounded-full border border-edge bg-ink/60 px-4 py-2 font-mono text-xs lowercase tracking-wide text-muted">
+              {status}
+            </span>
+          )}
+        </div>
       </header>
 
       {setupCollapsed ? (
