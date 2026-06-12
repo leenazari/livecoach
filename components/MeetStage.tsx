@@ -13,6 +13,10 @@ type Props = {
   room: string;
   onFinalTranscript: (role: string, text: string, speaker?: string) => void;
   onCandidateTurnEnd: () => void;
+  // Optional controlled meeting URL (entered up in the setup step). Falls back
+  // to internal state if not provided.
+  meetingUrl?: string;
+  onMeetingUrlChange?: (v: string) => void;
 };
 
 type Speaker = { name: string; lastRole: string };
@@ -35,8 +39,12 @@ export default function MeetStage({
   room,
   onFinalTranscript,
   onCandidateTurnEnd,
+  meetingUrl: meetingUrlProp,
+  onMeetingUrlChange,
 }: Props) {
-  const [meetingUrl, setMeetingUrl] = useState("");
+  const [meetingUrlInternal, setMeetingUrlInternal] = useState("");
+  const meetingUrl = meetingUrlProp ?? meetingUrlInternal;
+  const setMeetingUrl = onMeetingUrlChange ?? setMeetingUrlInternal;
   const [botId, setBotId] = useState("");
   const [status, setStatus] = useState("not connected");
   const [wsState, setWsState] = useState<"off" | "connecting" | "on" | "error">(
@@ -236,7 +244,7 @@ export default function MeetStage({
     <div className="grid gap-4 rounded-2xl border border-edge bg-panel/50 p-5">
       <div className="flex items-center justify-between">
         <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-          Google Meet
+          Meet / Teams / Zoom
         </p>
         <span className="flex items-center gap-2 font-mono text-[0.6rem] uppercase tracking-wider text-muted">
           <span className={`h-2 w-2 rounded-full ${dot}`} />
@@ -248,7 +256,7 @@ export default function MeetStage({
         <input
           value={meetingUrl}
           onChange={(e) => setMeetingUrl(e.target.value)}
-          placeholder="https://meet.google.com/abc-defg-hij"
+          placeholder="Paste Meet / Teams / Zoom link"
           className="min-w-[260px] flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone"
         />
         <button
