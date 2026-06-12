@@ -84,6 +84,7 @@ export default function CallPage() {
   const [callType, setCallType] = useState("general");
   const [callLive, setCallLive] = useState(false);
   const [source, setSource] = useState<"inapp" | "meet">("inapp");
+  const [meetingUrl, setMeetingUrl] = useState("");
   const [expandSetup, setExpandSetup] = useState(false);
   const [rightTab, setRightTab] = useState<"summary" | "transcript">("summary");
   const [rightMin, setRightMin] = useState(false);
@@ -139,6 +140,8 @@ export default function CallPage() {
   );
   const turnsSinceSummaryRef = useRef(0);
   const summaryInFlightRef = useRef(false);
+  const lastCueAtRef = useRef(0);
+  const cueGapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bulletsRef = useRef<{
     context: string[];
     signals: string[];
@@ -422,7 +425,22 @@ export default function CallPage() {
   // the running summary on a LIGHT cadence (first turn, then every 2nd) so we
   // don't triple the live model load.
   const handleCandidateTurnEnd = useCallback(() => {
-    requestLiveSuggestion();
+    // Pace the cues: at most one every ~9s. Rapid turns (e.g. a 3-way call)
+    // coalesce into a single, well-timed cue built from the latest context, so
+    // they don't flood in faster than you can read.
+    const MIN_CUE_GAP_MS = 9000;
+    const now = Date.now();
+    const since = now - lastCueAtRef.current;
+    if (since >= MIN_CUE_GAP_MS) {
+      lastCueAtRef.current = now;
+      requestLiveSuggestion();
+    } else {
+      if (cueGapTimerRef.current) clearTimeout(cueGapTimerRef.current);
+      cueGapTimerRef.current = setTimeout(() => {
+        lastCueAtRef.current = Date.now();
+        requestLiveSuggestion();
+      }, MIN_CUE_GAP_MS - since);
+    }
     turnsSinceSummaryRef.current += 1;
     const candCount = linesRef.current.filter(
       (l) => l.role === "candidate"
@@ -1099,7 +1117,7 @@ export default function CallPage() {
                       : "border-edge text-muted hover:text-bone"
                   }`}
                 >
-                  Google Meet
+                  Meet / Teams / Zoom
                 </button>
               </div>
               {source === "inapp" ? (
@@ -1131,15 +1149,22 @@ export default function CallPage() {
                   </a>
                 </div>
               ) : (
-                <p className="mt-3 font-mono text-[0.62rem] leading-relaxed text-muted">
-                  Hit Start call, then paste your{" "}
-                  <code className="rounded bg-ink/60 px-1.5 py-0.5 text-bone">
-                    meet.google.com
-                  </code>{" "}
-                  link and send the notetaker bot - the transcript flows in
-                  automatically and cues, summary and scoring run exactly as on
-                  an in-app call.
-                </p>
+                <div className="mt-3 flex flex-col gap-2">
+                  <p className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-amber">
+                    Meeting link
+                  </p>
+                  <input
+                    value={meetingUrl}
+                    onChange={(e) => setMeetingUrl(e.target.value)}
+                    placeholder="Paste Meet / Teams / Zoom link"
+                    className="w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+                  />
+                  <p className="font-mono text-[0.6rem] leading-relaxed text-muted">
+                    Paste it here, then hit Start call and Send bot - the
+                    transcript flows in automatically and cues, summary and
+                    scoring run exactly as an in-app call.
+                  </p>
+                </div>
               )}
             </div>
           </div>
@@ -1373,6 +1398,8 @@ export default function CallPage() {
             room={room}
             onFinalTranscript={onFinalTranscript}
             onCandidateTurnEnd={handleCandidateTurnEnd}
+            meetingUrl={meetingUrl}
+            onMeetingUrlChange={setMeetingUrl}
           />
         ) : (
           <CallStage
