@@ -295,11 +295,16 @@ export default function CallPage() {
       },
     ]);
 
+    // Abort a hung request so a mic-toggle renegotiation stall can't leave
+    // inFlightRef stuck true and silently freeze all future cues.
+    const controller = new AbortController();
+    const cueTimer = setTimeout(() => controller.abort(), 25000);
     try {
       claudeCallsRef.current += 1;
       const res = await fetch("/api/interview/suggest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           knowledgeContext: knowledgeRef.current,
           transcript: labelled.slice(-2400),
@@ -355,6 +360,7 @@ export default function CallPage() {
         )
       );
     } finally {
+      clearTimeout(cueTimer);
       inFlightRef.current = false;
     }
   }, []);
@@ -373,11 +379,16 @@ export default function CallPage() {
     if (!labelled.trim()) return;
     summaryInFlightRef.current = true;
     setSummaryUpdating(true);
+    // Abort a hung request so a stalled fetch (e.g. during a mute toggle's mic
+    // renegotiation) can't leave summaryInFlightRef stuck and freeze updates.
+    const controller = new AbortController();
+    const sumTimer = setTimeout(() => controller.abort(), 20000);
     try {
       claudeCallsRef.current += 1;
       const res = await fetch("/api/interview/running-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           transcript: labelled,
           previousBullets: bulletsRef.current,
@@ -401,6 +412,7 @@ export default function CallPage() {
     } catch (e) {
       console.error("Running summary failed:", e);
     } finally {
+      clearTimeout(sumTimer);
       summaryInFlightRef.current = false;
       setSummaryUpdating(false);
     }
