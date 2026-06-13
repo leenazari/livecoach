@@ -415,16 +415,16 @@ Return the JSON plan now.`;
     const DEADLINE = Date.now() + 52000;
     const remaining = () => DEADLINE - Date.now();
 
-    // Fast Haiku structural plan: up to two attempts, but each bounded by the
-    // remaining budget so two slow attempts can't blow the deadline.
+    // Fast Haiku structural plan: ONE attempt that uses most of the budget,
+    // reserving ~14s for the separate Sonnet playbook. Two short attempts were
+    // worse - if the model needs ~35s, both 28s attempts time out and we get
+    // nothing; a single long attempt finishes. A failure here is covered by the
+    // deterministic backfill further down, so a retry buys little.
     let raw = "";
-    let modelOk = false;
     let planUsage: any = null;
     let pbUsage: any = null;
-    for (let attempt = 0; attempt < 2 && !modelOk; attempt++) {
-      // Need at least ~10s to make another attempt worthwhile.
-      if (remaining() < 10000) break;
-      const ms = Math.min(28000, remaining() - 3000);
+    {
+      const ms = Math.min(42000, remaining() - 14000);
       try {
         const msg = await callModelWithTimeout(system, userMsg, ms);
         raw = msg.content
@@ -433,9 +433,8 @@ Return the JSON plan now.`;
           .join("")
           .trim();
         planUsage = msg.usage;
-        if (raw) modelOk = true;
       } catch (e) {
-        console.error(`Plan model attempt ${attempt + 1} failed:`, e);
+        console.error("Plan model attempt failed:", e);
       }
     }
 
@@ -600,7 +599,7 @@ Write the 4-6 tactic playbook now - JSON array only.`;
       console.error("Playbook (Sonnet) failed - keeping Haiku playbook:", e);
     }
 
-    const playbook = sonnetPlaybook.length ? sonnetPlaybook : haikuPlaybook;
+    let playbook = sonnetPlaybook.length ? sonnetPlaybook : haikuPlaybook;
 
     const privateNotes = Array.isArray(plan.privateNotes)
       ? plan.privateNotes
@@ -608,9 +607,40 @@ Write the 4-6 tactic playbook now - JSON array only.`;
           .slice(0, 6)
       : [];
 
-    const goals = Array.isArray(plan.goals)
+    let goals = Array.isArray(plan.goals)
       ? plan.goals.filter((x: any) => typeof x === "string" && x.trim()).slice(0, 8)
       : [];
+
+    // GUARANTEE the rest of the plan, NOT just the focus. In step 2 the caller
+    // passes a locked focus, which forces focusAreas to be non-empty - so the
+    // old "focusAreas.length === 0" check below could NOT catch a structural
+    // model that timed out and produced no questions/playbook/goals. That left
+    // the panel showing only the focuses. Here we detect that empty-body case
+    // and backfill the missing pieces from the deterministic fallback so step 2
+    // always yields a full, usable plan.
+    let degraded = false;
+    // A timed-out structural call shows up as missing questions/goals (the
+    // Sonnet playbook runs separately and may still have succeeded). Backfill
+    // each missing piece independently so the panel is never left half-empty.
+    const structuralFailed =
+      openingQuestions.length === 0 && goals.length === 0;
+    if (
+      openingQuestions.length === 0 ||
+      goals.length === 0 ||
+      playbook.length === 0
+    ) {
+      const fb = buildFallback(brief, role, callType);
+      if (openingQuestions.length === 0) openingQuestions = fb.openingQuestions;
+      if (goals.length === 0) goals = fb.goals;
+      if (playbook.length === 0) playbook = fb.playbook;
+      if (!approach.goal && !approach.pathway.length) {
+        approach.goal = fb.approach.goal;
+        approach.premise = fb.approach.premise;
+        approach.strategy = fb.approach.strategy;
+        approach.pathway = fb.approach.pathway;
+      }
+      if (structuralFailed) degraded = true;
+    }
 
     // GUARANTEE a usable plan. If the model gave us nothing parseable, fall
     // back to a deterministic, call-type-aware plan so the panel always
@@ -640,7 +670,7 @@ Write the 4-6 tactic playbook now - JSON array only.`;
         playbook,
         privateNotes,
         goals,
-        degraded: false,
+        degraded,
       },
       {
         headers: {

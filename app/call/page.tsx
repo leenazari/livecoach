@@ -1453,7 +1453,44 @@ export default function CallPage() {
 
           {/* RIGHT - the generated plan */}
           <div className="relative flex flex-col gap-3 px-5 py-4">
-            {prepping ? (
+            {prepping && suggestedComps.length > 0 ? (
+              // BUILDING THE PLAN: the focus the user just locked stays pinned
+              // at the top while the rest of the brief unfurls beneath it in
+              // place (skeletons). No screen swap - the plan grows from the
+              // focus on the same surface.
+              <>
+                <div className="rounded-xl border border-amber/50 bg-amber/[0.08] p-3.5">
+                  <p className="mb-2 flex items-center gap-1.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-amber">
+                    {"\u{1F512}"} Focus locked
+                    <span className="text-muted">- building your plan around it</span>
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {suggestedComps.map((c, i) => (
+                      <span
+                        key={i}
+                        className="rounded-full bg-amber/15 px-2.5 py-1 font-mono text-[0.62rem] text-amber/90"
+                      >
+                        {i + 1} {"\u00B7"} {c}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                {["your read", "opening questions", "playbook", "goals"].map(
+                  (label) => (
+                    <div key={label}>
+                      <p className="mb-2 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-muted">
+                        {label}{" "}
+                        <span className="text-muted/60">{"\u00B7"} building...</span>
+                      </p>
+                      <div className="flex flex-col gap-1.5">
+                        <div className="h-2.5 w-11/12 animate-pulse rounded bg-panel2/70" />
+                        <div className="h-2.5 w-3/4 animate-pulse rounded bg-panel2/70" />
+                      </div>
+                    </div>
+                  )
+                )}
+              </>
+            ) : prepping ? (
               <MatrixRain
                 messages={[
                   "reading the brief",
@@ -1491,6 +1528,43 @@ export default function CallPage() {
                     </p>
                   </div>
                 )}
+                {/* FOCUS - the spine. Pinned first; once the plan is built it
+                    is framed as locked, with the plan unfurled beneath it. */}
+                {suggestedComps.length > 0 && (
+                  <div
+                    className={
+                      planStage === "full"
+                        ? "rounded-xl border border-amber/50 bg-amber/[0.08] p-3.5"
+                        : ""
+                    }
+                  >
+                    <p className="mb-1 flex items-center gap-1.5 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-amber">
+                      {planStage === "full" ? (
+                        <>
+                          {"\u{1F512}"} Focus locked{" "}
+                          <span className="text-muted">- plan built around this</span>
+                        </>
+                      ) : (
+                        <>
+                          Focus <span className="text-muted">- priority order</span>
+                        </>
+                      )}
+                    </p>
+                    <p className="mb-3 font-mono text-[0.58rem] leading-relaxed text-muted">
+                      {planStage === "full"
+                        ? "Edit and hit Refresh from focus to re-steer the plan - this list stays exactly as you set it."
+                        : "Drag or arrows to rank. Delete with \u00D7, or add your own. Rebuilding won't touch this list."}
+                    </p>
+                    <SortableFocusList
+                      items={suggestedComps}
+                      activeItems={selectedComps}
+                      onReorder={setSuggestedComps}
+                      onToggle={toggleComp}
+                      onDelete={deleteComp}
+                      onAdd={addComp}
+                    />
+                  </div>
+                )}
                 {character && (
                   <div className="rounded-xl border border-sage/40 bg-sage/[0.06] p-3.5">
                     <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-sage">
@@ -1501,26 +1575,27 @@ export default function CallPage() {
                     </p>
                   </div>
                 )}
-                {suggestedComps.length > 0 && (
-                  <div>
-                    <p className="mb-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-amber">
-                      Focus <span className="text-muted">- priority order</span>
+                {suggestions.some((s) => s.kind === "opening") && (
+                  <div className="rounded-xl border border-edge bg-panel2/40 p-3.5">
+                    <p className="mb-2 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-sky">
+                      Opening questions{" "}
+                      <span className="text-muted">- ways in</span>
                     </p>
-                    <p className="mb-3 font-mono text-[0.58rem] leading-relaxed text-muted">
-                      Drag or arrows to rank. Delete with{" "}
-                      <span className="text-rust">{"\u00D7"}</span>, or add your
-                      own. Mark one <span className="text-sage">covered</span>{" "}
-                      when satisfied - still scored, re-activate any time.
-                      Rebuilding won't touch this list.
-                    </p>
-                    <SortableFocusList
-                      items={suggestedComps}
-                      activeItems={selectedComps}
-                      onReorder={setSuggestedComps}
-                      onToggle={toggleComp}
-                      onDelete={deleteComp}
-                      onAdd={addComp}
-                    />
+                    <ul className="flex flex-col gap-2">
+                      {suggestions
+                        .filter((s) => s.kind === "opening")
+                        .map((s) => (
+                          <li
+                            key={s.id}
+                            className="font-sans text-[0.82rem] leading-snug text-bone/85"
+                          >
+                            {s.text}
+                            {s.why ? (
+                              <span className="text-muted"> {"\u2014"} {s.why}</span>
+                            ) : null}
+                          </li>
+                        ))}
+                    </ul>
                   </div>
                 )}
                 {playbook.length > 0 && (
@@ -1537,6 +1612,25 @@ export default function CallPage() {
                         >
                           <span className="text-bone">{p.label}:</span>{" "}
                           {p.detail}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {goals.length > 0 && (
+                  <div className="rounded-xl border border-edge bg-panel2/40 p-3.5">
+                    <p className="mb-2 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-sage">
+                      Goals{" "}
+                      <span className="text-muted">- what a good call looks like</span>
+                    </p>
+                    <ul className="flex flex-col gap-1.5">
+                      {goals.map((g, i) => (
+                        <li
+                          key={i}
+                          className="flex items-start gap-2 font-sans text-[0.82rem] leading-snug text-bone/85"
+                        >
+                          <span className="mt-0.5 text-muted">{"\u25A2"}</span>
+                          {g.text}
                         </li>
                       ))}
                     </ul>
