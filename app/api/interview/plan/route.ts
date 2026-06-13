@@ -301,6 +301,7 @@ Return the JSON plan now.`;
     // call ate the whole budget.)
     let raw = "";
     let modelOk = false;
+    let planUsage: any = null;
     for (let attempt = 0; attempt < 2 && !modelOk; attempt++) {
       try {
         const msg = await callModelWithTimeout(system, userMsg, 28000);
@@ -309,6 +310,7 @@ Return the JSON plan now.`;
           .map((b: any) => b.text)
           .join("")
           .trim();
+        planUsage = msg.usage;
         if (raw) modelOk = true;
       } catch (e) {
         console.error(`Plan model attempt ${attempt + 1} failed:`, e);
@@ -402,20 +404,36 @@ Return the JSON plan now.`;
     // renders. degraded:true tells the client it's the generic safety net.
     if (focusAreas.length === 0) {
       const fb = buildFallback(brief, role, callType);
-      return NextResponse.json({ ...fb, degraded: true });
+      return NextResponse.json(
+        { ...fb, degraded: true },
+        {
+          headers: {
+            "x-usage": JSON.stringify(planUsage || {}),
+            "x-model": "haiku",
+          },
+        }
+      );
     }
 
-    return NextResponse.json({
-      callType,
-      subjectName,
-      approach,
-      focusAreas,
-      character,
-      openingQuestions,
-      playbook,
-      privateNotes,
-      degraded: false,
-    });
+    return NextResponse.json(
+      {
+        callType,
+        subjectName,
+        approach,
+        focusAreas,
+        character,
+        openingQuestions,
+        playbook,
+        privateNotes,
+        degraded: false,
+      },
+      {
+        headers: {
+          "x-usage": JSON.stringify(planUsage || {}),
+          "x-model": "haiku",
+        },
+      }
+    );
   } catch (err: any) {
     // Never 500 the page: return an empty-but-valid plan shape so the client
     // renders gracefully instead of throwing.

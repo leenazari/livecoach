@@ -179,6 +179,21 @@ Give the natural next beat: a WARM, friendly MAIN question that flows from what 
               controller.enqueue(encoder.encode(event.delta.text));
             }
           }
+          // Append the real token usage as a trailing marker the client parses
+          // and strips, so the cost meter bills exact tokens for this cue.
+          try {
+            const finalMsg = await claudeStream.finalMessage();
+            controller.enqueue(
+              encoder.encode(
+                `\n||USAGE||${JSON.stringify({
+                  model: "haiku",
+                  usage: finalMsg.usage,
+                })}||ENDUSAGE||`
+              )
+            );
+          } catch {
+            /* usage optional */
+          }
         } catch (e) {
           console.error("Stream error:", e);
         } finally {

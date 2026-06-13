@@ -95,6 +95,8 @@ Give the single best thing to say now to solidify the current idea - or HOLD.`;
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-store",
+        "x-usage": JSON.stringify(msg.usage || {}),
+        "x-model": "sonnet",
       },
     });
   } catch (err: any) {

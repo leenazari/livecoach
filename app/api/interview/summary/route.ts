@@ -179,7 +179,15 @@ Return the JSON assessment now.`;
       console.error("Summary store failed:", e);
     }
 
-    return NextResponse.json({ summary });
+    return NextResponse.json(
+      { summary },
+      {
+        headers: {
+          "x-usage": JSON.stringify(msg.usage || {}),
+          "x-model": "sonnet",
+        },
+      }
+    );
   } catch (err: any) {
     console.error("Summary route error:", err);
     return NextResponse.json(

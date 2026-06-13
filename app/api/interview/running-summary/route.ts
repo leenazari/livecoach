@@ -100,12 +100,20 @@ Return the updated JSON bullets now.`;
       }
     }
 
-    return NextResponse.json({
-      context: clean(out.context),
-      signals: clean(out.signals),
-      concerns: clean(out.concerns),
-      coverage,
-    });
+    return NextResponse.json(
+      {
+        context: clean(out.context),
+        signals: clean(out.signals),
+        concerns: clean(out.concerns),
+        coverage,
+      },
+      {
+        headers: {
+          "x-usage": JSON.stringify(msg.usage || {}),
+          "x-model": "haiku",
+        },
+      }
+    );
   } catch (err: any) {
     console.error("Running summary error:", err);
     return NextResponse.json(

@@ -11,6 +11,7 @@ import CostMeter from "@/components/CostMeter";
 import MatrixRain from "@/components/MatrixRain";
 import {
   estimateCost,
+  usageCostUSD,
   knowledgeTokensFromText,
   projectHourlyGBP,
   HOURLY_CEILING_GBP,
@@ -39,6 +40,18 @@ function timeNow() {
 
 function normalise(s: string) {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function addUsageToRef(ref: { current: number }, res: Response) {
+  try {
+    const u = res.headers.get("x-usage");
+    const m = res.headers.get("x-model");
+    if (u && (m === "haiku" || m === "sonnet")) {
+      ref.current += usageCostUSD(m, JSON.parse(u));
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 function splitCue(raw: string): { ask: string; why: string; followup: string } {
@@ -120,6 +133,7 @@ export default function CallPage() {
 
   const knowledgeRef = useRef("");
   const claudeCallsRef = useRef(0);
+  const claudeUsdRef = useRef(0);
   const callStartedAtRef = useRef(0);
   const costTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sonnetCallsRef = useRef(0);
@@ -174,12 +188,10 @@ export default function CallPage() {
           ? (Date.now() - callStartedAtRef.current) / 1000
           : 0;
       const meet = sourceRef.current === "meet";
-      const c = estimateCost(transcribing, claudeCallsRef.current, {
-        knowledgeTokens: knowledgeTokensFromText(knowledgeRef.current),
+      const c = estimateCost(transcribing, 0, {
         deepgramStreams: meet ? 0 : 2,
         transport: meet ? "recall" : "livekit",
-        sonnetCalls: sonnetCallsRef.current,
-        insightCalls: insightCallsRef.current,
+        claudeUsd: claudeUsdRef.current,
       });
       setCost(c);
       setOverBudget(
@@ -341,18 +353,31 @@ export default function CallPage() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let acc = "";
+      const stripUsageTail = (x: string) =>
+        x.replace(/\n?\|\|USAGE\|\|[\s\S]*$/, "");
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         acc += decoder.decode(value, { stream: true });
-        const { ask, why, followup } = splitCue(acc);
+        const { ask, why, followup } = splitCue(stripUsageTail(acc));
         setSuggestions((prev) =>
           prev.map((s) =>
             s.id === id ? { ...s, text: ask, why, followup } : s
           )
         );
       }
-      const { ask, why, followup } = splitCue(acc);
+      // Bank the exact token usage appended to the stream.
+      const um = acc.match(/\|\|USAGE\|\|([\s\S]*?)\|\|ENDUSAGE\|\|/);
+      if (um) {
+        try {
+          const parsed = JSON.parse(um[1]);
+          if (parsed?.usage)
+            claudeUsdRef.current += usageCostUSD("haiku", parsed.usage);
+        } catch {
+          /* ignore */
+        }
+      }
+      const { ask, why, followup } = splitCue(stripUsageTail(acc));
       const isHold = ask.toUpperCase() === "HOLD";
       if (isHold || isDuplicate(ask)) {
         setSuggestions((prev) => prev.filter((s) => s.id !== id));
@@ -411,6 +436,7 @@ export default function CallPage() {
         }),
       });
       const data = await res.json();
+      addUsageToRef(claudeUsdRef, res);
       if (res.ok) {
         const next = {
           context: Array.isArray(data.context) ? data.context : [],
@@ -484,6 +510,7 @@ export default function CallPage() {
           recentInsights: recentInsightsRef.current.slice(0, 5),
         }),
       });
+      addUsageToRef(claudeUsdRef, res);
       const text = (await res.text()).trim();
       const { ask, why } = splitCue(text);
       if (!ask || ask.toUpperCase() === "HOLD") {
@@ -597,6 +624,7 @@ export default function CallPage() {
       }),
     });
     const data = await res.json();
+    addUsageToRef(claudeUsdRef, res);
     if (!res.ok) throw new Error(data.error || "Failed to build plan");
 
     const focus: string[] = Array.isArray(data.focusAreas)
@@ -796,6 +824,7 @@ export default function CallPage() {
         }),
       });
       const data = await res.json();
+      addUsageToRef(claudeUsdRef, res);
       if (!res.ok) throw new Error(data.error || "Summary failed");
       cachedSummaryRef.current = data.summary;
       cachedSigRef.current = sig;
