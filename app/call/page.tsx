@@ -120,6 +120,9 @@ export default function CallPage() {
   const [cvReady, setCvReady] = useState(false);
   const [status, setStatus] = useState("");
   const [loadedDocs, setLoadedDocs] = useState<string[]>([]);
+  // Raised when a document is uploaded AFTER the focus was built, so the user
+  // can fold it in. Cleared whenever the focus is (re)built.
+  const [newDocFlag, setNewDocFlag] = useState(false);
   const [suggestedComps, setSuggestedComps] = useState<string[]>([]);
   const [selectedComps, setSelectedComps] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -159,6 +162,10 @@ export default function CallPage() {
   const candidateRef = useRef("");
   const selectedCompsRef = useRef<string[]>([]);
   const suggestedCompsRef = useRef<string[]>([]);
+  // Document-count bookkeeping for the "new document" prompt: how many docs
+  // were loaded when the focus was last built vs how many are loaded now.
+  const docsAtFocusRef = useRef(0);
+  const loadedDocsCountRef = useRef(0);
   const cachedSummaryRef = useRef<any>(null);
   const cachedSigRef = useRef("");
   const linesRef = useRef<Line[]>([]);
@@ -619,13 +626,23 @@ export default function CallPage() {
     });
     const ctx = await res.json();
     knowledgeRef.current = ctx.context || "";
-    setLoadedDocs(Array.isArray(ctx.sources) ? ctx.sources : []);
+    const sources = Array.isArray(ctx.sources) ? ctx.sources : [];
+    setLoadedDocs(sources);
+    loadedDocsCountRef.current = sources.length;
+    // If a focus already exists and there are now MORE documents than when it
+    // was built, flag it so the user can rebuild the focus to fold them in.
+    if (
+      suggestedCompsRef.current.length > 0 &&
+      sources.length > docsAtFocusRef.current
+    ) {
+      setNewDocFlag(true);
+    }
     return knowledgeRef.current;
   }, [candidate]);
 
   // Intent-driven plan: brief (top priority) + CV/JD context -> ranked focus
   // areas + character profile + opening questions, in one call.
-  const generatePlan = useCallback(async (mode: "focus" | "full") => {
+  const generatePlan = useCallback(async (mode: "focus" | "full" | "refocus") => {
     claudeCallsRef.current += 1;
     const res = await fetch("/api/interview/plan", {
       method: "POST",
@@ -633,8 +650,10 @@ export default function CallPage() {
       body: JSON.stringify({
         brief: brief || null,
         role: role || null,
-        focusAreas: suggestedCompsRef.current,
-        focusOnly: mode === "focus",
+        // Only the full build is built AROUND the locked focus. focus/refocus
+        // derive a fresh list, so don't pin the existing one.
+        focusAreas: mode === "full" ? suggestedCompsRef.current : [],
+        focusOnly: mode !== "full",
         knowledgeContext: [
           knowledgeRef.current,
           backgroundRef.current
@@ -662,13 +681,26 @@ export default function CallPage() {
     const focus: string[] = Array.isArray(data.focusAreas)
       ? data.focusAreas
       : [];
-    // Lock the focus list once it exists: a regenerate only refreshes the
-    // character profile + opening questions and must NOT touch the focus the
-    // user has ranked/edited. Only seed it on the first build.
-    setSuggestedComps((prev) => (prev.length > 0 ? prev : focus));
-    setSelectedComps((prev) =>
-      prev.length > 0 || suggestedCompsRef.current.length > 0 ? prev : focus
-    );
+    if (mode === "refocus") {
+      // Rebuild focus: keep the user's existing (hand-edited, ranked) focus and
+      // APPEND any genuinely new topics the fresh derivation surfaced - deduped
+      // case-insensitively. Their edits survive; the document's new angles get
+      // added on the end for them to rank.
+      const newOnes = (prev: string[]) => {
+        const have = new Set(prev.map((p) => p.toLowerCase().trim()));
+        return focus.filter((f) => !have.has(f.toLowerCase().trim()));
+      };
+      setSuggestedComps((prev) => [...prev, ...newOnes(prev)].slice(0, 12));
+      setSelectedComps((prev) => [...prev, ...newOnes(prev)]);
+    } else {
+      // Lock the focus list once it exists: a regenerate only refreshes the
+      // character + opening questions and must NOT touch the focus the user has
+      // ranked/edited. Only seed it on the first build.
+      setSuggestedComps((prev) => (prev.length > 0 ? prev : focus));
+      setSelectedComps((prev) =>
+        prev.length > 0 || suggestedCompsRef.current.length > 0 ? prev : focus
+      );
+    }
     setCharacter(typeof data.character === "string" ? data.character : "");
     if (typeof data.callType === "string") setCallType(data.callType);
     if (
@@ -733,20 +765,36 @@ export default function CallPage() {
 
 
   const prep = useCallback(
-    async (mode: "focus" | "full") => {
+    async (mode: "focus" | "full" | "refocus") => {
       setPrepping(true);
       setMeterOn(true);
-      setStatus(mode === "focus" ? "finding focus..." : "building the plan...");
+      setStatus(
+        mode === "full"
+          ? "building the plan..."
+          : mode === "refocus"
+          ? "rebuilding focus..."
+          : "finding focus..."
+      );
       try {
-        if (mode === "focus") await loadContext();
+        // Always reload context first so a document uploaded since the last
+        // build actually reaches the plan (not just on the initial focus).
+        await loadContext();
         const { ok, degraded } = await generatePlan(mode);
         if (mode === "focus") setPlanStage(ok ? "focus" : "none");
-        else if (ok) setPlanStage("full");
+        else if (mode === "full" && ok) setPlanStage("full");
+        // refocus keeps the current stage - it only re-derives the focus.
+        // The focus now reflects the current documents, so clear the prompt.
+        if (mode === "focus" || mode === "refocus") {
+          docsAtFocusRef.current = loadedDocsCountRef.current;
+          setNewDocFlag(false);
+        }
         setStatus(
           !ok
             ? "nothing came back - try again"
             : degraded
             ? "generic - edit & rebuild for a tailored plan"
+            : mode === "refocus"
+            ? "focus updated - hit Refresh from focus to fold it into the plan"
             : mode === "focus"
             ? "focus ready - rank or delete, then Build the plan"
             : "plan ready"
@@ -835,8 +883,12 @@ export default function CallPage() {
             : "CV loaded"
           : "doc loaded"
       );
+      // Pull the new document into the call's context right away. loadContext
+      // also raises the "new document" prompt if a focus already exists, so the
+      // user can fold it in - the doc no longer gets silently ignored.
+      loadContext().catch(() => {});
     },
-    []
+    [loadContext]
   );
 
   const endAndSummarise = useCallback(async () => {
@@ -1523,6 +1575,25 @@ export default function CallPage() {
                     </p>
                   </div>
                 )}
+                {/* NEW DOCUMENT prompt: a doc was added after the focus was
+                    built. Offer to fold it in by rebuilding the focus. */}
+                {newDocFlag && suggestedComps.length > 0 && (
+                  <div className="flex items-center gap-3 rounded-xl border border-sky/45 bg-sky/[0.08] px-3.5 py-3">
+                    <span className="text-base text-sky">{"\u2295"}</span>
+                    <p className="flex-1 font-sans text-[0.78rem] leading-snug text-bone/90">
+                      <span className="text-sky">New document added</span> - it
+                      isn't reflected in your focus yet. Rebuild the focus to fold
+                      it in.
+                    </p>
+                    <button
+                      onClick={() => prep("refocus")}
+                      disabled={prepping}
+                      className="shrink-0 rounded-full border border-sky/60 bg-sky/15 px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
+                    >
+                      {"\u21BB"} Rebuild focus
+                    </button>
+                  </div>
+                )}
                 {/* FOCUS - the spine. Pinned first; once the plan is built it
                     is framed as locked, with the plan unfurled beneath it. */}
                 {suggestedComps.length > 0 && (
@@ -1533,22 +1604,32 @@ export default function CallPage() {
                         : ""
                     }
                   >
-                    <p className="mb-1 flex items-center gap-1.5 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-amber">
-                      {planStage === "full" ? (
-                        <>
-                          {"\u{1F512}"} Focus locked{" "}
-                          <span className="text-muted">- plan built around this</span>
-                        </>
-                      ) : (
-                        <>
-                          Focus <span className="text-muted">- priority order</span>
-                        </>
-                      )}
-                    </p>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <p className="flex items-center gap-1.5 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-amber">
+                        {planStage === "full" ? (
+                          <>
+                            {"\u{1F512}"} Focus locked{" "}
+                            <span className="text-muted">- plan built around this</span>
+                          </>
+                        ) : (
+                          <>
+                            Focus <span className="text-muted">- priority order</span>
+                          </>
+                        )}
+                      </p>
+                      <button
+                        onClick={() => prep("refocus")}
+                        disabled={prepping}
+                        title="Re-derive the focus from your intent + documents, keeping your edits"
+                        className="shrink-0 rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-40"
+                      >
+                        {"\u21BB"} Rebuild focus
+                      </button>
+                    </div>
                     <p className="mb-3 font-mono text-[0.58rem] leading-relaxed text-muted">
                       {planStage === "full"
-                        ? "Edit and hit Refresh from focus to re-steer the plan - this list stays exactly as you set it."
-                        : "Drag or arrows to rank. Delete with \u00D7, or add your own. Rebuilding won't touch this list."}
+                        ? "Edit and hit Refresh from focus to re-steer the plan - this list stays exactly as you set it. Rebuild focus re-derives it from your intent + documents and keeps your edits."
+                        : "Drag or arrows to rank. Delete with \u00D7, or add your own. Rebuild focus re-derives the list from your intent + documents and keeps anything you've added."}
                     </p>
                     <SortableFocusList
                       items={suggestedComps}
@@ -1622,12 +1703,15 @@ export default function CallPage() {
                       {goals.map((g, i) => (
                         <li
                           key={i}
-                          className="flex items-start gap-2 font-sans text-[0.82rem] leading-snug text-bone/85"
+                          className="flex items-start gap-2.5 font-sans text-[0.82rem] leading-snug text-bone/85"
                         >
-                          <span className="mt-0.5 text-muted">{"\u25A2"}</span>
+                          <span className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full bg-sage/70" />
                           {g.text}
                         </li>
                       ))}
+                      <p className="mt-1 font-mono text-[0.56rem] leading-relaxed text-muted/70">
+                        You tick these off live during the call.
+                      </p>
                     </ul>
                   </div>
                 )}
