@@ -86,6 +86,37 @@ export function insightCostUSD(): number {
   );
 }
 
+// EXACT cost of one Claude call from the usage object the API returns.
+// Bills uncached input, cache-write (1.25x), cache-read (0.1x) and output at
+// the model's real rates - no assumptions. This is what makes the meter
+// accurate (a plan rebuild, a big scorecard, etc. each cost what they used).
+export function usageCostUSD(
+  model: "haiku" | "sonnet",
+  usage:
+    | {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      }
+    | null
+    | undefined
+): number {
+  if (!usage) return 0;
+  const inRate = model === "sonnet" ? RATES.sonnetInPerM : RATES.haikuInPerM;
+  const outRate = model === "sonnet" ? RATES.sonnetOutPerM : RATES.haikuOutPerM;
+  const inp = Number(usage.input_tokens) || 0;
+  const out = Number(usage.output_tokens) || 0;
+  const cw = Number(usage.cache_creation_input_tokens) || 0;
+  const cr = Number(usage.cache_read_input_tokens) || 0;
+  return (
+    (inp / 1_000_000) * inRate +
+    (cw / 1_000_000) * inRate * RATES.haikuCacheWritePerM +
+    (cr / 1_000_000) * inRate * RATES.haikuCacheReadPerM +
+    (out / 1_000_000) * outRate
+  );
+}
+
 export type CostBreakdown = {
   deepgram: number;
   transport: number; // LiveKit (in-app) or Recall.ai (Meet)
@@ -109,6 +140,9 @@ export type EstimateOpts = {
   sonnetCalls?: number;
   // Number of live Sonnet "statement" insight calls made.
   insightCalls?: number;
+  // ACCURATE path: real accumulated Claude cost (USD) from token usage. When
+  // provided, it replaces the count-based estimate entirely.
+  claudeUsd?: number;
 };
 
 // Live running estimate.
@@ -135,22 +169,26 @@ export function estimateCost(
   if (transportKind === "livekit") transport = hours * RATES.livekitPerHour;
   else if (transportKind === "recall") transport = hours * RATES.recallPerHour;
 
-  // Claude: first Haiku call writes the cache, the rest are warm reads; the
-  // scorecard is a separate Sonnet call.
+  // Claude cost. ACCURATE: if real usage-based cost is supplied, use it.
+  // Otherwise fall back to the count-based estimate (legacy console).
   let claude = 0;
-  if (haikuCalls > 0) {
-    const writeCost =
-      (knowledgeTokens / 1_000_000) *
-        RATES.haikuInPerM *
-        RATES.haikuCacheWritePerM +
-      ((TOKENS.transcriptWindow + TOKENS.instructions) / 1_000_000) *
-        RATES.haikuInPerM +
-      (TOKENS.output / 1_000_000) * RATES.haikuOutPerM;
-    claude += writeCost;
-    claude += (haikuCalls - 1) * claudeCallCostUSD(true, knowledgeTokens);
+  if (typeof opts.claudeUsd === "number") {
+    claude = opts.claudeUsd;
+  } else {
+    if (haikuCalls > 0) {
+      const writeCost =
+        (knowledgeTokens / 1_000_000) *
+          RATES.haikuInPerM *
+          RATES.haikuCacheWritePerM +
+        ((TOKENS.transcriptWindow + TOKENS.instructions) / 1_000_000) *
+          RATES.haikuInPerM +
+        (TOKENS.output / 1_000_000) * RATES.haikuOutPerM;
+      claude += writeCost;
+      claude += (haikuCalls - 1) * claudeCallCostUSD(true, knowledgeTokens);
+    }
+    claude += sonnetCalls * scorecardCostUSD();
+    claude += (opts.insightCalls ?? 0) * insightCostUSD();
   }
-  claude += sonnetCalls * scorecardCostUSD();
-  claude += (opts.insightCalls ?? 0) * insightCostUSD();
 
   const vercel = hours * RATES.vercelPerHour;
   const supabase = hours * RATES.supabasePerHour;
