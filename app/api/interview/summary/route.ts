@@ -76,15 +76,21 @@ Also extract a short STYLE PROFILE of the INTERVIEWER, drawn ONLY from the inter
 
 Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
 {
-  "recommendation": "one of: Strong, Lean yes, Mixed, Lean no, Too early to tell",
+  "callType": "one of: interview, sales, support, general - the best fit for THIS call",
+  "title": "a short, specific title for this call, e.g. 'Avatar roadmap sync with Mark & Jay'",
+  "recommendation": "the overall verdict for THIS kind of call (interview: Strong / Lean yes / Mixed / Lean no / Too early; sales: Hot / Warm / Cold / Dead; support: Resolved / Partly resolved / Unresolved; general: a one-word read)",
   "headline": "one sentence overall read",
+  "overview": "2-4 sentences on how the call actually went - the gist, the mood, where it landed. Plain English, no jargon.",
+  "competencies": [{"name": "competency", "score": 3, "note": "one short line of evidence"}],
   "strengths": ["short bullet", "..."],
   "concerns": ["short bullet", "..."],
-  "competencies": [{"name": "competency", "score": 3, "note": "one short line of evidence"}],
-  "contributors": [{"name": "participant name", "impact": "helped", "note": "the part they played and how it bore on the scoring"}],
-  "questionReview": [{"question": "short version of what the interviewer asked", "answered": "yes", "note": "if not fully answered, say briefly how they dodged or deflected"}],
+  "contributors": [{"name": "participant name", "impact": "helped", "note": "the part they played and how it bore on the outcome"}],
+  "questionReview": [{"question": "short version of a key question asked", "answered": "yes", "note": "if not fully answered, say briefly how it was dodged or deflected"}],
+  "myNextActions": ["a concrete thing the HOST (you / the person being coached) needs to DO after this call - an email to send, a person to speak to, a decision to make, a thing to prepare", "..."],
+  "theirNextActions": ["something another participant SAID they would do - name who, e.g. 'Mark: test the workable integration before go-live'", "..."],
+  "suggestedNextActions": ["a smart next move YOU (the AI) recommend the host take - not necessarily said on the call, but the right strategic step given how it went", "..."],
   "notCovered": ["an area or question not yet explored", "..."],
-  "styleProfile": "2-3 sentences on the interviewer's speaking style and tone"
+  "styleProfile": "2-3 sentences on the host's speaking style and tone"
 }
 
 COMPETENCIES TO SCORE:
@@ -112,7 +118,15 @@ QUESTION-BY-QUESTION REVIEW (questionReview):
 - For each: a short version of the question, whether it was actually answered - "answered" is exactly one of "yes", "partial", or "no" - and a one-line note.
 - A confident, fluent reply that does not address what was asked is NOT a yes. If someone changed the subject, deflected, or answered a different question, mark "no" (or "partial") and say briefly how (e.g. "pivoted to career instead of the family question"). Surfacing these dodges clearly is the most important part of this review - do not be charmed by smooth delivery.
 
-Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Keep every bullet tight.`;
+OVERVIEW:
+- A short, honest narrative of how the call went - what it was about, how it flowed, where it ended up. This is the "how did it go" the host reads first. Plain English.
+
+NEXT ACTIONS (this is the most useful part - be concrete and specific, grounded in the transcript):
+- "myNextActions": what the HOST personally needs to do now. Real, actionable items - "Email Sarah the one-page concept by Friday", "Decide P1 vs P4 on the loading-spinner feedback", "Send Mark the pricing numbers". Pull these from open loops, things the host promised, and decisions left hanging. 2-6 items. If genuinely none, return an empty array.
+- "theirNextActions": what each OTHER participant said they would do, so the host can track and chase it. Name the person. Only include things actually said. 0-6 items.
+- "suggestedNextActions": YOUR recommendations - the smart next moves the host should consider that may NOT have been said on the call (a follow-up to send, a person to bring in, a risk to close off, a decision to force). Strategic and specific to this call. 2-5 items.
+
+Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Action items are short plain-English lines. Keep every bullet tight.`;
 
     const userMsg = `ROLE: ${role || "(not specified)"}
 CANDIDATE / SUBJECT: ${candidate || "(unknown)"}
@@ -131,7 +145,7 @@ Return the JSON assessment now.`;
 
     const msg = await anthropic.messages.create({
       model: CLAUDE_MODEL_PRO,
-      max_tokens: 2000,
+      max_tokens: 2600,
       temperature: 0,
       system,
       messages: [{ role: "user", content: userMsg }],
