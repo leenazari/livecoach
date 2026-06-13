@@ -938,7 +938,7 @@ export default function CallPage() {
     -1
   );
 
-  const renderCard = (s: Suggestion) => {
+  const renderCard = (s: Suggestion, compact = false) => {
     const meta = TYPE_META[cueType(s)];
     const fresh = s.kind === "live" && s.id === newestLiveId;
     return (
@@ -948,7 +948,7 @@ export default function CallPage() {
           fresh ? meta.borderBright : meta.border
         }`}
       >
-        <div className="flex items-center justify-between px-4 pt-3">
+        <div className={`flex items-center justify-between ${compact ? "px-3 pt-2" : "px-4 pt-3"}`}>
           <div className="flex items-center gap-2">
             <span className="font-mono text-[0.7rem] font-medium tabular-nums text-bone/70">
               #{s.id}
@@ -974,15 +974,15 @@ export default function CallPage() {
         </div>
 
         {s.pending && !s.text ? (
-          <div className="px-4 pb-4 pt-2">
-            <span className="thinking font-display text-lg">
+          <div className={`${compact ? "px-3 pb-2.5 pt-1.5" : "px-4 pb-4 pt-2"}`}>
+            <span className={`thinking font-display ${compact ? "text-sm" : "text-lg"}`}>
               reading the room...
             </span>
           </div>
         ) : (
           <>
-            <div className="px-4 pb-4 pt-2">
-              <p className="font-display text-[1.45rem] font-medium leading-snug text-bone">
+            <div className={`${compact ? "px-3 pb-2.5 pt-1.5" : "px-4 pb-4 pt-2"}`}>
+              <p className={`font-display font-medium leading-snug text-bone ${compact ? "text-[0.95rem]" : "text-[1.45rem]"}`}>
                 {s.text}
               </p>
               {s.why && (
@@ -993,7 +993,7 @@ export default function CallPage() {
                 </p>
               )}
             </div>
-            {s.followup && (
+            {!compact && s.followup && (
               <div className="border-t border-edge/70 bg-ink/50 px-4 py-3">
                 <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.22em] text-sage/70">
                   then go deeper
@@ -1754,7 +1754,7 @@ export default function CallPage() {
               <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-amber/70">
                 Bulletin
               </p>
-              <div className="flex flex-col gap-2">{pinned.map(renderCard)}</div>
+              <div className="flex flex-col gap-2">{pinned.map((s) => renderCard(s))}</div>
             </div>
           )}
 
@@ -1765,14 +1765,14 @@ export default function CallPage() {
                 as the candidate answers.
               </p>
             ) : (
-              feed.map(renderCard)
+              feed.map((s) => renderCard(s))
             )}
           </div>
         </section>
       </div>
 
       {cueFull && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-ink/97 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex flex-col bg-ink">
           <div className="flex items-center justify-between border-b border-edge px-6 py-4">
             <div className="flex items-baseline gap-4">
               <h2 className="font-mono text-sm uppercase tracking-[0.25em] text-amber">
@@ -1797,12 +1797,12 @@ export default function CallPage() {
               </p>
             ) : (
               <div
-                className="grid gap-3"
+                className="grid gap-2.5"
                 style={{
-                  gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+                  gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
                 }}
               >
-                {[...pinned, ...feed].map(renderCard)}
+                {[...pinned, ...feed].map((s) => renderCard(s, true))}
               </div>
             )}
           </div>
