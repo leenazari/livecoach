@@ -310,15 +310,16 @@ ${context || "(none provided)"}
 
 Return the JSON plan now.`;
 
-    // Two attempts, ~28s each, so a retry still fits inside the 60s function
-    // cap. (The previous single 55s attempt left no room to retry: one slow
-    // call ate the whole budget.)
+    // ONE attempt with a generous window: the plan now runs on Sonnet (slower,
+    // higher quality) and a full ~2k-token plan can take 30-45s. A 28s abort
+    // was timing it out and serving the generic fallback. 52s sits inside the
+    // 60s function cap and leaves room to return.
     let raw = "";
     let modelOk = false;
     let planUsage: any = null;
-    for (let attempt = 0; attempt < 2 && !modelOk; attempt++) {
+    for (let attempt = 0; attempt < 1 && !modelOk; attempt++) {
       try {
-        const msg = await callModelWithTimeout(system, userMsg, 28000);
+        const msg = await callModelWithTimeout(system, userMsg, 52000);
         raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
