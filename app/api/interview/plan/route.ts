@@ -468,7 +468,12 @@ ${
   curatedFocus.length
     ? `\nFIXED FOCUS AREAS - the caller has ALREADY chosen and RANKED these. Use EXACTLY these as the "focusAreas" (do NOT add, remove, merge, or reorder them), and build the read/character, opening questions, playbook AND goals AROUND them, in this exact priority order:\n${curatedFocus
         .map((f, i) => `${i + 1}. ${f}`)
-        .join("\n")}\n`
+        .join("\n")}
+
+THE FOCUS LIST IS THE COMPLETE AGENDA - HARD BOUNDARY:
+- Every opening question and every playbook tactic MUST serve one of the focus areas above. Nothing else is on the table.
+- The caller has DELIBERATELY chosen what is in and what is out. Do NOT raise, open on, or reference any topic that is not one of these focus areas - even if the supporting document makes it prominent, impressive, or tempting (a big audience, a headline number, a famous name, a juicy aside). If a fact from the document is not tied to one of the focus areas, leave it OUT entirely.
+- Example of the trap to avoid: the document mentions a large social following or a flashy metric, but it is NOT a focus area - then NO question or tactic may mention it. Treat anything outside the focus list as off-limits for this call.\n`
     : ""
 }
 SUPPORTING CONTEXT - uploaded document(s) / researched background / notes. This is the substance of what the call is about; use it heavily and specifically:
@@ -601,7 +606,9 @@ Return the JSON plan now.`;
           type: "text",
           text: `You write the PLAYBOOK for a live call: 4-6 concrete, in-the-moment tactics the caller should be ready to use. Each item is { "label": "short tactic name", "detail": "one specific, actionable line" }.
 
-Ground EVERY tactic in THIS call - name the real idea, product, people and numbers (from the intent, the focus areas, and the document). A reader should be unable to use these tactics for any other call. Never generic advice.
+Ground EVERY tactic in THIS call - name the real idea, product, and people from the intent, the FOCUS AREAS, and the document. A reader should be unable to use these tactics for any other call. Never generic advice.
+
+THE FOCUS AREAS ARE A HARD BOUNDARY: every tactic MUST serve one of the focus areas given below. Do NOT build a tactic around any topic, fact, or number from the document that is not one of the focus areas - even if it is prominent or impressive (a big audience, a headline metric, a famous name). The caller deliberately chose what is in scope; anything outside the focus areas is OFF-LIMITS for this call. Only cite a number if it belongs to a focus area.
 
 TONE - the detail is for a real human to say WARMLY: write each tactic the way a thoughtful, friendly, intellectually-curious partner would - warm, collaborative, softened, leading with curiosity. If you suggest something to SAY, phrase it as a warm person actually would: inviting, never a scripted command or ultimatum. BAN bossy openers like "I want you to...", "Before we talk X, I want to be clear...", "That's your role here", "explicitly say:". This is a conversation between collaborators, not a sales script.
 
