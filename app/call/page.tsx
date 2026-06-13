@@ -115,6 +115,7 @@ export default function CallPage() {
   const [summaryUpdating, setSummaryUpdating] = useState(false);
   const [coverage, setCoverage] = useState<Record<string, number>>({});
   const [prepping, setPrepping] = useState(false);
+  const [planStage, setPlanStage] = useState<"none" | "focus" | "full">("none");
   const [docsReady, setDocsReady] = useState(false);
   const [cvReady, setCvReady] = useState(false);
   const [status, setStatus] = useState("");
@@ -147,6 +148,9 @@ export default function CallPage() {
   const costTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sonnetCallsRef = useRef(0);
   const callLiveRef = useRef(false);
+  // Holds the latest goLive() so the transcript funnel (stable, no deps) can
+  // auto-start the call on first real speech without a stale closure.
+  const goLiveRef = useRef<() => void>(() => {});
   const sourceRef = useRef<"inapp" | "meet">("inapp");
   const backgroundRef = useRef("");
   const callTypeRef = useRef("general");
@@ -248,6 +252,13 @@ export default function CallPage() {
 
   const onFinalTranscript = useCallback(
     (r: string, text: string, speaker?: string) => {
+      // Auto-start: the moment real speech is transcribed, the call has in
+      // effect begun - so flip to the live cue view automatically (the manual
+      // Go live button stays for when you want cues up before anyone speaks).
+      // Guarded inside goLive so it only ever fires once.
+      if (!callLiveRef.current && text && text.trim().length > 1) {
+        goLiveRef.current();
+      }
       setLines((prev) => {
         const last = prev[prev.length - 1];
         let next: Line[];
@@ -614,7 +625,7 @@ export default function CallPage() {
 
   // Intent-driven plan: brief (top priority) + CV/JD context -> ranked focus
   // areas + character profile + opening questions, in one call.
-  const generatePlan = useCallback(async () => {
+  const generatePlan = useCallback(async (mode: "focus" | "full") => {
     claudeCallsRef.current += 1;
     const res = await fetch("/api/interview/plan", {
       method: "POST",
@@ -623,6 +634,7 @@ export default function CallPage() {
         brief: brief || null,
         role: role || null,
         focusAreas: suggestedCompsRef.current,
+        focusOnly: mode === "focus",
         knowledgeContext: [
           knowledgeRef.current,
           backgroundRef.current
@@ -648,25 +660,6 @@ export default function CallPage() {
       prev.length > 0 || suggestedCompsRef.current.length > 0 ? prev : focus
     );
     setCharacter(typeof data.character === "string" ? data.character : "");
-    setPlaybook(
-      Array.isArray(data.playbook)
-        ? data.playbook.filter(
-            (p: any) => p && typeof p.label === "string" && typeof p.detail === "string"
-          )
-        : []
-    );
-    setPrivateNotes(
-      Array.isArray(data.privateNotes)
-        ? data.privateNotes.filter((x: any) => typeof x === "string" && x.trim())
-        : []
-    );
-    setGoals(
-      Array.isArray(data.goals)
-        ? data.goals
-            .filter((x: any) => typeof x === "string" && x.trim())
-            .map((t: string) => ({ text: t }))
-        : []
-    );
     if (typeof data.callType === "string") setCallType(data.callType);
     if (
       typeof data.subjectName === "string" &&
@@ -676,30 +669,51 @@ export default function CallPage() {
       setCandidate(data.subjectName.trim());
     }
 
-    const qs: any[] = Array.isArray(data.openingQuestions)
-      ? data.openingQuestions
-      : [];
-    const cards: Suggestion[] = qs.map((item) => ({
-      id: ++suggestIdRef.current,
-      text: typeof item === "string" ? item : item.q || "",
-      why: typeof item === "string" ? "" : item.why || "",
-      followup: "",
-      at: timeNow(),
-      pending: false,
-      kind: "opening" as const,
-      pinned: false,
-    }));
-    // The feed renders newest-first (reversed), so insert the openers in
-    // reverse: the warm/gentlest one (created first) then lands at the TOP,
-    // gentle probe second, exploratory third - instead of scrolling off.
-    setSuggestions((prev) => [
-      ...prev.filter((s) => s.kind !== "opening"),
-      ...[...cards].reverse(),
-    ]);
-    recentTextsRef.current = [
-      ...cards.map((c) => c.text),
-      ...recentTextsRef.current,
-    ].slice(0, 10);
+    if (mode === "full") {
+      setPlaybook(
+        Array.isArray(data.playbook)
+          ? data.playbook.filter(
+              (p: any) =>
+                p && typeof p.label === "string" && typeof p.detail === "string"
+            )
+          : []
+      );
+      setPrivateNotes(
+        Array.isArray(data.privateNotes)
+          ? data.privateNotes.filter(
+              (x: any) => typeof x === "string" && x.trim()
+            )
+          : []
+      );
+      setGoals(
+        Array.isArray(data.goals)
+          ? data.goals
+              .filter((x: any) => typeof x === "string" && x.trim())
+              .map((t: string) => ({ text: t }))
+          : []
+      );
+      const qs: any[] = Array.isArray(data.openingQuestions)
+        ? data.openingQuestions
+        : [];
+      const cards: Suggestion[] = qs.map((item) => ({
+        id: ++suggestIdRef.current,
+        text: typeof item === "string" ? item : item.q || "",
+        why: typeof item === "string" ? "" : item.why || "",
+        followup: "",
+        at: timeNow(),
+        pending: false,
+        kind: "opening" as const,
+        pinned: false,
+      }));
+      setSuggestions((prev) => [
+        ...prev.filter((s) => s.kind !== "opening"),
+        ...[...cards].reverse(),
+      ]);
+      recentTextsRef.current = [
+        ...cards.map((c) => c.text),
+        ...recentTextsRef.current,
+      ].slice(0, 10);
+    }
 
     // Report whether a real plan came back, and whether it's the generic
     // fallback, so the status line stays honest.
@@ -708,26 +722,33 @@ export default function CallPage() {
   }, [brief, role]);
 
 
-  const prepOpening = useCallback(async () => {
-    setPrepping(true);
-    setMeterOn(true);
-    setStatus("building plan...");
-    try {
-      await loadContext();
-      const { ok, degraded } = await generatePlan();
-      setStatus(
-        !ok
-          ? "no plan came back - tap Build plan to try again"
-          : degraded
-          ? "plan ready (generic - rebuild for a tailored plan)"
-          : "plan ready"
-      );
-    } catch (e: any) {
-      setStatus(`error: ${e.message || "could not build plan"}`);
-    } finally {
-      setPrepping(false);
-    }
-  }, [loadContext, generatePlan]);
+  const prep = useCallback(
+    async (mode: "focus" | "full") => {
+      setPrepping(true);
+      setMeterOn(true);
+      setStatus(mode === "focus" ? "finding focus..." : "building the plan...");
+      try {
+        if (mode === "focus") await loadContext();
+        const { ok, degraded } = await generatePlan(mode);
+        if (mode === "focus") setPlanStage(ok ? "focus" : "none");
+        else if (ok) setPlanStage("full");
+        setStatus(
+          !ok
+            ? "nothing came back - try again"
+            : degraded
+            ? "generic - edit & rebuild for a tailored plan"
+            : mode === "focus"
+            ? "focus ready - rank or delete, then Build the plan"
+            : "plan ready"
+        );
+      } catch (e: any) {
+        setStatus(`error: ${e.message || "could not build"}`);
+      } finally {
+        setPrepping(false);
+      }
+    },
+    [loadContext, generatePlan]
+  );
 
   const persistSession = useCallback(() => {
     // Fire-and-forget: record the call's intent server-side so a scorecard can
@@ -747,6 +768,22 @@ export default function CallPage() {
       }),
     }).catch(() => {});
   }, [room, brief, role, callType, suggestedComps, selectedComps, candidate, source]);
+
+  // Single path into the live call - used by BOTH the manual Go live button and
+  // the auto-start on first transcript. Guarded so it only ever runs once:
+  // persists the session (for scoring) and switches to the cue view.
+  const goLive = useCallback(() => {
+    if (callLiveRef.current) return;
+    persistSession();
+    setExpandSetup(false);
+    setCallLive(true);
+  }, [persistSession]);
+
+  // Keep the ref pointed at the latest goLive so the transcript funnel can call
+  // it without taking goLive as a dependency (which would re-create the funnel).
+  useEffect(() => {
+    goLiveRef.current = goLive;
+  }, [goLive]);
 
   const research = useCallback(async () => {
     const url = publicLink.trim();
@@ -1422,9 +1459,9 @@ export default function CallPage() {
                   Your plan appears here
                 </p>
                 <p className="mt-1.5 max-w-[15rem] font-mono text-[0.62rem] leading-relaxed text-muted/70">
-                  Write the intent (and optionally a link), then Build plan -
-                  you'll get the background, a read on them, ranked focus, and a
-                  tailored playbook.
+                  Write the intent (and optionally a link), then Build focus -
+                  you'll get the ranked focus to lock in first, then build the
+                  full plan around it.
                 </p>
               </div>
             ) : (
@@ -1521,32 +1558,32 @@ export default function CallPage() {
         {/* ACTION BAR - the build gate */}
         <div className="flex flex-col items-start gap-3 border-t border-edge bg-ink/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="font-mono text-[0.63rem] leading-relaxed text-muted">
-            {suggestedComps.length > 0
-              ? "Plan built. Rank or delete focus areas, then Refresh from focus rebuilds the read, questions, playbook & goals around your edited focus - your focus list stays exactly as you set it."
-              : "Nothing generates until you build - no wasted calls while you type."}
+            {planStage === "none"
+              ? "Step 1: build the focus only - fast. Then rank/delete it before we generate the full plan."
+              : planStage === "focus"
+              ? "Step 2: rank or delete the focus, then Build the plan - the read, questions, playbook & goals are built around your locked focus."
+              : "Edit the focus anytime, then Refresh from focus rebuilds the read, questions, playbook & goals around it - your focus list stays as you set it. The call goes live on its own the moment speech is picked up - or hit Go live to bring the cues up first."}
           </p>
           <div className="flex shrink-0 gap-2">
             <button
-              onClick={prepOpening}
+              onClick={() => prep(planStage === "none" ? "focus" : "full")}
               disabled={prepping || (!brief.trim() && !(cvReady && role.trim()))}
               className="rounded-full border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {prepping
-                ? "building..."
-                : suggestedComps.length > 0
-                ? "Refresh from focus"
-                : "Build plan"}
+                ? "working..."
+                : planStage === "none"
+                ? "Build focus"
+                : planStage === "focus"
+                ? "Build the plan"
+                : "Refresh from focus"}
             </button>
-            {suggestedComps.length > 0 && (
+            {planStage === "full" && (
               <button
-                onClick={() => {
-                  persistSession();
-                  setExpandSetup(false);
-                  setCallLive(true);
-                }}
+                onClick={goLive}
                 className="rounded-full border border-sage/60 bg-sage/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
               >
-                Start call {"\u25B8"}
+                Go live {"\u25B8"}
               </button>
             )}
           </div>
