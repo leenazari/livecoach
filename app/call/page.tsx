@@ -585,9 +585,11 @@ export default function CallPage() {
   // smart-insights switch is on (off by call when you don't want the pro cost).
   useEffect(() => {
     if (!callLive || !insightsOn) return;
+    // ~20s so ideas flow more readily during brainstorming (was 30s). The
+    // advisor itself decides whether there's something worth saying.
     const id = setInterval(() => {
       requestInsight();
-    }, 30000);
+    }, 20000);
     return () => clearInterval(id);
   }, [callLive, insightsOn, requestInsight]);
 
@@ -1158,7 +1160,14 @@ export default function CallPage() {
   const ordered = [...lines].reverse();
   const personLabel = candidate.trim() || "Them";
   const pinned = suggestions.filter((s) => s.pinned);
-  const feed = suggestions.filter((s) => !s.pinned).reverse();
+  // Statements (the "SAY" advisor lane) get their own stream so they don't get
+  // buried in the question feed. Pinned ones still promote to the Bulletin.
+  const ideas = suggestions
+    .filter((s) => s.kind === "insight" && !s.pinned)
+    .reverse();
+  const feed = suggestions
+    .filter((s) => !s.pinned && s.kind !== "insight")
+    .reverse();
   // The cue engine works down the ranked list, top first; the first active
   // focus (in rank order) is the one currently being served.
   const servingFocus =
@@ -2400,11 +2409,25 @@ export default function CallPage() {
             </div>
           )}
 
+          {/* IDEAS TO ADD - the advisor "SAY" lane, its own visible spot so the
+              statements you could make don't get lost among the questions. */}
+          {insightsOn && ideas.length > 0 && (
+            <div className="border-b border-sky/25 bg-sky/[0.04] px-5 py-4">
+              <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-sky/80">
+                {"◆"} Ideas to add{" "}
+                <span className="text-muted">- things you could say</span>
+              </p>
+              <div className="flex flex-col gap-2">
+                {ideas.slice(0, 3).map((s) => renderCard(s))}
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-5">
             {feed.length === 0 ? (
               <p className="font-mono text-sm text-muted">
-                Upload a CV + set a role for opening questions. Live cues appear
-                as the candidate answers.
+                Upload a CV + set a role for opening questions. Live cues (and
+                ideas to say) appear as the conversation unfolds.
               </p>
             ) : (
               feed.map((s) => renderCard(s))

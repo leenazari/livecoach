@@ -444,6 +444,7 @@ Produce a plan that drives the conversation toward the caller's intent:
    - strategy: either "direct" or "warm-up-then-pivot". Choose "warm-up-then-pivot" when the premise is unproven or the goal is sensitive/persuasive (a job move, a sale, a concession) - discover and build rapport first, then pivot. Choose "direct" only when the brief clearly invites directness or the premise is already established. IF THE BRIEF STATES A PREFERENCE (e.g. "ease in", "warm them up", "be direct", "get to the point"), FOLLOW THE BRIEF.
    - pathway: an ordered array of 3-5 short stage labels describing the route from rapport to purpose (e.g. ["build rapport", "surface what they value in their work", "probe ambitions / frustrations", "if a gap appears, introduce the alternative"]). The destination/purpose comes LAST, never first.
 4. openingQuestions: 6 CANDIDATE questions to open the conversation, each as { "q": "...", "why": "short reason", "opener": true|false }.
+   COLD START - CRITICAL: these are the VERY FIRST thing said on the call. NOTHING has happened yet. Do NOT presuppose any prior moment in THIS call: no "now that you've heard the vision", "you've just seen", "as we discussed", "following on from", "earlier you said", "a moment ago". The other party has NOT yet heard a pitch, seen a demo, or agreed to anything in this conversation. Each opener must make sense as the literal first sentence spoken, drawing only on what is genuinely known BEFORE the call (the intent and the document/background) - never on imagined in-call context.
    A true opener eases the person in and surfaces their MOTIVATION, context, and what they care about - warm and inviting, one clear question. Tag these "opener": true.
    Tag "opener": false for anything that is a hypothetical stress-test, pressure scenario (e.g. "how would you feel if I gave you X with no Y"), gotcha, or loaded multi-clause challenge - that probing belongs LATER in the conversation, never at the top.
    Provide AT LEAST 3 strong openers (opener:true). List the opener:true questions first, ordered gentlest -> slightly more searching. Every opening question must be one you would be comfortable asking with everyone in the room - never about the caller's own internal matters or position.
@@ -557,6 +558,12 @@ Return the JSON plan now.`;
     const STRESS_PATTERN =
       /(if i (gave|give|asked|put|threw|handed)|how would (you|that) feel|how does that (make you )?feel|what if\b|imagine (you|that|a|having)|suppose (you|that)|hypothetical|what would you do if|picture (yourself|a))/i;
 
+    // A real opener can't presuppose anything that happened earlier in THIS
+    // call - it IS the first thing said. Drop any "now that you've heard / as we
+    // discussed / following on from" phrasing from the opener slot.
+    const PRESUMPTIVE_PATTERN =
+      /(you'?ve (just )?(heard|seen|had|got)|now that you|as (we|you|i) (discussed|mentioned|said|saw|heard|covered|talked)|we'?ve (just )?(discussed|covered|talked|been)|following (on )?from|earlier (you|we)|a moment ago|just (heard|saw|seen)|you mentioned (earlier|just)|since (we|you) (discussed|mentioned)|having (heard|seen))/i;
+
     const candidates: any[] = Array.isArray(plan.openingQuestions)
       ? plan.openingQuestions.filter((q: any) => q && typeof q.q === "string")
       : [];
@@ -564,7 +571,10 @@ Return the JSON plan now.`;
     const graded = candidates.map((q: any) => ({
       q: q.q as string,
       why: typeof q.why === "string" ? q.why : "",
-      isOpener: q.opener !== false && !STRESS_PATTERN.test(q.q),
+      isOpener:
+        q.opener !== false &&
+        !STRESS_PATTERN.test(q.q) &&
+        !PRESUMPTIVE_PATTERN.test(q.q),
     }));
 
     let openingQuestions = graded

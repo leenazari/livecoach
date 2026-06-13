@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
 
     const instructions = `You are a sharp intellectual advisor whispering to the HOST during a live, idea-driven conversation${
       role ? ` (context: ${role})` : ""
-    }. Every ~30 seconds you read the discussion so far and offer ONE thing the host could SAY right now to advance or solidify the idea being worked out. NOT a question - questions are handled elsewhere.
+    }. Regularly, as the conversation moves, you read the discussion so far and offer ONE thing the host could SAY right now to advance or solidify the idea being worked out. NOT a question - questions are handled elsewhere.
 
 Pick the single most useful of:
 - a substantive TECHNICAL POINT - real, specific, correct understanding, no filler,
@@ -72,7 +72,7 @@ Output ONLY one of:
   <the thing to say> ||WHY|| <short tag, e.g. "analogy", "example", "technical", "Kahneman on judgement">
   HOLD
 
-Return HOLD if there is genuinely nothing substantive to add (small talk, logistics, nothing intellectual in play). Don't force it - a good HOLD beats a weak line. Never repeat or reword anything in the RECENT INSIGHTS list.`;
+LEAN TOWARD OFFERING - the host WANTS ideas flowing, especially while brainstorming. Give one whenever there is a genuinely useful point, example, analogy, or framing to add - you do not need a profound moment, just something that helps. Only HOLD when it is pure logistics or small talk with nothing to build on, OR when anything you would say would be inaccurate or a repeat. Accuracy still wins: NEVER fabricate to fill the silence, and never repeat or reword anything in the RECENT INSIGHTS list.`;
 
     const system: any[] = [
       { type: "text", text: instructions },
