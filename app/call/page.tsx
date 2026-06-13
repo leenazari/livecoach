@@ -1081,6 +1081,27 @@ export default function CallPage() {
   // edit), the tall authoring column collapses to a thin strip and the brief
   // takes the full page width in two columns. Reading mode, not typing mode.
   const briefMode = planStage === "full" && !briefSetupOpen;
+  // Which of the three stages the user is in, for the header stepper.
+  const currentStage: 1 | 2 | 3 = callLive ? 3 : briefMode ? 2 : 1;
+  // Click a stage in the stepper to move between them. Going back never ends
+  // the call or loses work - it just changes which view is shown.
+  const goStage = (n: 1 | 2 | 3) => {
+    if (n === 1) {
+      // Intent & focus: reveal the full authoring setup.
+      if (callLive) setExpandSetup(true);
+      setBriefSetupOpen(true);
+    } else if (n === 2) {
+      // Pre-call brief: only reachable once a plan exists.
+      if (planStage !== "full") return;
+      if (callLive) setExpandSetup(true);
+      setBriefSetupOpen(false);
+    } else {
+      // Live: go live from setup, or return to the cue view if already live.
+      if (planStage !== "full") return;
+      if (callLive) setExpandSetup(false);
+      else goLive();
+    }
+  };
   // Overall progress toward the intent: rank-weighted average of how well each
   // focus has been covered so far (top-ranked focuses count most). Page-side,
   // so reordering focus re-weights it instantly without a new model call.
@@ -1301,6 +1322,50 @@ export default function CallPage() {
           )}
         </div>
       </header>
+
+      {/* STAGE STEPPER - always visible, click to move between the three
+          stages. Stages 2 and 3 unlock once a plan exists. */}
+      <nav className="mb-5 flex items-center gap-1 sm:gap-2">
+        {([
+          [1, "Intent & focus"],
+          [2, "Pre-call brief"],
+          [3, "Live"],
+        ] as const).map(([n, label], i) => {
+          const reachable = n === 1 || planStage === "full";
+          const active = currentStage === n;
+          return (
+            <span key={n} className="flex items-center gap-1 sm:gap-2">
+              {i > 0 && <span className="text-muted/40">{"›"}</span>}
+              <button
+                type="button"
+                onClick={() => goStage(n)}
+                disabled={!reachable}
+                title={
+                  reachable
+                    ? `Go to ${label}`
+                    : "Build the plan first to unlock this"
+                }
+                className={`flex items-center gap-2 rounded-full px-2.5 py-1.5 font-mono text-[0.6rem] uppercase tracking-[0.12em] transition ${
+                  active
+                    ? "bg-amber/15 text-amber"
+                    : reachable
+                    ? "text-muted hover:bg-bone/[0.05] hover:text-bone"
+                    : "cursor-not-allowed text-muted/30"
+                }`}
+              >
+                <span
+                  className={`flex h-4 w-4 items-center justify-center rounded-full text-[0.55rem] ${
+                    active ? "bg-amber text-ink" : "bg-bone/10"
+                  }`}
+                >
+                  {n}
+                </span>
+                <span className="hidden sm:inline">{label}</span>
+              </button>
+            </span>
+          );
+        })}
+      </nav>
 
       {setupCollapsed ? (
         <button
