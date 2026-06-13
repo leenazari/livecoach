@@ -645,8 +645,18 @@ export default function CallPage() {
           .join("\n\n"),
       }),
     });
-    const data = await res.json();
     addUsageToRef(claudeUsdRef, res);
+    // Be tolerant of a non-JSON body. If the planner is killed by the platform
+    // time cap it returns an HTML/text error page ("An error occurred..."),
+    // and a raw res.json() would throw "Unexpected token 'A'". Read text first,
+    // parse defensively, and surface a clear, actionable message instead.
+    const rawBody = await res.text();
+    let data: any = {};
+    try {
+      data = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      throw new Error("the planner ran long - hit build again");
+    }
     if (!res.ok) throw new Error(data.error || "Failed to build plan");
 
     const focus: string[] = Array.isArray(data.focusAreas)

@@ -279,6 +279,82 @@ export async function POST(req: NextRequest) {
       context = context.slice(0, MAX_CONTEXT_CHARS) + "\n[context truncated]";
     }
 
+    // STEP 1 of the two-step build: focus areas only. A small, fast Haiku call
+    // so the caller can lock/edit focus BEFORE we spend on the heavy full plan
+    // (questions + playbook + goals). Returns callType, subjectName, a quick
+    // read, and the ranked focus list - nothing else.
+    if (body.focusOnly === true) {
+      const fSystem = `You are an expert conversation planner. From the INTENT brief and any supporting document, return ONLY this and nothing else:
+- callType: one of "interview", "sales", "support", "general".
+- subjectName: the person/party being spoken with if discernible from the brief/context, else "".
+- focusAreas: 6-9 topics to assess or explore, RANKED most-important-first. Tight labels (2-5 words) that are CONCRETE and SPECIFIC TO THIS CALL - name the actual idea, product, people, numbers or mechanics from the brief and document. A reader should be UNABLE to use them for any other call. BANNED generic filler: "Phase 1 deliverables", "Timeline and resources", "Data privacy", "Decision authority", "Content integration". GOOD (for a relationship-AI built from 100 books, a YouTube audience, a 50/50 JV): "how the 100 books shape replies", "therapy-avatar emotional realism", "YouTube 9.7M launch fit", "JV 50/50 terms", "consent for sensitive relationship data". Every focus must be appropriate to raise OPENLY with the other party - never the caller's own internal/sensitive matters.
+- character: 1-2 sentences - the caller's read on who/what they're dealing with and what they want from this call.
+
+Output ONLY valid JSON: { "callType": "...", "subjectName": "...", "focusAreas": ["..."], "character": "..." }`;
+      const fUser = `INTENT BRIEF (top priority): ${brief || "(none given)"}
+ROLE / TITLE: ${role || "(not specified)"}
+
+SUPPORTING CONTEXT - the substance of this call:
+${context || "(none provided)"}
+
+Return the JSON now.`;
+      let fUsage: any = null;
+      let fRaw = "";
+      try {
+        const fMsg = await callModelWithTimeout(fSystem, fUser, 25000);
+        fUsage = fMsg.usage;
+        fRaw = fMsg.content
+          .filter((b: any) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("")
+          .trim();
+      } catch (e) {
+        console.error("Focus-only model call failed:", e);
+      }
+      const fPlan = extractPlan(fRaw) || {};
+      let fFocus = Array.isArray(fPlan.focusAreas)
+        ? fPlan.focusAreas
+            .filter((x: any) => typeof x === "string" && x.trim())
+            .slice(0, 10)
+        : [];
+      if (fFocus.length === 0) fFocus = salvageFocusAreas(fRaw).slice(0, 10);
+      const fCallType = ["interview", "sales", "support", "general"].includes(
+        fPlan.callType
+      )
+        ? fPlan.callType
+        : "general";
+      const fSubject =
+        typeof fPlan.subjectName === "string" ? fPlan.subjectName.trim() : "";
+      const fCharacter =
+        typeof fPlan.character === "string" ? fPlan.character : "";
+      const costHeader = { "x-cost-usd": String(callCostUSD("haiku", fUsage)) };
+      if (fFocus.length === 0) {
+        const fb = buildFallback(brief, role, fCallType);
+        return NextResponse.json(
+          {
+            callType: fb.callType,
+            subjectName: fb.subjectName,
+            focusAreas: fb.focusAreas,
+            character: fb.character,
+            focusOnly: true,
+            degraded: true,
+          },
+          { headers: costHeader }
+        );
+      }
+      return NextResponse.json(
+        {
+          callType: fCallType,
+          subjectName: fSubject,
+          focusAreas: fFocus,
+          character: fCharacter,
+          focusOnly: true,
+          degraded: false,
+        },
+        { headers: costHeader }
+      );
+    }
+
     const system = `You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
 
 The INTENT BRIEF defines the GOAL of the call and what KIND of call it is (interview, sales, support, discovery, general). Use it to set the goal, the call type, and the caller's angle.
@@ -331,14 +407,26 @@ ${context || "(none provided)"}
 
 Return the JSON plan now.`;
 
-    // Fast Haiku: two attempts, ~28s each, comfortably inside the 60s cap.
+    // HARD TIME BUDGET. The function is killed by the platform at 60s, and that
+    // kill returns a non-JSON error page ("An error occurred...") which the
+    // client cannot parse. So we self-police: every model call is bounded by
+    // the time REMAINING before a 52s deadline (8s headroom), and we skip a
+    // stage rather than overrun. This guarantees we always return clean JSON.
+    const DEADLINE = Date.now() + 52000;
+    const remaining = () => DEADLINE - Date.now();
+
+    // Fast Haiku structural plan: up to two attempts, but each bounded by the
+    // remaining budget so two slow attempts can't blow the deadline.
     let raw = "";
     let modelOk = false;
     let planUsage: any = null;
     let pbUsage: any = null;
     for (let attempt = 0; attempt < 2 && !modelOk; attempt++) {
+      // Need at least ~10s to make another attempt worthwhile.
+      if (remaining() < 10000) break;
+      const ms = Math.min(28000, remaining() - 3000);
       try {
-        const msg = await callModelWithTimeout(system, userMsg, 28000);
+        const msg = await callModelWithTimeout(system, userMsg, ms);
         raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
@@ -436,7 +524,10 @@ Return the JSON plan now.`;
     // so the tactics are sharp, warm and specific, WITHOUT putting the whole
     // slow plan on Sonnet. If it fails/times out, keep the fast Haiku playbook.
     let sonnetPlaybook: { label: string; detail: string }[] = [];
+    // Only attempt the Sonnet upgrade if there's real budget left; otherwise
+    // keep the Haiku playbook. This is what stops the 60s overrun.
     try {
+      if (remaining() < 9000) throw new Error("skip Sonnet - low budget");
       const pbSystem: any[] = [
         {
           type: "text",
@@ -463,7 +554,8 @@ YOUR READ ON THEM: ${character || "(n/a)"}
 
 Write the 4-6 tactic playbook now - JSON array only.`;
       const pbController = new AbortController();
-      const pbTimer = setTimeout(() => pbController.abort(), 25000);
+      const pbMs = Math.min(25000, remaining() - 3000);
+      const pbTimer = setTimeout(() => pbController.abort(), pbMs);
       try {
         const pbMsg = await anthropic.messages.create(
           {
