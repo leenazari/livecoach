@@ -25,7 +25,7 @@ type Suggestion = {
   followup: string;
   at: string;
   pending: boolean;
-  kind: "opening" | "live";
+  kind: "opening" | "live" | "insight";
   pinned: boolean;
 };
 
@@ -114,6 +114,7 @@ export default function CallPage() {
   const [cost, setCost] = useState<CostBreakdown>(() => estimateCost(0, 0));
   const [overBudget, setOverBudget] = useState(false);
   const [meterOn, setMeterOn] = useState(false);
+  const [insightsOn, setInsightsOn] = useState(true);
 
   const knowledgeRef = useRef("");
   const claudeCallsRef = useRef(0);
@@ -142,6 +143,10 @@ export default function CallPage() {
   const summaryInFlightRef = useRef(false);
   const lastCueAtRef = useRef(0);
   const cueGapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const insightInFlightRef = useRef(false);
+  const recentInsightsRef = useRef<string[]>([]);
+  const insightCallsRef = useRef(0);
+  const lastInsightLenRef = useRef(0);
   const bulletsRef = useRef<{
     context: string[];
     signals: string[];
@@ -171,6 +176,7 @@ export default function CallPage() {
         deepgramStreams: meet ? 0 : 2,
         transport: meet ? "recall" : "livekit",
         sonnetCalls: sonnetCallsRef.current,
+        insightCalls: insightCallsRef.current,
       });
       setCost(c);
       setOverBudget(
@@ -420,6 +426,90 @@ export default function CallPage() {
       setSummaryUpdating(false);
     }
   }, []);
+
+  // ADVISOR LANE (pro). Every ~30s a Sonnet pass offers the single best thing
+  // to SAY - a technical point, example, accurate analogy, or genuine quote -
+  // not a question. Only fires when there's new discussion; HOLDs are dropped.
+  const requestInsight = useCallback(async () => {
+    if (insightInFlightRef.current) return;
+    const lines = linesRef.current;
+    if (lines.length < 2 || lines.length <= lastInsightLenRef.current) return;
+
+    const labelled = lines
+      .map(
+        (l) =>
+          `${
+            l.role === "candidate" ? l.speaker || personLabelRef.current : "You"
+          }: ${l.text}`
+      )
+      .join("\n")
+      .slice(-3000);
+    if (!labelled.trim()) return;
+
+    insightInFlightRef.current = true;
+    lastInsightLenRef.current = lines.length;
+    const id = ++suggestIdRef.current;
+    setSuggestions((prev) => [
+      ...prev,
+      {
+        id,
+        text: "",
+        why: "",
+        followup: "",
+        at: timeNow(),
+        pending: true,
+        kind: "insight",
+        pinned: false,
+      },
+    ]);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25000);
+    try {
+      insightCallsRef.current += 1;
+      const res = await fetch("/api/interview/insight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          knowledgeContext: knowledgeRef.current,
+          transcript: labelled,
+          role: roleRef.current || null,
+          recentInsights: recentInsightsRef.current.slice(0, 5),
+        }),
+      });
+      const text = (await res.text()).trim();
+      const { ask, why } = splitCue(text);
+      if (!ask || ask.toUpperCase() === "HOLD") {
+        setSuggestions((prev) => prev.filter((s) => s.id !== id));
+      } else {
+        recentInsightsRef.current = [ask, ...recentInsightsRef.current].slice(
+          0,
+          6
+        );
+        setSuggestions((prev) =>
+          prev.map((s) =>
+            s.id === id ? { ...s, text: ask, why, pending: false } : s
+          )
+        );
+      }
+    } catch {
+      setSuggestions((prev) => prev.filter((s) => s.id !== id));
+    } finally {
+      clearTimeout(timer);
+      insightInFlightRef.current = false;
+    }
+  }, []);
+
+  // Advisor lane: one Sonnet pass every ~30s while the call is live AND the
+  // smart-insights switch is on (off by call when you don't want the pro cost).
+  useEffect(() => {
+    if (!callLive || !insightsOn) return;
+    const id = setInterval(() => {
+      requestInsight();
+    }, 30000);
+    return () => clearInterval(id);
+  }, [callLive, insightsOn, requestInsight]);
 
   // Fires on every candidate turn-end: always request a live cue, and update
   // the running summary on a LIGHT cadence (first turn, then every 2nd) so we
@@ -786,7 +876,10 @@ export default function CallPage() {
 
   // Cue card: question is the hero, why is a tiny tag, follow-up is a
   // clearly separated optional section.
-  const cueType = (s: Suggestion): "opening" | "redirect" | "question" => {
+  const cueType = (
+    s: Suggestion
+  ): "opening" | "redirect" | "question" | "statement" => {
+    if (s.kind === "insight") return "statement";
     if (s.kind === "opening") return "opening";
     if (
       /didn'?t\s+answer|didn'?t\s+address|off.?topic|changed the subject|redirect|not answer/i.test(
@@ -827,6 +920,13 @@ export default function CallPage() {
       badge: "border-sage/40 bg-sage/15 text-sage",
       whyColor: "text-sage/70",
       label: "OPENING",
+    },
+    statement: {
+      border: "border-sky/40",
+      borderBright: "border-sky ring-1 ring-sky/40",
+      badge: "border-sky/40 bg-sky/15 text-sky",
+      whyColor: "text-sky/70",
+      label: "SAY",
     },
   };
 
@@ -1317,6 +1417,18 @@ export default function CallPage() {
           <span className="shrink-0 font-mono text-sm font-medium tabular-nums text-amber">
             {intentPct}%
           </span>
+          <button
+            type="button"
+            onClick={() => setInsightsOn((v) => !v)}
+            title="Smart 'say this' insights (Sonnet, ~1 call/30s). Toggle off to save cost on calls that don't need it."
+            className={`shrink-0 rounded-full border px-3 py-1.5 font-mono text-[0.55rem] uppercase tracking-wider transition ${
+              insightsOn
+                ? "border-sky/50 bg-sky/10 text-sky"
+                : "border-edge text-muted hover:text-bone"
+            }`}
+          >
+            {insightsOn ? "insights on" : "insights off"}
+          </button>
           <CostMeter
             cost={cost}
             overBudget={overBudget}
