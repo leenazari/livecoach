@@ -1177,33 +1177,17 @@ export default function CallPage() {
               {s.at}
             </span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => thumbUp(s)}
-              title="good cue - log it"
-              className={`text-sm leading-none transition ${
-                s.liked ? "text-sage" : "text-muted hover:text-sage"
-              }`}
-            >
-              {"\u{1F44D}"}
-            </button>
-            <button
-              onClick={() => thumbDown(s)}
-              title="not useful - remove & log"
-              className="text-sm leading-none text-muted transition hover:text-rust"
-            >
-              {"\u{1F44E}"}
-            </button>
-            <button
-              onClick={() => togglePin(s.id)}
-              className={`text-lg leading-none transition ${
-                s.pinned ? "text-amber" : "text-muted hover:text-amber"
-              }`}
-              title={s.pinned ? "unpin" : "pin"}
-            >
-              {s.pinned ? "\u2605" : "\u2606"}
-            </button>
-          </div>
+          {/* Favourite (pin) sits alone in the top corner - well away from the
+              thumbs, which live at opposite ends of the footer below. */}
+          <button
+            onClick={() => togglePin(s.id)}
+            className={`shrink-0 rounded-md px-2 py-1 text-lg leading-none transition ${
+              s.pinned ? "text-amber" : "text-muted hover:text-amber"
+            }`}
+            title={s.pinned ? "unpin (favourite)" : "pin (favourite)"}
+          >
+            {s.pinned ? "\u2605" : "\u2606"}
+          </button>
         </div>
 
         {s.pending && !s.text ? (
@@ -1236,6 +1220,38 @@ export default function CallPage() {
                 </p>
               </div>
             )}
+            {/* ACTION FOOTER: thumbs pushed to opposite edges (up far-left,
+                down far-right) so they can't be mis-tapped for each other. */}
+            <div
+              className={`flex items-center justify-between border-t border-edge/60 ${
+                compact ? "px-2 py-1.5" : "px-2.5 py-2"
+              }`}
+            >
+              <button
+                onClick={() => thumbUp(s)}
+                title="good cue - log it"
+                className={`flex items-center gap-1.5 rounded-lg font-mono uppercase tracking-wider transition ${
+                  compact ? "px-2.5 py-1 text-[0.7rem]" : "px-3 py-1.5 text-[0.6rem]"
+                } ${
+                  s.liked
+                    ? "bg-sage/15 text-sage"
+                    : "text-muted hover:bg-sage/10 hover:text-sage"
+                }`}
+              >
+                {"\u{1F44D}"}
+                {!compact && <span>helpful</span>}
+              </button>
+              <button
+                onClick={() => thumbDown(s)}
+                title="not useful - remove & log"
+                className={`flex items-center gap-1.5 rounded-lg font-mono uppercase tracking-wider text-muted transition hover:bg-rust/10 hover:text-rust ${
+                  compact ? "px-2.5 py-1 text-[0.7rem]" : "px-3 py-1.5 text-[0.6rem]"
+                }`}
+              >
+                {!compact && <span>dismiss</span>}
+                {"\u{1F44E}"}
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -1976,29 +1992,27 @@ export default function CallPage() {
                         {goals.map((g, i) => (
                           <li
                             key={i}
-                            className="flex items-start gap-2 font-sans text-[0.82rem] leading-snug text-bone/85"
+                            className="flex items-start gap-2.5 font-sans text-[0.82rem] leading-snug text-bone/85"
                           >
-                            <span className="mt-0.5 flex shrink-0 items-center gap-1">
-                              <button
-                                onClick={() => goalThumbUp(i)}
-                                title="good goal"
-                                className={`text-[0.7rem] leading-none transition ${
-                                  g.liked
-                                    ? "text-sage"
-                                    : "text-muted hover:text-sage"
-                                }`}
-                              >
-                                {"\u{1F44D}"}
-                              </button>
-                              <button
-                                onClick={() => goalThumbDown(i)}
-                                title="remove goal"
-                                className="text-[0.7rem] leading-none text-muted transition hover:text-rust"
-                              >
-                                {"\u{1F44E}"}
-                              </button>
-                            </span>
-                            <span>{g.text}</span>
+                            <button
+                              onClick={() => goalThumbUp(i)}
+                              title="good goal"
+                              className={`mt-px shrink-0 rounded px-1.5 py-0.5 text-[0.8rem] leading-none transition ${
+                                g.liked
+                                  ? "bg-sage/15 text-sage"
+                                  : "text-muted hover:bg-sage/10 hover:text-sage"
+                              }`}
+                            >
+                              {"\u{1F44D}"}
+                            </button>
+                            <span className="flex-1">{g.text}</span>
+                            <button
+                              onClick={() => goalThumbDown(i)}
+                              title="remove goal"
+                              className="mt-px shrink-0 rounded px-1.5 py-0.5 text-[0.8rem] leading-none text-muted transition hover:bg-rust/10 hover:text-rust"
+                            >
+                              {"\u{1F44E}"}
+                            </button>
                           </li>
                         ))}
                       </ul>
