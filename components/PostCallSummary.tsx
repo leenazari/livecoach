@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 type Comp = { name: string; score: number; note: string };
 type QReview = { question: string; answered: string; note: string };
 type Contributor = { name: string; impact: string; note: string };
@@ -129,17 +131,27 @@ function impactTone(impact: string) {
   return { dot: "bg-muted", label: "text-muted" };
 }
 
+type FeedbackCue = { text: string; why: string; kind: string };
+
 export default function PostCallSummary({
   summary,
   candidate,
   transcript,
+  liked,
+  disliked,
+  onSaveFeedback,
   onClose,
 }: {
   summary: Summary;
   candidate?: string;
   transcript?: string;
+  liked?: FeedbackCue[];
+  disliked?: FeedbackCue[];
+  onSaveFeedback?: (notes: string) => Promise<void> | void;
   onClose?: () => void;
 }) {
+  const [debriefNotes, setDebriefNotes] = useState("");
+  const [savedFeedback, setSavedFeedback] = useState(false);
   const callTypeLabel =
     summary.callType && summary.callType !== "general"
       ? `${summary.callType} call`
@@ -575,6 +587,57 @@ export default function PostCallSummary({
             items={summary.notCovered}
             tone="muted"
           />
+
+          {(onSaveFeedback ||
+            (liked && liked.length > 0) ||
+            (disliked && disliked.length > 0)) && (
+            <div className="rounded-xl border border-amber/30 bg-amber/[0.04] px-5 py-4">
+              <h3 className="mb-1.5 font-mono text-[0.66rem] uppercase tracking-[0.22em] text-amber">
+                Debrief - tune the next call
+              </h3>
+              <p className="mb-3 font-mono text-[0.62rem] text-muted">
+                {liked?.length || 0} cue{liked?.length === 1 ? "" : "s"} liked
+                {"  \u00b7  "}
+                {disliked?.length || 0} removed
+              </p>
+              {disliked && disliked.length > 0 && (
+                <div className="mb-3">
+                  <p className="mb-1 font-mono text-[0.56rem] uppercase tracking-[0.18em] text-rust/80">
+                    you removed
+                  </p>
+                  <ul className="space-y-1">
+                    {disliked.slice(0, 8).map((d, i) => (
+                      <li
+                        key={i}
+                        className="font-sans text-xs leading-snug text-bone/60 line-through"
+                      >
+                        {d.text}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <textarea
+                value={debriefNotes}
+                onChange={(e) => setDebriefNotes(e.target.value)}
+                rows={3}
+                placeholder="What worked, what to change next time - e.g. cues were too long, loved the redirects, stop probing budget so early"
+                className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+              />
+              {onSaveFeedback && (
+                <button
+                  onClick={async () => {
+                    await onSaveFeedback(debriefNotes);
+                    setSavedFeedback(true);
+                  }}
+                  disabled={savedFeedback}
+                  className="mt-2 rounded-full border border-amber/50 bg-amber/10 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-50"
+                >
+                  {savedFeedback ? "saved \u2713" : "save feedback"}
+                </button>
+              )}
+            </div>
+          )}
 
           {summary.styleProfile && (
             <div className="rounded-xl border border-edge bg-ink/40 px-5 py-4">

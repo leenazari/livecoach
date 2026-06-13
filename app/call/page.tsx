@@ -28,6 +28,7 @@ type Suggestion = {
   pending: boolean;
   kind: "opening" | "live" | "insight";
   pinned: boolean;
+  liked?: boolean;
 };
 
 function timeNow() {
@@ -134,6 +135,8 @@ export default function CallPage() {
   const knowledgeRef = useRef("");
   const claudeCallsRef = useRef(0);
   const claudeUsdRef = useRef(0);
+  const likedRef = useRef<{ text: string; why: string; kind: string }[]>([]);
+  const dislikedRef = useRef<{ text: string; why: string; kind: string }[]>([]);
   const callStartedAtRef = useRef(0);
   const costTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sonnetCallsRef = useRef(0);
@@ -889,6 +892,42 @@ export default function CallPage() {
     );
   };
 
+  // Thumbs feedback: up logs a good cue and marks it; down logs it and removes
+  // the tile. Banked for the end-of-call debrief and future-call tuning.
+  const thumbUp = (sug: Suggestion) => {
+    if (!sug.liked)
+      likedRef.current = [
+        ...likedRef.current,
+        { text: sug.text, why: sug.why, kind: sug.kind },
+      ];
+    setSuggestions((prev) =>
+      prev.map((x) => (x.id === sug.id ? { ...x, liked: true } : x))
+    );
+  };
+  const thumbDown = (sug: Suggestion) => {
+    dislikedRef.current = [
+      ...dislikedRef.current,
+      { text: sug.text, why: sug.why, kind: sug.kind },
+    ];
+    setSuggestions((prev) => prev.filter((x) => x.id !== sug.id));
+  };
+  const saveFeedback = async (notes: string) => {
+    try {
+      await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: room,
+          liked: likedRef.current,
+          disliked: dislikedRef.current,
+          notes,
+        }),
+      });
+    } catch {
+      /* non-blocking */
+    }
+  };
+
   const ordered = [...lines].reverse();
   const personLabel = candidate.trim() || "Them";
   const pinned = suggestions.filter((s) => s.pinned);
@@ -1001,15 +1040,33 @@ export default function CallPage() {
               {s.at}
             </span>
           </div>
-          <button
-            onClick={() => togglePin(s.id)}
-            className={`text-lg leading-none transition ${
-              s.pinned ? "text-amber" : "text-muted hover:text-amber"
-            }`}
-            title={s.pinned ? "unpin" : "pin"}
-          >
-            {s.pinned ? "\u2605" : "\u2606"}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => thumbUp(s)}
+              title="good cue - log it"
+              className={`text-sm leading-none transition ${
+                s.liked ? "text-sage" : "text-muted hover:text-sage"
+              }`}
+            >
+              {"\u{1F44D}"}
+            </button>
+            <button
+              onClick={() => thumbDown(s)}
+              title="not useful - remove & log"
+              className="text-sm leading-none text-muted transition hover:text-rust"
+            >
+              {"\u{1F44E}"}
+            </button>
+            <button
+              onClick={() => togglePin(s.id)}
+              className={`text-lg leading-none transition ${
+                s.pinned ? "text-amber" : "text-muted hover:text-amber"
+              }`}
+              title={s.pinned ? "unpin" : "pin"}
+            >
+              {s.pinned ? "\u2605" : "\u2606"}
+            </button>
+          </div>
         </div>
 
         {s.pending && !s.text ? (
@@ -1878,6 +1935,9 @@ export default function CallPage() {
           summary={summary}
           candidate={candidate}
           transcript={summaryTranscript}
+          liked={likedRef.current}
+          disliked={dislikedRef.current}
+          onSaveFeedback={saveFeedback}
           onClose={() => setSummary(null)}
         />
       )}
