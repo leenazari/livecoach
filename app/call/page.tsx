@@ -107,6 +107,7 @@ export default function CallPage() {
   const [summarising, setSummarising] = useState(false);
   const [summaryTranscript, setSummaryTranscript] = useState("");
   const [playbook, setPlaybook] = useState<{ label: string; detail: string }[]>([]);
+  const [privateNotes, setPrivateNotes] = useState<string[]>([]);
   const [publicLink, setPublicLink] = useState("");
   const [background, setBackground] = useState("");
   const [researching, setResearching] = useState(false);
@@ -614,6 +615,11 @@ export default function CallPage() {
         ? data.playbook.filter(
             (p: any) => p && typeof p.label === "string" && typeof p.detail === "string"
           )
+        : []
+    );
+    setPrivateNotes(
+      Array.isArray(data.privateNotes)
+        ? data.privateNotes.filter((x: any) => typeof x === "string" && x.trim())
         : []
     );
     if (typeof data.callType === "string") setCallType(data.callType);
@@ -1360,6 +1366,24 @@ export default function CallPage() {
                         >
                           <span className="text-bone">{p.label}:</span>{" "}
                           {p.detail}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {privateNotes.length > 0 && (
+                  <div className="rounded-xl border border-dashed border-rust/50 bg-rust/[0.05] p-3.5">
+                    <p className="mb-2 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-rust">
+                      {"\u2691"} Keep in mind{" "}
+                      <span className="text-muted">- private, do NOT raise on the call</span>
+                    </p>
+                    <ul className="flex flex-col gap-1.5">
+                      {privateNotes.map((n, i) => (
+                        <li
+                          key={i}
+                          className="font-sans text-[0.8rem] leading-snug text-bone/80"
+                        >
+                          {n}
                         </li>
                       ))}
                     </ul>
