@@ -674,6 +674,10 @@ export default function CallPage() {
         // derive a fresh list, so don't pin the existing one.
         focusAreas: mode === "full" ? suggestedCompsRef.current : [],
         focusOnly: mode !== "full",
+        // refocus passes the current list so the model reconciles against it
+        // (dedupes by meaning + upgrades in place) instead of deriving blind.
+        existingFocus:
+          mode === "refocus" ? suggestedCompsRef.current : undefined,
         knowledgeContext: [
           knowledgeRef.current,
           backgroundRef.current
@@ -701,17 +705,67 @@ export default function CallPage() {
     const focus: string[] = Array.isArray(data.focusAreas)
       ? data.focusAreas
       : [];
+    let refocusAdded = 0;
+    let refocusUpgraded = 0;
     if (mode === "refocus") {
-      // Rebuild focus: keep the user's existing (hand-edited, ranked) focus and
-      // APPEND any genuinely new topics the fresh derivation surfaced - deduped
-      // case-insensitively. Their edits survive; the document's new angles get
-      // added on the end for them to rank.
-      const newOnes = (prev: string[]) => {
-        const have = new Set(prev.map((p) => p.toLowerCase().trim()));
-        return focus.filter((f) => !have.has(f.toLowerCase().trim()));
+      // Rebuild focus reconciles against the existing list (the route deduped by
+      // meaning): apply in-place UPGRADES (a clearly better wording of an
+      // existing focus) and APPEND only genuinely new ADDITIONS. Hand-edits and
+      // ranking survive; no near-duplicates get tacked on.
+      const additions: string[] = Array.isArray(data.additions)
+        ? data.additions
+            .filter((x: any) => typeof x === "string" && x.trim())
+            .map((x: string) => x.trim())
+        : [];
+      const upgrades: { from: string; to: string }[] = Array.isArray(
+        data.upgrades
+      )
+        ? data.upgrades
+            .filter(
+              (u: any) =>
+                u &&
+                typeof u.from === "string" &&
+                typeof u.to === "string" &&
+                u.from.trim() &&
+                u.to.trim()
+            )
+            .map((u: any) => ({ from: String(u.from).trim(), to: String(u.to).trim() }))
+        : [];
+      const applyUpgrade = (label: string) => {
+        const u = upgrades.find(
+          (x) => x.from.toLowerCase().trim() === label.toLowerCase().trim()
+        );
+        return u ? u.to : label;
       };
-      setSuggestedComps((prev) => [...prev, ...newOnes(prev)].slice(0, 12));
-      setSelectedComps((prev) => [...prev, ...newOnes(prev)]);
+      const mergeInto = (prev: string[]) => {
+        const upgraded = prev.map(applyUpgrade);
+        const have = new Set(upgraded.map((p) => p.toLowerCase().trim()));
+        const newOnes = additions.filter(
+          (a) => !have.has(a.toLowerCase().trim())
+        );
+        return [...upgraded, ...newOnes];
+      };
+      // Fallback for an older route that still returns a flat focusAreas list.
+      const legacyMerge = (prev: string[]) => {
+        const have = new Set(prev.map((p) => p.toLowerCase().trim()));
+        return [...prev, ...focus.filter((f) => !have.has(f.toLowerCase().trim()))];
+      };
+      const reconciled = data.reconcile === true;
+      refocusAdded = reconciled
+        ? additions.length
+        : focus.filter(
+            (f) =>
+              !suggestedCompsRef.current
+                .map((p) => p.toLowerCase().trim())
+                .includes(f.toLowerCase().trim())
+          ).length;
+      refocusUpgraded = reconciled ? upgrades.length : 0;
+      setSuggestedComps((prev) =>
+        (reconciled ? mergeInto(prev) : legacyMerge(prev)).slice(0, 12)
+      );
+      setSelectedComps((prev) =>
+        reconciled ? mergeInto(prev) : legacyMerge(prev)
+      );
     } else {
       // Lock the focus list once it exists: a regenerate only refreshes the
       // character + opening questions and must NOT touch the focus the user has
@@ -780,7 +834,12 @@ export default function CallPage() {
     // Report whether a real plan came back, and whether it's the generic
     // fallback, so the status line stays honest.
     const ok = focus.length > 0 || suggestedCompsRef.current.length > 0;
-    return { ok, degraded: data.degraded === true };
+    return {
+      ok,
+      degraded: data.degraded === true,
+      added: refocusAdded,
+      upgraded: refocusUpgraded,
+    };
   }, [brief, role]);
 
 
@@ -799,7 +858,7 @@ export default function CallPage() {
         // Always reload context first so a document uploaded since the last
         // build actually reaches the plan (not just on the initial focus).
         await loadContext();
-        const { ok, degraded } = await generatePlan(mode);
+        const { ok, degraded, added, upgraded } = await generatePlan(mode);
         if (mode === "focus") setPlanStage(ok ? "focus" : "none");
         else if (mode === "full" && ok) setPlanStage("full");
         // refocus keeps the current stage - it only re-derives the focus.
@@ -808,13 +867,24 @@ export default function CallPage() {
           docsAtFocusRef.current = loadedDocsCountRef.current;
           setNewDocFlag(false);
         }
+        // Honest, specific status for a rebuild: say what actually changed.
+        const refocusMsg = () => {
+          const a = added || 0;
+          const u = upgraded || 0;
+          if (a === 0 && u === 0)
+            return "focus already covers the document - nothing new to add";
+          const parts: string[] = [];
+          if (a > 0) parts.push(`${a} new`);
+          if (u > 0) parts.push(`${u} sharpened`);
+          return `focus updated (${parts.join(", ")}) - hit Refresh from focus to fold it into the plan`;
+        };
         setStatus(
           !ok
             ? "nothing came back - try again"
             : degraded
             ? "generic - edit & rebuild for a tailored plan"
             : mode === "refocus"
-            ? "focus updated - hit Refresh from focus to fold it into the plan"
+            ? refocusMsg()
             : mode === "focus"
             ? "focus ready - rank or delete, then Build the plan"
             : "plan ready"
