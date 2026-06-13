@@ -128,6 +128,7 @@ export default function CallPage() {
   const callTypeRef = useRef("general");
   const roleRef = useRef("");
   const personLabelRef = useRef("Them");
+  const candidateRef = useRef("");
   const selectedCompsRef = useRef<string[]>([]);
   const suggestedCompsRef = useRef<string[]>([]);
   const cachedSummaryRef = useRef<any>(null);
@@ -193,6 +194,7 @@ export default function CallPage() {
   useEffect(() => {
     roleRef.current = role;
     personLabelRef.current = candidate.trim() || "Them";
+    candidateRef.current = candidate.trim();
   }, [role, candidate]);
   useEffect(() => {
     selectedCompsRef.current = selectedComps;
@@ -320,6 +322,7 @@ export default function CallPage() {
           transcript: labelled.slice(-2400),
           latest,
           latestSpeaker,
+          subjectName: candidateRef.current || null,
           role: roleRef.current || null,
           callType: callTypeRef.current,
           previousSuggestions: recentTextsRef.current.slice(0, 5),
@@ -476,6 +479,7 @@ export default function CallPage() {
           knowledgeContext: knowledgeRef.current,
           transcript: labelled,
           role: roleRef.current || null,
+          subjectName: candidateRef.current || null,
           recentInsights: recentInsightsRef.current.slice(0, 5),
         }),
       });
@@ -1406,6 +1410,13 @@ export default function CallPage() {
 
       {callLive && suggestedComps.length > 0 && (
         <div className="mb-3 flex items-center gap-3 rounded-2xl border border-edge bg-panel/50 px-4 py-3">
+          <input
+            value={candidate}
+            onChange={(e) => setCandidate(e.target.value)}
+            placeholder="subject name"
+            title="Fix the subject's name - the AI uses this spelling in cues, summary and report even if it was mis-heard"
+            className="w-32 shrink-0 rounded-lg border border-edge bg-ink/60 px-2.5 py-1 font-mono text-[0.62rem] text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+          />
           <span className="shrink-0 font-mono text-[0.58rem] uppercase tracking-[0.16em] text-muted">
             intent
           </span>
