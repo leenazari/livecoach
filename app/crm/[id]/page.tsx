@@ -24,6 +24,7 @@ export default function CompanyDetailPage() {
   const [company, setCompany] = useState<Company | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [fields, setFields] = useState<FieldDefinition[]>([]);
+  const [calls, setCalls] = useState<any[]>([]);
   const [attrs, setAttrs] = useState<Record<string, any>>({});
   const [core, setCore] = useState({
     name: "",
@@ -48,17 +49,21 @@ export default function CompanyDetailPage() {
     setLoading(true);
     setErr("");
     try {
-      const [{ company, contacts }, { fields }] = await Promise.all([
+      const [{ company, contacts }, { fields }, { calls }] = await Promise.all([
         crmFetch<{ company: Company; contacts: Contact[] }>(
           `/api/crm/companies/${id}`
         ),
         crmFetch<{ fields: FieldDefinition[] }>(
           `/api/crm/fields?entity=company`
         ),
+        crmFetch<{ calls: any[] }>(`/api/crm/companies/${id}/calls`).catch(
+          () => ({ calls: [] as any[] })
+        ),
       ]);
       setCompany(company);
       setContacts(contacts);
       setFields(fields);
+      setCalls(calls || []);
       setAttrs(company.attributes || {});
       setCore({
         name: company.name || "",
@@ -376,6 +381,64 @@ export default function CompanyDetailPage() {
           </button>
         </section>
       </div>
+
+      {/* CALL HISTORY - scorecards from calls linked to this company. */}
+      <section className="mt-5 rounded-xl border border-edge bg-panel/40 p-4">
+        <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+          Call history{" "}
+          <span className="text-muted">({calls.length})</span>
+        </p>
+        {calls.length === 0 ? (
+          <p className="font-mono text-[0.6rem] text-muted">
+            No calls linked yet. On the call screen, set this company in the
+            “Client” bar before you go live and the scorecard lands here.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {calls.map((c) => {
+              const overview =
+                c?.summary && typeof c.summary.overview === "string"
+                  ? c.summary.overview
+                  : "";
+              const score =
+                c?.summary &&
+                (typeof c.summary.score === "number"
+                  ? c.summary.score
+                  : typeof c.summary.overallScore === "number"
+                  ? c.summary.overallScore
+                  : null);
+              const date = c?.created_at
+                ? new Date(c.created_at).toLocaleDateString()
+                : "";
+              return (
+                <li
+                  key={c.id}
+                  className="rounded-lg border border-edge bg-ink/40 px-4 py-3"
+                >
+                  <div className="mb-1 flex items-center justify-between gap-3">
+                    <span className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">
+                      {date}
+                      {c.candidate ? ` · ${c.candidate}` : ""}
+                    </span>
+                    {score !== null && (
+                      <span className="font-mono text-[0.62rem] text-sage">
+                        {Math.round(score)}%
+                      </span>
+                    )}
+                  </div>
+                  {overview && (
+                    <p className="font-sans text-[0.82rem] leading-snug text-bone/80">
+                      {overview.length > 240
+                        ? overview.slice(0, 240) + "…"
+                        : overview}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
     </main>
   );
 }

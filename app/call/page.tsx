@@ -9,6 +9,7 @@ import SortableFocusList from "@/components/SortableFocusList";
 import PostCallSummary from "@/components/PostCallSummary";
 import CostMeter from "@/components/CostMeter";
 import MatrixRain from "@/components/MatrixRain";
+import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import {
   estimateCost,
   usageCostUSD,
@@ -126,6 +127,12 @@ export default function CallPage() {
   // Raised when a document is uploaded AFTER the focus was built, so the user
   // can fold it in. Cleared whenever the focus is (re)built.
   const [newDocFlag, setNewDocFlag] = useState(false);
+  // CRM link: the company this call is attached to (its history feeds the plan
+  // later, and its scorecard rolls up under the company).
+  const [linkedCompany, setLinkedCompany] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const [suggestedComps, setSuggestedComps] = useState<string[]>([]);
   const [selectedComps, setSelectedComps] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -173,6 +180,7 @@ export default function CallPage() {
   // callbacks driven by refs) can feed them to the model without stale state.
   const goalsRef = useRef<{ text: string; liked?: boolean }[]>([]);
   const privateNotesRef = useRef<string[]>([]);
+  const linkedCompanyRef = useRef<{ id: string; name: string } | null>(null);
   const cachedSummaryRef = useRef<any>(null);
   const cachedSigRef = useRef("");
   const linesRef = useRef<Line[]>([]);
@@ -242,6 +250,33 @@ export default function CallPage() {
   useEffect(() => {
     privateNotesRef.current = privateNotes;
   }, [privateNotes]);
+  useEffect(() => {
+    linkedCompanyRef.current = linkedCompany;
+  }, [linkedCompany]);
+
+  // Best-effort: stamp the linked company onto this session's row. Idempotent -
+  // safe to call when linking, at go-live, and at end (the session row exists by
+  // then). Never blocks the call.
+  const linkSession = useCallback(() => {
+    fetch("/api/crm/link-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: room,
+        companyId: linkedCompanyRef.current?.id || null,
+        contactId: null,
+      }),
+    }).catch(() => {});
+  }, [room]);
+
+  const handleLinkCompany = useCallback(
+    (v: { id: string; name: string } | null) => {
+      setLinkedCompany(v);
+      linkedCompanyRef.current = v;
+      linkSession();
+    },
+    [linkSession]
+  );
   useEffect(() => {
     selectedCompsRef.current = selectedComps;
   }, [selectedComps]);
@@ -933,7 +968,13 @@ export default function CallPage() {
     persistSession();
     setExpandSetup(false);
     setCallLive(true);
-  }, [persistSession]);
+    // Stamp the company link onto the now-created session row. Delayed once so
+    // the update lands after persistSession's insert (fire-and-forget order).
+    if (linkedCompanyRef.current) {
+      linkSession();
+      setTimeout(linkSession, 1500);
+    }
+  }, [persistSession, linkSession]);
 
   // Keep the ref pointed at the latest goLive so the transcript funnel can call
   // it without taking goLive as a dependency (which would re-create the funnel).
@@ -1027,6 +1068,9 @@ export default function CallPage() {
     setStatus("building summary...");
     try {
       sonnetCallsRef.current += 1;
+      // Make sure the session row carries the company link before we store the
+      // scorecard under it.
+      if (linkedCompanyRef.current) linkSession();
       const res = await fetch("/api/interview/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1038,6 +1082,7 @@ export default function CallPage() {
           competencies: suggestedCompsRef.current,
           callType,
           sessionId: room,
+          companyId: linkedCompanyRef.current?.id || null,
         }),
       });
       const data = await res.json();
@@ -1472,6 +1517,23 @@ export default function CallPage() {
           );
         })}
       </nav>
+
+      {/* CLIENT LINK - attach this call to a CRM company so its scorecard rolls
+          up under that client (and, later, its history feeds the plan). */}
+      <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-edge bg-panel/40 px-4 py-2.5">
+        <span className="font-mono text-[0.58rem] uppercase tracking-[0.16em] text-muted">
+          Client
+        </span>
+        <CompanyLinkPicker value={linkedCompany} onChange={handleLinkCompany} />
+        <a
+          href="/crm"
+          target="_blank"
+          rel="noreferrer"
+          className="ml-auto font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:text-amber"
+        >
+          all clients ↗
+        </a>
+      </div>
 
       {setupCollapsed ? (
         <button
