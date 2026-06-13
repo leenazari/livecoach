@@ -680,6 +680,9 @@ export default function CallPage() {
         // (dedupes by meaning + upgrades in place) instead of deriving blind.
         existingFocus:
           mode === "refocus" ? suggestedCompsRef.current : undefined,
+        // The name you've corrected is AUTHORITATIVE - send it so the model uses
+        // that exact spelling in the focus labels/read instead of the document's.
+        subjectName: candidateRef.current || null,
         knowledgeContext: [
           knowledgeRef.current,
           backgroundRef.current
@@ -779,10 +782,13 @@ export default function CallPage() {
     }
     setCharacter(typeof data.character === "string" ? data.character : "");
     if (typeof data.callType === "string") setCallType(data.callType);
+    // Whatever is in the name field is AUTHORITATIVE: only seed it from the
+    // model when it's still empty. Use the live ref (not the stale closure
+    // value) so a name you corrected is never overwritten on a rebuild.
     if (
       typeof data.subjectName === "string" &&
       data.subjectName.trim() &&
-      !candidate.trim()
+      !candidateRef.current.trim()
     ) {
       setCandidate(data.subjectName.trim());
     }

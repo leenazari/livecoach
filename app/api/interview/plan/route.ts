@@ -273,6 +273,13 @@ export async function POST(req: NextRequest) {
           .filter((x: any) => typeof x === "string" && x.trim())
           .slice(0, 12)
       : [];
+    // The caller's CORRECTED name (the name field) is authoritative - use this
+    // exact spelling everywhere and never re-derive it from the document.
+    const authoritativeName =
+      typeof body.subjectName === "string" ? body.subjectName.trim() : "";
+    const nameRule = authoritativeName
+      ? `\n\nSUBJECT NAME - AUTHORITATIVE: the person/party is named EXACTLY "${authoritativeName}". Use THIS exact spelling everywhere you name them (focus areas, the read, questions, playbook, goals), even if the document or transcript spells it differently. Set subjectName to exactly "${authoritativeName}". Do NOT change, re-spell, or "correct" it.`
+      : "";
 
     let context = typeof knowledgeContext === "string" ? knowledgeContext : "";
     if (context.length > MAX_CONTEXT_CHARS) {
@@ -321,7 +328,7 @@ Output ONLY valid JSON: { "additions": ["..."], "upgrades": [{"from":"...","to":
 
       const fSystem = reconcile ? reconcileSystem : deriveSystem;
       const fUser = `INTENT BRIEF (top priority): ${brief || "(none given)"}
-ROLE / TITLE: ${role || "(not specified)"}
+ROLE / TITLE: ${role || "(not specified)"}${nameRule}
 
 SUPPORTING CONTEXT - the substance of this call:
 ${context || "(none provided)"}
@@ -347,7 +354,8 @@ Return the JSON now.`;
         ? fPlan.callType
         : "general";
       const fSubject =
-        typeof fPlan.subjectName === "string" ? fPlan.subjectName.trim() : "";
+        authoritativeName ||
+        (typeof fPlan.subjectName === "string" ? fPlan.subjectName.trim() : "");
       const fCharacter =
         typeof fPlan.character === "string" ? fPlan.character : "";
       const costHeader = { "x-cost-usd": String(callCostUSD("haiku", fUsage)) };
@@ -476,7 +484,7 @@ THE FOCUS LIST IS THE COMPLETE AGENDA - HARD BOUNDARY:
 - The caller has DELIBERATELY chosen what is in and what is out. Do NOT raise, open on, or reference any topic that is not one of these focus areas - even if the supporting document makes it prominent, impressive, or tempting (a big audience, a headline number, a famous name, a juicy aside). If a fact from the document is not tied to one of the focus areas, leave it OUT entirely.
 - Example of the trap to avoid: the document mentions a large social following or a flashy metric, but it is NOT a focus area - then NO question or tactic may mention it. Treat anything outside the focus list as off-limits for this call.\n`
     : ""
-}
+}${nameRule}
 SUPPORTING CONTEXT - uploaded document(s) / researched background / notes. This is the substance of what the call is about; use it heavily and specifically:
 ${context || "(none provided)"}
 
@@ -536,7 +544,8 @@ Return the JSON plan now.`;
       ? plan.callType
       : "general";
     const subjectName =
-      typeof plan.subjectName === "string" ? plan.subjectName.trim() : "";
+      authoritativeName ||
+      (typeof plan.subjectName === "string" ? plan.subjectName.trim() : "");
     const rawApproach =
       plan.approach && typeof plan.approach === "object" ? plan.approach : {};
     const approach = {
