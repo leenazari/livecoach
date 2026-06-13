@@ -115,6 +115,7 @@ export default function CallPage() {
   const [overBudget, setOverBudget] = useState(false);
   const [meterOn, setMeterOn] = useState(false);
   const [insightsOn, setInsightsOn] = useState(true);
+  const [cueFull, setCueFull] = useState(false);
 
   const knowledgeRef = useRef("");
   const claudeCallsRef = useRef(0);
@@ -1737,13 +1738,23 @@ export default function CallPage() {
         )}
 
         <section className="flex min-h-[72vh] flex-col rounded-2xl border border-amber/40 bg-gradient-to-b from-amber/[0.07] to-transparent lg:order-1">
-          <div className="border-b border-edge px-6 py-3.5">
-            <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-amber">
-              Ask this next
-            </h2>
-            <p className="mt-1 font-mono text-[0.58rem] tracking-wide text-muted">
-              {"\u2606"} favourite a cue to keep it in the Bulletin
-            </p>
+          <div className="flex items-start justify-between gap-3 border-b border-edge px-6 py-3.5">
+            <div>
+              <h2 className="font-mono text-xs uppercase tracking-[0.25em] text-amber">
+                Ask this next
+              </h2>
+              <p className="mt-1 font-mono text-[0.58rem] tracking-wide text-muted">
+                {"\u2606"} favourite a cue to keep it in the Bulletin
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCueFull(true)}
+              title="Expand cues to full screen (wall of cues)"
+              className="shrink-0 rounded-full border border-edge px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-bone transition hover:border-amber/60"
+            >
+              {"\u2922"} Expand
+            </button>
           </div>
 
           {pinned.length > 0 && (
@@ -1767,6 +1778,44 @@ export default function CallPage() {
           </div>
         </section>
       </div>
+
+      {cueFull && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-ink/97 backdrop-blur-sm">
+          <div className="flex items-center justify-between border-b border-edge px-6 py-4">
+            <div className="flex items-baseline gap-4">
+              <h2 className="font-mono text-sm uppercase tracking-[0.25em] text-amber">
+                Live cues
+              </h2>
+              <span className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">
+                {pinned.length + feed.length} on screen
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCueFull(false)}
+              className="rounded-full border border-rust px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-rust transition hover:bg-rust hover:text-ink"
+            >
+              Exit full screen
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6">
+            {pinned.length + feed.length === 0 ? (
+              <p className="font-mono text-sm text-muted">
+                Live cues appear here as the conversation flows.
+              </p>
+            ) : (
+              <div
+                className="grid gap-3"
+                style={{
+                  gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+                }}
+              >
+                {[...pinned, ...feed].map(renderCard)}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {summary && (
         <PostCallSummary
