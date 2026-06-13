@@ -45,6 +45,11 @@ function normalise(s: string) {
 
 function addUsageToRef(ref: { current: number }, res: Response) {
   try {
+    const direct = res.headers.get("x-cost-usd");
+    if (direct) {
+      ref.current += parseFloat(direct) || 0;
+      return;
+    }
     const u = res.headers.get("x-usage");
     const m = res.headers.get("x-model");
     if (u && (m === "haiku" || m === "sonnet")) {

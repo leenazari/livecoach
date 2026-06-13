@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import {
+  anthropic,
+  CLAUDE_MODEL_LIVE,
+  CLAUDE_MODEL_PRO,
+} from "@/lib/anthropic";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -21,11 +25,10 @@ async function callModelWithTimeout(system: string, userMsg: string, ms: number)
   try {
     return await anthropic.messages.create(
       {
-        model: CLAUDE_MODEL_PRO,
-        // Generous budget: the full JSON plan (approach + 6-9 focus areas +
-        // 6 questions + 6 playbook tactics) overran the old 1200-token cap and
-        // truncated mid-object, which made JSON.parse fail and returned an
-        // EMPTY plan (the "plan ready but blank panel" bug). 2400 leaves room.
+        model: CLAUDE_MODEL_LIVE,
+        // The STRUCTURAL plan runs on fast Haiku so it never times out against
+        // the 60s function cap (the playbook is upgraded separately on Sonnet).
+        // 2400 tokens leaves room for the full JSON without truncation.
         max_tokens: 2400,
         system,
         messages: [{ role: "user", content: userMsg }],
@@ -35,6 +38,24 @@ async function callModelWithTimeout(system: string, userMsg: string, ms: number)
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Exact USD cost of one call from its usage (so the meter stays accurate even
+// with the two-model split). Mirrors lib/costs usageCostUSD.
+function callCostUSD(model: "haiku" | "sonnet", u: any): number {
+  if (!u) return 0;
+  const inR = model === "sonnet" ? 3 : 1;
+  const outR = model === "sonnet" ? 15 : 5;
+  const i = Number(u.input_tokens) || 0;
+  const o = Number(u.output_tokens) || 0;
+  const cw = Number(u.cache_creation_input_tokens) || 0;
+  const cr = Number(u.cache_read_input_tokens) || 0;
+  return (
+    (i / 1e6) * inR +
+    (cw / 1e6) * inR * 1.25 +
+    (cr / 1e6) * inR * 0.1 +
+    (o / 1e6) * outR
+  );
 }
 
 // Tolerant JSON extraction. Haiku occasionally adds a prose preamble, wraps the
@@ -310,16 +331,14 @@ ${context || "(none provided)"}
 
 Return the JSON plan now.`;
 
-    // ONE attempt with a generous window: the plan now runs on Sonnet (slower,
-    // higher quality) and a full ~2k-token plan can take 30-45s. A 28s abort
-    // was timing it out and serving the generic fallback. 52s sits inside the
-    // 60s function cap and leaves room to return.
+    // Fast Haiku: two attempts, ~28s each, comfortably inside the 60s cap.
     let raw = "";
     let modelOk = false;
     let planUsage: any = null;
-    for (let attempt = 0; attempt < 1 && !modelOk; attempt++) {
+    let pbUsage: any = null;
+    for (let attempt = 0; attempt < 2 && !modelOk; attempt++) {
       try {
-        const msg = await callModelWithTimeout(system, userMsg, 52000);
+        const msg = await callModelWithTimeout(system, userMsg, 28000);
         raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
@@ -399,7 +418,7 @@ Return the JSON plan now.`;
       }));
     }
 
-    const playbook = Array.isArray(plan.playbook)
+    const haikuPlaybook = Array.isArray(plan.playbook)
       ? plan.playbook
           .filter(
             (p: any) =>
@@ -412,6 +431,84 @@ Return the JSON plan now.`;
           .slice(0, 6)
           .map((p: any) => ({ label: String(p.label), detail: String(p.detail) }))
       : [];
+
+    // PLAYBOOK on the high-quality model. A small, focused Sonnet pass (fast)
+    // so the tactics are sharp, warm and specific, WITHOUT putting the whole
+    // slow plan on Sonnet. If it fails/times out, keep the fast Haiku playbook.
+    let sonnetPlaybook: { label: string; detail: string }[] = [];
+    try {
+      const pbSystem: any[] = [
+        {
+          type: "text",
+          text: `You write the PLAYBOOK for a live call: 4-6 concrete, in-the-moment tactics the caller should be ready to use. Each item is { "label": "short tactic name", "detail": "one specific, actionable line" }.
+
+Ground EVERY tactic in THIS call - name the real idea, product, people and numbers (from the intent, the focus areas, and the document). A reader should be unable to use these tactics for any other call. Never generic advice.
+
+TONE - the detail is for a real human to say WARMLY: write each tactic the way a thoughtful, friendly, intellectually-curious partner would - warm, collaborative, softened, leading with curiosity. If you suggest something to SAY, phrase it as a warm person actually would: inviting, never a scripted command or ultimatum. BAN bossy openers like "I want you to...", "Before we talk X, I want to be clear...", "That's your role here", "explicitly say:". This is a conversation between collaborators, not a sales script.
+
+Output ONLY a JSON array: [{"label":"...","detail":"..."}] - no prose, no markdown.`,
+        },
+        {
+          type: "text",
+          text: `CONTEXT - the subject of this call:\n\n${
+            context || "(none provided)"
+          }`,
+          cache_control: { type: "ephemeral" },
+        },
+      ];
+      const pbUser = `INTENT: ${brief || "(none given)"}
+ROLE / TITLE: ${role || "(not specified)"}
+RANKED FOCUS AREAS: ${focusAreas.join(", ")}
+YOUR READ ON THEM: ${character || "(n/a)"}
+
+Write the 4-6 tactic playbook now - JSON array only.`;
+      const pbController = new AbortController();
+      const pbTimer = setTimeout(() => pbController.abort(), 25000);
+      try {
+        const pbMsg = await anthropic.messages.create(
+          {
+            model: CLAUDE_MODEL_PRO,
+            max_tokens: 900,
+            temperature: 0.5,
+            system: pbSystem,
+            messages: [{ role: "user", content: pbUser }],
+          },
+          { signal: pbController.signal }
+        );
+        pbUsage = pbMsg.usage;
+        const pbRaw = pbMsg.content
+          .filter((b: any) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("")
+          .replace(/```json|```/g, "")
+          .trim();
+        const a = pbRaw.indexOf("[");
+        const b = pbRaw.lastIndexOf("]");
+        const arr = a >= 0 && b > a ? JSON.parse(pbRaw.slice(a, b + 1)) : [];
+        if (Array.isArray(arr)) {
+          sonnetPlaybook = arr
+            .filter(
+              (pp: any) =>
+                pp &&
+                typeof pp.label === "string" &&
+                typeof pp.detail === "string" &&
+                pp.label.trim() &&
+                pp.detail.trim()
+            )
+            .slice(0, 6)
+            .map((pp: any) => ({
+              label: String(pp.label),
+              detail: String(pp.detail),
+            }));
+        }
+      } finally {
+        clearTimeout(pbTimer);
+      }
+    } catch (e) {
+      console.error("Playbook (Sonnet) failed - keeping Haiku playbook:", e);
+    }
+
+    const playbook = sonnetPlaybook.length ? sonnetPlaybook : haikuPlaybook;
 
     const privateNotes = Array.isArray(plan.privateNotes)
       ? plan.privateNotes
@@ -432,8 +529,9 @@ Return the JSON plan now.`;
         { ...fb, degraded: true },
         {
           headers: {
-            "x-usage": JSON.stringify(planUsage || {}),
-            "x-model": "sonnet",
+            "x-cost-usd": String(
+              callCostUSD("haiku", planUsage) + callCostUSD("sonnet", pbUsage)
+            ),
           },
         }
       );
@@ -454,8 +552,9 @@ Return the JSON plan now.`;
       },
       {
         headers: {
-          "x-usage": JSON.stringify(planUsage || {}),
-          "x-model": "sonnet",
+          "x-cost-usd": String(
+            callCostUSD("haiku", planUsage) + callCostUSD("sonnet", pbUsage)
+          ),
         },
       }
     );
