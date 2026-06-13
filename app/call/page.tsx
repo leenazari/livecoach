@@ -2432,8 +2432,8 @@ export default function CallPage() {
           <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-5 py-5">
             {feed.length === 0 ? (
               <p className="font-mono text-sm text-muted">
-                Upload a CV + set a role for opening questions. Live cues (and
-                ideas to say) appear as the conversation unfolds.
+                Cues and ideas to say stream in here once the conversation gets
+                going - your opening questions are ready in the plan.
               </p>
             ) : (
               feed.map((s) => renderCard(s))
