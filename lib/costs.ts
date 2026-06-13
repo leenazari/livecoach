@@ -49,6 +49,11 @@ export const TOKENS = {
   // End-of-call scorecard (Sonnet). Estimates for a typical call.
   scorecardIn: 12000, // transcript + competencies + rubric
   scorecardOut: 1800, // structured scorecard JSON
+
+  // Live "statement" insight (Sonnet, periodic). Small: recent transcript +
+  // cached knowledge + a short statement out.
+  insightIn: 2600,
+  insightOut: 180,
 };
 
 // Estimate Claude cost for ONE warm live suggestion call (Haiku, cache warm).
@@ -73,6 +78,14 @@ export function scorecardCostUSD(): number {
   );
 }
 
+// One live "statement" insight on Sonnet (the advisory lane).
+export function insightCostUSD(): number {
+  return (
+    (TOKENS.insightIn / 1_000_000) * RATES.sonnetInPerM +
+    (TOKENS.insightOut / 1_000_000) * RATES.sonnetOutPerM
+  );
+}
+
 export type CostBreakdown = {
   deepgram: number;
   transport: number; // LiveKit (in-app) or Recall.ai (Meet)
@@ -94,6 +107,8 @@ export type EstimateOpts = {
   transport?: "none" | "livekit" | "recall";
   // Number of Sonnet scorecard calls made (0 before the call ends, 1 after).
   sonnetCalls?: number;
+  // Number of live Sonnet "statement" insight calls made.
+  insightCalls?: number;
 };
 
 // Live running estimate.
@@ -135,6 +150,7 @@ export function estimateCost(
     claude += (haikuCalls - 1) * claudeCallCostUSD(true, knowledgeTokens);
   }
   claude += sonnetCalls * scorecardCostUSD();
+  claude += (opts.insightCalls ?? 0) * insightCostUSD();
 
   const vercel = hours * RATES.vercelPerHour;
   const supabase = hours * RATES.supabasePerHour;
