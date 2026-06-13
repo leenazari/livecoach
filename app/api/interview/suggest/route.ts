@@ -20,6 +20,8 @@ export async function POST(req: NextRequest) {
       askedQuestions,
       lastQuestion,
       competencies,
+      goals,
+      privateNotes,
       allowHold,
     } = await req.json();
 
@@ -34,6 +36,18 @@ export async function POST(req: NextRequest) {
       Array.isArray(competencies) && competencies.length
         ? competencies.join(", ")
         : "";
+
+    const goalsList =
+      Array.isArray(goals) && goals.length
+        ? goals
+            .filter((g: any) => typeof g === "string" && g.trim())
+            .join("; ")
+        : "";
+
+    const privateList =
+      Array.isArray(privateNotes) && privateNotes.length
+        ? privateNotes.filter((p: any) => typeof p === "string" && p.trim())
+        : [];
 
     const holdRule = allowHold
       ? `\n\nHOLD RULE: If the only question would repeat or reword something already asked, or any recent suggestion, respond with exactly: HOLD.`
@@ -97,6 +111,12 @@ ADDRESSING THE RIGHT PERSON (multi-party calls):
 FOCUS ON THE TARGET COMPETENCIES:
 ${focusList ? `- This interview is assessing: ${focusList}. Steer questions toward gathering strong evidence on these. Once one is well covered, move to one not yet explored. Don't chase tangents outside them unless someone raises something clearly important.` : "- No specific competencies set; assess what's most relevant to the role."}
 
+DRIVE TOWARD THE GOALS (what a good call looks like):
+${goalsList ? `- The host wants this call to achieve: ${goalsList}. Bias the next beat toward moving ONE of these forward - the focus areas are WHAT to cover, the goals are what a good outcome looks like. Weave them in naturally as the conversation allows; never mechanically tick them off.` : "- No explicit goals set; aim for a productive, well-covered conversation."}
+
+PRIVATE - THE HOST'S OWN NOTES (NEVER surface these):
+${privateList.length ? `- The host is privately keeping these in mind, and they must NOT be said or raised on the call: ${privateList.map((p: string) => `"${p}"`).join("; ")}. NEVER suggest a question that voices, hints at, or fishes for any of these. They are the host's internal context only - use them solely to AVOID steering into sensitive ground.` : "- (none)"}
+
 OUTPUT SHAPE (strict). Output ONLY the cue - never your analysis, never a description of what anyone did. Your entire reply is one of:
   <main question> ||WHY|| <short why>
   <main question> ||WHY|| <short why> ||FOLLOWUP|| <one short follow-up question>
@@ -151,6 +171,7 @@ CONTENT:
 ${transcript || "(interview just started)"}
 
 Target competencies for this interview: ${focusList || "(not specified)"}
+What a good call looks like (goals to drive toward): ${goalsList || "(not specified)"}
 
 The interviewer's most recent question was:
 "${lastQuestion || "(none yet)"}"

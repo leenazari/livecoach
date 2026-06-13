@@ -13,8 +13,16 @@ export const maxDuration = 30;
 // already parses: <statement> ||WHY|| <short tag>.
 export async function POST(req: NextRequest) {
   try {
-    const { knowledgeContext, transcript, role, subjectName, recentInsights } =
-      await req.json();
+    const {
+      knowledgeContext,
+      transcript,
+      role,
+      subjectName,
+      recentInsights,
+      competencies,
+      goals,
+      privateNotes,
+    } = await req.json();
 
     if (!transcript || typeof transcript !== "string") {
       return new Response(JSON.stringify({ error: "transcript required" }), {
@@ -22,6 +30,19 @@ export async function POST(req: NextRequest) {
         headers: { "Content-Type": "application/json" },
       });
     }
+
+    const focusList =
+      Array.isArray(competencies) && competencies.length
+        ? competencies.join(", ")
+        : "";
+    const goalsList =
+      Array.isArray(goals) && goals.length
+        ? goals.filter((g: any) => typeof g === "string" && g.trim()).join("; ")
+        : "";
+    const privateList =
+      Array.isArray(privateNotes) && privateNotes.length
+        ? privateNotes.filter((p: any) => typeof p === "string" && p.trim())
+        : [];
 
     const instructions = `You are a sharp intellectual advisor whispering to the HOST during a live, idea-driven conversation${
       role ? ` (context: ${role})` : ""
@@ -41,6 +62,11 @@ PLAIN SPEECH - everyone in the room must understand it:
 - Write the line so the host can say it ALOUD and anyone in the room gets it: no jargon, no acronyms without a plain gloss, no academic phrasing. Translate technical depth DOWN into clear, everyday language - a smart person explaining simply, not reading a textbook. Keep the substance; lose the jargon. If a technical term is unavoidable, fold a one-clause explanation into the line.
 
 Distil the idea currently being worked out and give the host ONE crisp line (1-2 sentences) they can say out loud, in their own voice, ready to speak.
+
+STEER TOWARD WHAT MATTERS:
+${focusList ? `- The host's focus for this call: ${focusList}. Favour a SAY that advances one of these threads.` : "- No explicit focus set; follow the live thread."}
+${goalsList ? `- What a good call looks like (the host's goals): ${goalsList}. Your line should help move ONE of these forward - a statement that nudges the conversation toward a good outcome, not just a clever aside.` : ""}
+${privateList.length ? `- PRIVATE - the host is keeping these in mind and they must NEVER be said aloud: ${privateList.map((p: string) => `"${p}"`).join("; ")}. NEVER put any of these into the host's mouth. Use them only to avoid steering into sensitive ground. If the only thing to add would touch one of these, return HOLD.` : ""}
 
 Output ONLY one of:
   <the thing to say> ||WHY|| <short tag, e.g. "analogy", "example", "technical", "Kahneman on judgement">

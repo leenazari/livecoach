@@ -169,6 +169,10 @@ export default function CallPage() {
   // were loaded when the focus was last built vs how many are loaded now.
   const docsAtFocusRef = useRef(0);
   const loadedDocsCountRef = useRef(0);
+  // Mirrors of the plan's goals + private notes so the live cue lanes (stable
+  // callbacks driven by refs) can feed them to the model without stale state.
+  const goalsRef = useRef<{ text: string; liked?: boolean }[]>([]);
+  const privateNotesRef = useRef<string[]>([]);
   const cachedSummaryRef = useRef<any>(null);
   const cachedSigRef = useRef("");
   const linesRef = useRef<Line[]>([]);
@@ -232,6 +236,12 @@ export default function CallPage() {
     personLabelRef.current = candidate.trim() || "Them";
     candidateRef.current = candidate.trim();
   }, [role, candidate]);
+  useEffect(() => {
+    goalsRef.current = goals;
+  }, [goals]);
+  useEffect(() => {
+    privateNotesRef.current = privateNotes;
+  }, [privateNotes]);
   useEffect(() => {
     selectedCompsRef.current = selectedComps;
   }, [selectedComps]);
@@ -374,6 +384,8 @@ export default function CallPage() {
           competencies: suggestedCompsRef.current.filter((c) =>
             selectedCompsRef.current.includes(c)
           ),
+          goals: goalsRef.current.map((g) => g.text),
+          privateNotes: privateNotesRef.current,
           allowHold: true,
         }),
       });
@@ -538,6 +550,11 @@ export default function CallPage() {
           role: roleRef.current || null,
           subjectName: candidateRef.current || null,
           recentInsights: recentInsightsRef.current.slice(0, 5),
+          competencies: suggestedCompsRef.current.filter((c) =>
+            selectedCompsRef.current.includes(c)
+          ),
+          goals: goalsRef.current.map((g) => g.text),
+          privateNotes: privateNotesRef.current,
         }),
       });
       addUsageToRef(claudeUsdRef, res);
@@ -1081,8 +1098,12 @@ export default function CallPage() {
   // edit), the tall authoring column collapses to a thin strip and the brief
   // takes the full page width in two columns. Reading mode, not typing mode.
   const briefMode = planStage === "full" && !briefSetupOpen;
-  // Which of the three stages the user is in, for the header stepper.
-  const currentStage: 1 | 2 | 3 = callLive ? 3 : briefMode ? 2 : 1;
+  // Which of the three stages the user is in, for the header stepper. This must
+  // follow the VIEW being shown, not just whether the call is live: going back
+  // to setup mid-call (expandSetup) means they're viewing stage 1/2 even though
+  // the call is still live in the background.
+  const viewingSetup = !callLive || expandSetup;
+  const currentStage: 1 | 2 | 3 = !viewingSetup ? 3 : briefMode ? 2 : 1;
   // Click a stage in the stepper to move between them. Going back never ends
   // the call or loses work - it just changes which view is shown.
   const goStage = (n: 1 | 2 | 3) => {
