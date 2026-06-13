@@ -105,6 +105,9 @@ export default function CallPage() {
   const [source, setSource] = useState<"inapp" | "meet">("inapp");
   const [meetingUrl, setMeetingUrl] = useState("");
   const [expandSetup, setExpandSetup] = useState(false);
+  // When true, the full authoring setup is shown even at the brief stage (the
+  // user clicked "edit setup" from the condensed strip).
+  const [briefSetupOpen, setBriefSetupOpen] = useState(false);
   const [rightTab, setRightTab] = useState<"summary" | "transcript">("summary");
   const [rightMin, setRightMin] = useState(false);
   const [bullets, setBullets] = useState<{
@@ -1074,6 +1077,10 @@ export default function CallPage() {
   const servingFocus =
     suggestedComps.find((c) => selectedComps.includes(c)) || "";
   const setupCollapsed = callLive && !expandSetup;
+  // BRIEF MODE: once the plan is built (and the user hasn't reopened setup to
+  // edit), the tall authoring column collapses to a thin strip and the brief
+  // takes the full page width in two columns. Reading mode, not typing mode.
+  const briefMode = planStage === "full" && !briefSetupOpen;
   // Overall progress toward the intent: rank-weighted average of how well each
   // focus has been covered so far (top-ranked focuses count most). Page-side,
   // so reordering focus re-weights it instantly without a new model call.
@@ -1325,8 +1332,46 @@ export default function CallPage() {
               {"\u25BE"} collapse setup
             </button>
           )}
-        <div className="grid md:grid-cols-2">
-          {/* LEFT - stepped setup */}
+        {briefSetupOpen && planStage === "full" && !callLive && (
+          <button
+            type="button"
+            onClick={() => setBriefSetupOpen(false)}
+            className="flex w-full items-center justify-end gap-2 border-b border-edge bg-ink/40 px-4 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:text-amber"
+          >
+            {"▴"} back to brief
+          </button>
+        )}
+        <div className={briefMode ? "" : "grid md:grid-cols-2"}>
+          {/* LEFT - stepped setup. Condenses to a one-line strip once the brief
+              is built, so the plan can use the full page width. */}
+          {briefMode ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-edge bg-ink/40 px-5 py-3">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 font-mono text-[0.6rem] uppercase tracking-[0.12em] text-muted">
+                {callType && callType !== "general" && (
+                  <span className="text-amber">
+                    {"●"} {callType} call
+                  </span>
+                )}
+                {candidate.trim() && (
+                  <span className="text-bone/80">{candidate.trim()}</span>
+                )}
+                <span>
+                  {source === "meet" ? "Meet / Teams / Zoom" : "in-app link / bot"}
+                </span>
+                {loadedDocs.length > 0 && (
+                  <span>
+                    {loadedDocs.length} doc{loadedDocs.length === 1 ? "" : "s"}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setBriefSetupOpen(true)}
+                className="shrink-0 rounded-full border border-edge px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+              >
+                {"▾"} edit setup
+              </button>
+            </div>
+          ) : (
           <div className="flex flex-col border-edge md:border-r">
             {/* STEP 1 - Intent */}
             <div className="border-b border-edge px-5 py-3.5">
@@ -1518,8 +1563,9 @@ export default function CallPage() {
               )}
             </div>
           </div>
+          )}
 
-          {/* RIGHT - the generated plan */}
+          {/* RIGHT - the generated plan (spans full width in brief mode) */}
           <div className="relative flex flex-col gap-3 px-5 py-4">
             {prepping && suggestedComps.length > 0 ? (
               // BUILDING THE PLAN: the focus the user just locked stays pinned
@@ -1657,6 +1703,15 @@ export default function CallPage() {
                     />
                   </div>
                 )}
+                {/* Brief cards flow into two columns once the plan is built, so
+                    they fill the full page width instead of one tall column. */}
+                <div
+                  className={
+                    briefMode
+                      ? "gap-3 [&>*]:mb-3 [&>*]:break-inside-avoid md:columns-2"
+                      : "flex flex-col gap-3"
+                  }
+                >
                 {character && (
                   <div className="rounded-xl border border-sage/40 bg-sage/[0.06] p-3.5">
                     <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-sage">
@@ -1749,6 +1804,7 @@ export default function CallPage() {
                     </ul>
                   </div>
                 )}
+                </div>
               </>
             )}
           </div>
