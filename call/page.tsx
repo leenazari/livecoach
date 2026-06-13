@@ -148,6 +148,9 @@ export default function CallPage() {
   const costTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sonnetCallsRef = useRef(0);
   const callLiveRef = useRef(false);
+  // Holds the latest goLive() so the transcript funnel (stable, no deps) can
+  // auto-start the call on first real speech without a stale closure.
+  const goLiveRef = useRef<() => void>(() => {});
   const sourceRef = useRef<"inapp" | "meet">("inapp");
   const backgroundRef = useRef("");
   const callTypeRef = useRef("general");
@@ -249,6 +252,13 @@ export default function CallPage() {
 
   const onFinalTranscript = useCallback(
     (r: string, text: string, speaker?: string) => {
+      // Auto-start: the moment real speech is transcribed, the call has in
+      // effect begun - so flip to the live cue view automatically (the manual
+      // Go live button stays for when you want cues up before anyone speaks).
+      // Guarded inside goLive so it only ever fires once.
+      if (!callLiveRef.current && text && text.trim().length > 1) {
+        goLiveRef.current();
+      }
       setLines((prev) => {
         const last = prev[prev.length - 1];
         let next: Line[];
@@ -758,6 +768,22 @@ export default function CallPage() {
       }),
     }).catch(() => {});
   }, [room, brief, role, callType, suggestedComps, selectedComps, candidate, source]);
+
+  // Single path into the live call - used by BOTH the manual Go live button and
+  // the auto-start on first transcript. Guarded so it only ever runs once:
+  // persists the session (for scoring) and switches to the cue view.
+  const goLive = useCallback(() => {
+    if (callLiveRef.current) return;
+    persistSession();
+    setExpandSetup(false);
+    setCallLive(true);
+  }, [persistSession]);
+
+  // Keep the ref pointed at the latest goLive so the transcript funnel can call
+  // it without taking goLive as a dependency (which would re-create the funnel).
+  useEffect(() => {
+    goLiveRef.current = goLive;
+  }, [goLive]);
 
   const research = useCallback(async () => {
     const url = publicLink.trim();
@@ -1536,7 +1562,7 @@ export default function CallPage() {
               ? "Step 1: build the focus only - fast. Then rank/delete it before we generate the full plan."
               : planStage === "focus"
               ? "Step 2: rank or delete the focus, then Build the plan - the read, questions, playbook & goals are built around your locked focus."
-              : "Edit the focus anytime, then Refresh from focus rebuilds the read, questions, playbook & goals around it - your focus list stays as you set it."}
+              : "Edit the focus anytime, then Refresh from focus rebuilds the read, questions, playbook & goals around it - your focus list stays as you set it. The call goes live on its own the moment speech is picked up - or hit Go live to bring the cues up first."}
           </p>
           <div className="flex shrink-0 gap-2">
             <button
@@ -1554,14 +1580,10 @@ export default function CallPage() {
             </button>
             {planStage === "full" && (
               <button
-                onClick={() => {
-                  persistSession();
-                  setExpandSetup(false);
-                  setCallLive(true);
-                }}
+                onClick={goLive}
                 className="rounded-full border border-sage/60 bg-sage/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
               >
-                Start call {"\u25B8"}
+                Go live {"\u25B8"}
               </button>
             )}
           </div>
