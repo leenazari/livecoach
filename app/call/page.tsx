@@ -1583,14 +1583,6 @@ export default function CallPage() {
               >
                 {summarising ? "ending\u2026" : "End session"}
               </button>
-              <button
-                type="button"
-                onClick={() => setRightMin(true)}
-                title="minimise"
-                className="px-4 py-3 font-mono text-sm text-muted transition hover:text-bone"
-              >
-                {"\u229F"}
-              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto px-5 py-4">
