@@ -679,7 +679,12 @@ export default function CallPage() {
     const res = await fetch("/api/interview/context", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: room }),
+      body: JSON.stringify({
+        sessionId: room,
+        // Phase 2: if this call is linked to a client, pull their profile + past
+        // call history into the plan's context automatically.
+        companyId: linkedCompanyRef.current?.id || null,
+      }),
     });
     const ctx = await res.json();
     knowledgeRef.current = ctx.context || "";
