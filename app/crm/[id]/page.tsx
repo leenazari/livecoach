@@ -202,6 +202,21 @@ export default function CompanyDetailPage() {
 
       {err && <p className="mb-3 font-mono text-[0.66rem] text-rust">{err}</p>}
 
+      {company.profile &&
+        typeof company.profile === "object" &&
+        typeof (company.profile as any).brief === "string" &&
+        (company.profile as any).brief.trim() && (
+          <div className="mb-5 rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
+            <p className="mb-1.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sky">
+              {"◆"} What we know{" "}
+              <span className="text-muted">- learned from your calls</span>
+            </p>
+            <p className="font-sans text-sm leading-relaxed text-bone/85">
+              {(company.profile as any).brief}
+            </p>
+          </div>
+        )}
+
       <div className="grid gap-5 lg:grid-cols-2">
         {/* CORE + CUSTOM FIELDS */}
         <section className="flex flex-col gap-4">

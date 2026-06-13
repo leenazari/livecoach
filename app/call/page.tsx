@@ -1097,6 +1097,18 @@ export default function CallPage() {
       cachedSigRef.current = sig;
       setSummary(data.summary);
       setStatus("summary ready");
+      // Phase 3: if this call is linked to a client, fold the scorecard into
+      // that client's running profile (fire-and-forget, never blocks).
+      if (linkedCompanyRef.current && data.summary) {
+        fetch("/api/crm/update-profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            companyId: linkedCompanyRef.current.id,
+            summary: data.summary,
+          }),
+        }).catch(() => {});
+      }
     } catch (e: any) {
       setStatus(`error: ${e.message}`);
     } finally {
