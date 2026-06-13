@@ -247,6 +247,11 @@ export async function POST(req: NextRequest) {
     brief = typeof body.brief === "string" ? body.brief : "";
     role = typeof body.role === "string" ? body.role : "";
     const knowledgeContext = body.knowledgeContext;
+    const curatedFocus: string[] = Array.isArray(body.focusAreas)
+      ? body.focusAreas
+          .filter((x: any) => typeof x === "string" && x.trim())
+          .slice(0, 12)
+      : [];
 
     let context = typeof knowledgeContext === "string" ? knowledgeContext : "";
     if (context.length > MAX_CONTEXT_CHARS) {
@@ -293,7 +298,13 @@ Output ONLY valid JSON (no markdown, no preamble):
     const userMsg = `INTENT BRIEF (top priority): ${brief || "(none given)"}
 
 ROLE / TITLE: ${role || "(not specified)"}
-
+${
+  curatedFocus.length
+    ? `\nFIXED FOCUS AREAS - the caller has ALREADY chosen and RANKED these. Use EXACTLY these as the "focusAreas" (do NOT add, remove, merge, or reorder them), and build the read/character, opening questions, playbook AND goals AROUND them, in this exact priority order:\n${curatedFocus
+        .map((f, i) => `${i + 1}. ${f}`)
+        .join("\n")}\n`
+    : ""
+}
 SUPPORTING CONTEXT - uploaded document(s) / researched background / notes. This is the substance of what the call is about; use it heavily and specifically:
 ${context || "(none provided)"}
 
@@ -330,6 +341,11 @@ Return the JSON plan now.`;
     // If parsing dropped the array, try to recover it directly from the text.
     if (focusAreas.length === 0) {
       focusAreas = salvageFocusAreas(raw).slice(0, 10);
+    }
+    // If the caller supplied a curated/ranked focus, that is authoritative -
+    // the rest of the plan was built around it; keep their exact list & order.
+    if (curatedFocus.length > 0) {
+      focusAreas = curatedFocus.slice(0, 10);
     }
 
     const character = typeof plan.character === "string" ? plan.character : "";

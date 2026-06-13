@@ -617,6 +617,7 @@ export default function CallPage() {
       body: JSON.stringify({
         brief: brief || null,
         role: role || null,
+        focusAreas: suggestedCompsRef.current,
         knowledgeContext: [
           knowledgeRef.current,
           backgroundRef.current
@@ -686,7 +687,10 @@ export default function CallPage() {
     // The feed renders newest-first (reversed), so insert the openers in
     // reverse: the warm/gentlest one (created first) then lands at the TOP,
     // gentle probe second, exploratory third - instead of scrolling off.
-    setSuggestions((prev) => [...prev, ...[...cards].reverse()]);
+    setSuggestions((prev) => [
+      ...prev.filter((s) => s.kind !== "opening"),
+      ...[...cards].reverse(),
+    ]);
     recentTextsRef.current = [
       ...cards.map((c) => c.text),
       ...recentTextsRef.current,
@@ -1513,7 +1517,7 @@ export default function CallPage() {
         <div className="flex flex-col items-start gap-3 border-t border-edge bg-ink/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="font-mono text-[0.63rem] leading-relaxed text-muted">
             {suggestedComps.length > 0
-              ? "Plan built. Rank your focus, then Start call. Rebuild refreshes the read, background + playbook - your focus stays."
+              ? "Plan built. Rank or delete focus areas, then Refresh from focus rebuilds the read, questions, playbook & goals around your edited focus - your focus list stays exactly as you set it."
               : "Nothing generates until you build - no wasted calls while you type."}
           </p>
           <div className="flex shrink-0 gap-2">
@@ -1525,7 +1529,7 @@ export default function CallPage() {
               {prepping
                 ? "building..."
                 : suggestedComps.length > 0
-                ? "Rebuild plan"
+                ? "Refresh from focus"
                 : "Build plan"}
             </button>
             {suggestedComps.length > 0 && (
