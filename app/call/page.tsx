@@ -1326,19 +1326,19 @@ export default function CallPage() {
 
         {s.pending && !s.text ? (
           <div className={`${compact ? "px-3 pb-2.5 pt-1.5" : "px-4 pb-4 pt-2"}`}>
-            <span className={`thinking font-display ${compact ? "text-sm" : "text-lg"}`}>
+            <span className={`thinking font-display ${compact ? "text-lg" : "text-lg"}`}>
               reading the room...
             </span>
           </div>
         ) : (
           <>
-            <div className={`${compact ? "px-3 pb-2.5 pt-1.5" : "px-4 pb-4 pt-2"}`}>
-              <p className={`font-display font-medium leading-snug text-bone ${compact ? "text-[0.95rem]" : "text-[1.45rem]"}`}>
+            <div className={`${compact ? "px-4 pb-3.5 pt-2" : "px-4 pb-4 pt-2"}`}>
+              <p className={`font-display font-medium leading-snug text-bone ${compact ? "text-[1.3rem]" : "text-[1.45rem]"}`}>
                 {s.text}
               </p>
               {s.why && (
                 <p
-                  className={`mt-2.5 font-mono text-[0.62rem] uppercase tracking-[0.18em] ${meta.whyColor}`}
+                  className={`mt-2.5 font-mono uppercase tracking-[0.18em] ${meta.whyColor} ${compact ? "text-[0.72rem]" : "text-[0.62rem]"}`}
                 >
                   {s.why}
                 </p>
@@ -2468,9 +2468,9 @@ export default function CallPage() {
               </p>
             ) : (
               <div
-                className="grid gap-2.5"
+                className="grid gap-3"
                 style={{
-                  gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+                  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
                 }}
               >
                 {[...pinned, ...feed].map((s) => renderCard(s, true))}
