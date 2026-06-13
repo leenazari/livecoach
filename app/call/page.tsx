@@ -1475,20 +1475,15 @@ export default function CallPage() {
                     ))}
                   </div>
                 </div>
-                {["your read", "opening questions", "playbook", "goals"].map(
-                  (label) => (
-                    <div key={label}>
-                      <p className="mb-2 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-muted">
-                        {label}{" "}
-                        <span className="text-muted/60">{"\u00B7"} building...</span>
-                      </p>
-                      <div className="flex flex-col gap-1.5">
-                        <div className="h-2.5 w-11/12 animate-pulse rounded bg-panel2/70" />
-                        <div className="h-2.5 w-3/4 animate-pulse rounded bg-panel2/70" />
-                      </div>
-                    </div>
-                  )
-                )}
+                <MatrixRain
+                  messages={[
+                    "reading the brief",
+                    "folding in the document",
+                    "shaping the approach",
+                    "writing the playbook",
+                    "setting the goals",
+                  ]}
+                />
               </>
             ) : prepping ? (
               <MatrixRain
