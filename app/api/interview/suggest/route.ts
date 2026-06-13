@@ -13,6 +13,7 @@ export async function POST(req: NextRequest) {
       transcript,
       latest,
       latestSpeaker,
+      subjectName,
       role,
       callType,
       previousSuggestions,
@@ -140,7 +141,13 @@ CONTENT:
       ? `${latestSpeaker}'s latest answer:`
       : `Latest answer (from the person who just spoke):`;
 
-    const userMsg = `TRANSCRIPT (speaker-labelled - the interviewer plus one or more named participants):
+    const userMsg = `${
+      subjectName
+        ? `The main person being spoken with is named "${subjectName}" - use THIS exact spelling whenever you name them, even if the transcript spells it differently (auto-transcription mishears names).
+
+`
+        : ""
+    }TRANSCRIPT (speaker-labelled - the interviewer plus one or more named participants):
 ${transcript || "(interview just started)"}
 
 Target competencies for this interview: ${focusList || "(not specified)"}

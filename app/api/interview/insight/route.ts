@@ -13,7 +13,7 @@ export const maxDuration = 30;
 // already parses: <statement> ||WHY|| <short tag>.
 export async function POST(req: NextRequest) {
   try {
-    const { knowledgeContext, transcript, role, recentInsights } =
+    const { knowledgeContext, transcript, role, subjectName, recentInsights } =
       await req.json();
 
     if (!transcript || typeof transcript !== "string") {
@@ -66,7 +66,13 @@ Return HOLD if there is genuinely nothing substantive to add (small talk, logist
             .join("\n")}`
         : "";
 
-    const userMsg = `DISCUSSION SO FAR (speaker-labelled, most recent last):
+    const userMsg = `${
+      subjectName
+        ? `The main person is named "${subjectName}" - use THIS exact spelling if you name them, even if the transcript spells it differently.
+
+`
+        : ""
+    }DISCUSSION SO FAR (speaker-labelled, most recent last):
 ${transcript}${recent}
 
 Give the single best thing to say now to solidify the current idea - or HOLD.`;

@@ -234,6 +234,7 @@ function buildFallback(brief: string, role: string, callTypeIn: string) {
     character,
     openingQuestions: OPENERS[callType],
     playbook: PLAYBOOK[callType],
+    privateNotes: [],
   };
 }
 
@@ -260,7 +261,7 @@ Any SUPPORTING CONTEXT below - an uploaded document, a researched page, notes - 
 There may be no document at all - in that case build the plan from the intent alone.
 
 Produce a plan that drives the conversation toward the caller's intent:
-1. focusAreas: 6-9 topics/competencies to assess or explore, RANKED most-important-first for THIS intent. Short keyword labels (1-4 words), specific to the intent AND to the uploaded document's specifics - not generic filler.
+1. focusAreas: 6-9 topics/competencies to assess or explore, RANKED most-important-first for THIS intent. Short keyword labels (1-4 words), specific to the intent AND to the uploaded document's specifics - not generic filler. These are topics you will explore OPENLY with the other party in the room, so EVERY focus area must be appropriate to raise in front of them. NEVER put the caller's own internal or sensitive matters here - their own team's capacity, their own staff's availability, their own costs/margins, their negotiating limits or walk-away, internal doubts. Those are private and go in privateNotes (item 6), never in a focus area the live cues will push you to ask about.
 2. character: 1-2 sentences describing who/what the caller is looking for or the outcome they want from this conversation, inferred from the intent (and any document).
    Also determine:
    - callType: one of "interview", "sales", "support", or "general" - whichever best fits the intent.
@@ -273,7 +274,7 @@ Produce a plan that drives the conversation toward the caller's intent:
 4. openingQuestions: 6 CANDIDATE questions to open the conversation, each as { "q": "...", "why": "short reason", "opener": true|false }.
    A true opener eases the person in and surfaces their MOTIVATION, context, and what they care about - warm and inviting, one clear question. Tag these "opener": true.
    Tag "opener": false for anything that is a hypothetical stress-test, pressure scenario (e.g. "how would you feel if I gave you X with no Y"), gotcha, or loaded multi-clause challenge - that probing belongs LATER in the conversation, never at the top.
-   Provide AT LEAST 3 strong openers (opener:true). List the opener:true questions first, ordered gentlest -> slightly more searching.
+   Provide AT LEAST 3 strong openers (opener:true). List the opener:true questions first, ordered gentlest -> slightly more searching. Every opening question must be one you would be comfortable asking with everyone in the room - never about the caller's own internal matters or position.
 5. playbook: 4-6 concrete, in-the-moment TACTICS tailored to THIS call type and intent - the practical moves the caller should be ready to make on the call. Each item is { "label": "short tactic name", "detail": "one specific, actionable line" }. Adapt the tactics to the call type:
    - sales / discovery: an opening discovery move, how to qualify (budget / authority / timeline), the single most likely objection and how to handle it, a buying-signal vs mere-politeness signal to watch for.
    - support: how to triage the issue, how to de-escalate if it turns tense, how to confirm the resolution actually landed.
@@ -281,8 +282,10 @@ Produce a plan that drives the conversation toward the caller's intent:
    - general: how to build rapport, the key thing to clarify early, how to steer toward the goal without forcing it.
    Ground every tactic in the ACTUAL intent AND the specifics of the uploaded document - reference the real idea/product/person by name. Never generic advice that could apply to any call.
 
+6. privateNotes: 0-5 things the caller should KEEP IN MIND but must NOT say or raise on the call with the other party present - their own internal constraints, sensitivities, leverage, or risks (e.g. "your team is already at capacity - don't signal this to them", "your real walk-away is X", "keep Mark's limited availability internal"). For the caller's eyes only; these NEVER become focus areas, questions, or cues. Empty array if there are none.
+
 Output ONLY valid JSON (no markdown, no preamble):
-{ "callType": "interview|sales|support|general", "subjectName": "...", "approach": { "goal": "...", "premise": "...", "strategy": "direct|warm-up-then-pivot", "pathway": ["..."] }, "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}], "playbook": [{"label":"...","detail":"..."}] }`;
+{ "callType": "interview|sales|support|general", "subjectName": "...", "approach": { "goal": "...", "premise": "...", "strategy": "direct|warm-up-then-pivot", "pathway": ["..."] }, "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}], "playbook": [{"label":"...","detail":"..."}], "privateNotes": ["..."] }`;
 
     const userMsg = `INTENT BRIEF (top priority): ${brief || "(none given)"}
 
@@ -388,6 +391,12 @@ Return the JSON plan now.`;
           .map((p: any) => ({ label: String(p.label), detail: String(p.detail) }))
       : [];
 
+    const privateNotes = Array.isArray(plan.privateNotes)
+      ? plan.privateNotes
+          .filter((x: any) => typeof x === "string" && x.trim())
+          .slice(0, 6)
+      : [];
+
     // GUARANTEE a usable plan. If the model gave us nothing parseable, fall
     // back to a deterministic, call-type-aware plan so the panel always
     // renders. degraded:true tells the client it's the generic safety net.
@@ -404,6 +413,7 @@ Return the JSON plan now.`;
       character,
       openingQuestions,
       playbook,
+      privateNotes,
       degraded: false,
     });
   } catch (err: any) {

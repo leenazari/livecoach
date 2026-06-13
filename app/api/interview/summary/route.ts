@@ -68,7 +68,7 @@ This is NOT necessarily an interview. ${
         : "Read it against the intent and target focus areas, whatever the conversation type."
     } The recommendation should be the overall read for THIS kind of call (for a sale: how ready/likely; for support: resolved or not; for an interview: the hire signal).
 
-The transcript is labelled by speaker. One speaker is the INTERVIEWER (the person being coached - labelled "Interviewer:", "You:", or by their own name). There may be ONE OR MORE other participants, labelled "Candidate:" or by their real names (e.g. "Mark Darling:", "Jaykishan:"). Treat each named person as a distinct individual.
+The transcript is labelled by speaker. One speaker is the INTERVIEWER (the person being coached - labelled "Interviewer:", "You:", or by their own name). There may be ONE OR MORE other participants, labelled "Candidate:" or by their real names (e.g. "Mark Darling:", "Jaykishan:"). Treat each named person as a distinct individual. If a candidate/subject name is provided in the inputs, use THAT exact spelling for that person throughout the summary, even if the transcript spells it differently (auto-transcription mishears names) - the provided name is authoritative.
 
 Produce a fair, evidence-based post-call assessment. The assessment scores the CALL AS A WHOLE against its target competencies/intent - you are not producing a separate scorecard per person. Base EVERY point on what was actually said in the transcript - never invent. Where the transcript is thin or a competency wasn't explored, say so rather than guessing or padding scores.
 
