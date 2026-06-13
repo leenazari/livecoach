@@ -122,6 +122,7 @@ export default function CallPage() {
   const [summaryTranscript, setSummaryTranscript] = useState("");
   const [playbook, setPlaybook] = useState<{ label: string; detail: string }[]>([]);
   const [privateNotes, setPrivateNotes] = useState<string[]>([]);
+  const [goals, setGoals] = useState<{ text: string; liked?: boolean }[]>([]);
   const [publicLink, setPublicLink] = useState("");
   const [background, setBackground] = useState("");
   const [researching, setResearching] = useState(false);
@@ -653,6 +654,13 @@ export default function CallPage() {
         ? data.privateNotes.filter((x: any) => typeof x === "string" && x.trim())
         : []
     );
+    setGoals(
+      Array.isArray(data.goals)
+        ? data.goals
+            .filter((x: any) => typeof x === "string" && x.trim())
+            .map((t: string) => ({ text: t }))
+        : []
+    );
     if (typeof data.callType === "string") setCallType(data.callType);
     if (
       typeof data.subjectName === "string" &&
@@ -926,6 +934,27 @@ export default function CallPage() {
     } catch {
       /* non-blocking */
     }
+  };
+
+  const goalThumbUp = (i: number) => {
+    const g = goals[i];
+    if (g && !g.liked)
+      likedRef.current = [
+        ...likedRef.current,
+        { text: g.text, why: "goal", kind: "goal" },
+      ];
+    setGoals((prev) =>
+      prev.map((x, idx) => (idx === i ? { ...x, liked: true } : x))
+    );
+  };
+  const goalThumbDown = (i: number) => {
+    const g = goals[i];
+    if (g)
+      dislikedRef.current = [
+        ...dislikedRef.current,
+        { text: g.text, why: "goal", kind: "goal" },
+      ];
+    setGoals((prev) => prev.filter((_, idx) => idx !== i));
   };
 
   const ordered = [...lines].reverse();
@@ -1709,6 +1738,43 @@ export default function CallPage() {
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {rightTab === "summary" ? (
                 <div className="space-y-4">
+                  {goals.length > 0 && (
+                    <div className="rounded-xl border border-amber/30 bg-amber/[0.05] p-3.5">
+                      <p className="mb-2 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-amber">
+                        Goals for this call
+                      </p>
+                      <ul className="flex flex-col gap-1.5">
+                        {goals.map((g, i) => (
+                          <li
+                            key={i}
+                            className="flex items-start gap-2 font-sans text-[0.82rem] leading-snug text-bone/85"
+                          >
+                            <span className="mt-0.5 flex shrink-0 items-center gap-1">
+                              <button
+                                onClick={() => goalThumbUp(i)}
+                                title="good goal"
+                                className={`text-[0.7rem] leading-none transition ${
+                                  g.liked
+                                    ? "text-sage"
+                                    : "text-muted hover:text-sage"
+                                }`}
+                              >
+                                {"\u{1F44D}"}
+                              </button>
+                              <button
+                                onClick={() => goalThumbDown(i)}
+                                title="remove goal"
+                                className="text-[0.7rem] leading-none text-muted transition hover:text-rust"
+                              >
+                                {"\u{1F44E}"}
+                              </button>
+                            </span>
+                            <span>{g.text}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {suggestedComps.length > 0 && (
                     <div>
                       <p className="mb-2 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-amber">

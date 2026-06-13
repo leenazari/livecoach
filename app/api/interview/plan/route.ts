@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -21,7 +21,7 @@ async function callModelWithTimeout(system: string, userMsg: string, ms: number)
   try {
     return await anthropic.messages.create(
       {
-        model: CLAUDE_MODEL_LIVE,
+        model: CLAUDE_MODEL_PRO,
         // Generous budget: the full JSON plan (approach + 6-9 focus areas +
         // 6 questions + 6 playbook tactics) overran the old 1200-token cap and
         // truncated mid-object, which made JSON.parse fail and returned an
@@ -235,6 +235,7 @@ function buildFallback(brief: string, role: string, callTypeIn: string) {
     openingQuestions: OPENERS[callType],
     playbook: PLAYBOOK[callType],
     privateNotes: [],
+    goals: [],
   };
 }
 
@@ -281,11 +282,13 @@ Produce a plan that drives the conversation toward the caller's intent:
    - interview: what "good" looks like for the top focus, a STAR probe to draw out real evidence, a common dodge to watch for.
    - general: how to build rapport, the key thing to clarify early, how to steer toward the goal without forcing it.
    Ground every tactic in the ACTUAL intent AND the specifics of the uploaded document - reference the real idea/product/person by name. Never generic advice that could apply to any call.
+   TONE (important - the detail is for a real human to say warmly): write each tactic the way a thoughtful, friendly, intellectually-curious partner would - warm, collaborative, softened. If you suggest something to SAY, phrase it as a warm person actually would: inviting and curious, NOT a scripted command, ultimatum, or directive. Give the MOVE plus a friendly way to make it, so the host adapts it in their own voice. BAN bossy/blunt openers like "I want you to...", "Before we talk X, I want to be clear...", "That's your role here", "explicitly say:". Lead with curiosity and partnership, never control. This is a conversation between collaborators, not a sales script.
 
 6. privateNotes: 0-5 things the caller should KEEP IN MIND but must NOT say or raise on the call with the other party present - their own internal constraints, sensitivities, leverage, or risks (e.g. "your team is already at capacity - don't signal this to them", "your real walk-away is X", "keep Mark's limited availability internal"). For the caller's eyes only; these NEVER become focus areas, questions, or cues. Empty array if there are none.
+7. goals: 3-6 SHORT, concrete outcomes the caller should work TOWARD on this call - what "a good call" looks like (e.g. "agree Phase 1 scope", "understand the therapeutic value of the books", "confirm who has final say"). Tickable objectives in plain words, ranked most-important-first. These pre-populate the caller's live goal checklist.
 
 Output ONLY valid JSON (no markdown, no preamble):
-{ "callType": "interview|sales|support|general", "subjectName": "...", "approach": { "goal": "...", "premise": "...", "strategy": "direct|warm-up-then-pivot", "pathway": ["..."] }, "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}], "playbook": [{"label":"...","detail":"..."}], "privateNotes": ["..."] }`;
+{ "callType": "interview|sales|support|general", "subjectName": "...", "approach": { "goal": "...", "premise": "...", "strategy": "direct|warm-up-then-pivot", "pathway": ["..."] }, "focusAreas": ["..."], "character": "...", "openingQuestions": [{"q":"...","why":"...","opener":true}], "playbook": [{"label":"...","detail":"..."}], "privateNotes": ["..."], "goals": ["..."] }`;
 
     const userMsg = `INTENT BRIEF (top priority): ${brief || "(none given)"}
 
@@ -399,6 +402,10 @@ Return the JSON plan now.`;
           .slice(0, 6)
       : [];
 
+    const goals = Array.isArray(plan.goals)
+      ? plan.goals.filter((x: any) => typeof x === "string" && x.trim()).slice(0, 8)
+      : [];
+
     // GUARANTEE a usable plan. If the model gave us nothing parseable, fall
     // back to a deterministic, call-type-aware plan so the panel always
     // renders. degraded:true tells the client it's the generic safety net.
@@ -409,7 +416,7 @@ Return the JSON plan now.`;
         {
           headers: {
             "x-usage": JSON.stringify(planUsage || {}),
-            "x-model": "haiku",
+            "x-model": "sonnet",
           },
         }
       );
@@ -425,12 +432,13 @@ Return the JSON plan now.`;
         openingQuestions,
         playbook,
         privateNotes,
+        goals,
         degraded: false,
       },
       {
         headers: {
           "x-usage": JSON.stringify(planUsage || {}),
-          "x-model": "haiku",
+          "x-model": "sonnet",
         },
       }
     );
