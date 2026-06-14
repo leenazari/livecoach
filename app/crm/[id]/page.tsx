@@ -366,7 +366,7 @@ export default function CompanyDetailPage() {
         typeof company.profile === "object" &&
         typeof (company.profile as any).brief === "string" &&
         (company.profile as any).brief.trim() && (
-          <div className="mb-5 rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
+          <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
             <p className="mb-1.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sky">
               {"◆"} What we know{" "}
               <span className="text-muted">- learned from your calls</span>
@@ -374,6 +374,35 @@ export default function CompanyDetailPage() {
             <p className="font-sans text-sm leading-relaxed text-bone/85">
               {(company.profile as any).brief}
             </p>
+          </div>
+        )}
+
+      {/* PLAYBOOK - the main play to move this client toward the outcome you
+          want. AI-built from the history, refreshed after each call. */}
+      {company.profile &&
+        typeof company.profile === "object" &&
+        Array.isArray((company.profile as any).playbook) &&
+        (company.profile as any).playbook.length > 0 && (
+          <div className="mb-5 rounded-xl border border-amber/40 bg-amber/[0.06] p-4">
+            <p className="mb-2.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+              {"▸"} Playbook{" "}
+              <span className="text-muted">
+                - the main play to move {company.name} forward
+              </span>
+            </p>
+            <ul className="flex flex-col gap-2">
+              {((company.profile as any).playbook as string[]).map((p, i) => (
+                <li
+                  key={i}
+                  className="flex gap-2.5 font-sans text-sm leading-snug text-bone/90"
+                >
+                  <span className="mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full bg-amber/20 font-mono text-[0.6rem] text-amber">
+                    {i + 1}
+                  </span>
+                  <span>{p}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 

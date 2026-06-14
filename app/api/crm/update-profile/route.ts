@@ -39,6 +39,12 @@ export async function POST(req: NextRequest) {
       company.profile && typeof company.profile === "object"
         ? String((company.profile as any).brief || "")
         : "";
+    const existingPlaybook: string[] =
+      company.profile &&
+      typeof company.profile === "object" &&
+      Array.isArray((company.profile as any).playbook)
+        ? (company.profile as any).playbook
+        : [];
 
     const s = summary as any;
     const callText = [
@@ -61,6 +67,7 @@ export async function POST(req: NextRequest) {
 
 {
   "brief": "the UPDATED running profile - a tight <=180-word plain-English memory of durable facts about this client (who they are, what they want, key people, decisions, open threads on either side, preferences). Merge with the existing brief: keep what's true, update what changed, add what's new, drop one-off noise. No call-by-call log.",
+  "playbook": [ "3-6 short, punchy strategic plays - the MAIN moves to advance THIS specific client toward the outcome the host wants (win the deal, land the project, get the yes). Ordered most important first. Each is ONE short sentence, practical and specific to this client and the open threads - not generic sales advice. This is the host's game plan for the relationship." ],
   "opportunities": [ { "title": "short name for a concrete opportunity FOR US this call surfaced (a deal, upsell, a need we can serve, a next project)", "detail": "one line grounding it in what was said", "value": <rough GBP number or null> } ],
   "followUp": { "subject": "email subject", "body": "a warm, ready-to-review DRAFT follow-up email to the client referencing what was discussed and the sensible next steps" }
 }
@@ -83,6 +90,7 @@ ${callText || "(little of note)"}
 Return the JSON now.`;
 
     let brief = existingBrief;
+    let playbook: string[] = existingPlaybook;
     let opportunities: { title: string; detail: string; value: number | null }[] = [];
     let followUp: { subject: string; body: string } | null = null;
 
@@ -112,6 +120,13 @@ Return the JSON now.`;
         if (parsed) {
           if (typeof parsed.brief === "string" && parsed.brief.trim()) {
             brief = parsed.brief.trim();
+          }
+          if (Array.isArray(parsed.playbook)) {
+            const pb = parsed.playbook
+              .filter((p: any) => typeof p === "string" && p.trim())
+              .map((p: string) => p.trim())
+              .slice(0, 6);
+            if (pb.length) playbook = pb;
           }
           if (Array.isArray(parsed.opportunities)) {
             opportunities = parsed.opportunities
@@ -144,7 +159,9 @@ Return the JSON now.`;
     // Store profile.
     await supabaseAdmin
       .from("companies")
-      .update({ profile: { brief, updated: new Date().toISOString() } })
+      .update({
+        profile: { brief, playbook, updated: new Date().toISOString() },
+      })
       .eq("id", companyId);
 
     // Idempotent per call: clear this session's prior AI rows, then re-insert.
