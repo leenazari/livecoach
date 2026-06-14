@@ -189,6 +189,14 @@ export default function CallPage() {
   const goalsRef = useRef<{ text: string; liked?: boolean }[]>([]);
   const privateNotesRef = useRef<string[]>([]);
   const linkedCompanyRef = useRef<{ id: string; name: string } | null>(null);
+  // Scheduled-call link. When the call screen is opened from an Upcoming call
+  // (?upcoming=<id>), the prep plan built here is auto-saved against that row and
+  // reloaded next time, so prepping in advance survives leaving the page.
+  const upcomingIdRef = useRef<string | null>(null);
+  const lastPrepSigRef = useRef("");
+  // Guards the auto-save from firing (and clobbering a saved plan with empty
+  // initial state) before any reload of an existing plan has finished.
+  const prepHydratedRef = useRef(false);
   const cachedSummaryRef = useRef<any>(null);
   const cachedSigRef = useRef("");
   const linesRef = useRef<Line[]>([]);
@@ -289,9 +297,85 @@ export default function CallPage() {
     [linkSession]
   );
 
+  // Restore a prep plan that was built in advance for a scheduled call (the prep
+  // snapshot stored on the upcoming_calls row), so reopening prep picks up where
+  // you left off instead of from a blank slate.
+  const hydrateFromPrep = useCallback((prep: any) => {
+    if (!prep || typeof prep !== "object") return;
+    try {
+      if (typeof prep.brief === "string" && prep.brief) setBrief(prep.brief);
+      if (typeof prep.role === "string") setRole(prep.role);
+      if (typeof prep.callType === "string") setCallType(prep.callType);
+      if (typeof prep.candidate === "string" && prep.candidate) {
+        setCandidate(prep.candidate);
+        candidateRef.current = prep.candidate;
+      }
+      if (typeof prep.character === "string") setCharacter(prep.character);
+      if (Array.isArray(prep.suggestedComps)) {
+        const list = prep.suggestedComps.filter(
+          (x: any) => typeof x === "string"
+        );
+        setSuggestedComps(list);
+        suggestedCompsRef.current = list;
+      }
+      if (Array.isArray(prep.selectedComps)) {
+        const list = prep.selectedComps.filter(
+          (x: any) => typeof x === "string"
+        );
+        setSelectedComps(list);
+        selectedCompsRef.current = list;
+      }
+      if (Array.isArray(prep.goals)) {
+        const g: { text: string; liked?: boolean }[] = [];
+        for (const x of prep.goals) {
+          if (typeof x === "string" && x.trim()) g.push({ text: x.trim() });
+          else if (x && typeof x.text === "string" && x.text.trim())
+            g.push({ text: x.text.trim(), liked: !!x.liked });
+        }
+        setGoals(g);
+      }
+      if (Array.isArray(prep.playbook)) {
+        setPlaybook(
+          prep.playbook.filter(
+            (p: any) =>
+              p && typeof p.label === "string" && typeof p.detail === "string"
+          )
+        );
+      }
+      if (Array.isArray(prep.privateNotes)) {
+        setPrivateNotes(
+          prep.privateNotes.filter((x: any) => typeof x === "string" && x.trim())
+        );
+      }
+      if (Array.isArray(prep.openingQuestions) && prep.openingQuestions.length) {
+        const cards: Suggestion[] = prep.openingQuestions.map((item: any) => ({
+          id: ++suggestIdRef.current,
+          text: typeof item === "string" ? item : item.text || item.q || "",
+          why: typeof item === "string" ? "" : item.why || "",
+          followup: "",
+          at: timeNow(),
+          pending: false,
+          kind: "opening" as const,
+          pinned: false,
+        }));
+        setSuggestions((prev) => [
+          ...prev.filter((s) => s.kind !== "opening"),
+          ...cards.reverse(),
+        ]);
+      }
+      if (prep.planStage === "full" || prep.planStage === "focus") {
+        setPlanStage(prep.planStage);
+      }
+      setStatus("loaded your saved prep - pick up where you left off");
+    } catch {
+      /* ignore a malformed snapshot */
+    }
+  }, []);
+
   // Preload from a scheduled (upcoming) call:
-  // /call?company=&companyName=&intent=&meetingUrl=  -> link the client, fill
-  // the intent, and set up the Meet/Teams/Zoom link so the user lands ready.
+  // /call?company=&companyName=&intent=&meetingUrl=&upcoming=  -> link the client,
+  // fill the intent, set up the meeting link, and reload any saved prep plan so
+  // the user lands ready.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const p = new URLSearchParams(window.location.search);
@@ -299,14 +383,90 @@ export default function CallPage() {
     const cname = p.get("companyName");
     const intent = p.get("intent");
     const url = p.get("meetingUrl");
+    const upcoming = p.get("upcoming");
     if (cid && cname) handleLinkCompany({ id: cid, name: cname });
     if (intent) setBrief(intent);
     if (url) {
       setMeetingUrl(url);
       setSource("meet");
     }
+    if (upcoming) {
+      upcomingIdRef.current = upcoming;
+      (async () => {
+        try {
+          const res = await fetch(`/api/crm/upcoming/${upcoming}`);
+          if (res.ok) {
+            const { call } = await res.json();
+            if (call?.company_id && call?.company && !linkedCompanyRef.current) {
+              handleLinkCompany({ id: call.company_id, name: call.company });
+            }
+            hydrateFromPrep(call?.prep);
+          }
+        } catch {
+          /* best-effort reload */
+        } finally {
+          // Only allow auto-save once any existing plan has been reloaded.
+          prepHydratedRef.current = true;
+        }
+      })();
+    } else {
+      prepHydratedRef.current = true;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-save the prep plan against the scheduled call it was opened from, so
+  // building it in advance survives leaving the page. Debounced, and only while
+  // prepping (once the call is live the prep is finalised). Skips saving when
+  // nothing has changed.
+  useEffect(() => {
+    if (!upcomingIdRef.current || !prepHydratedRef.current) return;
+    if (callLiveRef.current || planStage === "none") return;
+    const openingQuestions = suggestions
+      .filter((s) => s.kind === "opening")
+      .map((s) => ({ text: s.text, why: s.why }));
+    const snapshot = {
+      version: 1,
+      brief,
+      role,
+      callType,
+      candidate,
+      character,
+      suggestedComps,
+      selectedComps,
+      goals,
+      playbook,
+      privateNotes,
+      openingQuestions,
+      planStage,
+    };
+    const sig = JSON.stringify(snapshot);
+    if (sig === lastPrepSigRef.current) return;
+    const t = setTimeout(() => {
+      lastPrepSigRef.current = sig;
+      fetch(`/api/crm/upcoming/${upcomingIdRef.current}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prep: { ...snapshot, savedAt: new Date().toISOString() },
+        }),
+      }).catch(() => {});
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [
+    brief,
+    role,
+    callType,
+    candidate,
+    character,
+    suggestedComps,
+    selectedComps,
+    goals,
+    playbook,
+    privateNotes,
+    planStage,
+    suggestions,
+  ]);
   useEffect(() => {
     selectedCompsRef.current = selectedComps;
   }, [selectedComps]);

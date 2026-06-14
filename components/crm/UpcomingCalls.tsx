@@ -90,13 +90,19 @@ export default function UpcomingCalls() {
     crmFetch(`/api/crm/upcoming/${id}`, { method: "DELETE" }).catch(() => {});
   };
 
-  // Open the call screen preloaded from this scheduled call.
-  const start = (c: Upcoming) => {
+  // Open the call screen preloaded from this scheduled call. The /call screen IS
+  // the prep screen: it opens at the plan stage with this client, intent and link
+  // already loaded, and only goes live when speech starts or you hit Go live. Both
+  // "prep" and "start" route here - prep = prepare ahead, start = jump in now.
+  const openCall = (c: Upcoming) => {
     const qs = new URLSearchParams();
     if (c.company_id) qs.set("company", c.company_id);
     if (c.company) qs.set("companyName", c.company);
     if (c.intent) qs.set("intent", c.intent);
     if (c.meeting_url) qs.set("meetingUrl", c.meeting_url);
+    // Tie this session to the scheduled call so the plan you build saves against
+    // it and reloads next time you open prep.
+    qs.set("upcoming", c.id);
     router.push(`/call${qs.toString() ? `?${qs.toString()}` : ""}`);
   };
 
@@ -174,6 +180,19 @@ export default function UpcomingCalls() {
               className="rounded-lg border border-edge bg-ink/40 px-3.5 py-3"
             >
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <button
+                  type="button"
+                  onClick={() => patch(c.id, { prepped: !c.prepped })}
+                  title={c.prepped ? "prepped - click to unset" : "mark as prepped"}
+                  aria-label="toggle prepped"
+                  className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[0.6rem] leading-none transition ${
+                    c.prepped
+                      ? "border-sky bg-sky text-ink"
+                      : "border-edge text-muted hover:border-sky/60 hover:text-bone"
+                  }`}
+                >
+                  {c.prepped ? "✓" : ""}
+                </button>
                 <span className="font-mono text-[0.6rem] uppercase tracking-wider text-sky">
                   {fmtWhen(c.scheduled_at)}
                 </span>
@@ -187,19 +206,16 @@ export default function UpcomingCalls() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => patch(c.id, { prepped: !c.prepped })}
-                  title={c.prepped ? "marked prepped - click to unset" : "mark prepped"}
-                  className={`rounded-full px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider transition ${
-                    c.prepped
-                      ? "border border-sky bg-sky text-ink"
-                      : "border border-edge text-muted hover:text-bone"
-                  }`}
+                  onClick={() => openCall(c)}
+                  title="Open the prep screen for this call: build the plan, load docs, set your focus. It saves against this call."
+                  className="rounded-full border border-amber/60 bg-amber/15 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
                 >
-                  {c.prepped ? "✓ prepped" : "prep"}
+                  prep ▸
                 </button>
                 <button
                   type="button"
-                  onClick={() => start(c)}
+                  onClick={() => openCall(c)}
+                  title="Jump straight into the live call (same screen, ready to go)"
                   className="rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
                 >
                   start ▸
