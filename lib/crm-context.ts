@@ -133,3 +133,86 @@ export async function gatherClientContext(companyId: string): Promise<string> {
 
   return lines.join("\n");
 }
+
+// Everything across ALL clients, for the global assistant: each client with its
+// profile, open opportunities, waiting drafts and outstanding tasks. Lets the
+// assistant answer "show Alan's to-do" (it resolves the name) or "my to-do"
+// (across everyone) without the user picking a client first.
+export async function gatherGlobalContext(): Promise<string> {
+  const cut = (s: any, n: number) =>
+    typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : "";
+
+  const [companiesRes, draftsRes, oppsRes, summariesRes] = await Promise.all([
+    supabaseAdmin
+      .from("companies")
+      .select("id, name, sector, stage, profile")
+      .limit(200),
+    supabaseAdmin
+      .from("follow_ups")
+      .select("company_id, draft_subject")
+      .eq("status", "draft")
+      .limit(200),
+    supabaseAdmin
+      .from("opportunities")
+      .select("company_id, title, value")
+      .eq("status", "open")
+      .limit(200),
+    supabaseAdmin
+      .from("interview_summaries")
+      .select("company_id, summary, created_at")
+      .not("company_id", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(60),
+  ]);
+
+  const companies = companiesRes.data || [];
+  if (companies.length === 0) {
+    return "The user has no clients in their CRM yet.";
+  }
+
+  const draftsBy = new Map<string, string[]>();
+  for (const d of draftsRes.data || []) {
+    if (!d.company_id) continue;
+    const arr = draftsBy.get(d.company_id) || [];
+    arr.push(d.draft_subject || "(untitled)");
+    draftsBy.set(d.company_id, arr);
+  }
+  const oppsBy = new Map<string, string[]>();
+  for (const o of oppsRes.data || []) {
+    if (!o.company_id) continue;
+    const arr = oppsBy.get(o.company_id) || [];
+    arr.push(`${o.title}${o.value ? ` (~£${o.value})` : ""}`);
+    oppsBy.set(o.company_id, arr);
+  }
+  // Latest call's tasks per company.
+  const tasksBy = new Map<string, string[]>();
+  const seen = new Set<string>();
+  for (const s of summariesRes.data || []) {
+    if (!s.company_id || seen.has(s.company_id)) continue;
+    seen.add(s.company_id);
+    const my = Array.isArray((s.summary as any)?.myNextActions)
+      ? (s.summary as any).myNextActions
+      : [];
+    if (my.length) tasksBy.set(s.company_id, my.slice(0, 4));
+  }
+
+  const lines: string[] = [
+    "YOUR CLIENTS AND YOUR WHOLE PIPELINE. The user may refer to a client by a slightly different name or spelling - match it to the closest client below.",
+    "",
+  ];
+  for (const c of companies as any[]) {
+    const bits: string[] = [
+      `• ${c.name}${c.sector ? ` (${c.sector}${c.stage ? `, ${c.stage}` : ""})` : ""}`,
+    ];
+    const brief = (c.profile || {}).brief;
+    if (brief) bits.push(`    what we know: ${cut(brief, 220)}`);
+    const t = tasksBy.get(c.id);
+    if (t && t.length) bits.push(`    your outstanding tasks: ${t.join("; ")}`);
+    const dr = draftsBy.get(c.id);
+    if (dr && dr.length) bits.push(`    drafts waiting to send: ${dr.join("; ")}`);
+    const op = oppsBy.get(c.id);
+    if (op && op.length) bits.push(`    open opportunities: ${op.join("; ")}`);
+    lines.push(bits.join("\n"));
+  }
+  return lines.join("\n");
+}

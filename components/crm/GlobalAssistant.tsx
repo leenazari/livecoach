@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import ClientAssistant from "@/components/crm/ClientAssistant";
-import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 
-// A floating, always-available assistant. Pass the current client for context
-// (e.g. the call you're on); with none, you pick or name a client to ask about.
-// Reuses the same grounded ClientAssistant under the hood.
+// The assistant trigger + panel. A top-centre pill opens a top-anchored,
+// height-capped panel (never runs off the page). With a client context it's
+// that client; with none it's the GLOBAL assistant - open and just talk, it
+// resolves who you mean or answers across your whole pipeline. No picking first.
 export default function GlobalAssistant({
   companyId,
   companyName,
@@ -15,12 +15,7 @@ export default function GlobalAssistant({
   companyName?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [picked, setPicked] = useState<{ id: string; name: string } | null>(
-    companyId && companyName ? { id: companyId, name: companyName } : null
-  );
-
-  const active =
-    picked || (companyId && companyName ? { id: companyId, name: companyName } : null);
+  const active = companyId && companyName ? { id: companyId, name: companyName } : null;
 
   if (!open) {
     return (
@@ -39,8 +34,6 @@ export default function GlobalAssistant({
     );
   }
 
-  // Top-anchored panel, height-capped with internal scroll, so it can never run
-  // off the bottom of the page.
   return (
     <div className="fixed inset-x-0 top-0 z-50 flex justify-center px-3">
       <div className="mt-3 flex max-h-[86vh] w-[min(480px,96vw)] flex-col overflow-hidden rounded-2xl border border-amber/40 bg-panel shadow-2xl">
@@ -48,42 +41,22 @@ export default function GlobalAssistant({
           <span className="font-mono text-[0.62rem] uppercase tracking-[0.16em] text-amber">
             {"▤"} Assistant{active ? ` · ${active.name}` : ""}
           </span>
-          <div className="flex items-center gap-3">
-            {active && (
-              <button
-                type="button"
-                onClick={() => setPicked(null)}
-                className="font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-amber"
-              >
-                change client
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="font-mono text-sm text-muted transition hover:text-bone"
-            >
-              ✕
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="font-mono text-sm text-muted transition hover:text-bone"
+          >
+            ✕
+          </button>
         </div>
 
         <div className="overflow-y-auto p-3">
-          {active ? (
-            <ClientAssistant
-              key={active.id}
-              companyId={active.id}
-              companyName={active.name}
-              autoListen
-            />
-          ) : (
-            <div className="flex flex-col gap-3 py-2">
-              <p className="font-sans text-[0.82rem] leading-relaxed text-bone/75">
-                Which client do you want to ask about?
-              </p>
-              <CompanyLinkPicker value={null} onChange={(v) => setPicked(v)} />
-            </div>
-          )}
+          <ClientAssistant
+            key={active ? active.id : "global"}
+            companyId={active?.id}
+            companyName={active?.name}
+            autoListen
+          />
         </div>
       </div>
     </div>

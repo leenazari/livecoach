@@ -1,37 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
-import { gatherClientContext } from "@/lib/crm-context";
+import { gatherClientContext, gatherGlobalContext } from "@/lib/crm-context";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
 
-// The per-client AI assistant. POST a message; it loads the full client context
-// + the recent thread, answers as a strategic relationship advisor, stores both
-// turns, and returns the reply. Always explains its reasoning so the user learns
-// the thinking. Drafts emails / scope docs / next-call plans on request.
+// The CRM assistant. With a companyId it's grounded in that ONE client; without
+// one it's GLOBAL - it knows every client + your whole pipeline, so you can just
+// talk ("show Alan's to-do", "what's my to-do list", "which deal is closest").
+// Always explains its reasoning. Drafts on request. Stores the thread (global
+// thread = company_id null).
 export async function POST(req: NextRequest) {
   try {
     const { companyId, message } = await req.json();
-    if (typeof companyId !== "string" || !companyId) {
-      return NextResponse.json({ error: "companyId is required" }, { status: 400 });
-    }
     if (typeof message !== "string" || !message.trim()) {
       return NextResponse.json({ error: "message is required" }, { status: 400 });
     }
+    const isGlobal = typeof companyId !== "string" || !companyId;
 
-    const context = await gatherClientContext(companyId);
+    const context = isGlobal
+      ? await gatherGlobalContext()
+      : await gatherClientContext(companyId);
     if (!context) {
       return NextResponse.json({ error: "client not found" }, { status: 404 });
     }
 
-    // Recent thread for continuity (so "yes, draft it" works).
-    const { data: history } = await supabaseAdmin
+    // Recent thread for continuity. Global thread = rows with company_id null.
+    let histQ = supabaseAdmin
       .from("assistant_messages")
       .select("role, content")
-      .eq("company_id", companyId)
       .order("created_at", { ascending: false })
       .limit(12);
+    histQ = isGlobal
+      ? histQ.is("company_id", null)
+      : histQ.eq("company_id", companyId);
+    const { data: history } = await histQ;
     const priorTurns: { role: "user" | "assistant"; content: string }[] = (
       history || []
     )
@@ -43,24 +47,32 @@ export async function POST(req: NextRequest) {
         content: String(m.content),
       }));
 
+    const scope = isGlobal
+      ? `You are the user's overall CRM assistant. You know ALL their clients and their whole pipeline (below). They might ask about one client ("what do I do next with Alaine"), or across everyone ("what's my to-do list", "which deal is closest to closing"). When they name a client, match it to the closest one in the context even if the spelling is slightly off, and answer about them. When the question is across the board, pull from everyone.`
+      : `You are the user's strategic CRM assistant for ONE client. You help them understand the relationship and move it forward.`;
+
     const system: any[] = [
       {
         type: "text",
-        text: `You are the user's strategic CRM assistant for ONE client. You help them understand the relationship and move it forward - answering questions, suggesting next moves, and drafting things (emails, scope documents, the playbook for the next call) on request.
+        text: `${scope}
 
-GROUND EVERYTHING in the client context provided below. Never invent facts, names, numbers, dates or commitments that aren't supported by it. If you don't know something, say so plainly and say what you'd need.
+GROUND EVERYTHING in the context provided below. Never invent facts, names, numbers, dates or commitments that aren't supported by it. If you don't know something, say so plainly.
 
-ALWAYS EXPLAIN THE WHY. This is non-negotiable: whenever you suggest a next step, a task, or a way to close the deal, give the REASONING behind it in a short, plain "why" - what in the history makes this the right move. The user wants to learn the thinking, not just follow instructions. Never hand over a bare to-do.
+ALWAYS EXPLAIN THE WHY. Non-negotiable: whenever you suggest a next step, a task, or a way to close a deal, give the REASONING in a short, plain "why" - what in the history makes this the right move. The user wants to learn the thinking, not just follow instructions.
 
 BE CONCRETE: real steps, who to contact, roughly when, what to say. When you propose a sequence, order it and explain the order.
 
-OFFER THEN DRAFT: when a next step involves a message or document, briefly offer to draft it, and if the user says yes (or asks directly), write it in full. For an email, give a clear "Subject:" line then the body. For a scope document or next-call playbook, lay it out clearly with short headings or bullets.
+DRAFT FORMATTING: when you write something the user would SEND or SHARE verbatim (an email, a text, a scope doc), put ONLY that sendable text between these exact marker lines:
+---DRAFT---
+<the sendable text only - for an email include a "Subject:" line then the body>
+---END DRAFT---
+Keep your commentary and "why" OUTSIDE the markers.
 
-TONE: warm, sharp, concise. Plain English. Talk like a smart colleague who knows this client well.`,
+TONE: warm, sharp, concise. Plain English, like a smart colleague who knows the book of business well.`,
       },
       {
         type: "text",
-        text: `CLIENT CONTEXT (everything we know):\n\n${context}`,
+        text: `${isGlobal ? "PIPELINE CONTEXT" : "CLIENT CONTEXT"} (everything we know):\n\n${context}`,
         cache_control: { type: "ephemeral" },
       },
     ];
@@ -103,10 +115,17 @@ TONE: warm, sharp, concise. Plain English. Talk like a smart colleague who knows
 
     if (!reply) reply = "Sorry, I couldn't form a reply just then. Try again?";
 
-    // Persist both turns (fire-and-forget on the store itself is fine).
     await supabaseAdmin.from("assistant_messages").insert([
-      { company_id: companyId, role: "user", content: message.trim() },
-      { company_id: companyId, role: "assistant", content: reply },
+      {
+        company_id: isGlobal ? null : companyId,
+        role: "user",
+        content: message.trim(),
+      },
+      {
+        company_id: isGlobal ? null : companyId,
+        role: "assistant",
+        content: reply,
+      },
     ]);
 
     return NextResponse.json({ reply });

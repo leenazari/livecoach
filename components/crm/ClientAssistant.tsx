@@ -32,10 +32,16 @@ export default function ClientAssistant({
   companyName,
   autoListen,
 }: {
-  companyId: string;
-  companyName: string;
+  companyId?: string;
+  companyName?: string;
   autoListen?: boolean;
 }) {
+  // No companyId = the GLOBAL assistant: it knows every client + the pipeline.
+  const isGlobal = !companyId;
+  const threadUrl = companyId
+    ? `/api/crm/companies/${companyId}/assistant`
+    : `/api/crm/assistant/thread`;
+  const label = companyName || "your clients";
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -49,10 +55,11 @@ export default function ClientAssistant({
   const didAutoListen = useRef(false);
 
   useEffect(() => {
-    crmFetch<{ messages: Msg[] }>(`/api/crm/companies/${companyId}/assistant`)
+    crmFetch<{ messages: Msg[] }>(threadUrl)
       .then((d) => setMessages(d.messages || []))
       .catch(() => {});
-  }, [companyId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadUrl]);
 
   useEffect(() => {
     const el = threadRef.current;
@@ -95,7 +102,7 @@ export default function ClientAssistant({
     try {
       const { reply } = await crmFetch<{ reply: string }>("/api/crm/assistant", {
         method: "POST",
-        body: JSON.stringify({ companyId, message: t }),
+        body: JSON.stringify({ companyId: companyId ?? null, message: t }),
       });
       setMessages((p) => [...p, { role: "assistant", content: reply }]);
       if (readAloud) speak(reply);
@@ -170,6 +177,7 @@ export default function ClientAssistant({
   // Save an assistant-written draft into this client's follow-ups, so it lands
   // in your drafts board + dashboard count. Splits a leading "Subject:" line.
   const saveDraft = async (key: string, text: string) => {
+    if (!companyId) return; // global mode: no single client to save against
     const sm = text.match(/^subject:\s*(.+)$/im);
     const subject = sm ? sm[1].trim() : "Follow-up";
     const body = sm ? text.replace(/^subject:.*$/im, "").trim() : text;
@@ -191,24 +199,29 @@ export default function ClientAssistant({
   const clearThread = async () => {
     if (!confirm("Clear this assistant conversation?")) return;
     setMessages([]);
-    crmFetch(`/api/crm/companies/${companyId}/assistant`, {
-      method: "DELETE",
-    }).catch(() => {});
+    crmFetch(threadUrl, { method: "DELETE" }).catch(() => {});
   };
 
-  const chips = [
-    "What do I do next to win this?",
-    "Draft a scope document from our calls",
-    "What are the risks with this client?",
-    "Prep me for the next call",
-  ];
+  const chips = isGlobal
+    ? [
+        "What's my to-do list today?",
+        "Which deal is closest to closing?",
+        "Who have I gone quiet on?",
+        "What should I prioritise this week?",
+      ]
+    : [
+        "What do I do next to win this?",
+        "Draft a scope document from our calls",
+        "What are the risks with this client?",
+        "Prep me for the next call",
+      ];
 
   return (
     <section className="rounded-xl border border-amber/40 bg-amber/[0.04] p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
           {"▤"} Assistant{" "}
-          <span className="text-muted">- ask anything about {companyName}</span>
+          <span className="text-muted">- ask anything about {label}</span>
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -247,9 +260,9 @@ export default function ClientAssistant({
         {messages.length === 0 && !busy && (
           <div>
             <p className="mb-2 font-sans text-[0.82rem] leading-relaxed text-bone/70">
-              I know everything on {companyName} - every call, the focus scores,
-              opportunities, follow-ups and your notes. Ask me how to move the
-              relationship forward and I'll explain the thinking.
+              {isGlobal
+                ? "I know all your clients and your whole pipeline - tasks, drafts, opportunities. Ask me about anyone by name, or across everyone, and I'll explain the thinking."
+                : `I know everything on ${companyName} - every call, the focus scores, opportunities, follow-ups and your notes. Ask me how to move the relationship forward and I'll explain the thinking.`}
             </p>
             <div className="flex flex-wrap gap-1.5">
               {chips.map((c) => (
@@ -299,14 +312,16 @@ export default function ClientAssistant({
                           >
                             copy
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => saveDraft(`${i}-${pi}`, part.text)}
-                            disabled={savedDrafts[`${i}-${pi}`]}
-                            className="rounded-full border border-sage/50 px-2.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-wider text-sage transition hover:bg-sage/15 disabled:opacity-60"
-                          >
-                            {savedDrafts[`${i}-${pi}`] ? "saved ✓" : "save as follow-up"}
-                          </button>
+                          {companyId && (
+                            <button
+                              type="button"
+                              onClick={() => saveDraft(`${i}-${pi}`, part.text)}
+                              disabled={savedDrafts[`${i}-${pi}`]}
+                              className="rounded-full border border-sage/50 px-2.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-wider text-sage transition hover:bg-sage/15 disabled:opacity-60"
+                            >
+                              {savedDrafts[`${i}-${pi}`] ? "saved ✓" : "save as follow-up"}
+                            </button>
+                          )}
                         </span>
                       </div>
                       <p className="whitespace-pre-wrap font-sans text-[0.82rem] leading-relaxed text-bone/90">
