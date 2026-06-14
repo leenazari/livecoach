@@ -107,6 +107,9 @@ export default function CallPage() {
   const [character, setCharacter] = useState("");
   const [callType, setCallType] = useState("general");
   const [callLive, setCallLive] = useState(false);
+  // True once the call has been ended + summarised: freezes the meter and
+  // unmounts the transcription stage so nothing keeps running or billing.
+  const [ended, setEnded] = useState(false);
   const [source, setSource] = useState<"inapp" | "meet">("inapp");
   const [meetingUrl, setMeetingUrl] = useState("");
   const [expandSetup, setExpandSetup] = useState(false);
@@ -163,6 +166,7 @@ export default function CallPage() {
   const dislikedRef = useRef<{ text: string; why: string; kind: string }[]>([]);
   const callStartedAtRef = useRef(0);
   const costTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const callEndedAtRef = useRef<number | null>(null);
   const sonnetCallsRef = useRef(0);
   const callLiveRef = useRef(false);
   // Holds the latest goLive() so the transcript funnel (stable, no deps) can
@@ -222,10 +226,13 @@ export default function CallPage() {
   useEffect(() => {
     if (!meterOn) return;
     const tick = () => {
+      // While live, count transcription time up to now. Once the call has
+      // ended, freeze at the end time so the meter stops climbing (it never
+      // resets to zero - the accrued cost is preserved).
+      const start = callStartedAtRef.current;
+      const until = callLiveRef.current ? Date.now() : callEndedAtRef.current || 0;
       const transcribing =
-        callLiveRef.current && callStartedAtRef.current
-          ? (Date.now() - callStartedAtRef.current) / 1000
-          : 0;
+        start && until ? Math.max(0, (until - start) / 1000) : 0;
       const meet = sourceRef.current === "meet";
       const c = estimateCost(transcribing, 0, {
         deepgramStreams: meet ? 0 : 2,
@@ -1065,6 +1072,14 @@ export default function CallPage() {
       setStatus("not enough conversation yet to summarise");
       return;
     }
+    // End the call NOW. The transcript is already captured in linesRef, so
+    // summarising still works - but the live state stops: the cost meter
+    // freezes at this moment (no more penny-by-penny ticking) and the
+    // transcription stage unmounts so nothing keeps listening or billing.
+    callEndedAtRef.current = Date.now();
+    callLiveRef.current = false;
+    setCallLive(false);
+    setEnded(true);
     setSummaryTranscript(labelled);
     const sig = `${labelled}||${suggestedCompsRef.current.join(",")}`;
     // Same call, already summarised -> just re-show the saved results.
@@ -2227,23 +2242,26 @@ export default function CallPage() {
       )}
 
       <div className="mb-6">
-        {source === "meet" ? (
-          <MeetStage
-            room={room}
-            onFinalTranscript={onFinalTranscript}
-            onCandidateTurnEnd={handleCandidateTurnEnd}
-            meetingUrl={meetingUrl}
-            onMeetingUrlChange={setMeetingUrl}
-          />
-        ) : (
-          <CallStage
-            room={room}
-            identity="Interviewer"
-            role="interviewer"
-            onFinalTranscript={onFinalTranscript}
-            onCandidateTurnEnd={handleCandidateTurnEnd}
-          />
-        )}
+        {/* Unmount the transcription stage once the call has ended so the
+            socket / mic / bot listener fully stops (no lingering billing). */}
+        {!ended &&
+          (source === "meet" ? (
+            <MeetStage
+              room={room}
+              onFinalTranscript={onFinalTranscript}
+              onCandidateTurnEnd={handleCandidateTurnEnd}
+              meetingUrl={meetingUrl}
+              onMeetingUrlChange={setMeetingUrl}
+            />
+          ) : (
+            <CallStage
+              room={room}
+              identity="Interviewer"
+              role="interviewer"
+              onFinalTranscript={onFinalTranscript}
+              onCandidateTurnEnd={handleCandidateTurnEnd}
+            />
+          ))}
       </div>
 
       <div className="mb-6 flex justify-center">
