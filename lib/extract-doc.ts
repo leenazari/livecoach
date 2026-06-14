@@ -17,14 +17,15 @@ const TESSERACT =
 const MAMMOTH =
   "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js";
 
-const scriptPromises: Record<string, Promise<void>> = {};
+const scriptPromises: Record<string, Promise<void> | undefined> = {};
 
 function loadScript(src: string, globalName: string): Promise<void> {
   if (typeof window !== "undefined" && (window as any)[globalName]) {
     return Promise.resolve();
   }
-  if (scriptPromises[src]) return scriptPromises[src];
-  scriptPromises[src] = new Promise<void>((resolve, reject) => {
+  const existing = scriptPromises[src];
+  if (existing) return existing;
+  const p = new Promise<void>((resolve, reject) => {
     const s = document.createElement("script");
     s.src = src;
     s.async = true;
@@ -32,7 +33,8 @@ function loadScript(src: string, globalName: string): Promise<void> {
     s.onerror = () => reject(new Error(`could not load ${src}`));
     document.head.appendChild(s);
   });
-  return scriptPromises[src];
+  scriptPromises[src] = p;
+  return p;
 }
 
 export async function extractDocText(

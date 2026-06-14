@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { extractDocText } from "@/lib/extract-doc";
 
 // Upload a document for the plan. The file's TEXT is extracted IN THE BROWSER
@@ -13,7 +13,9 @@ export default function KnowledgePanel({
   onUploaded,
 }: {
   candidate?: string;
-  sessionId: string;
+  // Optional so other call sites (e.g. InterviewConsole) compile; uploads are
+  // guarded below when it's absent.
+  sessionId?: string;
   onUploaded: (detectedName: string | null, docType: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -23,6 +25,10 @@ export default function KnowledgePanel({
   const [drag, setDrag] = useState(false);
 
   const handleFile = async (file: File) => {
+    if (!sessionId) {
+      setErr("no session to attach this document to");
+      return;
+    }
     setBusy(true);
     setErr("");
     setProgress("reading the file…");
@@ -53,13 +59,13 @@ export default function KnowledgePanel({
     }
   };
 
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onPick = (e: ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files && e.target.files[0];
     if (f) handleFile(f);
     e.target.value = "";
   };
 
-  const onDrop = (e: React.DragEvent) => {
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDrag(false);
     const f = e.dataTransfer.files && e.dataTransfer.files[0];
