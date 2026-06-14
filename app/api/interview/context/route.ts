@@ -33,19 +33,26 @@ async function companyHistoryBlock(
       .single();
     if (!company) return null;
 
-    const [{ data: contacts }, { data: summaries }] = await Promise.all([
-      supabaseAdmin
-        .from("contacts")
-        .select("name, role")
-        .eq("company_id", companyId)
-        .limit(20),
-      supabaseAdmin
-        .from("interview_summaries")
-        .select("candidate, created_at, summary")
-        .eq("company_id", companyId)
-        .order("created_at", { ascending: false })
-        .limit(5),
-    ]);
+    const [{ data: contacts }, { data: summaries }, { data: ctxItems }] =
+      await Promise.all([
+        supabaseAdmin
+          .from("contacts")
+          .select("name, role")
+          .eq("company_id", companyId)
+          .limit(20),
+        supabaseAdmin
+          .from("interview_summaries")
+          .select("candidate, created_at, summary")
+          .eq("company_id", companyId)
+          .order("created_at", { ascending: false })
+          .limit(5),
+        supabaseAdmin
+          .from("client_context")
+          .select("kind, title, url, content")
+          .eq("company_id", companyId)
+          .order("created_at", { ascending: false })
+          .limit(15),
+      ]);
 
     const lines: string[] = [];
     lines.push(
@@ -114,6 +121,17 @@ async function companyHistoryBlock(
       }
     } else {
       lines.push("", "No past calls recorded with this client yet.");
+    }
+
+    // Extra context the user attached to the client (notes / links / docs).
+    if (Array.isArray(ctxItems) && ctxItems.length) {
+      const cut2 = (s: any, n: number) =>
+        typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : "";
+      lines.push("", "EXTRA CONTEXT the caller attached to this client:");
+      for (const c of ctxItems as any[]) {
+        const head = c.title || (c.kind === "link" ? c.url : c.kind);
+        lines.push(`- [${c.kind}] ${head}: ${cut2(c.content || c.url || "", 500)}`);
+      }
     }
 
     return {

@@ -11,6 +11,8 @@ import {
 } from "@/lib/crm";
 import CustomFieldEditor from "@/components/crm/CustomFieldEditor";
 import AddFieldForm from "@/components/crm/AddFieldForm";
+import ClientAssistant from "@/components/crm/ClientAssistant";
+import ClientContext from "@/components/crm/ClientContext";
 
 const inputCls =
   "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
@@ -52,6 +54,9 @@ export default function CompanyDetailPage() {
     setLoading(true);
     setErr("");
     try {
+      // Make sure the standard fields (owner / priority / value / address) exist
+      // before we read them for the stats. Idempotent, runs once effectively.
+      await crmFetch(`/api/crm/fields/seed`, { method: "POST" }).catch(() => {});
       const [{ company, contacts }, { fields }, { calls }, pipeline] =
         await Promise.all([
         crmFetch<{ company: Company; contacts: Contact[] }>(
@@ -209,6 +214,55 @@ export default function CompanyDetailPage() {
     );
   }
 
+  // Stats for the clickable top row.
+  const focusScores = calls.flatMap((c: any) =>
+    Array.isArray(c?.summary?.competencies)
+      ? c.summary.competencies
+          .map((x: any) => Number(x.score))
+          .filter((n: number) => !Number.isNaN(n))
+      : []
+  );
+  const avgFocus = focusScores.length
+    ? focusScores.reduce((a: number, b: number) => a + b, 0) / focusScores.length
+    : null;
+
+  // Focus scores over time: calls come newest-first, so the first focus we meet
+  // is the main one from the latest call (newest at top), and each focus's
+  // entries run newest -> oldest.
+  const focusOrder: string[] = [];
+  const focusData: Record<string, { date: string; score: number }[]> = {};
+  calls.forEach((c: any) => {
+    const date = c?.created_at
+      ? new Date(c.created_at).toLocaleDateString()
+      : "";
+    (Array.isArray(c?.summary?.competencies) ? c.summary.competencies : []).forEach(
+      (comp: any) => {
+        const name = String(comp?.name || "").trim();
+        const score = Number(comp?.score);
+        if (!name || Number.isNaN(score)) return;
+        if (!focusData[name]) {
+          focusData[name] = [];
+          focusOrder.push(name);
+        }
+        focusData[name].push({ date, score });
+      }
+    );
+  });
+  const openOppCount = opps.filter((o: any) => o.status === "open").length;
+  const priorityVal = (attrs as any).priority || "";
+  const dealVal = (attrs as any).value;
+
+  const scrollToId = (anchorId: string) => {
+    if (typeof document !== "undefined") {
+      document
+        .getElementById(anchorId)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const statCls =
+    "cursor-pointer rounded-lg border border-edge bg-ink/40 px-3 py-2.5 text-left transition hover:border-amber/50";
+
   return (
     <main className="relative z-10 mx-auto max-w-[1000px] px-5 py-10">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
@@ -242,6 +296,48 @@ export default function CompanyDetailPage() {
 
       {err && <p className="mb-3 font-mono text-[0.66rem] text-rust">{err}</p>}
 
+      {/* STATS - clickable, each jumps to its detail section. */}
+      <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <button type="button" onClick={() => scrollToId("sec-fields")} className={statCls}>
+          <div className="font-sans text-[0.95rem] text-rust">
+            {priorityVal || "—"}
+          </div>
+          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+            priority ↗
+          </div>
+        </button>
+        <button type="button" onClick={() => scrollToId("sec-fields")} className={statCls}>
+          <div className="font-sans text-[0.95rem] text-bone">
+            {typeof dealVal === "number"
+              ? `£${Number(dealVal).toLocaleString()}`
+              : "—"}
+          </div>
+          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+            value ↗
+          </div>
+        </button>
+        <button type="button" onClick={() => scrollToId("sec-history")} className={statCls}>
+          <div className="font-sans text-[0.95rem] text-bone">{calls.length}</div>
+          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+            calls ↗
+          </div>
+        </button>
+        <button type="button" onClick={() => scrollToId("sec-focus")} className={statCls}>
+          <div className="font-sans text-[0.95rem] text-amber">
+            {avgFocus !== null ? avgFocus.toFixed(1) : "—"}
+          </div>
+          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+            avg focus ↗
+          </div>
+        </button>
+        <button type="button" onClick={() => scrollToId("sec-opps")} className={statCls}>
+          <div className="font-sans text-[0.95rem] text-sage">{openOppCount}</div>
+          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+            open opps ↗
+          </div>
+        </button>
+      </div>
+
       {company.profile &&
         typeof company.profile === "object" &&
         typeof (company.profile as any).brief === "string" &&
@@ -257,9 +353,14 @@ export default function CompanyDetailPage() {
           </div>
         )}
 
+      {/* AI ASSISTANT - the heart of the client page. */}
+      <div className="mb-5">
+        <ClientAssistant companyId={id} companyName={company.name} />
+      </div>
+
       <div className="grid gap-5 lg:grid-cols-2">
         {/* CORE + CUSTOM FIELDS */}
-        <section className="flex flex-col gap-4">
+        <section id="sec-fields" className="flex flex-col gap-4">
           <div className="rounded-xl border border-edge bg-panel/40 p-4">
             <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
               Details
@@ -437,8 +538,68 @@ export default function CompanyDetailPage() {
         </section>
       </div>
 
+      {/* CLIENT CONTEXT - notes / links / docs that feed the plan + assistant. */}
+      <div className="mt-5">
+        <ClientContext companyId={id} />
+      </div>
+
+      {/* FOCUS SCORES OVER TIME - main focus first, newest score at top. */}
+      {focusOrder.length > 0 && (
+        <section
+          id="sec-focus"
+          className="mt-5 rounded-xl border border-edge bg-panel/40 p-4"
+        >
+          <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+            Focus scores over time{" "}
+            <span className="text-muted">- main focus first, newest at top</span>
+          </p>
+          <ul className="flex flex-col">
+            {focusOrder.map((name) => {
+              const entries = focusData[name];
+              const latest = entries[0];
+              const prior = entries.slice(1);
+              const tone =
+                latest.score >= 4
+                  ? "bg-sage/20 text-sage"
+                  : latest.score <= 2
+                  ? "bg-rust/20 text-rust"
+                  : "bg-amber/20 text-amber";
+              return (
+                <li
+                  key={name}
+                  className="flex items-center gap-3 border-b border-edge/40 py-2 last:border-none"
+                >
+                  <span className="flex-1 font-sans text-[0.85rem] text-bone">
+                    {name}
+                    {prior.length > 0 && (
+                      <span className="ml-2 font-mono text-[0.56rem] text-muted">
+                        · also{" "}
+                        {prior
+                          .map((e) => `${e.date} (${e.score})`)
+                          .join(", ")}
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={`rounded-full px-2.5 py-0.5 font-mono text-[0.62rem] ${tone}`}
+                  >
+                    {latest.score}
+                  </span>
+                  <span className="w-16 text-right font-mono text-[0.56rem] text-muted">
+                    {latest.date}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
       {/* CALL HISTORY - scorecards from calls linked to this company. */}
-      <section className="mt-5 rounded-xl border border-edge bg-panel/40 p-4">
+      <section
+        id="sec-history"
+        className="mt-5 rounded-xl border border-edge bg-panel/40 p-4"
+      >
         <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
           Call history{" "}
           <span className="text-muted">({calls.length})</span>
@@ -496,7 +657,10 @@ export default function CompanyDetailPage() {
       </section>
 
       {/* OPPORTUNITIES - AI-surfaced from calls. */}
-      <section className="mt-5 rounded-xl border border-edge bg-panel/40 p-4">
+      <section
+        id="sec-opps"
+        className="mt-5 rounded-xl border border-edge bg-panel/40 p-4"
+      >
         <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
           Opportunities{" "}
           <span className="text-muted">
