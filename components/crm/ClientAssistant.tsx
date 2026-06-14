@@ -32,11 +32,13 @@ export default function ClientAssistant({
   companyName,
   autoListen,
   initialPrompt,
+  draftTaskId,
 }: {
   companyId?: string;
   companyName?: string;
   autoListen?: boolean;
   initialPrompt?: string;
+  draftTaskId?: string;
 }) {
   // No companyId = the GLOBAL assistant: it knows every client + the pipeline.
   const isGlobal = !companyId;
@@ -223,6 +225,14 @@ export default function ClientAssistant({
           draft_body: body,
         }),
       });
+      // Close the loop: if this draft came from an email task, tick that task
+      // done now that it's written and filed.
+      if (draftTaskId) {
+        crmFetch(`/api/crm/tasks/${draftTaskId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "done" }),
+        }).catch(() => {});
+      }
     } catch {
       setSavedDrafts((p) => ({ ...p, [key]: false }));
     }

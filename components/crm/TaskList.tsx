@@ -68,7 +68,12 @@ export default function TaskList({
     if (a === "email") {
       window.dispatchEvent(
         new CustomEvent("lc:draft-email", {
-          detail: { companyId: t.company_id, companyName: t.company, text: t.text },
+          detail: {
+            companyId: t.company_id,
+            companyName: t.company,
+            text: t.text,
+            taskId: t.id,
+          },
         })
       );
       return;

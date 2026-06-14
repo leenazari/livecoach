@@ -16,17 +16,28 @@ export default function GlobalAssistant({
 }) {
   const [open, setOpen] = useState(false);
   const [seed, setSeed] = useState("");
-  const active = companyId && companyName ? { id: companyId, name: companyName } : null;
+  // When a draft is started from a task, remember which client + task so the
+  // assistant scopes to that client (its drafts save there) and the task can
+  // auto-complete once the draft is saved.
+  const [eventClient, setEventClient] = useState<{ id: string; name: string } | null>(null);
+  const [draftTaskId, setDraftTaskId] = useState<string>("");
+  const propClient =
+    companyId && companyName ? { id: companyId, name: companyName } : null;
+  const active = eventClient || propClient;
 
-  // A "draft email" next step (anywhere) opens the assistant and asks it to
-  // draft that email, so the task actually starts the action.
+  // A "draft email" next step (anywhere) opens the assistant, scopes it to that
+  // client, and asks it to draft the email - so the task actually starts the
+  // action and the resulting draft can be saved + tick the task.
   useEffect(() => {
     const h = (e: Event) => {
-      const text = (e as CustomEvent)?.detail?.text || "";
+      const d = (e as CustomEvent)?.detail || {};
       setOpen(true);
+      if (d.companyId && d.companyName)
+        setEventClient({ id: d.companyId, name: d.companyName });
+      setDraftTaskId(d.taskId || "");
       setSeed(
-        text
-          ? `Draft a short, warm, ready-to-send email for this next step: ${text}`
+        d.text
+          ? `Draft a short, warm, ready-to-send email for this next step: ${d.text}`
           : ""
       );
     };
@@ -74,6 +85,7 @@ export default function GlobalAssistant({
             companyName={active?.name}
             autoListen={!seed}
             initialPrompt={seed}
+            draftTaskId={draftTaskId}
           />
         </div>
       </div>
