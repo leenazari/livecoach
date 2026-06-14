@@ -52,7 +52,21 @@ export default function ClientAssistant({
   const threadRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef(""); // latest input, for sending after the mic stops
   const sendOnStopRef = useRef(false);
+  const suppressMicRef = useRef(false); // ignore late mic results after a send
   const didAutoListen = useRef(false);
+
+  // Stop the mic immediately and stop it from re-filling the box (used on send).
+  const killMic = () => {
+    suppressMicRef.current = true;
+    sendOnStopRef.current = false;
+    try {
+      recRef.current?.abort?.() ?? recRef.current?.stop?.();
+    } catch {
+      /* ignore */
+    }
+    recRef.current = null;
+    setListening(false);
+  };
 
   useEffect(() => {
     crmFetch<{ messages: Msg[] }>(threadUrl)
@@ -93,8 +107,11 @@ export default function ClientAssistant({
   useEffect(() => () => stopSpeaking(), []);
 
   const send = async (text?: string) => {
-    const t = (text ?? input).trim();
+    const t = (text ?? inputRef.current ?? input).trim();
     if (!t || busy) return;
+    // If the mic is still running when they hit Ask, stop it and don't let a
+    // late transcript re-populate the box. Then clear the field.
+    if (listening || recRef.current) killMic();
     setInput("");
     inputRef.current = "";
     setMessages((p) => [...p, { role: "user", content: t }]);
@@ -134,8 +151,10 @@ export default function ClientAssistant({
     rec.lang = "en-GB";
     rec.interimResults = true;
     rec.continuous = true;
+    suppressMicRef.current = false; // fresh dictation session
     let finalText = "";
     rec.onresult = (e: any) => {
+      if (suppressMicRef.current) return; // a send already consumed this
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
@@ -217,7 +236,7 @@ export default function ClientAssistant({
       ];
 
   return (
-    <section className="rounded-xl border border-amber/40 bg-amber/[0.04] p-4">
+    <section className="flex min-h-0 w-full flex-1 flex-col rounded-xl border border-amber/40 bg-amber/[0.04] p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
           {"▤"} Assistant{" "}
@@ -255,7 +274,7 @@ export default function ClientAssistant({
 
       <div
         ref={threadRef}
-        className="mb-3 flex max-h-[420px] min-h-[120px] flex-col gap-2.5 overflow-y-auto"
+        className="mb-3 flex min-h-[120px] flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain"
       >
         {messages.length === 0 && !busy && (
           <div>
@@ -287,7 +306,7 @@ export default function ClientAssistant({
             }
           >
             <div
-              className={`max-w-[88%] rounded-xl px-3 py-2 font-sans text-[0.84rem] leading-relaxed ${
+              className={`max-w-[88%] select-text rounded-xl px-3 py-2 font-sans text-[0.84rem] leading-relaxed ${
                 m.role === "user"
                   ? "border border-amber/30 bg-amber/15 text-amber/90"
                   : "border border-edge bg-ink/40 text-bone/90"

@@ -36,7 +36,7 @@ export default function GlobalAssistant({
 
   return (
     <div className="fixed inset-x-0 top-0 z-50 flex justify-center px-3">
-      <div className="mt-3 flex max-h-[86vh] w-[min(480px,96vw)] flex-col overflow-hidden rounded-2xl border border-amber/40 bg-panel shadow-2xl">
+      <div className="mt-3 flex max-h-[86vh] w-[min(624px,96vw)] flex-col overflow-hidden rounded-2xl border border-amber/40 bg-panel shadow-2xl">
         <div className="flex items-center justify-between gap-2 border-b border-edge bg-ink/50 px-4 py-2.5">
           <span className="font-mono text-[0.62rem] uppercase tracking-[0.16em] text-amber">
             {"▤"} Assistant{active ? ` · ${active.name}` : ""}
@@ -50,7 +50,7 @@ export default function GlobalAssistant({
           </button>
         </div>
 
-        <div className="overflow-y-auto p-3">
+        <div className="flex min-h-0 flex-1 flex-col p-3">
           <ClientAssistant
             key={active ? active.id : "global"}
             companyId={active?.id}
