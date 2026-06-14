@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import CallStage from "@/components/CallStage";
 import MeetStage from "@/components/MeetStage";
 import KnowledgePanel from "@/components/KnowledgePanel";
@@ -94,6 +95,7 @@ function splitCue(raw: string): { ask: string; why: string; followup: string } {
 }
 
 export default function CallPage() {
+  const router = useRouter();
   const [room] = useState(() => `lc-${Math.random().toString(36).slice(2, 8)}`);
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
@@ -1512,7 +1514,13 @@ export default function CallPage() {
 
       {/* STAGE STEPPER - always visible, click to move between the three
           stages. Stages 2 and 3 unlock once a plan exists. */}
-      <nav className="mb-5 flex items-center gap-1 sm:gap-2">
+      <nav
+        className={`mb-5 flex items-center gap-1 sm:gap-2 ${
+          callLive
+            ? "sticky top-0 z-30 -mx-5 border-b border-edge bg-ink/90 px-5 py-2 backdrop-blur"
+            : ""
+        }`}
+      >
         {([
           [1, "Intent & focus"],
           [2, "Pre-call brief"],
@@ -1813,20 +1821,13 @@ export default function CallPage() {
                   </a>
                 </div>
               ) : (
-                <div className="mt-3 flex flex-col gap-2">
-                  <p className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-amber">
-                    Meeting link
-                  </p>
-                  <input
-                    value={meetingUrl}
-                    onChange={(e) => setMeetingUrl(e.target.value)}
-                    placeholder="Paste Meet / Teams / Zoom link"
-                    className="w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
-                  />
+                <div className="mt-3 rounded-lg border border-dashed border-edge bg-ink/30 px-3 py-2.5">
                   <p className="font-mono text-[0.6rem] leading-relaxed text-muted">
-                    Paste it here, then hit Start call and Send bot - the
-                    transcript flows in automatically and cues, summary and
-                    scoring run exactly as an in-app call.
+                    Paste the meeting link and send the bot in the{" "}
+                    <span className="text-amber">Meet / Teams / Zoom</span> panel
+                    just below - one place to add the link, send the bot and watch
+                    it join. The transcript, cues, summary and scoring then run
+                    exactly as an in-app call.
                   </p>
                 </div>
               )}
@@ -2251,7 +2252,7 @@ export default function CallPage() {
           disabled={summarising}
           className="rounded-full border border-amber/50 bg-amber/10 px-7 py-3 font-mono text-sm uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {summarising ? "summarising..." : "End interview & summarise"}
+          {summarising ? "summarising..." : "End call & summarise"}
         </button>
       </div>
 
@@ -2586,14 +2587,24 @@ export default function CallPage() {
           liked={likedRef.current}
           disliked={dislikedRef.current}
           onSaveFeedback={saveFeedback}
-          onClose={() => setSummary(null)}
+          onClose={() => {
+            // After reading the individual call summary, land somewhere clean
+            // and useful rather than the spent live-call screen: the linked
+            // client's profile (with its freshly updated overall AI summary),
+            // or the dashboard if this call wasn't tied to a client.
+            setSummary(null);
+            const cid = linkedCompanyRef.current?.id || linkedCompany?.id;
+            router.push(cid ? `/crm/${cid}` : "/crm");
+          }}
         />
       )}
       <GlobalAssistant
         companyId={linkedCompany?.id}
         companyName={linkedCompany?.name}
       />
-      <NavMenu />
+      {/* Hide the sidebar while a full-screen overlay is up (the cue wall or the
+          end-of-call summary) so nothing pokes through on the left. */}
+      {!cueFull && !summary && <NavMenu />}
     </main>
   );
 }
