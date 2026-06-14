@@ -11,7 +11,7 @@ import {
 } from "@/lib/crm";
 import CustomFieldEditor from "@/components/crm/CustomFieldEditor";
 import AddFieldForm from "@/components/crm/AddFieldForm";
-import ClientAssistant from "@/components/crm/ClientAssistant";
+import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import ClientContext from "@/components/crm/ClientContext";
 import NavMenu from "@/components/crm/NavMenu";
 
@@ -353,11 +353,6 @@ export default function CompanyDetailPage() {
             </p>
           </div>
         )}
-
-      {/* AI ASSISTANT - the heart of the client page. */}
-      <div className="mb-5">
-        <ClientAssistant companyId={id} companyName={company.name} />
-      </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
         {/* CORE + CUSTOM FIELDS */}
@@ -778,6 +773,7 @@ export default function CompanyDetailPage() {
           </ul>
         )}
       </section>
+      <GlobalAssistant companyId={id} companyName={company.name} />
       <NavMenu />
     </main>
   );

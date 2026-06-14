@@ -28,58 +28,63 @@ export default function GlobalAssistant({
         type="button"
         onClick={() => setOpen(true)}
         title="Ask your assistant"
-        className="fixed bottom-6 right-6 z-40 flex items-center gap-2.5 rounded-full border border-amber/70 bg-amber px-6 py-4 font-mono text-[0.74rem] font-medium uppercase tracking-wider text-ink shadow-[0_10px_34px_rgba(232,163,61,0.45)] transition hover:scale-[1.03] hover:brightness-110"
+        className="fixed left-1/2 top-3 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-amber/70 bg-amber px-5 py-2.5 font-mono text-[0.66rem] font-medium uppercase tracking-wider text-ink shadow-[0_8px_26px_rgba(232,163,61,0.4)] transition hover:brightness-110"
       >
-        <span className="relative flex h-2.5 w-2.5">
+        <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ink/60" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-ink" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-ink" />
         </span>
         {"▤"} Ask the assistant
       </button>
     );
   }
 
+  // Top-anchored panel, height-capped with internal scroll, so it can never run
+  // off the bottom of the page.
   return (
-    <div className="fixed bottom-5 right-5 z-40 flex max-h-[80vh] w-[min(430px,94vw)] flex-col overflow-hidden rounded-2xl border border-amber/40 bg-panel shadow-2xl">
-      <div className="flex items-center justify-between gap-2 border-b border-edge bg-ink/50 px-4 py-2.5">
-        <span className="font-mono text-[0.62rem] uppercase tracking-[0.16em] text-amber">
-          {"▤"} Assistant{active ? ` · ${active.name}` : ""}
-        </span>
-        <div className="flex items-center gap-3">
-          {active && (
+    <div className="fixed inset-x-0 top-0 z-50 flex justify-center px-3">
+      <div className="mt-3 flex max-h-[86vh] w-[min(480px,96vw)] flex-col overflow-hidden rounded-2xl border border-amber/40 bg-panel shadow-2xl">
+        <div className="flex items-center justify-between gap-2 border-b border-edge bg-ink/50 px-4 py-2.5">
+          <span className="font-mono text-[0.62rem] uppercase tracking-[0.16em] text-amber">
+            {"▤"} Assistant{active ? ` · ${active.name}` : ""}
+          </span>
+          <div className="flex items-center gap-3">
+            {active && (
+              <button
+                type="button"
+                onClick={() => setPicked(null)}
+                className="font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-amber"
+              >
+                change client
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => setPicked(null)}
-              className="font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-amber"
+              onClick={() => setOpen(false)}
+              className="font-mono text-sm text-muted transition hover:text-bone"
             >
-              change client
+              ✕
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            className="font-mono text-sm text-muted transition hover:text-bone"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
-
-      <div className="overflow-y-auto p-3">
-        {active ? (
-          <ClientAssistant
-            key={active.id}
-            companyId={active.id}
-            companyName={active.name}
-          />
-        ) : (
-          <div className="flex flex-col gap-3 py-2">
-            <p className="font-sans text-[0.82rem] leading-relaxed text-bone/75">
-              Which client do you want to ask about?
-            </p>
-            <CompanyLinkPicker value={null} onChange={(v) => setPicked(v)} />
           </div>
-        )}
+        </div>
+
+        <div className="overflow-y-auto p-3">
+          {active ? (
+            <ClientAssistant
+              key={active.id}
+              companyId={active.id}
+              companyName={active.name}
+              autoListen
+            />
+          ) : (
+            <div className="flex flex-col gap-3 py-2">
+              <p className="font-sans text-[0.82rem] leading-relaxed text-bone/75">
+                Which client do you want to ask about?
+              </p>
+              <CompanyLinkPicker value={null} onChange={(v) => setPicked(v)} />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

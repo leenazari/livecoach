@@ -30,9 +30,11 @@ function splitDrafts(content: string): { type: "text" | "draft"; text: string }[
 export default function ClientAssistant({
   companyId,
   companyName,
+  autoListen,
 }: {
   companyId: string;
   companyName: string;
+  autoListen?: boolean;
 }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -42,6 +44,9 @@ export default function ClientAssistant({
   const [savedDrafts, setSavedDrafts] = useState<Record<string, boolean>>({});
   const recRef = useRef<any>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef(""); // latest input, for sending after the mic stops
+  const sendOnStopRef = useRef(false);
+  const didAutoListen = useRef(false);
 
   useEffect(() => {
     crmFetch<{ messages: Msg[] }>(`/api/crm/companies/${companyId}/assistant`)
@@ -84,6 +89,7 @@ export default function ClientAssistant({
     const t = (text ?? input).trim();
     if (!t || busy) return;
     setInput("");
+    inputRef.current = "";
     setMessages((p) => [...p, { role: "user", content: t }]);
     setBusy(true);
     try {
@@ -112,6 +118,8 @@ export default function ClientAssistant({
       return;
     }
     if (listening) {
+      // Deliberate stop = "I'm done talking" -> send what was heard.
+      sendOnStopRef.current = true;
       recRef.current?.stop();
       return;
     }
@@ -127,17 +135,37 @@ export default function ClientAssistant({
         if (r.isFinal) finalText += r[0].transcript;
         else interim += r[0].transcript;
       }
-      setInput((finalText + interim).trim());
+      const text = (finalText + interim).trim();
+      inputRef.current = text;
+      setInput(text);
     };
     rec.onend = () => {
       setListening(false);
       recRef.current = null;
+      if (sendOnStopRef.current) {
+        sendOnStopRef.current = false;
+        const t = inputRef.current.trim();
+        if (t) send(t);
+      }
     };
-    rec.onerror = () => setListening(false);
+    rec.onerror = () => {
+      setListening(false);
+      sendOnStopRef.current = false;
+    };
     recRef.current = rec;
     setListening(true);
     rec.start();
   };
+
+  // Talk straight away: start listening as soon as the assistant is opened.
+  useEffect(() => {
+    if (autoListen && !didAutoListen.current) {
+      didAutoListen.current = true;
+      const t = setTimeout(() => toggleMic(), 350);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoListen]);
 
   // Save an assistant-written draft into this client's follow-ups, so it lands
   // in your drafts board + dashboard count. Splits a leading "Subject:" line.
@@ -340,7 +368,10 @@ export default function ClientAssistant({
         </button>
         <input
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            inputRef.current = e.target.value;
+            setInput(e.target.value);
+          }}
           onKeyDown={(e) => e.key === "Enter" && send()}
           placeholder={listening ? "listening… tap mic to stop" : "Ask, or tap the mic to talk…"}
           className="flex-1 rounded-full border border-edge bg-ink/60 px-4 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
