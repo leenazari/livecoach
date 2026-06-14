@@ -25,6 +25,9 @@ export default function CompanyDetailPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [fields, setFields] = useState<FieldDefinition[]>([]);
   const [calls, setCalls] = useState<any[]>([]);
+  const [opps, setOpps] = useState<any[]>([]);
+  const [followUps, setFollowUps] = useState<any[]>([]);
+  const [copiedId, setCopiedId] = useState<string>("");
   const [attrs, setAttrs] = useState<Record<string, any>>({});
   const [core, setCore] = useState({
     name: "",
@@ -49,7 +52,8 @@ export default function CompanyDetailPage() {
     setLoading(true);
     setErr("");
     try {
-      const [{ company, contacts }, { fields }, { calls }] = await Promise.all([
+      const [{ company, contacts }, { fields }, { calls }, pipeline] =
+        await Promise.all([
         crmFetch<{ company: Company; contacts: Contact[] }>(
           `/api/crm/companies/${id}`
         ),
@@ -59,11 +63,16 @@ export default function CompanyDetailPage() {
         crmFetch<{ calls: any[] }>(`/api/crm/companies/${id}/calls`).catch(
           () => ({ calls: [] as any[] })
         ),
+        crmFetch<{ opportunities: any[]; followUps: any[] }>(
+          `/api/crm/companies/${id}/pipeline`
+        ).catch(() => ({ opportunities: [] as any[], followUps: [] as any[] })),
       ]);
       setCompany(company);
       setContacts(contacts);
       setFields(fields);
       setCalls(calls || []);
+      setOpps(pipeline.opportunities || []);
+      setFollowUps(pipeline.followUps || []);
       setAttrs(company.attributes || {});
       setCore({
         name: company.name || "",
@@ -144,6 +153,37 @@ export default function CompanyDetailPage() {
       router.push("/crm");
     } catch (e: any) {
       setErr(e.message || "could not delete the company");
+    }
+  };
+
+  const setOppStatus = async (oppId: string, status: string) => {
+    setOpps((prev) =>
+      prev.map((o) => (o.id === oppId ? { ...o, status } : o))
+    );
+    crmFetch(`/api/crm/opportunities/${oppId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }).catch(() => {});
+  };
+
+  const setFollowUpStatus = async (fuId: string, status: string) => {
+    setFollowUps((prev) =>
+      prev.map((f) => (f.id === fuId ? { ...f, status } : f))
+    );
+    crmFetch(`/api/crm/follow-ups/${fuId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }).catch(() => {});
+  };
+
+  const copyDraft = async (fu: any) => {
+    const text = `Subject: ${fu.draft_subject || ""}\n\n${fu.draft_body || ""}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(fu.id);
+      setTimeout(() => setCopiedId(""), 1500);
+    } catch {
+      /* clipboard blocked - ignore */
     }
   };
 
@@ -451,6 +491,125 @@ export default function CompanyDetailPage() {
                 </li>
               );
             })}
+          </ul>
+        )}
+      </section>
+
+      {/* OPPORTUNITIES - AI-surfaced from calls. */}
+      <section className="mt-5 rounded-xl border border-edge bg-panel/40 p-4">
+        <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+          Opportunities{" "}
+          <span className="text-muted">
+            ({opps.filter((o) => o.status === "open").length} open)
+          </span>
+        </p>
+        {opps.length === 0 ? (
+          <p className="font-mono text-[0.6rem] text-muted">
+            Opportunities the AI spots in your calls land here. Link a call to
+            this client and run it.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {opps.map((o) => (
+              <li
+                key={o.id}
+                className={`rounded-lg border border-edge bg-ink/40 px-4 py-3 ${
+                  o.status !== "open" ? "opacity-55" : ""
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-sans text-[0.9rem] text-bone">
+                      {o.title}
+                      {typeof o.value === "number" && (
+                        <span className="ml-2 font-mono text-[0.62rem] text-sage">
+                          ~£{Number(o.value).toLocaleString()}
+                        </span>
+                      )}
+                    </p>
+                    {o.detail && (
+                      <p className="mt-0.5 font-sans text-[0.8rem] leading-snug text-bone/70">
+                        {o.detail}
+                      </p>
+                    )}
+                  </div>
+                  <select
+                    value={o.status}
+                    onChange={(e) => setOppStatus(o.id, e.target.value)}
+                    className="shrink-0 rounded-md border border-edge bg-ink/60 px-2 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-bone outline-none focus:border-amber/60"
+                  >
+                    <option value="open">open</option>
+                    <option value="won">won</option>
+                    <option value="lost">lost</option>
+                    <option value="dismissed">dismissed</option>
+                  </select>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* FOLLOW-UP DRAFTS - AI-written, you review and send yourself. */}
+      <section className="mt-5 rounded-xl border border-edge bg-panel/40 p-4">
+        <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+          Follow-up drafts{" "}
+          <span className="text-muted">- review &amp; send yourself</span>
+        </p>
+        {followUps.filter((f) => f.status !== "dismissed").length === 0 ? (
+          <p className="font-mono text-[0.6rem] text-muted">
+            After a linked call, a ready-to-send draft email appears here for you
+            to review.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {followUps
+              .filter((f) => f.status !== "dismissed")
+              .map((f) => (
+                <li
+                  key={f.id}
+                  className={`rounded-lg border border-edge bg-ink/40 p-3.5 ${
+                    f.status === "sent" ? "opacity-60" : ""
+                  }`}
+                >
+                  <p className="mb-1 font-sans text-[0.86rem] font-medium text-bone">
+                    {f.draft_subject || "(no subject)"}
+                    {f.status === "sent" && (
+                      <span className="ml-2 font-mono text-[0.56rem] uppercase tracking-wider text-sage">
+                        sent
+                      </span>
+                    )}
+                  </p>
+                  <p className="whitespace-pre-wrap font-sans text-[0.82rem] leading-relaxed text-bone/80">
+                    {f.draft_body}
+                  </p>
+                  <div className="mt-2.5 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => copyDraft(f)}
+                      className="rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-amber transition hover:bg-amber/20"
+                    >
+                      {copiedId === f.id ? "copied" : "copy"}
+                    </button>
+                    {f.status !== "sent" && (
+                      <button
+                        type="button"
+                        onClick={() => setFollowUpStatus(f.id, "sent")}
+                        className="rounded-full border border-sage/50 bg-sage/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-sage transition hover:bg-sage/20"
+                      >
+                        mark sent
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setFollowUpStatus(f.id, "dismissed")}
+                      className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-rust"
+                    >
+                      dismiss
+                    </button>
+                  </div>
+                </li>
+              ))}
           </ul>
         )}
       </section>

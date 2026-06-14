@@ -1106,6 +1106,9 @@ export default function CallPage() {
           body: JSON.stringify({
             companyId: linkedCompanyRef.current.id,
             summary: data.summary,
+            sessionId: room,
+            candidate: candidateRef.current || null,
+            role: roleRef.current || null,
           }),
         }).catch(() => {});
       }

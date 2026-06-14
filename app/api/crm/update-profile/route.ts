@@ -3,16 +3,19 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 40;
 
-// PHASE 3 - the evolving client profile. After a linked call is summarised, one
-// Sonnet pass merges the latest call into the company's running "what we know"
-// brief. This is what makes Phase 2's auto-attached history get richer over
-// time instead of being just a stack of raw scorecards. Fire-and-forget from
-// the client; never blocks the call.
+// PHASE 3 - the post-call CRM pass. After a LINKED call is summarised, ONE
+// Sonnet pass turns the scorecard + the client's existing profile into three
+// things, which we then store against the company:
+//   1. an updated running "what we know" profile brief,
+//   2. any concrete OPPORTUNITIES the call surfaced,
+//   3. a ready-to-review DRAFT follow-up email (never auto-sent).
+// Fire-and-forget from the client; never blocks the call. Idempotent per
+// session: re-running replaces this call's opportunities + follow-up draft.
 export async function POST(req: NextRequest) {
   try {
-    const { companyId, summary } = await req.json();
+    const { companyId, summary, sessionId, candidate, role } = await req.json();
     if (typeof companyId !== "string" || !companyId) {
       return NextResponse.json(
         { error: "companyId is required" },
@@ -20,10 +23,7 @@ export async function POST(req: NextRequest) {
       );
     }
     if (!summary || typeof summary !== "object") {
-      return NextResponse.json(
-        { error: "summary is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "summary is required" }, { status: 400 });
     }
 
     const { data: company } = await supabaseAdmin
@@ -40,9 +40,8 @@ export async function POST(req: NextRequest) {
         ? String((company.profile as any).brief || "")
         : "";
 
-    // Feed only the durable, useful parts of the scorecard.
     const s = summary as any;
-    const newCall = [
+    const callText = [
       s.headline ? `Headline: ${s.headline}` : "",
       s.overview ? `How it went: ${s.overview}` : "",
       Array.isArray(s.myNextActions) && s.myNextActions.length
@@ -58,31 +57,43 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n");
 
-    const system = `You maintain a CONCISE running profile of a client (a company/person a coach speaks with repeatedly). Given the EXISTING profile brief and the LATEST call, produce an UPDATED brief.
+    const system = `After a call with a client, you produce three things from the call and the client's existing profile. Output ONLY JSON with exactly these keys:
 
-The brief is a tight running memory (<= 180 words, plain English) capturing only DURABLE, useful facts: who they are and what they want, key people and their roles, decisions made, open threads / promises still outstanding on either side, and any preferences or sensitivities to remember.
+{
+  "brief": "the UPDATED running profile - a tight <=180-word plain-English memory of durable facts about this client (who they are, what they want, key people, decisions, open threads on either side, preferences). Merge with the existing brief: keep what's true, update what changed, add what's new, drop one-off noise. No call-by-call log.",
+  "opportunities": [ { "title": "short name for a concrete opportunity FOR US this call surfaced (a deal, upsell, a need we can serve, a next project)", "detail": "one line grounding it in what was said", "value": <rough GBP number or null> } ],
+  "followUp": { "subject": "email subject", "body": "a warm, ready-to-review DRAFT follow-up email to the client referencing what was discussed and the sensible next steps" }
+}
 
-Merge, don't append: keep what is still true, update what changed, fold in what's new, and drop stale or one-off noise. Do not invent anything not supported by the inputs. No scores, no call-by-call log - a single current picture of the relationship.
+Rules:
+- Ground everything ONLY in the inputs - never invent facts, names, numbers or promises.
+- opportunities: 0-4, ONLY real ones clearly implied by the call. Empty array if none. value is a rough number or null - never a string.
+- followUp: warm and human, not pushy; reference the actual discussion and any agreed next steps; sign off generically (the host reviews and sends it themselves). It is a DRAFT, never sent automatically.`;
 
-Output ONLY JSON: { "brief": "..." }`;
+    const userMsg = `CLIENT: ${company.name}${candidate ? ` | spoke with: ${candidate}` : ""}${
+      role ? ` | context: ${role}` : ""
+    }
 
-    const userMsg = `EXISTING PROFILE BRIEF (may be empty for a first call):
+EXISTING PROFILE BRIEF (may be empty):
 ${existingBrief || "(none yet)"}
 
-LATEST CALL:
-${newCall || "(little of note)"}
+THIS CALL:
+${callText || "(little of note)"}
 
-Return the updated JSON brief now.`;
+Return the JSON now.`;
 
     let brief = existingBrief;
+    let opportunities: { title: string; detail: string; value: number | null }[] = [];
+    let followUp: { subject: string; body: string } | null = null;
+
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 22000);
+      const timer = setTimeout(() => controller.abort(), 32000);
       try {
         const msg = await anthropic.messages.create(
           {
             model: CLAUDE_MODEL_PRO,
-            max_tokens: 400,
+            max_tokens: 1100,
             temperature: 0.3,
             system,
             messages: [{ role: "user", content: userMsg }],
@@ -98,28 +109,86 @@ Return the updated JSON brief now.`;
         const a = raw.indexOf("{");
         const b = raw.lastIndexOf("}");
         const parsed = a >= 0 && b > a ? JSON.parse(raw.slice(a, b + 1)) : null;
-        if (parsed && typeof parsed.brief === "string" && parsed.brief.trim()) {
-          brief = parsed.brief.trim();
+        if (parsed) {
+          if (typeof parsed.brief === "string" && parsed.brief.trim()) {
+            brief = parsed.brief.trim();
+          }
+          if (Array.isArray(parsed.opportunities)) {
+            opportunities = parsed.opportunities
+              .filter((o: any) => o && typeof o.title === "string" && o.title.trim())
+              .slice(0, 4)
+              .map((o: any) => ({
+                title: String(o.title).trim(),
+                detail: typeof o.detail === "string" ? o.detail.trim() : "",
+                value: typeof o.value === "number" ? o.value : null,
+              }));
+          }
+          if (
+            parsed.followUp &&
+            typeof parsed.followUp === "object" &&
+            (parsed.followUp.subject || parsed.followUp.body)
+          ) {
+            followUp = {
+              subject: String(parsed.followUp.subject || "").trim(),
+              body: String(parsed.followUp.body || "").trim(),
+            };
+          }
         }
       } finally {
         clearTimeout(timer);
       }
     } catch (e) {
-      console.error("Profile update model call failed:", e);
-      // Keep the existing brief rather than wiping it.
+      console.error("Post-call CRM pass failed:", e);
     }
 
-    const profile = { brief, updated: new Date().toISOString() };
-    const { error } = await supabaseAdmin
+    // Store profile.
+    await supabaseAdmin
       .from("companies")
-      .update({ profile })
+      .update({ profile: { brief, updated: new Date().toISOString() } })
       .eq("id", companyId);
-    if (error) throw error;
 
-    return NextResponse.json({ ok: true, profile });
+    // Idempotent per call: clear this session's prior AI rows, then re-insert.
+    if (sessionId) {
+      await supabaseAdmin
+        .from("opportunities")
+        .delete()
+        .eq("session_id", sessionId)
+        .eq("surfaced_by_ai", true);
+      await supabaseAdmin.from("follow_ups").delete().eq("session_id", sessionId);
+    }
+
+    if (opportunities.length) {
+      await supabaseAdmin.from("opportunities").insert(
+        opportunities.map((o) => ({
+          company_id: companyId,
+          session_id: sessionId || null,
+          title: o.title,
+          detail: o.detail || null,
+          value: o.value,
+          status: "open",
+          surfaced_by_ai: true,
+        }))
+      );
+    }
+
+    if (followUp && (followUp.subject || followUp.body)) {
+      await supabaseAdmin.from("follow_ups").insert({
+        company_id: companyId,
+        session_id: sessionId || null,
+        draft_subject: followUp.subject || null,
+        draft_body: followUp.body || null,
+        status: "draft",
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      opportunities: opportunities.length,
+      followUp: !!followUp,
+    });
   } catch (err: any) {
     return NextResponse.json(
-      { error: err?.message || "failed to update profile" },
+      { error: err?.message || "post-call pass failed" },
       { status: 500 }
     );
   }
