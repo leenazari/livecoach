@@ -56,7 +56,11 @@ export async function POST(req: NextRequest) {
         type: "text",
         text: `${scope}
 
-GROUND EVERYTHING in the context provided below. Never invent facts, names, numbers, dates or commitments that aren't supported by it. If you don't know something, say so plainly.
+GROUND EVERYTHING in the context provided below. This is the hardest rule and it overrides being helpful.
+- Never state a specific number, money amount, budget, deal value, date, deadline, percentage, stage, name or commitment unless it appears literally in the context. Do not estimate, assume, or infer a figure that isn't written there. If you catch yourself about to put a number in a sentence, check it is actually in the context first.
+- If a piece of information is missing (no budget, no stage, no value, no next step recorded), say it is not recorded yet. Do NOT fill the gap with a plausible-sounding guess. "You haven't logged a budget for them" is a good answer. Inventing "a $200k budget" is a serious error.
+- When a client's record is thin or empty, say so directly and tell the user what to capture first (link a call, set a stage, note the next step). Do not pad a near-empty record into multiple confident options or a detailed plan built on assumptions. A short honest answer beats a long invented one.
+- If you are unsure whether something is in the context, treat it as not there and say so.
 
 EXPLAIN THE WHY. Whenever you suggest a next step or a way to move a deal forward, work the reasoning into your sentences so the user learns the thinking, not just the instruction. Say what in the history makes it the right move. Do this in plain prose, not under a "Why:" label.
 
