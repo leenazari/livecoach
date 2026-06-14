@@ -5,6 +5,25 @@ import { crmFetch } from "@/lib/crm";
 
 type Msg = { id?: string; role: string; content: string };
 
+// Splits an assistant reply into prose and sendable DRAFT blocks (wrapped by the
+// model in ---DRAFT--- … ---END DRAFT--- markers) so each draft gets its own
+// one-click copy.
+function splitDrafts(content: string): { type: "text" | "draft"; text: string }[] {
+  const parts: { type: "text" | "draft"; text: string }[] = [];
+  const re = /---DRAFT---\s*([\s\S]*?)\s*---END DRAFT---/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    if (m.index > last)
+      parts.push({ type: "text", text: content.slice(last, m.index) });
+    parts.push({ type: "draft", text: m[1].trim() });
+    last = re.lastIndex;
+  }
+  if (last < content.length)
+    parts.push({ type: "text", text: content.slice(last) });
+  return parts;
+}
+
 // Per-client AI assistant: a chat grounded in everything we know about the
 // client. Talk to it (tap the mic to start, tap again to stop - browser speech)
 // or type, and it can read its answers aloud. Always explains its reasoning.
@@ -20,6 +39,7 @@ export default function ClientAssistant({
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
   const [readAloud, setReadAloud] = useState(false);
+  const [savedDrafts, setSavedDrafts] = useState<Record<string, boolean>>({});
   const recRef = useRef<any>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
 
@@ -34,13 +54,18 @@ export default function ClientAssistant({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, busy]);
 
+  const stopSpeaking = () => {
+    try {
+      (window as any).speechSynthesis?.cancel();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // Speaks regardless of the toggle (the toggle only governs auto-play after a
+  // reply). Always cancels anything already playing first.
   const speak = (text: string) => {
-    if (
-      !readAloud ||
-      typeof window === "undefined" ||
-      !(window as any).speechSynthesis
-    )
-      return;
+    if (typeof window === "undefined" || !(window as any).speechSynthesis) return;
     try {
       const synth = (window as any).speechSynthesis;
       synth.cancel();
@@ -51,6 +76,9 @@ export default function ClientAssistant({
       /* ignore */
     }
   };
+
+  // Stop talking if the component goes away.
+  useEffect(() => () => stopSpeaking(), []);
 
   const send = async (text?: string) => {
     const t = (text ?? input).trim();
@@ -64,7 +92,7 @@ export default function ClientAssistant({
         body: JSON.stringify({ companyId, message: t }),
       });
       setMessages((p) => [...p, { role: "assistant", content: reply }]);
-      speak(reply);
+      if (readAloud) speak(reply);
     } catch (e: any) {
       setMessages((p) => [
         ...p,
@@ -111,6 +139,27 @@ export default function ClientAssistant({
     rec.start();
   };
 
+  // Save an assistant-written draft into this client's follow-ups, so it lands
+  // in your drafts board + dashboard count. Splits a leading "Subject:" line.
+  const saveDraft = async (key: string, text: string) => {
+    const sm = text.match(/^subject:\s*(.+)$/im);
+    const subject = sm ? sm[1].trim() : "Follow-up";
+    const body = sm ? text.replace(/^subject:.*$/im, "").trim() : text;
+    setSavedDrafts((p) => ({ ...p, [key]: true }));
+    try {
+      await crmFetch("/api/crm/follow-ups", {
+        method: "POST",
+        body: JSON.stringify({
+          companyId,
+          draft_subject: subject,
+          draft_body: body,
+        }),
+      });
+    } catch {
+      setSavedDrafts((p) => ({ ...p, [key]: false }));
+    }
+  };
+
   const clearThread = async () => {
     if (!confirm("Clear this assistant conversation?")) return;
     setMessages([]);
@@ -136,7 +185,11 @@ export default function ClientAssistant({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setReadAloud((v) => !v)}
+            onClick={() => {
+              const next = !readAloud;
+              if (!next) stopSpeaking(); // turning off stops it talking now
+              setReadAloud(next);
+            }}
             title="read answers aloud"
             className={`rounded-full border px-2.5 py-1 font-mono text-[0.54rem] uppercase tracking-wider transition ${
               readAloud
@@ -199,7 +252,48 @@ export default function ClientAssistant({
                   : "border border-edge bg-ink/40 text-bone/90"
               }`}
             >
-              <p className="whitespace-pre-wrap">{m.content}</p>
+              {m.role === "assistant" ? (
+                splitDrafts(m.content).map((part, pi) =>
+                  part.type === "draft" ? (
+                    <div
+                      key={pi}
+                      className="my-2 rounded-lg border border-sky/40 bg-sky/[0.06] p-2.5"
+                    >
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="font-mono text-[0.52rem] uppercase tracking-wider text-sky">
+                          {"◆"} ready to send
+                        </span>
+                        <span className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => navigator.clipboard?.writeText(part.text)}
+                            className="rounded-full border border-sky/50 px-2.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-wider text-sky transition hover:bg-sky/15"
+                          >
+                            copy
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => saveDraft(`${i}-${pi}`, part.text)}
+                            disabled={savedDrafts[`${i}-${pi}`]}
+                            className="rounded-full border border-sage/50 px-2.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-wider text-sage transition hover:bg-sage/15 disabled:opacity-60"
+                          >
+                            {savedDrafts[`${i}-${pi}`] ? "saved ✓" : "save as follow-up"}
+                          </button>
+                        </span>
+                      </div>
+                      <p className="whitespace-pre-wrap font-sans text-[0.82rem] leading-relaxed text-bone/90">
+                        {part.text}
+                      </p>
+                    </div>
+                  ) : part.text.trim() ? (
+                    <p key={pi} className="whitespace-pre-wrap">
+                      {part.text.trim()}
+                    </p>
+                  ) : null
+                )
+              ) : (
+                <p className="whitespace-pre-wrap">{m.content}</p>
+              )}
               {m.role === "assistant" && (
                 <div className="mt-1.5 flex gap-3">
                   <button
@@ -207,7 +301,7 @@ export default function ClientAssistant({
                     onClick={() => navigator.clipboard?.writeText(m.content)}
                     className="font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:text-amber"
                   >
-                    copy
+                    copy all
                   </button>
                   <button
                     type="button"
