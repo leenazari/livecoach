@@ -68,11 +68,13 @@ This is NOT necessarily an interview. ${
         : "Read it against the intent and target focus areas, whatever the conversation type."
     } The recommendation should be the overall read for THIS kind of call (for a sale: how ready/likely; for support: resolved or not; for an interview: the hire signal).
 
-The transcript is labelled by speaker. One speaker is the INTERVIEWER (the person being coached - labelled "Interviewer:", "You:", or by their own name). There may be ONE OR MORE other participants, labelled "Candidate:" or by their real names (e.g. "Mark Darling:", "Jaykishan:"). Treat each named person as a distinct individual. If a candidate/subject name is provided in the inputs, use THAT exact spelling for that person throughout the summary, even if the transcript spells it differently (auto-transcription mishears names) - the provided name is authoritative.
+The transcript is labelled by speaker. One speaker is the HOST - this is the user you are writing FOR (the person being coached, labelled "You:", "Interviewer:", or by their own name). Always refer to the host as "you" in your output, or by their name. NEVER call the host "the interviewer" unless this is actually an interview (callType interview). There may be one or more OTHER participants, labelled by their real names (e.g. "Mark Darling:", "Alain:"). Refer to them by name. Only call someone a "candidate" if this is an interview - on a sales, support or general call they are the client or the other party, never a "candidate". If a subject/client name is provided in the inputs, use THAT exact spelling for that person throughout, even if the transcript spells it differently (auto-transcription mishears names) - the provided name is authoritative.
+
+NO-SHOW / ONE-SIDED CALLS: check who actually spoke before writing anything. If only the host speaks and the other party never joined, or the transcript is just an opening audio or connection check with no real conversation, say that plainly (e.g. "Alain didn't join" or "the recording only captured the setup - no conversation took place"). Do NOT write as if the other party was present or said things they did not. In that case keep the whole summary short, set recommendation to "Incomplete", leave competency notes as "not explored", and put the obvious next action (reschedule, or message them to rebook) in myNextActions. Do not invent discussion that is not in the transcript.
 
 Produce a fair, evidence-based post-call assessment. The assessment scores the CALL AS A WHOLE against its target competencies/intent - you are not producing a separate scorecard per person. Base EVERY point on what was actually said in the transcript - never invent. Where the transcript is thin or a competency wasn't explored, say so rather than guessing or padding scores.
 
-Also extract a short STYLE PROFILE of the INTERVIEWER, drawn ONLY from the interviewer's own lines (the lines labelled "Interviewer:", "You:", or the interviewer's name - NOT the other participants): their tone, how they phrase questions, formality, warmth, and typical sentence length. This will later be used to match future suggestion wording to their natural style.
+Also extract a short STYLE PROFILE of the HOST (you), drawn ONLY from the host's own lines (labelled "You:", "Interviewer:", or the host's name - NOT the other participants): tone, how they phrase things, formality, warmth, and typical sentence length. This will later be used to match future suggestion wording to their natural style.
 
 Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
 {
@@ -108,13 +110,13 @@ Base every score strictly on transcript evidence against this rubric - not on ge
 
 CONTRIBUTORS (who moved the call toward or away from its intent):
 - The call is scored as a whole against the target competencies/intent above - you are NOT scoring individuals. This section simply credits who did what.
-- List each distinct participant who spoke meaningfully, using their name exactly as labelled in the transcript. You MAY include the interviewer (You) if their steering materially shaped the outcome.
+- List each distinct participant who spoke meaningfully, using their name exactly as labelled in the transcript. You MAY include the host (you) if your steering materially shaped the outcome.
 - For each, "impact" is EXACTLY one of: "helped", "blocked", "mixed", "neutral" - did they move the conversation toward the target competencies/intent, derail or stall it, a mix of both, or neither.
 - "note" is one short line: the part they played and how it bore on the scoring (e.g. "drove the problem-solving evidence with concrete detail on match scoring", "stalled ownership by never naming who owns the fix").
 - Base strictly on the transcript. If there is only one other participant, list just them. 2-6 contributors.
 
 QUESTION-BY-QUESTION REVIEW (questionReview):
-- Go through the substantive questions the interviewer actually asked, in order (skip greetings/filler).
+- Go through the substantive questions you (the host) actually asked, in order (skip greetings/filler).
 - For each: a short version of the question, whether it was actually answered - "answered" is exactly one of "yes", "partial", or "no" - and a one-line note.
 - A confident, fluent reply that does not address what was asked is NOT a yes. If someone changed the subject, deflected, or answered a different question, mark "no" (or "partial") and say briefly how (e.g. "pivoted to career instead of the family question"). Surfacing these dodges clearly is the most important part of this review - do not be charmed by smooth delivery.
 
@@ -129,7 +131,7 @@ NEXT ACTIONS (this is the most useful part - be concrete and specific, grounded 
 Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Action items are short plain-English lines. Keep every bullet tight.`;
 
     const userMsg = `ROLE: ${role || "(not specified)"}
-CANDIDATE / SUBJECT: ${candidate || "(unknown)"}
+SUBJECT (the client / other party on the call - only a "candidate" if this is an interview): ${candidate || "(unknown)"}
 
 COMPETENCIES TO SCORE (use these exact names if provided): ${
       fixedComps.length ? fixedComps.join(", ") : "(assessor's choice)"
