@@ -32,6 +32,7 @@ export default function SettingsPage() {
   const [lTopic, setLTopic] = useState("negotiation");
   const [lSource, setLSource] = useState("");
   const [lContent, setLContent] = useState("");
+  const [lYt, setLYt] = useState("");
   const [distilling, setDistilling] = useState(false);
   const [lErr, setLErr] = useState("");
 
@@ -68,6 +69,27 @@ export default function SettingsPage() {
       setLSource("");
     } catch (e: any) {
       setLErr(e.message || "couldn't distil that");
+    } finally {
+      setDistilling(false);
+    }
+  };
+
+  const distilYt = async () => {
+    if (!lYt.trim()) {
+      setLErr("Paste a YouTube link first.");
+      return;
+    }
+    setDistilling(true);
+    setLErr("");
+    try {
+      const { lesson } = await crmFetch<{ lesson: Lesson }>("/api/crm/lessons", {
+        method: "POST",
+        body: JSON.stringify({ youtubeUrl: lYt.trim(), topic: lTopic }),
+      });
+      setLessons((p) => [lesson, ...p]);
+      setLYt("");
+    } catch (e: any) {
+      setLErr(e.message || "couldn't fetch that video");
     } finally {
       setDistilling(false);
     }
@@ -179,12 +201,29 @@ export default function SettingsPage() {
             ))}
           </select>
           <input
-            value={lSource}
-            onChange={(e) => setLSource(e.target.value)}
-            placeholder="Source link (optional)"
-            className="min-w-[200px] flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-[0.7rem] text-bone outline-none placeholder:text-muted/50 focus:border-sky/60"
+            value={lYt}
+            onChange={(e) => setLYt(e.target.value)}
+            placeholder="Paste a YouTube link to fetch automatically…"
+            className="min-w-[220px] flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-[0.7rem] text-bone outline-none placeholder:text-muted/50 focus:border-sky/60"
           />
+          <button
+            type="button"
+            onClick={distilYt}
+            disabled={distilling}
+            className="rounded-full border border-sky/60 bg-sky/15 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
+          >
+            {distilling ? "fetching…" : "fetch from youtube"}
+          </button>
         </div>
+        <p className="mb-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">
+          or paste a transcript / article below
+        </p>
+        <input
+          value={lSource}
+          onChange={(e) => setLSource(e.target.value)}
+          placeholder="Source link (optional)"
+          className="mb-2 w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-[0.7rem] text-bone outline-none placeholder:text-muted/50 focus:border-sky/60"
+        />
         <textarea
           value={lContent}
           onChange={(e) => setLContent(e.target.value)}

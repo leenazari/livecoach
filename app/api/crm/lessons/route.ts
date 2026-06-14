@@ -29,15 +29,63 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const content = typeof body.content === "string" ? body.content.trim() : "";
+    let content = typeof body.content === "string" ? body.content.trim() : "";
     const topic = TOPICS.includes(body.topic) ? body.topic : "general";
-    const sourceUrl =
+    const youtubeUrl =
+      typeof body.youtubeUrl === "string" && body.youtubeUrl.trim()
+        ? body.youtubeUrl.trim()
+        : "";
+    let sourceUrl =
       typeof body.sourceUrl === "string" && body.sourceUrl.trim()
         ? body.sourceUrl.trim()
-        : null;
+        : youtubeUrl || null;
+
+    // If a YouTube link is given and no transcript was pasted, fetch the
+    // transcript via Supadata (server-to-server, so YouTube's bot-block on
+    // datacenter IPs doesn't apply). Needs SUPADATA_API_KEY in the env.
+    if (!content && youtubeUrl) {
+      const key = process.env.SUPADATA_API_KEY;
+      if (!key) {
+        return NextResponse.json(
+          {
+            error:
+              "YouTube fetching isn't set up yet - add a SUPADATA_API_KEY env var, or paste the transcript instead.",
+          },
+          { status: 400 }
+        );
+      }
+      try {
+        const r = await fetch(
+          `https://api.supadata.ai/v1/transcript?url=${encodeURIComponent(
+            youtubeUrl
+          )}`,
+          { headers: { "x-api-key": key } }
+        );
+        const d = await r.json();
+        if (!r.ok) {
+          return NextResponse.json(
+            { error: `couldn't fetch that video (${d?.error || r.status})` },
+            { status: 502 }
+          );
+        }
+        const segs = Array.isArray(d?.content) ? d.content : [];
+        content = segs
+          .map((s: any) => (typeof s?.text === "string" ? s.text : ""))
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim();
+        sourceUrl = youtubeUrl;
+      } catch (e: any) {
+        return NextResponse.json(
+          { error: "couldn't reach the transcript service - try again" },
+          { status: 502 }
+        );
+      }
+    }
+
     if (content.length < 80) {
       return NextResponse.json(
-        { error: "paste a bit more content to learn from" },
+        { error: "not enough transcript/content to learn from" },
         { status: 422 }
       );
     }
