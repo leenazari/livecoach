@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 
@@ -141,27 +142,58 @@ export async function GET(req: Request) {
             .slice(0, 8)
             .join("; ")}`,
         ].join("\n");
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 12000);
+
+        // Server-side cache: the "your day" read only depends on the workload
+        // (drafts + opps + commitments). Reuse the stored read while that is
+        // unchanged, so the dashboard doesn't pay for a fresh LLM call (slow +
+        // costly) on every visit - it only regenerates when the inputs change.
+        const cacheKey =
+          "dayread:" + createHash("sha256").update(lines).digest("hex");
         try {
-          const msg = await anthropic.messages.create(
-            {
-              model: CLAUDE_MODEL_LIVE,
-              max_tokens: 160,
-              temperature: 0.4,
-              system:
-                "You write a 2-3 sentence read of the user's day from their CRM workload. Warm, sharp, specific - name the client and the single most pressing thing. Plain English. No lists, no preamble, just the read.",
-              messages: [{ role: "user", content: lines }],
-            },
-            { signal: controller.signal }
-          );
-          dayRead = msg.content
-            .filter((b: any) => b.type === "text")
-            .map((b: any) => b.text)
-            .join("")
-            .trim();
-        } finally {
-          clearTimeout(timer);
+          const { data: hit } = await supabaseAdmin
+            .from("ai_cache")
+            .select("value")
+            .eq("key", cacheKey)
+            .maybeSingle();
+          if (hit?.value) dayRead = String(hit.value);
+        } catch {
+          /* cache miss is fine */
+        }
+
+        if (!dayRead) {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 12000);
+          try {
+            const msg = await anthropic.messages.create(
+              {
+                model: CLAUDE_MODEL_LIVE,
+                max_tokens: 160,
+                temperature: 0.4,
+                system:
+                  "You write a 2-3 sentence read of the user's day from their CRM workload. Warm, sharp, specific - name the client and the single most pressing thing. Plain English. No lists, no preamble, just the read.",
+                messages: [{ role: "user", content: lines }],
+              },
+              { signal: controller.signal }
+            );
+            dayRead = msg.content
+              .filter((b: any) => b.type === "text")
+              .map((b: any) => b.text)
+              .join("")
+              .trim();
+            if (dayRead) {
+              try {
+                await supabaseAdmin.from("ai_cache").upsert({
+                  key: cacheKey,
+                  value: dayRead,
+                  created_at: new Date().toISOString(),
+                });
+              } catch {
+                /* storing the cache is best-effort */
+              }
+            }
+          } finally {
+            clearTimeout(timer);
+          }
         }
       }
     } catch {
