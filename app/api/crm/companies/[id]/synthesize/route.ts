@@ -3,7 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 import { gatherClientContext } from "@/lib/crm-context";
 import { upsertTasks } from "@/lib/tasks";
-import { workspaceContextBlock } from "@/lib/workspace";
+import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -43,7 +43,8 @@ export async function POST(
       : String(existing.brief || "");
 
     const biz = await workspaceContextBlock();
-    const system = `${biz}You build a client's working intelligence from EVERYTHING known about them (calls, notes, pulled emails, opportunities) - provided below. Output ONLY JSON with exactly these keys:
+    const lessons = await getLessonsBlock(["negotiation", "strategy"]);
+    const system = `${biz}${lessons}You build a client's working intelligence from EVERYTHING known about them (calls, notes, pulled emails, opportunities) - provided below. Output ONLY JSON with exactly these keys:
 
 {
   "brief": [ "the running 'what we know' profile as a SCANNABLE BULLET LIST - one short bullet per distinct subject, person or thread (who they are, what they want, the state of play, open threads). Group by subject or contact so it never reads as a paragraph. Each bullet is one line, lead with the subject or name where it helps (e.g. 'Alain / KIN: ...'). 3-8 bullets. Merge with the existing brief if given." ],

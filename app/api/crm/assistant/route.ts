@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 import { gatherClientContext, gatherGlobalContext } from "@/lib/crm-context";
-import { workspaceContextBlock } from "@/lib/workspace";
+import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -53,10 +53,11 @@ export async function POST(req: NextRequest) {
       : `You are the user's strategic CRM assistant for ONE client. You help them understand the relationship and move it forward.`;
 
     const biz = await workspaceContextBlock();
+    const lessons = await getLessonsBlock(["negotiation", "strategy", "psychology"]);
     const system: any[] = [
       {
         type: "text",
-        text: `${biz}${scope}
+        text: `${biz}${lessons}${scope}
 
 GROUND EVERYTHING in the context provided below. This is the hardest rule and it overrides being helpful.
 - Never state a specific number, money amount, budget, deal value, date, deadline, percentage, stage, name or commitment unless it appears literally in the context. Do not estimate, assume, or infer a figure that isn't written there. If you catch yourself about to put a number in a sentence, check it is actually in the context first.

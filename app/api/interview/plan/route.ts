@@ -4,7 +4,7 @@ import {
   CLAUDE_MODEL_LIVE,
   CLAUDE_MODEL_PRO,
 } from "@/lib/anthropic";
-import { workspaceContextBlock } from "@/lib/workspace";
+import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -266,6 +266,7 @@ export async function POST(req: NextRequest) {
   let role = "";
   try {
     const biz = await workspaceContextBlock();
+    const lessons = await getLessonsBlock(["negotiation", "psychology"]);
     const body = await req.json();
     brief = typeof body.brief === "string" ? body.brief : "";
     role = typeof body.role === "string" ? body.role : "";
@@ -434,7 +435,7 @@ Return the JSON now.`;
       );
     }
 
-    const system = `${biz}You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
+    const system = `${biz}${lessons}You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
 
 The INTENT BRIEF defines the GOAL of the call and what KIND of call it is (interview, sales, support, discovery, general). Use it to set the goal, the call type, and the caller's angle.
 
@@ -625,7 +626,7 @@ Return the JSON plan now.`;
       const pbSystem: any[] = [
         {
           type: "text",
-          text: `${biz}You write the PLAYBOOK for a live call: 4-6 concrete, in-the-moment tactics the caller should be ready to use. Each item is { "label": "short tactic name", "detail": "one specific, actionable line" }.
+          text: `${biz}${lessons}You write the PLAYBOOK for a live call: 4-6 concrete, in-the-moment tactics the caller should be ready to use. Each item is { "label": "short tactic name", "detail": "one specific, actionable line" }.
 
 Ground EVERY tactic in THIS call - name the real idea, product, and people from the intent, the FOCUS AREAS, and the document. A reader should be unable to use these tactics for any other call. Never generic advice.
 
