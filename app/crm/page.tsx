@@ -182,7 +182,24 @@ export default function DashboardPage() {
               >
                 <span className="mt-1 h-3 w-3 shrink-0 rounded border border-muted" />
                 <span className="flex-1 font-sans text-[0.84rem] leading-snug text-bone">
-                  {t.text}{" "}
+                  {/* Clicking the task takes you to where you action it: a
+                      draft opens the drafts list, anything else opens the
+                      client to act on it. */}
+                  <Link
+                    href={
+                      t.kind === "draft"
+                        ? "/crm/board?tab=drafts"
+                        : `/crm/${t.companyId}`
+                    }
+                    title={
+                      t.kind === "draft"
+                        ? "Open your drafts to send this"
+                        : "Open this client to act on it"
+                    }
+                    className="text-bone transition hover:text-amber hover:underline"
+                  >
+                    {t.text}
+                  </Link>{" "}
                   <Link
                     href={`/crm/${t.companyId}`}
                     className="font-mono text-[0.6rem] text-sky transition hover:text-amber"

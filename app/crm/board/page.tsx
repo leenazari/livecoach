@@ -154,7 +154,26 @@ export default function BoardPage() {
             <li key={i} className="flex items-start gap-2.5 border-b border-edge/40 py-2.5 last:border-none">
               <span className="mt-1 h-3 w-3 shrink-0 rounded border border-muted" />
               <span className="flex-1 font-sans text-[0.86rem] leading-snug text-bone">
-                {t.text}{" "}
+                {/* Click to action it: a draft jumps to the Drafts tab to send,
+                    anything else opens the client. */}
+                {t.kind === "draft" ? (
+                  <button
+                    type="button"
+                    onClick={() => setTab("drafts")}
+                    title="Open your drafts to send this"
+                    className="text-left text-bone transition hover:text-amber hover:underline"
+                  >
+                    {t.text}
+                  </button>
+                ) : (
+                  <Link
+                    href={`/crm/${t.companyId}`}
+                    title="Open this client to act on it"
+                    className="text-bone transition hover:text-amber hover:underline"
+                  >
+                    {t.text}
+                  </Link>
+                )}{" "}
                 <Link href={`/crm/${t.companyId}`} className="font-mono text-[0.6rem] text-sky hover:text-amber">
                   · {t.company}
                 </Link>

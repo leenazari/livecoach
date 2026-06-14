@@ -14,7 +14,7 @@ type Call = {
   company: string | null;
   company_id: string | null;
   created_at: string;
-  cost: number | null;
+  cost: number | string | null;
   summary: any;
   durationSeconds: number | null;
   transcriptChars: number | null;
@@ -34,13 +34,15 @@ export default function CallDetailPage() {
       .catch((e) => setError(e?.message || "Could not load this call."));
   }, [id]);
 
-  const gbp = (n: number | null) =>
-    typeof n === "number"
-      ? `£${n.toLocaleString(undefined, {
+  const gbp = (n: number | string | null) => {
+    const v = n == null ? NaN : Number(n);
+    return Number.isFinite(v)
+      ? `£${v.toLocaleString(undefined, {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
         })}`
       : "—";
+  };
   const fmtDate = (iso?: string) => {
     if (!iso) return "";
     try {

@@ -253,12 +253,15 @@ export default function CompanyDetailPage() {
   const priorityVal = (attrs as any).priority || "";
   const dealVal = (attrs as any).value;
 
-  // Total spend on this client across all linked calls.
+  // Total spend on this client across all linked calls. (Postgres numeric
+  // arrives as a string from supabase, so coerce with Number.)
   const totalSpend = calls.reduce(
-    (sum: number, c: any) => sum + (typeof c?.cost === "number" ? c.cost : 0),
+    (sum: number, c: any) => sum + (Number(c?.cost) || 0),
     0
   );
-  const hasSpend = calls.some((c: any) => typeof c?.cost === "number");
+  const hasSpend = calls.some(
+    (c: any) => c?.cost != null && Number.isFinite(Number(c.cost))
+  );
   const gbp = (n: number) =>
     `£${Number(n || 0).toLocaleString(undefined, {
       minimumFractionDigits: 2,
@@ -653,9 +656,9 @@ export default function CompanyDetailPage() {
                       {c.candidate ? ` · ${c.candidate}` : ""}
                     </span>
                     <span className="flex items-center gap-2">
-                      {typeof c.cost === "number" && (
+                      {c.cost != null && Number.isFinite(Number(c.cost)) && (
                         <span className="font-mono text-[0.62rem] text-bone/70">
-                          {gbp(c.cost)}
+                          {gbp(Number(c.cost))}
                         </span>
                       )}
                       {score !== null && (

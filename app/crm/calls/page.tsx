@@ -12,7 +12,7 @@ type Call = {
   role: string | null;
   company: string | null;
   created_at: string;
-  cost: number | null;
+  cost: number | string | null;
 };
 
 export default function CallsPage() {
@@ -40,13 +40,16 @@ export default function CallsPage() {
       return iso;
     }
   };
-  const gbp = (n: number | null) =>
-    typeof n === "number"
-      ? `£${n.toLocaleString(undefined, {
+  const gbp = (n: number | string | null) => {
+    // numeric columns arrive as strings from supabase - coerce before format.
+    const v = n == null ? NaN : Number(n);
+    return Number.isFinite(v)
+      ? `£${v.toLocaleString(undefined, {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
         })}`
       : "—";
+  };
 
   const needle = q.trim().toLowerCase();
   const shown = needle

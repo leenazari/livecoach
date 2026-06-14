@@ -86,7 +86,7 @@ export async function GET() {
 
     const openOpps = oppsRes.data || [];
     const openOppValue = openOpps.reduce(
-      (sum: number, o: any) => sum + (typeof o.value === "number" ? o.value : 0),
+      (sum: number, o: any) => sum + (Number(o.value) || 0),
       0
     );
 
@@ -99,7 +99,8 @@ export async function GET() {
     let monthCost = 0;
     let allCost = 0;
     for (const r of costRes.data || []) {
-      const c = typeof r.cost === "number" ? r.cost : 0;
+      // Postgres `numeric` comes back from supabase as a STRING, so coerce.
+      const c = Number(r.cost) || 0;
       if (!c) continue;
       allCost += c;
       const age = now - new Date(r.created_at as string).getTime();
