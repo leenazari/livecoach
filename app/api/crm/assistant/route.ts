@@ -32,10 +32,14 @@ export async function POST(req: NextRequest) {
       .eq("company_id", companyId)
       .order("created_at", { ascending: false })
       .limit(12);
-    const priorTurns = (history || [])
+    const priorTurns: { role: "user" | "assistant"; content: string }[] = (
+      history || []
+    )
       .reverse()
       .map((m: any) => ({
-        role: m.role === "assistant" ? "assistant" : "user",
+        role: (m.role === "assistant" ? "assistant" : "user") as
+          | "user"
+          | "assistant",
         content: String(m.content),
       }));
 
