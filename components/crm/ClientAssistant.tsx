@@ -31,10 +31,12 @@ export default function ClientAssistant({
   companyId,
   companyName,
   autoListen,
+  initialPrompt,
 }: {
   companyId?: string;
   companyName?: string;
   autoListen?: boolean;
+  initialPrompt?: string;
 }) {
   // No companyId = the GLOBAL assistant: it knows every client + the pipeline.
   const isGlobal = !companyId;
@@ -54,6 +56,7 @@ export default function ClientAssistant({
   const sendOnStopRef = useRef(false);
   const suppressMicRef = useRef(false); // ignore late mic results after a send
   const didAutoListen = useRef(false);
+  const lastSeedRef = useRef(""); // last initialPrompt auto-sent
 
   // Stop the mic immediately and stop it from re-filling the box (used on send).
   const killMic = () => {
@@ -192,6 +195,16 @@ export default function ClientAssistant({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoListen]);
+
+  // Seeded prompt (e.g. from a "draft email" task) - send it once.
+  useEffect(() => {
+    const p = (initialPrompt || "").trim();
+    if (p && p !== lastSeedRef.current) {
+      lastSeedRef.current = p;
+      send(p);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPrompt]);
 
   // Save an assistant-written draft into this client's follow-ups, so it lands
   // in your drafts board + dashboard count. Splits a leading "Subject:" line.

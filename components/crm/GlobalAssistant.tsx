@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ClientAssistant from "@/components/crm/ClientAssistant";
 
 // The assistant trigger + panel. A top-centre pill opens a top-anchored,
@@ -15,7 +15,24 @@ export default function GlobalAssistant({
   companyName?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [seed, setSeed] = useState("");
   const active = companyId && companyName ? { id: companyId, name: companyName } : null;
+
+  // A "draft email" next step (anywhere) opens the assistant and asks it to
+  // draft that email, so the task actually starts the action.
+  useEffect(() => {
+    const h = (e: Event) => {
+      const text = (e as CustomEvent)?.detail?.text || "";
+      setOpen(true);
+      setSeed(
+        text
+          ? `Draft a short, warm, ready-to-send email for this next step: ${text}`
+          : ""
+      );
+    };
+    window.addEventListener("lc:draft-email", h);
+    return () => window.removeEventListener("lc:draft-email", h);
+  }, []);
 
   if (!open) {
     return (
@@ -55,7 +72,8 @@ export default function GlobalAssistant({
             key={active ? active.id : "global"}
             companyId={active?.id}
             companyName={active?.name}
-            autoListen
+            autoListen={!seed}
+            initialPrompt={seed}
           />
         </div>
       </div>

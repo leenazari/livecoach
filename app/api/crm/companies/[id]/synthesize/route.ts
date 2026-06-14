@@ -47,14 +47,14 @@ export async function POST(
   "brief": [ "the running 'what we know' profile as a SCANNABLE BULLET LIST - one short bullet per distinct subject, person or thread (who they are, what they want, the state of play, open threads). Group by subject or contact so it never reads as a paragraph. Each bullet is one line, lead with the subject or name where it helps (e.g. 'Alain / KIN: ...'). 3-8 bullets. Merge with the existing brief if given." ],
   "playbook": [ "3-6 short, ordered strategic plays - the main moves to advance THIS client toward the outcome the host wants. Specific to this client and the open threads, most important first. Not generic advice." ],
   "opportunities": [ { "title": "short name for a concrete opportunity FOR US", "detail": "one line grounding it in the context", "value": <rough GBP number or null> } ],
-  "nextSteps": [ "3-6 concrete to-dos the host should do next, each a short action line (who to contact, what to send, what to decide). Ordered by priority." ]
+  "nextSteps": [ { "text": "a concrete to-do, short action line (who to contact, what to send, what to decide)", "action": "one of: email (write/send a message), call (prep for or make a call/meeting), task (anything else)" } ]
 }
 
 Rules:
 - Ground EVERYTHING only in the context below. Never invent facts, names, numbers, dates or commitments. If something isn't there, leave it out.
 - Write in plain English. No markdown, no "#" headings, no "**bold**". No em-dashes or semicolons - use commas and full stops.
 - opportunities: 0-4, only real ones clearly implied. Empty array if none. value is a rough number or null, never a string.
-- nextSteps: real and actionable, drawn from the open threads in the context. If genuinely none, return an empty array.`;
+- nextSteps: real and actionable, drawn from the open threads in the context. action must be exactly one of "email", "call", "task". If genuinely none, return an empty array.`;
 
     const userMsg = `CLIENT: ${company.name}
 
@@ -74,7 +74,7 @@ Return the JSON now.`;
     let playbook: string[] = Array.isArray(existing.playbook)
       ? existing.playbook
       : [];
-    let nextSteps: string[] = [];
+    let nextSteps: { text: string; action: string }[] = [];
     let opportunities: { title: string; detail: string; value: number | null }[] =
       [];
 
@@ -125,8 +125,18 @@ Return the JSON now.`;
           }
           if (Array.isArray(parsed.nextSteps)) {
             nextSteps = parsed.nextSteps
-              .filter((p: any) => typeof p === "string" && p.trim())
-              .map((p: string) => p.trim())
+              .map((s: any) => {
+                if (typeof s === "string" && s.trim())
+                  return { text: s.trim(), action: "task" };
+                if (s && typeof s.text === "string" && s.text.trim()) {
+                  const a = ["email", "call", "task"].includes(s.action)
+                    ? s.action
+                    : "task";
+                  return { text: String(s.text).trim(), action: a };
+                }
+                return null;
+              })
+              .filter((x: any): x is { text: string; action: string } => !!x)
               .slice(0, 6);
           }
           if (Array.isArray(parsed.opportunities)) {
@@ -167,10 +177,10 @@ Return the JSON now.`;
     // completed ones are never recreated when this is re-run).
     await upsertTasks(
       companyId,
-      nextSteps.map((t) => ({
-        text: t,
+      nextSteps.map((s) => ({
+        text: s.text,
         kind: "next_step",
-        linkKind: "client",
+        linkKind: s.action, // email | call | task -> drives the click action
         source: "synthesis",
       }))
     );

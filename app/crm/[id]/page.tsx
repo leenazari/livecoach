@@ -47,6 +47,10 @@ export default function CompanyDetailPage() {
   const [synthing, setSynthing] = useState(false);
   const [err, setErr] = useState("");
   const [savedAt, setSavedAt] = useState("");
+  // Which data tab is showing below the always-visible AI intelligence.
+  const [tab, setTab] = useState<"details" | "notes" | "calls" | "pipeline">(
+    "details"
+  );
 
   // New-contact form.
   const [cName, setCName] = useState("");
@@ -292,6 +296,11 @@ export default function CompanyDetailPage() {
         ?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   };
+  // Switch the data tab and scroll the tab strip into view (used by the stats).
+  const goTab = (t: "details" | "notes" | "calls" | "pipeline") => {
+    setTab(t);
+    scrollToId("sec-tabs");
+  };
 
   const statCls =
     "cursor-pointer rounded-lg border border-edge bg-ink/40 px-3 py-2.5 text-left transition hover:border-amber/50";
@@ -338,9 +347,9 @@ export default function CompanyDetailPage() {
 
       {err && <p className="mb-3 font-mono text-[0.66rem] text-rust">{err}</p>}
 
-      {/* STATS - clickable, each jumps to its detail section. */}
+      {/* STATS - clickable, each opens the relevant data tab below. */}
       <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-6">
-        <button type="button" onClick={() => scrollToId("sec-fields")} className={statCls}>
+        <button type="button" onClick={() => goTab("details")} className={statCls}>
           <div className="font-sans text-[0.95rem] text-rust">
             {priorityVal || "—"}
           </div>
@@ -348,7 +357,7 @@ export default function CompanyDetailPage() {
             priority ↗
           </div>
         </button>
-        <button type="button" onClick={() => scrollToId("sec-fields")} className={statCls}>
+        <button type="button" onClick={() => goTab("details")} className={statCls}>
           <div className="font-sans text-[0.95rem] text-bone">
             {typeof dealVal === "number"
               ? `£${Number(dealVal).toLocaleString()}`
@@ -358,13 +367,13 @@ export default function CompanyDetailPage() {
             value ↗
           </div>
         </button>
-        <button type="button" onClick={() => scrollToId("sec-history")} className={statCls}>
+        <button type="button" onClick={() => goTab("calls")} className={statCls}>
           <div className="font-sans text-[0.95rem] text-bone">{calls.length}</div>
           <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
             calls ↗
           </div>
         </button>
-        <button type="button" onClick={() => scrollToId("sec-focus")} className={statCls}>
+        <button type="button" onClick={() => goTab("calls")} className={statCls}>
           <div className="font-sans text-[0.95rem] text-amber">
             {avgFocus !== null ? avgFocus.toFixed(1) : "—"}
           </div>
@@ -372,13 +381,13 @@ export default function CompanyDetailPage() {
             avg focus ↗
           </div>
         </button>
-        <button type="button" onClick={() => scrollToId("sec-opps")} className={statCls}>
+        <button type="button" onClick={() => goTab("pipeline")} className={statCls}>
           <div className="font-sans text-[0.95rem] text-sage">{openOppCount}</div>
           <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
             open opps ↗
           </div>
         </button>
-        <button type="button" onClick={() => scrollToId("sec-history")} className={statCls}>
+        <button type="button" onClick={() => goTab("calls")} className={statCls}>
           <div className="font-sans text-[0.95rem] text-bone">
             {hasSpend ? gbp(totalSpend) : "—"}
           </div>
@@ -467,6 +476,36 @@ export default function CompanyDetailPage() {
         />
       </div>
 
+      {/* DATA TABS - the AI intelligence above stays put; the raw client data
+          lives in these tabs so the page isn't one long scroll. */}
+      <div
+        id="sec-tabs"
+        className="mb-4 flex flex-wrap gap-1 border-b border-edge"
+      >
+        {(
+          [
+            ["details", "Details"],
+            ["notes", "Notes & docs"],
+            ["calls", "Calls"],
+            ["pipeline", "Pipeline"],
+          ] as const
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setTab(k)}
+            className={`-mb-px border-b-2 px-3.5 py-2 font-mono text-[0.6rem] uppercase tracking-wider transition ${
+              tab === k
+                ? "border-amber text-amber"
+                : "border-transparent text-muted hover:text-bone"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "details" && (
       <div className="grid gap-5 lg:grid-cols-2">
         {/* CORE + CUSTOM FIELDS */}
         <section id="sec-fields" className="flex flex-col gap-4">
@@ -646,12 +685,17 @@ export default function CompanyDetailPage() {
           </button>
         </section>
       </div>
+      )}
 
       {/* CLIENT CONTEXT - notes / links / docs that feed the plan + assistant. */}
-      <div className="mt-5">
-        <ClientContext companyId={id} />
-      </div>
+      {tab === "notes" && (
+        <div>
+          <ClientContext companyId={id} />
+        </div>
+      )}
 
+      {tab === "calls" && (
+      <>
       {/* FOCUS SCORES OVER TIME - main focus first, newest score at top. */}
       {focusOrder.length > 0 && (
         <section
@@ -777,7 +821,11 @@ export default function CompanyDetailPage() {
           </ul>
         )}
       </section>
+      </>
+      )}
 
+      {tab === "pipeline" && (
+      <>
       {/* OPPORTUNITIES - AI-surfaced from calls. */}
       <section
         id="sec-opps"
@@ -899,6 +947,8 @@ export default function CompanyDetailPage() {
           </ul>
         )}
       </section>
+      </>
+      )}
       <GlobalAssistant companyId={id} companyName={company.name} />
       <NavMenu />
     </main>

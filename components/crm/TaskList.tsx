@@ -15,9 +15,12 @@ type Task = {
   done_at: string | null;
 };
 
-// A tickable to-do list backed by the tasks table. Tick to complete, click the
-// ticked box to remove now (done tasks also auto-clear the next day). Click the
-// task text to jump to where you action it.
+// A tickable to-do list backed by the tasks table.
+// - Tick the box to mark done; tick again to UN-tick (no data loss).
+// - The separate ✕ removes a task for good.
+// - Done tasks also auto-clear the next day.
+// - Clicking the text starts the action: email -> opens the assistant to draft
+//   it, call -> starts a preloaded call, anything else -> opens the client.
 export default function TaskList({
   companyId,
   showCompany = false,
@@ -38,17 +41,19 @@ export default function TaskList({
       .catch(() => {});
   }, [url]);
 
-  const complete = (t: Task) => {
+  // Tick / un-tick (toggle done). Never deletes - that's the ✕.
+  const toggle = (t: Task) => {
+    const next = t.status === "done" ? "open" : "done";
     setTasks((p) =>
       p.map((x) =>
         x.id === t.id
-          ? { ...x, status: "done", done_at: new Date().toISOString() }
+          ? { ...x, status: next, done_at: next === "done" ? new Date().toISOString() : null }
           : x
       )
     );
     crmFetch(`/api/crm/tasks/${t.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ status: "done" }),
+      body: JSON.stringify({ status: next }),
     }).catch(() => {});
   };
 
@@ -57,14 +62,45 @@ export default function TaskList({
     crmFetch(`/api/crm/tasks/${t.id}`, { method: "DELETE" }).catch(() => {});
   };
 
-  // Where clicking the task text takes you, to start the action.
-  const go = (t: Task) => {
-    if (t.link_kind === "drafts") return router.push("/crm/board?tab=drafts");
-    if (t.link_kind === "call") {
-      const qs = t.company_id ? `?company=${t.company_id}` : "";
-      return router.push(`/call${qs}`);
+  // What clicking the task text does, by action.
+  const start = (t: Task) => {
+    const a = t.link_kind || "task";
+    if (a === "email") {
+      window.dispatchEvent(
+        new CustomEvent("lc:draft-email", {
+          detail: { companyId: t.company_id, companyName: t.company, text: t.text },
+        })
+      );
+      return;
     }
-    if (t.company_id) return router.push(`/crm/${t.company_id}`);
+    if (a === "call") {
+      const q = new URLSearchParams();
+      if (t.company_id) q.set("company", t.company_id);
+      if (t.company) q.set("companyName", t.company);
+      q.set("intent", t.text);
+      return router.push(`/call?${q.toString()}`);
+    }
+    if (a === "drafts") return router.push("/crm/board?tab=drafts");
+    // task / client: open the client - unless we're already on that client page.
+    if (t.company_id && t.company_id !== companyId) {
+      return router.push(`/crm/${t.company_id}`);
+    }
+  };
+
+  const chip = (a: string | null) => {
+    if (a === "email")
+      return { label: "draft email", icon: "ti-mail", bg: "var(--color-background-info)", fg: "var(--color-text-info)" };
+    if (a === "call")
+      return { label: "prep call", icon: "ti-player-play", bg: "var(--color-background-warning)", fg: "var(--color-text-warning)" };
+    if (a === "drafts")
+      return { label: "draft", icon: "ti-mail", bg: "var(--color-background-info)", fg: "var(--color-text-info)" };
+    return null;
+  };
+
+  const actionable = (t: Task) => {
+    const a = t.link_kind || "task";
+    if (a === "email" || a === "call" || a === "drafts") return true;
+    return !!(t.company_id && t.company_id !== companyId);
   };
 
   if (tasks.length === 0) {
@@ -79,16 +115,18 @@ export default function TaskList({
     <ul className="flex flex-col">
       {tasks.map((t) => {
         const done = t.status === "done";
+        const c = chip(t.link_kind);
+        const canClick = actionable(t);
         return (
           <li
             key={t.id}
-            className="flex items-start gap-2.5 border-b border-edge/40 py-2 last:border-none"
+            className="flex items-center gap-2.5 border-b border-edge/40 py-2 last:border-none"
           >
             <button
               type="button"
-              onClick={() => (done ? remove(t) : complete(t))}
-              title={done ? "completed - click to remove" : "mark done"}
-              className={`mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded border text-[0.6rem] transition ${
+              onClick={() => toggle(t)}
+              title={done ? "tick to un-complete" : "mark done"}
+              className={`flex h-4 w-4 flex-none items-center justify-center rounded border text-[0.6rem] transition ${
                 done
                   ? "border-sage bg-sage text-ink"
                   : "border-muted hover:border-sage"
@@ -96,22 +134,45 @@ export default function TaskList({
             >
               {done ? "✓" : ""}
             </button>
-            <span className="flex-1 leading-snug">
-              <button
-                type="button"
-                onClick={() => go(t)}
-                className={`text-left font-sans text-[0.84rem] transition hover:text-amber hover:underline ${
-                  done ? "text-muted line-through" : "text-bone"
-                }`}
+
+            <button
+              type="button"
+              onClick={() => canClick && start(t)}
+              disabled={!canClick}
+              className={`flex-1 text-left font-sans text-[0.84rem] leading-snug transition ${
+                done
+                  ? "text-muted line-through"
+                  : canClick
+                  ? "text-bone hover:text-amber hover:underline"
+                  : "cursor-default text-bone"
+              }`}
+            >
+              {t.text}
+            </button>
+
+            {c && !done && (
+              <span
+                className="flex-none rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider"
+                style={{ background: c.bg, color: c.fg }}
               >
-                {t.text}
-              </button>
-              {showCompany && t.company && (
-                <span className="ml-1.5 font-mono text-[0.6rem] text-sky">
-                  · {t.company}
-                </span>
-              )}
-            </span>
+                <i className={`ti ${c.icon}`} aria-hidden="true" /> {c.label}
+              </span>
+            )}
+            {showCompany && t.company && (
+              <span className="flex-none font-mono text-[0.58rem] text-sky">
+                {t.company}
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={() => remove(t)}
+              aria-label="remove task"
+              title="remove"
+              className="flex-none font-mono text-[0.7rem] text-muted transition hover:text-rust"
+            >
+              ✕
+            </button>
           </li>
         );
       })}
