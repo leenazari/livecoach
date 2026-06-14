@@ -88,8 +88,18 @@ export async function gatherClientContext(companyId: string): Promise<string> {
   lines.push(`Sector: ${company.sector?.trim() || "not set"}`);
   lines.push(`Stage: ${company.stage?.trim() || "not set"}`);
   lines.push(`Notes: ${hasNotes ? String(company.notes).trim() : "none recorded"}`);
+  const briefText = Array.isArray(profile.brief)
+    ? profile.brief
+        .filter((b: any) => typeof b === "string" && b.trim())
+        .map((b: string) => `- ${b.trim()}`)
+        .join("\n")
+    : typeof profile.brief === "string"
+    ? profile.brief
+    : "";
   lines.push(
-    `Background / what we know: ${profile.brief ? profile.brief : "nothing recorded yet"}`
+    `Background / what we know:${
+      briefText ? `\n${briefText}` : " nothing recorded yet"
+    }`
   );
   lines.push(
     `Recorded fields (budget, value, owner, priority, etc.): ${
@@ -236,7 +246,12 @@ export async function gatherGlobalContext(): Promise<string> {
     const bits: string[] = [
       `• ${c.name}${c.sector ? ` (${c.sector}${c.stage ? `, ${c.stage}` : ""})` : ""}`,
     ];
-    const brief = (c.profile || {}).brief;
+    const rawBrief = (c.profile || {}).brief;
+    const brief = Array.isArray(rawBrief)
+      ? rawBrief.filter((b: any) => typeof b === "string" && b.trim()).join("; ")
+      : typeof rawBrief === "string"
+      ? rawBrief
+      : "";
     const t = tasksBy.get(c.id);
     const dr = draftsBy.get(c.id);
     const op = oppsBy.get(c.id);

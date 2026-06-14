@@ -35,10 +35,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "company not found" }, { status: 404 });
     }
 
-    const existingBrief =
+    const existingBriefRaw =
       company.profile && typeof company.profile === "object"
-        ? String((company.profile as any).brief || "")
+        ? (company.profile as any).brief
         : "";
+    const existingBrief = Array.isArray(existingBriefRaw)
+      ? existingBriefRaw.join("\n")
+      : String(existingBriefRaw || "");
     const existingPlaybook: string[] =
       company.profile &&
       typeof company.profile === "object" &&
@@ -66,7 +69,7 @@ export async function POST(req: NextRequest) {
     const system = `After a call with a client, you produce three things from the call and the client's existing profile. Output ONLY JSON with exactly these keys:
 
 {
-  "brief": "the UPDATED running profile - a tight <=180-word plain-English memory of durable facts about this client (who they are, what they want, key people, decisions, open threads on either side, preferences). Merge with the existing brief: keep what's true, update what changed, add what's new, drop one-off noise. No call-by-call log.",
+  "brief": [ "the UPDATED running profile as a SCANNABLE BULLET LIST - one short bullet per distinct subject, person or thread (who they are, what they want, key people, decisions, open threads on either side, preferences). Lead with the subject or name where it helps. Never a paragraph. Merge with the existing brief: keep what's true, update what changed, add what's new, drop one-off noise. 3-8 bullets, no call-by-call log." ],
   "playbook": [ "3-6 short, punchy strategic plays - the MAIN moves to advance THIS specific client toward the outcome the host wants (win the deal, land the project, get the yes). Ordered most important first. Each is ONE short sentence, practical and specific to this client and the open threads - not generic sales advice. This is the host's game plan for the relationship." ],
   "opportunities": [ { "title": "short name for a concrete opportunity FOR US this call surfaced (a deal, upsell, a need we can serve, a next project)", "detail": "one line grounding it in what was said", "value": <rough GBP number or null> } ],
   "followUp": { "subject": "email subject", "body": "a warm, ready-to-review DRAFT follow-up email to the client referencing what was discussed and the sensible next steps" }
@@ -89,7 +92,11 @@ ${callText || "(little of note)"}
 
 Return the JSON now.`;
 
-    let brief = existingBrief;
+    let brief: string[] = Array.isArray(existingBriefRaw)
+      ? existingBriefRaw
+      : existingBrief
+      ? [existingBrief]
+      : [];
     let playbook: string[] = existingPlaybook;
     let opportunities: { title: string; detail: string; value: number | null }[] = [];
     let followUp: { subject: string; body: string } | null = null;
@@ -118,8 +125,18 @@ Return the JSON now.`;
         const b = raw.lastIndexOf("}");
         const parsed = a >= 0 && b > a ? JSON.parse(raw.slice(a, b + 1)) : null;
         if (parsed) {
-          if (typeof parsed.brief === "string" && parsed.brief.trim()) {
-            brief = parsed.brief.trim();
+          if (Array.isArray(parsed.brief)) {
+            const bb = parsed.brief
+              .filter((p: any) => typeof p === "string" && p.trim())
+              .map((p: string) => p.replace(/^[-•*]\s*/, "").trim())
+              .slice(0, 8);
+            if (bb.length) brief = bb;
+          } else if (typeof parsed.brief === "string" && parsed.brief.trim()) {
+            brief = parsed.brief
+              .split(/\n+/)
+              .map((s: string) => s.replace(/^[-•*]\s*/, "").trim())
+              .filter(Boolean)
+              .slice(0, 8);
           }
           if (Array.isArray(parsed.playbook)) {
             const pb = parsed.playbook

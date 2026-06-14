@@ -36,11 +36,14 @@ export async function POST(
     }
 
     const existing = (company.profile || {}) as any;
+    const existingBriefStr = Array.isArray(existing.brief)
+      ? existing.brief.join("\n")
+      : String(existing.brief || "");
 
     const system = `You build a client's working intelligence from EVERYTHING known about them (calls, notes, pulled emails, opportunities) - provided below. Output ONLY JSON with exactly these keys:
 
 {
-  "brief": "the running 'what we know' profile - a tight <=180-word plain-English memory of durable facts: who they are, what they want, key people, the state of play, open threads on either side. Merge with the existing brief if one is given.",
+  "brief": [ "the running 'what we know' profile as a SCANNABLE BULLET LIST - one short bullet per distinct subject, person or thread (who they are, what they want, the state of play, open threads). Group by subject or contact so it never reads as a paragraph. Each bullet is one line, lead with the subject or name where it helps (e.g. 'Alain / KIN: ...'). 3-8 bullets. Merge with the existing brief if given." ],
   "playbook": [ "3-6 short, ordered strategic plays - the main moves to advance THIS client toward the outcome the host wants. Specific to this client and the open threads, most important first. Not generic advice." ],
   "opportunities": [ { "title": "short name for a concrete opportunity FOR US", "detail": "one line grounding it in the context", "value": <rough GBP number or null> } ],
   "nextSteps": [ "3-6 concrete to-dos the host should do next, each a short action line (who to contact, what to send, what to decide). Ordered by priority." ]
@@ -55,14 +58,18 @@ Rules:
     const userMsg = `CLIENT: ${company.name}
 
 EXISTING BRIEF (may be empty):
-${existing.brief || "(none yet)"}
+${existingBriefStr || "(none yet)"}
 
 EVERYTHING WE KNOW (calls, notes, emails, opportunities):
 ${context}
 
 Return the JSON now.`;
 
-    let brief = String(existing.brief || "");
+    let brief: string[] = Array.isArray(existing.brief)
+      ? existing.brief
+      : existingBriefStr
+      ? [existingBriefStr]
+      : [];
     let playbook: string[] = Array.isArray(existing.playbook)
       ? existing.playbook
       : [];
@@ -94,8 +101,20 @@ Return the JSON now.`;
         const b = raw.lastIndexOf("}");
         const parsed = a >= 0 && b > a ? JSON.parse(raw.slice(a, b + 1)) : null;
         if (parsed) {
-          if (typeof parsed.brief === "string" && parsed.brief.trim())
-            brief = parsed.brief.trim();
+          if (Array.isArray(parsed.brief)) {
+            const bb = parsed.brief
+              .filter((p: any) => typeof p === "string" && p.trim())
+              .map((p: string) => p.replace(/^[-•*]\s*/, "").trim())
+              .slice(0, 8);
+            if (bb.length) brief = bb;
+          } else if (typeof parsed.brief === "string" && parsed.brief.trim()) {
+            // Model returned a paragraph - split into bullets defensively.
+            brief = parsed.brief
+              .split(/\n+/)
+              .map((s: string) => s.replace(/^[-•*]\s*/, "").trim())
+              .filter(Boolean)
+              .slice(0, 8);
+          }
           if (Array.isArray(parsed.playbook)) {
             const pb = parsed.playbook
               .filter((p: any) => typeof p === "string" && p.trim())

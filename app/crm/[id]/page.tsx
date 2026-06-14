@@ -387,20 +387,42 @@ export default function CompanyDetailPage() {
         </button>
       </div>
 
-      {company.profile &&
-        typeof company.profile === "object" &&
-        typeof (company.profile as any).brief === "string" &&
-        (company.profile as any).brief.trim() && (
+      {(() => {
+        const raw = (company.profile as any)?.brief;
+        const items: string[] = Array.isArray(raw)
+          ? raw.filter((b: any) => typeof b === "string" && b.trim())
+          : [];
+        const para =
+          !items.length && typeof raw === "string" && raw.trim()
+            ? raw.trim()
+            : "";
+        if (!items.length && !para) return null;
+        return (
           <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
-            <p className="mb-1.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sky">
+            <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sky">
               {"◆"} What we know{" "}
-              <span className="text-muted">- learned from your calls</span>
+              <span className="text-muted">- learned from your calls and context</span>
             </p>
-            <p className="font-sans text-sm leading-relaxed text-bone/85">
-              {(company.profile as any).brief}
-            </p>
+            {items.length ? (
+              <ul className="flex flex-col gap-1.5">
+                {items.map((b, i) => (
+                  <li
+                    key={i}
+                    className="flex gap-2.5 font-sans text-sm leading-snug text-bone/85"
+                  >
+                    <span className="mt-1.5 h-1.5 w-1.5 flex-none rounded-full bg-sky/70" />
+                    <span>{b}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="font-sans text-sm leading-relaxed text-bone/85">
+                {para}
+              </p>
+            )}
           </div>
-        )}
+        );
+      })()}
 
       {/* PLAYBOOK - the main play to move this client toward the outcome you
           want. AI-built from the history, refreshed after each call. */}
