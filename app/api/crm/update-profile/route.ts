@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 import { upsertTasks } from "@/lib/tasks";
+import { workspaceContextBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -67,7 +68,8 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n");
 
-    const system = `After a call with a client, you produce three things from the call and the client's existing profile. Output ONLY JSON with exactly these keys:
+    const biz = await workspaceContextBlock();
+    const system = `${biz}After a call with a client, you produce three things from the call and the client's existing profile. Output ONLY JSON with exactly these keys:
 
 {
   "brief": [ "the UPDATED running profile as a SCANNABLE BULLET LIST - one short bullet per distinct subject, person or thread (who they are, what they want, key people, decisions, open threads on either side, preferences). Lead with the subject or name where it helps. Never a paragraph. Merge with the existing brief: keep what's true, update what changed, add what's new, drop one-off noise. 3-8 bullets, no call-by-call log." ],

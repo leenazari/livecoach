@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { workspaceContextBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 25;
@@ -135,6 +136,7 @@ export async function GET(req: Request) {
                 max_tokens: 160,
                 temperature: 0.4,
                 system:
+                  (await workspaceContextBlock()) +
                   "You write a 2-3 sentence read of the user's day from their CRM workload. Warm, sharp, specific - name the client and the single most pressing thing. Plain English. No lists, no preamble, just the read.",
                 messages: [{ role: "user", content: lines }],
               },

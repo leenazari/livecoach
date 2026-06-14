@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 import { supabaseAdmin } from "@/lib/supabase";
+import { workspaceContextBlock } from "@/lib/workspace";
 import { createHash } from "crypto";
 
 export const runtime = "nodejs";
@@ -56,7 +57,8 @@ export async function POST(req: NextRequest) {
         ? callType
         : "";
 
-    const system = `You are an expert conversation assessor. You are given a speaker-labelled transcript of a ${typeName || "call"}${role ? ` (role / title in play: ${role})` : ""}, plus any supporting context (CV, notes, framework).
+    const biz = await workspaceContextBlock();
+    const system = `${biz}You are an expert conversation assessor. You are given a speaker-labelled transcript of a ${typeName || "call"}${role ? ` (role / title in play: ${role})` : ""}, plus any supporting context (CV, notes, framework).
 
 This is NOT necessarily an interview. ${
       typeName === "sales"
