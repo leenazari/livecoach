@@ -49,53 +49,82 @@ export async function gatherClientContext(companyId: string): Promise<string> {
 
   if (!company) return "";
 
-  const lines: string[] = [];
-  lines.push(
-    `CLIENT: ${company.name}${company.sector ? ` | sector: ${company.sector}` : ""}${
-      company.stage ? ` | stage: ${company.stage}` : ""
-    }`
-  );
-  if (company.notes && String(company.notes).trim())
-    lines.push(`Notes: ${String(company.notes).trim()}`);
-
+  // Pre-compute every field so we can render it as a value OR an explicit
+  // "not set". Absent fields are what tempt the model to invent (e.g. a budget),
+  // so we never leave one silently missing - we say it isn't recorded.
   const profile = (company.profile || {}) as any;
-  if (profile.brief) lines.push(`What we know: ${profile.brief}`);
-
   const attrs = (company.attributes || {}) as any;
   const attrStr = Object.entries(attrs)
     .filter(([, v]) => v !== null && v !== "" && v !== undefined)
     .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
     .join("; ");
-  if (attrStr) lines.push(`Fields: ${attrStr}`);
-
   const contacts = contactsRes.data || [];
-  if (contacts.length)
-    lines.push(
-      `Contacts: ${contacts
-        .map((c: any) => `${c.name}${c.role ? ` (${c.role})` : ""}`)
-        .join(", ")}`
-    );
-
   const opps = (oppsRes.data || []).filter((o: any) => o.status === "open");
-  if (opps.length)
-    lines.push(
-      `Open opportunities: ${opps
-        .map(
-          (o: any) =>
-            `${o.title}${o.value ? ` (~£${o.value})` : ""}${o.detail ? ` - ${o.detail}` : ""}`
-        )
-        .join("; ")}`
-    );
-
   const drafts = (fuRes.data || []).filter((f: any) => f.status === "draft");
-  if (drafts.length)
-    lines.push(
-      `Follow-up drafts waiting: ${drafts
-        .map((f: any) => f.draft_subject || "(untitled)")
-        .join("; ")}`
-    );
-
   const summaries = summariesRes.data || [];
+  const ctx = ctxRes.data || [];
+
+  const hasNotes = !!(company.notes && String(company.notes).trim());
+  const isThin =
+    !hasNotes &&
+    !profile.brief &&
+    !attrStr &&
+    contacts.length === 0 &&
+    opps.length === 0 &&
+    drafts.length === 0 &&
+    summaries.length === 0 &&
+    ctx.length === 0;
+
+  const lines: string[] = [];
+
+  if (isThin) {
+    lines.push(
+      `RECORD STATUS: this client's record is almost empty - only the name "${company.name}" has been entered. There is NO budget, deal value, stage, call history, contact, opportunity or next step on file. Do not infer or state any of these. Tell the user the record is thin and suggest what to capture first (link a call, set a stage, add a contact or a note).`,
+      ""
+    );
+  }
+
+  lines.push(`CLIENT: ${company.name}`);
+  lines.push(`Sector: ${company.sector?.trim() || "not set"}`);
+  lines.push(`Stage: ${company.stage?.trim() || "not set"}`);
+  lines.push(`Notes: ${hasNotes ? String(company.notes).trim() : "none recorded"}`);
+  lines.push(
+    `Background / what we know: ${profile.brief ? profile.brief : "nothing recorded yet"}`
+  );
+  lines.push(
+    `Recorded fields (budget, value, owner, priority, etc.): ${
+      attrStr || "none set - no budget or deal value has been entered for this client"
+    }`
+  );
+  lines.push(
+    `Contacts: ${
+      contacts.length
+        ? contacts
+            .map((c: any) => `${c.name}${c.role ? ` (${c.role})` : ""}`)
+            .join(", ")
+        : "none recorded"
+    }`
+  );
+  lines.push(
+    `Open opportunities: ${
+      opps.length
+        ? opps
+            .map(
+              (o: any) =>
+                `${o.title}${o.value ? ` (~£${o.value})` : ""}${o.detail ? ` - ${o.detail}` : ""}`
+            )
+            .join("; ")
+        : "none recorded - no deal value or budget on file"
+    }`
+  );
+  lines.push(
+    `Follow-up drafts waiting: ${
+      drafts.length
+        ? drafts.map((f: any) => f.draft_subject || "(untitled)").join("; ")
+        : "none"
+    }`
+  );
+
   if (summaries.length) {
     lines.push("", "PAST CALLS (most recent first):");
     for (const row of summaries as any[]) {
@@ -120,15 +149,18 @@ export async function gatherClientContext(companyId: string): Promise<string> {
       if (outstanding) line += ` [outstanding for us: ${cut(outstanding, 220)}]`;
       lines.push(line);
     }
+  } else {
+    lines.push("Past calls: none recorded");
   }
 
-  const ctx = ctxRes.data || [];
   if (ctx.length) {
     lines.push("", "EXTRA CONTEXT YOU ADDED (notes / links / documents):");
     for (const c of ctx as any[]) {
       const head = c.title || (c.kind === "link" ? c.url : c.kind);
       lines.push(`- [${c.kind}] ${head}: ${cut(c.content || c.url || "", 600)}`);
     }
+  } else {
+    lines.push("Extra context (notes / links / documents): none added");
   }
 
   return lines.join("\n");
@@ -205,13 +237,19 @@ export async function gatherGlobalContext(): Promise<string> {
       `• ${c.name}${c.sector ? ` (${c.sector}${c.stage ? `, ${c.stage}` : ""})` : ""}`,
     ];
     const brief = (c.profile || {}).brief;
-    if (brief) bits.push(`    what we know: ${cut(brief, 220)}`);
     const t = tasksBy.get(c.id);
-    if (t && t.length) bits.push(`    your outstanding tasks: ${t.join("; ")}`);
     const dr = draftsBy.get(c.id);
-    if (dr && dr.length) bits.push(`    drafts waiting to send: ${dr.join("; ")}`);
     const op = oppsBy.get(c.id);
+    if (brief) bits.push(`    what we know: ${cut(brief, 220)}`);
+    if (t && t.length) bits.push(`    your outstanding tasks: ${t.join("; ")}`);
+    if (dr && dr.length) bits.push(`    drafts waiting to send: ${dr.join("; ")}`);
     if (op && op.length) bits.push(`    open opportunities: ${op.join("; ")}`);
+    // No details at all -> say so, so the assistant doesn't invent any.
+    if (!brief && !(t && t.length) && !(dr && dr.length) && !(op && op.length)) {
+      bits.push(
+        `    no details recorded yet - thin record, no budget, value, history or next step on file`
+      );
+    }
     lines.push(bits.join("\n"));
   }
   return lines.join("\n");
