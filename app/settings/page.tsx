@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { crmFetch, getCached } from "@/lib/crm";
+import { crmFetch, getCached, setCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 
 type Lesson = {
@@ -24,6 +24,9 @@ export default function SettingsPage() {
   const [loaded, setLoaded] = useState(!!cached);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState("");
+  const [saveErr, setSaveErr] = useState("");
+  // Once you've typed, the background load must NOT overwrite your text.
+  const touchedRef = useRef(false);
 
   // Lessons library state.
   const [lessons, setLessons] = useState<Lesson[]>(
@@ -39,7 +42,8 @@ export default function SettingsPage() {
   useEffect(() => {
     crmFetch<{ knowledge: string }>("/api/crm/workspace")
       .then((d) => {
-        setKnowledge(d.knowledge || "");
+        // Never clobber text the user has already started editing.
+        if (!touchedRef.current) setKnowledge(d.knowledge || "");
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
@@ -102,14 +106,25 @@ export default function SettingsPage() {
 
   const save = async () => {
     setSaving(true);
+    setSaveErr("");
     try {
       await crmFetch("/api/crm/workspace", {
         method: "PUT",
         body: JSON.stringify({ knowledge }),
       });
+      // Keep the in-memory cache in step so navigating away and back shows the
+      // saved text, not a stale copy.
+      setCached("/api/crm/workspace", { knowledge });
+      touchedRef.current = false;
       setSavedAt(new Date().toLocaleTimeString());
-    } catch {
-      /* ignore */
+    } catch (e: any) {
+      // Surface failures LOUDLY - a silent fail is what made edits "vanish"
+      // (the save 404'd, then the page reloaded the old value over the top).
+      setSaveErr(
+        e?.message
+          ? `Not saved: ${e.message}. Your text is still here - don't reload yet.`
+          : "Not saved - the save request failed. Your text is still here, don't reload yet."
+      );
     } finally {
       setSaving(false);
     }
@@ -139,9 +154,9 @@ export default function SettingsPage() {
             <span className="text-muted">- context the AI uses everywhere</span>
           </p>
           <div className="flex items-center gap-3">
-            {savedAt && (
+            {savedAt && !saveErr && (
               <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
-                saved {savedAt}
+                ✓ saved to database {savedAt}
               </span>
             )}
             <button
@@ -154,6 +169,11 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
+        {saveErr && (
+          <p className="mb-2 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-rust">
+            {saveErr}
+          </p>
+        )}
         <p className="mb-3 font-mono text-[0.6rem] leading-relaxed text-muted">
           Who you are, your company, your products, how you sell, your goals.
           This is fed into every AI pass - the assistant, building a client from
@@ -162,7 +182,10 @@ export default function SettingsPage() {
         </p>
         <textarea
           value={knowledge}
-          onChange={(e) => setKnowledge(e.target.value)}
+          onChange={(e) => {
+            touchedRef.current = true;
+            setKnowledge(e.target.value);
+          }}
           rows={20}
           placeholder={
             loaded

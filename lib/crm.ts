@@ -94,6 +94,12 @@ export function getCached<T = any>(url: string): T | undefined {
   return _getCache.get(url) as T | undefined;
 }
 
+// Manually update the cache (e.g. right after a save) so the next render of a
+// page that seeds from getCached shows the new value, not a stale one.
+export function setCached(url: string, value: any): void {
+  _getCache.set(url, value);
+}
+
 // Tiny typed fetch wrapper - throws on non-OK with the server's message.
 // Successful GETs are cached by URL for instant re-render on revisit.
 export async function crmFetch<T = any>(
