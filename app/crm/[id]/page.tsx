@@ -43,6 +43,7 @@ export default function CompanyDetailPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [synthing, setSynthing] = useState(false);
   const [err, setErr] = useState("");
   const [savedAt, setSavedAt] = useState("");
 
@@ -116,6 +117,21 @@ export default function CompanyDetailPage() {
       setErr(e.message || "could not save");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Build this client's intelligence (brief, playbook, next steps,
+  // opportunities) from everything we know - calls, notes, pulled emails.
+  const synth = async () => {
+    setSynthing(true);
+    setErr("");
+    try {
+      await crmFetch(`/api/crm/companies/${id}/synthesize`, { method: "POST" });
+      await load();
+    } catch (e: any) {
+      setErr(e.message || "could not build from context");
+    } finally {
+      setSynthing(false);
     }
   };
 
@@ -301,6 +317,15 @@ export default function CompanyDetailPage() {
           )}
           <button
             type="button"
+            onClick={synth}
+            disabled={synthing}
+            title="Build this client's summary, playbook, next steps and opportunities from everything we know (calls, notes, emails)"
+            className="rounded-full border border-sky/60 bg-sky/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
+          >
+            {synthing ? "building…" : "↻ build from context"}
+          </button>
+          <button
+            type="button"
             onClick={save}
             disabled={saving}
             className="rounded-full border border-amber/60 bg-amber/15 px-5 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
@@ -399,6 +424,30 @@ export default function CompanyDetailPage() {
                   <span className="mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full bg-amber/20 font-mono text-[0.6rem] text-amber">
                     {i + 1}
                   </span>
+                  <span>{p}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+      {/* NEXT STEPS - concrete to-dos built from the client's context. */}
+      {company.profile &&
+        typeof company.profile === "object" &&
+        Array.isArray((company.profile as any).nextSteps) &&
+        (company.profile as any).nextSteps.length > 0 && (
+          <div className="mb-5 rounded-xl border border-edge bg-panel/40 p-4">
+            <p className="mb-2.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
+              {"→"} Next steps{" "}
+              <span className="text-muted">- what to do for {company.name}</span>
+            </p>
+            <ul className="flex flex-col gap-1.5">
+              {((company.profile as any).nextSteps as string[]).map((p, i) => (
+                <li
+                  key={i}
+                  className="flex gap-2.5 font-sans text-sm leading-snug text-bone/90"
+                >
+                  <span className="mt-1 h-3 w-3 flex-none rounded border border-muted" />
                   <span>{p}</span>
                 </li>
               ))}
