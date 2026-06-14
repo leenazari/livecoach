@@ -6,6 +6,7 @@ import { crmFetch, getCached } from "@/lib/crm";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
 import UpcomingCalls from "@/components/crm/UpcomingCalls";
+import TaskList from "@/components/crm/TaskList";
 
 type Dash = {
   kpis: {
@@ -164,66 +165,22 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      {dash && dash.tasks.length > 0 && (
-        <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
-          <div className="mb-2.5 flex items-center justify-between">
-            <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-              {"→"} Do next
-            </p>
-            <Link
-              href="/crm/board?tab=tasks"
-              className="font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-amber"
-            >
-              see all ↗
-            </Link>
-          </div>
-          <ul className="flex flex-col">
-            {dash.tasks.slice(0, 6).map((t, i) => (
-              <li
-                key={i}
-                className="flex items-start gap-2.5 border-b border-edge/40 py-2 last:border-none"
-              >
-                <span className="mt-1 h-3 w-3 shrink-0 rounded border border-muted" />
-                <span className="flex-1 font-sans text-[0.84rem] leading-snug text-bone">
-                  {/* Clicking the task takes you to where you action it: a
-                      draft opens the drafts list, anything else opens the
-                      client to act on it. */}
-                  <Link
-                    href={
-                      t.kind === "draft"
-                        ? "/crm/board?tab=drafts"
-                        : `/crm/${t.companyId}`
-                    }
-                    title={
-                      t.kind === "draft"
-                        ? "Open your drafts to send this"
-                        : "Open this client to act on it"
-                    }
-                    className="text-bone transition hover:text-amber hover:underline"
-                  >
-                    {t.text}
-                  </Link>{" "}
-                  <Link
-                    href={`/crm/${t.companyId}`}
-                    className="font-mono text-[0.6rem] text-sky transition hover:text-amber"
-                  >
-                    · {t.company}
-                  </Link>
-                  {t.note && (
-                    <span
-                      className={`ml-1 font-mono text-[0.56rem] ${
-                        t.kind === "draft" ? "text-sage" : "text-muted"
-                      }`}
-                    >
-                      · {t.note}
-                    </span>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
+      <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
+        <div className="mb-2.5 flex items-center justify-between">
+          <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+            {"→"} Do next
+          </p>
+          <Link
+            href="/crm/board?tab=tasks"
+            className="font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-amber"
+          >
+            see all ↗
+          </Link>
         </div>
-      )}
+        {/* Tick to complete, click a ticked task to remove. Done tasks clear on
+            their own the next day. Click the text to start the action. */}
+        <TaskList showCompany emptyText="Nothing on your plate. Nice." />
+      </div>
 
       {/* UPCOMING CALLS - schedule, prep in advance, start preloaded.
           (Google Calendar sync is the next phase.) */}

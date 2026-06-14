@@ -14,7 +14,7 @@ export async function GET(req: Request) {
   // it loads instantly. The dashboard home fetches the blurb separately.
   const light = new URL(req.url).searchParams.get("light") === "1";
   try {
-    const [companiesRes, draftsRes, oppsRes, summariesRes, costRes] =
+    const [companiesRes, draftsRes, oppsRes, tasksRes, costRes] =
       await Promise.all([
         supabaseAdmin.from("companies").select("id, name"),
         supabaseAdmin
@@ -28,12 +28,13 @@ export async function GET(req: Request) {
           .select("company_id, title, value, status")
           .eq("status", "open")
           .limit(100),
+        // Open to-dos from the tasks table (next steps + call commitments).
         supabaseAdmin
-          .from("interview_summaries")
-          .select("company_id, summary, created_at")
-          .not("company_id", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(25),
+          .from("tasks")
+          .select("text, company_id, kind")
+          .eq("status", "open")
+          .order("created_at", { ascending: true })
+          .limit(300),
         // Spend-so-far rollup: every call's cost, regardless of company link.
         supabaseAdmin
           .from("interview_summaries")
@@ -46,47 +47,12 @@ export async function GET(req: Request) {
     const nameById = new Map<string, string>();
     for (const c of companiesRes.data || []) nameById.set(c.id, c.name);
 
-    type Task = {
-      text: string;
-      company: string;
-      companyId: string;
-      kind: "draft" | "commitment";
-      note?: string;
-    };
-    const tasks: Task[] = [];
-
-    for (const d of draftsRes.data || []) {
-      if (!d.company_id) continue;
-      tasks.push({
-        text: `Send: ${d.draft_subject || "follow-up email"}`,
-        company: nameById.get(d.company_id) || "a client",
-        companyId: d.company_id,
-        kind: "draft",
-        note: "draft ready",
-      });
-    }
-
-    // Commitments: the host's own next-actions from recent calls (one per
-    // company's latest call, to avoid flooding the list with old promises).
-    const seenCompany = new Set<string>();
-    for (const s of summariesRes.data || []) {
-      if (!s.company_id || seenCompany.has(s.company_id)) continue;
-      seenCompany.add(s.company_id);
-      const my = Array.isArray((s.summary as any)?.myNextActions)
-        ? (s.summary as any).myNextActions
-        : [];
-      for (const a of my.slice(0, 3)) {
-        if (typeof a === "string" && a.trim()) {
-          tasks.push({
-            text: a.trim(),
-            company: nameById.get(s.company_id) || "a client",
-            companyId: s.company_id,
-            kind: "commitment",
-            note: "you committed to this",
-          });
-        }
-      }
-    }
+    const tasks = (tasksRes.data || []).map((t: any) => ({
+      text: t.text,
+      company: t.company_id ? nameById.get(t.company_id) || "a client" : "—",
+      companyId: t.company_id as string,
+      kind: t.kind as string,
+    }));
 
     const openOpps = oppsRes.data || [];
     const openOppValue = openOpps.reduce(
@@ -136,10 +102,9 @@ export async function GET(req: Request) {
             .map((o: any) => `${nameById.get(o.company_id) || "?"}: ${o.title}${o.value ? ` (£${o.value})` : ""}`)
             .slice(0, 8)
             .join("; ")}`,
-          `Commitments outstanding: ${tasks
-            .filter((t) => t.kind === "commitment")
+          `Your open to-dos: ${tasks
             .map((t) => `${t.company}: ${t.text}`)
-            .slice(0, 8)
+            .slice(0, 10)
             .join("; ")}`,
         ].join("\n");
 

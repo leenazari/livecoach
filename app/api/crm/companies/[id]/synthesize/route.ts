@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 import { gatherClientContext } from "@/lib/crm-context";
+import { upsertTasks } from "@/lib/tasks";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -157,11 +158,22 @@ Return the JSON now.`;
           ...existing,
           brief,
           playbook,
-          nextSteps,
           updated: new Date().toISOString(),
         },
       })
       .eq("id", companyId);
+
+    // Next steps become real, trackable tasks (deduped by fingerprint, so
+    // completed ones are never recreated when this is re-run).
+    await upsertTasks(
+      companyId,
+      nextSteps.map((t) => ({
+        text: t,
+        kind: "next_step",
+        linkKind: "client",
+        source: "synthesis",
+      }))
+    );
 
     // Idempotent: replace only the context-synthesised opportunities (AI-
     // surfaced, not tied to a specific call), leaving call-derived ones alone.

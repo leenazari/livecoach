@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { crmFetch, type Company } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
+import TaskList from "@/components/crm/TaskList";
 
 type Tab = "tasks" | "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
@@ -148,45 +149,13 @@ function BoardInner() {
         ))}
       </nav>
 
-      {loading ? (
+      {loading && tab !== "tasks" ? (
         <p className="font-mono text-sm text-muted">loading…</p>
       ) : tab === "tasks" ? (
-        <ul className="flex flex-col rounded-xl border border-edge bg-panel/40 p-4">
-          {tasks.length === 0 && (
-            <li className="font-mono text-[0.66rem] text-muted">Nothing on your plate. Nice.</li>
-          )}
-          {tasks.map((t, i) => (
-            <li key={i} className="flex items-start gap-2.5 border-b border-edge/40 py-2.5 last:border-none">
-              <span className="mt-1 h-3 w-3 shrink-0 rounded border border-muted" />
-              <span className="flex-1 font-sans text-[0.86rem] leading-snug text-bone">
-                {/* Click to action it: a draft jumps to the Drafts tab to send,
-                    anything else opens the client. */}
-                {t.kind === "draft" ? (
-                  <button
-                    type="button"
-                    onClick={() => setTab("drafts")}
-                    title="Open your drafts to send this"
-                    className="text-left text-bone transition hover:text-amber hover:underline"
-                  >
-                    {t.text}
-                  </button>
-                ) : (
-                  <Link
-                    href={`/crm/${t.companyId}`}
-                    title="Open this client to act on it"
-                    className="text-bone transition hover:text-amber hover:underline"
-                  >
-                    {t.text}
-                  </Link>
-                )}{" "}
-                <Link href={`/crm/${t.companyId}`} className="font-mono text-[0.6rem] text-sky hover:text-amber">
-                  · {t.company}
-                </Link>
-                {t.note && <span className="ml-1 font-mono text-[0.56rem] text-muted">· {t.note}</span>}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <div className="rounded-xl border border-edge bg-panel/40 p-4">
+          {/* Tick to complete, click ticked to remove, click text to start. */}
+          <TaskList showCompany emptyText="Nothing on your plate. Nice." />
+        </div>
       ) : tab === "drafts" ? (
         <div className="flex flex-col gap-3">
           {drafts.length === 0 && (

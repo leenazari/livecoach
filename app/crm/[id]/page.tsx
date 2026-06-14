@@ -14,6 +14,7 @@ import AddFieldForm from "@/components/crm/AddFieldForm";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import ClientContext from "@/components/crm/ClientContext";
 import NavMenu from "@/components/crm/NavMenu";
+import TaskList from "@/components/crm/TaskList";
 
 const inputCls =
   "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
@@ -453,29 +454,18 @@ export default function CompanyDetailPage() {
           </div>
         )}
 
-      {/* NEXT STEPS - concrete to-dos built from the client's context. */}
-      {company.profile &&
-        typeof company.profile === "object" &&
-        Array.isArray((company.profile as any).nextSteps) &&
-        (company.profile as any).nextSteps.length > 0 && (
-          <div className="mb-5 rounded-xl border border-edge bg-panel/40 p-4">
-            <p className="mb-2.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
-              {"→"} Next steps{" "}
-              <span className="text-muted">- what to do for {company.name}</span>
-            </p>
-            <ul className="flex flex-col gap-1.5">
-              {((company.profile as any).nextSteps as string[]).map((p, i) => (
-                <li
-                  key={i}
-                  className="flex gap-2.5 font-sans text-sm leading-snug text-bone/90"
-                >
-                  <span className="mt-1 h-3 w-3 flex-none rounded border border-muted" />
-                  <span>{p}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+      {/* NEXT STEPS - trackable to-dos for this client. Tick to complete,
+          click ticked to remove, done tasks clear next day. */}
+      <div id="sec-tasks" className="mb-5 rounded-xl border border-edge bg-panel/40 p-4">
+        <p className="mb-2.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
+          {"→"} Next steps{" "}
+          <span className="text-muted">- what to do for {company.name}</span>
+        </p>
+        <TaskList
+          companyId={id}
+          emptyText="No next steps yet. Hit “build from context” above, or finish a call."
+        />
+      </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
         {/* CORE + CUSTOM FIELDS */}

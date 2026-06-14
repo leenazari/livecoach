@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { upsertTasks } from "@/lib/tasks";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -204,6 +205,23 @@ Return the JSON now.`;
         }))
       );
     }
+
+    // The host's own commitments from this call become trackable tasks
+    // (deduped, so re-summarising the same call never duplicates them).
+    const myActions = Array.isArray(s.myNextActions) ? s.myNextActions : [];
+    await upsertTasks(
+      companyId,
+      myActions
+        .filter((a: any) => typeof a === "string" && a.trim())
+        .slice(0, 6)
+        .map((a: string) => ({
+          text: a,
+          kind: "commitment",
+          linkKind: "client",
+          source: "call",
+          sourceRef: sessionId || null,
+        }))
+    );
 
     if (followUp && (followUp.subject || followUp.body)) {
       await supabaseAdmin.from("follow_ups").insert({
