@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { crmFetch, type Company } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
@@ -14,7 +15,8 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "clients", label: "Clients" },
 ];
 
-export default function BoardPage() {
+function BoardInner() {
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>("tasks");
   const [tasks, setTasks] = useState<any[]>([]);
   const [drafts, setDrafts] = useState<any[]>([]);
@@ -25,14 +27,15 @@ export default function BoardPage() {
   const [copiedId, setCopiedId] = useState("");
   const [newName, setNewName] = useState("");
 
-  // Initial tab from ?tab= (read from location to avoid a Suspense boundary).
+  // Follow the ?tab= param. Using useSearchParams means this re-runs when the
+  // query changes (e.g. clicking Drafts in the side menu while already on the
+  // board), not only on first mount - that was the "drafts won't load" bug.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const t = new URLSearchParams(window.location.search).get("tab");
+    const t = searchParams.get("tab");
     if (t === "drafts" || t === "opportunities" || t === "clients" || t === "tasks") {
-      setTab(t);
+      setTab(t as Tab);
     }
-  }, []);
+  }, [searchParams]);
 
   const load = useCallback(async (which: Tab) => {
     setLoading(true);
@@ -298,5 +301,14 @@ export default function BoardPage() {
       <GlobalAssistant />
       <NavMenu />
     </main>
+  );
+}
+
+// useSearchParams needs a Suspense boundary in the App Router.
+export default function BoardPage() {
+  return (
+    <Suspense fallback={null}>
+      <BoardInner />
+    </Suspense>
   );
 }

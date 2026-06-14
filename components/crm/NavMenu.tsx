@@ -95,6 +95,15 @@ export default function NavMenu() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 px-3">
+        {/* Go back one step in history, wherever you came from. */}
+        <button
+          type="button"
+          onClick={() => router.back()}
+          className="mb-1 flex items-center gap-3 rounded-lg px-3 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-muted transition hover:bg-bone/[0.05] hover:text-bone"
+        >
+          <span className="w-4 text-center">←</span>
+          Back
+        </button>
         {ITEMS.map((it) => (
           <Link
             key={it.href}
