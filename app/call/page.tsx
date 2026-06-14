@@ -10,6 +10,7 @@ import PostCallSummary from "@/components/PostCallSummary";
 import CostMeter from "@/components/CostMeter";
 import MatrixRain from "@/components/MatrixRain";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
+import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import {
   estimateCost,
   usageCostUSD,
@@ -2573,6 +2574,10 @@ export default function CallPage() {
           onClose={() => setSummary(null)}
         />
       )}
+      <GlobalAssistant
+        companyId={linkedCompany?.id}
+        companyName={linkedCompany?.name}
+      />
     </main>
   );
 }

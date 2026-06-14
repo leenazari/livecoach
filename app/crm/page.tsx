@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { crmFetch, type Company } from "@/lib/crm";
+import GlobalAssistant from "@/components/crm/GlobalAssistant";
 
 export default function CrmPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -238,6 +239,7 @@ export default function CrmPage() {
           ))}
         </ul>
       )}
+      <GlobalAssistant />
     </main>
   );
 }
