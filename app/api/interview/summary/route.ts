@@ -10,7 +10,7 @@ export const maxDuration = 60;
 // Returns a structured JSON summary + scorecard + contributors + style profile.
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId, companyId } =
+    const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId, companyId, cost } =
       await req.json();
 
     if (!transcript || transcript.length < 30) {
@@ -178,6 +178,7 @@ Return the JSON assessment now.`;
         // company's call history (and feeds Phase 2 auto-attach).
         company_id:
           typeof companyId === "string" && companyId ? companyId : null,
+        cost: typeof cost === "number" ? cost : null,
       });
     } catch (e) {
       console.error("Summary store failed:", e);

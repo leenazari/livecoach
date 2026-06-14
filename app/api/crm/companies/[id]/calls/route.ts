@@ -13,7 +13,7 @@ export async function GET(
   try {
     const { data, error } = await supabaseAdmin
       .from("interview_summaries")
-      .select("id, session_id, candidate, role, summary, created_at")
+      .select("id, session_id, candidate, role, summary, created_at, cost")
       .eq("company_id", params.id)
       .order("created_at", { ascending: false })
       .limit(100);

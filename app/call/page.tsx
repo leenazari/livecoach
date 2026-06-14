@@ -1078,6 +1078,18 @@ export default function CallPage() {
       // Make sure the session row carries the company link before we store the
       // scorecard under it.
       if (linkedCompanyRef.current) linkSession();
+      // Enrich the call-event row (interview_sessions) with the end time, full
+      // transcript and total cost - powers duration / length / participants on
+      // the call view. Fire-and-forget: must never block summarising.
+      fetch("/api/interview/session-end", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: room,
+          transcript: labelled,
+          totalCost: cost?.totalGBP ?? null,
+        }),
+      }).catch(() => {});
       const res = await fetch("/api/interview/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1090,6 +1102,8 @@ export default function CallPage() {
           callType,
           sessionId: room,
           companyId: linkedCompanyRef.current?.id || null,
+          // This call's running cost (GBP) so spend can be totalled over time.
+          cost: cost?.totalGBP ?? null,
         }),
       });
       const data = await res.json();

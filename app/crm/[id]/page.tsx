@@ -253,6 +253,18 @@ export default function CompanyDetailPage() {
   const priorityVal = (attrs as any).priority || "";
   const dealVal = (attrs as any).value;
 
+  // Total spend on this client across all linked calls.
+  const totalSpend = calls.reduce(
+    (sum: number, c: any) => sum + (typeof c?.cost === "number" ? c.cost : 0),
+    0
+  );
+  const hasSpend = calls.some((c: any) => typeof c?.cost === "number");
+  const gbp = (n: number) =>
+    `£${Number(n || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+
   const scrollToId = (anchorId: string) => {
     if (typeof document !== "undefined") {
       document
@@ -298,7 +310,7 @@ export default function CompanyDetailPage() {
       {err && <p className="mb-3 font-mono text-[0.66rem] text-rust">{err}</p>}
 
       {/* STATS - clickable, each jumps to its detail section. */}
-      <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-6">
         <button type="button" onClick={() => scrollToId("sec-fields")} className={statCls}>
           <div className="font-sans text-[0.95rem] text-rust">
             {priorityVal || "—"}
@@ -335,6 +347,14 @@ export default function CompanyDetailPage() {
           <div className="font-sans text-[0.95rem] text-sage">{openOppCount}</div>
           <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
             open opps ↗
+          </div>
+        </button>
+        <button type="button" onClick={() => scrollToId("sec-history")} className={statCls}>
+          <div className="font-sans text-[0.95rem] text-bone">
+            {hasSpend ? gbp(totalSpend) : "—"}
+          </div>
+          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+            spend ↗
           </div>
         </button>
       </div>
@@ -632,11 +652,18 @@ export default function CompanyDetailPage() {
                       {date}
                       {c.candidate ? ` · ${c.candidate}` : ""}
                     </span>
-                    {score !== null && (
-                      <span className="font-mono text-[0.62rem] text-sage">
-                        {Math.round(score)}%
-                      </span>
-                    )}
+                    <span className="flex items-center gap-2">
+                      {typeof c.cost === "number" && (
+                        <span className="font-mono text-[0.62rem] text-bone/70">
+                          {gbp(c.cost)}
+                        </span>
+                      )}
+                      {score !== null && (
+                        <span className="font-mono text-[0.62rem] text-sage">
+                          {Math.round(score)}%
+                        </span>
+                      )}
+                    </span>
                   </div>
                   {overview && (
                     <p className="font-sans text-[0.82rem] leading-snug text-bone/80">
@@ -645,6 +672,12 @@ export default function CompanyDetailPage() {
                         : overview}
                     </p>
                   )}
+                  <Link
+                    href={`/crm/calls/${c.id}`}
+                    className="mt-2 inline-block font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:text-amber"
+                  >
+                    view call ↗
+                  </Link>
                 </li>
               );
             })}
