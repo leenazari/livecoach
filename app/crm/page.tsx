@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { crmFetch } from "@/lib/crm";
+import { crmFetch, getCached } from "@/lib/crm";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
 
@@ -28,7 +28,14 @@ type Dash = {
 };
 
 export default function DashboardPage() {
-  const [dash, setDash] = useState<Dash | null>(null);
+  // Seed from the last response (cached in-memory) so a revisit renders
+  // instantly with no blink; the fetches below refresh it in the background.
+  const [dash, setDash] = useState<Dash | null>(
+    () =>
+      getCached<Dash>("/api/crm/dashboard") ||
+      getCached<Dash>("/api/crm/dashboard?light=1") ||
+      null
+  );
   const [costMode, setCostMode] = useState<"week" | "month">("week");
 
   useEffect(() => {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { crmFetch } from "@/lib/crm";
+import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 
@@ -16,8 +16,10 @@ type Call = {
 };
 
 export default function CallsPage() {
-  const [calls, setCalls] = useState<Call[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seed from cache so a revisit shows the list instantly (no spinner blink).
+  const cached = getCached<{ calls: Call[] }>("/api/crm/calls");
+  const [calls, setCalls] = useState<Call[]>(cached?.calls || []);
+  const [loading, setLoading] = useState(!cached);
   const [q, setQ] = useState("");
 
   useEffect(() => {

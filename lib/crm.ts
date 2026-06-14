@@ -84,7 +84,18 @@ export function formatFieldValue(type: FieldType, value: any): string {
   }
 }
 
+// Last successful GET response per URL. Module scope persists across in-app
+// (client-side) navigation, so a page can render its previous data INSTANTLY
+// on a revisit (no blank/blink) while a fresh fetch updates it in the
+// background. Cleared on a full page reload. Use `getCached` to seed state.
+const _getCache = new Map<string, any>();
+
+export function getCached<T = any>(url: string): T | undefined {
+  return _getCache.get(url) as T | undefined;
+}
+
 // Tiny typed fetch wrapper - throws on non-OK with the server's message.
+// Successful GETs are cached by URL for instant re-render on revisit.
 export async function crmFetch<T = any>(
   url: string,
   init?: RequestInit
@@ -101,5 +112,7 @@ export async function crmFetch<T = any>(
     throw new Error("unexpected response from the server");
   }
   if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
+  const method = (init?.method || "GET").toUpperCase();
+  if (method === "GET") _getCache.set(url, data);
   return data as T;
 }
