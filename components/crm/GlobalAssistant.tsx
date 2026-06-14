@@ -28,9 +28,13 @@ export default function GlobalAssistant({
         type="button"
         onClick={() => setOpen(true)}
         title="Ask your assistant"
-        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full border border-amber/60 bg-amber px-4 py-3 font-mono text-[0.62rem] font-medium uppercase tracking-wider text-ink shadow-lg transition hover:brightness-110"
+        className="fixed bottom-6 right-6 z-40 flex items-center gap-2.5 rounded-full border border-amber/70 bg-amber px-6 py-4 font-mono text-[0.74rem] font-medium uppercase tracking-wider text-ink shadow-[0_10px_34px_rgba(232,163,61,0.45)] transition hover:scale-[1.03] hover:brightness-110"
       >
-        {"▤"} Assistant
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ink/60" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-ink" />
+        </span>
+        {"▤"} Ask the assistant
       </button>
     );
   }
