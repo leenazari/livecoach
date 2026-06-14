@@ -38,7 +38,9 @@ export default function BoardPage() {
     setLoading(true);
     try {
       if (which === "tasks") {
-        const d = await crmFetch<any>("/api/crm/dashboard");
+        // light=1 skips the AI "your day" blurb the board doesn't show, so the
+        // To-do list loads fast instead of waiting on an LLM call.
+        const d = await crmFetch<any>("/api/crm/dashboard?light=1");
         setTasks(d.tasks || []);
       } else if (which === "drafts") {
         const d = await crmFetch<any>("/api/crm/drafts");

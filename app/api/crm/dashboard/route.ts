@@ -8,7 +8,10 @@ export const maxDuration = 25;
 // The CRM dashboard: everything on your plate across all clients, in one call.
 // KPIs, a short AI read of your day, and a "do next" list pulled from follow-up
 // drafts, open opportunities and the commitments you made on recent calls.
-export async function GET() {
+export async function GET(req: Request) {
+  // ?light=1 skips the (slow) AI "your day" blurb - used by the To-do board so
+  // it loads instantly. The dashboard home fetches the blurb separately.
+  const light = new URL(req.url).searchParams.get("light") === "1";
   try {
     const [companiesRes, draftsRes, oppsRes, summariesRes, costRes] =
       await Promise.all([
@@ -122,7 +125,7 @@ export async function GET() {
     // A short, cheap AI read of the day. Optional - never block the dashboard.
     let dayRead = "";
     try {
-      if (tasks.length || openOpps.length) {
+      if (!light && (tasks.length || openOpps.length)) {
         const lines = [
           `Follow-up drafts ready: ${(draftsRes.data || [])
             .map((d: any) => `${nameById.get(d.company_id) || "?"}: ${d.draft_subject}`)

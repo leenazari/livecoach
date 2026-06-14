@@ -32,9 +32,23 @@ export default function DashboardPage() {
   const [costMode, setCostMode] = useState<"week" | "month">("week");
 
   useEffect(() => {
-    crmFetch<Dash>("/api/crm/dashboard")
-      .then((d) => setDash(d))
+    let alive = true;
+    // Paint immediately from the light (no-AI) response, then fold in the
+    // "Your day" blurb when the slower AI call returns - so the dashboard
+    // never blocks on an LLM call.
+    crmFetch<Dash>("/api/crm/dashboard?light=1")
+      .then((d) => alive && setDash(d))
       .catch(() => {});
+    crmFetch<Dash>("/api/crm/dashboard")
+      .then(
+        (d) =>
+          alive &&
+          setDash((prev) => (prev ? { ...prev, dayRead: d.dayRead } : d))
+      )
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const gbp = (n: number) =>
