@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { crmFetch, type Company } from "@/lib/crm";
+import NavMenu from "@/components/crm/NavMenu";
+import GlobalAssistant from "@/components/crm/GlobalAssistant";
 
 type Tab = "tasks" | "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
@@ -272,6 +274,8 @@ export default function BoardPage() {
           </ul>
         </div>
       )}
+      <GlobalAssistant />
+      <NavMenu />
     </main>
   );
 }

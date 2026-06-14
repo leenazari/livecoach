@@ -11,6 +11,7 @@ import CostMeter from "@/components/CostMeter";
 import MatrixRain from "@/components/MatrixRain";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
+import NavMenu from "@/components/crm/NavMenu";
 import {
   estimateCost,
   usageCostUSD,
@@ -2578,6 +2579,7 @@ export default function CallPage() {
         companyId={linkedCompany?.id}
         companyName={linkedCompany?.name}
       />
+      <NavMenu />
     </main>
   );
 }

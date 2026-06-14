@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { crmFetch } from "@/lib/crm";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
+import NavMenu from "@/components/crm/NavMenu";
 
 type Dash = {
   kpis: {
@@ -157,6 +158,7 @@ export default function DashboardPage() {
       </div>
 
       <GlobalAssistant />
+      <NavMenu />
     </main>
   );
 }

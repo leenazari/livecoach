@@ -13,6 +13,7 @@ import CustomFieldEditor from "@/components/crm/CustomFieldEditor";
 import AddFieldForm from "@/components/crm/AddFieldForm";
 import ClientAssistant from "@/components/crm/ClientAssistant";
 import ClientContext from "@/components/crm/ClientContext";
+import NavMenu from "@/components/crm/NavMenu";
 
 const inputCls =
   "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
@@ -777,6 +778,7 @@ export default function CompanyDetailPage() {
           </ul>
         )}
       </section>
+      <NavMenu />
     </main>
   );
 }
