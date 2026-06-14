@@ -57,12 +57,40 @@ export default function DashboardPage() {
             / dashboard
           </span>
         </h1>
-        <Link
-          href="/call"
-          className="rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
-        >
-          ◂ back to a call
-        </Link>
+        <div className="flex items-center gap-3">
+          {/* Spend so far - compact, with a weekly / monthly toggle. */}
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+              spend
+            </span>
+            <span className="font-mono text-[0.8rem] tabular-nums text-sage">
+              {dash ? gbp(costNow || 0) : "—"}
+            </span>
+            <div className="flex overflow-hidden rounded-full border border-edge">
+              {(["week", "month"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setCostMode(m)}
+                  title={m === "week" ? "last 7 days" : "last 30 days"}
+                  className={`px-2 py-1 font-mono text-[0.5rem] uppercase tracking-wider transition ${
+                    costMode === m
+                      ? "bg-amber/15 text-amber"
+                      : "text-muted hover:text-bone"
+                  }`}
+                >
+                  {m === "week" ? "wk" : "mo"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Link
+            href="/call"
+            className="rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+          >
+            ◂ back to a call
+          </Link>
+        </div>
       </header>
 
       {dash?.dayRead && (
@@ -77,7 +105,7 @@ export default function DashboardPage() {
       )}
 
       {/* OVERALL STATS - each opens its drill-down board. */}
-      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Link href="/crm/board?tab=clients" className={statCls}>
           <div className="font-sans text-[1.2rem] text-bone">
             {dash?.kpis.clients ?? "—"}
@@ -112,53 +140,6 @@ export default function DashboardPage() {
             drafts to send ↗
           </div>
         </Link>
-        <Link href="/crm/calls" className={statCls}>
-          <div className="font-sans text-[1.2rem] text-sage">
-            {dash ? gbp(dash.kpis.allCost) : "—"}
-          </div>
-          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-            total spend ↗
-          </div>
-        </Link>
-      </div>
-
-      {/* COSTS SO FAR - rolling spend, toggled weekly / monthly. */}
-      <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="mb-1 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-              {"⏣"} Costs so far
-            </p>
-            <p className="font-sans text-[1.5rem] leading-none text-bone">
-              {dash ? gbp(costNow || 0) : "—"}
-            </p>
-            <p className="mt-1 font-mono text-[0.54rem] uppercase tracking-wider text-muted">
-              {costMode === "week" ? "last 7 days" : "last 30 days"}
-              {dash ? ` · all time ${gbp(dash.kpis.allCost)}` : ""}
-            </p>
-          </div>
-          <div className="flex overflow-hidden rounded-full border border-edge">
-            {(["week", "month"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setCostMode(m)}
-                className={`px-3 py-1.5 font-mono text-[0.56rem] uppercase tracking-wider transition ${
-                  costMode === m
-                    ? "bg-amber/15 text-amber"
-                    : "text-muted hover:text-bone"
-                }`}
-              >
-                {m === "week" ? "weekly" : "monthly"}
-              </button>
-            ))}
-          </div>
-        </div>
-        {dash && dash.kpis.allCost === 0 && (
-          <p className="mt-2 font-mono text-[0.56rem] leading-relaxed text-muted">
-            No cost recorded yet. Spend is captured per call from now on.
-          </p>
-        )}
       </div>
 
       {dash && dash.tasks.length > 0 && (
