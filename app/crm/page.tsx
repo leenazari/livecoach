@@ -14,7 +14,13 @@ export default function CrmPage() {
   const [newSector, setNewSector] = useState("");
   const [creating, setCreating] = useState(false);
   const [dash, setDash] = useState<{
-    kpis: { tasks: number; drafts: number; openOppValue: number; openOppCount: number };
+    kpis: {
+      clients: number;
+      tasks: number;
+      drafts: number;
+      openOppValue: number;
+      openOppCount: number;
+    };
     tasks: { text: string; company: string; companyId: string; kind: string; note?: string }[];
     dayRead: string;
   } | null>(null);
@@ -81,7 +87,7 @@ export default function CrmPage() {
         <h1 className="font-display text-[1.55rem] leading-none tracking-tight text-bone">
           <span className="italic text-amber">Live</span>Coach{" "}
           <span className="font-mono text-[0.7rem] uppercase tracking-[0.2em] text-muted">
-            / clients
+            / dashboard
           </span>
         </h1>
         <Link
@@ -92,74 +98,93 @@ export default function CrmPage() {
         </Link>
       </header>
 
-      {/* DASHBOARD - everything on your plate, across all clients. */}
-      {dash && (dash.tasks.length > 0 || dash.kpis.openOppCount > 0) && (
-        <div className="mb-6">
-          {dash.dayRead && (
-            <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
-              <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.2em] text-sky">
-                {"▣"} Your day
-              </p>
-              <p className="font-sans text-sm leading-relaxed text-bone/85">
-                {dash.dayRead}
-              </p>
-            </div>
-          )}
-          <div className="mb-3 grid grid-cols-3 gap-2">
-            <div className="rounded-lg border border-edge bg-ink/40 px-3 py-2.5">
-              <div className="font-sans text-[1.1rem] text-bone">{dash.kpis.tasks}</div>
-              <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">tasks to do</div>
-            </div>
-            <div className="rounded-lg border border-edge bg-ink/40 px-3 py-2.5">
-              <div className="font-sans text-[1.1rem] text-bone">{dash.kpis.drafts}</div>
-              <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">drafts to send</div>
-            </div>
-            <div className="rounded-lg border border-edge bg-ink/40 px-3 py-2.5">
-              <div className="font-sans text-[1.1rem] text-sage">
-                {dash.kpis.openOppValue > 0
-                  ? `£${Number(dash.kpis.openOppValue).toLocaleString()}`
-                  : dash.kpis.openOppCount}
-              </div>
-              <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">open opportunities</div>
-            </div>
+      {/* MAIN DASHBOARD - overall, across all clients. */}
+      <div className="mb-6">
+        {dash?.dayRead && (
+          <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
+            <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.2em] text-sky">
+              {"▣"} Your day
+            </p>
+            <p className="font-sans text-sm leading-relaxed text-bone/85">
+              {dash.dayRead}
+            </p>
           </div>
-          {dash.tasks.length > 0 && (
-            <div className="rounded-xl border border-edge bg-panel/40 p-4">
-              <p className="mb-2.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-                {"→"} Do next
-              </p>
-              <ul className="flex flex-col">
-                {dash.tasks.map((t, i) => (
-                  <li
-                    key={i}
-                    className="flex items-start gap-2.5 border-b border-edge/40 py-2 last:border-none"
-                  >
-                    <span className="mt-1 h-3 w-3 shrink-0 rounded border border-muted" />
-                    <span className="flex-1 font-sans text-[0.84rem] leading-snug text-bone">
-                      {t.text}{" "}
-                      <Link
-                        href={`/crm/${t.companyId}`}
-                        className="font-mono text-[0.6rem] text-sky transition hover:text-amber"
-                      >
-                        · {t.company}
-                      </Link>
-                      {t.note && (
-                        <span
-                          className={`ml-1 font-mono text-[0.56rem] ${
-                            t.kind === "draft" ? "text-sage" : "text-muted"
-                          }`}
-                        >
-                          · {t.note}
-                        </span>
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+        )}
+
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-lg border border-edge bg-ink/40 px-3 py-2.5">
+            <div className="font-sans text-[1.1rem] text-bone">{dash?.kpis.clients ?? "—"}</div>
+            <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">clients</div>
+          </div>
+          <div className="rounded-lg border border-edge bg-ink/40 px-3 py-2.5">
+            <div className="font-sans text-[1.1rem] text-sage">
+              {dash && dash.kpis.openOppValue > 0
+                ? `£${Number(dash.kpis.openOppValue).toLocaleString()}`
+                : dash?.kpis.openOppCount ?? "—"}
             </div>
-          )}
+            <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">open value</div>
+          </div>
+          <div className="rounded-lg border border-edge bg-ink/40 px-3 py-2.5">
+            <div className="font-sans text-[1.1rem] text-bone">{dash?.kpis.tasks ?? "—"}</div>
+            <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">tasks to do</div>
+          </div>
+          <div className="rounded-lg border border-edge bg-ink/40 px-3 py-2.5">
+            <div className="font-sans text-[1.1rem] text-bone">{dash?.kpis.drafts ?? "—"}</div>
+            <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">drafts to send</div>
+          </div>
         </div>
-      )}
+
+        {dash && dash.tasks.length > 0 && (
+          <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
+            <p className="mb-2.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+              {"→"} Do next
+            </p>
+            <ul className="flex flex-col">
+              {dash.tasks.map((t, i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-2.5 border-b border-edge/40 py-2 last:border-none"
+                >
+                  <span className="mt-1 h-3 w-3 shrink-0 rounded border border-muted" />
+                  <span className="flex-1 font-sans text-[0.84rem] leading-snug text-bone">
+                    {t.text}{" "}
+                    <Link
+                      href={`/crm/${t.companyId}`}
+                      className="font-mono text-[0.6rem] text-sky transition hover:text-amber"
+                    >
+                      · {t.company}
+                    </Link>
+                    {t.note && (
+                      <span
+                        className={`ml-1 font-mono text-[0.56rem] ${
+                          t.kind === "draft" ? "text-sage" : "text-muted"
+                        }`}
+                      >
+                        · {t.note}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* UPCOMING CALLS - needs calendar integration (next slice). */}
+        <div className="rounded-xl border border-edge bg-panel/40 p-4">
+          <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+            {"▦"} Upcoming calls
+          </p>
+          <p className="font-mono text-[0.62rem] leading-relaxed text-muted">
+            Connect your calendar to see scheduled calls here and prep them in
+            advance. Calendar integration is the next build.
+          </p>
+        </div>
+      </div>
+
+      <p className="mb-2.5 font-mono text-[0.62rem] uppercase tracking-[0.2em] text-amber">
+        Clients
+      </p>
 
       <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-edge bg-panel/50 p-4 sm:flex-row sm:items-end">
         <div className="flex-1">

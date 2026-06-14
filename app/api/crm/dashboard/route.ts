@@ -83,6 +83,7 @@ export async function GET() {
     );
 
     const kpis = {
+      clients: (companiesRes.data || []).length,
       tasks: tasks.length,
       drafts: (draftsRes.data || []).length,
       openOppValue,
