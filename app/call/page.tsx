@@ -288,6 +288,25 @@ export default function CallPage() {
     },
     [linkSession]
   );
+
+  // Preload from a scheduled (upcoming) call:
+  // /call?company=&companyName=&intent=&meetingUrl=  -> link the client, fill
+  // the intent, and set up the Meet/Teams/Zoom link so the user lands ready.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    const cid = p.get("company");
+    const cname = p.get("companyName");
+    const intent = p.get("intent");
+    const url = p.get("meetingUrl");
+    if (cid && cname) handleLinkCompany({ id: cid, name: cname });
+    if (intent) setBrief(intent);
+    if (url) {
+      setMeetingUrl(url);
+      setSource("meet");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     selectedCompsRef.current = selectedComps;
   }, [selectedComps]);

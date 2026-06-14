@@ -5,6 +5,7 @@ import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
+import UpcomingCalls from "@/components/crm/UpcomingCalls";
 
 type Dash = {
   kpis: {
@@ -224,16 +225,9 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* UPCOMING CALLS - needs calendar integration (next build). */}
-      <div className="rounded-xl border border-edge bg-panel/40 p-4">
-        <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-          {"▦"} Upcoming calls
-        </p>
-        <p className="font-mono text-[0.62rem] leading-relaxed text-muted">
-          Connect your calendar to see scheduled calls here and prep them in
-          advance. Calendar integration is the next build.
-        </p>
-      </div>
+      {/* UPCOMING CALLS - schedule, prep in advance, start preloaded.
+          (Google Calendar sync is the next phase.) */}
+      <UpcomingCalls />
 
       <GlobalAssistant />
       <NavMenu />
