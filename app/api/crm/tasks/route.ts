@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     let q = supabaseAdmin
       .from("tasks")
       .select(
-        "id, company_id, text, kind, link_kind, status, done_at, created_at"
+        "id, company_id, text, kind, link_kind, status, done_at, created_at, payload, due_at"
       )
       .order("created_at", { ascending: true })
       .limit(500);
@@ -69,6 +69,8 @@ export async function GET(req: NextRequest) {
         meeting_url: null,
         intent: null,
         due_soon: false,
+        payload: t.payload ?? null,
+        due_at: t.due_at ?? null,
       }));
     const openReal = real.filter((t: any) => t.status !== "done");
     const doneReal = real.filter((t: any) => t.status === "done");

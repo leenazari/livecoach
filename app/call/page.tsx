@@ -1521,6 +1521,26 @@ export default function CallPage() {
           })
           .catch(() => {});
       }
+      // Detect commitments YOU made on this call (recap OR transcript) and
+      // pre-draft each so they land in the Commitments queue ready to approve.
+      // Fire-and-forget; works for any client-linked call.
+      if (linkedCompanyRef.current && labelled.trim().length >= 30) {
+        fetch("/api/crm/commitments/detect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            companyId: linkedCompanyRef.current.id,
+            text: labelled,
+            clientName: candidateRef.current || null,
+            source: manualRecap ? "recap" : "call",
+          }),
+        })
+          .then(() => {
+            if (typeof window !== "undefined")
+              window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+          })
+          .catch(() => {});
+      }
     } catch (e: any) {
       setStatus(`error: ${e.message}`);
     } finally {

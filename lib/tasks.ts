@@ -21,6 +21,10 @@ export type NewTask = {
   linkKind?: string; // client | drafts | call | email
   source?: string; // synthesis | call | manual | follow_up | assistant | debrief
   sourceRef?: string | null;
+  // For commitments: the prepared, editable action the user approves in-app.
+  // e.g. { actionType: "email", subject, body } or { actionType: "task", notes }.
+  payload?: Record<string, any> | null;
+  dueAt?: string | null; // ISO; parsed from "by Friday" etc.
 };
 
 // Map a spoken/loose action word to the to-do's link_kind, which drives the
@@ -55,6 +59,8 @@ export async function upsertTasks(
       link_kind: i.linkKind || "client",
       source: i.source || null,
       source_ref: i.sourceRef || null,
+      payload: i.payload ?? null,
+      due_at: i.dueAt || null,
       fingerprint: fingerprintTask(companyId, i.text),
       status: "open",
     }));
@@ -63,7 +69,9 @@ export async function upsertTasks(
     const { data } = await supabaseAdmin
       .from("tasks")
       .upsert(rows, { onConflict: "fingerprint", ignoreDuplicates: true })
-      .select("id, company_id, text, kind, link_kind, status, done_at, created_at");
+      .select(
+        "id, company_id, text, kind, link_kind, status, done_at, created_at, payload, due_at"
+      );
     return data || [];
   } catch (e) {
     console.error("upsertTasks failed:", e);

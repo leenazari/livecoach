@@ -21,6 +21,9 @@ export async function PATCH(
     }
     if (typeof body.text === "string" && body.text.trim())
       patch.text = body.text.trim();
+    // Save an edited commitment draft (the prepared, approve-in-app action).
+    if (body.payload && typeof body.payload === "object")
+      patch.payload = body.payload;
     if (Object.keys(patch).length === 0) return NextResponse.json({ ok: true });
 
     const { error } = await supabaseAdmin

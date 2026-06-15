@@ -6,6 +6,7 @@ import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import UpcomingCalls from "@/components/crm/UpcomingCalls";
 import TaskList from "@/components/crm/TaskList";
+import Commitments from "@/components/crm/Commitments";
 
 type Dash = {
   kpis: {
@@ -163,6 +164,10 @@ export default function DashboardPage() {
           </div>
         </Link>
       </div>
+
+      {/* Commitments YOU made (calls + emails), each with a draft to approve.
+          Self-hides when empty. */}
+      <Commitments showCompany />
 
       <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
         <div className="mb-2.5 flex items-center justify-between">
