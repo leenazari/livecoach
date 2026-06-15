@@ -13,7 +13,7 @@ export async function gatherClientContext(companyId: string): Promise<string> {
     await Promise.all([
       supabaseAdmin
         .from("companies")
-        .select("name, sector, stage, profile, attributes, notes")
+        .select("name, sector, stage, profile, attributes, notes, email_context")
         .eq("id", companyId)
         .single(),
       supabaseAdmin
@@ -98,6 +98,15 @@ export async function gatherClientContext(companyId: string): Promise<string> {
   lines.push(`Sector: ${company.sector?.trim() || "not set"}`);
   lines.push(`Stage: ${company.stage?.trim() || "not set"}`);
   lines.push(`Notes: ${hasNotes ? String(company.notes).trim() : "none recorded"}`);
+  const emailCtx = (company as any).email_context;
+  if (emailCtx && String(emailCtx).trim()) {
+    lines.push(
+      "",
+      "EMAIL CONTEXT (the email thread and relationship so far - this is where the relationship is actually happening right now, so weigh it heavily when judging the intent, the plan and the next steps):",
+      String(emailCtx).trim(),
+      ""
+    );
+  }
   const briefText = Array.isArray(profile.brief)
     ? profile.brief
         .filter((b: any) => typeof b === "string" && b.trim())

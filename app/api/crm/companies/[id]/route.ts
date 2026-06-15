@@ -14,6 +14,9 @@ const PATCHABLE = [
   "sector",
   "stage",
   "notes",
+  // A running summary of the email thread/relationship so far. Feeds the plan,
+  // the assistant and the build-profile pass.
+  "email_context",
 ] as const;
 
 export async function GET(

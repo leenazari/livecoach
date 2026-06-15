@@ -131,6 +131,73 @@ export default function CallPage() {
   // types what happened and we summarise from that instead of a live transcript.
   const [manualRecap, setManualRecap] = useState(false);
   const [recapText, setRecapText] = useState("");
+  const [recapListening, setRecapListening] = useState(false);
+  const recapRecRef = useRef<any>(null);
+  const recapBaseRef = useRef("");
+  const recapTextRef = useRef("");
+  useEffect(() => {
+    recapTextRef.current = recapText;
+  }, [recapText]);
+  // Dictate the recap. Toggles the browser recogniser; appends onto whatever is
+  // already in the box. Stable (reads the current text from a ref).
+  const toggleRecapMic = useCallback(() => {
+    const SR =
+      typeof window !== "undefined"
+        ? (window as any).webkitSpeechRecognition ||
+          (window as any).SpeechRecognition
+        : null;
+    if (!SR) {
+      alert("Voice input needs a Chromium browser (Chrome, Edge, Arc).");
+      return;
+    }
+    if (recapRecRef.current) {
+      try {
+        recapRecRef.current.stop();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-GB";
+    rec.interimResults = true;
+    rec.continuous = true;
+    recapBaseRef.current = recapTextRef.current.trim()
+      ? `${recapTextRef.current.trim()} `
+      : "";
+    let finalText = "";
+    rec.onresult = (e: any) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      setRecapText((recapBaseRef.current + finalText + interim).trim());
+    };
+    rec.onend = () => {
+      setRecapListening(false);
+      recapRecRef.current = null;
+    };
+    rec.onerror = () => setRecapListening(false);
+    recapRecRef.current = rec;
+    setRecapListening(true);
+    rec.start();
+  }, []);
+  // Opening the recap popup starts the mic straight away; closing stops it.
+  useEffect(() => {
+    if (manualRecap && !recapRecRef.current) {
+      const t = setTimeout(() => toggleRecapMic(), 300);
+      return () => clearTimeout(t);
+    }
+    if (!manualRecap && recapRecRef.current) {
+      try {
+        recapRecRef.current.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [manualRecap, toggleRecapMic]);
   const [docsReady, setDocsReady] = useState(false);
   const [cvReady, setCvReady] = useState(false);
   const [status, setStatus] = useState("");
@@ -2339,50 +2406,80 @@ export default function CallPage() {
             {planStage === "full" && (
               <button
                 type="button"
-                onClick={() => setManualRecap((v) => !v)}
-                title="Bot couldn't join? Recap the call yourself instead."
-                className="rounded-full border border-edge px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-muted transition hover:border-sky/60 hover:text-sky"
+                onClick={() => setManualRecap(true)}
+                title="Bot couldn't join? Record your own recap and I'll summarise it."
+                className="rounded-full border border-sky/60 bg-sky/20 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-sky transition hover:bg-sky/30"
               >
-                {manualRecap ? "hide recap" : "no transcriber? recap"}
+                {"\u2726"} No transcriber? Recap by voice
               </button>
             )}
           </div>
 
-          {manualRecap && planStage === "full" && (
-            <div className="mt-3 rounded-xl border border-sky/40 bg-sky/[0.05] p-4">
-              <p className="mb-1.5 font-mono text-[0.62rem] uppercase tracking-[0.2em] text-sky">
-                {"\u2726"} Recap this call yourself
-              </p>
-              <p className="mb-2.5 font-mono text-[0.6rem] leading-relaxed text-muted">
-                If the bot could not join, just say what happened - who was on,
-                what was discussed, the outcome and what needs doing next. I'll
-                write the summary and turn the next steps into to-dos.
-              </p>
-              <div className="mb-2 flex items-center gap-2">
-                <VoiceNoteButton
-                  onText={(t) =>
-                    setRecapText((p) => (p.trim() ? `${p.trim()} ${t}` : t))
-                  }
+          {manualRecap && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/80 p-4 backdrop-blur-sm">
+              <div className="w-full max-w-[640px] rounded-2xl border border-sky/40 bg-panel p-6 shadow-2xl">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="font-mono text-[0.68rem] uppercase tracking-[0.2em] text-sky">
+                    {"\u2726"} Recap this call
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setManualRecap(false)}
+                    className="font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:text-rust"
+                  >
+                    close
+                  </button>
+                </div>
+                <p className="mb-4 font-mono text-[0.62rem] leading-relaxed text-muted">
+                  The mic is on - just say what happened: who was on, what was
+                  discussed, the outcome, and what needs doing next. I'll write
+                  the summary and turn the next steps into to-dos.
+                </p>
+                <div className="mb-3 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={toggleRecapMic}
+                    title={recapListening ? "tap to pause" : "tap to record"}
+                    className={`flex h-12 w-12 items-center justify-center rounded-full border text-lg transition ${
+                      recapListening
+                        ? "border-rust bg-rust text-white animate-pulse"
+                        : "border-sky/60 bg-sky/15 text-sky hover:bg-sky/25"
+                    }`}
+                  >
+                    {recapListening ? "\u23F9" : "\u{1F3A4}"}
+                  </button>
+                  <span className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">
+                    {recapListening ? "listening\u2026 tap to pause" : "tap to record"}
+                  </span>
+                </div>
+                <textarea
+                  value={recapText}
+                  onChange={(e) => setRecapText(e.target.value)}
+                  rows={12}
+                  placeholder="What happened on the call?\u2026"
+                  className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-4 py-3 font-sans text-[0.95rem] leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-sky/60"
                 />
-                <span className="font-mono text-[0.56rem] uppercase tracking-wider text-muted">
-                  tap to speak your recap
-                </span>
+                <div className="mt-4 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setManualRecap(false)}
+                    className="rounded-full border border-edge px-4 py-2 font-mono text-[0.64rem] uppercase tracking-wider text-muted transition hover:text-bone"
+                  >
+                    cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualRecap(false);
+                      endAndSummarise();
+                    }}
+                    disabled={summarising || recapText.trim().length < 20}
+                    className="rounded-full border border-sky/60 bg-sky/20 px-5 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-sky transition hover:bg-sky/30 disabled:opacity-40"
+                  >
+                    {summarising ? "summarising\u2026" : `summarise from my recap ${"\u25B8"}`}
+                  </button>
+                </div>
               </div>
-              <textarea
-                value={recapText}
-                onChange={(e) => setRecapText(e.target.value)}
-                rows={5}
-                placeholder="What happened on the call?\u2026"
-                className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-sky/60"
-              />
-              <button
-                type="button"
-                onClick={endAndSummarise}
-                disabled={summarising || recapText.trim().length < 20}
-                className="mt-2 rounded-full border border-sky/60 bg-sky/15 px-5 py-2 font-mono text-[0.66rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
-              >
-                {summarising ? "summarising\u2026" : `summarise from my recap ${"\u25B8"}`}
-              </button>
             </div>
           )}
         </div>

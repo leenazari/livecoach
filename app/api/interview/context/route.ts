@@ -28,7 +28,7 @@ async function companyHistoryBlock(
   try {
     const { data: company } = await supabaseAdmin
       .from("companies")
-      .select("name, sector, stage, profile, attributes, notes")
+      .select("name, sector, stage, profile, attributes, notes, email_context")
       .eq("id", companyId)
       .single();
     if (!company) return null;
@@ -65,6 +65,14 @@ async function companyHistoryBlock(
 
     if (company.notes && String(company.notes).trim()) {
       lines.push(`Notes: ${String(company.notes).trim()}`);
+    }
+
+    const emailCtx = (company as any).email_context;
+    if (emailCtx && String(emailCtx).trim()) {
+      lines.push(
+        "EMAIL CONTEXT (the email thread so far - where the relationship is actually happening; weigh it heavily for the intent, plan and next steps):",
+        String(emailCtx).trim()
+      );
     }
 
     const profile = company.profile || {};

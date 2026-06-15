@@ -27,6 +27,19 @@ export default function ClientContext({ companyId }: { companyId: string }) {
   const [err, setErr] = useState("");
   const fileRef = useRef<HTMLInputElement | null>(null);
 
+  // A running summary of the email thread so far - a dedicated company field
+  // (not a context item), because the relationship is happening over email.
+  const [emailCtx, setEmailCtx] = useState("");
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailSaved, setEmailSaved] = useState(false);
+  const [eListening, setEListening] = useState(false);
+  const eRecRef = useRef<any>(null);
+  const eBaseRef = useRef("");
+  const emailRef = useRef("");
+  useEffect(() => {
+    emailRef.current = emailCtx;
+  }, [emailCtx]);
+
   const load = () =>
     crmFetch<{ items: Item[] }>(`/api/crm/companies/${companyId}/context`)
       .then((d) => setItems(d.items || []))
@@ -34,8 +47,72 @@ export default function ClientContext({ companyId }: { companyId: string }) {
 
   useEffect(() => {
     load();
+    crmFetch<{ company: { email_context: string | null } }>(
+      `/api/crm/companies/${companyId}`
+    )
+      .then((d) => setEmailCtx(d.company?.email_context || ""))
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
+
+  const saveEmail = async () => {
+    setEmailSaving(true);
+    try {
+      await crmFetch(`/api/crm/companies/${companyId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ email_context: emailCtx }),
+      });
+      setEmailSaved(true);
+      setTimeout(() => setEmailSaved(false), 2500);
+    } catch {
+      /* ignore */
+    } finally {
+      setEmailSaving(false);
+    }
+  };
+
+  const toggleEmailMic = () => {
+    const SR =
+      (window as any).webkitSpeechRecognition ||
+      (window as any).SpeechRecognition;
+    if (!SR) {
+      alert("Voice input needs a Chromium browser (Chrome, Edge, Arc).");
+      return;
+    }
+    if (eRecRef.current) {
+      try {
+        eRecRef.current.stop();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-GB";
+    rec.interimResults = true;
+    rec.continuous = true;
+    eBaseRef.current = emailRef.current.trim()
+      ? `${emailRef.current.trim()} `
+      : "";
+    let finalText = "";
+    rec.onresult = (e: any) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      setEmailCtx((eBaseRef.current + finalText + interim).trim());
+    };
+    rec.onend = () => {
+      setEListening(false);
+      eRecRef.current = null;
+    };
+    rec.onerror = () => setEListening(false);
+    eRecRef.current = rec;
+    setEListening(true);
+    rec.start();
+  };
 
   const add = async (body: Record<string, any>) => {
     setBusy(true);
@@ -86,6 +163,50 @@ export default function ClientContext({ companyId }: { companyId: string }) {
     }`;
 
   return (
+    <div className="flex flex-col gap-4">
+    <section className="rounded-xl border border-sky/40 bg-sky/[0.05] p-4">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sky">
+          {"✉"} Email context{" "}
+          <span className="text-muted">- the email thread so far, shapes the plan &amp; intent</span>
+        </p>
+        <div className="flex items-center gap-2">
+          {emailSaved && (
+            <span className="font-mono text-[0.54rem] uppercase tracking-wider text-sage">
+              saved ✓
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={toggleEmailMic}
+            title={eListening ? "tap to stop" : "speak the email summary"}
+            className={`flex h-7 w-7 items-center justify-center rounded-full border text-[0.8rem] transition ${
+              eListening
+                ? "border-rust bg-rust text-white"
+                : "border-sky/60 bg-sky/15 text-sky hover:bg-sky/25"
+            }`}
+          >
+            {eListening ? "⏹" : "\u{1F3A4}"}
+          </button>
+        </div>
+      </div>
+      <textarea
+        value={emailCtx}
+        onChange={(e) => setEmailCtx(e.target.value)}
+        rows={5}
+        placeholder="Summarise the email thread so far - what they've said, where it's up to, what's outstanding. The AI weighs this heavily for the plan, intent and next steps."
+        className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-sky/60"
+      />
+      <button
+        type="button"
+        onClick={saveEmail}
+        disabled={emailSaving}
+        className="mt-2 rounded-full border border-sky/60 bg-sky/15 px-4 py-1.5 font-mono text-[0.6rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
+      >
+        {emailSaving ? "saving…" : "save email context"}
+      </button>
+    </section>
+
     <section className="rounded-xl border border-edge bg-panel/40 p-4">
       <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
         Context{" "}
@@ -193,5 +314,6 @@ export default function ClientContext({ companyId }: { companyId: string }) {
         </ul>
       )}
     </section>
+    </div>
   );
 }
