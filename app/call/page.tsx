@@ -278,6 +278,8 @@ export default function CallPage() {
   // Compact plan brief for the live lanes: intent + the read + the email thread.
   // This is the "plan context" the cues run on, so we don't load the full brain.
   const planBriefRef = useRef<string>("");
+  // Latest email-context box value, so go-live can save it without stale state.
+  const clientEmailCtxRef = useRef<string>("");
   const linkedCompanyRef = useRef<{ id: string; name: string } | null>(null);
   // Scheduled-call link. When the call screen is opened from an Upcoming call
   // (?upcoming=<id>), the prep plan built here is auto-saved against that row and
@@ -366,6 +368,7 @@ export default function CallPage() {
     cueGapMsRef.current = SPEEDS[cueSpeed];
   }, [cueSpeed]);
   useEffect(() => {
+    clientEmailCtxRef.current = clientEmailCtx;
     planBriefRef.current = [
       brief?.trim() ? `INTENT: ${brief.trim()}` : "",
       character?.trim() ? `YOUR READ: ${character.trim()}` : "",
@@ -1320,6 +1323,18 @@ export default function CallPage() {
     if (linkedCompanyRef.current) {
       linkSession();
       setTimeout(linkSession, 1500);
+      // Pin the email-context box to the server at go-live so the saved record
+      // matches what this call is actually using - no drift for the brain,
+      // assistant, or a later re-open. Fire-and-forget; refs avoid stale state.
+      const emailCtx = clientEmailCtxRef.current;
+      const companyId = linkedCompanyRef.current.id;
+      if (companyId && emailCtx.trim()) {
+        fetch(`/api/crm/companies/${companyId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email_context: emailCtx }),
+        }).catch(() => {});
+      }
     }
   }, [persistSession, linkSession]);
 
