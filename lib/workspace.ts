@@ -34,12 +34,46 @@ function nowLine(): string {
 }
 
 // Wraps the brain in a labelled block for prompts. Always includes the current
-// date/time so the model reasons against the real "now"; adds the brain when set.
+// date/time, the curated profile (knowledge), and the auto-learned layer that
+// the brain has picked up from calls, emails and chats over time.
 export async function workspaceContextBlock(): Promise<string> {
-  const k = await getWorkspaceContext();
   const now = nowLine();
-  if (!k) return now;
-  return `${now}ABOUT THE USER AND THEIR BUSINESS (background for everything below - use it to frame your reasoning, never contradict or override the specific data provided later):\n${k}\n\n`;
+  let knowledge = "";
+  let learned = "";
+  try {
+    const { data } = await supabaseAdmin
+      .from("workspace_profile")
+      .select("knowledge, learned")
+      .eq("id", "main")
+      .maybeSingle();
+    knowledge = typeof data?.knowledge === "string" ? data.knowledge.trim() : "";
+    learned = typeof data?.learned === "string" ? data.learned.trim() : "";
+  } catch {
+    /* best-effort */
+  }
+  let out = now;
+  if (knowledge)
+    out += `ABOUT THE USER AND THEIR BUSINESS (background for everything below - use it to frame your reasoning, never contradict or override the specific data provided later):\n${knowledge}\n\n`;
+  if (learned)
+    out += `WHAT YOU HAVE LEARNED SO FAR (durable patterns picked up from the user's calls, emails and chats - apply them, but treat them as secondary to the curated profile above and to the specific data provided later):\n${learned}\n\n`;
+  return out;
+}
+
+// The brain's open questions about the user's business (gaps it wants filled).
+// Surfaced to the assistant so it can raise them naturally and brainstorm.
+export async function getBrainQuestions(): Promise<string> {
+  try {
+    const { data } = await supabaseAdmin
+      .from("workspace_profile")
+      .select("open_questions")
+      .eq("id", "main")
+      .maybeSingle();
+    return typeof data?.open_questions === "string"
+      ? data.open_questions.trim()
+      : "";
+  } catch {
+    return "";
+  }
 }
 
 // The lessons library, optionally filtered to specific topics, as a labelled

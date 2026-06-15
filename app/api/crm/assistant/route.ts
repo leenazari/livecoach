@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 import { gatherClientContext, gatherGlobalContext } from "@/lib/crm-context";
-import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
+import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib/workspace";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
 
 export const runtime = "nodejs";
@@ -67,10 +67,14 @@ export async function POST(req: NextRequest) {
 
     const biz = await workspaceContextBlock();
     const lessons = await getLessonsBlock(["negotiation", "strategy", "psychology"]);
+    const brainQuestions = await getBrainQuestions();
+    const qBlock = brainQuestions
+      ? `\n\nTHINGS YOU ARE TRYING TO LEARN (open questions about the user's business that would make you sharper). When it fits naturally, when the user asks what you need, or when you are brainstorming, raise one or two of these - never the whole list and never force them. When the user answers, weave it into your reply and treat it as fact from then on:\n${brainQuestions}`
+      : "";
     const system: any[] = [
       {
         type: "text",
-        text: `${biz}${lessons}${scope}
+        text: `${biz}${lessons}${scope}${qBlock}
 
 GROUND EVERYTHING in the context provided below. This is the hardest rule and it overrides being helpful.
 - Never state a specific number, money amount, budget, deal value, date, deadline, percentage, stage, name or commitment unless it appears literally in the context. Do not estimate, assume, or infer a figure that isn't written there. If you catch yourself about to put a number in a sentence, check it is actually in the context first.
