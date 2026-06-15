@@ -39,6 +39,14 @@ export default function SettingsPage() {
   const [distilling, setDistilling] = useState(false);
   const [lErr, setLErr] = useState("");
 
+  // Google Calendar connection.
+  const [gcal, setGcal] = useState<{
+    connected: boolean;
+    email: string | null;
+    configured: boolean;
+  } | null>(null);
+  const [gcalNote, setGcalNote] = useState("");
+
   useEffect(() => {
     crmFetch<{ knowledge: string }>("/api/crm/workspace")
       .then((d) => {
@@ -50,6 +58,17 @@ export default function SettingsPage() {
     crmFetch<{ lessons: Lesson[] }>("/api/crm/lessons")
       .then((d) => setLessons(d.lessons || []))
       .catch(() => {});
+    crmFetch<{ connected: boolean; email: string | null; configured: boolean }>(
+      "/api/auth/google/status"
+    )
+      .then((d) => setGcal(d))
+      .catch(() => {});
+    if (typeof window !== "undefined") {
+      const g = new URLSearchParams(window.location.search).get("google");
+      if (g === "connected") setGcalNote("Google Calendar connected.");
+      else if (g === "denied") setGcalNote("Connection cancelled.");
+      else if (g === "error") setGcalNote("Couldn't connect - try again.");
+    }
   }, []);
 
   const distil = async () => {
@@ -146,6 +165,38 @@ export default function SettingsPage() {
           ◂ dashboard
         </Link>
       </header>
+
+      <div className="mb-5 rounded-xl border border-sky/40 bg-sky/[0.05] p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="font-mono text-[0.62rem] uppercase tracking-[0.2em] text-sky">
+              {"◷"} Google Calendar
+            </p>
+            <p className="mt-1 font-mono text-[0.6rem] leading-relaxed text-muted">
+              {gcal?.connected
+                ? `Connected${
+                    gcal.email ? ` as ${gcal.email}` : ""
+                  }. Your calendar feeds Upcoming calls, and the Sync button on the dashboard pulls changes on demand.`
+                : "Connect your Google Calendar so the app can pull your meetings and apply reschedules live."}
+            </p>
+            {gcalNote && (
+              <p className="mt-1 font-mono text-[0.58rem] text-sage">{gcalNote}</p>
+            )}
+            {gcal && !gcal.configured && (
+              <p className="mt-1 font-mono text-[0.58rem] text-rust">
+                Not set up yet - add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and
+                GOOGLE_REDIRECT_URI in Vercel, then redeploy.
+              </p>
+            )}
+          </div>
+          <a
+            href="/api/auth/google/start"
+            className="shrink-0 rounded-full border border-sky/60 bg-sky/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/25"
+          >
+            {gcal?.connected ? "reconnect" : "connect google"}
+          </a>
+        </div>
+      </div>
 
       <div className="rounded-xl border border-amber/40 bg-amber/[0.05] p-5">
         <div className="mb-2 flex items-center justify-between gap-3">

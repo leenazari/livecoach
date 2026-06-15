@@ -18,18 +18,34 @@ export function fingerprintTask(companyId: string | null, text: string): string 
 export type NewTask = {
   text: string;
   kind?: string; // next_step | commitment | draft | manual
-  linkKind?: string; // client | drafts | call
-  source?: string; // synthesis | call | manual | follow_up
+  linkKind?: string; // client | drafts | call | email
+  source?: string; // synthesis | call | manual | follow_up | assistant | debrief
   sourceRef?: string | null;
 };
 
+// Map a spoken/loose action word to the to-do's link_kind, which drives the
+// action chip in the list (draft email, prep call, open client). "email" and
+// "draft" become an email-draft action, "call"/"prep" a call action, the rest
+// just open the client.
+export function actionToLinkKind(action?: string): string {
+  const a = (action || "").toLowerCase().trim();
+  if (a === "email" || a === "draft" || a === "follow-up" || a === "followup")
+    return "email";
+  if (a === "call" || a === "prep" || a === "meeting" || a === "schedule")
+    return "call";
+  if (a === "drafts") return "drafts";
+  return "client";
+}
+
 // Upsert tasks by fingerprint. onConflict do-nothing: existing rows (open OR
 // done) are left untouched, so we never duplicate and never un-complete a
-// finished task. Best-effort - never throws into the caller.
+// finished task. Best-effort - never throws into the caller. Returns the rows
+// that were actually inserted (new ones only), so callers can confirm what was
+// added.
 export async function upsertTasks(
   companyId: string | null,
   items: NewTask[]
-): Promise<void> {
+): Promise<any[]> {
   const rows = (items || [])
     .filter((i) => i && typeof i.text === "string" && i.text.trim())
     .map((i) => ({
@@ -42,12 +58,15 @@ export async function upsertTasks(
       fingerprint: fingerprintTask(companyId, i.text),
       status: "open",
     }));
-  if (!rows.length) return;
+  if (!rows.length) return [];
   try {
-    await supabaseAdmin
+    const { data } = await supabaseAdmin
       .from("tasks")
-      .upsert(rows, { onConflict: "fingerprint", ignoreDuplicates: true });
+      .upsert(rows, { onConflict: "fingerprint", ignoreDuplicates: true })
+      .select("id, company_id, text, kind, link_kind, status, done_at, created_at");
+    return data || [];
   } catch (e) {
     console.error("upsertTasks failed:", e);
+    return [];
   }
 }

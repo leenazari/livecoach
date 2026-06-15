@@ -60,6 +60,17 @@ export default function TaskList({
       .catch(() => {});
   }, [url]);
 
+  // Refresh when something elsewhere creates to-dos (the assistant, or the
+  // post-call voice debrief) so new items appear without a manual reload.
+  useEffect(() => {
+    const onUpd = () =>
+      crmFetch<{ tasks: Task[] }>(url)
+        .then((d) => setTasks(d.tasks || []))
+        .catch(() => {});
+    window.addEventListener("lc:tasks-updated", onUpd);
+    return () => window.removeEventListener("lc:tasks-updated", onUpd);
+  }, [url]);
+
   // Tick / un-tick (toggle done). Never deletes - that's the ✕.
   const toggle = (t: Task) => {
     // A prep to-do is derived from an upcoming call: ticking it marks that call

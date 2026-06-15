@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { crmFetch } from "@/lib/crm";
 
 type Comp = { name: string; score: number; note: string };
 type QReview = { question: string; answered: string; note: string };
@@ -137,6 +138,7 @@ export default function PostCallSummary({
   summary,
   candidate,
   transcript,
+  companyId,
   liked,
   disliked,
   onSaveFeedback,
@@ -145,6 +147,7 @@ export default function PostCallSummary({
   summary: Summary;
   candidate?: string;
   transcript?: string;
+  companyId?: string;
   liked?: FeedbackCue[];
   disliked?: FeedbackCue[];
   onSaveFeedback?: (notes: string) => Promise<void> | void;
@@ -152,6 +155,77 @@ export default function PostCallSummary({
 }) {
   const [debriefNotes, setDebriefNotes] = useState("");
   const [savedFeedback, setSavedFeedback] = useState(false);
+  // Voice debrief: dictate feedback instead of typing it.
+  const [listening, setListening] = useState(false);
+  const recRef = useRef<any>(null);
+  const baseNotesRef = useRef("");
+  // How many to-dos the spoken/typed debrief produced (null until saved).
+  const [todoCount, setTodoCount] = useState<number | null>(null);
+
+  const toggleMic = () => {
+    const SR =
+      (window as any).webkitSpeechRecognition ||
+      (window as any).SpeechRecognition;
+    if (!SR) {
+      alert("Voice input needs a Chromium browser (Chrome, Edge, Arc).");
+      return;
+    }
+    if (listening) {
+      recRef.current?.stop();
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-GB";
+    rec.interimResults = true;
+    rec.continuous = true;
+    baseNotesRef.current = debriefNotes ? debriefNotes.trim() + " " : "";
+    let finalText = "";
+    rec.onresult = (e: any) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      setDebriefNotes((baseNotesRef.current + finalText + interim).trim());
+    };
+    rec.onend = () => {
+      setListening(false);
+      recRef.current = null;
+    };
+    rec.onerror = () => setListening(false);
+    recRef.current = rec;
+    setListening(true);
+    rec.start();
+  };
+
+  // Save the debrief, and turn it into concrete to-dos (with an action each)
+  // against this client, so spoken feedback becomes next steps automatically.
+  const saveDebrief = async () => {
+    if (onSaveFeedback) await onSaveFeedback(debriefNotes);
+    setSavedFeedback(true);
+    if (companyId && debriefNotes.trim()) {
+      try {
+        const { created } = await crmFetch<{ created: { id: string }[] }>(
+          "/api/crm/extract-tasks",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              companyId,
+              text: debriefNotes,
+              clientName: candidate || null,
+              source: "debrief",
+            }),
+          }
+        );
+        setTodoCount(created?.length || 0);
+        if (created?.length)
+          window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      } catch {
+        setTodoCount(null);
+      }
+    }
+  };
   const callTypeLabel =
     summary.callType && summary.callType !== "general"
       ? `${summary.callType} call`
@@ -617,24 +691,54 @@ export default function PostCallSummary({
                   </ul>
                 </div>
               )}
-              <textarea
-                value={debriefNotes}
-                onChange={(e) => setDebriefNotes(e.target.value)}
-                rows={3}
-                placeholder="What worked, what to change next time - e.g. cues were too long, loved the redirects, stop probing budget so early"
-                className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
-              />
-              {onSaveFeedback && (
+              <div className="flex items-start gap-2">
                 <button
-                  onClick={async () => {
-                    await onSaveFeedback(debriefNotes);
-                    setSavedFeedback(true);
-                  }}
-                  disabled={savedFeedback}
-                  className="mt-2 rounded-full border border-amber/50 bg-amber/10 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-50"
+                  type="button"
+                  onClick={toggleMic}
+                  title={listening ? "tap to stop" : "tap to speak your feedback"}
+                  className={`mt-0.5 flex h-9 w-9 flex-none items-center justify-center rounded-full border text-sm transition ${
+                    listening
+                      ? "border-rust bg-rust text-white"
+                      : "border-amber/60 bg-amber/15 text-amber hover:bg-amber/25"
+                  }`}
                 >
-                  {savedFeedback ? "saved \u2713" : "save feedback"}
+                  {listening ? "\u23f9" : "\u{1F3A4}"}
                 </button>
+                <textarea
+                  value={debriefNotes}
+                  onChange={(e) => setDebriefNotes(e.target.value)}
+                  rows={3}
+                  placeholder={
+                    listening
+                      ? "listening\u2026 speak your feedback, tap the mic to stop"
+                      : "Speak or type: what worked, what to change, and what to do next - e.g. send Sak the pricing, chase Rasim next week"
+                  }
+                  className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+                />
+              </div>
+              {companyId && (
+                <p className="mt-1.5 font-mono text-[0.56rem] leading-relaxed text-muted">
+                  When you save, I'll turn the next steps you mention into to-dos
+                  with the right action attached.
+                </p>
+              )}
+              {onSaveFeedback && (
+                <div className="mt-2 flex items-center gap-3">
+                  <button
+                    onClick={saveDebrief}
+                    disabled={savedFeedback}
+                    className="rounded-full border border-amber/50 bg-amber/10 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-50"
+                  >
+                    {savedFeedback ? "saved \u2713" : "save feedback"}
+                  </button>
+                  {todoCount !== null && (
+                    <span className="font-mono text-[0.6rem] uppercase tracking-wider text-sage">
+                      {todoCount > 0
+                        ? `added ${todoCount} to-do${todoCount === 1 ? "" : "s"}`
+                        : "no actions found"}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           )}

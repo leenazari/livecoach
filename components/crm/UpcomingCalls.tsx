@@ -37,6 +37,8 @@ export default function UpcomingCalls() {
   const [calls, setCalls] = useState<Upcoming[]>(cached?.calls || []);
   const [adding, setAdding] = useState(false);
   const [prepId, setPrepId] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
 
   // add-form state
   const [title, setTitle] = useState("");
@@ -51,6 +53,29 @@ export default function UpcomingCalls() {
     crmFetch<{ calls: Upcoming[] }>("/api/crm/upcoming")
       .then((d) => setCalls(d.calls || []))
       .catch(() => {});
+
+  // Pull the latest from Google now (catches reschedules between the automatic
+  // syncs). Needs Google connected in Settings.
+  const syncNow = async () => {
+    setSyncing(true);
+    setSyncMsg("");
+    try {
+      const r = await crmFetch<{ added: number; updated: number }>(
+        "/api/crm/calendar-sync",
+        { method: "POST" }
+      );
+      await load();
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      const bits: string[] = [];
+      if (r.added) bits.push(`${r.added} new`);
+      if (r.updated) bits.push(`${r.updated} updated`);
+      setSyncMsg(bits.length ? `synced - ${bits.join(", ")}` : "already up to date");
+    } catch (e: any) {
+      setSyncMsg(e?.message || "sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -115,13 +140,29 @@ export default function UpcomingCalls() {
         <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
           {"▦"} Upcoming calls
         </p>
-        <button
-          type="button"
-          onClick={() => setAdding((v) => !v)}
-          className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
-        >
-          {adding ? "close" : "+ schedule"}
-        </button>
+        <div className="flex items-center gap-2">
+          {syncMsg && (
+            <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+              {syncMsg}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={syncNow}
+            disabled={syncing}
+            title="Pull the latest from your Google calendar now"
+            className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-sky/50 hover:text-sky disabled:opacity-40"
+          >
+            {syncing ? "syncing…" : "⟳ sync"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setAdding((v) => !v)}
+            className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+          >
+            {adding ? "close" : "+ schedule"}
+          </button>
+        </div>
       </div>
 
       {adding && (

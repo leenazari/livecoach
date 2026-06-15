@@ -7,6 +7,10 @@ export const runtime = "nodejs";
 // company name. Powers the dashboard's Upcoming Calls card.
 export async function GET() {
   try {
+    // Hide calls whose time has passed by more than a short grace window (3h),
+    // so a just-finished call sticks around long enough to open/recap, then
+    // drops off on its own. Calls with no set time are always kept.
+    const pastCutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
     const [{ data: companies }, { data: calls }] = await Promise.all([
       supabaseAdmin.from("companies").select("id, name"),
       supabaseAdmin
@@ -14,6 +18,7 @@ export async function GET() {
         .select(
           "id, company_id, title, scheduled_at, meeting_url, intent, prepped, source, created_at"
         )
+        .or(`scheduled_at.is.null,scheduled_at.gte.${pastCutoff}`)
         .order("scheduled_at", { ascending: true, nullsFirst: false })
         .limit(200),
     ]);

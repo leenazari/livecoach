@@ -47,6 +47,16 @@ export async function gatherClientContext(companyId: string): Promise<string> {
         .limit(30),
     ]);
 
+  // Upcoming calls for this client, synced from the calendar, so the assistant
+  // can answer "when's our next call" / "what's coming up" from the CRM's copy.
+  const { data: upcomingRows } = await supabaseAdmin
+    .from("upcoming_calls")
+    .select("title, scheduled_at, meeting_url, intent, prepped")
+    .eq("company_id", companyId)
+    .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
+    .order("scheduled_at", { ascending: true })
+    .limit(10);
+
   if (!company) return "";
 
   // Pre-compute every field so we can render it as a value OR an explicit
@@ -134,6 +144,29 @@ export async function gatherClientContext(companyId: string): Promise<string> {
         : "none"
     }`
   );
+
+  const upcoming = upcomingRows || [];
+  if (upcoming.length) {
+    lines.push("", "UPCOMING CALLS (from the synced calendar):");
+    for (const u of upcoming as any[]) {
+      const when = u.scheduled_at
+        ? new Date(u.scheduled_at).toLocaleString("en-GB", {
+            weekday: "short",
+            day: "2-digit",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "no time set";
+      lines.push(
+        `- ${when}: ${u.title || "call"}${
+          u.prepped ? " [prepped]" : " [not prepped yet]"
+        }${u.intent ? ` - ${cut(u.intent, 160)}` : ""}`
+      );
+    }
+  } else {
+    lines.push("Upcoming calls (synced calendar): none scheduled with this client");
+  }
 
   if (summaries.length) {
     lines.push("", "PAST CALLS (most recent first):");
@@ -267,5 +300,38 @@ export async function gatherGlobalContext(): Promise<string> {
     }
     lines.push(bits.join("\n"));
   }
+
+  // Upcoming calls across everyone, synced from the calendar, so "what's on my
+  // calendar" / "what's next" works without picking a client first.
+  const { data: upAll } = await supabaseAdmin
+    .from("upcoming_calls")
+    .select("company_id, title, scheduled_at, prepped")
+    .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
+    .order("scheduled_at", { ascending: true })
+    .limit(40);
+  const up = upAll || [];
+  if (up.length) {
+    const nameById = new Map<string, string>();
+    for (const c of companies as any[]) nameById.set(c.id, c.name);
+    lines.push("", "YOUR UPCOMING CALLS (synced from your calendar, soonest first):");
+    for (const u of up as any[]) {
+      const when = u.scheduled_at
+        ? new Date(u.scheduled_at).toLocaleString("en-GB", {
+            weekday: "short",
+            day: "2-digit",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "no time set";
+      const who = u.company_id ? nameById.get(u.company_id) || "" : "";
+      lines.push(
+        `• ${when}: ${u.title || "call"}${who ? ` (${who})` : ""}${
+          u.prepped ? " [prepped]" : ""
+        }`
+      );
+    }
+  }
+
   return lines.join("\n");
 }

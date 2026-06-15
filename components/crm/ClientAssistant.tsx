@@ -122,11 +122,18 @@ export default function ClientAssistant({
     setMessages((p) => [...p, { role: "user", content: t }]);
     setBusy(true);
     try {
-      const { reply } = await crmFetch<{ reply: string }>("/api/crm/assistant", {
+      const { reply, createdTasks } = await crmFetch<{
+        reply: string;
+        createdTasks?: { id: string }[];
+      }>("/api/crm/assistant", {
         method: "POST",
         body: JSON.stringify({ companyId: companyId ?? null, message: t }),
       });
-      setMessages((p) => [...p, { role: "assistant", content: reply }]);
+      const n = createdTasks?.length || 0;
+      const note = n ? `\n\n✓ Added ${n} to your to-do list.` : "";
+      setMessages((p) => [...p, { role: "assistant", content: reply + note }]);
+      // Tell any open to-do list to refresh so the new items show right away.
+      if (n) window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       if (readAloud) speak(reply);
     } catch (e: any) {
       setMessages((p) => [

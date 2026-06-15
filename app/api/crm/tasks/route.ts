@@ -34,7 +34,9 @@ export async function GET(req: NextRequest) {
       )
       .not("company_id", "is", null)
       .eq("prepped", false)
-      .gte("scheduled_at", startOfToday.toISOString())
+      // A prep to-do falls off once the call's time has passed by a short grace
+      // window (3h), enough to still open or recap it just after, not linger.
+      .gte("scheduled_at", new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString())
       .order("scheduled_at", { ascending: true })
       .limit(200);
     if (companyId) uq = uq.eq("company_id", companyId);

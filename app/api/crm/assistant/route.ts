@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 import { gatherClientContext, gatherGlobalContext } from "@/lib/crm-context";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
+import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -83,6 +84,14 @@ DRAFTS: when you write something the user would SEND or SHARE verbatim (an email
 ---END DRAFT---
 Keep your commentary and reasoning OUTSIDE the markers. The text inside the markers can be plain and clean since it is what gets sent.
 
+TO-DOS: when the user asks you to arrange, remember, chase, follow up, add, draft, prep, or otherwise CREATE actions to do later, capture each as a to-do. In ADDITION to your normal prose reply, put ONLY a JSON array between these exact markers:
+---TASKS---
+[{"text":"short imperative to-do","action":"email|call|task"}]
+---END TASKS---
+Use "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Only create to-dos the user actually wants tracked, and do not repeat ones already shown as outstanding in the context. They appear on the user's to-do list with the action attached, to trigger when they choose. Keep these markers out of your prose, and still answer naturally.
+
+CALENDAR: the user's upcoming calls, synced from their calendar, are in the context below under "UPCOMING CALLS". Answer "what's on my calendar" / "what's next" from that. You do not have live access to edit their Google calendar. If they tell you a call moved or was cancelled, do not claim you changed the calendar - instead offer to add a to-do or note it, and remind them the synced view refreshes from their calendar.
+
 TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the book of business well and respects your time.`,
       },
       {
@@ -128,7 +137,38 @@ TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the bo
       );
     }
 
-    if (!reply) reply = "Sorry, I couldn't form a reply just then. Try again?";
+    // Pull out any to-dos the assistant decided to create, save them (deduped),
+    // and strip the markers from what we show and store. The user actions them
+    // later from their to-do list.
+    let createdTasks: any[] = [];
+    const tm = reply.match(/---TASKS---\s*([\s\S]*?)\s*---END TASKS---/);
+    if (tm) {
+      reply = reply.replace(/---TASKS---[\s\S]*?---END TASKS---/, "").trim();
+      try {
+        const seg = tm[1];
+        const a = seg.indexOf("[");
+        const b = seg.lastIndexOf("]");
+        const arr = a >= 0 && b > a ? JSON.parse(seg.slice(a, b + 1)) : [];
+        if (Array.isArray(arr)) {
+          const items = arr
+            .filter((x: any) => x && typeof x.text === "string" && x.text.trim())
+            .slice(0, 12)
+            .map((x: any) => ({
+              text: String(x.text).trim(),
+              linkKind: actionToLinkKind(x.action),
+              source: "assistant",
+            }));
+          createdTasks = await upsertTasks(isGlobal ? null : companyId, items);
+        }
+      } catch {
+        /* ignore a malformed task block */
+      }
+    }
+
+    if (!reply)
+      reply = createdTasks.length
+        ? `Added ${createdTasks.length} to your to-do list.`
+        : "Sorry, I couldn't form a reply just then. Try again?";
 
     await supabaseAdmin.from("assistant_messages").insert([
       {
@@ -143,7 +183,7 @@ TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the bo
       },
     ]);
 
-    return NextResponse.json({ reply });
+    return NextResponse.json({ reply, createdTasks });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "assistant failed" },
