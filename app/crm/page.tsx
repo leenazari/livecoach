@@ -18,6 +18,11 @@ type Dash = {
     weekCost: number;
     monthCost: number;
     allCost: number;
+    costBreakdown?: {
+      calls: { week: number; month: number; all: number };
+      ai: { week: number; month: number; all: number };
+      automation: { week: number; month: number; all: number };
+    };
   };
   tasks: {
     text: string;
@@ -68,6 +73,24 @@ export default function DashboardPage() {
   const costNow =
     costMode === "week" ? dash?.kpis.weekCost : dash?.kpis.monthCost;
 
+  // Weekly spend guide. A soft budget: when this week's all-in spend goes over
+  // it, the dashboard flags it and names the biggest driver. Change
+  // WEEK_GUIDE_GBP to your own comfort level.
+  const WEEK_GUIDE_GBP = 20;
+  const weekSpend = dash?.kpis.weekCost ?? 0;
+  const overGuide = weekSpend > WEEK_GUIDE_GBP;
+  const cb = dash?.kpis.costBreakdown;
+  const driver = cb
+    ? (
+        [
+          ["calls", cb.calls.week],
+          ["in-app AI", cb.ai.week],
+          ["automation", cb.automation.week],
+        ] as [string, number][]
+      ).sort((a, b) => b[1] - a[1])[0]
+    : null;
+  const monthlyPace = weekSpend * (30 / 7);
+
   const statCls =
     "rounded-lg border border-edge bg-ink/40 px-3 py-2.5 text-left transition hover:border-amber/50";
 
@@ -107,12 +130,6 @@ export default function DashboardPage() {
               ))}
             </div>
           </div>
-          <Link
-            href="/call"
-            className="rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
-          >
-            ◂ back to a call
-          </Link>
         </div>
       </header>
 
@@ -123,6 +140,21 @@ export default function DashboardPage() {
           </p>
           <p className="font-sans text-sm leading-relaxed text-bone/85">
             {dash.dayRead}
+          </p>
+        </div>
+      )}
+
+      {/* Weekly spend flag: only shows when this week's all-in spend is over the
+          guide, names the biggest driver and the monthly pace. */}
+      {overGuide && (
+        <div className="mb-3 rounded-xl border border-amber/50 bg-amber/[0.07] p-3">
+          <p className="font-mono text-[0.58rem] uppercase tracking-[0.18em] text-amber">
+            {"⚠"} Spend flag
+          </p>
+          <p className="mt-1 font-sans text-[0.84rem] leading-snug text-bone/85">
+            This week is {gbp(weekSpend)}, above your {gbp(WEEK_GUIDE_GBP)} guide.
+            {driver ? ` Biggest driver: ${driver[0]} (${gbp(driver[1])}).` : ""} At
+            this pace that is about {gbp(monthlyPace)} for the month.
           </p>
         </div>
       )}

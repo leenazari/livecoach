@@ -2734,6 +2734,14 @@ export default function CallPage() {
               </button>
             ))}
           </div>
+          {insightsOn && insightSpeed === "fast" && (
+            <span
+              title="The 'say this' advisor runs on Sonnet. At fast that is a call every 9 seconds, your most expensive mode. Use it only for short, high-stakes calls."
+              className="flex-none rounded-full border border-rust/50 bg-rust/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase tracking-wider text-rust"
+            >
+              {"⚠"} say=fast pricey
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setInsightsOn((v) => !v)}
