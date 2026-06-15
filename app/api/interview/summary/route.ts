@@ -182,7 +182,7 @@ Return the JSON assessment now.`;
       if (sessionId) {
         const { data: sess } = await supabaseAdmin
           .from("interview_sessions")
-          .select("created_at, ended_at")
+          .select("created_at, ended_at, source")
           .eq("session_id", sessionId)
           .maybeSingle();
         if (sess?.created_at) {
@@ -193,7 +193,9 @@ Return the JSON assessment now.`;
           // Cap at 4h so a tab left open can't inflate the figure.
           const durSec = Math.min(Math.max(0, (endMs - startMs) / 1000), 4 * 3600);
           if (durSec >= 30) {
-            const meet = source === "meet";
+            // Source is authoritative from the session row (set when the call
+            // started, e.g. a bot sent to Meet); fall back to the client hint.
+            const meet = ((sess as any).source || source) === "meet";
             const floor = estimateCost(durSec, 0, {
               transport: meet ? "recall" : "livekit",
               deepgramStreams: meet ? 0 : 2,

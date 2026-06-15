@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { crmFetch, type Company } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
-import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import TaskList from "@/components/crm/TaskList";
 
 type Tab = "tasks" | "drafts" | "opportunities" | "clients";
@@ -21,6 +20,7 @@ function BoardInner() {
   const [tab, setTab] = useState<Tab>("tasks");
   const [tasks, setTasks] = useState<any[]>([]);
   const [drafts, setDrafts] = useState<any[]>([]);
+  const [emailTasks, setEmailTasks] = useState<any[]>([]);
   const [opps, setOpps] = useState<any[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [q, setQ] = useState("");
@@ -47,8 +47,18 @@ function BoardInner() {
         const d = await crmFetch<any>("/api/crm/dashboard?light=1");
         setTasks(d.tasks || []);
       } else if (which === "drafts") {
-        const d = await crmFetch<any>("/api/crm/drafts");
+        // Drafts = emails already written (follow_ups, ready to send) PLUS the
+        // email next steps that still need drafting (ready to be drafted).
+        const [d, t] = await Promise.all([
+          crmFetch<any>("/api/crm/drafts"),
+          crmFetch<any>("/api/crm/tasks"),
+        ]);
         setDrafts(d.drafts || []);
+        setEmailTasks(
+          (t.tasks || []).filter(
+            (x: any) => x.link_kind === "email" && x.status === "open"
+          )
+        );
       } else if (which === "opportunities") {
         const d = await crmFetch<any>("/api/crm/opportunities?status=open");
         setOpps(d.opportunities || []);
@@ -78,6 +88,13 @@ function BoardInner() {
       /* ignore */
     }
   };
+  // An "email to draft" task -> open the assistant to write it.
+  const draftEmail = (t: any) =>
+    window.dispatchEvent(
+      new CustomEvent("lc:draft-email", {
+        detail: { companyId: t.company_id, companyName: t.company, text: t.text },
+      })
+    );
   const setDraftStatus = (id: string, status: string) => {
     setDrafts((p) => p.map((x) => (x.id === id ? { ...x, status } : x)));
     crmFetch(`/api/crm/follow-ups/${id}`, {
@@ -158,8 +175,50 @@ function BoardInner() {
         </div>
       ) : tab === "drafts" ? (
         <div className="flex flex-col gap-3">
+          {/* EMAILS TO DRAFT - email next steps you haven't written yet. */}
+          {emailTasks.length > 0 && (
+            <div className="rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
+              <p className="mb-2.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sky">
+                ✉ Emails to draft{" "}
+                <span className="text-muted">({emailTasks.length})</span>
+              </p>
+              <ul className="flex flex-col">
+                {emailTasks.map((t) => (
+                  <li
+                    key={t.id}
+                    className="flex items-center gap-2.5 border-b border-edge/40 py-2 last:border-none"
+                  >
+                    <span className="flex-1 font-sans text-[0.84rem] text-bone">
+                      {t.text}
+                      {t.company && (
+                        <span className="ml-1.5 font-mono text-[0.58rem] text-sky">
+                          · {t.company}
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => draftEmail(t)}
+                      className="shrink-0 rounded-full border border-sky/50 bg-sky/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:bg-sky/20"
+                    >
+                      draft it
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {emailTasks.length > 0 && (
+            <p className="mt-1 font-mono text-[0.58rem] uppercase tracking-[0.2em] text-amber">
+              Ready to send
+            </p>
+          )}
           {drafts.length === 0 && (
-            <p className="font-mono text-[0.66rem] text-muted">No drafts waiting.</p>
+            <p className="font-mono text-[0.66rem] text-muted">
+              No written drafts yet. After a call, a ready-to-send draft lands
+              here.
+            </p>
           )}
           {drafts.map((d) => (
             <div
@@ -267,7 +326,6 @@ function BoardInner() {
           </ul>
         </div>
       )}
-      <GlobalAssistant />
       <NavMenu />
     </main>
   );

@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
-import GlobalAssistant from "@/components/crm/GlobalAssistant";
 
 type Call = {
   id: string;
@@ -143,7 +142,6 @@ export default function CallsPage() {
         </div>
       )}
 
-      <GlobalAssistant />
       <NavMenu />
     </main>
   );

@@ -16,7 +16,7 @@ export const maxDuration = 40;
 // thread = company_id null).
 export async function POST(req: NextRequest) {
   try {
-    const { companyId, message } = await req.json();
+    const { companyId, focusCompanyId, message } = await req.json();
     if (typeof message !== "string" || !message.trim()) {
       return NextResponse.json({ error: "message is required" }, { status: 400 });
     }
@@ -25,17 +25,26 @@ export async function POST(req: NextRequest) {
     // On a client page we lead with that client, but still load the wider
     // pipeline so the user can range onto anyone or anything (the assistant is
     // their co-founder, not a single-client bot).
+    // The client to LEAD with (the page the user is on) - from focusCompanyId
+    // (persistent layout assistant) or companyId (legacy/call-screen scoping).
+    // The conversation thread itself stays global unless companyId is set.
+    const focus =
+      typeof focusCompanyId === "string" && focusCompanyId
+        ? focusCompanyId
+        : typeof companyId === "string" && companyId
+        ? companyId
+        : null;
     let context: string | null;
-    if (isGlobal) {
-      context = await gatherGlobalContext();
-    } else {
+    if (focus) {
       const [client, pipeline] = await Promise.all([
-        gatherClientContext(companyId),
+        gatherClientContext(focus),
         gatherGlobalContext(),
       ]);
       context = client
         ? `FOCUSED CLIENT - the page the user is on. Lead here when the question is about them:\n\n${client}\n\n----------\n\nTHE WIDER PIPELINE - everyone else and the whole book. Use this when the user ranges beyond this client (another client, a new idea, their week ahead):\n\n${pipeline}`
-        : null;
+        : await gatherGlobalContext();
+    } else {
+      context = await gatherGlobalContext();
     }
     if (!context) {
       return NextResponse.json({ error: "client not found" }, { status: 404 });

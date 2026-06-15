@@ -30,12 +30,16 @@ function splitDrafts(content: string): { type: "text" | "draft"; text: string }[
 export default function ClientAssistant({
   companyId,
   companyName,
+  focusCompanyId,
   autoListen,
   initialPrompt,
   draftTaskId,
 }: {
   companyId?: string;
   companyName?: string;
+  // The client the user is currently looking at (from the page URL). Used to
+  // lead the answer and to save drafts, WITHOUT scoping the conversation thread.
+  focusCompanyId?: string;
   autoListen?: boolean;
   initialPrompt?: string;
   draftTaskId?: string;
@@ -127,7 +131,11 @@ export default function ClientAssistant({
         createdTasks?: { id: string }[];
       }>("/api/crm/assistant", {
         method: "POST",
-        body: JSON.stringify({ companyId: companyId ?? null, message: t }),
+        body: JSON.stringify({
+          companyId: companyId ?? null,
+          focusCompanyId: focusCompanyId ?? null,
+          message: t,
+        }),
       });
       const n = createdTasks?.length || 0;
       const note = n ? `\n\n✓ Added ${n} to your to-do list.` : "";
@@ -218,7 +226,8 @@ export default function ClientAssistant({
   // Save an assistant-written draft into this client's follow-ups, so it lands
   // in your drafts board + dashboard count. Splits a leading "Subject:" line.
   const saveDraft = async (key: string, text: string) => {
-    if (!companyId) return; // global mode: no single client to save against
+    const target = companyId || focusCompanyId;
+    if (!target) return; // no single client to save against
     const sm = text.match(/^subject:\s*(.+)$/im);
     const subject = sm ? sm[1].trim() : "Follow-up";
     const body = sm ? text.replace(/^subject:.*$/im, "").trim() : text;
@@ -227,7 +236,7 @@ export default function ClientAssistant({
       await crmFetch("/api/crm/follow-ups", {
         method: "POST",
         body: JSON.stringify({
-          companyId,
+          companyId: target,
           draft_subject: subject,
           draft_body: body,
         }),
@@ -361,7 +370,7 @@ export default function ClientAssistant({
                           >
                             copy
                           </button>
-                          {companyId && (
+                          {(companyId || focusCompanyId) && (
                             <button
                               type="button"
                               onClick={() => saveDraft(`${i}-${pi}`, part.text)}

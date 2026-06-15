@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { crmFetch } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
-import GlobalAssistant from "@/components/crm/GlobalAssistant";
 
 type Call = {
   id: string;
@@ -258,7 +257,6 @@ export default function CallDetailPage() {
         </>
       )}
 
-      <GlobalAssistant companyId={call?.company_id || undefined} />
       <NavMenu />
     </main>
   );

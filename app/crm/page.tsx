@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
-import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
 import UpcomingCalls from "@/components/crm/UpcomingCalls";
 import TaskList from "@/components/crm/TaskList";
@@ -186,7 +185,6 @@ export default function DashboardPage() {
           (Google Calendar sync is the next phase.) */}
       <UpcomingCalls />
 
-      <GlobalAssistant />
       <NavMenu />
     </main>
   );

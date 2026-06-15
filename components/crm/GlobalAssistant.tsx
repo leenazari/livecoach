@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import ClientAssistant from "@/components/crm/ClientAssistant";
 
 // The assistant trigger + panel. A top-centre pill opens a top-anchored,
@@ -24,6 +25,16 @@ export default function GlobalAssistant({
   const propClient =
     companyId && companyName ? { id: companyId, name: companyName } : null;
   const active = eventClient || propClient;
+
+  // Which client the user is currently viewing, from the page URL (/crm/<id>).
+  // Used to LEAD the answer, without scoping the conversation thread, so the
+  // chat stays one continuous thread as you move between pages.
+  const pathname = usePathname();
+  const pathMatch = pathname
+    ? pathname.match(/\/crm\/([0-9a-fA-F-]{36})/)
+    : null;
+  const pathFocusId = pathMatch ? pathMatch[1] : null;
+  const focusId = eventClient?.id || pathFocusId || undefined;
 
   // A "draft email" next step (anywhere) opens the assistant, scopes it to that
   // client, and asks it to draft the email - so the task actually starts the
@@ -80,9 +91,10 @@ export default function GlobalAssistant({
 
         <div className="flex min-h-0 flex-1 flex-col p-3">
           <ClientAssistant
-            key={active ? active.id : "global"}
-            companyId={active?.id}
-            companyName={active?.name}
+            key="lc-assistant"
+            companyId={propClient?.id}
+            companyName={propClient?.name}
+            focusCompanyId={focusId}
             autoListen={!seed}
             initialPrompt={seed}
             draftTaskId={draftTaskId}

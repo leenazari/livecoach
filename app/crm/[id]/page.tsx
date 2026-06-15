@@ -11,7 +11,6 @@ import {
 } from "@/lib/crm";
 import CustomFieldEditor from "@/components/crm/CustomFieldEditor";
 import AddFieldForm from "@/components/crm/AddFieldForm";
-import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import ClientContext from "@/components/crm/ClientContext";
 import NavMenu from "@/components/crm/NavMenu";
 import TaskList from "@/components/crm/TaskList";
@@ -49,7 +48,7 @@ export default function CompanyDetailPage() {
   const [savedAt, setSavedAt] = useState("");
   // Which data tab is showing below the always-visible AI intelligence.
   const [tab, setTab] = useState<"details" | "notes" | "calls" | "pipeline">(
-    "details"
+    "calls"
   );
 
   // New-contact form.
@@ -347,56 +346,6 @@ export default function CompanyDetailPage() {
 
       {err && <p className="mb-3 font-mono text-[0.66rem] text-rust">{err}</p>}
 
-      {/* STATS - clickable, each opens the relevant data tab below. */}
-      <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-6">
-        <button type="button" onClick={() => goTab("details")} className={statCls}>
-          <div className="font-sans text-[0.95rem] text-rust">
-            {priorityVal || "—"}
-          </div>
-          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-            priority ↗
-          </div>
-        </button>
-        <button type="button" onClick={() => goTab("details")} className={statCls}>
-          <div className="font-sans text-[0.95rem] text-bone">
-            {typeof dealVal === "number"
-              ? `£${Number(dealVal).toLocaleString()}`
-              : "—"}
-          </div>
-          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-            value ↗
-          </div>
-        </button>
-        <button type="button" onClick={() => goTab("calls")} className={statCls}>
-          <div className="font-sans text-[0.95rem] text-bone">{calls.length}</div>
-          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-            calls ↗
-          </div>
-        </button>
-        <button type="button" onClick={() => goTab("calls")} className={statCls}>
-          <div className="font-sans text-[0.95rem] text-amber">
-            {avgFocus !== null ? avgFocus.toFixed(1) : "—"}
-          </div>
-          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-            avg focus ↗
-          </div>
-        </button>
-        <button type="button" onClick={() => goTab("pipeline")} className={statCls}>
-          <div className="font-sans text-[0.95rem] text-sage">{openOppCount}</div>
-          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-            open opps ↗
-          </div>
-        </button>
-        <button type="button" onClick={() => goTab("calls")} className={statCls}>
-          <div className="font-sans text-[0.95rem] text-bone">
-            {hasSpend ? gbp(totalSpend) : "—"}
-          </div>
-          <div className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-            spend ↗
-          </div>
-        </button>
-      </div>
-
       {(() => {
         const raw = (company.profile as any)?.brief;
         const items: string[] = Array.isArray(raw)
@@ -484,10 +433,10 @@ export default function CompanyDetailPage() {
       >
         {(
           [
-            ["details", "Details"],
+            ["calls", "Focus"],
             ["notes", "Notes & docs"],
-            ["calls", "Calls"],
             ["pipeline", "Pipeline"],
+            ["details", "Details"],
           ] as const
         ).map(([k, label]) => (
           <button
@@ -695,133 +644,56 @@ export default function CompanyDetailPage() {
       )}
 
       {tab === "calls" && (
-      <>
-      {/* FOCUS SCORES OVER TIME - main focus first, newest score at top. */}
-      {focusOrder.length > 0 && (
-        <section
-          id="sec-focus"
-          className="mt-5 rounded-xl border border-edge bg-panel/40 p-4"
-        >
+        <section className="mt-2 rounded-xl border border-edge bg-panel/40 p-4">
           <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
             Focus scores over time{" "}
             <span className="text-muted">- main focus first, newest at top</span>
           </p>
-          <ul className="flex flex-col">
-            {focusOrder.map((name) => {
-              const entries = focusData[name];
-              const latest = entries[0];
-              const prior = entries.slice(1);
-              const tone =
-                latest.score >= 4
-                  ? "bg-sage/20 text-sage"
-                  : latest.score <= 2
-                  ? "bg-rust/20 text-rust"
-                  : "bg-amber/20 text-amber";
-              return (
-                <li
-                  key={name}
-                  className="flex items-center gap-3 border-b border-edge/40 py-2 last:border-none"
-                >
-                  <span className="flex-1 font-sans text-[0.85rem] text-bone">
-                    {name}
-                    {prior.length > 0 && (
-                      <span className="ml-2 font-mono text-[0.56rem] text-muted">
-                        · also{" "}
-                        {prior
-                          .map((e) => `${e.date} (${e.score})`)
-                          .join(", ")}
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    className={`rounded-full px-2.5 py-0.5 font-mono text-[0.62rem] ${tone}`}
+          {focusOrder.length === 0 ? (
+            <p className="font-mono text-[0.6rem] text-muted">
+              No focus scores yet. They appear once a call linked to this client
+              is scored.
+            </p>
+          ) : (
+            <ul className="flex flex-col">
+              {focusOrder.map((name) => {
+                const entries = focusData[name];
+                const latest = entries[0];
+                const prior = entries.slice(1);
+                const tone =
+                  latest.score >= 4
+                    ? "bg-sage/20 text-sage"
+                    : latest.score <= 2
+                    ? "bg-rust/20 text-rust"
+                    : "bg-amber/20 text-amber";
+                return (
+                  <li
+                    key={name}
+                    className="flex items-center gap-3 border-b border-edge/40 py-2 last:border-none"
                   >
-                    {latest.score}
-                  </span>
-                  <span className="w-16 text-right font-mono text-[0.56rem] text-muted">
-                    {latest.date}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
+                    <span className="flex-1 font-sans text-[0.85rem] text-bone">
+                      {name}
+                      {prior.length > 0 && (
+                        <span className="ml-2 font-mono text-[0.56rem] text-muted">
+                          · also{" "}
+                          {prior.map((e) => `${e.date} (${e.score})`).join(", ")}
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      className={`rounded-full px-2.5 py-0.5 font-mono text-[0.62rem] ${tone}`}
+                    >
+                      {latest.score}
+                    </span>
+                    <span className="w-16 text-right font-mono text-[0.56rem] text-muted">
+                      {latest.date}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
-      )}
-
-      {/* CALL HISTORY - scorecards from calls linked to this company. */}
-      <section
-        id="sec-history"
-        className="mt-5 rounded-xl border border-edge bg-panel/40 p-4"
-      >
-        <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-          Call history{" "}
-          <span className="text-muted">({calls.length})</span>
-        </p>
-        {calls.length === 0 ? (
-          <p className="font-mono text-[0.6rem] text-muted">
-            No calls linked yet. On the call screen, set this company in the
-            “Client” bar before you go live and the scorecard lands here.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {calls.map((c) => {
-              const overview =
-                c?.summary && typeof c.summary.overview === "string"
-                  ? c.summary.overview
-                  : "";
-              const score =
-                c?.summary &&
-                (typeof c.summary.score === "number"
-                  ? c.summary.score
-                  : typeof c.summary.overallScore === "number"
-                  ? c.summary.overallScore
-                  : null);
-              const date = c?.created_at
-                ? new Date(c.created_at).toLocaleDateString()
-                : "";
-              return (
-                <li
-                  key={c.id}
-                  className="rounded-lg border border-edge bg-ink/40 px-4 py-3"
-                >
-                  <div className="mb-1 flex items-center justify-between gap-3">
-                    <span className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">
-                      {date}
-                      {c.candidate ? ` · ${c.candidate}` : ""}
-                    </span>
-                    <span className="flex items-center gap-2">
-                      {c.cost != null && Number.isFinite(Number(c.cost)) && (
-                        <span className="font-mono text-[0.62rem] text-bone/70">
-                          {gbp(Number(c.cost))}
-                        </span>
-                      )}
-                      {score !== null && (
-                        <span className="font-mono text-[0.62rem] text-sage">
-                          {Math.round(score)}%
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                  {overview && (
-                    <p className="font-sans text-[0.82rem] leading-snug text-bone/80">
-                      {overview.length > 240
-                        ? overview.slice(0, 240) + "…"
-                        : overview}
-                    </p>
-                  )}
-                  <Link
-                    href={`/crm/calls/${c.id}`}
-                    className="mt-2 inline-block font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:text-amber"
-                  >
-                    view call ↗
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-      </>
       )}
 
       {tab === "pipeline" && (
@@ -949,7 +821,76 @@ export default function CompanyDetailPage() {
       </section>
       </>
       )}
-      <GlobalAssistant companyId={id} companyName={company.name} />
+
+      {/* CALL HISTORY - always below the tabs. The whole card is clickable. */}
+      <section className="mt-5 rounded-xl border border-edge bg-panel/40 p-4">
+        <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+          Call history <span className="text-muted">({calls.length})</span>
+        </p>
+        {calls.length === 0 ? (
+          <p className="font-mono text-[0.6rem] text-muted">
+            No calls linked yet. On the call screen, set this company in the
+            “Client” bar before you go live and the scorecard lands here.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {calls.map((c) => {
+              const overview =
+                c?.summary && typeof c.summary.overview === "string"
+                  ? c.summary.overview
+                  : "";
+              const score =
+                c?.summary &&
+                (typeof c.summary.score === "number"
+                  ? c.summary.score
+                  : typeof c.summary.overallScore === "number"
+                  ? c.summary.overallScore
+                  : null);
+              const date = c?.created_at
+                ? new Date(c.created_at).toLocaleDateString()
+                : "";
+              return (
+                <li key={c.id}>
+                  <Link
+                    href={`/crm/calls/${c.id}`}
+                    className="block rounded-lg border border-edge bg-ink/40 px-4 py-3 transition hover:border-amber/50"
+                  >
+                    <div className="mb-1 flex items-center justify-between gap-3">
+                      <span className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">
+                        {date}
+                        {c.candidate ? ` · ${c.candidate}` : ""}
+                      </span>
+                      <span className="flex items-center gap-2">
+                        {c.cost != null && Number.isFinite(Number(c.cost)) && (
+                          <span className="font-mono text-[0.62rem] text-bone/70">
+                            {gbp(Number(c.cost))}
+                          </span>
+                        )}
+                        {score !== null && (
+                          <span className="font-mono text-[0.62rem] text-sage">
+                            {Math.round(score)}%
+                          </span>
+                        )}
+                        <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sky">
+                          view ↗
+                        </span>
+                      </span>
+                    </div>
+                    {overview && (
+                      <p className="font-sans text-[0.82rem] leading-snug text-bone/80">
+                        {overview.length > 240
+                          ? overview.slice(0, 240) + "…"
+                          : overview}
+                      </p>
+                    )}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
       <NavMenu />
     </main>
   );
