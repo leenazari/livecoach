@@ -211,6 +211,11 @@ export default function CallPage() {
     id: string;
     name: string;
   } | null>(null);
+  // The linked client's email summary, shown on the prep screen so intent and
+  // focus are built from the latest of the thread. Saved back to the client.
+  const [clientEmailCtx, setClientEmailCtx] = useState("");
+  const [emailCtxSaving, setEmailCtxSaving] = useState(false);
+  const [emailCtxSaved, setEmailCtxSaved] = useState(false);
   const [suggestedComps, setSuggestedComps] = useState<string[]>([]);
   const [selectedComps, setSelectedComps] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -343,6 +348,39 @@ export default function CallPage() {
   useEffect(() => {
     linkedCompanyRef.current = linkedCompany;
   }, [linkedCompany]);
+
+  // Load the linked client's email summary onto the prep screen.
+  useEffect(() => {
+    const id = linkedCompany?.id;
+    if (!id) {
+      setClientEmailCtx("");
+      return;
+    }
+    fetch(`/api/crm/companies/${id}`)
+      .then((r) => r.json())
+      .then((d) => setClientEmailCtx(d?.company?.email_context || ""))
+      .catch(() => {});
+  }, [linkedCompany?.id]);
+
+  // Save the email summary back to the client so the planner reads the latest.
+  const saveClientEmailCtx = async () => {
+    const id = linkedCompanyRef.current?.id;
+    if (!id) return;
+    setEmailCtxSaving(true);
+    try {
+      await fetch(`/api/crm/companies/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_context: clientEmailCtx }),
+      });
+      setEmailCtxSaved(true);
+      setTimeout(() => setEmailCtxSaved(false), 2500);
+    } catch {
+      /* ignore */
+    } finally {
+      setEmailCtxSaving(false);
+    }
+  };
 
   // Best-effort: stamp the linked company onto this session's row. Idempotent -
   // safe to call when linking, at go-live, and at end (the session row exists by
@@ -1969,6 +2007,56 @@ export default function CallPage() {
               </p>
             </div>
 
+            {/* Email context - the thread so far, where most prep info lives. */}
+            {linkedCompany && (
+              <div className="border-b border-edge px-5 py-3.5">
+                <div className="mb-2 flex items-center gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-sky font-mono text-[0.55rem] text-sky">
+                    {"✉"}
+                  </span>
+                  <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-bone">
+                    Email context
+                  </span>
+                  <span className="ml-auto flex items-center gap-2">
+                    {emailCtxSaved && (
+                      <span className="font-mono text-[0.54rem] uppercase tracking-wider text-sage">
+                        saved ✓
+                      </span>
+                    )}
+                    <VoiceNoteButton
+                      onText={(t) =>
+                        setClientEmailCtx((p) =>
+                          p.trim() ? `${p.trim()} ${t}` : t
+                        )
+                      }
+                    />
+                  </span>
+                </div>
+                <textarea
+                  value={clientEmailCtx}
+                  onChange={(e) => setClientEmailCtx(e.target.value)}
+                  onBlur={saveClientEmailCtx}
+                  rows={5}
+                  placeholder="Latest from the email thread - what they've said, where it's up to, what's outstanding. This shapes the focus and intent, and the cues on the call."
+                  className="max-h-[36vh] min-h-[6rem] w-full resize-y overflow-y-auto rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-sky/60"
+                />
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <p className="font-mono text-[0.62rem] leading-relaxed text-muted">
+                    Saved to the client and fed into the plan - most of your
+                    context lives here.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={saveClientEmailCtx}
+                    disabled={emailCtxSaving}
+                    className="shrink-0 rounded-full border border-sky/60 bg-sky/15 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
+                  >
+                    {emailCtxSaving ? "saving…" : "save"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* STEP 2 - Who & context */}
             <div className="border-b border-edge px-5 py-3.5">
               <div className="mb-3 flex items-center gap-2.5">
@@ -2383,7 +2471,11 @@ export default function CallPage() {
           </p>
           <div className="flex shrink-0 gap-2">
             <button
-              onClick={() => prep(planStage === "none" ? "focus" : "full")}
+              onClick={async () => {
+                // Persist the latest email context first so the planner reads it.
+                if (linkedCompanyRef.current?.id) await saveClientEmailCtx();
+                prep(planStage === "none" ? "focus" : "full");
+              }}
               disabled={prepping || (!brief.trim() && !(cvReady && role.trim()))}
               className="rounded-full border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
             >

@@ -21,9 +21,21 @@ export async function POST(req: NextRequest) {
     }
     const isGlobal = typeof companyId !== "string" || !companyId;
 
-    const context = isGlobal
-      ? await gatherGlobalContext()
-      : await gatherClientContext(companyId);
+    // On a client page we lead with that client, but still load the wider
+    // pipeline so the user can range onto anyone or anything (the assistant is
+    // their co-founder, not a single-client bot).
+    let context: string | null;
+    if (isGlobal) {
+      context = await gatherGlobalContext();
+    } else {
+      const [client, pipeline] = await Promise.all([
+        gatherClientContext(companyId),
+        gatherGlobalContext(),
+      ]);
+      context = client
+        ? `FOCUSED CLIENT - the page the user is on. Lead here when the question is about them:\n\n${client}\n\n----------\n\nTHE WIDER PIPELINE - everyone else and the whole book. Use this when the user ranges beyond this client (another client, a new idea, their week ahead):\n\n${pipeline}`
+        : null;
+    }
     if (!context) {
       return NextResponse.json({ error: "client not found" }, { status: 404 });
     }
@@ -51,7 +63,7 @@ export async function POST(req: NextRequest) {
 
     const scope = isGlobal
       ? `You are the user's overall CRM assistant. You know ALL their clients and their whole pipeline (below). They might ask about one client ("what do I do next with Alaine"), or across everyone ("what's my to-do list", "which deal is closest to closing"). When they name a client, match it to the closest one in the context even if the spelling is slightly off, and answer about them. When the question is across the board, pull from everyone.`
-      : `You are the user's strategic CRM assistant for ONE client. You help them understand the relationship and move it forward.`;
+      : `You are the user's strategic co-founder and CRM assistant. They are currently on ONE client's page, so by default answer about that client (the FOCUSED CLIENT below) and help move that relationship forward. But you are NOT limited to them - the user may bring up another client, a fresh idea, their week, or anything at all, and you should help with whatever they raise, drawing on the wider pipeline below. Whatever the topic, help them plan, prep and take action.`;
 
     const biz = await workspaceContextBlock();
     const lessons = await getLessonsBlock(["negotiation", "strategy", "psychology"]);
@@ -96,7 +108,7 @@ TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the bo
       },
       {
         type: "text",
-        text: `${isGlobal ? "PIPELINE CONTEXT" : "CLIENT CONTEXT"} (everything we know):\n\n${context}`,
+        text: `${isGlobal ? "PIPELINE CONTEXT" : "CONTEXT"} (everything we know):\n\n${context}`,
         cache_control: { type: "ephemeral" },
       },
     ];
