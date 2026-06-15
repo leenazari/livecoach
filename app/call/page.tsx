@@ -127,6 +127,10 @@ export default function CallPage() {
   const [coverage, setCoverage] = useState<Record<string, number>>({});
   const [prepping, setPrepping] = useState(false);
   const [planStage, setPlanStage] = useState<"none" | "focus" | "full">("none");
+  // No-transcriber recap: when the bot can't join the call, the user speaks or
+  // types what happened and we summarise from that instead of a live transcript.
+  const [manualRecap, setManualRecap] = useState(false);
+  const [recapText, setRecapText] = useState("");
   const [docsReady, setDocsReady] = useState(false);
   const [cvReady, setCvReady] = useState(false);
   const [status, setStatus] = useState("");
@@ -1235,7 +1239,7 @@ export default function CallPage() {
       body: JSON.stringify({ sessionId: room }),
     }).catch(() => {});
 
-    const labelled = linesRef.current
+    const transcriptLabelled = linesRef.current
       .map(
         (l) =>
           `${
@@ -1247,8 +1251,16 @@ export default function CallPage() {
           }: ${l.text}`
       )
       .join("\n");
+    // In recap mode (bot couldn't join), summarise from what the user said
+    // happened instead of a live transcript.
+    const labelled =
+      manualRecap && recapText.trim() ? recapText.trim() : transcriptLabelled;
     if (labelled.length < 30) {
-      setStatus("not enough conversation yet to summarise");
+      setStatus(
+        manualRecap
+          ? "add a little more to your recap to summarise"
+          : "not enough conversation yet to summarise"
+      );
       return;
     }
     // End the call NOW. The transcript is already captured in linesRef, so
@@ -1324,12 +1336,31 @@ export default function CallPage() {
           }),
         }).catch(() => {});
       }
+      // Recap mode: turn what the user said happened into to-dos with actions,
+      // so a bot-less call still feeds the to-do list. Fire-and-forget.
+      if (manualRecap && recapText.trim() && linkedCompanyRef.current) {
+        fetch("/api/crm/extract-tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            companyId: linkedCompanyRef.current.id,
+            text: recapText,
+            clientName: candidateRef.current || null,
+            source: "recap",
+          }),
+        })
+          .then(() => {
+            if (typeof window !== "undefined")
+              window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+          })
+          .catch(() => {});
+      }
     } catch (e: any) {
       setStatus(`error: ${e.message}`);
     } finally {
       setSummarising(false);
     }
-  }, [candidate]);
+  }, [candidate, manualRecap, recapText]);
 
   const briefRef = useRef<HTMLTextAreaElement | null>(null);
   // Auto-follow: keep the newest text in view as the brief grows (e.g. while a
@@ -2305,7 +2336,55 @@ export default function CallPage() {
                 Go live {"\u25B8"}
               </button>
             )}
+            {planStage === "full" && (
+              <button
+                type="button"
+                onClick={() => setManualRecap((v) => !v)}
+                title="Bot couldn't join? Recap the call yourself instead."
+                className="rounded-full border border-edge px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-muted transition hover:border-sky/60 hover:text-sky"
+              >
+                {manualRecap ? "hide recap" : "no transcriber? recap"}
+              </button>
+            )}
           </div>
+
+          {manualRecap && planStage === "full" && (
+            <div className="mt-3 rounded-xl border border-sky/40 bg-sky/[0.05] p-4">
+              <p className="mb-1.5 font-mono text-[0.62rem] uppercase tracking-[0.2em] text-sky">
+                {"\u2726"} Recap this call yourself
+              </p>
+              <p className="mb-2.5 font-mono text-[0.6rem] leading-relaxed text-muted">
+                If the bot could not join, just say what happened - who was on,
+                what was discussed, the outcome and what needs doing next. I'll
+                write the summary and turn the next steps into to-dos.
+              </p>
+              <div className="mb-2 flex items-center gap-2">
+                <VoiceNoteButton
+                  onText={(t) =>
+                    setRecapText((p) => (p.trim() ? `${p.trim()} ${t}` : t))
+                  }
+                />
+                <span className="font-mono text-[0.56rem] uppercase tracking-wider text-muted">
+                  tap to speak your recap
+                </span>
+              </div>
+              <textarea
+                value={recapText}
+                onChange={(e) => setRecapText(e.target.value)}
+                rows={5}
+                placeholder="What happened on the call?\u2026"
+                className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-sky/60"
+              />
+              <button
+                type="button"
+                onClick={endAndSummarise}
+                disabled={summarising || recapText.trim().length < 20}
+                className="mt-2 rounded-full border border-sky/60 bg-sky/15 px-5 py-2 font-mono text-[0.66rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
+              >
+                {summarising ? "summarising\u2026" : `summarise from my recap ${"\u25B8"}`}
+              </button>
+            </div>
+          )}
         </div>
         </div>
       )}
@@ -2781,6 +2860,7 @@ export default function CallPage() {
           summary={summary}
           candidate={candidate}
           transcript={summaryTranscript}
+          companyId={linkedCompany?.id}
           liked={likedRef.current}
           disliked={dislikedRef.current}
           onSaveFeedback={saveFeedback}
