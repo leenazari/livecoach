@@ -214,6 +214,7 @@ export default function CallPage() {
   // The linked client's email summary, shown on the prep screen so intent and
   // focus are built from the latest of the thread. Saved back to the client.
   const [clientEmailCtx, setClientEmailCtx] = useState("");
+  const [emailCtxUpdatedAt, setEmailCtxUpdatedAt] = useState<string | null>(null);
   const [emailCtxSaving, setEmailCtxSaving] = useState(false);
   const [emailCtxSaved, setEmailCtxSaved] = useState(false);
   const [suggestedComps, setSuggestedComps] = useState<string[]>([]);
@@ -358,7 +359,10 @@ export default function CallPage() {
     }
     fetch(`/api/crm/companies/${id}`)
       .then((r) => r.json())
-      .then((d) => setClientEmailCtx(d?.company?.email_context || ""))
+      .then((d) => {
+        setClientEmailCtx(d?.company?.email_context || "");
+        setEmailCtxUpdatedAt(d?.company?.email_context_updated_at || null);
+      })
       .catch(() => {});
   }, [linkedCompany?.id]);
 
@@ -373,6 +377,7 @@ export default function CallPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_context: clientEmailCtx }),
       });
+      setEmailCtxUpdatedAt(new Date().toISOString());
       setEmailCtxSaved(true);
       setTimeout(() => setEmailCtxSaved(false), 2500);
     } catch {
@@ -2018,6 +2023,11 @@ export default function CallPage() {
                     Email context
                   </span>
                   <span className="ml-auto flex items-center gap-2">
+                    <span className="font-mono text-[0.52rem] tracking-wider text-muted">
+                      {emailCtxUpdatedAt
+                        ? `updated ${new Date(emailCtxUpdatedAt).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`
+                        : "not set yet"}
+                    </span>
                     {emailCtxSaved && (
                       <span className="font-mono text-[0.54rem] uppercase tracking-wider text-sage">
                         saved ✓

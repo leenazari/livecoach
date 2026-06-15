@@ -13,6 +13,20 @@ type Item = {
   created_at: string;
 };
 
+const fmtUpdated = (iso: string | null) => {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+};
+
 // A company-scoped context store: add notes, links, or documents that augment a
 // client beyond its calls (things prepped separately, or jotted after an
 // off-system call). Everything here feeds the assistant and the next call's plan.
@@ -30,6 +44,7 @@ export default function ClientContext({ companyId }: { companyId: string }) {
   // A running summary of the email thread so far - a dedicated company field
   // (not a context item), because the relationship is happening over email.
   const [emailCtx, setEmailCtx] = useState("");
+  const [emailUpdatedAt, setEmailUpdatedAt] = useState<string | null>(null);
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailSaved, setEmailSaved] = useState(false);
   const [eListening, setEListening] = useState(false);
@@ -47,10 +62,16 @@ export default function ClientContext({ companyId }: { companyId: string }) {
 
   useEffect(() => {
     load();
-    crmFetch<{ company: { email_context: string | null } }>(
-      `/api/crm/companies/${companyId}`
-    )
-      .then((d) => setEmailCtx(d.company?.email_context || ""))
+    crmFetch<{
+      company: {
+        email_context: string | null;
+        email_context_updated_at: string | null;
+      };
+    }>(`/api/crm/companies/${companyId}`)
+      .then((d) => {
+        setEmailCtx(d.company?.email_context || "");
+        setEmailUpdatedAt(d.company?.email_context_updated_at || null);
+      })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
@@ -62,6 +83,7 @@ export default function ClientContext({ companyId }: { companyId: string }) {
         method: "PATCH",
         body: JSON.stringify({ email_context: emailCtx }),
       });
+      setEmailUpdatedAt(new Date().toISOString());
       setEmailSaved(true);
       setTimeout(() => setEmailSaved(false), 2500);
     } catch {
@@ -171,6 +193,9 @@ export default function ClientContext({ companyId }: { companyId: string }) {
           <span className="text-muted">- the email thread so far, shapes the plan &amp; intent</span>
         </p>
         <div className="flex items-center gap-2">
+          <span className="font-mono text-[0.52rem] tracking-wider text-muted">
+            {emailUpdatedAt ? `updated ${fmtUpdated(emailUpdatedAt)}` : "not set yet"}
+          </span>
           {emailSaved && (
             <span className="font-mono text-[0.54rem] uppercase tracking-wider text-sage">
               saved ✓
