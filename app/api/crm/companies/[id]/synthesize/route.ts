@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { logModelUsage } from "@/lib/usage";
 import { gatherClientContext } from "@/lib/crm-context";
 import { upsertTasks } from "@/lib/tasks";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
@@ -95,6 +96,7 @@ Return the JSON now.`;
           },
           { signal: controller.signal }
         );
+        await logModelUsage("synthesize", "sonnet", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

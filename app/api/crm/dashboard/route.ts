@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { logModelUsage } from "@/lib/usage";
 import { workspaceContextBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -15,7 +16,7 @@ export async function GET(req: Request) {
   // it loads instantly. The dashboard home fetches the blurb separately.
   const light = new URL(req.url).searchParams.get("light") === "1";
   try {
-    const [companiesRes, draftsRes, oppsRes, tasksRes, costRes] =
+    const [companiesRes, draftsRes, oppsRes, tasksRes, costRes, usageRes] =
       await Promise.all([
         supabaseAdmin.from("companies").select("id, name"),
         supabaseAdmin
@@ -43,6 +44,13 @@ export async function GET(req: Request) {
           .not("cost", "is", null)
           .order("created_at", { ascending: false })
           .limit(1000),
+        // All other AI spend (assistant, day reads, profile syntheses, task
+        // extraction, lessons) plus the background automation jobs.
+        supabaseAdmin
+          .from("usage_log")
+          .select("kind, cost_gbp, created_at")
+          .order("created_at", { ascending: false })
+          .limit(5000),
       ]);
 
     const nameById = new Map<string, string>();
@@ -66,18 +74,43 @@ export async function GET(req: Request) {
     const now = Date.now();
     const WEEK = 7 * 24 * 60 * 60 * 1000;
     const MONTH = 30 * 24 * 60 * 60 * 1000;
-    let weekCost = 0;
-    let monthCost = 0;
-    let allCost = 0;
+    // Calls (costed per session), in-app AI, and background automation - all in,
+    // so the dashboard shows true spend, not just calls.
+    let callsW = 0, callsM = 0, callsA = 0;
     for (const r of costRes.data || []) {
       // Postgres `numeric` comes back from supabase as a STRING, so coerce.
       const c = Number(r.cost) || 0;
       if (!c) continue;
-      allCost += c;
+      callsA += c;
       const age = now - new Date(r.created_at as string).getTime();
-      if (age <= WEEK) weekCost += c;
-      if (age <= MONTH) monthCost += c;
+      if (age <= WEEK) callsW += c;
+      if (age <= MONTH) callsM += c;
     }
+    let aiW = 0, aiM = 0, aiA = 0;
+    let autoW = 0, autoM = 0, autoA = 0;
+    for (const r of usageRes.data || []) {
+      const c = Number(r.cost_gbp) || 0;
+      if (!c) continue;
+      const isAuto = String(r.kind || "").startsWith("automation");
+      const age = now - new Date(r.created_at as string).getTime();
+      if (isAuto) {
+        autoA += c;
+        if (age <= WEEK) autoW += c;
+        if (age <= MONTH) autoM += c;
+      } else {
+        aiA += c;
+        if (age <= WEEK) aiW += c;
+        if (age <= MONTH) aiM += c;
+      }
+    }
+    const weekCost = callsW + aiW + autoW;
+    const monthCost = callsM + aiM + autoM;
+    const allCost = callsA + aiA + autoA;
+    const costBreakdown = {
+      calls: { week: callsW, month: callsM, all: callsA },
+      ai: { week: aiW, month: aiM, all: aiA },
+      automation: { week: autoW, month: autoM, all: autoA },
+    };
 
     const kpis = {
       clients: (companiesRes.data || []).length,
@@ -88,6 +121,7 @@ export async function GET(req: Request) {
       weekCost,
       monthCost,
       allCost,
+      costBreakdown,
     };
 
     // A short, cheap AI read of the day. Optional - never block the dashboard.
@@ -142,6 +176,7 @@ export async function GET(req: Request) {
               },
               { signal: controller.signal }
             );
+            await logModelUsage("day-read", "haiku", (msg as any).usage);
             dayRead = msg.content
               .filter((b: any) => b.type === "text")
               .map((b: any) => b.text)

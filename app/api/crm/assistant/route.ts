@@ -4,6 +4,7 @@ import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 import { gatherClientContext, gatherGlobalContext } from "@/lib/crm-context";
 import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib/workspace";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
+import { logModelUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -137,6 +138,7 @@ TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the bo
           },
           { signal: controller.signal }
         );
+        await logModelUsage("assistant", "sonnet", (msg as any).usage);
         reply = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

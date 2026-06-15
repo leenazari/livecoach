@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
+import { logModelUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -45,6 +46,7 @@ Rules:
           },
           { signal: controller.signal }
         );
+        await logModelUsage("extract-tasks", "haiku", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

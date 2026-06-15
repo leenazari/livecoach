@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { logModelUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -117,6 +118,7 @@ Rules:
           },
           { signal: controller.signal }
         );
+        await logModelUsage("lessons", "sonnet", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
