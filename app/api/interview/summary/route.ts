@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
+import { estimateCost } from "@/lib/costs";
 import { createHash } from "crypto";
 
 export const runtime = "nodejs";
@@ -11,7 +12,7 @@ export const maxDuration = 60;
 // Returns a structured JSON summary + scorecard + contributors + style profile.
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId, companyId, cost } =
+    const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId, companyId, cost, source } =
       await req.json();
 
     if (!transcript || transcript.length < 30) {
@@ -172,6 +173,39 @@ Return the JSON assessment now.`;
       );
     }
 
+    // Robust cost: the browser meter sometimes reports nothing (a Meet/bot call
+    // where the in-app meter never ran, or the tab closed). Never let a real
+    // call save as free - fall back to a cost derived from the call's actual
+    // duration so the dashboard reflects reality.
+    let finalCost: number | null = typeof cost === "number" ? cost : null;
+    try {
+      if (sessionId) {
+        const { data: sess } = await supabaseAdmin
+          .from("interview_sessions")
+          .select("created_at, ended_at")
+          .eq("session_id", sessionId)
+          .maybeSingle();
+        if (sess?.created_at) {
+          const startMs = new Date(sess.created_at as string).getTime();
+          const endMs = sess.ended_at
+            ? new Date(sess.ended_at as string).getTime()
+            : Date.now();
+          // Cap at 4h so a tab left open can't inflate the figure.
+          const durSec = Math.min(Math.max(0, (endMs - startMs) / 1000), 4 * 3600);
+          if (durSec >= 30) {
+            const meet = source === "meet";
+            const floor = estimateCost(durSec, 0, {
+              transport: meet ? "recall" : "livekit",
+              deepgramStreams: meet ? 0 : 2,
+            }).totalGBP;
+            finalCost = Math.max(finalCost || 0, floor);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Duration-cost fallback failed:", e);
+    }
+
     try {
       await supabaseAdmin.from("interview_summaries").insert({
         cache_key: cacheKey,
@@ -183,7 +217,7 @@ Return the JSON assessment now.`;
         // company's call history (and feeds Phase 2 auto-attach).
         company_id:
           typeof companyId === "string" && companyId ? companyId : null,
-        cost: typeof cost === "number" ? cost : null,
+        cost: finalCost,
       });
     } catch (e) {
       console.error("Summary store failed:", e);

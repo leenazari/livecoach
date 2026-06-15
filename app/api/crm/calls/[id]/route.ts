@@ -11,7 +11,7 @@ export async function GET(
   try {
     const { data: call, error } = await supabaseAdmin
       .from("interview_summaries")
-      .select("id, candidate, role, company_id, created_at, cost, summary, session_id")
+      .select("id, candidate, role, company_id, created_at, cost, summary, session_id, ref")
       .eq("id", params.id)
       .single();
     if (error) throw error;

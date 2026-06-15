@@ -1422,6 +1422,9 @@ export default function CallPage() {
           companyId: linkedCompanyRef.current?.id || null,
           // This call's running cost (GBP) so spend can be totalled over time.
           cost: cost?.totalGBP ?? null,
+          // Lets the server fall back to a duration-based cost if the meter
+          // reported nothing (e.g. a Meet call where the in-app meter never ran).
+          source: sourceRef.current,
         }),
       });
       const data = await res.json();

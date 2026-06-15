@@ -13,6 +13,7 @@ type Call = {
   company: string | null;
   created_at: string;
   cost: number | string | null;
+  ref: string | null;
 };
 
 export default function CallsPage() {
@@ -113,6 +114,11 @@ export default function CallsPage() {
               className="grid grid-cols-[1.4fr_1.2fr_1fr_0.6fr_auto] items-center gap-3 border-b border-edge/40 px-4 py-3 last:border-none hover:bg-bone/[0.03]"
             >
               <span className="truncate font-sans text-[0.84rem] text-bone">
+                {c.ref && (
+                  <span className="mr-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-muted">
+                    {c.ref}
+                  </span>
+                )}
                 {c.candidate || "Untitled call"}
               </span>
               <span className="truncate font-mono text-[0.66rem] text-sky">

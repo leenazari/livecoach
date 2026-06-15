@@ -15,6 +15,7 @@ type Call = {
   company_id: string | null;
   created_at: string;
   cost: number | string | null;
+  ref: string | null;
   summary: any;
   durationSeconds: number | null;
   transcriptChars: number | null;
@@ -131,6 +132,7 @@ export default function CallDetailPage() {
               {s.title || call.candidate || "Call"}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-3 font-mono text-[0.6rem] uppercase tracking-wider text-muted">
+              {call.ref && <span className="text-amber/80">{call.ref}</span>}
               <span>{fmtDate(call.created_at)}</span>
               {call.company && (
                 <Link

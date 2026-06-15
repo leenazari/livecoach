@@ -11,7 +11,7 @@ export async function GET() {
       supabaseAdmin.from("companies").select("id, name"),
       supabaseAdmin
         .from("interview_summaries")
-        .select("id, candidate, role, company_id, created_at, cost")
+        .select("id, candidate, role, company_id, created_at, cost, ref")
         .order("created_at", { ascending: false })
         .limit(500),
     ]);
@@ -25,6 +25,7 @@ export async function GET() {
       company: c.company_id ? nameById.get(c.company_id) || null : null,
       created_at: c.created_at,
       cost: c.cost,
+      ref: c.ref || null,
     }));
     return NextResponse.json({ calls: items });
   } catch (err: any) {
