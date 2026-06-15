@@ -13,6 +13,25 @@ type Task = {
   link_kind: string | null;
   status: string;
   done_at: string | null;
+  // Set on prep to-dos derived from an upcoming client call.
+  upcoming_id?: string | null;
+  scheduled_at?: string | null;
+  meeting_url?: string | null;
+  intent?: string | null;
+  due_soon?: boolean;
+};
+
+// "today 14:00" / "Tue 14:00" for a prep to-do's call time.
+const whenLabel = (iso?: string | null) => {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (d.toDateString() === new Date().toDateString()) return `today ${t}`;
+    return `${d.toLocaleDateString([], { weekday: "short" })} ${t}`;
+  } catch {
+    return "";
+  }
 };
 
 // A tickable to-do list backed by the tasks table.
@@ -43,6 +62,16 @@ export default function TaskList({
 
   // Tick / un-tick (toggle done). Never deletes - that's the ✕.
   const toggle = (t: Task) => {
+    // A prep to-do is derived from an upcoming call: ticking it marks that call
+    // prepped, which drops it off the list, rather than writing a tasks row.
+    if (t.upcoming_id) {
+      crmFetch(`/api/crm/upcoming/${t.upcoming_id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ prepped: true }),
+      }).catch(() => {});
+      setTasks((p) => p.filter((x) => x.id !== t.id));
+      return;
+    }
     const next = t.status === "done" ? "open" : "done";
     setTasks((p) =>
       p.map((x) =>
@@ -82,7 +111,13 @@ export default function TaskList({
       const q = new URLSearchParams();
       if (t.company_id) q.set("company", t.company_id);
       if (t.company) q.set("companyName", t.company);
-      q.set("intent", t.text);
+      // Prefer the call's own intent; only fall back to the task text for a
+      // plain manual call task (not a "Prep: ..." label).
+      const intentVal = t.intent || (t.upcoming_id ? "" : t.text);
+      if (intentVal) q.set("intent", intentVal);
+      if (t.meeting_url) q.set("meetingUrl", t.meeting_url);
+      // Tie it to the scheduled call so the plan saves + reloads against it.
+      if (t.upcoming_id) q.set("upcoming", t.upcoming_id);
       return router.push(`/call?${q.toString()}`);
     }
     if (a === "drafts") return router.push("/crm/board?tab=drafts");
@@ -155,6 +190,19 @@ export default function TaskList({
               {t.text}
             </button>
 
+            {t.upcoming_id && t.scheduled_at && (
+              <span
+                title={t.due_soon ? "within 48 hours - prep now" : "upcoming call"}
+                className={`flex-none rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider ${
+                  t.due_soon
+                    ? "border border-amber/60 bg-amber/15 text-amber"
+                    : "border border-edge text-muted"
+                }`}
+              >
+                {t.due_soon ? "▲ " : ""}
+                {whenLabel(t.scheduled_at)}
+              </span>
+            )}
             {c && !done && (
               <span
                 className="flex-none rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider"
@@ -169,15 +217,20 @@ export default function TaskList({
               </span>
             )}
 
-            <button
-              type="button"
-              onClick={() => remove(t)}
-              aria-label="remove task"
-              title="remove"
-              className="flex-none font-mono text-[0.7rem] text-muted transition hover:text-rust"
-            >
-              ✕
-            </button>
+            {/* Prep to-dos are derived from the call, so there's no row to
+                delete - you complete them by ticking (marks the call prepped)
+                or they roll off once the call has passed. */}
+            {!t.upcoming_id && (
+              <button
+                type="button"
+                onClick={() => remove(t)}
+                aria-label="remove task"
+                title="remove"
+                className="flex-none font-mono text-[0.7rem] text-muted transition hover:text-rust"
+              >
+                ✕
+              </button>
+            )}
           </li>
         );
       })}

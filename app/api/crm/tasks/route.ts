@@ -23,16 +23,37 @@ export async function GET(req: NextRequest) {
       .limit(500);
     if (companyId) q = q.eq("company_id", companyId);
 
-    const [{ data: rows }, { data: companies }] = await Promise.all([
-      q,
-      supabaseAdmin.from("companies").select("id, name"),
-    ]);
+    // Prep to-dos are DERIVED from the linked upcoming calls (not stored), so
+    // they always match the calendar, never duplicate, and disappear once the
+    // call is prepped or has passed. Only client-linked, future, un-prepped
+    // calls become a prep to-do (internal meetings with no client are skipped).
+    let uq = supabaseAdmin
+      .from("upcoming_calls")
+      .select(
+        "id, company_id, title, scheduled_at, meeting_url, intent, prepped, created_at"
+      )
+      .not("company_id", "is", null)
+      .eq("prepped", false)
+      .gte("scheduled_at", startOfToday.toISOString())
+      .order("scheduled_at", { ascending: true })
+      .limit(200);
+    if (companyId) uq = uq.eq("company_id", companyId);
+
+    const [{ data: rows }, { data: ucals }, { data: companies }] =
+      await Promise.all([
+        q,
+        uq,
+        supabaseAdmin.from("companies").select("id, name"),
+      ]);
 
     const nameById = new Map<string, string>();
     for (const c of companies || []) nameById.set(c.id, c.name);
 
     const startMs = startOfToday.getTime();
-    const tasks = (rows || [])
+    // "Takes priority if within 48hrs of the call or the same day."
+    const soonCutoff = Date.now() + 48 * 60 * 60 * 1000;
+
+    const real = (rows || [])
       .filter((t: any) => {
         if (t.status !== "done") return true;
         // keep done tasks only if completed today
@@ -41,12 +62,42 @@ export async function GET(req: NextRequest) {
       .map((t: any) => ({
         ...t,
         company: t.company_id ? nameById.get(t.company_id) || null : null,
-      }))
-      // open first, then done; within each, oldest first
-      .sort((a: any, b: any) => {
-        if (a.status !== b.status) return a.status === "done" ? 1 : -1;
-        return 0;
-      });
+        upcoming_id: null,
+        scheduled_at: null,
+        meeting_url: null,
+        intent: null,
+        due_soon: false,
+      }));
+    const openReal = real.filter((t: any) => t.status !== "done");
+    const doneReal = real.filter((t: any) => t.status === "done");
+
+    // Build the prep to-dos from the upcoming client calls.
+    const prep = (ucals || []).map((u: any) => {
+      const ms = u.scheduled_at ? new Date(u.scheduled_at).getTime() : null;
+      const due_soon = ms != null && ms <= soonCutoff;
+      return {
+        id: `upcoming:${u.id}`,
+        upcoming_id: u.id,
+        company_id: u.company_id,
+        company: u.company_id ? nameById.get(u.company_id) || null : null,
+        text: `Prep: ${u.title || "call"}`,
+        kind: "prep",
+        link_kind: "call",
+        status: "open",
+        done_at: null,
+        created_at: u.created_at,
+        scheduled_at: u.scheduled_at,
+        meeting_url: u.meeting_url || null,
+        intent: u.intent || null,
+        due_soon,
+      };
+    });
+    const dueSoonPrep = prep.filter((p) => p.due_soon);
+    const laterPrep = prep.filter((p) => !p.due_soon);
+
+    // Order: imminent prep first (soonest first), then the rest of the open
+    // list, then prep that's further out, then today's completed tasks.
+    const tasks = [...dueSoonPrep, ...openReal, ...laterPrep, ...doneReal];
 
     return NextResponse.json({ tasks });
   } catch (err: any) {
