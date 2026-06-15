@@ -18,11 +18,28 @@ export async function getWorkspaceContext(): Promise<string> {
   }
 }
 
-// Wraps the brain in a labelled block for prompts. Empty string if no brain set.
+// A live "now" stamp so every AI pass knows the exact current moment and never
+// treats a past meeting as upcoming. UK time, since that's where the user works.
+function nowLine(): string {
+  const formatted = new Date().toLocaleString("en-GB", {
+    timeZone: "Europe/London",
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `CURRENT DATE AND TIME (UK): ${formatted}. Anything scheduled before this moment has ALREADY HAPPENED - never present a past meeting as upcoming, never suggest preparing for or attending a call whose time has passed, and focus only on what is still ahead.\n\n`;
+}
+
+// Wraps the brain in a labelled block for prompts. Always includes the current
+// date/time so the model reasons against the real "now"; adds the brain when set.
 export async function workspaceContextBlock(): Promise<string> {
   const k = await getWorkspaceContext();
-  if (!k) return "";
-  return `ABOUT THE USER AND THEIR BUSINESS (background for everything below - use it to frame your reasoning, never contradict or override the specific data provided later):\n${k}\n\n`;
+  const now = nowLine();
+  if (!k) return now;
+  return `${now}ABOUT THE USER AND THEIR BUSINESS (background for everything below - use it to frame your reasoning, never contradict or override the specific data provided later):\n${k}\n\n`;
 }
 
 // The lessons library, optionally filtered to specific topics, as a labelled

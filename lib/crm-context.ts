@@ -147,10 +147,14 @@ export async function gatherClientContext(companyId: string): Promise<string> {
 
   const upcoming = upcomingRows || [];
   if (upcoming.length) {
-    lines.push("", "UPCOMING CALLS (from the synced calendar):");
+    const nowMs = Date.now();
+    lines.push("", "CALLS (from the synced calendar, UK time):");
     for (const u of upcoming as any[]) {
+      const ms = u.scheduled_at ? new Date(u.scheduled_at).getTime() : null;
+      const past = ms != null && ms < nowMs;
       const when = u.scheduled_at
         ? new Date(u.scheduled_at).toLocaleString("en-GB", {
+            timeZone: "Europe/London",
             weekday: "short",
             day: "2-digit",
             month: "short",
@@ -159,8 +163,8 @@ export async function gatherClientContext(companyId: string): Promise<string> {
           })
         : "no time set";
       lines.push(
-        `- ${when}: ${u.title || "call"}${
-          u.prepped ? " [prepped]" : " [not prepped yet]"
+        `- ${when}${past ? " [ALREADY PASSED]" : ""}: ${u.title || "call"}${
+          u.prepped ? " [prepped]" : ""
         }${u.intent ? ` - ${cut(u.intent, 160)}` : ""}`
       );
     }
@@ -311,12 +315,19 @@ export async function gatherGlobalContext(): Promise<string> {
     .limit(40);
   const up = upAll || [];
   if (up.length) {
+    const nowMs = Date.now();
     const nameById = new Map<string, string>();
     for (const c of companies as any[]) nameById.set(c.id, c.name);
-    lines.push("", "YOUR UPCOMING CALLS (synced from your calendar, soonest first):");
+    lines.push(
+      "",
+      "YOUR CALLS (synced from your calendar, UK time, soonest first - items marked ALREADY PASSED are over, do not treat them as upcoming):"
+    );
     for (const u of up as any[]) {
+      const ms = u.scheduled_at ? new Date(u.scheduled_at).getTime() : null;
+      const past = ms != null && ms < nowMs;
       const when = u.scheduled_at
         ? new Date(u.scheduled_at).toLocaleString("en-GB", {
+            timeZone: "Europe/London",
             weekday: "short",
             day: "2-digit",
             month: "short",
@@ -326,9 +337,9 @@ export async function gatherGlobalContext(): Promise<string> {
         : "no time set";
       const who = u.company_id ? nameById.get(u.company_id) || "" : "";
       lines.push(
-        `• ${when}: ${u.title || "call"}${who ? ` (${who})` : ""}${
-          u.prepped ? " [prepped]" : ""
-        }`
+        `• ${when}${past ? " [ALREADY PASSED]" : ""}: ${u.title || "call"}${
+          who ? ` (${who})` : ""
+        }${u.prepped ? " [prepped]" : ""}`
       );
     }
   }
