@@ -35,6 +35,9 @@ type Suggestion = {
   liked?: boolean;
 };
 
+// Live-cue pacing presets (ms). Fast/medium/slow, set per lane by the user.
+const SPEEDS = { fast: 9000, medium: 30000, slow: 60000 } as const;
+
 function timeNow() {
   return new Date().toLocaleTimeString([], {
     hour: "2-digit",
@@ -234,6 +237,12 @@ export default function CallPage() {
   const [overBudget, setOverBudget] = useState(false);
   const [meterOn, setMeterOn] = useState(false);
   const [insightsOn, setInsightsOn] = useState(true);
+  // Live-cue pacing the user can dial: fast 9s / medium 30s / slow 60s, per lane.
+  const [cueSpeed, setCueSpeed] = useState<"fast" | "medium" | "slow">("medium");
+  const [insightSpeed, setInsightSpeed] = useState<"fast" | "medium" | "slow">(
+    "slow"
+  );
+  const cueGapMsRef = useRef<number>(SPEEDS.medium);
   const [cueFull, setCueFull] = useState(false);
 
   const knowledgeRef = useRef("");
@@ -265,6 +274,10 @@ export default function CallPage() {
   // callbacks driven by refs) can feed them to the model without stale state.
   const goalsRef = useRef<{ text: string; liked?: boolean }[]>([]);
   const privateNotesRef = useRef<string[]>([]);
+  const playbookRef = useRef<{ label: string; detail: string }[]>([]);
+  // Compact plan brief for the live lanes: intent + the read + the email thread.
+  // This is the "plan context" the cues run on, so we don't load the full brain.
+  const planBriefRef = useRef<string>("");
   const linkedCompanyRef = useRef<{ id: string; name: string } | null>(null);
   // Scheduled-call link. When the call screen is opened from an Upcoming call
   // (?upcoming=<id>), the prep plan built here is auto-saved against that row and
@@ -346,6 +359,23 @@ export default function CallPage() {
   useEffect(() => {
     privateNotesRef.current = privateNotes;
   }, [privateNotes]);
+  useEffect(() => {
+    playbookRef.current = playbook;
+  }, [playbook]);
+  useEffect(() => {
+    cueGapMsRef.current = SPEEDS[cueSpeed];
+  }, [cueSpeed]);
+  useEffect(() => {
+    planBriefRef.current = [
+      brief?.trim() ? `INTENT: ${brief.trim()}` : "",
+      character?.trim() ? `YOUR READ: ${character.trim()}` : "",
+      clientEmailCtx?.trim()
+        ? `EMAIL THREAD SO FAR (where most of this relationship has happened):\n${clientEmailCtx.trim()}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }, [brief, character, clientEmailCtx]);
   useEffect(() => {
     linkedCompanyRef.current = linkedCompany;
   }, [linkedCompany]);
@@ -649,7 +679,7 @@ export default function CallPage() {
     return false;
   };
 
-  const requestLiveSuggestion = useCallback(async () => {
+  const requestLiveSuggestion = useCallback(async (force = false) => {
     if (inFlightRef.current) return;
 
     const labelled = linesRef.current
@@ -725,7 +755,9 @@ export default function CallPage() {
           ),
           goals: goalsRef.current.map((g) => g.text),
           privateNotes: privateNotesRef.current,
-          allowHold: true,
+          playbook: playbookRef.current,
+          planBrief: planBriefRef.current,
+          allowHold: !force,
         }),
       });
       if (!res.ok || !res.body) {
@@ -894,6 +926,8 @@ export default function CallPage() {
           ),
           goals: goalsRef.current.map((g) => g.text),
           privateNotes: privateNotesRef.current,
+          playbook: playbookRef.current,
+          planBrief: planBriefRef.current,
         }),
       });
       addUsageToRef(claudeUsdRef, res);
@@ -924,22 +958,23 @@ export default function CallPage() {
   // smart-insights switch is on (off by call when you don't want the pro cost).
   useEffect(() => {
     if (!callLive || !insightsOn) return;
-    // ~20s so ideas flow more readily during brainstorming (was 30s). The
-    // advisor itself decides whether there's something worth saying.
+    // Cadence is user-dialled (fast 9s / medium 30s / slow 60s). Defaults to
+    // slow so the advisor only chimes in occasionally. It still self-censors via
+    // HOLD. Changing the speed re-arms the interval (insightSpeed is a dep).
     const id = setInterval(() => {
       requestInsight();
-    }, 20000);
+    }, SPEEDS[insightSpeed]);
     return () => clearInterval(id);
-  }, [callLive, insightsOn, requestInsight]);
+  }, [callLive, insightsOn, requestInsight, insightSpeed]);
 
   // Fires on every candidate turn-end: always request a live cue, and update
   // the running summary on a LIGHT cadence (first turn, then every 2nd) so we
   // don't triple the live model load.
   const handleCandidateTurnEnd = useCallback(() => {
-    // Pace the cues: at most one every ~9s. Rapid turns (e.g. a 3-way call)
-    // coalesce into a single, well-timed cue built from the latest context, so
-    // they don't flood in faster than you can read.
-    const MIN_CUE_GAP_MS = 9000;
+    // Pace the cues to the user's chosen speed (fast 9s / medium 30s / slow
+    // 60s). You can also tap "Cue me" for one on demand. Rapid turns coalesce
+    // into a single, well-timed cue built from the latest context.
+    const MIN_CUE_GAP_MS = cueGapMsRef.current;
     const now = Date.now();
     const since = now - lastCueAtRef.current;
     if (since >= MIN_CUE_GAP_MS) {
@@ -1029,6 +1064,9 @@ export default function CallPage() {
         subjectName: candidateRef.current || null,
         knowledgeContext: [
           knowledgeRef.current,
+          clientEmailCtx?.trim()
+            ? `EMAIL CONTEXT (the email thread with this client so far - this is where most of the relationship has happened before this call; treat as primary substance):\n${clientEmailCtx.trim()}`
+            : "",
           backgroundRef.current
             ? `PUBLIC PAGE RESEARCH (about the person / company):\n${backgroundRef.current}`
             : "",
@@ -1192,7 +1230,7 @@ export default function CallPage() {
       added: refocusAdded,
       upgraded: refocusUpgraded,
     };
-  }, [brief, role]);
+  }, [brief, role, clientEmailCtx]);
 
 
   const prep = useCallback(
@@ -2616,8 +2654,55 @@ export default function CallPage() {
           </span>
           <button
             type="button"
+            onClick={() => requestLiveSuggestion(true)}
+            title="Get one suggestion right now. Otherwise cues come at the pace you set."
+            className="shrink-0 rounded-full border border-amber/60 bg-amber/15 px-3 py-1.5 font-mono text-[0.55rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
+          >
+            {"⚡"} cue me
+          </button>
+          {/* Cue pacing - dial each lane independently: fast 9s / med 30s / slow 60s. */}
+          <div className="flex shrink-0 items-center gap-1">
+            <span className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">
+              cues
+            </span>
+            {(["fast", "medium", "slow"] as const).map((sp) => (
+              <button
+                key={`cue-${sp}`}
+                type="button"
+                onClick={() => setCueSpeed(sp)}
+                title={`Auto cues about every ${SPEEDS[sp] / 1000}s`}
+                className={`rounded px-1.5 py-0.5 font-mono text-[0.52rem] uppercase transition ${
+                  cueSpeed === sp
+                    ? "bg-amber/20 text-amber"
+                    : "text-muted hover:text-bone"
+                }`}
+              >
+                {sp[0]}
+              </button>
+            ))}
+            <span className="ml-1 font-mono text-[0.5rem] uppercase tracking-wider text-muted">
+              say
+            </span>
+            {(["fast", "medium", "slow"] as const).map((sp) => (
+              <button
+                key={`say-${sp}`}
+                type="button"
+                onClick={() => setInsightSpeed(sp)}
+                title={`'Say this' insights about every ${SPEEDS[sp] / 1000}s`}
+                className={`rounded px-1.5 py-0.5 font-mono text-[0.52rem] uppercase transition ${
+                  insightSpeed === sp
+                    ? "bg-sky/20 text-sky"
+                    : "text-muted hover:text-bone"
+                }`}
+              >
+                {sp[0]}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
             onClick={() => setInsightsOn((v) => !v)}
-            title="Smart 'say this' insights (Sonnet, ~1 call/30s). Toggle off to save cost on calls that don't need it."
+            title="Smart 'say this' insights (Sonnet, ~1 call/60s). Toggle off to save cost on calls that don't need it."
             className={`shrink-0 rounded-full border px-3 py-1.5 font-mono text-[0.55rem] uppercase tracking-wider transition ${
               insightsOn
                 ? "border-sky/50 bg-sky/10 text-sky"

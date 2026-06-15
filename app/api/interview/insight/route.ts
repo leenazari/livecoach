@@ -22,6 +22,8 @@ export async function POST(req: NextRequest) {
       competencies,
       goals,
       privateNotes,
+      playbook,
+      planBrief,
     } = await req.json();
 
     if (!transcript || typeof transcript !== "string") {
@@ -43,6 +45,25 @@ export async function POST(req: NextRequest) {
       Array.isArray(privateNotes) && privateNotes.length
         ? privateNotes.filter((p: any) => typeof p === "string" && p.trim())
         : [];
+    // Plan context (NOT the full brain - that would load every live call). The
+    // plan already folds in the intent and the email thread.
+    const playbookList =
+      Array.isArray(playbook) && playbook.length
+        ? playbook
+            .filter((p: any) => p && (p.label || p.detail))
+            .map((p: any) => `- ${p.label ? `${p.label}: ` : ""}${p.detail || ""}`)
+            .join("\n")
+        : "";
+    const planBlock = [
+      typeof planBrief === "string" && planBrief.trim()
+        ? `THE PLAN (intent, the read, and the email thread so far):\n${planBrief.trim()}`
+        : "",
+      playbookList
+        ? `THE PLAYBOOK (the host's game plan for this call):\n${playbookList}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
     const instructions = `You are a sharp intellectual advisor whispering to the HOST during a live, idea-driven conversation${
       role ? ` (context: ${role})` : ""
@@ -76,6 +97,15 @@ LEAN TOWARD OFFERING - the host WANTS ideas flowing, especially while brainstorm
 
     const system: any[] = [
       { type: "text", text: instructions },
+      ...(planBlock
+        ? [
+            {
+              type: "text" as const,
+              text: `THIS CALL'S PLAN - let it steer what you offer. When the talk hits a problem, an objection, or a fork, you may offer a concise market-standard best move that serves the plan:\n\n${planBlock}`,
+              cache_control: { type: "ephemeral" as const },
+            },
+          ]
+        : []),
       {
         type: "text",
         text: `KNOWLEDGE BASE (CV / docs / framework - for grounding):\n\n${

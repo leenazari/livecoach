@@ -22,6 +22,8 @@ export async function POST(req: NextRequest) {
       competencies,
       goals,
       privateNotes,
+      playbook,
+      planBrief,
       allowHold,
     } = await req.json();
 
@@ -50,7 +52,7 @@ export async function POST(req: NextRequest) {
         : [];
 
     const holdRule = allowHold
-      ? `\n\nHOLD RULE: If the only question would repeat or reword something already asked, or any recent suggestion, respond with exactly: HOLD.`
+      ? `\n\nHOLD RULE (be strict - cues now arrive only about every 30 seconds or when the host asks for one, so each must earn its place): respond with exactly HOLD unless you have a genuinely HIGH-VALUE cue for right now - one that opens something important up, catches a dodge or a missing piece, or moves the call materially forward. HOLD if the best you have is obvious, low-stakes, a minor reword, small talk, or just "keep them talking". When in doubt, HOLD - a quiet screen beats a mediocre prompt.`
       : "";
 
     const typeLine =
@@ -135,8 +137,40 @@ CRITICAL - no repetition:
 CONTENT:
 - Favour depth, ownership, concrete examples - but reach them gradually, following the conversation.${holdRule}`;
 
+    // The live lane is PLAN-DRIVEN, not brain-driven: loading the whole brain on
+    // every cue would add latency and cost to the call. The plan already folds in
+    // the intent and the email thread, so the plan + playbook is all the context
+    // the live engine needs - plus its own judgement for a market-standard best
+    // move in the moment.
+    const playbookList =
+      Array.isArray(playbook) && playbook.length
+        ? playbook
+            .filter((p: any) => p && (p.label || p.detail))
+            .map((p: any) => `- ${p.label ? `${p.label}: ` : ""}${p.detail || ""}`)
+            .join("\n")
+        : "";
+    const planBlock = [
+      typeof planBrief === "string" && planBrief.trim()
+        ? `THE PLAN (intent, your read, and the email thread so far):\n${planBrief.trim()}`
+        : "",
+      playbookList
+        ? `THE PLAYBOOK (your game plan - steer cues toward landing these plays):\n${playbookList}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
     const system: any[] = [
       { type: "text", text: instructions },
+      ...(planBlock
+        ? [
+            {
+              type: "text" as const,
+              text: `THIS CALL'S PLAN - work from this, not generic advice. Steer every cue toward it and TIME them to the moment. When the talk hits a problem, an objection, or a fork, you may offer ONE concise best move that a strong operator would widely agree on right then - kept in service of the plan:\n\n${planBlock}`,
+              cache_control: { type: "ephemeral" as const },
+            },
+          ]
+        : []),
       {
         type: "text",
         text: `KNOWLEDGE BASE (candidate CV / previous summary / question framework):\n\n${knowledgeContext || "No knowledge base loaded."}`,
