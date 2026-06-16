@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { crmFetch } from "@/lib/crm";
 
-type Msg = { id?: string; role: string; content: string };
+type Msg = { id?: string; role: string; content: string; actions?: any[] };
 
 // Splits an assistant reply into prose and sendable DRAFT blocks (wrapped by the
 // model in ---DRAFT--- … ---END DRAFT--- markers) so each draft gets its own
@@ -56,6 +56,8 @@ export default function ClientAssistant({
   const [listening, setListening] = useState(false);
   const [readAloud, setReadAloud] = useState(false);
   const [savedDrafts, setSavedDrafts] = useState<Record<string, boolean>>({});
+  // Per-proposed-action state: pending | busy | done | cancelled.
+  const [actionState, setActionState] = useState<Record<string, string>>({});
   const recRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null); // ElevenLabs playback
   const ttsAbortRef = useRef<AbortController | null>(null); // in-flight tts fetch
@@ -176,9 +178,10 @@ export default function ClientAssistant({
     setMessages((p) => [...p, { role: "user", content: t }]);
     setBusy(true);
     try {
-      const { reply, createdTasks } = await crmFetch<{
+      const { reply, createdTasks, proposedActions } = await crmFetch<{
         reply: string;
         createdTasks?: { id: string }[];
+        proposedActions?: any[];
       }>("/api/crm/assistant", {
         method: "POST",
         body: JSON.stringify({
@@ -189,7 +192,10 @@ export default function ClientAssistant({
       });
       const n = createdTasks?.length || 0;
       const note = n ? `\n\n✓ Added ${n} to your to-do list.` : "";
-      setMessages((p) => [...p, { role: "assistant", content: reply + note }]);
+      setMessages((p) => [
+        ...p,
+        { role: "assistant", content: reply + note, actions: proposedActions || [] },
+      ]);
       // Tell any open to-do list to refresh so the new items show right away.
       if (n) window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       if (readAloud) speak(reply);
@@ -303,6 +309,26 @@ export default function ClientAssistant({
       setSavedDrafts((p) => ({ ...p, [key]: false }));
     }
   };
+
+  // A proposed write action only runs when the user taps Confirm. It fires the
+  // ready-made request the server resolved (set link, set intent, link client,
+  // dismiss) and refreshes any open lists.
+  const confirmAction = async (a: any) => {
+    if (!a || !a.endpoint) return;
+    setActionState((s) => ({ ...s, [a.key]: "busy" }));
+    try {
+      await crmFetch(a.endpoint, {
+        method: a.method || "PATCH",
+        body: JSON.stringify(a.body || {}),
+      });
+      setActionState((s) => ({ ...s, [a.key]: "done" }));
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    } catch {
+      setActionState((s) => ({ ...s, [a.key]: "pending" }));
+    }
+  };
+  const cancelAction = (a: any) =>
+    setActionState((s) => ({ ...s, [a.key]: "cancelled" }));
 
   const clearThread = async () => {
     if (!confirm("Clear this assistant conversation?")) return;
@@ -463,6 +489,50 @@ export default function ClientAssistant({
                   </button>
                 </div>
               )}
+              {m.role === "assistant" &&
+                Array.isArray(m.actions) &&
+                m.actions.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {m.actions.map((a: any) => {
+                      const st = actionState[a.key] || "pending";
+                      if (st === "cancelled") return null;
+                      return (
+                        <div
+                          key={a.key}
+                          className="rounded-lg border border-sky/40 bg-sky/[0.06] p-2"
+                        >
+                          <p className="mb-1.5 font-sans text-[0.78rem] leading-snug text-bone/90">
+                            {"⚙"} {a.label}
+                          </p>
+                          {st === "done" ? (
+                            <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
+                              ✓ done
+                            </span>
+                          ) : (
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                disabled={st === "busy"}
+                                onClick={() => confirmAction(a)}
+                                className="rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 disabled:opacity-50"
+                              >
+                                {st === "busy" ? "doing…" : "confirm"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={st === "busy"}
+                                onClick={() => cancelAction(a)}
+                                className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-rust disabled:opacity-50"
+                              >
+                                cancel
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
             </div>
           </div>
         ))}

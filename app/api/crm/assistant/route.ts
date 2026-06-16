@@ -14,6 +14,129 @@ export const maxDuration = 40;
 // talk ("show Alan's to-do", "what's my to-do list", "which deal is closest").
 // Always explains its reasoning. Drafts on request. Stores the thread (global
 // thread = company_id null).
+// Resolve a proposed write action's target by NAME/TITLE (never an id the model
+// guessed) to a real record, and return a ready-to-fire request the CLIENT runs
+// only after the user taps Confirm. Nothing here writes to the database.
+function likeTerm(s: string): string {
+  return String(s || "").replace(/[%_]/g, "").trim().slice(0, 60);
+}
+async function findCall(title: string) {
+  const term = likeTerm(title);
+  if (!term) return null;
+  const { data } = await supabaseAdmin
+    .from("upcoming_calls")
+    .select("id, title, scheduled_at")
+    .ilike("title", `%${term}%`)
+    .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
+    .order("scheduled_at", { ascending: true })
+    .limit(1);
+  return data && data[0] ? data[0] : null;
+}
+async function findCompany(name: string) {
+  const term = likeTerm(name);
+  if (!term) return null;
+  const { data } = await supabaseAdmin
+    .from("companies")
+    .select("id, name")
+    .ilike("name", `%${term}%`)
+    .limit(1);
+  return data && data[0] ? data[0] : null;
+}
+async function findOpenTask(text: string) {
+  const term = likeTerm(text);
+  if (!term) return null;
+  const { data } = await supabaseAdmin
+    .from("tasks")
+    .select("id, text")
+    .eq("status", "open")
+    .ilike("text", `%${term}%`)
+    .limit(1);
+  return data && data[0] ? data[0] : null;
+}
+async function findDraft(subject: string) {
+  const term = likeTerm(subject);
+  if (!term) return null;
+  const { data } = await supabaseAdmin
+    .from("follow_ups")
+    .select("id, draft_subject")
+    .eq("status", "draft")
+    .ilike("draft_subject", `%${term}%`)
+    .limit(1);
+  return data && data[0] ? data[0] : null;
+}
+async function resolveActions(items: any[]): Promise<any[]> {
+  const out: any[] = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    if (out.length >= 6) break;
+    if (!it || typeof it.type !== "string") continue;
+    const key = Math.random().toString(36).slice(2);
+    if (it.type === "set_meeting_link") {
+      const call = await findCall(String(it.call || ""));
+      const url = typeof it.url === "string" ? it.url.trim() : "";
+      if (call && url)
+        out.push({
+          key,
+          type: it.type,
+          label: `Attach this link to "${call.title}": ${url}`,
+          endpoint: `/api/crm/upcoming/${call.id}`,
+          method: "PATCH",
+          body: { meetingUrl: url },
+        });
+    } else if (it.type === "set_intent") {
+      const call = await findCall(String(it.call || ""));
+      const intent = typeof it.intent === "string" ? it.intent.trim() : "";
+      if (call)
+        out.push({
+          key,
+          type: it.type,
+          label: intent
+            ? `Set the intent on "${call.title}": ${intent}`
+            : `Clear the intent on "${call.title}"`,
+          endpoint: `/api/crm/upcoming/${call.id}`,
+          method: "PATCH",
+          body: { intent },
+        });
+    } else if (it.type === "link_call") {
+      const call = await findCall(String(it.call || ""));
+      const company = await findCompany(String(it.client || ""));
+      if (call && company)
+        out.push({
+          key,
+          type: it.type,
+          label: `Link "${call.title}" to client ${company.name}`,
+          endpoint: `/api/crm/upcoming/${call.id}`,
+          method: "PATCH",
+          body: { companyId: company.id },
+        });
+    } else if (it.type === "dismiss") {
+      if (it.kind === "draft") {
+        const d = await findDraft(String(it.item || ""));
+        if (d)
+          out.push({
+            key,
+            type: it.type,
+            label: `Dismiss draft: "${d.draft_subject || "(no subject)"}"`,
+            endpoint: `/api/crm/follow-ups/${d.id}`,
+            method: "PATCH",
+            body: { status: "dismissed" },
+          });
+      } else {
+        const t = await findOpenTask(String(it.item || ""));
+        if (t)
+          out.push({
+            key,
+            type: it.type,
+            label: `Dismiss to-do: "${t.text}"`,
+            endpoint: `/api/crm/tasks/${t.id}`,
+            method: "PATCH",
+            body: { status: "dismissed" },
+          });
+      }
+    }
+  }
+  return out;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { companyId, focusCompanyId, message } = await req.json();
@@ -116,7 +239,13 @@ TO-DOS: when the user asks you to arrange, remember, chase, follow up, add, draf
 ---END TASKS---
 Use "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Only create to-dos the user actually wants tracked, and do not repeat ones already shown as outstanding in the context. They appear on the user's to-do list with the action attached, to trigger when they choose. Keep these markers out of your prose, and still answer naturally.
 
-CALENDAR: the user's upcoming calls, synced from their calendar, are in the context below under "UPCOMING CALLS". Answer "what's on my calendar" / "what's next" from that. You do not have live access to edit their Google calendar. If they tell you a call moved or was cancelled, do not claim you changed the calendar - instead offer to add a to-do or note it, and remind them the synced view refreshes from their calendar.
+CALENDAR: the user's upcoming calls, synced from their calendar, are in the context below in the calls list, each with its join link when there is one. Answer "what's on my calendar" / "what's next" from that, and give the join link when asked. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
+
+ACTIONS YOU CAN TAKE (always with the user's confirmation - never claim you already did them): when the user explicitly asks you to attach or change a meeting link on a call, set or clear a call's intent, link a call to a client, or dismiss a draft or a to-do, propose it. In ADDITION to a short prose reply, put ONLY a JSON array between these exact markers:
+---ACTIONS---
+[{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"}]
+---END ACTIONS---
+Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Only include the actions the user actually asked for. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done. Keep these markers out of your prose and still reply naturally.
 
 TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the book of business well and respects your time.`,
       },
@@ -192,6 +321,24 @@ TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the bo
       }
     }
 
+    // Pull out any WRITE ACTIONS the assistant proposed. We do NOT execute them:
+    // resolve each named target to a real record and hand the client a ready-to-
+    // fire request it runs only when the user taps Confirm.
+    let proposedActions: any[] = [];
+    const am = reply.match(/---ACTIONS---\s*([\s\S]*?)\s*---END ACTIONS---/);
+    if (am) {
+      reply = reply.replace(/---ACTIONS---[\s\S]*?---END ACTIONS---/, "").trim();
+      try {
+        const seg = am[1];
+        const a = seg.indexOf("[");
+        const b = seg.lastIndexOf("]");
+        const arr = a >= 0 && b > a ? JSON.parse(seg.slice(a, b + 1)) : [];
+        proposedActions = await resolveActions(arr);
+      } catch {
+        /* ignore a malformed action block */
+      }
+    }
+
     if (!reply)
       reply = createdTasks.length
         ? `Added ${createdTasks.length} to your to-do list.`
@@ -210,7 +357,7 @@ TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the bo
       },
     ]);
 
-    return NextResponse.json({ reply, createdTasks });
+    return NextResponse.json({ reply, createdTasks, proposedActions });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "assistant failed" },
