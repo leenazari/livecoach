@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { foldDictationEvent } from "@/lib/dictation";
 import CallStage from "@/components/CallStage";
 import MeetStage from "@/components/MeetStage";
 import KnowledgePanel from "@/components/KnowledgePanel";
@@ -141,7 +142,6 @@ export default function CallPage() {
   // Keep finalised dictation segments so the box never shrinks or drops the last
   // words when Chrome revises its interim guess near the end.
   const recapCommittedRef = useRef("");
-  const recapCommittedCountRef = useRef(0);
   useEffect(() => {
     recapTextRef.current = recapText;
   }, [recapText]);
@@ -173,26 +173,16 @@ export default function CallPage() {
       ? `${recapTextRef.current.trim()} `
       : "";
     recapCommittedRef.current = "";
-    recapCommittedCountRef.current = 0;
     rec.onresult = (e: any) => {
-      // Android Chrome keeps several overlapping interim results, and Chrome also
-      // revises its interim guess downward near the end (which dropped the last
-      // words). Fold each FINAL segment into a committed buffer ONCE by index so
-      // it can never shrink, and only ever show the single latest interim as the
-      // live tail. The box grows monotonically and keeps the whole sentence.
-      for (let i = recapCommittedCountRef.current; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r.isFinal) {
-          recapCommittedRef.current += r[0]?.transcript || "";
-          recapCommittedCountRef.current = i + 1;
-        }
-      }
-      let interim = "";
-      for (let i = recapCommittedCountRef.current; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (!r.isFinal) interim = r[0]?.transcript || "";
-      }
-      setRecapText((recapBaseRef.current + recapCommittedRef.current + interim).trim());
+      // Desktop returns fresh segments, Android restates the whole phrase in
+      // each result. The shared helper merges both safely (no "sosososo" runaway)
+      // and keeps the box from shrinking when Chrome revises its interim.
+      const { committed, text } = foldDictationEvent(
+        recapCommittedRef.current,
+        e.results
+      );
+      recapCommittedRef.current = committed;
+      setRecapText((recapBaseRef.current + text).trim());
     };
     rec.onend = () => {
       setRecapListening(false);

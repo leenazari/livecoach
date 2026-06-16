@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { crmFetch } from "@/lib/crm";
 import { extractDocText } from "@/lib/extract-doc";
+import { foldDictationEvent } from "@/lib/dictation";
 
 type Item = {
   id: string;
@@ -116,15 +117,13 @@ export default function ClientContext({ companyId }: { companyId: string }) {
     eBaseRef.current = emailRef.current.trim()
       ? `${emailRef.current.trim()} `
       : "";
-    let finalText = "";
+    let committed = "";
     rec.onresult = (e: any) => {
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r.isFinal) finalText += r[0].transcript;
-        else interim += r[0].transcript;
-      }
-      setEmailCtx((eBaseRef.current + finalText + interim).trim());
+      // Shared merge: handles desktop segments AND Android's cumulative
+      // restatement (no "sosososo" runaway).
+      const r = foldDictationEvent(committed, e.results);
+      committed = r.committed;
+      setEmailCtx((eBaseRef.current + r.text).trim());
     };
     rec.onend = () => {
       setEListening(false);

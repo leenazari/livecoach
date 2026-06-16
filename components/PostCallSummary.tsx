@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { crmFetch } from "@/lib/crm";
+import { foldDictationEvent } from "@/lib/dictation";
 
 type Comp = { name: string; score: number; note: string };
 type QReview = { question: string; answered: string; note: string };
@@ -204,15 +205,13 @@ export default function PostCallSummary({
     rec.interimResults = true;
     rec.continuous = true;
     baseNotesRef.current = debriefNotes ? debriefNotes.trim() + " " : "";
-    let finalText = "";
+    let committed = "";
     rec.onresult = (e: any) => {
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r.isFinal) finalText += r[0].transcript;
-        else interim += r[0].transcript;
-      }
-      setDebriefNotes((baseNotesRef.current + finalText + interim).trim());
+      // Shared merge: handles desktop segments AND Android's cumulative
+      // restatement (no "sosososo" runaway).
+      const r = foldDictationEvent(committed, e.results);
+      committed = r.committed;
+      setDebriefNotes((baseNotesRef.current + r.text).trim());
     };
     rec.onend = () => {
       setListening(false);
