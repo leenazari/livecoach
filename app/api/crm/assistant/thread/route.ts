@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
+// Keep this a dynamic function: a no-arg GET would otherwise be statically
+// optimised and the DELETE would 405 (INVALID_REQUEST_METHOD) at the edge.
+export const dynamic = "force-dynamic";
 
 // The GLOBAL assistant thread (company_id null).
 // GET    /api/crm/assistant/thread -> messages, oldest first

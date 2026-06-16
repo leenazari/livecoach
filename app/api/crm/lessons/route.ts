@@ -5,6 +5,9 @@ import { logModelUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
+// Keep this a dynamic function: a no-arg GET would otherwise be statically
+// optimised and the POST would 405 (INVALID_REQUEST_METHOD) at the edge.
+export const dynamic = "force-dynamic";
 
 const TOPICS = ["negotiation", "psychology", "strategy", "general"];
 

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
+// Keep this a dynamic function: a no-arg GET would otherwise be statically
+// optimised and the POST would 405 (INVALID_REQUEST_METHOD) at the edge.
+export const dynamic = "force-dynamic";
 
 // GET /api/crm/upcoming -> scheduled calls, soonest first, with the linked
 // company name. Powers the dashboard's Upcoming Calls card.

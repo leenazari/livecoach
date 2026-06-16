@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
+// Force a dynamic serverless function. The GET handler takes no request arg, so
+// Next would otherwise STATICALLY optimise this route - and a static route only
+// allows GET, making PUT fail at the edge with a 405 INVALID_REQUEST_METHOD
+// (this is what blocked saving the brain). force-dynamic keeps it a real
+// function that serves every exported method.
+export const dynamic = "force-dynamic";
 
 // GET /api/crm/workspace -> the global knowledge base ("brain").
 export async function GET() {
