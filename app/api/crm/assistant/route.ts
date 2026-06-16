@@ -163,6 +163,20 @@ async function resolveActions(items: any[]): Promise<any[]> {
       continue;
     }
 
+    if (it.type === "remember") {
+      const note = typeof it.note === "string" ? it.note.trim() : "";
+      if (note)
+        out.push({
+          key,
+          type: it.type,
+          label: `Remember this: ${note}`,
+          endpoint: `/api/crm/brain/remember`,
+          method: "POST",
+          body: { note },
+        });
+      continue;
+    }
+
     if (it.type === "dismiss") {
       if (it.kind === "draft") {
         const d = await findDraft(String(it.item || ""));
@@ -306,9 +320,9 @@ Use "email" for anything to write or send, "call" to prep or schedule a call, "t
 
 CALENDAR: the user's upcoming calls, synced from their calendar, are in the context below in the calls list, each with its join link when there is one. Answer "what's on my calendar" / "what's next" from that, and give the join link when asked. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
 
-ACTIONS YOU CAN TAKE (always with the user's confirmation - never claim you already did them): when the user explicitly asks you to attach or change a meeting link on a call, set or clear a call's intent, link a call to a client, cancel/remove a call that is no longer happening (it was cancelled or already happened separately) and note why, or dismiss a draft or a to-do, propose it. In ADDITION to a short prose reply, put ONLY a JSON array between these exact markers:
+ACTIONS YOU CAN TAKE (always with the user's confirmation - never claim you already did them): when the user explicitly asks you to attach or change a meeting link on a call, set or clear a call's intent, link a call to a client, cancel/remove a call that is no longer happening (it was cancelled or already happened separately) and note why, or dismiss a draft or a to-do, propose it. ALSO watch for the user stating a durable PREFERENCE, habit, standard practice, rule, or lasting fact about how they work or their business (for example "I wait 48 hours before chasing a follow-up", "I never call before 10am", "always cc Mark on proposals", "my standard pilot is two weeks"). When they do, offer to REMEMBER it with a "remember" action so it sticks for future plans, cues and chats - acknowledge it in your prose AND propose saving it; never save silently. In ADDITION to a short prose reply, put ONLY a JSON array between these exact markers:
 ---ACTIONS---
-[{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"}]
+[{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"}]
 ---END ACTIONS---
 When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too. If you are not sure which call, client, draft or to-do the user means, ask them to clarify in your prose reply rather than guessing (the system will also offer a pick-list if more than one record matches the name).
 Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Only include the actions the user actually asked for. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done. Keep these markers out of your prose and still reply naturally.
@@ -346,125 +360,158 @@ NEVER read out a full draft or email in the spoken version. If you wrote a draft
     const model = simple ? CLAUDE_MODEL_LIVE : CLAUDE_MODEL_PRO;
     const maxTok = simple ? 800 : 1300;
 
-    let reply = "";
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 34000);
-      try {
-        const msg = await anthropic.messages.create(
-          {
+    // STREAM the reply so words appear as they are written. We emit newline-
+    // delimited JSON frames: {type:"delta",text} as the model writes, then one
+    // {type:"done", reply, spoken, createdTasks, proposedActions} once the full
+    // text is in and we have run the to-do / action / spoken extraction.
+    const encoder = new TextEncoder();
+    const frame = (
+      controller: ReadableStreamDefaultController,
+      obj: any
+    ) => controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+
+    const streamBody = new ReadableStream({
+      async start(controller) {
+        let full = "";
+        try {
+          const aStream: any = (anthropic as any).messages.stream({
             model,
             max_tokens: maxTok,
             temperature: 0.4,
             system,
             messages,
-          },
-          { signal: controller.signal }
-        );
-        await logModelUsage("assistant", simple ? "haiku" : "sonnet", (msg as any).usage);
-        reply = msg.content
-          .filter((b: any) => b.type === "text")
-          .map((b: any) => b.text)
-          .join("")
-          .trim();
-      } finally {
-        clearTimeout(timer);
-      }
-    } catch (e) {
-      console.error("Assistant model call failed:", e);
-      return NextResponse.json(
-        { error: "the assistant took too long - try again" },
-        { status: 504 }
-      );
-    }
+          });
+          for await (const ev of aStream) {
+            if (
+              ev?.type === "content_block_delta" &&
+              ev?.delta?.type === "text_delta"
+            ) {
+              const t = ev.delta.text || "";
+              if (t) {
+                full += t;
+                frame(controller, { type: "delta", text: t });
+              }
+            }
+          }
+          let usage: any = null;
+          try {
+            const fm = await aStream.finalMessage();
+            usage = fm?.usage;
+            if (!full && Array.isArray(fm?.content)) {
+              full = fm.content
+                .filter((b: any) => b.type === "text")
+                .map((b: any) => b.text)
+                .join("");
+            }
+          } catch {
+            /* ignore - we still have `full` from the deltas */
+          }
+          await logModelUsage("assistant", simple ? "haiku" : "sonnet", usage);
 
-    // Pull out any to-dos the assistant decided to create, save them (deduped),
-    // and strip the markers from what we show and store. The user actions them
-    // later from their to-do list.
-    let createdTasks: any[] = [];
-    const tm = reply.match(/---TASKS---\s*([\s\S]*?)\s*---END TASKS---/);
-    if (tm) {
-      reply = reply.replace(/---TASKS---[\s\S]*?---END TASKS---/, "").trim();
-      try {
-        const seg = tm[1];
-        const a = seg.indexOf("[");
-        const b = seg.lastIndexOf("]");
-        const arr = a >= 0 && b > a ? JSON.parse(seg.slice(a, b + 1)) : [];
-        if (Array.isArray(arr)) {
-          const items = arr
-            .filter((x: any) => x && typeof x.text === "string" && x.text.trim())
-            .slice(0, 12)
-            .map((x: any) => ({
-              text: String(x.text).trim(),
-              linkKind: actionToLinkKind(x.action),
-              source: "assistant",
-            }));
-          createdTasks = await upsertTasks(isGlobal ? null : companyId, items);
+          let reply = full.trim();
+
+          // --- TO-DOS: create them (deduped) and strip the markers ---
+          let createdTasks: any[] = [];
+          const tm = reply.match(/---TASKS---\s*([\s\S]*?)\s*---END TASKS---/);
+          if (tm) {
+            reply = reply.replace(/---TASKS---[\s\S]*?---END TASKS---/, "").trim();
+            try {
+              const seg = tm[1];
+              const a = seg.indexOf("[");
+              const b = seg.lastIndexOf("]");
+              const arr = a >= 0 && b > a ? JSON.parse(seg.slice(a, b + 1)) : [];
+              if (Array.isArray(arr)) {
+                const items = arr
+                  .filter((x: any) => x && typeof x.text === "string" && x.text.trim())
+                  .slice(0, 12)
+                  .map((x: any) => ({
+                    text: String(x.text).trim(),
+                    linkKind: actionToLinkKind(x.action),
+                    source: "assistant",
+                  }));
+                createdTasks = await upsertTasks(isGlobal ? null : companyId, items);
+              }
+            } catch {
+              /* ignore a malformed task block */
+            }
+          }
+
+          // --- WRITE ACTIONS: resolve targets, never execute (client confirms) ---
+          let proposedActions: any[] = [];
+          const am = reply.match(/---ACTIONS---\s*([\s\S]*?)\s*---END ACTIONS---/);
+          if (am) {
+            reply = reply.replace(/---ACTIONS---[\s\S]*?---END ACTIONS---/, "").trim();
+            try {
+              const seg = am[1];
+              const a = seg.indexOf("[");
+              const b = seg.lastIndexOf("]");
+              const arr = a >= 0 && b > a ? JSON.parse(seg.slice(a, b + 1)) : [];
+              proposedActions = await resolveActions(arr);
+            } catch {
+              /* ignore a malformed action block */
+            }
+          }
+
+          // --- SPOKEN summary (tolerant of a malformed close) ---
+          let spoken = "";
+          const spIdx = reply.indexOf("---SPOKEN---");
+          if (spIdx !== -1) {
+            let after = reply.slice(spIdx + "---SPOKEN---".length);
+            reply = reply.slice(0, spIdx).trim();
+            after = after
+              .replace(/---END SPOKEN---[\s\S]*$/, "")
+              .replace(/---SPOKEN---[\s\S]*$/, "");
+            spoken = after.trim();
+          }
+          // Safety net: never let stray SPOKEN / TASKS / ACTIONS markers remain.
+          reply = reply
+            .replace(/---END (SPOKEN|TASKS|ACTIONS)---/g, "")
+            .replace(/---(SPOKEN|TASKS|ACTIONS)---/g, "")
+            .trim();
+
+          if (!reply)
+            reply = createdTasks.length
+              ? `Added ${createdTasks.length} to your to-do list.`
+              : "Sorry, I couldn't form a reply just then. Try again?";
+
+          await supabaseAdmin.from("assistant_messages").insert([
+            {
+              company_id: isGlobal ? null : companyId,
+              role: "user",
+              content: message.trim(),
+            },
+            {
+              company_id: isGlobal ? null : companyId,
+              role: "assistant",
+              content: reply,
+            },
+          ]);
+
+          frame(controller, {
+            type: "done",
+            reply,
+            spoken,
+            createdTasks,
+            proposedActions,
+          });
+        } catch (e: any) {
+          console.error("Assistant stream failed:", e);
+          frame(controller, {
+            type: "error",
+            error: "the assistant failed just then - try again",
+          });
+        } finally {
+          controller.close();
         }
-      } catch {
-        /* ignore a malformed task block */
-      }
-    }
-
-    // Pull out any WRITE ACTIONS the assistant proposed. We do NOT execute them:
-    // resolve each named target to a real record and hand the client a ready-to-
-    // fire request it runs only when the user taps Confirm.
-    let proposedActions: any[] = [];
-    const am = reply.match(/---ACTIONS---\s*([\s\S]*?)\s*---END ACTIONS---/);
-    if (am) {
-      reply = reply.replace(/---ACTIONS---[\s\S]*?---END ACTIONS---/, "").trim();
-      try {
-        const seg = am[1];
-        const a = seg.indexOf("[");
-        const b = seg.lastIndexOf("]");
-        const arr = a >= 0 && b > a ? JSON.parse(seg.slice(a, b + 1)) : [];
-        proposedActions = await resolveActions(arr);
-      } catch {
-        /* ignore a malformed action block */
-      }
-    }
-
-    // A short SPOKEN version for the voice, so it never reads the full answer
-    // out word for word. Tolerant of a malformed close: the model sometimes
-    // repeats ---SPOKEN--- instead of writing ---END SPOKEN---. The spoken block
-    // is always at the END, so cut the visible reply at the first marker and
-    // take everything after it (minus any trailing markers) as the spoken text.
-    let spoken = "";
-    const spIdx = reply.indexOf("---SPOKEN---");
-    if (spIdx !== -1) {
-      let after = reply.slice(spIdx + "---SPOKEN---".length);
-      reply = reply.slice(0, spIdx).trim();
-      after = after
-        .replace(/---END SPOKEN---[\s\S]*$/, "")
-        .replace(/---SPOKEN---[\s\S]*$/, "");
-      spoken = after.trim();
-    }
-    // Safety net: never let stray SPOKEN / TASKS / ACTIONS markers show in the
-    // reply or get read aloud (DRAFT markers are kept - the client renders them).
-    reply = reply
-      .replace(/---END (SPOKEN|TASKS|ACTIONS)---/g, "")
-      .replace(/---(SPOKEN|TASKS|ACTIONS)---/g, "")
-      .trim();
-
-    if (!reply)
-      reply = createdTasks.length
-        ? `Added ${createdTasks.length} to your to-do list.`
-        : "Sorry, I couldn't form a reply just then. Try again?";
-
-    await supabaseAdmin.from("assistant_messages").insert([
-      {
-        company_id: isGlobal ? null : companyId,
-        role: "user",
-        content: message.trim(),
       },
-      {
-        company_id: isGlobal ? null : companyId,
-        role: "assistant",
-        content: reply,
-      },
-    ]);
+    });
 
-    return NextResponse.json({ reply, createdTasks, proposedActions, spoken });
+    return new Response(streamBody, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "assistant failed" },

@@ -46,6 +46,14 @@ function splitForSpeech(text: string): string[] {
   return chunks;
 }
 
+// While a reply streams in, hide the trailing SPOKEN / TASKS / ACTIONS blocks
+// (they sit at the end) until the server sends back the cleaned reply.
+function visibleForDisplay(content: string): string {
+  return (content || "")
+    .replace(/---(SPOKEN|TASKS|ACTIONS)---[\s\S]*$/i, "")
+    .trim();
+}
+
 // Per-client AI assistant: a chat grounded in everything we know about the
 // client. Talk to it (tap the mic to start, tap again to stop - browser speech)
 // or type, and it can read its answers aloud. Always explains its reasoning.
@@ -275,39 +283,87 @@ export default function ClientAssistant({
     if (listening || recRef.current) killMic();
     setInput("");
     inputRef.current = "";
-    setMessages((p) => [...p, { role: "user", content: t }]);
+    // Add the user message AND an empty assistant bubble to stream the reply
+    // into, so words appear as they are written.
+    setMessages((p) => [
+      ...p,
+      { role: "user", content: t },
+      { role: "assistant", content: "" },
+    ]);
     setBusy(true);
+
+    const setLastAssistant = (updater: (m: Msg) => Msg) =>
+      setMessages((p) => {
+        const next = [...p];
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].role === "assistant") {
+            next[i] = updater(next[i]);
+            break;
+          }
+        }
+        return next;
+      });
+
     try {
-      const { reply, spoken, createdTasks, proposedActions } = await crmFetch<{
-        reply: string;
-        spoken?: string;
-        createdTasks?: { id: string }[];
-        proposedActions?: any[];
-      }>("/api/crm/assistant", {
+      const res = await fetch("/api/crm/assistant", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           companyId: companyId ?? null,
           focusCompanyId: focusCompanyId ?? null,
           message: t,
         }),
       });
-      const n = createdTasks?.length || 0;
+      if (!res.ok || !res.body) throw new Error("the assistant is unavailable");
+      // Read the newline-delimited JSON stream: {type:"delta"} as it writes,
+      // then a {type:"done"} with the clean reply + actions + spoken.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let streamed = "";
+      let done: any = null;
+      for (;;) {
+        const { value, done: rdone } = await reader.read();
+        if (rdone) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) !== -1) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let fr: any;
+          try {
+            fr = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (fr.type === "delta") {
+            streamed += fr.text || "";
+            const shown = streamed;
+            setLastAssistant((m) => ({ ...m, content: shown }));
+          } else if (fr.type === "done") {
+            done = fr;
+          } else if (fr.type === "error") {
+            throw new Error(fr.error || "assistant error");
+          }
+        }
+      }
+
+      const finalReply = String(done?.reply ?? streamed).trim();
+      const n = done?.createdTasks?.length || 0;
       const note = n ? `\n\n✓ Added ${n} to your to-do list.` : "";
-      setMessages((p) => [
-        ...p,
-        { role: "assistant", content: reply + note, actions: proposedActions || [] },
-      ]);
-      // Tell any open to-do list to refresh so the new items show right away.
+      setLastAssistant((m) => ({
+        ...m,
+        content: finalReply + note,
+        actions: done?.proposedActions || [],
+      }));
       if (n) window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-      // Speak a SHORT spoken summary (the full written answer can be long
-      // winded). In hands-free mode, go back to listening once it finishes.
       if (readAloud || convoRef.current) {
-        // Prefer the short spoken summary. If we fall back to the full reply,
-        // never read out the draft body - just note one is ready.
+        const spoken = done?.spoken;
         const say =
-          spoken && spoken.trim()
-            ? spoken.trim()
-            : reply
+          spoken && String(spoken).trim()
+            ? String(spoken).trim()
+            : finalReply
                 .replace(
                   /---DRAFT---[\s\S]*?---END DRAFT---/g,
                   " I have written a draft for you below. "
@@ -318,10 +374,10 @@ export default function ClientAssistant({
         });
       }
     } catch (e: any) {
-      setMessages((p) => [
-        ...p,
-        { role: "assistant", content: `(couldn't answer: ${e.message})` },
-      ]);
+      setLastAssistant((m) => ({
+        ...m,
+        content: `(couldn't answer: ${e?.message || "try again"})`,
+      }));
     } finally {
       setBusy(false);
     }
@@ -630,7 +686,7 @@ export default function ClientAssistant({
               }`}
             >
               {m.role === "assistant" ? (
-                splitDrafts(m.content).map((part, pi) =>
+                splitDrafts(visibleForDisplay(m.content)).map((part, pi) =>
                   part.type === "draft" ? (
                     <div
                       key={pi}
@@ -673,7 +729,7 @@ export default function ClientAssistant({
               ) : (
                 <p className="whitespace-pre-wrap">{m.content}</p>
               )}
-              {m.role === "assistant" && (
+              {m.role === "assistant" && visibleForDisplay(m.content).trim() && (
                 <div className="mt-1.5 flex gap-3">
                   <button
                     type="button"
@@ -761,13 +817,14 @@ export default function ClientAssistant({
           </div>
         ))}
 
-        {busy && (
-          <div className="flex justify-start">
-            <div className="rounded-xl border border-edge bg-ink/40 px-3 py-2 font-mono text-[0.7rem] text-muted">
-              thinking…
+        {busy &&
+          !(messages[messages.length - 1]?.content || "").trim() && (
+            <div className="flex justify-start">
+              <div className="rounded-xl border border-edge bg-ink/40 px-3 py-2 font-mono text-[0.7rem] text-muted">
+                thinking…
+              </div>
             </div>
-          </div>
-        )}
+          )}
       </div>
 
       <div className="flex items-end gap-2">
