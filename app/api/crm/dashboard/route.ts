@@ -8,6 +8,25 @@ import { workspaceContextBlock } from "@/lib/workspace";
 export const runtime = "nodejs";
 export const maxDuration = 25;
 
+// Guarantee the "your day" read is plain prose: the model sometimes ignores the
+// "no markdown / no em-dash" instruction (and a cached blurb can predate the
+// rule), so we strip it deterministically. Removes markdown emphasis/headings,
+// turns em/en dashes and semicolons into commas, and a leading "Your day" label
+// the model occasionally prepends. Never trust the LLM to self-police format.
+function sanitizeRead(s: string): string {
+  return (s || "")
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "")
+    .replace(/[*_`#>]/g, "")
+    .replace(/^\s*your day[^.:\n]*[:\n]\s*/i, "") // drop a "Your day ...:" title
+    .replace(/[—–]/g, ", ") // em / en dash -> comma
+    .replace(/;/g, ",")
+    .replace(/\s+([,.;:!?])/g, "$1") // no space before punctuation
+    .replace(/,\s*,/g, ",") // collapse doubled commas
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 // The CRM dashboard: everything on your plate across all clients, in one call.
 // KPIs, a short AI read of your day, and a "do next" list pulled from follow-up
 // drafts, open opportunities and the commitments you made on recent calls.
@@ -171,17 +190,18 @@ export async function GET(req: Request) {
                 temperature: 0.4,
                 system:
                   (await workspaceContextBlock()) +
-                  "You write a 2-3 sentence read of the user's day from their CRM workload. Warm, sharp, specific - name the client and the single most pressing thing. Plain English. No lists, no preamble, just the read.",
+                  "You write a 2 to 3 sentence read of the user's day from their CRM workload. Warm, sharp, specific: name the client and the single most pressing thing. Start straight into the substance. Do NOT add a title, heading, or label (never begin with 'Your day' or similar). Plain English prose only: no markdown, no bold, no asterisks, no headings, no bullet lists. Never use em-dashes or semicolons, use commas and full stops instead. Just the read.",
                 messages: [{ role: "user", content: lines }],
               },
               { signal: controller.signal }
             );
             await logModelUsage("day-read", "haiku", (msg as any).usage);
-            dayRead = msg.content
-              .filter((b: any) => b.type === "text")
-              .map((b: any) => b.text)
-              .join("")
-              .trim();
+            dayRead = sanitizeRead(
+              msg.content
+                .filter((b: any) => b.type === "text")
+                .map((b: any) => b.text)
+                .join("")
+            );
             if (dayRead) {
               try {
                 await supabaseAdmin.from("ai_cache").upsert({
@@ -202,7 +222,11 @@ export async function GET(req: Request) {
       /* read is optional */
     }
 
-    return NextResponse.json({ kpis, tasks: tasks.slice(0, 20), dayRead });
+    return NextResponse.json({
+      kpis,
+      tasks: tasks.slice(0, 20),
+      dayRead: sanitizeRead(dayRead),
+    });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to load dashboard" },
