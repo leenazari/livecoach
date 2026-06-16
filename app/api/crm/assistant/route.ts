@@ -303,7 +303,13 @@ ACTIONS YOU CAN TAKE (always with the user's confirmation - never claim you alre
 When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too. If you are not sure which call, client, draft or to-do the user means, ask them to clarify in your prose reply rather than guessing (the system will also offer a pick-list if more than one record matches the name).
 Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Only include the actions the user actually asked for. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done. Keep these markers out of your prose and still reply naturally.
 
-TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the book of business well and respects your time.`,
+TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the book of business well and respects your time.
+
+SPOKEN SUMMARY: the user often listens to your reply by voice, and hearing the whole thing read out is long winded (especially for a game plan or a list). So ALWAYS also give a SHORT spoken version - one or two sentences that carry the gist and the single most useful point, in a natural talking voice. Put ONLY that between these exact markers:
+---SPOKEN---
+<one or two spoken sentences>
+---END SPOKEN---
+Keep these markers out of your visible prose. The full written answer still goes in your normal reply.`,
       },
       {
         type: "text",
@@ -395,6 +401,15 @@ TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the bo
       }
     }
 
+    // A short SPOKEN version for the voice, so it never reads the full answer
+    // out word for word.
+    let spoken = "";
+    const sp = reply.match(/---SPOKEN---\s*([\s\S]*?)\s*---END SPOKEN---/);
+    if (sp) {
+      reply = reply.replace(/---SPOKEN---[\s\S]*?---END SPOKEN---/, "").trim();
+      spoken = sp[1].trim();
+    }
+
     if (!reply)
       reply = createdTasks.length
         ? `Added ${createdTasks.length} to your to-do list.`
@@ -413,7 +428,7 @@ TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the bo
       },
     ]);
 
-    return NextResponse.json({ reply, createdTasks, proposedActions });
+    return NextResponse.json({ reply, createdTasks, proposedActions, spoken });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "assistant failed" },

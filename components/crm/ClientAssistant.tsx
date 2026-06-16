@@ -54,7 +54,10 @@ export default function ClientAssistant({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
-  const [readAloud, setReadAloud] = useState(false);
+  // Read replies aloud by default - the brain talks back.
+  const [readAloud, setReadAloud] = useState(true);
+  // Hands-free conversation: it listens, replies aloud, then listens again.
+  const [convo, setConvo] = useState(false);
   const [savedDrafts, setSavedDrafts] = useState<Record<string, boolean>>({});
   // Per-proposed-action state: pending | busy | done | cancelled.
   const [actionState, setActionState] = useState<Record<string, string>>({});
@@ -67,6 +70,8 @@ export default function ClientAssistant({
   const suppressMicRef = useRef(false); // ignore late mic results after a send
   const didAutoListen = useRef(false);
   const lastSeedRef = useRef(""); // last initialPrompt auto-sent
+  const convoRef = useRef(false); // mirror of convo for the stable callbacks
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Stop the mic immediately and stop it from re-filling the box (used on send).
   const killMic = () => {
@@ -123,19 +128,20 @@ export default function ClientAssistant({
   // Speak a reply with the ElevenLabs voice, falling back to the browser voice
   // if TTS isn't configured or the request fails. Always cancels anything
   // already playing first so taps never overlap.
-  const speak = async (text: string) => {
-    if (typeof window === "undefined") return;
+  const speak = async (text: string, onEnd?: () => void) => {
+    if (typeof window === "undefined") return onEnd?.();
     stopSpeaking();
     const fallback = () => {
       try {
         const synth = (window as any).speechSynthesis;
-        if (!synth) return;
+        if (!synth) return onEnd?.();
         synth.cancel();
         const u = new (window as any).SpeechSynthesisUtterance(text);
         u.rate = 1.03;
+        u.onend = () => onEnd?.();
         synth.speak(u);
       } catch {
-        /* ignore */
+        onEnd?.();
       }
     };
     try {
@@ -149,14 +155,16 @@ export default function ClientAssistant({
       });
       if (!res.ok) throw new Error("tts unavailable");
       const blob = await res.blob();
-      if (ctrl.signal.aborted) return; // muted while fetching
+      if (ctrl.signal.aborted) return; // muted/stopped while fetching - no re-listen
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audioRef.current = audio;
       audio.onended = () => {
         URL.revokeObjectURL(url);
         if (audioRef.current === audio) audioRef.current = null;
+        onEnd?.();
       };
+      audio.onerror = () => onEnd?.();
       await audio.play();
     } catch (e: any) {
       if (e?.name === "AbortError") return; // deliberate stop, stay silent
@@ -164,8 +172,20 @@ export default function ClientAssistant({
     }
   };
 
-  // Stop talking if the component goes away.
-  useEffect(() => () => stopSpeaking(), []);
+  // Stop talking AND listening if the component goes away.
+  useEffect(
+    () => () => {
+      stopSpeaking();
+      convoRef.current = false;
+      try {
+        recRef.current?.abort?.();
+      } catch {
+        /* ignore */
+      }
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    },
+    []
+  );
 
   const send = async (text?: string) => {
     const t = (text ?? inputRef.current ?? input).trim();
@@ -178,8 +198,9 @@ export default function ClientAssistant({
     setMessages((p) => [...p, { role: "user", content: t }]);
     setBusy(true);
     try {
-      const { reply, createdTasks, proposedActions } = await crmFetch<{
+      const { reply, spoken, createdTasks, proposedActions } = await crmFetch<{
         reply: string;
+        spoken?: string;
         createdTasks?: { id: string }[];
         proposedActions?: any[];
       }>("/api/crm/assistant", {
@@ -198,7 +219,14 @@ export default function ClientAssistant({
       ]);
       // Tell any open to-do list to refresh so the new items show right away.
       if (n) window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-      if (readAloud) speak(reply);
+      // Speak a SHORT spoken summary (the full written answer can be long
+      // winded). In hands-free mode, go back to listening once it finishes.
+      if (readAloud || convoRef.current) {
+        const say = spoken && spoken.trim() ? spoken.trim() : reply;
+        speak(say, () => {
+          if (convoRef.current) startListening();
+        });
+      }
     } catch (e: any) {
       setMessages((p) => [
         ...p,
@@ -206,6 +234,73 @@ export default function ClientAssistant({
       ]);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const startListening = () => {
+    const SR =
+      (window as any).webkitSpeechRecognition ||
+      (window as any).SpeechRecognition;
+    if (!SR) {
+      alert("Voice input needs a Chromium browser (Chrome, Edge, Arc).");
+      setConvo(false);
+      convoRef.current = false;
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-GB";
+    rec.interimResults = true;
+    rec.continuous = true;
+    suppressMicRef.current = false; // fresh dictation session
+    rec.onresult = (e: any) => {
+      if (suppressMicRef.current) return; // a send already consumed this
+      // Rebuild the WHOLE transcript from all results each event. Accumulating
+      // finals in a closure double-counted on some Chrome builds, which is the
+      // "sososo can you add the link" repetition bug.
+      let full = "";
+      for (let i = 0; i < e.results.length; i++) {
+        full += e.results[i][0]?.transcript || "";
+      }
+      const text = full.trim();
+      inputRef.current = text;
+      setInput(text);
+      // Hands-free: when you pause for a moment, end the turn and send.
+      if (convoRef.current && text) {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          sendOnStopRef.current = true;
+          try {
+            recRef.current?.stop();
+          } catch {
+            /* ignore */
+          }
+        }, 1600);
+      }
+    };
+    rec.onend = () => {
+      setListening(false);
+      recRef.current = null;
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+      if (sendOnStopRef.current) {
+        sendOnStopRef.current = false;
+        const t = inputRef.current.trim();
+        if (t) send(t);
+        else if (convoRef.current) startListening(); // empty turn, keep listening
+      }
+    };
+    rec.onerror = () => {
+      setListening(false);
+      sendOnStopRef.current = false;
+    };
+    recRef.current = rec;
+    setListening(true);
+    try {
+      rec.start();
+    } catch {
+      /* ignore a double-start */
     }
   };
 
@@ -223,40 +318,26 @@ export default function ClientAssistant({
       recRef.current?.stop();
       return;
     }
-    const rec = new SR();
-    rec.lang = "en-GB";
-    rec.interimResults = true;
-    rec.continuous = true;
-    suppressMicRef.current = false; // fresh dictation session
-    let finalText = "";
-    rec.onresult = (e: any) => {
-      if (suppressMicRef.current) return; // a send already consumed this
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r.isFinal) finalText += r[0].transcript;
-        else interim += r[0].transcript;
+    startListening();
+  };
+
+  // Hands-free loop: listen, reply aloud, then listen again until you turn it
+  // off. Turning it on also turns read-aloud on (it has to talk to converse).
+  const toggleConvo = () => {
+    const next = !convoRef.current;
+    setConvo(next);
+    convoRef.current = next;
+    if (next) {
+      setReadAloud(true);
+      if (!listening) startListening();
+    } else {
+      stopSpeaking();
+      killMic();
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
       }
-      const text = (finalText + interim).trim();
-      inputRef.current = text;
-      setInput(text);
-    };
-    rec.onend = () => {
-      setListening(false);
-      recRef.current = null;
-      if (sendOnStopRef.current) {
-        sendOnStopRef.current = false;
-        const t = inputRef.current.trim();
-        if (t) send(t);
-      }
-    };
-    rec.onerror = () => {
-      setListening(false);
-      sendOnStopRef.current = false;
-    };
-    recRef.current = rec;
-    setListening(true);
-    rec.start();
+    }
   };
 
   // Talk straight away: start listening as soon as the assistant is opened.
@@ -374,6 +455,18 @@ export default function ClientAssistant({
           <span className="text-muted">- ask anything about {label}</span>
         </p>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleConvo}
+            title="Hands-free: talk and the brain talks back, then keeps listening. Tap to stop."
+            className={`rounded-full border px-2.5 py-1 font-mono text-[0.54rem] uppercase tracking-wider transition ${
+              convo
+                ? "border-sage/60 bg-sage/15 text-sage"
+                : "border-edge text-muted hover:text-bone"
+            }`}
+          >
+            {convo ? "● hands-free" : "hands-free"}
+          </button>
           <button
             type="button"
             onClick={() => {
