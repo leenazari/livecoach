@@ -80,6 +80,65 @@ export async function PATCH(
   }
 }
 
+// POST /api/crm/upcoming/:id/cancel -> the call is OFF (cancelled, or it happened
+// separately). Note the reason in the brain's memory so it is remembered, then
+// remove the scheduled call - which drops it off the upcoming list AND its
+// derived prep to-do at once. The calendar sync won't re-add it because the
+// event is no longer on the calendar.
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const reason =
+      body && typeof body.reason === "string" ? body.reason.trim() : "";
+    const { data: call } = await supabaseAdmin
+      .from("upcoming_calls")
+      .select("title, scheduled_at")
+      .eq("id", params.id)
+      .maybeSingle();
+    // Record the reason in the brain's learned memory so it sticks.
+    try {
+      const { data: prof } = await supabaseAdmin
+        .from("workspace_profile")
+        .select("learned")
+        .eq("id", "main")
+        .maybeSingle();
+      const prev =
+        prof && typeof prof.learned === "string" ? prof.learned.trim() : "";
+      const when = call?.scheduled_at
+        ? new Date(call.scheduled_at).toLocaleDateString("en-GB", {
+            day: "2-digit",
+            month: "short",
+          })
+        : "";
+      const note = `Call "${call?.title || "(untitled)"}"${
+        when ? ` (${when})` : ""
+      } is not happening${reason ? `. Reason: ${reason}` : " (cancelled)"}.`;
+      let next = prev ? `${prev}\n- ${note}` : `- ${note}`;
+      if (next.length > 8000) next = next.slice(-8000);
+      await supabaseAdmin
+        .from("workspace_profile")
+        .update({ learned: next })
+        .eq("id", "main");
+    } catch {
+      /* noting the reason is best-effort */
+    }
+    const { error } = await supabaseAdmin
+      .from("upcoming_calls")
+      .delete()
+      .eq("id", params.id);
+    if (error) throw error;
+    return NextResponse.json({ ok: true });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err?.message || "failed to cancel the call" },
+      { status: 500 }
+    );
+  }
+}
+
 // DELETE /api/crm/upcoming/:id -> remove a scheduled call.
 export async function DELETE(
   _req: NextRequest,

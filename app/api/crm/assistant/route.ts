@@ -108,6 +108,20 @@ async function resolveActions(items: any[]): Promise<any[]> {
           method: "PATCH",
           body: { companyId: company.id },
         });
+    } else if (it.type === "cancel_call") {
+      const call = await findCall(String(it.call || ""));
+      const reason = typeof it.reason === "string" ? it.reason.trim() : "";
+      if (call)
+        out.push({
+          key,
+          type: it.type,
+          label: `Remove the "${call.title}" call${
+            reason ? ` and note it cancelled: ${reason}` : " (off the calendar)"
+          }`,
+          endpoint: `/api/crm/upcoming/${call.id}/cancel`,
+          method: "POST",
+          body: { reason },
+        });
     } else if (it.type === "dismiss") {
       if (it.kind === "draft") {
         const d = await findDraft(String(it.item || ""));
@@ -241,10 +255,11 @@ Use "email" for anything to write or send, "call" to prep or schedule a call, "t
 
 CALENDAR: the user's upcoming calls, synced from their calendar, are in the context below in the calls list, each with its join link when there is one. Answer "what's on my calendar" / "what's next" from that, and give the join link when asked. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
 
-ACTIONS YOU CAN TAKE (always with the user's confirmation - never claim you already did them): when the user explicitly asks you to attach or change a meeting link on a call, set or clear a call's intent, link a call to a client, or dismiss a draft or a to-do, propose it. In ADDITION to a short prose reply, put ONLY a JSON array between these exact markers:
+ACTIONS YOU CAN TAKE (always with the user's confirmation - never claim you already did them): when the user explicitly asks you to attach or change a meeting link on a call, set or clear a call's intent, link a call to a client, cancel/remove a call that is no longer happening (it was cancelled or already happened separately) and note why, or dismiss a draft or a to-do, propose it. In ADDITION to a short prose reply, put ONLY a JSON array between these exact markers:
 ---ACTIONS---
-[{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"}]
+[{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"}]
 ---END ACTIONS---
+When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too.
 Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Only include the actions the user actually asked for. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done. Keep these markers out of your prose and still reply naturally.
 
 TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the book of business well and respects your time.`,
