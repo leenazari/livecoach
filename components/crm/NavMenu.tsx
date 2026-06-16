@@ -50,6 +50,13 @@ function NavMenuInner() {
     document.body.style.paddingLeft = minimised ? "" : SIDEBAR_W;
   }, [minimised]);
 
+  // Open the brain chat from the menu. On phones the open sidebar would sit on
+  // top of the chat, so collapse it as we open.
+  const openBrain = () => {
+    window.dispatchEvent(new CustomEvent("lc:open-brain"));
+    if (typeof window !== "undefined" && window.innerWidth < 640) setMinimised(true);
+  };
+
   const isActive = (it: Item) => {
     if (it.href === "/crm") return pathname === "/crm";
     if (it.href === "/call") return pathname.startsWith("/call");
@@ -89,6 +96,15 @@ function NavMenuInner() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 px-3">
+        {/* Open the brain chat panel from anywhere in the CRM. */}
+        <button
+          type="button"
+          onClick={openBrain}
+          className="mb-1 flex items-center gap-3 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-amber transition hover:bg-amber/20"
+        >
+          <span className="w-4 text-center">▤</span>
+          Talk to brain
+        </button>
         {/* Go back one step in history - but NOT on the dashboard, which is the
             CRM home, there's nowhere to go back to from there. */}
         {pathname !== "/crm" && (

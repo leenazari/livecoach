@@ -56,29 +56,37 @@ export default function GlobalAssistant({
     return () => window.removeEventListener("lc:draft-email", h);
   }, []);
 
+  // Open the brain from anywhere (e.g. the "Talk to brain" item in the side
+  // menu) - just show the panel.
+  useEffect(() => {
+    const openIt = () => setOpen(true);
+    window.addEventListener("lc:open-brain", openIt);
+    return () => window.removeEventListener("lc:open-brain", openIt);
+  }, []);
+
   if (!open) {
     return (
       <button
         type="button"
         onClick={() => setOpen(true)}
-        title="Ask your assistant"
-        className="fixed left-1/2 top-3 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-amber/70 bg-amber px-5 py-2.5 font-mono text-[0.66rem] font-medium uppercase tracking-wider text-ink shadow-[0_8px_26px_rgba(232,163,61,0.4)] transition hover:brightness-110"
+        title="Ask the brain"
+        className="fixed bottom-4 right-4 z-[60] flex items-center gap-2 rounded-full border border-amber/70 bg-amber px-5 py-3 font-mono text-[0.66rem] font-medium uppercase tracking-wider text-ink shadow-[0_8px_26px_rgba(232,163,61,0.4)] transition hover:brightness-110"
       >
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ink/60" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-ink" />
         </span>
-        {"▤"} Ask the assistant
+        {"▤"} Ask the brain
       </button>
     );
   }
 
   return (
-    <div className="fixed inset-x-0 top-0 z-50 flex justify-center px-3">
-      <div className="mt-3 flex max-h-[86vh] w-[min(624px,96vw)] flex-col overflow-hidden rounded-2xl border border-amber/40 bg-panel shadow-2xl">
+    <div className="fixed inset-0 z-[60] flex justify-center px-0 sm:items-start sm:px-3">
+      <div className="flex h-[100dvh] w-full flex-col overflow-hidden border border-amber/40 bg-panel shadow-2xl sm:mt-3 sm:h-auto sm:max-h-[86vh] sm:w-[min(624px,96vw)] sm:rounded-2xl">
         <div className="flex items-center justify-between gap-2 border-b border-edge bg-ink/50 px-4 py-2.5">
           <span className="font-mono text-[0.62rem] uppercase tracking-[0.16em] text-amber">
-            {"▤"} Assistant{active ? ` · ${active.name}` : ""}
+            {"▤"} The brain{active ? ` · ${active.name}` : ""}
           </span>
           <button
             type="button"
