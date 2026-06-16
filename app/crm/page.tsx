@@ -7,6 +7,8 @@ import NavMenu from "@/components/crm/NavMenu";
 import UpcomingCalls from "@/components/crm/UpcomingCalls";
 import TaskList from "@/components/crm/TaskList";
 import Commitments from "@/components/crm/Commitments";
+import MorningCheckin from "@/components/crm/MorningCheckin";
+import RecentCalls from "@/components/crm/RecentCalls";
 
 type Dash = {
   kpis: {
@@ -133,6 +135,10 @@ export default function DashboardPage() {
         </div>
       </header>
 
+      {/* The brain interviews you with a few questions each morning - answer by
+          voice and it learns. Self-hides when there's nothing to ask. */}
+      <MorningCheckin />
+
       {dash?.dayRead && (
         <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
           <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.2em] text-sky">
@@ -217,6 +223,10 @@ export default function DashboardPage() {
             their own the next day. Click the text to start the action. */}
         <TaskList showCompany emptyText="Nothing on your plate. Nice." />
       </div>
+
+      {/* RECENT CALLS - so a call is never lost. Unassigned ones get a one-click
+          picker to put them under the right client whenever you get to it. */}
+      <RecentCalls />
 
       {/* UPCOMING CALLS - schedule, prep in advance, start preloaded.
           (Google Calendar sync is the next phase.) */}

@@ -406,7 +406,7 @@ export async function findCompaniesNamedIn(
   if (m.trim().length < 2) return [];
   const { data } = await supabaseAdmin
     .from("companies")
-    .select("id, name")
+    .select("id, name, profile")
     .limit(500);
   const out: { id: string; name: string }[] = [];
   for (const c of (data || []) as any[]) {
@@ -418,6 +418,20 @@ export async function findCompaniesNamedIn(
         .filter((t) => t.length >= 4 && !NAME_STOP.has(t));
       for (const t of toks) {
         if (m.includes(` ${t} `)) {
+          matched = true;
+          break;
+        }
+      }
+    }
+    // Learned aliases (e.g. "elaine" -> Alain). A saved mispronunciation resolves
+    // to the right client with no prompt.
+    if (!matched) {
+      const aliases = Array.isArray((c.profile || {}).aliases)
+        ? (c.profile as any).aliases
+        : [];
+      for (const a of aliases) {
+        const na = norm(String(a || ""));
+        if (na.length >= 2 && m.includes(` ${na} `)) {
           matched = true;
           break;
         }

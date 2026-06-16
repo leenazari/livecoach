@@ -562,6 +562,20 @@ export default function PostCallSummary({
         </div>
 
         <div className="space-y-6 px-6 py-6">
+          {/* On-the-spot low-capture warning. A real call produces thousands of
+              characters, so under ~400 means the mic/transcription was almost
+              certainly not picking up. Tell the user NOW, while they can still
+              add what was said to the debrief, not days later. */}
+          {(transcript || "").trim().length < 400 && (
+            <div className="rounded-xl border border-rust/50 bg-rust/10 px-5 py-4 font-sans text-[0.9rem] leading-relaxed text-rust">
+              {"⚠"} Heads up, this call captured only about{" "}
+              {Math.max(0, Math.round((transcript || "").trim().length / 6))}{" "}
+              words. The mic or transcription probably was not picking up, so the
+              conversation may not have been recorded. If you spoke for longer
+              than that, jot the key points into the debrief below so they are
+              saved against the client before you close.
+            </div>
+          )}
           <div className="rounded-xl border border-amber/40 bg-amber/[0.07] px-5 py-4">
             <p className="font-mono text-[0.6rem] uppercase tracking-[0.25em] text-amber/70">
               recommendation
