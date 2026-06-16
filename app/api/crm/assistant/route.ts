@@ -90,10 +90,13 @@ function callExec(call: any, type: string, x: any) {
   if (type === "set_intent")
     return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { intent: x.intent } };
   if (type === "add_intent") {
-    // Append to the call's existing focus rather than overwriting it, so a prep
-    // note lands in the intent window without wiping what's already there.
+    // Append to the call's existing focus rather than overwriting it. If the
+    // note is already there (the user is just re-confirming, or it was added
+    // before) leave it untouched, so confirming can never duplicate the text.
     const cur = typeof call.intent === "string" ? call.intent.trim() : "";
-    const next = cur ? `${cur} ${x.note}` : x.note;
+    const note = String(x.note || "").trim();
+    const already = !!note && cur.toLowerCase().includes(note.toLowerCase());
+    const next = already ? cur : cur ? `${cur} ${note}` : note;
     return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { intent: next } };
   }
   if (type === "link_call")
@@ -426,6 +429,8 @@ FIX WRONG RECORDS: when the user corrects a fact about a client (for example the
 PREP NOTES GO INTO THE CALL: when the user says to add something to the plan or focus for a named upcoming call (for example "add to the focus for the Alain call that I should bring up Darren"), use add_intent so it lands in that call's intent window and is in front of them at prep time. Do NOT just make a loose to-do for this, since that is easy to miss.
 
 EXPLICIT ASK = ACT NOW: when the user explicitly asks for one of these (create a profile, add to a plan, remember something, change or cancel a call, dismiss something), propose the action straight away in the SAME reply. Do not ask "want me to?" a second time when they have already told you to do it, and never claim it is already done. Emitting the action IS how you carry out their request. Only the destructive ones (cancel a call, dismiss a draft or to-do) and anything you are unsure about need a careful confirm. If you are not sure which call, client, draft or to-do they mean, ask them to clarify in your prose rather than guessing (the system also offers a pick-list when more than one record matches). Only include the actions the user actually asked for. Keep these markers out of your prose and still reply naturally.
+
+STATUS QUESTIONS ARE NOT ACTIONS: when the user is only asking what you have, what is already planned, or to confirm something is done (for example "have you got everything for Alain", "what's on the plan for that call", "did you add that"), answer in prose from the context and emit NO action. Never re-propose an action you already proposed earlier in the thread, or one whose change is already present in the context, because that makes the user re-confirm something already done, which is confusing. Only emit an action when the user is asking you to make a NEW change right now.
 
 TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the book of business well and respects your time.
 
