@@ -24,6 +24,28 @@ function splitDrafts(content: string): { type: "text" | "draft"; text: string }[
   return parts;
 }
 
+// Break text into speakable chunks (~280 chars, at sentence boundaries) so the
+// first chunk can be generated and played fast while the rest render behind it.
+function splitForSpeech(text: string): string[] {
+  const clean = (text || "").replace(/\s+/g, " ").trim();
+  if (!clean) return [];
+  const sentences = clean.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) || [clean];
+  const chunks: string[] = [];
+  let buf = "";
+  for (const s of sentences) {
+    const piece = s.trim();
+    if (!piece) continue;
+    if (buf && (buf + " " + piece).length > 280) {
+      chunks.push(buf);
+      buf = piece;
+    } else {
+      buf = buf ? `${buf} ${piece}` : piece;
+    }
+  }
+  if (buf) chunks.push(buf);
+  return chunks;
+}
+
 // Per-client AI assistant: a chat grounded in everything we know about the
 // client. Talk to it (tap the mic to start, tap again to stop - browser speech)
 // or type, and it can read its answers aloud. Always explains its reasoning.
@@ -64,6 +86,7 @@ export default function ClientAssistant({
   const recRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null); // ElevenLabs playback
   const ttsAbortRef = useRef<AbortController | null>(null); // in-flight tts fetch
+  const speakSeqRef = useRef(0); // bumps each speak()/stop to cancel old playback
   const threadRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef(""); // latest input, for sending after the mic stops
   const sendOnStopRef = useRef(false);
@@ -118,6 +141,7 @@ export default function ClientAssistant({
   // and cancel the browser fallback voice. Called when read-aloud is turned off
   // (the "don't play sound" tap) and on unmount - it cuts off mid-sentence.
   const stopSpeaking = () => {
+    speakSeqRef.current += 1; // invalidate any chunk loop in flight
     try {
       ttsAbortRef.current?.abort();
       ttsAbortRef.current = null;
@@ -141,50 +165,90 @@ export default function ClientAssistant({
     }
   };
 
-  // Speak a reply with the ElevenLabs voice, falling back to the browser voice
-  // if TTS isn't configured or the request fails. Always cancels anything
-  // already playing first so taps never overlap.
+  // Speak a reply with the ElevenLabs voice, in CHUNKS so the first sentence
+  // starts almost immediately while the rest render behind it. Prefetches the
+  // next chunk while the current one plays. Falls back to the browser voice if
+  // TTS isn't configured or fails. stopSpeaking() (or a new speak) cancels it.
   const speak = async (text: string, onEnd?: () => void) => {
     if (typeof window === "undefined") return onEnd?.();
     stopSpeaking();
-    const fallback = () => {
+    const seq = ++speakSeqRef.current;
+    const chunks = splitForSpeech(text);
+    if (!chunks.length) return onEnd?.();
+
+    const browserFallback = (t: string) => {
       try {
         const synth = (window as any).speechSynthesis;
         if (!synth) return onEnd?.();
         synth.cancel();
-        const u = new (window as any).SpeechSynthesisUtterance(text);
+        const u = new (window as any).SpeechSynthesisUtterance(t);
         u.rate = 1.03;
-        u.onend = () => onEnd?.();
+        u.onend = () => {
+          if (seq === speakSeqRef.current) onEnd?.();
+        };
         synth.speak(u);
       } catch {
         onEnd?.();
       }
     };
+
+    // Fetch one chunk's audio. Returns the Audio + its object URL, or null.
+    const genChunk = async (
+      chunk: string
+    ): Promise<{ audio: HTMLAudioElement; url: string } | null> => {
+      try {
+        const ctrl = new AbortController();
+        ttsAbortRef.current = ctrl;
+        const res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: chunk }),
+          signal: ctrl.signal,
+        });
+        if (!res.ok) return null;
+        const blob = await res.blob();
+        if (seq !== speakSeqRef.current) return null; // cancelled while fetching
+        const url = URL.createObjectURL(blob);
+        return { audio: new Audio(url), url };
+      } catch {
+        return null;
+      }
+    };
+
     try {
-      const ctrl = new AbortController();
-      ttsAbortRef.current = ctrl;
-      const res = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok) throw new Error("tts unavailable");
-      const blob = await res.blob();
-      if (ctrl.signal.aborted) return; // muted/stopped while fetching - no re-listen
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        if (audioRef.current === audio) audioRef.current = null;
-        onEnd?.();
-      };
-      audio.onerror = () => onEnd?.();
-      await audio.play();
-    } catch (e: any) {
-      if (e?.name === "AbortError") return; // deliberate stop, stay silent
-      fallback();
+      let nextP = genChunk(chunks[0]); // start the first one now
+      for (let i = 0; i < chunks.length; i++) {
+        if (seq !== speakSeqRef.current) return; // stopped
+        const cur = await nextP;
+        // Kick off the next chunk's render while this one plays.
+        nextP =
+          i + 1 < chunks.length
+            ? genChunk(chunks[i + 1])
+            : Promise.resolve(null);
+        if (seq !== speakSeqRef.current) return;
+        if (!cur) {
+          // ElevenLabs failed for this chunk - read the rest with the browser
+          // voice rather than going silent.
+          browserFallback(chunks.slice(i).join(" "));
+          return;
+        }
+        audioRef.current = cur.audio;
+        await new Promise<void>((resolve) => {
+          cur.audio.onended = () => {
+            URL.revokeObjectURL(cur.url);
+            resolve();
+          };
+          cur.audio.onerror = () => {
+            URL.revokeObjectURL(cur.url);
+            resolve();
+          };
+          cur.audio.play().catch(() => resolve());
+        });
+        if (seq !== speakSeqRef.current) return; // stopped during playback
+      }
+      onEnd?.();
+    } catch {
+      onEnd?.();
     }
   };
 
