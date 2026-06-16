@@ -3395,6 +3395,7 @@ export default function CallPage() {
       {summary && (
         <PostCallSummary
           summary={summary}
+          sessionId={room}
           candidate={candidate}
           transcript={summaryTranscript}
           companyId={linkedCompany?.id}

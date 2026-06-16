@@ -136,6 +136,7 @@ type FeedbackCue = { text: string; why: string; kind: string };
 
 export default function PostCallSummary({
   summary,
+  sessionId,
   candidate,
   transcript,
   companyId,
@@ -145,6 +146,7 @@ export default function PostCallSummary({
   onClose,
 }: {
   summary: Summary;
+  sessionId?: string;
   candidate?: string;
   transcript?: string;
   companyId?: string;
@@ -153,6 +155,9 @@ export default function PostCallSummary({
   onSaveFeedback?: (notes: string) => Promise<void> | void;
   onClose?: () => void;
 }) {
+  // The displayed summary is local so the host's notes can refine it in place.
+  const [view, setView] = useState<Summary>(summary);
+  const [refining, setRefining] = useState(false);
   const [debriefNotes, setDebriefNotes] = useState("");
   const [savedFeedback, setSavedFeedback] = useState(false);
   // Voice debrief: dictate feedback instead of typing it.
@@ -203,8 +208,10 @@ export default function PostCallSummary({
   // against this client, so spoken feedback becomes next steps automatically.
   const saveDebrief = async () => {
     if (onSaveFeedback) await onSaveFeedback(debriefNotes);
-    setSavedFeedback(true);
-    if (companyId && debriefNotes.trim()) {
+    const hasNotes = debriefNotes.trim().length > 0;
+    setRefining(hasNotes);
+    // 1) Turn the next steps mentioned into to-dos against this client.
+    if (companyId && hasNotes) {
       try {
         const { created } = await crmFetch<{ created: { id: string }[] }>(
           "/api/crm/extract-tasks",
@@ -225,10 +232,35 @@ export default function PostCallSummary({
         setTodoCount(null);
       }
     }
+    // 2) Fold the notes INTO the summary itself - the host was in the room, so
+    // their notes are authoritative. Updates the cards above and the saved
+    // record.
+    if (hasNotes) {
+      try {
+        const r = await crmFetch<{ summary: Summary }>(
+          "/api/interview/refine-summary",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              sessionId,
+              summary: view,
+              notes: debriefNotes,
+              transcript: transcript || "",
+              candidate: candidate || null,
+            }),
+          }
+        );
+        if (r?.summary) setView(r.summary);
+      } catch {
+        /* keep the existing summary if the refine fails */
+      }
+    }
+    setRefining(false);
+    setSavedFeedback(true);
   };
   const callTypeLabel =
-    summary.callType && summary.callType !== "general"
-      ? `${summary.callType} call`
+    view.callType && view.callType !== "general"
+      ? `${view.callType} call`
       : "call";
 
   const downloadPdf = async () => {
@@ -346,7 +378,7 @@ export default function PostCallSummary({
     doc.setFont("helvetica", "normal");
     doc.setFontSize(13);
     doc.setTextColor(236, 231, 218);
-    doc.splitTextToSize(summary.title || "Call summary", W).slice(0, 1).forEach((ln: string) => {
+    doc.splitTextToSize(view.title || "Call summary", W).slice(0, 1).forEach((ln: string) => {
       doc.text(ln, M, 68);
     });
     doc.setFontSize(9);
@@ -373,20 +405,20 @@ export default function PostCallSummary({
     doc.text("RECOMMENDATION", M + 14, y + 17);
     doc.setFontSize(15);
     doc.setTextColor(...INK);
-    doc.text(summary.recommendation || "-", M + 14, y + 36);
+    doc.text(view.recommendation || "-", M + 14, y + 36);
     y += 66;
 
     // ---- how it went ----
-    if (summary.overview || summary.headline) {
+    if (view.overview || view.headline) {
       section("How it went");
-      para(summary.overview || summary.headline);
+      para(view.overview || view.headline);
       y += 4;
     }
 
     // ---- scoring with bars ----
-    if (summary.competencies && summary.competencies.length > 0) {
+    if (view.competencies && view.competencies.length > 0) {
       section("Scoring");
-      summary.competencies.forEach((c) => {
+      view.competencies.forEach((c) => {
         const s = clamp(c.score);
         const p = pct(c.score);
         ensure(26);
@@ -417,9 +449,9 @@ export default function PostCallSummary({
     }
 
     // ---- action blocks ----
-    actionBlock("Your next actions", summary.myNextActions, AMBER);
-    actionBlock("Their next actions", summary.theirNextActions, SKY);
-    actionBlock("Suggested next actions", summary.suggestedNextActions, SAGE);
+    actionBlock("Your next actions", view.myNextActions, AMBER);
+    actionBlock("Their next actions", view.theirNextActions, SKY);
+    actionBlock("Suggested next actions", view.suggestedNextActions, SAGE);
 
     // ---- strengths / concerns ----
     const list = (
@@ -433,12 +465,12 @@ export default function PostCallSummary({
         y += 2;
       }
     };
-    list("Strengths", summary.strengths, SAGE);
-    list("Concerns", summary.concerns, RUST);
+    list("Strengths", view.strengths, SAGE);
+    list("Concerns", view.concerns, RUST);
 
-    if (summary.contributors && summary.contributors.length > 0) {
+    if (view.contributors && view.contributors.length > 0) {
       section("Contributors");
-      summary.contributors.forEach((c) => {
+      view.contributors.forEach((c) => {
         bullet(
           `${c.name}  (${(c.impact || "neutral").toLowerCase()})${
             c.note ? `  -  ${c.note}` : ""
@@ -449,20 +481,20 @@ export default function PostCallSummary({
       y += 2;
     }
 
-    if (summary.questionReview && summary.questionReview.length > 0) {
+    if (view.questionReview && view.questionReview.length > 0) {
       section("Key questions");
-      summary.questionReview.forEach((q) => {
+      view.questionReview.forEach((q) => {
         const tag = (q.answered || "").toUpperCase();
         bullet(`[${tag}] ${q.question}${q.note ? `  -  ${q.note}` : ""}`, MUTE);
       });
       y += 2;
     }
 
-    list("Not yet covered", summary.notCovered, MUTE);
+    list("Not yet covered", view.notCovered, MUTE);
 
-    if (summary.styleProfile) {
+    if (view.styleProfile) {
       section("Your style profile");
-      para(summary.styleProfile, 10, MUTE);
+      para(view.styleProfile, 10, MUTE);
     }
 
     if (transcript && transcript.trim()) {
@@ -474,7 +506,7 @@ export default function PostCallSummary({
 
     footer();
 
-    const safe = (summary.title || candidate || callTypeLabel)
+    const safe = (view.title || candidate || callTypeLabel)
       .replace(/[^a-z0-9]+/gi, "_")
       .toLowerCase()
       .slice(0, 50);
@@ -487,7 +519,7 @@ export default function PostCallSummary({
         <div className="flex items-center justify-between border-b border-edge px-6 py-4">
           <div>
             <h2 className="font-display text-2xl text-bone">
-              {summary.title || "Call summary"}
+              {view.title || "Call summary"}
             </h2>
             <p className="mt-0.5 font-mono text-xs uppercase tracking-[0.2em] text-muted">
               {callTypeLabel}
@@ -516,22 +548,22 @@ export default function PostCallSummary({
               recommendation
             </p>
             <p className="mt-1 font-display text-xl text-bone">
-              {summary.recommendation}
+              {view.recommendation}
             </p>
-            {(summary.overview || summary.headline) && (
+            {(view.overview || view.headline) && (
               <p className="mt-2 font-sans text-sm leading-relaxed text-bone/80">
-                {summary.overview || summary.headline}
+                {view.overview || view.headline}
               </p>
             )}
           </div>
 
-          {summary.competencies && summary.competencies.length > 0 && (
+          {view.competencies && view.competencies.length > 0 && (
             <div>
               <h3 className="mb-3 font-mono text-[0.7rem] uppercase tracking-[0.25em] text-muted">
                 Scoring
               </h3>
               <div className="space-y-2.5">
-                {summary.competencies.map((c, i) => (
+                {view.competencies.map((c, i) => (
                   <div key={i} className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <p className="font-sans text-sm text-bone">{c.name}</p>
@@ -548,35 +580,35 @@ export default function PostCallSummary({
             </div>
           )}
 
-          {(summary.myNextActions?.length ||
-            summary.theirNextActions?.length ||
-            summary.suggestedNextActions?.length) && (
+          {(view.myNextActions?.length ||
+            view.theirNextActions?.length ||
+            view.suggestedNextActions?.length) && (
             <div className="space-y-3">
               <ActionSection
                 title="Your next actions"
-                items={summary.myNextActions}
+                items={view.myNextActions}
                 accent="amber"
               />
               <ActionSection
                 title="Their next actions"
-                items={summary.theirNextActions}
+                items={view.theirNextActions}
                 accent="sky"
               />
               <ActionSection
                 title="Suggested next actions"
-                items={summary.suggestedNextActions}
+                items={view.suggestedNextActions}
                 accent="sage"
               />
             </div>
           )}
 
-          {summary.contributors && summary.contributors.length > 0 && (
+          {view.contributors && view.contributors.length > 0 && (
             <div>
               <h3 className="mb-3 font-mono text-[0.7rem] uppercase tracking-[0.25em] text-muted">
                 Contributors
               </h3>
               <div className="space-y-2">
-                {summary.contributors.map((c, i) => {
+                {view.contributors.map((c, i) => {
                   const tone = impactTone(c.impact);
                   return (
                     <div
@@ -610,13 +642,13 @@ export default function PostCallSummary({
             </div>
           )}
 
-          {summary.questionReview && summary.questionReview.length > 0 && (
+          {view.questionReview && view.questionReview.length > 0 && (
             <div>
               <h3 className="mb-3 font-mono text-[0.7rem] uppercase tracking-[0.25em] text-muted">
                 Key questions
               </h3>
               <div className="space-y-2">
-                {summary.questionReview.map((q, i) => {
+                {view.questionReview.map((q, i) => {
                   const a = (q.answered || "").toLowerCase();
                   const tone =
                     a === "yes"
@@ -654,11 +686,11 @@ export default function PostCallSummary({
             </div>
           )}
 
-          <SummaryList title="Strengths" items={summary.strengths} tone="sage" />
-          <SummaryList title="Concerns" items={summary.concerns} tone="rust" />
+          <SummaryList title="Strengths" items={view.strengths} tone="sage" />
+          <SummaryList title="Concerns" items={view.concerns} tone="rust" />
           <SummaryList
             title="Not yet covered"
-            items={summary.notCovered}
+            items={view.notCovered}
             tone="muted"
           />
 
@@ -716,20 +748,25 @@ export default function PostCallSummary({
                   className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
                 />
               </div>
-              {companyId && (
-                <p className="mt-1.5 font-mono text-[0.56rem] leading-relaxed text-muted">
-                  When you save, I'll turn the next steps you mention into to-dos
-                  with the right action attached.
-                </p>
-              )}
+              <p className="mt-1.5 font-mono text-[0.56rem] leading-relaxed text-muted">
+                When you save, your notes fold into the summary above - your read
+                wins, you were in the room
+                {companyId
+                  ? " - and the next steps you mention become to-dos."
+                  : "."}
+              </p>
               {onSaveFeedback && (
                 <div className="mt-2 flex items-center gap-3">
                   <button
                     onClick={saveDebrief}
-                    disabled={savedFeedback}
+                    disabled={savedFeedback || refining}
                     className="rounded-full border border-amber/50 bg-amber/10 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-50"
                   >
-                    {savedFeedback ? "saved \u2713" : "save feedback"}
+                    {refining
+                      ? "updating summary\u2026"
+                      : savedFeedback
+                      ? "saved \u2713"
+                      : "save & update summary"}
                   </button>
                   {todoCount !== null && (
                     <span className="font-mono text-[0.6rem] uppercase tracking-wider text-sage">
@@ -743,16 +780,28 @@ export default function PostCallSummary({
             </div>
           )}
 
-          {summary.styleProfile && (
+          {view.styleProfile && (
             <div className="rounded-xl border border-edge bg-ink/40 px-5 py-4">
               <p className="mb-1 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-muted">
                 your style profile (for future cue matching)
               </p>
               <p className="font-sans text-sm text-bone/80">
-                {summary.styleProfile}
+                {view.styleProfile}
               </p>
             </div>
           )}
+
+          {/* Bottom close, so you can shut the summary after a long read without
+              scrolling back to the top. */}
+          <div className="flex justify-center pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full border border-edge px-6 py-2.5 font-mono text-[0.66rem] uppercase tracking-wider text-muted transition hover:border-rust hover:text-rust"
+            >
+              close summary
+            </button>
+          </div>
         </div>
       </div>
     </div>
