@@ -167,6 +167,25 @@ export default function CallDetailPage() {
                 )}
               </div>
             )}
+            {/* Low-capture warning: a real call produces thousands of characters.
+                Under ~400 means the mic or transcription almost certainly was
+                not picking up, so flag it loudly rather than quietly showing
+                nothing. */}
+            {call.transcriptChars != null && call.transcriptChars < 400 && (
+              <div className="mt-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 font-sans text-[0.82rem] leading-snug text-rust">
+                {"⚠"} Low capture. This call only recorded about{" "}
+                {Math.max(1, Math.round(call.transcriptChars / 6))} words, so the
+                mic or transcription probably was not picking up the
+                conversation, and what was said may not have been saved. If you
+                have notes from the call, add them to the client so nothing is
+                lost.
+              </div>
+            )}
+            {call.transcriptChars == null && (
+              <div className="mt-3 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 font-sans text-[0.82rem] leading-snug text-amber">
+                No transcript was saved for this call, only the AI summary below.
+              </div>
+            )}
             {s.recommendation && (
               <span className="mt-3 inline-block rounded-full border border-amber/40 bg-amber/10 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-amber">
                 {s.recommendation}
