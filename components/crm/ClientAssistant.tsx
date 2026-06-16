@@ -57,6 +57,8 @@ export default function ClientAssistant({
   const [readAloud, setReadAloud] = useState(false);
   const [savedDrafts, setSavedDrafts] = useState<Record<string, boolean>>({});
   const recRef = useRef<any>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null); // ElevenLabs playback
+  const ttsAbortRef = useRef<AbortController | null>(null); // in-flight tts fetch
   const threadRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef(""); // latest input, for sending after the mic stops
   const sendOnStopRef = useRef(false);
@@ -89,7 +91,26 @@ export default function ClientAssistant({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, busy]);
 
+  // Stop talking NOW: abort any in-flight TTS request, stop ElevenLabs audio,
+  // and cancel the browser fallback voice. Called when read-aloud is turned off
+  // (the "don't play sound" tap) and on unmount - it cuts off mid-sentence.
   const stopSpeaking = () => {
+    try {
+      ttsAbortRef.current?.abort();
+      ttsAbortRef.current = null;
+    } catch {
+      /* ignore */
+    }
+    try {
+      const a = audioRef.current;
+      if (a) {
+        a.pause();
+        a.src = "";
+        audioRef.current = null;
+      }
+    } catch {
+      /* ignore */
+    }
     try {
       (window as any).speechSynthesis?.cancel();
     } catch {
@@ -97,18 +118,47 @@ export default function ClientAssistant({
     }
   };
 
-  // Speaks regardless of the toggle (the toggle only governs auto-play after a
-  // reply). Always cancels anything already playing first.
-  const speak = (text: string) => {
-    if (typeof window === "undefined" || !(window as any).speechSynthesis) return;
+  // Speak a reply with the ElevenLabs voice, falling back to the browser voice
+  // if TTS isn't configured or the request fails. Always cancels anything
+  // already playing first so taps never overlap.
+  const speak = async (text: string) => {
+    if (typeof window === "undefined") return;
+    stopSpeaking();
+    const fallback = () => {
+      try {
+        const synth = (window as any).speechSynthesis;
+        if (!synth) return;
+        synth.cancel();
+        const u = new (window as any).SpeechSynthesisUtterance(text);
+        u.rate = 1.03;
+        synth.speak(u);
+      } catch {
+        /* ignore */
+      }
+    };
     try {
-      const synth = (window as any).speechSynthesis;
-      synth.cancel();
-      const u = new (window as any).SpeechSynthesisUtterance(text);
-      u.rate = 1.03;
-      synth.speak(u);
-    } catch {
-      /* ignore */
+      const ctrl = new AbortController();
+      ttsAbortRef.current = ctrl;
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error("tts unavailable");
+      const blob = await res.blob();
+      if (ctrl.signal.aborted) return; // muted while fetching
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        if (audioRef.current === audio) audioRef.current = null;
+      };
+      await audio.play();
+    } catch (e: any) {
+      if (e?.name === "AbortError") return; // deliberate stop, stay silent
+      fallback();
     }
   };
 

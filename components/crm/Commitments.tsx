@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { crmFetch, getCached } from "@/lib/crm";
+import VoiceNoteButton from "@/components/VoiceNoteButton";
 
 type Payload = {
   actionType?: string; // "email" | "task"
@@ -254,6 +255,15 @@ export default function Commitments({
                   )}
 
                   <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <VoiceNoteButton
+                      onText={(tx) =>
+                        setDraft((d) =>
+                          isEmail
+                            ? { ...d, body: d.body ? `${d.body} ${tx}` : tx }
+                            : { ...d, notes: d.notes ? `${d.notes} ${tx}` : tx }
+                        )
+                      }
+                    />
                     <button
                       type="button"
                       onClick={() => saveDraft(t)}

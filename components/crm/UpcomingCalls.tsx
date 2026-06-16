@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { crmFetch, getCached } from "@/lib/crm";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
+import VoiceNoteButton from "@/components/VoiceNoteButton";
 
 type Upcoming = {
   id: string;
@@ -201,6 +202,18 @@ export default function UpcomingCalls() {
               placeholder="Meet / Teams / Zoom link (optional)"
               className={inputCls}
             />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[0.54rem] uppercase tracking-wider text-muted">
+              intent
+            </span>
+            <span className="ml-auto">
+              <VoiceNoteButton
+                onText={(t) =>
+                  setIntent((p) => (p.trim() ? `${p.trim()} ${t}` : t))
+                }
+              />
+            </span>
           </div>
           <textarea
             value={intent}
