@@ -281,6 +281,11 @@ export default function ClientAssistant({
   const send = async (text?: string) => {
     const t = (text ?? inputRef.current ?? input).trim();
     if (!t || busy) return;
+    // Silence any read-aloud still playing from the PREVIOUS reply the instant a
+    // new turn starts. Without this the old answer keeps playing (or re-fires on
+    // mobile) until the new reply's audio begins, so you hear the last answer
+    // again before the new one. Stop it now.
+    stopSpeaking();
     // If the mic is still running when they hit Ask, stop it and don't let a
     // late transcript re-populate the box. Then clear the field.
     if (listening || recRef.current) killMic();
