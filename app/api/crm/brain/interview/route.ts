@@ -1,22 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import {
+  anthropic,
+  CLAUDE_MODEL_THINK,
+} from "@/lib/anthropic";
 import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
 import { logModelUsage } from "@/lib/usage";
+import {
+  coachSystemBlock,
+  CURRICULUM,
+  normaliseCoverage,
+  pickTopics,
+  topicForText,
+  type Coverage,
+} from "@/lib/brain-coach";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 40;
 // Keep this a dynamic function: a no-arg GET would otherwise be statically
 // optimised and the POST would 405 (INVALID_REQUEST_METHOD) at the edge.
 export const dynamic = "force-dynamic";
 
-// The brain's morning interview. GET returns a handful of questions the brain
-// wants answered (its own open questions first, topped up with freshly generated
-// ones). POST folds the user's spoken answer back into the brain's learned layer
-// and clears the question, optionally spinning out any to-dos the answer implies.
+// The success coach's interview. It runs on the THINK model (the smartest one)
+// and works through a CURRICULUM, asking about the thinnest, highest-impact gap
+// it still needs to coach Lee toward the £5M / £650k goal. GET returns the
+// questions (its own backlog first, then curriculum-targeted ones). POST folds
+// the answer into the brain's learned layer, advances that topic's coverage,
+// and spins out any to-dos the answer implies.
 
-// Split the stored open_questions blob into clean individual questions.
+// Label for the cost meter: track Opus spend as opus, otherwise sonnet.
+const THINK_LABEL: "opus" | "sonnet" = CLAUDE_MODEL_THINK.toLowerCase().includes(
+  "opus"
+)
+  ? "opus"
+  : "sonnet";
+
 function parseQuestions(blob: string): string[] {
   return (blob || "")
     .split(/\n+/)
@@ -34,13 +53,13 @@ export async function GET() {
   try {
     const { data } = await supabaseAdmin
       .from("workspace_profile")
-      .select("open_questions")
+      .select("open_questions, curriculum")
       .eq("id", "main")
       .maybeSingle();
+
     let questions = parseQuestions(
       typeof data?.open_questions === "string" ? data.open_questions : ""
     );
-    // Dedupe (case-insensitive) and cap.
     const seen = new Set<string>();
     questions = questions.filter((q) => {
       const k = q.toLowerCase();
@@ -49,26 +68,31 @@ export async function GET() {
       return true;
     });
 
-    // Top up to ~6 with freshly generated questions grounded in the brain, so
-    // the morning interview is always useful even on a quiet day.
+    // Top up with curriculum-targeted questions on the THINK model, drilling the
+    // thinnest, highest-impact gaps first.
     if (questions.length < 5) {
       try {
-        const need = 6 - questions.length;
+        const coverage = normaliseCoverage(data?.curriculum);
+        const topics = pickTopics(coverage, 6 - questions.length);
         const biz = await workspaceContextBlock();
+        const topicList = topics
+          .map((t, i) => `${i + 1}. [${t.key}] ${t.title}: ${t.focus}`)
+          .join("\n");
         const msg = await anthropic.messages.create({
-          model: CLAUDE_MODEL_LIVE,
-          max_tokens: 500,
-          temperature: 0.6,
-          system: `${biz}You are the user's AI brain. Ask short questions you genuinely want answered to (a) understand the user and their business better, or (b) help them brainstorm today's priorities and next steps. Mix both kinds. Each question must be specific to THIS user and answerable in a sentence or two out loud. Avoid generic or already-obvious questions. Output ONLY a JSON array of ${need} question strings.`,
+          model: CLAUDE_MODEL_THINK,
+          max_tokens: 700,
+          temperature: 0.5,
+          system: `${biz}${coachSystemBlock()}
+
+You are running your daily interview to fill the gaps you most need to coach Lee toward the goal. For EACH topic below, write ONE short, sharp, SPECIFIC question, answerable out loud in a sentence or two, whose answer would most help you move Lee toward the £5M / £650k target. Make every question specific to Lee and the business, not generic, and not something you already know from the context. Output ONLY a JSON array of objects {"topic": the topic key, "q": the question}.`,
           messages: [
             {
               role: "user",
-              content:
-                "Give me your questions for this morning as a JSON array of strings.",
+              content: `Topics to cover (thinnest first):\n${topicList}`,
             },
           ],
         });
-        await logModelUsage("brain-interview", "haiku", (msg as any).usage);
+        await logModelUsage("brain-interview", THINK_LABEL, (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
@@ -79,9 +103,15 @@ export async function GET() {
         const gen = a >= 0 && b > a ? JSON.parse(raw.slice(a, b + 1)) : [];
         if (Array.isArray(gen)) {
           for (const g of gen) {
-            if (typeof g === "string" && g.trim() && !seen.has(g.toLowerCase())) {
-              questions.push(g.trim());
-              seen.add(g.toLowerCase());
+            const q =
+              typeof g === "string"
+                ? g
+                : g && typeof g.q === "string"
+                ? g.q
+                : "";
+            if (q.trim() && !seen.has(q.toLowerCase())) {
+              questions.push(q.trim());
+              seen.add(q.toLowerCase());
             }
           }
         }
@@ -104,26 +134,31 @@ export async function POST(req: NextRequest) {
     if (!a) return NextResponse.json({ ok: false, error: "no answer" });
 
     const biz = await workspaceContextBlock();
+    const validKeys = new Set(CURRICULUM.map((t) => t.key));
     let ack = "Got it, noted.";
     let learning = "";
     let tasks: { text: string; action?: string }[] = [];
+    let topicKey: string | null = null;
+    let coverageState: "partial" | "solid" = "partial";
     try {
       const msg = await anthropic.messages.create({
-        model: CLAUDE_MODEL_LIVE,
-        max_tokens: 500,
+        model: CLAUDE_MODEL_THINK,
+        max_tokens: 600,
         temperature: 0.3,
-        system: `${biz}You are the user's AI brain, learning from a quick spoken Q&A so you understand them better over time. Given the question you asked and the user's answer, output ONLY JSON:
+        system: `${biz}${coachSystemBlock()}
+
+You just asked Lee a question in your daily interview and he answered. Distil it. Output ONLY JSON:
 {
- "learning": one concise, durable fact worth remembering long-term about the user, their business, preferences or goals, in plain words (max 2 sentences). Empty string if the answer holds nothing durable.
- "tasks": array of {"text": short imperative to-do under 12 words, "action": "email"|"call"|"task"} for any concrete next actions the answer implies (e.g. they said they need to do X). Empty array if none.
- "ack": a short, warm one-line acknowledgement.
+ "learning": one concise, durable fact worth remembering long term about Lee, the business, the money, the customers, the plan or his goals, in plain words (max 2 sentences). Empty string if nothing durable.
+ "tasks": array of {"text": short imperative to-do under 12 words, "action": "email"|"call"|"task"} for any concrete next actions the answer implies. Empty array if none.
+ "topic": which curriculum topic this answer informs, one of: ${CURRICULUM.map((t) => t.key).join(", ")}.
+ "coverage": "solid" if the answer gives you a strong, usable understanding of that topic, otherwise "partial".
+ "ack": a short, warm one line acknowledgement.
 }
-Never invent facts beyond what the answer says. No em dashes or semicolons.`,
-        messages: [
-          { role: "user", content: `Question: ${q}\n\nAnswer: ${a}` },
-        ],
+Never invent facts beyond what the answer says.`,
+        messages: [{ role: "user", content: `Question: ${q}\n\nAnswer: ${a}` }],
       });
-      await logModelUsage("brain-interview", "haiku", (msg as any).usage);
+      await logModelUsage("brain-interview", THINK_LABEL, (msg as any).usage);
       const raw = msg.content
         .filter((b: any) => b.type === "text")
         .map((b: any) => b.text)
@@ -136,14 +171,20 @@ Never invent facts beyond what the answer says. No em dashes or semicolons.`,
       if (typeof parsed.ack === "string" && parsed.ack.trim())
         ack = parsed.ack.trim();
       if (Array.isArray(parsed.tasks)) tasks = parsed.tasks;
+      if (typeof parsed.topic === "string" && validKeys.has(parsed.topic))
+        topicKey = parsed.topic;
+      if (parsed.coverage === "solid") coverageState = "solid";
     } catch {
       /* fall back to just recording the raw answer */
     }
+    // If the model didn't tag the topic, infer it from the question text.
+    if (!topicKey) topicKey = topicForText(q || a);
 
-    // Read current brain, append the learning, and remove the answered question.
+    // Read current brain, append the learning, remove the answered question, and
+    // advance the curriculum coverage for the topic.
     const { data: prof } = await supabaseAdmin
       .from("workspace_profile")
-      .select("learned, open_questions")
+      .select("learned, open_questions, curriculum")
       .eq("id", "main")
       .maybeSingle();
     const prevLearned =
@@ -152,7 +193,6 @@ Never invent facts beyond what the answer says. No em dashes or semicolons.`,
     let nextLearned = note
       ? `${prevLearned ? prevLearned + "\n" : ""}- ${note}`
       : prevLearned;
-    // Keep the learned layer from growing without bound.
     if (nextLearned.length > 8000) nextLearned = nextLearned.slice(-8000);
 
     let nextOpen: string =
@@ -172,12 +212,23 @@ Never invent facts beyond what the answer says. No em dashes or semicolons.`,
         .join("\n");
     }
 
+    const coverage: Coverage = normaliseCoverage(prof?.curriculum);
+    if (topicKey && validKeys.has(topicKey)) {
+      // Never downgrade a topic that was already solid.
+      if (!(coverage[topicKey] === "solid" && coverageState === "partial")) {
+        coverage[topicKey] = coverageState;
+      }
+    }
+
     await supabaseAdmin
       .from("workspace_profile")
-      .update({ learned: nextLearned, open_questions: nextOpen })
+      .update({
+        learned: nextLearned,
+        open_questions: nextOpen,
+        curriculum: coverage,
+      })
       .eq("id", "main");
 
-    // Spin out any to-dos the answer implied (global, not tied to a client).
     const clean = tasks
       .filter((t) => t && typeof t.text === "string" && t.text.trim())
       .slice(0, 6)

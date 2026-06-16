@@ -15,3 +15,12 @@ export const CLAUDE_MODEL_LIVE =
 
 export const CLAUDE_MODEL_PRO =
   process.env.CLAUDE_MODEL_PRO || "claude-sonnet-4-5";
+
+// THINK track: the smartest model, for the success coach's high-leverage
+// thinking (curriculum questions, growth-idea brainstorming, deal coaching,
+// research-backed strategy). Idea quality is where the money is, so this earns
+// the cost. Defaults to the PRO model so nothing 404s out of the box — set
+// CLAUDE_MODEL_THINK to the exact Opus string from console.anthropic.com in
+// Vercel env (e.g. an Opus 4.x model) to run the coach on Opus.
+export const CLAUDE_MODEL_THINK =
+  process.env.CLAUDE_MODEL_THINK || CLAUDE_MODEL_PRO;

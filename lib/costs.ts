@@ -30,6 +30,10 @@ export const RATES = {
   sonnetInPerM: 3.0,
   sonnetOutPerM: 15.0,
 
+  // Opus 4.x (the success coach's THINK tier). Verify against invoices.
+  opusInPerM: 15.0,
+  opusOutPerM: 75.0,
+
   // Transport / real-time layer. ESTIMATES — verify against invoices.
   livekitPerHour: 1.5, // in-app two-party real-time
   recallPerHour: 0.65, // Google Meet bot incl. transcription
@@ -91,7 +95,7 @@ export function insightCostUSD(): number {
 // the model's real rates - no assumptions. This is what makes the meter
 // accurate (a plan rebuild, a big scorecard, etc. each cost what they used).
 export function usageCostUSD(
-  model: "haiku" | "sonnet",
+  model: "haiku" | "sonnet" | "opus",
   usage:
     | {
         input_tokens?: number;
@@ -103,8 +107,18 @@ export function usageCostUSD(
     | undefined
 ): number {
   if (!usage) return 0;
-  const inRate = model === "sonnet" ? RATES.sonnetInPerM : RATES.haikuInPerM;
-  const outRate = model === "sonnet" ? RATES.sonnetOutPerM : RATES.haikuOutPerM;
+  const inRate =
+    model === "opus"
+      ? RATES.opusInPerM
+      : model === "sonnet"
+      ? RATES.sonnetInPerM
+      : RATES.haikuInPerM;
+  const outRate =
+    model === "opus"
+      ? RATES.opusOutPerM
+      : model === "sonnet"
+      ? RATES.sonnetOutPerM
+      : RATES.haikuOutPerM;
   const inp = Number(usage.input_tokens) || 0;
   const out = Number(usage.output_tokens) || 0;
   const cw = Number(usage.cache_creation_input_tokens) || 0;
