@@ -58,8 +58,10 @@ export async function POST(req: NextRequest) {
         ? callType
         : "";
 
-    const biz = await workspaceContextBlock();
-    const lessons = await getLessonsBlock(["psychology", "strategy"]);
+    const [biz, lessons] = await Promise.all([
+      workspaceContextBlock(),
+      getLessonsBlock(["psychology", "strategy"]),
+    ]);
     const system = `${biz}${lessons}You are an expert conversation assessor. You are given a speaker-labelled transcript of a ${typeName || "call"}${role ? ` (role / title in play: ${role})` : ""}, plus any supporting context (CV, notes, framework).
 
 This is NOT necessarily an interview. ${

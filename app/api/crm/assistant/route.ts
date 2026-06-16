@@ -212,32 +212,42 @@ export async function POST(req: NextRequest) {
         : typeof companyId === "string" && companyId
         ? companyId
         : null;
-    let context: string | null;
-    if (focus) {
-      const [client, pipeline] = await Promise.all([
-        gatherClientContext(focus),
-        gatherGlobalContext(),
-      ]);
-      context = client
-        ? `FOCUSED CLIENT - the page the user is on. Lead here when the question is about them:\n\n${client}\n\n----------\n\nTHE WIDER PIPELINE - everyone else and the whole book. Use this when the user ranges beyond this client (another client, a new idea, their week ahead):\n\n${pipeline}`
-        : await gatherGlobalContext();
-    } else {
-      context = await gatherGlobalContext();
-    }
-    if (!context) {
-      return NextResponse.json({ error: "client not found" }, { status: 404 });
-    }
-
     // Recent thread for continuity. Global thread = rows with company_id null.
     let histQ = supabaseAdmin
       .from("assistant_messages")
       .select("role, content")
       .order("created_at", { ascending: false })
-      .limit(12);
+      .limit(10);
     histQ = isGlobal
       ? histQ.is("company_id", null)
       : histQ.eq("company_id", companyId);
-    const { data: history } = await histQ;
+
+    const gatherContext = async (): Promise<string | null> => {
+      if (focus) {
+        const [client, pipeline] = await Promise.all([
+          gatherClientContext(focus),
+          gatherGlobalContext(),
+        ]);
+        return client
+          ? `FOCUSED CLIENT - the page the user is on. Lead here when the question is about them:\n\n${client}\n\n----------\n\nTHE WIDER PIPELINE - everyone else and the whole book. Use this when the user ranges beyond this client (another client, a new idea, their week ahead):\n\n${pipeline}`
+          : pipeline;
+      }
+      return gatherGlobalContext();
+    };
+
+    // Everything the model needs, fetched in PARALLEL instead of one-after-
+    // another. These were sequential DB round-trips that slowed every reply.
+    const [context, histRes, biz, lessons, brainQuestions] = await Promise.all([
+      gatherContext(),
+      histQ,
+      workspaceContextBlock(),
+      getLessonsBlock(["negotiation", "strategy", "psychology"]),
+      getBrainQuestions(),
+    ]);
+    if (!context) {
+      return NextResponse.json({ error: "client not found" }, { status: 404 });
+    }
+    const history = (histRes as any)?.data;
     const priorTurns: { role: "user" | "assistant"; content: string }[] = (
       history || []
     )
@@ -252,10 +262,6 @@ export async function POST(req: NextRequest) {
     const scope = isGlobal
       ? `You are the user's overall CRM assistant. You know ALL their clients and their whole pipeline (below). They might ask about one client ("what do I do next with Alaine"), or across everyone ("what's my to-do list", "which deal is closest to closing"). When they name a client, match it to the closest one in the context even if the spelling is slightly off, and answer about them. When the question is across the board, pull from everyone.`
       : `You are the user's strategic co-founder and CRM assistant. They are currently on ONE client's page, so by default answer about that client (the FOCUSED CLIENT below) and help move that relationship forward. But you are NOT limited to them - the user may bring up another client, a fresh idea, their week, or anything at all, and you should help with whatever they raise, drawing on the wider pipeline below. Whatever the topic, help them plan, prep and take action.`;
-
-    const biz = await workspaceContextBlock();
-    const lessons = await getLessonsBlock(["negotiation", "strategy", "psychology"]);
-    const brainQuestions = await getBrainQuestions();
     const qBlock = brainQuestions
       ? `\n\nTHINGS YOU ARE TRYING TO LEARN (open questions about the user's business that would make you sharper). When it fits naturally, when the user asks what you need, or when you are brainstorming, raise one or two of these - never the whole list and never force them. When the user answers, weave it into your reply and treat it as fact from then on:\n${brainQuestions}`
       : "";
@@ -282,7 +288,7 @@ HOW TO WRITE (this matters a lot - the user finds over-formatted answers robotic
 - Never use em-dashes or semicolons. Use commas and full stops instead.
 - Lead with the single most useful thing. Cut filler and preamble. Don't pad to sound thorough.
 
-DRAFTS: when you write something the user would SEND or SHARE verbatim (an email, a text, a scope doc), put ONLY that sendable text between these exact marker lines:
+DRAFTS - ONLY WHEN ASKED (this keeps replies fast): do NOT write a full email, message or document unless the user EXPLICITLY asks you to draft, write, or send one. For a normal question, answer concisely and, if a draft would help, OFFER it in a single line ("want me to draft that email?") rather than writing it. Writing a long draft nobody asked for is slow and wasteful. When they DO ask you to draft something, put ONLY that sendable text between these exact marker lines:
 ---DRAFT---
 <the sendable text only - for an email include a "Subject:" line then the body>
 ---END DRAFT---
