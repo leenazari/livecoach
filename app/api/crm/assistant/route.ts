@@ -309,7 +309,7 @@ SPOKEN SUMMARY: the user often listens to your reply by voice, and hearing the w
 ---SPOKEN---
 <one or two spoken sentences>
 ---END SPOKEN---
-Keep these markers out of your visible prose. The full written answer still goes in your normal reply.`,
+NEVER read out a full draft or email in the spoken version. If you wrote a draft, the spoken version should just say a draft is ready and ASK if they want you to read it out. Keep these markers out of your visible prose. The full written answer still goes in your normal reply.`,
       },
       {
         type: "text",

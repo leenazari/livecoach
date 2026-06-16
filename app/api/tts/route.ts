@@ -28,32 +28,55 @@ export async function POST(req: NextRequest) {
         headers: { "Content-Type": "application/json" },
       });
     }
-    const r = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_128`,
-      {
-        method: "POST",
-        headers: {
-          "xi-api-key": key,
-          "Content-Type": "application/json",
-          Accept: "audio/mpeg",
-        },
-        body: JSON.stringify({
-          text: t,
-          model_id: MODEL_ID,
-          voice_settings: { stability: 0.5, similarity_boost: 0.8 },
-        }),
-      }
+    // Try the configured model first, then fall back to widely-available models,
+    // so an account that doesn't include flash still gets the ElevenLabs voice
+    // instead of silently dropping to the browser voice.
+    const models = [MODEL_ID, "eleven_multilingual_v2", "eleven_turbo_v2_5"].filter(
+      (m, i, a) => a.indexOf(m) === i
     );
-    if (!r.ok) {
-      const detail = await r.text().catch(() => "");
+    let buf: ArrayBuffer | null = null;
+    let usedModel = "";
+    let lastStatus = 0;
+    let lastDetail = "";
+    for (const model of models) {
+      const r = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_128`,
+        {
+          method: "POST",
+          headers: {
+            "xi-api-key": key,
+            "Content-Type": "application/json",
+            Accept: "audio/mpeg",
+          },
+          body: JSON.stringify({
+            text: t,
+            model_id: model,
+            voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+          }),
+        }
+      );
+      if (r.ok) {
+        buf = await r.arrayBuffer();
+        usedModel = model;
+        break;
+      }
+      lastStatus = r.status;
+      lastDetail = (await r.text().catch(() => "")).slice(0, 200);
+      // A bad key or unauthorized voice won't be fixed by another model.
+      if (r.status === 401) break;
+    }
+    if (!buf) {
       return new Response(
-        JSON.stringify({ error: `tts failed (${r.status})`, detail: detail.slice(0, 200) }),
+        JSON.stringify({ error: `tts failed (${lastStatus})`, detail: lastDetail }),
         { status: 502, headers: { "Content-Type": "application/json" } }
       );
     }
-    const buf = await r.arrayBuffer();
     return new Response(buf, {
-      headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" },
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "Cache-Control": "no-store",
+        "x-tts-model": usedModel,
+      },
     });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e?.message || "tts error" }), {

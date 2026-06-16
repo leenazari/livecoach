@@ -72,6 +72,16 @@ export default function ClientAssistant({
   const lastSeedRef = useRef(""); // last initialPrompt auto-sent
   const convoRef = useRef(false); // mirror of convo for the stable callbacks
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputElRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Grow the input box with the text (typed or dictated) up to a few lines, so
+  // you can always see your last lines instead of one scrolling line.
+  const autosize = () => {
+    const el = inputElRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  };
 
   // Stop the mic immediately and stop it from re-filling the box (used on send).
   const killMic = () => {
@@ -97,6 +107,12 @@ export default function ClientAssistant({
     const el = threadRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, busy]);
+
+  // Resize the input whenever its value changes (covers dictation, which sets
+  // the value outside the textarea's own onChange).
+  useEffect(() => {
+    autosize();
+  }, [input]);
 
   // Stop talking NOW: abort any in-flight TTS request, stop ElevenLabs audio,
   // and cancel the browser fallback voice. Called when read-aloud is turned off
@@ -222,7 +238,17 @@ export default function ClientAssistant({
       // Speak a SHORT spoken summary (the full written answer can be long
       // winded). In hands-free mode, go back to listening once it finishes.
       if (readAloud || convoRef.current) {
-        const say = spoken && spoken.trim() ? spoken.trim() : reply;
+        // Prefer the short spoken summary. If we fall back to the full reply,
+        // never read out the draft body - just note one is ready.
+        const say =
+          spoken && spoken.trim()
+            ? spoken.trim()
+            : reply
+                .replace(
+                  /---DRAFT---[\s\S]*?---END DRAFT---/g,
+                  " I have written a draft for you below. "
+                )
+                .trim();
         speak(say, () => {
           if (convoRef.current) startListening();
         });
@@ -677,7 +703,7 @@ export default function ClientAssistant({
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-end gap-2">
         <button
           type="button"
           onClick={toggleMic}
@@ -690,15 +716,24 @@ export default function ClientAssistant({
         >
           {listening ? "⏹" : "\u{1F3A4}"}
         </button>
-        <input
+        <textarea
+          ref={inputElRef}
           value={input}
+          rows={1}
           onChange={(e) => {
             inputRef.current = e.target.value;
             setInput(e.target.value);
+            autosize();
           }}
-          onKeyDown={(e) => e.key === "Enter" && send()}
+          onKeyDown={(e) => {
+            // Enter sends; Shift+Enter makes a new line.
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
           placeholder={listening ? "listening… tap mic to stop" : "Ask, or tap the mic to talk…"}
-          className="flex-1 rounded-full border border-edge bg-ink/60 px-4 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+          className="max-h-[120px] min-h-[40px] flex-1 resize-none overflow-y-auto rounded-2xl border border-edge bg-ink/60 px-4 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
         />
         <button
           type="button"
