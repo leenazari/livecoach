@@ -515,7 +515,7 @@ export default function PostCallSummary({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/80 p-4 backdrop-blur-sm sm:p-8">
-      <div className="my-auto w-full max-w-[760px] rounded-2xl border border-edge bg-panel shadow-2xl">
+      <div className="my-6 w-full max-w-[760px] rounded-2xl border border-edge bg-panel shadow-2xl">
         <div className="flex items-center justify-between border-b border-edge px-6 py-4">
           <div>
             <h2 className="font-display text-2xl text-bone">
