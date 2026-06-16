@@ -174,7 +174,9 @@ export async function gatherClientContext(companyId: string): Promise<string> {
       lines.push(
         `- ${when}${past ? " [ALREADY PASSED]" : ""}: ${u.title || "call"}${
           u.prepped ? " [prepped]" : ""
-        }${u.intent ? ` - ${cut(u.intent, 160)}` : ""}`
+        }${u.intent ? ` - ${cut(u.intent, 160)}` : ""}${
+          u.meeting_url ? ` (join link: ${u.meeting_url})` : ""
+        }`
       );
     }
   } else {
@@ -318,7 +320,7 @@ export async function gatherGlobalContext(): Promise<string> {
   // calendar" / "what's next" works without picking a client first.
   const { data: upAll } = await supabaseAdmin
     .from("upcoming_calls")
-    .select("company_id, title, scheduled_at, prepped")
+    .select("company_id, title, scheduled_at, prepped, meeting_url")
     .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
     .limit(40);
@@ -348,7 +350,9 @@ export async function gatherGlobalContext(): Promise<string> {
       lines.push(
         `• ${when}${past ? " [ALREADY PASSED]" : ""}: ${u.title || "call"}${
           who ? ` (${who})` : ""
-        }${u.prepped ? " [prepped]" : ""}`
+        }${u.prepped ? " [prepped]" : ""}${
+          u.meeting_url ? ` - join link: ${u.meeting_url}` : " - no meeting link attached"
+        }`
       );
     }
   }
