@@ -2742,7 +2742,7 @@ export default function CallPage() {
       {/* call source + join link now live inside setup step 3 above */}
 
       {callLive && suggestedComps.length > 0 && (
-        <div className="mb-3 flex items-center gap-3 rounded-2xl border border-edge bg-panel/50 px-4 py-3">
+        <div className="sticky top-12 z-20 mb-3 flex flex-wrap items-center gap-3 rounded-2xl border border-edge bg-panel/95 px-4 py-3 shadow-lg backdrop-blur">
           <input
             value={candidate}
             onChange={(e) => setCandidate(e.target.value)}

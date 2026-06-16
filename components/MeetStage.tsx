@@ -203,6 +203,20 @@ export default function MeetStage({
       });
       const d = await r.json();
       if (!r.ok) {
+        // Recall.ai out of credit (402) is a billing state, not a code error -
+        // give a clear, actionable message and point to the no-bot path instead
+        // of a raw API dump.
+        const blob = `${d.error || ""} ${d.detail || ""}`.toLowerCase();
+        if (
+          r.status === 402 ||
+          blob.includes("insufficient_credit") ||
+          blob.includes("credit balance")
+        ) {
+          setStatus(
+            "Recall.ai is out of bot credits, so the transcriber can't join. Top up your Recall.ai account, or use 'Recap by voice' to run this call without the bot."
+          );
+          return;
+        }
         setStatus(
           "error: " + (d.error || r.status) + (d.detail ? " - " + d.detail : "")
         );
@@ -261,15 +275,33 @@ export default function MeetStage({
         />
         <button
           onClick={sendBot}
-          disabled={!meetingUrl.trim()}
-          className="rounded-full border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
+          disabled={!meetingUrl.trim() || !!botId || status === "sending bot..."}
+          title={
+            botId
+              ? "Bot is in the meeting. Stop it before sending another."
+              : "Send the bot to join and transcribe"
+          }
+          className={`rounded-full border px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider transition ${
+            botId
+              ? "cursor-default border-sage bg-sage text-ink"
+              : "border-amber/60 bg-amber/15 text-amber hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
+          }`}
         >
-          Send bot
+          {botId
+            ? "● bot sent"
+            : status === "sending bot..."
+            ? "sending…"
+            : "Send bot"}
         </button>
         <button
           onClick={stopBot}
           disabled={!botId}
-          className="rounded-full border border-edge px-4 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-muted transition hover:text-bone disabled:opacity-40"
+          title={botId ? "Remove the bot from the meeting" : "No bot is live"}
+          className={`rounded-full border px-4 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider transition ${
+            botId
+              ? "border-rust bg-rust text-white hover:brightness-110"
+              : "border-edge text-muted disabled:cursor-not-allowed disabled:opacity-40"
+          }`}
         >
           Stop bot
         </button>
