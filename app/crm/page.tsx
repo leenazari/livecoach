@@ -34,8 +34,9 @@ type Dash = {
     note?: string;
   }[];
   dayRead: string;
-  // "Your day" broken into one line per client / priority.
-  dayParts?: { label: string; text: string }[];
+  // "Your day" broken into one line per client / priority. Items with a fixed
+  // time (scheduled calls) carry `time` and lead the list.
+  dayParts?: { label: string; text: string; time?: string }[];
 };
 
 export default function DashboardPage() {
@@ -155,8 +156,15 @@ export default function DashboardPage() {
               {dash.dayParts.map((p, i) => (
                 <li
                   key={i}
-                  className="border-l-2 border-sky/40 pl-3 font-sans text-sm leading-snug text-bone/85"
+                  className={`border-l-2 pl-3 font-sans text-sm leading-snug text-bone/85 ${
+                    p.time ? "border-amber/60" : "border-sky/40"
+                  }`}
                 >
+                  {p.time ? (
+                    <span className="mr-1.5 rounded-full border border-amber/50 bg-amber/10 px-2 py-0.5 font-mono text-[0.56rem] uppercase tracking-wider text-amber">
+                      {p.time}
+                    </span>
+                  ) : null}
                   {p.label ? (
                     <span className="font-semibold text-bone">{p.label}: </span>
                   ) : null}
@@ -246,13 +254,13 @@ export default function DashboardPage() {
         <TaskList showCompany hideCommitments emptyText="Nothing on your plate. Nice." />
       </div>
 
-      {/* RECENT CALLS - so a call is never lost. Unassigned ones get a one-click
-          picker to put them under the right client whenever you get to it. */}
-      <RecentCalls />
-
-      {/* UPCOMING CALLS - schedule, prep in advance, start preloaded.
+      {/* UPCOMING CALLS first (what's ahead) - schedule, prep, start preloaded.
           (Google Calendar sync is the next phase.) */}
       <UpcomingCalls />
+
+      {/* RECENT (previous) CALLS below - so a call is never lost. Unassigned ones
+          get a one-click picker to put them under the right client. */}
+      <RecentCalls />
 
       <NavMenu />
     </main>

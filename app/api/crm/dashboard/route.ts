@@ -146,7 +146,7 @@ export async function GET(req: Request) {
     // A short, cheap AI read of the day, BROKEN INTO SEPARATE LINES (one per
     // client or priority) rather than one bunched paragraph. Optional - never
     // block the dashboard.
-    let dayParts: { label: string; text: string }[] = [];
+    let dayParts: { label: string; text: string; time?: string }[] = [];
     try {
       if (!light && (tasks.length || openOpps.length)) {
         const lines = [
@@ -167,7 +167,7 @@ export async function GET(req: Request) {
         // Server-side cache, keyed by the workload. dayread2 = the new
         // per-client structured format, so the old dayread: cache is ignored.
         const cacheKey =
-          "dayread2:" + createHash("sha256").update(lines).digest("hex");
+          "dayread3:" + createHash("sha256").update(lines).digest("hex");
         try {
           const { data: hit } = await supabaseAdmin
             .from("ai_cache")
@@ -197,7 +197,7 @@ export async function GET(req: Request) {
                 temperature: 0.4,
                 system:
                   (await workspaceContextBlock()) +
-                  'You turn the user\'s CRM workload into a short, scannable read of their day, BROKEN INTO SEPARATE LINES, one per client or priority, never one bunched paragraph. Output ONLY a JSON array of 3 to 6 items, each {"label": a 1 to 3 word client or topic name, "text": one short sentence on the single most useful thing for them on that today}. Order by importance, most pressing first. Ground only in the workload given, invent no names, numbers or dates. Plain English, no markdown, no em-dashes or semicolons.',
+                  'You turn the user\'s CRM workload into a short, scannable read of their day, BROKEN INTO SEPARATE LINES. Output ONLY a JSON array of 3 to 6 items, each {"label": a 1 to 3 word client or topic name, "text": one short sentence on the single most useful move for THAT client or topic today}. STRICT RULES: each line is about ONE client or topic only. NEVER mention or mix in another client within a line (do not write things like "once Testhouse is locked in" on the Alain line). NEVER feature the same client in two lines, no duplication. Scheduled calls are shown separately above with their times, so do NOT list calls here, focus on the priorities and moves. Order by importance, most pressing first. Ground only in the workload given, invent no names, numbers or dates. Plain English, no markdown, no em-dashes or semicolons.',
                 messages: [{ role: "user", content: lines }],
               },
               { signal: controller.signal }
@@ -247,12 +247,48 @@ export async function GET(req: Request) {
       /* read is optional */
     }
 
+    // Scheduled calls LEAD the day with their time, since they are fixed
+    // commitments. Computed fresh each request (not cached) so the times stay
+    // current, and placed above the AI priority lines.
+    let callParts: { label: string; text: string; time?: string }[] = [];
+    try {
+      if (!light) {
+        const { data: upRows } = await supabaseAdmin
+          .from("upcoming_calls")
+          .select("company_id, title, scheduled_at, intent")
+          .gte("scheduled_at", new Date().toISOString())
+          .order("scheduled_at", { ascending: true })
+          .limit(4);
+        callParts = (upRows || [])
+          .filter((u: any) => u.scheduled_at)
+          .map((u: any) => {
+            const when = new Date(u.scheduled_at).toLocaleString("en-GB", {
+              timeZone: "Europe/London",
+              weekday: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+            const who = u.company_id ? nameById.get(u.company_id) || "" : "";
+            const intent = typeof u.intent === "string" ? u.intent.trim() : "";
+            const title = typeof u.title === "string" ? u.title.trim() : "";
+            return {
+              label: who || title || "Call",
+              text: sanitizeRead(intent || title || "Scheduled call"),
+              time: when,
+            };
+          });
+      }
+    } catch {
+      /* calls in the day read are optional */
+    }
+
+    const dayPartsAll = [...callParts, ...dayParts];
     return NextResponse.json({
       kpis,
       tasks: tasks.slice(0, 20),
-      dayParts,
+      dayParts: dayPartsAll,
       // Joined string kept for any older client that still reads dayRead.
-      dayRead: dayParts.map((p) => p.text).join(" "),
+      dayRead: dayPartsAll.map((p) => p.text).join(" "),
     });
   } catch (err: any) {
     return NextResponse.json(
