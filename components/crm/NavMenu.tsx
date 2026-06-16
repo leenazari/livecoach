@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 // Persistent left sidebar, OPEN by default. Minimise collapses it to a ☰ button;
 // the choice is remembered (localStorage). When open it pushes the page content
@@ -20,41 +20,35 @@ const ITEMS: Item[] = [
 
 const SIDEBAR_W = "15rem";
 
-export default function NavMenu() {
+function NavMenuInner() {
   const pathname = usePathname() || "";
   const router = useRouter();
-  const [minimised, setMinimised] = useState(false);
-  const [tab, setTab] = useState("");
-  const [ready, setReady] = useState(false);
-
-  // Restore the open/minimised preference.
-  useEffect(() => {
+  // useSearchParams updates on query-only navigation (e.g. switching board
+  // tabs), so the active highlight follows instantly instead of sticking.
+  const tab = useSearchParams().get("tab") || "";
+  // Read the open/minimised preference synchronously so there's no open->
+  // minimised flash on every page mount.
+  const [minimised, setMinimised] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
     try {
-      setMinimised(localStorage.getItem("lc_nav_min") === "1");
+      return localStorage.getItem("lc_nav_min") === "1";
     } catch {
-      /* ignore */
+      return false;
     }
-    setReady(true);
-  }, []);
+  });
 
-  // Track the board tab (for highlighting Clients / To do / Drafts).
+  // Push page content right while open; remember the choice. Apply INSTANTLY
+  // (no CSS transition) - a transition could be caught half-finished when you
+  // navigate quickly, leaving the sidebar/content looking stuck.
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setTab(new URLSearchParams(window.location.search).get("tab") || "");
-    }
-  }, [pathname]);
-
-  // Push page content right while open; remember the choice.
-  useEffect(() => {
-    if (!ready) return;
     try {
       localStorage.setItem("lc_nav_min", minimised ? "1" : "0");
     } catch {
       /* ignore */
     }
-    document.body.style.transition = "padding-left .2s ease";
+    document.body.style.transition = "";
     document.body.style.paddingLeft = minimised ? "" : SIDEBAR_W;
-  }, [minimised, ready]);
+  }, [minimised]);
 
   const isActive = (it: Item) => {
     if (it.href === "/crm") return pathname === "/crm";
@@ -95,15 +89,18 @@ export default function NavMenu() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 px-3">
-        {/* Go back one step in history, wherever you came from. */}
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="mb-1 flex items-center gap-3 rounded-lg px-3 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-muted transition hover:bg-bone/[0.05] hover:text-bone"
-        >
-          <span className="w-4 text-center">←</span>
-          Back
-        </button>
+        {/* Go back one step in history - but NOT on the dashboard, which is the
+            CRM home, there's nowhere to go back to from there. */}
+        {pathname !== "/crm" && (
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="mb-1 flex items-center gap-3 rounded-lg px-3 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-muted transition hover:bg-bone/[0.05] hover:text-bone"
+          >
+            <span className="w-4 text-center">←</span>
+            Back
+          </button>
+        )}
         {ITEMS.map((it) => (
           <Link
             key={it.href}
@@ -131,5 +128,14 @@ export default function NavMenu() {
         </button>
       </div>
     </aside>
+  );
+}
+
+// useSearchParams needs a Suspense boundary in the App Router.
+export default function NavMenu() {
+  return (
+    <Suspense fallback={null}>
+      <NavMenuInner />
+    </Suspense>
   );
 }

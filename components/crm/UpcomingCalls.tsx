@@ -218,7 +218,7 @@ export default function UpcomingCalls() {
           <textarea
             value={intent}
             onChange={(e) => setIntent(e.target.value)}
-            rows={2}
+            rows={4}
             placeholder="What do you want from this call? (you can prep this later too)"
             className={`${inputCls} resize-y font-sans text-sm`}
           />

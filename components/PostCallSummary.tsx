@@ -171,6 +171,19 @@ export default function PostCallSummary({
   const [listening, setListening] = useState(false);
   const recRef = useRef<any>(null);
   const baseNotesRef = useRef("");
+  // Grow the debrief box with what you say/type so you always see your last few
+  // lines, then scroll once it's tall.
+  const debriefElRef = useRef<HTMLTextAreaElement | null>(null);
+  const sizeDebrief = () => {
+    const el = debriefElRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+    el.scrollTop = el.scrollHeight;
+  };
+  useEffect(() => {
+    sizeDebrief();
+  }, [debriefNotes]);
   // How many to-dos the spoken/typed debrief produced (null until saved).
   const [todoCount, setTodoCount] = useState<number | null>(null);
 
@@ -753,15 +766,19 @@ export default function PostCallSummary({
                   {listening ? "\u23f9" : "\u{1F3A4}"}
                 </button>
                 <textarea
+                  ref={debriefElRef}
                   value={debriefNotes}
-                  onChange={(e) => setDebriefNotes(e.target.value)}
+                  onChange={(e) => {
+                    setDebriefNotes(e.target.value);
+                    sizeDebrief();
+                  }}
                   rows={3}
                   placeholder={
                     listening
                       ? "listening\u2026 speak your feedback, tap the mic to stop"
                       : "Speak or type: what worked, what to change, and what to do next - e.g. send Sak the pricing, chase Rasim next week"
                   }
-                  className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+                  className="max-h-[160px] min-h-[64px] w-full resize-none overflow-y-auto rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
                 />
               </div>
               <p className="mt-1.5 font-mono text-[0.56rem] leading-relaxed text-muted">
