@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { anthropic, CLAUDE_MODEL_PRO, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 import { gatherClientContext, gatherGlobalContext } from "@/lib/crm-context";
 import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib/workspace";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
@@ -329,6 +329,19 @@ NEVER read out a full draft or email in the spoken version. If you wrote a draft
       { role: "user" as const, content: message.trim() },
     ];
 
+    // Route obvious data lookups (your to-do list, what's on the calendar) to the
+    // FAST model - it is only reading the context that is already here. Anything
+    // that creates, judges, plans, drafts, advises, compares or summarises stays
+    // on the smart model, since that is the part that matters.
+    const ml = message.toLowerCase();
+    const LOOKUP =
+      /(to.?do|task list|my tasks|what.?s on|what.?s next|what is next|upcoming|my calls?|my schedule|my calendar|show me|^list\b|list (my|the)|my drafts|my commitments|what do i owe|outstanding|who have i)/;
+    const SMART =
+      /(draft|write|email|message|plan|prep|summari[sz]e|advi[sc]e|should i|why|how (do|should|can|to|would)|best|strateg|recommend|opinion|brainstorm|idea|pitch|negoti|approach|think|compare|priorit|win\b|risk|objection|pros|cons)/;
+    const simple = LOOKUP.test(ml) && !SMART.test(ml);
+    const model = simple ? CLAUDE_MODEL_LIVE : CLAUDE_MODEL_PRO;
+    const maxTok = simple ? 800 : 1300;
+
     let reply = "";
     try {
       const controller = new AbortController();
@@ -336,15 +349,15 @@ NEVER read out a full draft or email in the spoken version. If you wrote a draft
       try {
         const msg = await anthropic.messages.create(
           {
-            model: CLAUDE_MODEL_PRO,
-            max_tokens: 1300,
+            model,
+            max_tokens: maxTok,
             temperature: 0.4,
             system,
             messages,
           },
           { signal: controller.signal }
         );
-        await logModelUsage("assistant", "sonnet", (msg as any).usage);
+        await logModelUsage("assistant", simple ? "haiku" : "sonnet", (msg as any).usage);
         reply = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

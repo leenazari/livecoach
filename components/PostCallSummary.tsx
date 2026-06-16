@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { crmFetch } from "@/lib/crm";
 
 type Comp = { name: string; score: number; note: string };
@@ -137,6 +137,7 @@ type FeedbackCue = { text: string; why: string; kind: string };
 export default function PostCallSummary({
   summary,
   sessionId,
+  loadingMore,
   candidate,
   transcript,
   companyId,
@@ -147,6 +148,7 @@ export default function PostCallSummary({
 }: {
   summary: Summary;
   sessionId?: string;
+  loadingMore?: boolean;
   candidate?: string;
   transcript?: string;
   companyId?: string;
@@ -158,6 +160,11 @@ export default function PostCallSummary({
   // The displayed summary is local so the host's notes can refine it in place.
   const [view, setView] = useState<Summary>(summary);
   const [refining, setRefining] = useState(false);
+  // The summary arrives in two pieces (fast top, then the full scorecard). Sync
+  // the view when the prop changes so the second half fills in.
+  useEffect(() => {
+    setView(summary);
+  }, [summary]);
   const [debriefNotes, setDebriefNotes] = useState("");
   const [savedFeedback, setSavedFeedback] = useState(false);
   // Voice debrief: dictate feedback instead of typing it.
@@ -556,6 +563,15 @@ export default function PostCallSummary({
               </p>
             )}
           </div>
+
+          {loadingMore && (
+            <div className="flex items-center gap-2 rounded-lg border border-sky/30 bg-sky/[0.05] px-4 py-2">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky" />
+              <span className="font-mono text-[0.58rem] uppercase tracking-wider text-sky">
+                filling in the full breakdown - scoring, strengths, questions…
+              </span>
+            </div>
+          )}
 
           {view.competencies && view.competencies.length > 0 && (
             <div>

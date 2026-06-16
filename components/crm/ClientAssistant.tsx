@@ -273,6 +273,9 @@ export default function ClientAssistant({
       convoRef.current = false;
       return;
     }
+    // Stop the brain talking the instant we start listening, so its own voice
+    // never bleeds into your recording.
+    stopSpeaking();
     const rec = new SR();
     rec.lang = "en-GB";
     rec.interimResults = true;

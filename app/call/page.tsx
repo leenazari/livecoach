@@ -225,6 +225,9 @@ export default function CallPage() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [summary, setSummary] = useState<any>(null);
   const [summarising, setSummarising] = useState(false);
+  // True while the full scorecard is still generating after the fast top half
+  // has shown - drives the "filling in the rest" note on the summary card.
+  const [summaryLoadingMore, setSummaryLoadingMore] = useState(false);
   // Quick mid-call wrap-up card (confirm next steps out loud before ending).
   const [wrapping, setWrapping] = useState(false);
   const [wrapCard, setWrapCard] = useState<{
@@ -1517,7 +1520,26 @@ export default function CallPage() {
       return;
     }
     setSummarising(true);
+    setSummaryLoadingMore(true);
     setStatus("building summary...");
+    // FAST top half: show the verdict, how it went and the next actions within a
+    // couple of seconds while the full scorecard generates below. The full
+    // result overwrites this when it lands. Fire-and-forget.
+    fetch("/api/interview/summary-top", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        transcript: labelled,
+        role: roleRef.current || null,
+        candidate: candidate || null,
+        competencies: suggestedCompsRef.current,
+      }),
+    })
+      .then((r) => r.json())
+      .then((top) => {
+        if (top && top.recommendation) setSummary((prev: any) => prev || top);
+      })
+      .catch(() => {});
     try {
       sonnetCallsRef.current += 1;
       // Make sure the session row carries the company link before we store the
@@ -1561,6 +1583,7 @@ export default function CallPage() {
       cachedSummaryRef.current = data.summary;
       cachedSigRef.current = sig;
       setSummary(data.summary);
+      setSummaryLoadingMore(false);
       setStatus("summary ready");
       // Phase 3: if this call is linked to a client, fold the scorecard into
       // that client's running profile (fire-and-forget, never blocks).
@@ -1620,6 +1643,7 @@ export default function CallPage() {
       setStatus(`error: ${e.message}`);
     } finally {
       setSummarising(false);
+      setSummaryLoadingMore(false);
     }
   }, [candidate, manualRecap, recapText]);
 
@@ -3396,6 +3420,7 @@ export default function CallPage() {
         <PostCallSummary
           summary={summary}
           sessionId={room}
+          loadingMore={summaryLoadingMore}
           candidate={candidate}
           transcript={summaryTranscript}
           companyId={linkedCompany?.id}
