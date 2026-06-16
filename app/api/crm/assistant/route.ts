@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_PRO, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
-import { gatherClientContext, gatherGlobalContext } from "@/lib/crm-context";
+import {
+  gatherClientContext,
+  gatherGlobalContext,
+  findCompaniesNamedIn,
+} from "@/lib/crm-context";
 import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib/workspace";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
 import { logModelUsage } from "@/lib/usage";
@@ -303,16 +307,31 @@ export async function POST(req: NextRequest) {
       : histQ.eq("company_id", companyId);
 
     const gatherContext = async (): Promise<string | null> => {
-      if (focus) {
-        const [client, pipeline] = await Promise.all([
-          gatherClientContext(focus),
-          gatherGlobalContext(),
-        ]);
-        return client
-          ? `FOCUSED CLIENT - the page the user is on. Lead here when the question is about them:\n\n${client}\n\n----------\n\nTHE WIDER PIPELINE - everyone else and the whole book. Use this when the user ranges beyond this client (another client, a new idea, their week ahead):\n\n${pipeline}`
-          : pipeline;
+      // DETAIL ON DEMAND. Pull FULL context for the client the user is on
+      // (focus) and for any client they NAME in the message, but only a one-line
+      // digest for everyone else. Keeps the prompt small as the book of clients
+      // grows, without losing depth on whoever the question is actually about.
+      const named = await findCompaniesNamedIn(message);
+      const detailIds: string[] = [];
+      if (focus) detailIds.push(focus);
+      for (const n of named) {
+        if (!detailIds.includes(n.id) && detailIds.length < 3)
+          detailIds.push(n.id);
       }
-      return gatherGlobalContext();
+      const [digest, ...details] = await Promise.all([
+        gatherGlobalContext(),
+        ...detailIds.map((id) => gatherClientContext(id)),
+      ]);
+      const detailBlocks = (details as (string | null)[]).filter(
+        (d): d is string => !!d && d.trim().length > 0
+      );
+      if (!detailBlocks.length) return digest || null;
+      const label = focus
+        ? "FOCUSED / NAMED CLIENTS - full detail. Lead here when the question is about them:"
+        : "NAMED CLIENTS - full detail on the client(s) the user mentioned:";
+      return `${label}\n\n${detailBlocks.join(
+        "\n\n----------\n\n"
+      )}\n\n==========\n\nTHE WIDER PIPELINE - one line per client (full detail comes up when you name a client):\n\n${digest}`;
     };
 
     // Everything the model needs, fetched in PARALLEL instead of one-after-

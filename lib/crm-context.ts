@@ -232,88 +232,112 @@ export async function gatherGlobalContext(): Promise<string> {
   const cut = (s: any, n: number) =>
     typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : "";
 
-  const [companiesRes, draftsRes, oppsRes, summariesRes] = await Promise.all([
-    supabaseAdmin
-      .from("companies")
-      .select("id, name, sector, stage, profile")
-      .limit(200),
-    supabaseAdmin
-      .from("follow_ups")
-      .select("company_id, draft_subject")
-      .eq("status", "draft")
-      .limit(200),
-    supabaseAdmin
-      .from("opportunities")
-      .select("company_id, title, value")
-      .eq("status", "open")
-      .limit(200),
-    supabaseAdmin
-      .from("interview_summaries")
-      .select("company_id, summary, created_at")
-      .not("company_id", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(60),
-  ]);
+  const [companiesRes, draftsRes, oppsRes, tasksRes, callsRes] =
+    await Promise.all([
+      supabaseAdmin
+        .from("companies")
+        .select("id, name, sector, stage, profile")
+        .limit(500),
+      supabaseAdmin
+        .from("follow_ups")
+        .select("company_id")
+        .eq("status", "draft")
+        .limit(500),
+      supabaseAdmin
+        .from("opportunities")
+        .select("company_id, value")
+        .eq("status", "open")
+        .limit(500),
+      supabaseAdmin
+        .from("tasks")
+        .select("company_id")
+        .eq("status", "open")
+        .limit(1000),
+      supabaseAdmin
+        .from("interview_summaries")
+        .select("company_id, created_at")
+        .not("company_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(500),
+    ]);
 
   const companies = companiesRes.data || [];
   if (companies.length === 0) {
     return "The user has no clients in their CRM yet.";
   }
 
-  const draftsBy = new Map<string, string[]>();
+  // Compact per-client tallies. We keep this to ONE line per client so the
+  // prompt stays small as the book of clients grows - the assistant pulls a
+  // client's FULL detail separately (gatherClientContext) when the user names
+  // one, so naming a client still gets depth (detail on demand).
+  const draftCount = new Map<string, number>();
   for (const d of draftsRes.data || []) {
     if (!d.company_id) continue;
-    const arr = draftsBy.get(d.company_id) || [];
-    arr.push(d.draft_subject || "(untitled)");
-    draftsBy.set(d.company_id, arr);
+    draftCount.set(d.company_id, (draftCount.get(d.company_id) || 0) + 1);
   }
-  const oppsBy = new Map<string, string[]>();
+  const oppCount = new Map<string, number>();
+  const oppValue = new Map<string, number>();
   for (const o of oppsRes.data || []) {
     if (!o.company_id) continue;
-    const arr = oppsBy.get(o.company_id) || [];
-    arr.push(`${o.title}${o.value ? ` (~£${o.value})` : ""}`);
-    oppsBy.set(o.company_id, arr);
+    oppCount.set(o.company_id, (oppCount.get(o.company_id) || 0) + 1);
+    oppValue.set(
+      o.company_id,
+      (oppValue.get(o.company_id) || 0) + (Number(o.value) || 0)
+    );
   }
-  // Latest call's tasks per company.
-  const tasksBy = new Map<string, string[]>();
-  const seen = new Set<string>();
-  for (const s of summariesRes.data || []) {
-    if (!s.company_id || seen.has(s.company_id)) continue;
-    seen.add(s.company_id);
-    const my = Array.isArray((s.summary as any)?.myNextActions)
-      ? (s.summary as any).myNextActions
-      : [];
-    if (my.length) tasksBy.set(s.company_id, my.slice(0, 4));
+  const taskCount = new Map<string, number>();
+  for (const t of tasksRes.data || []) {
+    if (!t.company_id) continue;
+    taskCount.set(t.company_id, (taskCount.get(t.company_id) || 0) + 1);
   }
+  // Most recent call per company (rows arrive newest-first, so first wins).
+  const lastCall = new Map<string, string>();
+  for (const s of callsRes.data || []) {
+    if (!s.company_id || lastCall.has(s.company_id)) continue;
+    lastCall.set(s.company_id, s.created_at as string);
+  }
+  const shortDate = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+      });
+    } catch {
+      return "";
+    }
+  };
 
   const lines: string[] = [
-    "YOUR CLIENTS AND YOUR WHOLE PIPELINE. The user may refer to a client by a slightly different name or spelling - match it to the closest client below.",
+    "YOUR CLIENTS AND PIPELINE - one compact line per client (name, stage, open opportunities and value, open to-dos, drafts, last contact, and a one-line note). Match a client the user names even if the spelling is slightly off. When the question is about a specific client, their FULL detail is given separately above. Answer pipeline-wide questions (which deal is closest, who has gone quiet, where the workload is) from these lines.",
     "",
   ];
   for (const c of companies as any[]) {
-    const bits: string[] = [
-      `• ${c.name}${c.sector ? ` (${c.sector}${c.stage ? `, ${c.stage}` : ""})` : ""}`,
-    ];
+    const head = `• ${c.name}${
+      c.stage || c.sector
+        ? ` (${[c.stage, c.sector].filter(Boolean).join(", ")})`
+        : ""
+    }`;
+    const bits: string[] = [];
+    const oc = oppCount.get(c.id) || 0;
+    const ov = oppValue.get(c.id) || 0;
+    if (oc) bits.push(`${oc} open opp${oc > 1 ? "s" : ""}${ov ? ` ~£${ov}` : ""}`);
+    const tc = taskCount.get(c.id) || 0;
+    if (tc) bits.push(`${tc} open to-do${tc > 1 ? "s" : ""}`);
+    const dc = draftCount.get(c.id) || 0;
+    if (dc) bits.push(`${dc} draft${dc > 1 ? "s" : ""} waiting`);
+    const lc = lastCall.get(c.id);
+    bits.push(lc ? `last contact ${shortDate(lc)}` : "no calls logged");
     const rawBrief = (c.profile || {}).brief;
     const brief = Array.isArray(rawBrief)
-      ? rawBrief.filter((b: any) => typeof b === "string" && b.trim()).join("; ")
+      ? rawBrief.find((b: any) => typeof b === "string" && b.trim()) || ""
       : typeof rawBrief === "string"
       ? rawBrief
       : "";
-    const t = tasksBy.get(c.id);
-    const dr = draftsBy.get(c.id);
-    const op = oppsBy.get(c.id);
-    if (brief) bits.push(`    what we know: ${cut(brief, 220)}`);
-    if (t && t.length) bits.push(`    your outstanding tasks: ${t.join("; ")}`);
-    if (dr && dr.length) bits.push(`    drafts waiting to send: ${dr.join("; ")}`);
-    if (op && op.length) bits.push(`    open opportunities: ${op.join("; ")}`);
-    // No details at all -> say so, so the assistant doesn't invent any.
-    if (!brief && !(t && t.length) && !(dr && dr.length) && !(op && op.length)) {
-      bits.push(
-        `    no details recorded yet - thin record, no budget, value, history or next step on file`
-      );
-    }
-    lines.push(bits.join("\n"));
+    let line = `${head} - ${bits.join(", ")}`;
+    if (brief) line += `. ${cut(brief, 110)}`;
+    else if (!oc && !tc && !dc && !lc)
+      line += ". no details recorded yet - thin record, do not infer any";
+    lines.push(line);
   }
 
   // Upcoming calls across everyone, synced from the calendar, so "what's on my
@@ -358,4 +382,49 @@ export async function gatherGlobalContext(): Promise<string> {
   }
 
   return lines.join("\n");
+}
+
+// Find the client(s) the user NAMED in their message, so the assistant can pull
+// their FULL detail on demand instead of dumping every client's full record into
+// every prompt. Matches the whole name, or a distinctive word from it (length
+// >= 4, minus generic words), on word boundaries. Conservative cap of 3 so a
+// vague question never drags in half the book.
+const NAME_STOP = new Set([
+  "university","college","of","the","and","referrals","city","group","ltd",
+  "school","global","limited","inc",
+]);
+export async function findCompaniesNamedIn(
+  message: string
+): Promise<{ id: string; name: string }[]> {
+  const norm = (s: string) =>
+    String(s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const m = ` ${norm(message)} `;
+  if (m.trim().length < 2) return [];
+  const { data } = await supabaseAdmin
+    .from("companies")
+    .select("id, name")
+    .limit(500);
+  const out: { id: string; name: string }[] = [];
+  for (const c of (data || []) as any[]) {
+    const full = norm(c.name);
+    let matched = full.length >= 4 && m.includes(` ${full} `);
+    if (!matched) {
+      const toks = full
+        .split(" ")
+        .filter((t) => t.length >= 4 && !NAME_STOP.has(t));
+      for (const t of toks) {
+        if (m.includes(` ${t} `)) {
+          matched = true;
+          break;
+        }
+      }
+    }
+    if (matched) out.push({ id: c.id, name: c.name });
+    if (out.length >= 3) break;
+  }
+  return out;
 }
