@@ -168,13 +168,16 @@ export default function CallPage() {
     recapBaseRef.current = recapTextRef.current.trim()
       ? `${recapTextRef.current.trim()} `
       : "";
-    let finalText = "";
     rec.onresult = (e: any) => {
+      // Android Chrome keeps several overlapping interim results in the list, so
+      // concatenating them all duplicates the text. Build from the FINAL
+      // segments and take only the LATEST interim snapshot.
+      let finalText = "";
       let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      for (let i = 0; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) finalText += r[0].transcript;
-        else interim += r[0].transcript;
+        if (r.isFinal) finalText += r[0]?.transcript || "";
+        else interim = r[0]?.transcript || "";
       }
       setRecapText((recapBaseRef.current + finalText + interim).trim());
     };

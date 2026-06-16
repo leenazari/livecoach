@@ -403,14 +403,18 @@ export default function ClientAssistant({
     suppressMicRef.current = false; // fresh dictation session
     rec.onresult = (e: any) => {
       if (suppressMicRef.current) return; // a send already consumed this
-      // Rebuild the WHOLE transcript from all results each event. Accumulating
-      // finals in a closure double-counted on some Chrome builds, which is the
-      // "sososo can you add the link" repetition bug.
-      let full = "";
+      // Android Chrome keeps several overlapping INTERIM results in the list, so
+      // concatenating them all duplicates ("sososo I just had a call"). Build the
+      // text from the FINAL segments only, and take just the LATEST interim
+      // snapshot for the live preview.
+      let finalText = "";
+      let interim = "";
       for (let i = 0; i < e.results.length; i++) {
-        full += e.results[i][0]?.transcript || "";
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0]?.transcript || "";
+        else interim = r[0]?.transcript || "";
       }
-      const text = full.trim();
+      const text = (finalText + interim).trim();
       inputRef.current = text;
       setInput(text);
       // Hands-free: when you pause for a moment, end the turn and send.
