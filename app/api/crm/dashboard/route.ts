@@ -143,8 +143,10 @@ export async function GET(req: Request) {
       costBreakdown,
     };
 
-    // A short, cheap AI read of the day. Optional - never block the dashboard.
-    let dayRead = "";
+    // A short, cheap AI read of the day, BROKEN INTO SEPARATE LINES (one per
+    // client or priority) rather than one bunched paragraph. Optional - never
+    // block the dashboard.
+    let dayParts: { label: string; text: string }[] = [];
     try {
       if (!light && (tasks.length || openOpps.length)) {
         const lines = [
@@ -162,51 +164,74 @@ export async function GET(req: Request) {
             .join("; ")}`,
         ].join("\n");
 
-        // Server-side cache: the "your day" read only depends on the workload
-        // (drafts + opps + commitments). Reuse the stored read while that is
-        // unchanged, so the dashboard doesn't pay for a fresh LLM call (slow +
-        // costly) on every visit - it only regenerates when the inputs change.
+        // Server-side cache, keyed by the workload. dayread2 = the new
+        // per-client structured format, so the old dayread: cache is ignored.
         const cacheKey =
-          "dayread:" + createHash("sha256").update(lines).digest("hex");
+          "dayread2:" + createHash("sha256").update(lines).digest("hex");
         try {
           const { data: hit } = await supabaseAdmin
             .from("ai_cache")
             .select("value")
             .eq("key", cacheKey)
             .maybeSingle();
-          if (hit?.value) dayRead = String(hit.value);
+          if (hit?.value) {
+            try {
+              const arr = JSON.parse(String(hit.value));
+              if (Array.isArray(arr)) dayParts = arr;
+            } catch {
+              /* malformed cache - regenerate */
+            }
+          }
         } catch {
           /* cache miss is fine */
         }
 
-        if (!dayRead) {
+        if (!dayParts.length) {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 12000);
           try {
             const msg = await anthropic.messages.create(
               {
                 model: CLAUDE_MODEL_LIVE,
-                max_tokens: 160,
+                max_tokens: 400,
                 temperature: 0.4,
                 system:
                   (await workspaceContextBlock()) +
-                  "You write a 2 to 3 sentence read of the user's day from their CRM workload. Warm, sharp, specific: name the client and the single most pressing thing. Start straight into the substance. Do NOT add a title, heading, or label (never begin with 'Your day' or similar). Plain English prose only: no markdown, no bold, no asterisks, no headings, no bullet lists. Never use em-dashes or semicolons, use commas and full stops instead. Just the read.",
+                  'You turn the user\'s CRM workload into a short, scannable read of their day, BROKEN INTO SEPARATE LINES, one per client or priority, never one bunched paragraph. Output ONLY a JSON array of 3 to 6 items, each {"label": a 1 to 3 word client or topic name, "text": one short sentence on the single most useful thing for them on that today}. Order by importance, most pressing first. Ground only in the workload given, invent no names, numbers or dates. Plain English, no markdown, no em-dashes or semicolons.',
                 messages: [{ role: "user", content: lines }],
               },
               { signal: controller.signal }
             );
             await logModelUsage("day-read", "haiku", (msg as any).usage);
-            dayRead = sanitizeRead(
-              msg.content
-                .filter((b: any) => b.type === "text")
-                .map((b: any) => b.text)
-                .join("")
-            );
-            if (dayRead) {
+            const raw = msg.content
+              .filter((b: any) => b.type === "text")
+              .map((b: any) => b.text)
+              .join("");
+            const a = raw.indexOf("[");
+            const b = raw.lastIndexOf("]");
+            const parsed = a >= 0 && b > a ? JSON.parse(raw.slice(a, b + 1)) : [];
+            if (Array.isArray(parsed)) {
+              dayParts = parsed
+                .map((p: any) => ({
+                  label: sanitizeRead(
+                    typeof p?.label === "string" ? p.label : ""
+                  ),
+                  text: sanitizeRead(
+                    typeof p?.text === "string"
+                      ? p.text
+                      : typeof p === "string"
+                      ? p
+                      : ""
+                  ),
+                }))
+                .filter((p: { label: string; text: string }) => p.text)
+                .slice(0, 6);
+            }
+            if (dayParts.length) {
               try {
                 await supabaseAdmin.from("ai_cache").upsert({
                   key: cacheKey,
-                  value: dayRead,
+                  value: JSON.stringify(dayParts),
                   created_at: new Date().toISOString(),
                 });
               } catch {
@@ -225,7 +250,9 @@ export async function GET(req: Request) {
     return NextResponse.json({
       kpis,
       tasks: tasks.slice(0, 20),
-      dayRead: sanitizeRead(dayRead),
+      dayParts,
+      // Joined string kept for any older client that still reads dayRead.
+      dayRead: dayParts.map((p) => p.text).join(" "),
     });
   } catch (err: any) {
     return NextResponse.json(

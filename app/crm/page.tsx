@@ -34,6 +34,8 @@ type Dash = {
     note?: string;
   }[];
   dayRead: string;
+  // "Your day" broken into one line per client / priority.
+  dayParts?: { label: string; text: string }[];
 };
 
 export default function DashboardPage() {
@@ -59,7 +61,11 @@ export default function DashboardPage() {
       .then(
         (d) =>
           alive &&
-          setDash((prev) => (prev ? { ...prev, dayRead: d.dayRead } : d))
+          setDash((prev) =>
+            prev
+              ? { ...prev, dayRead: d.dayRead, dayParts: d.dayParts }
+              : d
+          )
       )
       .catch(() => {});
     return () => {
@@ -139,14 +145,30 @@ export default function DashboardPage() {
           voice and it learns. Self-hides when there's nothing to ask. */}
       <MorningCheckin />
 
-      {dash?.dayRead && (
+      {(dash?.dayParts?.length || dash?.dayRead) && (
         <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
-          <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.2em] text-sky">
+          <p className="mb-2 font-mono text-[0.58rem] uppercase tracking-[0.2em] text-sky">
             {"▣"} Your day
           </p>
-          <p className="font-sans text-sm leading-relaxed text-bone/85">
-            {dash.dayRead}
-          </p>
+          {dash?.dayParts?.length ? (
+            <ul className="flex flex-col gap-2">
+              {dash.dayParts.map((p, i) => (
+                <li
+                  key={i}
+                  className="border-l-2 border-sky/40 pl-3 font-sans text-sm leading-snug text-bone/85"
+                >
+                  {p.label ? (
+                    <span className="font-semibold text-bone">{p.label}: </span>
+                  ) : null}
+                  {p.text}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="font-sans text-sm leading-relaxed text-bone/85">
+              {dash?.dayRead}
+            </p>
+          )}
         </div>
       )}
 
@@ -221,7 +243,7 @@ export default function DashboardPage() {
         </div>
         {/* Tick to complete, click a ticked task to remove. Done tasks clear on
             their own the next day. Click the text to start the action. */}
-        <TaskList showCompany emptyText="Nothing on your plate. Nice." />
+        <TaskList showCompany hideCommitments emptyText="Nothing on your plate. Nice." />
       </div>
 
       {/* RECENT CALLS - so a call is never lost. Unassigned ones get a one-click

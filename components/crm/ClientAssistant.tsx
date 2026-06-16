@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { crmFetch } from "@/lib/crm";
 
 type Msg = { id?: string; role: string; content: string; actions?: any[] };
@@ -54,6 +55,94 @@ function visibleForDisplay(content: string): string {
     .trim();
 }
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Section words in a reply become links to that part of the app, so the chat is
+// a jumping-off point: client names (passed in) link to the client's page, and
+// "to-do list", "drafts", "calls" etc link to those sections.
+const SECTION_LINKS: { src: string; href: string }[] = [
+  { src: "to-?do list", href: "/crm/board?tab=tasks" },
+  { src: "to-?dos?", href: "/crm/board?tab=tasks" },
+  { src: "tasks?", href: "/crm/board?tab=tasks" },
+  { src: "drafts?", href: "/crm/board?tab=drafts" },
+  { src: "follow-?ups?", href: "/crm/board?tab=drafts" },
+  { src: "call log", href: "/crm/calls" },
+  { src: "calls", href: "/crm/calls" },
+  { src: "opportunit\\w+", href: "/crm/board?tab=opportunities" },
+  { src: "pipeline", href: "/crm/board?tab=opportunities" },
+  { src: "upcoming calls?", href: "/crm" },
+  { src: "calendar", href: "/crm" },
+];
+
+// Render text with client names and section words turned into links. Plain text
+// otherwise. Word-boundary matched (no lookbehind, so it works on Safari too),
+// longest match first so multi-word client names win over single words.
+function LinkedText({
+  text,
+  clients,
+}: {
+  text: string;
+  clients: { id: string; name: string }[];
+}): JSX.Element {
+  const entries = [
+    ...clients
+      .filter((c) => c.name && c.name.trim().length >= 2)
+      .map((c) => ({
+        src: escapeRe(c.name.trim()),
+        href: `/crm/${c.id}`,
+        test: new RegExp("^" + escapeRe(c.name.trim()) + "$", "i"),
+      })),
+    ...SECTION_LINKS.map((s) => ({
+      src: s.src,
+      href: s.href,
+      test: new RegExp("^(?:" + s.src + ")$", "i"),
+    })),
+  ].sort((a, b) => b.src.length - a.src.length);
+  if (!entries.length) return <>{text}</>;
+  let combined: RegExp;
+  try {
+    combined = new RegExp(
+      "(^|[^A-Za-z0-9])(" +
+        entries.map((e) => e.src).join("|") +
+        ")(?![A-Za-z0-9])",
+      "gi"
+    );
+  } catch {
+    return <>{text}</>;
+  }
+  const out: ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = combined.exec(text)) !== null) {
+    const full = m[0];
+    const boundary = m[1] || "";
+    const word = m[2];
+    if (m.index > last) out.push(text.slice(last, m.index));
+    if (boundary) out.push(boundary);
+    const entry = entries.find((e) => e.test.test(word));
+    out.push(
+      entry ? (
+        <Link
+          key={key++}
+          href={entry.href}
+          className="text-sky underline decoration-sky/40 underline-offset-2 transition hover:decoration-sky"
+        >
+          {word}
+        </Link>
+      ) : (
+        word
+      )
+    );
+    last = m.index + full.length;
+    if (combined.lastIndex === m.index) combined.lastIndex++;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return <>{out}</>;
+}
+
 // Per-client AI assistant: a chat grounded in everything we know about the
 // client. Talk to it (tap the mic to start, tap again to stop - browser speech)
 // or type, and it can read its answers aloud. Always explains its reasoning.
@@ -81,6 +170,8 @@ export default function ClientAssistant({
     : `/api/crm/assistant/thread`;
   const label = companyName || "your clients";
   const [messages, setMessages] = useState<Msg[]>([]);
+  // Client list, so names in a reply can be turned into links to their page.
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
@@ -133,6 +224,11 @@ export default function ClientAssistant({
   useEffect(() => {
     crmFetch<{ messages: Msg[] }>(threadUrl)
       .then((d) => setMessages(d.messages || []))
+      .catch(() => {});
+    crmFetch<{ companies: { id: string; name: string }[] }>(
+      "/api/crm/companies"
+    )
+      .then((d) => setClients(d.companies || []))
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadUrl]);
@@ -757,7 +853,7 @@ export default function ClientAssistant({
                     </div>
                   ) : part.text.trim() ? (
                     <p key={pi} className="whitespace-pre-wrap">
-                      {part.text.trim()}
+                      <LinkedText text={part.text.trim()} clients={clients} />
                     </p>
                   ) : null
                 )

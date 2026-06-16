@@ -47,10 +47,14 @@ export default function TaskList({
   companyId,
   showCompany = false,
   emptyText = "Nothing on your plate. Nice.",
+  hideCommitments = false,
 }: {
   companyId?: string;
   showCompany?: boolean;
   emptyText?: string;
+  // On the dashboard, commitments are shown in "You promised" above, so the
+  // "Do next" list hides them to avoid duplicating the same item in both.
+  hideCommitments?: boolean;
 }) {
   const router = useRouter();
   const url = `/api/crm/tasks${companyId ? `?companyId=${companyId}` : ""}`;
@@ -177,7 +181,13 @@ export default function TaskList({
     return !!(t.company_id && t.company_id !== companyId);
   };
 
-  if (tasks.length === 0) {
+  // Commitments live in "You promised"; drop them here when asked so the same
+  // item never appears in both lists.
+  const shown = hideCommitments
+    ? tasks.filter((t) => t.kind !== "commitment")
+    : tasks;
+
+  if (shown.length === 0) {
     return (
       <p className="font-mono text-[0.62rem] leading-relaxed text-muted">
         {emptyText}
@@ -187,7 +197,7 @@ export default function TaskList({
 
   return (
     <ul className="flex flex-col">
-      {tasks.map((t) => {
+      {shown.map((t) => {
         const done = t.status === "done";
         const c = chip(t.link_kind);
         const approaches = Array.isArray(t.payload?.approaches)
