@@ -20,17 +20,32 @@ export const maxDuration = 40;
 function likeTerm(s: string): string {
   return String(s || "").replace(/[%_]/g, "").trim().slice(0, 60);
 }
-async function findCall(title: string) {
+async function findCalls(title: string): Promise<any[]> {
   const term = likeTerm(title);
-  if (!term) return null;
+  if (!term) return [];
   const { data } = await supabaseAdmin
     .from("upcoming_calls")
     .select("id, title, scheduled_at")
     .ilike("title", `%${term}%`)
     .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
-    .limit(1);
-  return data && data[0] ? data[0] : null;
+    .limit(4);
+  return Array.isArray(data) ? data : [];
+}
+function callWhen(iso: string): string {
+  if (!iso) return "no time set";
+  try {
+    return new Date(iso).toLocaleString("en-GB", {
+      timeZone: "Europe/London",
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "no time set";
+  }
 }
 async function findCompany(name: string) {
   const term = likeTerm(name);
@@ -64,65 +79,91 @@ async function findDraft(subject: string) {
     .limit(1);
   return data && data[0] ? data[0] : null;
 }
+// Build the ready-to-fire request for a call-targeting action against ONE call.
+function callExec(call: any, type: string, x: any) {
+  if (type === "set_meeting_link")
+    return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { meetingUrl: x.url } };
+  if (type === "set_intent")
+    return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { intent: x.intent } };
+  if (type === "link_call")
+    return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { companyId: x.companyId } };
+  // cancel_call
+  return { endpoint: `/api/crm/upcoming/${call.id}/cancel`, method: "POST", body: { reason: x.reason } };
+}
+function actionVerb(type: string): string {
+  return type === "set_meeting_link"
+    ? "attach the link to"
+    : type === "set_intent"
+    ? "set the intent on"
+    : type === "link_call"
+    ? "link"
+    : "remove";
+}
+
 async function resolveActions(items: any[]): Promise<any[]> {
   const out: any[] = [];
+  const callTypes = ["set_meeting_link", "set_intent", "link_call", "cancel_call"];
   for (const it of Array.isArray(items) ? items : []) {
     if (out.length >= 6) break;
     if (!it || typeof it.type !== "string") continue;
     const key = Math.random().toString(36).slice(2);
-    if (it.type === "set_meeting_link") {
-      const call = await findCall(String(it.call || ""));
-      const url = typeof it.url === "string" ? it.url.trim() : "";
-      if (call && url)
+
+    if (callTypes.includes(it.type)) {
+      const calls = await findCalls(String(it.call || ""));
+      if (!calls.length) continue;
+      // Gather the extras each action needs; skip if a required one is missing.
+      const x: any = {};
+      let detail = "";
+      if (it.type === "set_meeting_link") {
+        const url = typeof it.url === "string" ? it.url.trim() : "";
+        if (!url) continue;
+        x.url = url;
+        detail = `: ${url}`;
+      } else if (it.type === "set_intent") {
+        x.intent = typeof it.intent === "string" ? it.intent.trim() : "";
+        detail = x.intent ? `: ${x.intent}` : " (clear it)";
+      } else if (it.type === "link_call") {
+        const company = await findCompany(String(it.client || ""));
+        if (!company) continue;
+        x.companyId = company.id;
+        detail = ` to ${company.name}`;
+      } else if (it.type === "cancel_call") {
+        x.reason = typeof it.reason === "string" ? it.reason.trim() : "";
+        detail = x.reason ? ` (reason: ${x.reason})` : " (off the calendar)";
+      }
+      const verb = actionVerb(it.type);
+      if (calls.length === 1) {
+        const ex = callExec(calls[0], it.type, x);
         out.push({
           key,
           type: it.type,
-          label: `Attach this link to "${call.title}": ${url}`,
-          endpoint: `/api/crm/upcoming/${call.id}`,
-          method: "PATCH",
-          body: { meetingUrl: url },
+          label: `${verb.charAt(0).toUpperCase()}${verb.slice(1)} "${calls[0].title}"${detail}`,
+          endpoint: ex.endpoint,
+          method: ex.method,
+          body: ex.body,
         });
-    } else if (it.type === "set_intent") {
-      const call = await findCall(String(it.call || ""));
-      const intent = typeof it.intent === "string" ? it.intent.trim() : "";
-      if (call)
+      } else {
+        // Ambiguous - more than one matching call. Ask the user which one
+        // rather than guessing (the "which Joydeep call?" case).
         out.push({
           key,
           type: it.type,
-          label: intent
-            ? `Set the intent on "${call.title}": ${intent}`
-            : `Clear the intent on "${call.title}"`,
-          endpoint: `/api/crm/upcoming/${call.id}`,
-          method: "PATCH",
-          body: { intent },
+          label: `More than one call matches. Which one should I ${verb}${detail}?`,
+          choices: calls.slice(0, 4).map((c: any) => {
+            const ex = callExec(c, it.type, x);
+            return {
+              label: `${c.title || "call"} - ${callWhen(c.scheduled_at)}`,
+              endpoint: ex.endpoint,
+              method: ex.method,
+              body: ex.body,
+            };
+          }),
         });
-    } else if (it.type === "link_call") {
-      const call = await findCall(String(it.call || ""));
-      const company = await findCompany(String(it.client || ""));
-      if (call && company)
-        out.push({
-          key,
-          type: it.type,
-          label: `Link "${call.title}" to client ${company.name}`,
-          endpoint: `/api/crm/upcoming/${call.id}`,
-          method: "PATCH",
-          body: { companyId: company.id },
-        });
-    } else if (it.type === "cancel_call") {
-      const call = await findCall(String(it.call || ""));
-      const reason = typeof it.reason === "string" ? it.reason.trim() : "";
-      if (call)
-        out.push({
-          key,
-          type: it.type,
-          label: `Remove the "${call.title}" call${
-            reason ? ` and note it cancelled: ${reason}` : " (off the calendar)"
-          }`,
-          endpoint: `/api/crm/upcoming/${call.id}/cancel`,
-          method: "POST",
-          body: { reason },
-        });
-    } else if (it.type === "dismiss") {
+      }
+      continue;
+    }
+
+    if (it.type === "dismiss") {
       if (it.kind === "draft") {
         const d = await findDraft(String(it.item || ""));
         if (d)
@@ -259,7 +300,7 @@ ACTIONS YOU CAN TAKE (always with the user's confirmation - never claim you alre
 ---ACTIONS---
 [{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"}]
 ---END ACTIONS---
-When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too.
+When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too. If you are not sure which call, client, draft or to-do the user means, ask them to clarify in your prose reply rather than guessing (the system will also offer a pick-list if more than one record matches the name).
 Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Only include the actions the user actually asked for. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done. Keep these markers out of your prose and still reply naturally.
 
 TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the book of business well and respects your time.`,

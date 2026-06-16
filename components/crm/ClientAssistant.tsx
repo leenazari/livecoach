@@ -329,6 +329,22 @@ export default function ClientAssistant({
   };
   const cancelAction = (a: any) =>
     setActionState((s) => ({ ...s, [a.key]: "cancelled" }));
+  // When the brain wasn't sure which record you meant, it offers options. Tap
+  // one to run the action against exactly that record.
+  const confirmChoice = async (a: any, c: any) => {
+    if (!c || !c.endpoint) return;
+    setActionState((s) => ({ ...s, [a.key]: "busy" }));
+    try {
+      await crmFetch(c.endpoint, {
+        method: c.method || "PATCH",
+        body: JSON.stringify(c.body || {}),
+      });
+      setActionState((s) => ({ ...s, [a.key]: "done" }));
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    } catch {
+      setActionState((s) => ({ ...s, [a.key]: "pending" }));
+    }
+  };
 
   const clearThread = async () => {
     if (!confirm("Clear this assistant conversation?")) return;
@@ -354,7 +370,7 @@ export default function ClientAssistant({
     <section className="flex min-h-0 w-full flex-1 flex-col rounded-xl border border-amber/40 bg-amber/[0.04] p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-          {"▤"} Assistant{" "}
+          {"▤"} The brain{" "}
           <span className="text-muted">- ask anything about {label}</span>
         </p>
         <div className="flex items-center gap-2">
@@ -508,6 +524,28 @@ export default function ClientAssistant({
                             <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
                               ✓ done
                             </span>
+                          ) : Array.isArray(a.choices) && a.choices.length ? (
+                            <div className="flex flex-col gap-1">
+                              {a.choices.map((c: any, ci: number) => (
+                                <button
+                                  key={ci}
+                                  type="button"
+                                  disabled={st === "busy"}
+                                  onClick={() => confirmChoice(a, c)}
+                                  className="rounded-lg border border-sage/50 bg-sage/10 px-3 py-1 text-left font-sans text-[0.76rem] text-bone/90 transition hover:bg-sage/20 disabled:opacity-50"
+                                >
+                                  {c.label}
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                disabled={st === "busy"}
+                                onClick={() => cancelAction(a)}
+                                className="self-start rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-rust disabled:opacity-50"
+                              >
+                                none of these
+                              </button>
+                            </div>
                           ) : (
                             <div className="flex gap-2">
                               <button
