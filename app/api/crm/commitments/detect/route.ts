@@ -33,6 +33,7 @@ For EACH commitment output an object:
 
 Rules:
 - Capture ONLY commitments the USER made. Ignore things the OTHER party promised, and ignore vague intentions that are not a real next action.
+- ONE item per real promise/outcome. Never split a single commitment into several items, and never create both a call and an email for the same person and purpose. Do NOT add hedging "check whether...", "decide whether...", "wait for..." or "follow up if no reply" items. If two promises are about the same person or outcome, merge them.
 - Never invent names, companies, numbers, amounts, links or dates that are not supported by the text. If a detail is unknown, leave a clear placeholder like [their name] rather than guessing.
 - Drafts must be warm, concise and sound like the user. NEVER use em dashes or semicolons anywhere in any drafted text - use full stops or commas.
 - Keep email bodies short (a few sentences). Keep task notes tight.

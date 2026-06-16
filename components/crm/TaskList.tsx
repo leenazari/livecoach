@@ -19,6 +19,9 @@ type Task = {
   meeting_url?: string | null;
   intent?: string | null;
   due_soon?: boolean;
+  // When an intent has more than one way to act it (e.g. call OR email the same
+  // person), payload.approaches lists them and clicking asks which to use.
+  payload?: { approaches?: string[]; [k: string]: any } | null;
 };
 
 // "today 14:00" / "Tue 14:00" for a prep to-do's call time.
@@ -53,6 +56,8 @@ export default function TaskList({
   const url = `/api/crm/tasks${companyId ? `?companyId=${companyId}` : ""}`;
   const cached = getCached<{ tasks: Task[] }>(url);
   const [tasks, setTasks] = useState<Task[]>(cached?.tasks || []);
+  // Task id currently showing its "which approach?" chooser (call vs email).
+  const [choosing, setChoosing] = useState<string | null>(null);
 
   useEffect(() => {
     crmFetch<{ tasks: Task[] }>(url)
@@ -107,9 +112,22 @@ export default function TaskList({
     }).catch(() => {});
   };
 
-  // What clicking the task text does, by action.
+  // What clicking the task text does. If the intent has more than one approach
+  // (call OR email), ask which first; otherwise just run its action.
   const start = (t: Task) => {
-    const a = t.link_kind || "task";
+    const approaches = Array.isArray(t.payload?.approaches)
+      ? (t.payload!.approaches as string[])
+      : [];
+    if (approaches.length > 1) {
+      setChoosing((c) => (c === t.id ? null : t.id));
+      return;
+    }
+    runAction(t, t.link_kind || "task");
+  };
+
+  // Run a specific action for a task.
+  const runAction = (t: Task, a: string) => {
+    setChoosing(null);
     if (a === "email") {
       window.dispatchEvent(
         new CustomEvent("lc:draft-email", {
@@ -172,7 +190,11 @@ export default function TaskList({
       {tasks.map((t) => {
         const done = t.status === "done";
         const c = chip(t.link_kind);
-        const canClick = actionable(t);
+        const approaches = Array.isArray(t.payload?.approaches)
+          ? (t.payload!.approaches as string[])
+          : [];
+        const multi = approaches.length > 1;
+        const canClick = multi || actionable(t);
         return (
           <li
             key={t.id}
@@ -219,7 +241,36 @@ export default function TaskList({
                 {whenLabel(t.scheduled_at)}
               </span>
             )}
-            {c && !done && (
+            {/* Multi-approach: clicking the text opens this Call / Email choice. */}
+            {multi && !done && choosing === t.id && (
+              <span className="flex flex-none items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => runAction(t, "email")}
+                  className="rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider"
+                  style={{ background: "var(--color-background-info)", color: "var(--color-text-info)" }}
+                >
+                  <i className="ti ti-mail" aria-hidden="true" /> email
+                </button>
+                <button
+                  type="button"
+                  onClick={() => runAction(t, "call")}
+                  className="rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider"
+                  style={{ background: "var(--color-background-warning)", color: "var(--color-text-warning)" }}
+                >
+                  <i className="ti ti-player-play" aria-hidden="true" /> call
+                </button>
+              </span>
+            )}
+            {multi && !done && choosing !== t.id && (
+              <span
+                className="flex-none rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider"
+                style={{ background: "var(--color-background-info)", color: "var(--color-text-info)" }}
+              >
+                call or email
+              </span>
+            )}
+            {!multi && c && !done && (
               <span
                 className="flex-none rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider"
                 style={{ background: c.bg, color: c.fg }}

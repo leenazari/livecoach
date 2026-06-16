@@ -22,9 +22,12 @@ Output ONLY a JSON array. Each item is {"text": a short imperative to-do, "actio
 Rules:
 - Capture only real next steps the user stated or clearly intends. If the notes ramble or contain nothing actionable, return [].
 - Use "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else.
+- ONE item per real outcome. Never split a single next step into several. If a step could be done by call OR email (e.g. reschedule with someone), create just ONE item, pick the most likely action, never both a call and an email for the same person and purpose.
+- Do NOT add filler items that merely restate or hedge the main step, such as "check whether...", "decide whether...", "wait for..." or "follow up if no reply". Capture the concrete action only.
+- If two notes are about the same person or the same outcome, merge them into a single item.
 - Keep each "text" short and specific, under 12 words, starting with a verb.
 - Never invent names, companies, numbers, amounts or dates that are not in the notes.
-- Return at most 8 items. No prose, no markdown, only the JSON array.`;
+- Return at most 6 items. No prose, no markdown, only the JSON array.`;
 
     const user = `${clientName ? `Client: ${clientName}\n` : ""}Notes:\n${notes.slice(
       0,

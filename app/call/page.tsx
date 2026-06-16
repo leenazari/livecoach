@@ -138,6 +138,10 @@ export default function CallPage() {
   const recapRecRef = useRef<any>(null);
   const recapBaseRef = useRef("");
   const recapTextRef = useRef("");
+  // Keep finalised dictation segments so the box never shrinks or drops the last
+  // words when Chrome revises its interim guess near the end.
+  const recapCommittedRef = useRef("");
+  const recapCommittedCountRef = useRef(0);
   useEffect(() => {
     recapTextRef.current = recapText;
   }, [recapText]);
@@ -168,18 +172,27 @@ export default function CallPage() {
     recapBaseRef.current = recapTextRef.current.trim()
       ? `${recapTextRef.current.trim()} `
       : "";
+    recapCommittedRef.current = "";
+    recapCommittedCountRef.current = 0;
     rec.onresult = (e: any) => {
-      // Android Chrome keeps several overlapping interim results in the list, so
-      // concatenating them all duplicates the text. Build from the FINAL
-      // segments and take only the LATEST interim snapshot.
-      let finalText = "";
-      let interim = "";
-      for (let i = 0; i < e.results.length; i++) {
+      // Android Chrome keeps several overlapping interim results, and Chrome also
+      // revises its interim guess downward near the end (which dropped the last
+      // words). Fold each FINAL segment into a committed buffer ONCE by index so
+      // it can never shrink, and only ever show the single latest interim as the
+      // live tail. The box grows monotonically and keeps the whole sentence.
+      for (let i = recapCommittedCountRef.current; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) finalText += r[0]?.transcript || "";
-        else interim = r[0]?.transcript || "";
+        if (r.isFinal) {
+          recapCommittedRef.current += r[0]?.transcript || "";
+          recapCommittedCountRef.current = i + 1;
+        }
       }
-      setRecapText((recapBaseRef.current + finalText + interim).trim());
+      let interim = "";
+      for (let i = recapCommittedCountRef.current; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (!r.isFinal) interim = r[0]?.transcript || "";
+      }
+      setRecapText((recapBaseRef.current + recapCommittedRef.current + interim).trim());
     };
     rec.onend = () => {
       setRecapListening(false);

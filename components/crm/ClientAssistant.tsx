@@ -104,6 +104,11 @@ export default function ClientAssistant({
   const convoRef = useRef(false); // mirror of convo for the stable callbacks
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputElRef = useRef<HTMLTextAreaElement | null>(null);
+  // Dictation transcript, kept so the box never shrinks or drops your last words.
+  // committedRef holds every FINALISED segment this session (only ever grows);
+  // committedCountRef is how many results we've already folded into it.
+  const committedRef = useRef("");
+  const committedCountRef = useRef(0);
 
   // Grow the input box with the text (typed or dictated) up to a few lines, so
   // you can always see your last lines instead of one scrolling line.
@@ -283,6 +288,8 @@ export default function ClientAssistant({
     if (listening || recRef.current) killMic();
     setInput("");
     inputRef.current = "";
+    committedRef.current = "";
+    committedCountRef.current = 0;
     // Add the user message AND an empty assistant bubble to stream the reply
     // into, so words appear as they are written.
     setMessages((p) => [
@@ -401,20 +408,32 @@ export default function ClientAssistant({
     rec.interimResults = true;
     rec.continuous = true;
     suppressMicRef.current = false; // fresh dictation session
+    committedRef.current = "";
+    committedCountRef.current = 0;
     rec.onresult = (e: any) => {
       if (suppressMicRef.current) return; // a send already consumed this
-      // Android Chrome keeps several overlapping INTERIM results in the list, so
-      // concatenating them all duplicates ("sososo I just had a call"). Build the
-      // text from the FINAL segments only, and take just the LATEST interim
-      // snapshot for the live preview.
-      let finalText = "";
-      let interim = "";
-      for (let i = 0; i < e.results.length; i++) {
+      // Two browser quirks to handle at once:
+      //  - Android Chrome keeps several overlapping INTERIM results, so naively
+      //    concatenating them duplicates ("sososo I just had a call").
+      //  - Chrome also REVISES the live interim guess downward near the end, which
+      //    made the box "jump back up" and drop the last words on finish.
+      // Fix: once a segment is FINAL, fold it into committedRef ONCE (by index) so
+      // it can never shrink or vanish, and only ever show the single latest interim
+      // as the live tail. The box therefore grows monotonically and keeps the whole
+      // sentence, including the final words, when you stop.
+      for (let i = committedCountRef.current; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) finalText += r[0]?.transcript || "";
-        else interim = r[0]?.transcript || "";
+        if (r.isFinal) {
+          committedRef.current += r[0]?.transcript || "";
+          committedCountRef.current = i + 1;
+        }
       }
-      const text = (finalText + interim).trim();
+      let interim = "";
+      for (let i = committedCountRef.current; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (!r.isFinal) interim = r[0]?.transcript || ""; // keep only the latest
+      }
+      const text = (committedRef.current + interim).trim();
       inputRef.current = text;
       setInput(text);
       // Hands-free: when you pause for a moment, end the turn and send.

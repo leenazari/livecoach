@@ -25,7 +25,7 @@ async function findCalls(title: string): Promise<any[]> {
   if (!term) return [];
   const { data } = await supabaseAdmin
     .from("upcoming_calls")
-    .select("id, title, scheduled_at")
+    .select("id, title, scheduled_at, intent")
     .ilike("title", `%${term}%`)
     .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
@@ -85,6 +85,13 @@ function callExec(call: any, type: string, x: any) {
     return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { meetingUrl: x.url } };
   if (type === "set_intent")
     return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { intent: x.intent } };
+  if (type === "add_intent") {
+    // Append to the call's existing focus rather than overwriting it, so a prep
+    // note lands in the intent window without wiping what's already there.
+    const cur = typeof call.intent === "string" ? call.intent.trim() : "";
+    const next = cur ? `${cur} ${x.note}` : x.note;
+    return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { intent: next } };
+  }
   if (type === "link_call")
     return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { companyId: x.companyId } };
   // cancel_call
@@ -95,6 +102,8 @@ function actionVerb(type: string): string {
     ? "attach the link to"
     : type === "set_intent"
     ? "set the intent on"
+    : type === "add_intent"
+    ? "add to the focus for"
     : type === "link_call"
     ? "link"
     : "remove";
@@ -102,7 +111,7 @@ function actionVerb(type: string): string {
 
 async function resolveActions(items: any[]): Promise<any[]> {
   const out: any[] = [];
-  const callTypes = ["set_meeting_link", "set_intent", "link_call", "cancel_call"];
+  const callTypes = ["set_meeting_link", "set_intent", "add_intent", "link_call", "cancel_call"];
   for (const it of Array.isArray(items) ? items : []) {
     if (out.length >= 6) break;
     if (!it || typeof it.type !== "string") continue;
@@ -122,6 +131,15 @@ async function resolveActions(items: any[]): Promise<any[]> {
       } else if (it.type === "set_intent") {
         x.intent = typeof it.intent === "string" ? it.intent.trim() : "";
         detail = x.intent ? `: ${x.intent}` : " (clear it)";
+      } else if (it.type === "add_intent") {
+        x.note =
+          typeof it.note === "string"
+            ? it.note.trim()
+            : typeof it.intent === "string"
+            ? it.intent.trim()
+            : "";
+        if (!x.note) continue;
+        detail = `: ${x.note}`;
       } else if (it.type === "link_call") {
         const company = await findCompany(String(it.client || ""));
         if (!company) continue;
@@ -160,6 +178,31 @@ async function resolveActions(items: any[]): Promise<any[]> {
           }),
         });
       }
+      continue;
+    }
+
+    if (it.type === "create_client") {
+      const name = (typeof it.name === "string" ? it.name : it.client || "")
+        .toString()
+        .trim();
+      if (!name) continue;
+      // Don't duplicate someone already in the pipeline.
+      const existing = await findCompany(name);
+      if (existing) continue;
+      const brief =
+        typeof it.brief === "string"
+          ? it.brief.trim()
+          : typeof it.background === "string"
+          ? it.background.trim()
+          : "";
+      out.push({
+        key,
+        type: it.type,
+        label: `Create a profile for "${name}"`,
+        endpoint: `/api/crm/companies`,
+        method: "POST",
+        body: brief ? { name, notes: brief } : { name },
+      });
       continue;
     }
 
@@ -306,6 +349,8 @@ HOW TO WRITE (this matters a lot - the user finds over-formatted answers robotic
 - Never use em-dashes or semicolons. Use commas and full stops instead.
 - Lead with the single most useful thing. Cut filler and preamble. Don't pad to sound thorough.
 
+VOICE INPUT AND NAMES: the user usually talks to you by voice, so the transcript can mishear words, especially names. When a word is close to a person, client or company name that appears in the context (for example "Elaine", "Elon" or "a lane" for "Alain", "Joy deep" for "Joydeep", "Manny" vs "Danny"), treat it as that known name and use the correct spelling in your reply and in anything you draft. When the context makes the intended name obvious, just use it - do not stop to ask which name they meant.
+
 DRAFTS - ONLY WHEN ASKED (this keeps replies fast): do NOT write a full email, message or document unless the user EXPLICITLY asks you to draft, write, or send one. For a normal question, answer concisely and, if a draft would help, OFFER it in a single line ("want me to draft that email?") rather than writing it. Writing a long draft nobody asked for is slow and wasteful. When they DO ask you to draft something, put ONLY that sendable text between these exact marker lines:
 ---DRAFT---
 <the sendable text only - for an email include a "Subject:" line then the body>
@@ -320,20 +365,26 @@ Use "email" for anything to write or send, "call" to prep or schedule a call, "t
 
 CALENDAR: the user's upcoming calls, synced from their calendar, are in the context below in the calls list, each with its join link when there is one. Answer "what's on my calendar" / "what's next" from that, and give the join link when asked. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
 
-ACTIONS YOU CAN TAKE (always with the user's confirmation - never claim you already did them): when the user explicitly asks you to attach or change a meeting link on a call, set or clear a call's intent, link a call to a client, cancel/remove a call that is no longer happening (it was cancelled or already happened separately) and note why, or dismiss a draft or a to-do, propose it. ALSO watch for the user stating a durable PREFERENCE, habit, standard practice, rule, or lasting fact about how they work or their business (for example "I wait 48 hours before chasing a follow-up", "I never call before 10am", "always cc Mark on proposals", "my standard pilot is two weeks"). When they do, offer to REMEMBER it with a "remember" action so it sticks for future plans, cues and chats - acknowledge it in your prose AND propose saving it; never save silently. In ADDITION to a short prose reply, put ONLY a JSON array between these exact markers:
+ACTIONS YOU CAN TAKE (never claim you already did them - the Confirm button is what does the work): when the user explicitly asks you to attach or change a meeting link on a call, set or clear a call's intent, ADD a note to a call's focus (add_intent), link a call to a client, cancel/remove a call that is no longer happening (it was cancelled or already happened separately) and note why, dismiss a draft or a to-do, or CREATE a profile for someone new (create_client), propose it. ALSO watch for the user stating a durable PREFERENCE, habit, standard practice, rule, or lasting fact about how they work or their business (for example "I wait 48 hours before chasing a follow-up", "I never call before 10am", "always cc Mark on proposals", "my standard pilot is two weeks"). When they do, offer to REMEMBER it with a "remember" action so it sticks for future plans, cues and chats - acknowledge it in your prose AND propose saving it; never save silently. In ADDITION to a short prose reply, put ONLY a JSON array between these exact markers:
 ---ACTIONS---
-[{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"}]
+[{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<call title>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"}]
 ---END ACTIONS---
 When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too. If you are not sure which call, client, draft or to-do the user means, ask them to clarify in your prose reply rather than guessing (the system will also offer a pick-list if more than one record matches the name).
-Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Only include the actions the user actually asked for. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done. Keep these markers out of your prose and still reply naturally.
+Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done.
+
+NEW PEOPLE: when the user introduces or talks about a person or company who is a contact, prospect, partner or lead and is NOT already in the context, proactively OFFER to create their profile with create_client, capturing what you know in the brief, so future calls and notes track against them. Suggest it early rather than waiting to be asked twice.
+
+PREP NOTES GO INTO THE CALL: when the user says to add something to the plan or focus for a named upcoming call (for example "add to the focus for the Alain call that I should bring up Darren"), use add_intent so it lands in that call's intent window and is in front of them at prep time. Do NOT just make a loose to-do for this, since that is easy to miss.
+
+EXPLICIT ASK = ACT NOW: when the user explicitly asks for one of these (create a profile, add to a plan, remember something, change or cancel a call, dismiss something), propose the action straight away in the SAME reply. Do not ask "want me to?" a second time when they have already told you to do it, and never claim it is already done. Emitting the action IS how you carry out their request. Only the destructive ones (cancel a call, dismiss a draft or to-do) and anything you are unsure about need a careful confirm. If you are not sure which call, client, draft or to-do they mean, ask them to clarify in your prose rather than guessing (the system also offers a pick-list when more than one record matches). Only include the actions the user actually asked for. Keep these markers out of your prose and still reply naturally.
 
 TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the book of business well and respects your time.
 
 SPOKEN SUMMARY: the user often listens to your reply by voice, and hearing the whole thing read out is long winded (especially for a game plan or a list). So ALWAYS also give a SHORT spoken version - one or two sentences that carry the gist and the single most useful point, in a natural talking voice. Put ONLY that between these exact markers:
 ---SPOKEN---
-<one or two spoken sentences>
+<one or two spoken sentences. If your written reply ends by asking the user something, repeat that question word for word as the LAST sentence here>
 ---END SPOKEN---
-NEVER read out a full draft or email in the spoken version. If you wrote a draft, the spoken version should just say a draft is ready and ASK if they want you to read it out. Keep these markers out of your visible prose. The full written answer still goes in your normal reply.`,
+ALWAYS end the spoken version with your closing question whenever your reply has one. The user is often hands-free, so hearing the question read out is what keeps the conversation going - never drop it. NEVER read out a full draft or email in the spoken version. If you wrote a draft, the spoken version should just say a draft is ready and ASK if they want you to read it out. Keep these markers out of your visible prose. The full written answer still goes in your normal reply.`,
       },
       {
         type: "text",
