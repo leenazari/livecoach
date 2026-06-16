@@ -40,14 +40,16 @@ export async function workspaceContextBlock(): Promise<string> {
   const now = nowLine();
   let knowledge = "";
   let learned = "";
+  let coaching = "";
   try {
     const { data } = await supabaseAdmin
       .from("workspace_profile")
-      .select("knowledge, learned")
+      .select("knowledge, learned, coaching")
       .eq("id", "main")
       .maybeSingle();
     knowledge = typeof data?.knowledge === "string" ? data.knowledge.trim() : "";
     learned = typeof data?.learned === "string" ? data.learned.trim() : "";
+    coaching = typeof data?.coaching === "string" ? data.coaching.trim() : "";
   } catch {
     /* best-effort */
   }
@@ -56,6 +58,8 @@ export async function workspaceContextBlock(): Promise<string> {
     out += `ABOUT THE USER AND THEIR BUSINESS (background for everything below - use it to frame your reasoning, never contradict or override the specific data provided later):\n${knowledge}\n\n`;
   if (learned)
     out += `WHAT YOU HAVE LEARNED SO FAR (durable patterns picked up from the user's calls, emails and chats - apply them, but treat them as secondary to the curated profile above and to the specific data provided later):\n${learned}\n\n`;
+  if (coaching)
+    out += `THE USER'S DEVELOPMENT (what they are training toward: becoming a world-class technology expert in systems development and AI concepts, and articulating why their products fit each client's scenario - plus their pitch and closing habits. These are their recurring areas to improve and their strengths, learned from past calls. Coach gently toward these, build on the strengths, and help them close the gaps at the right moments):\n${coaching}\n\n`;
   return out;
 }
 

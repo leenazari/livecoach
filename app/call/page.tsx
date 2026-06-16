@@ -238,6 +238,9 @@ export default function CallPage() {
   } | null>(null);
   const [summaryTranscript, setSummaryTranscript] = useState("");
   const [playbook, setPlaybook] = useState<{ label: string; detail: string }[]>([]);
+  // Buyer-tailored pitch kit (selling calls): benefits, proof points,
+  // differentiators, must-mention points, objections. Built in the plan.
+  const [pitchKit, setPitchKit] = useState<any>(null);
   const [privateNotes, setPrivateNotes] = useState<string[]>([]);
   const [goals, setGoals] = useState<{ text: string; liked?: boolean }[]>([]);
   const [publicLink, setPublicLink] = useState("");
@@ -389,16 +392,32 @@ export default function CallPage() {
   }, [cueSpeed]);
   useEffect(() => {
     clientEmailCtxRef.current = clientEmailCtx;
+    // A compact pitch-kit line so the LIVE cues can surface the right benefit /
+    // proof / must-mention at the moment the buyer reveals a need.
+    const pk =
+      pitchKit &&
+      (pitchKit.mustMention?.length ||
+        pitchKit.benefits?.length ||
+        pitchKit.proofPoints?.length)
+        ? `PITCH KIT (land these when the moment fits - tie a benefit to the need they reveal, hit the must-mention points, back it with a proof): ${[
+            ...(pitchKit.mustMention || []).map((m: string) => `must-mention: ${m}`),
+            ...(pitchKit.benefits || []).map(
+              (b: any) => `benefit: ${b.benefit}${b.need ? ` (for ${b.need})` : ""}`
+            ),
+            ...(pitchKit.proofPoints || []).map((p: string) => `proof: ${p}`),
+          ].join("; ")}`
+        : "";
     planBriefRef.current = [
       brief?.trim() ? `INTENT: ${brief.trim()}` : "",
       character?.trim() ? `YOUR READ: ${character.trim()}` : "",
+      pk,
       clientEmailCtx?.trim()
         ? `EMAIL THREAD SO FAR (where most of this relationship has happened):\n${clientEmailCtx.trim()}`
         : "",
     ]
       .filter(Boolean)
       .join("\n\n");
-  }, [brief, character, clientEmailCtx]);
+  }, [brief, character, clientEmailCtx, pitchKit]);
   useEffect(() => {
     linkedCompanyRef.current = linkedCompany;
   }, [linkedCompany]);
@@ -509,6 +528,8 @@ export default function CallPage() {
           )
         );
       }
+      if (prep.pitchKit && typeof prep.pitchKit === "object")
+        setPitchKit(prep.pitchKit);
       if (Array.isArray(prep.privateNotes)) {
         setPrivateNotes(
           prep.privateNotes.filter((x: any) => typeof x === "string" && x.trim())
@@ -603,6 +624,7 @@ export default function CallPage() {
       selectedComps,
       goals,
       playbook,
+      pitchKit,
       privateNotes,
       openingQuestions,
       planStage,
@@ -630,6 +652,7 @@ export default function CallPage() {
     selectedComps,
     goals,
     playbook,
+    pitchKit,
     privateNotes,
     planStage,
     suggestions,
@@ -1199,6 +1222,7 @@ export default function CallPage() {
     }
 
     if (mode === "full") {
+      setPitchKit(data.pitchKit || null);
       setPlaybook(
         Array.isArray(data.playbook)
           ? data.playbook.filter(
@@ -1638,6 +1662,21 @@ export default function CallPage() {
               window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
           })
           .catch(() => {});
+      }
+      // Learn what YOU personally need to get better at - technical depth
+      // (systems / AI), product fit, and pitch & closing - and fold it into your
+      // development profile for future calls. Fire-and-forget; needs a real
+      // transcript so recap-only calls are skipped.
+      if (!manualRecap && labelled.trim().length >= 200) {
+        fetch("/api/interview/coaching-learn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transcript: labelled,
+            candidate: candidateRef.current || null,
+            callType,
+          }),
+        }).catch(() => {});
       }
     } catch (e: any) {
       setStatus(`error: ${e.message}`);
@@ -2597,6 +2636,120 @@ export default function CallPage() {
                         </li>
                       ))}
                     </ul>
+                  </div>
+                )}
+                {pitchKit && (
+                  <div className="rounded-xl border border-sky/40 bg-sky/[0.06] p-3.5">
+                    <p className="mb-2 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-sky">
+                      Pitch kit{" "}
+                      <span className="text-muted">
+                        - what to land with this buyer
+                      </span>
+                    </p>
+                    {Array.isArray(pitchKit.benefits) &&
+                      pitchKit.benefits.length > 0 && (
+                        <div className="mb-2.5">
+                          <p className="mb-1 font-mono text-[0.54rem] uppercase tracking-wider text-amber">
+                            benefits to land
+                          </p>
+                          <ul className="flex flex-col gap-1">
+                            {pitchKit.benefits.map((b: any, i: number) => (
+                              <li
+                                key={i}
+                                className="font-sans text-[0.82rem] leading-snug text-bone/85"
+                              >
+                                <span className="text-bone">{b.benefit}</span>
+                                {b.need ? (
+                                  <span className="text-muted">
+                                    {" — for: "}
+                                    {b.need}
+                                  </span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    {Array.isArray(pitchKit.proofPoints) &&
+                      pitchKit.proofPoints.length > 0 && (
+                        <div className="mb-2.5">
+                          <p className="mb-1 font-mono text-[0.54rem] uppercase tracking-wider text-sage">
+                            proof points
+                          </p>
+                          <ul className="flex flex-col gap-1">
+                            {pitchKit.proofPoints.map((p: string, i: number) => (
+                              <li
+                                key={i}
+                                className="font-sans text-[0.82rem] leading-snug text-bone/85"
+                              >
+                                {"•"} {p}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    {Array.isArray(pitchKit.mustMention) &&
+                      pitchKit.mustMention.length > 0 && (
+                        <div className="mb-2.5">
+                          <p className="mb-1 font-mono text-[0.54rem] uppercase tracking-wider text-rust">
+                            don't forget
+                          </p>
+                          <ul className="flex flex-col gap-1">
+                            {pitchKit.mustMention.map((p: string, i: number) => (
+                              <li
+                                key={i}
+                                className="font-sans text-[0.82rem] leading-snug text-bone/85"
+                              >
+                                {"•"} {p}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    {Array.isArray(pitchKit.differentiators) &&
+                      pitchKit.differentiators.length > 0 && (
+                        <div className="mb-2.5">
+                          <p className="mb-1 font-mono text-[0.54rem] uppercase tracking-wider text-sky">
+                            only you
+                          </p>
+                          <ul className="flex flex-col gap-1">
+                            {pitchKit.differentiators.map(
+                              (p: string, i: number) => (
+                                <li
+                                  key={i}
+                                  className="font-sans text-[0.82rem] leading-snug text-bone/85"
+                                >
+                                  {"•"} {p}
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                    {Array.isArray(pitchKit.objections) &&
+                      pitchKit.objections.length > 0 && (
+                        <div>
+                          <p className="mb-1 font-mono text-[0.54rem] uppercase tracking-wider text-muted">
+                            likely objections
+                          </p>
+                          <ul className="flex flex-col gap-1">
+                            {pitchKit.objections.map((o: any, i: number) => (
+                              <li
+                                key={i}
+                                className="font-sans text-[0.82rem] leading-snug text-bone/85"
+                              >
+                                <span className="text-bone">{o.objection}</span>
+                                {o.response ? (
+                                  <span className="text-muted">
+                                    {" → "}
+                                    {o.response}
+                                  </span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                   </div>
                 )}
                 {goals.length > 0 && (

@@ -619,6 +619,9 @@ Return the JSON plan now.`;
     // so the tactics are sharp, warm and specific, WITHOUT putting the whole
     // slow plan on Sonnet. If it fails/times out, keep the fast Haiku playbook.
     let sonnetPlaybook: { label: string; detail: string }[] = [];
+    // For selling calls, a buyer-tailored pitch kit: which benefits to land,
+    // proof points, differentiators, must-mention points, and objection prep.
+    let pitchKit: any = null;
     // Only attempt the Sonnet upgrade if there's real budget left; otherwise
     // keep the Haiku playbook. This is what stops the 60s overrun.
     try {
@@ -626,15 +629,21 @@ Return the JSON plan now.`;
       const pbSystem: any[] = [
         {
           type: "text",
-          text: `${biz}${lessons}You write the PLAYBOOK for a live call: 4-6 concrete, in-the-moment tactics the caller should be ready to use. Each item is { "label": "short tactic name", "detail": "one specific, actionable line" }.
+          text: `${biz}${lessons}You prepare a caller for a live call. Return TWO things as ONE JSON object: a playbook, and (for selling calls only) a pitch kit.
 
-Ground EVERY tactic in THIS call - name the real idea, product, and people from the intent, the FOCUS AREAS, and the document. A reader should be unable to use these tactics for any other call. Never generic advice.
+1) "playbook": 4-6 concrete, in-the-moment tactics the caller should be ready to use, each { "label": "short tactic name", "detail": "one specific, actionable line" }. Ground EVERY tactic in THIS call - name the real idea, product and people from the intent, the FOCUS AREAS and the document; never generic advice. THE FOCUS AREAS ARE A HARD BOUNDARY: every tactic must serve one of them, ignore prominent facts outside them. If the context includes AREAS THE USER IS WORKING ON (their own pitch/communication habits to improve), weave ONE gentle personal reminder into the playbook. TONE: warm, collaborative, leading with curiosity, never a scripted command or ultimatum; no bossy openers.
 
-THE FOCUS AREAS ARE A HARD BOUNDARY: every tactic MUST serve one of the focus areas given below. Do NOT build a tactic around any topic, fact, or number from the document that is not one of the focus areas - even if it is prominent or impressive (a big audience, a headline metric, a famous name). The caller deliberately chose what is in scope; anything outside the focus areas is OFF-LIMITS for this call. Only cite a number if it belongs to a focus area.
+2) "pitchKit": ONLY when this is a SALES, PITCH, DEMO or DISCOVERY call (use the CALL TYPE and the intent to decide). For an interview, support or other non-selling call set pitchKit to null. When it IS a selling call, tailor it to THIS specific buyer from the context - their needs, role, and what they care about, not a generic feature list:
+   - "benefits": 3-6 of the offer's benefits to land, RANKED, each {"benefit":"the benefit in the buyer's language","need":"the buyer need or pain it answers"}.
+   - "proofPoints": 2-5 concrete proofs, results, numbers, names or stories to cite - ONLY ones present in the context or intent, never invented.
+   - "differentiators": 0-4 things only the caller's offer does that matter to this buyer.
+   - "mustMention": 3-6 short points the caller MUST NOT forget to raise because they match this buyer's needs.
+   - "objections": 0-4 likely objections from this buyer, each {"objection":"...","response":"a warm one-line way to handle it"}.
+   Ground everything in the context. Never invent numbers, proofs, names or claims.
 
-TONE - the detail is for a real human to say WARMLY: write each tactic the way a thoughtful, friendly, intellectually-curious partner would - warm, collaborative, softened, leading with curiosity. If you suggest something to SAY, phrase it as a warm person actually would: inviting, never a scripted command or ultimatum. BAN bossy openers like "I want you to...", "Before we talk X, I want to be clear...", "That's your role here", "explicitly say:". This is a conversation between collaborators, not a sales script.
-
-Output ONLY a JSON array: [{"label":"...","detail":"..."}] - no prose, no markdown.`,
+Output ONLY this JSON object, no prose, no markdown:
+{"playbook":[{"label":"...","detail":"..."}],"pitchKit":{"benefits":[{"benefit":"...","need":"..."}],"proofPoints":["..."],"differentiators":["..."],"mustMention":["..."],"objections":[{"objection":"...","response":"..."}]}}
+pitchKit may be null.`,
         },
         {
           type: "text",
@@ -645,11 +654,12 @@ Output ONLY a JSON array: [{"label":"...","detail":"..."}] - no prose, no markdo
         },
       ];
       const pbUser = `INTENT: ${brief || "(none given)"}
+CALL TYPE: ${callType}
 ROLE / TITLE: ${role || "(not specified)"}
 RANKED FOCUS AREAS: ${focusAreas.join(", ")}
 YOUR READ ON THEM: ${character || "(n/a)"}
 
-Write the 4-6 tactic playbook now - JSON array only.`;
+Return the JSON object (playbook + pitchKit) now.`;
       const pbController = new AbortController();
       const pbMs = Math.min(25000, remaining() - 3000);
       const pbTimer = setTimeout(() => pbController.abort(), pbMs);
@@ -671,24 +681,64 @@ Write the 4-6 tactic playbook now - JSON array only.`;
           .join("")
           .replace(/```json|```/g, "")
           .trim();
-        const a = pbRaw.indexOf("[");
-        const b = pbRaw.lastIndexOf("]");
-        const arr = a >= 0 && b > a ? JSON.parse(pbRaw.slice(a, b + 1)) : [];
-        if (Array.isArray(arr)) {
-          sonnetPlaybook = arr
-            .filter(
-              (pp: any) =>
-                pp &&
-                typeof pp.label === "string" &&
-                typeof pp.detail === "string" &&
-                pp.label.trim() &&
-                pp.detail.trim()
-            )
-            .slice(0, 6)
-            .map((pp: any) => ({
-              label: String(pp.label),
-              detail: String(pp.detail),
-            }));
+        const a = pbRaw.indexOf("{");
+        const b = pbRaw.lastIndexOf("}");
+        const obj = a >= 0 && b > a ? JSON.parse(pbRaw.slice(a, b + 1)) : {};
+        const arr = Array.isArray(obj.playbook) ? obj.playbook : [];
+        sonnetPlaybook = arr
+          .filter(
+            (pp: any) =>
+              pp &&
+              typeof pp.label === "string" &&
+              typeof pp.detail === "string" &&
+              pp.label.trim() &&
+              pp.detail.trim()
+          )
+          .slice(0, 6)
+          .map((pp: any) => ({
+            label: String(pp.label),
+            detail: String(pp.detail),
+          }));
+        // Pitch kit - selling calls only. Validate + trim each part.
+        if (obj.pitchKit && typeof obj.pitchKit === "object") {
+          const pk = obj.pitchKit;
+          const sList = (v: any, n: number): string[] =>
+            Array.isArray(v)
+              ? v
+                  .filter((x: any) => typeof x === "string" && x.trim())
+                  .map((x: any) => x.trim())
+                  .slice(0, n)
+              : [];
+          const benefits = Array.isArray(pk.benefits)
+            ? pk.benefits
+                .filter((x: any) => x && typeof x.benefit === "string" && x.benefit.trim())
+                .map((x: any) => ({
+                  benefit: String(x.benefit).trim(),
+                  need: typeof x.need === "string" ? x.need.trim() : "",
+                }))
+                .slice(0, 6)
+            : [];
+          const objections = Array.isArray(pk.objections)
+            ? pk.objections
+                .filter((x: any) => x && typeof x.objection === "string" && x.objection.trim())
+                .map((x: any) => ({
+                  objection: String(x.objection).trim(),
+                  response: typeof x.response === "string" ? x.response.trim() : "",
+                }))
+                .slice(0, 4)
+            : [];
+          const proofPoints = sList(pk.proofPoints, 5);
+          const differentiators = sList(pk.differentiators, 4);
+          const mustMention = sList(pk.mustMention, 6);
+          if (benefits.length || mustMention.length || proofPoints.length) {
+            pitchKit = {
+              benefits,
+              proofPoints,
+              differentiators,
+              mustMention,
+              objections,
+            };
+          }
         }
       } finally {
         clearTimeout(pbTimer);
@@ -766,6 +816,7 @@ Write the 4-6 tactic playbook now - JSON array only.`;
         character,
         openingQuestions,
         playbook,
+        pitchKit,
         privateNotes,
         goals,
         degraded,
