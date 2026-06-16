@@ -255,6 +255,10 @@ export async function POST(req: NextRequest) {
     if (typeof message !== "string" || !message.trim()) {
       return NextResponse.json({ error: "message is required" }, { status: 400 });
     }
+    // Lightweight timing so we can SEE where a reply spends its time (context
+    // gather vs model) and whether prompt caching is hitting, before optimising
+    // further. Logged once per reply as "assistant-timing {...}".
+    const reqStart = Date.now();
     const isGlobal = typeof companyId !== "string" || !companyId;
 
     // On a client page we lead with that client, but still load the wider
@@ -301,6 +305,7 @@ export async function POST(req: NextRequest) {
       getLessonsBlock(["negotiation", "strategy", "psychology"]),
       getBrainQuestions(),
     ]);
+    const ctxMs = Date.now() - reqStart; // time to gather all grounding context
     if (!context) {
       return NextResponse.json({ error: "client not found" }, { status: 404 });
     }
@@ -433,6 +438,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
     const streamBody = new ReadableStream({
       async start(controller) {
         let full = "";
+        let firstTokenAt = 0; // when the first word arrived (for TTFT)
         try {
           const aStream: any = (anthropic as any).messages.stream({
             model,
@@ -448,6 +454,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
             ) {
               const t = ev.delta.text || "";
               if (t) {
+                if (!firstTokenAt) firstTokenAt = Date.now();
                 full += t;
                 frame(controller, { type: "delta", text: t });
               }
@@ -557,6 +564,23 @@ ALWAYS end the spoken version with your closing question whenever your reply has
             },
           ]);
 
+          // One timing line per reply (visible in Vercel runtime logs). ctxMs =
+          // DB/context gather, ttftMs = time to first word, totalMs = end to end.
+          // cacheRead > 0 proves the prompt cache is hitting.
+          console.log(
+            "assistant-timing " +
+              JSON.stringify({
+                model: simple ? "haiku" : "sonnet",
+                ctxMs,
+                ttftMs: firstTokenAt ? firstTokenAt - reqStart : null,
+                totalMs: Date.now() - reqStart,
+                stop: stopReason,
+                inTok: usage?.input_tokens ?? null,
+                outTok: usage?.output_tokens ?? null,
+                cacheRead: usage?.cache_read_input_tokens ?? null,
+                cacheWrite: usage?.cache_creation_input_tokens ?? null,
+              })
+          );
           frame(controller, {
             type: "done",
             reply,
