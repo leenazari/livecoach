@@ -225,6 +225,14 @@ export default function CallPage() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [summary, setSummary] = useState<any>(null);
   const [summarising, setSummarising] = useState(false);
+  // Quick mid-call wrap-up card (confirm next steps out loud before ending).
+  const [wrapping, setWrapping] = useState(false);
+  const [wrapCard, setWrapCard] = useState<{
+    actions: { who: string; what: string }[];
+    promises: string[];
+    keyPoints: string[];
+    openQuestions: string[];
+  } | null>(null);
   const [summaryTranscript, setSummaryTranscript] = useState("");
   const [playbook, setPlaybook] = useState<{ label: string; detail: string }[]>([]);
   const [privateNotes, setPrivateNotes] = useState<string[]>([]);
@@ -345,9 +353,18 @@ export default function CallPage() {
       );
     };
     tick();
-    costTickRef.current = setInterval(tick, 4000);
+    costTickRef.current = setInterval(tick, 1000);
+    // Background tabs throttle setInterval - that is what made the meter (and
+    // the interval-driven cues) appear to freeze mid-call while you were looking
+    // at the Meet window. Re-tick the instant the app regains focus so it snaps
+    // back to real wall-clock time instead of looking stuck.
+    const onWake = () => tick();
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
     return () => {
       if (costTickRef.current) clearInterval(costTickRef.current);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
     };
   }, [meterOn]);
   useEffect(() => {
@@ -1392,6 +1409,50 @@ export default function CallPage() {
     [loadContext]
   );
 
+  // Quick mid-call wrap-up: a fast bullet card to confirm next steps out loud
+  // before ending - who's doing what, promises, key points, and important
+  // questions raised but not yet answered. Reads the transcript so far.
+  const summarizeNow = useCallback(async () => {
+    const labelled = linesRef.current
+      .map(
+        (l) =>
+          `${
+            l.role === "interviewer"
+              ? "Interviewer"
+              : l.role === "candidate"
+              ? l.speaker || "Candidate"
+              : l.role
+          }: ${l.text}`
+      )
+      .join("\n");
+    if (labelled.trim().length < 30) {
+      setStatus("not enough conversation yet for a wrap-up");
+      return;
+    }
+    setWrapping(true);
+    try {
+      const res = await fetch("/api/interview/recap-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: labelled,
+          subjectName: candidateRef.current || null,
+        }),
+      });
+      const d = await res.json();
+      setWrapCard({
+        actions: Array.isArray(d.actions) ? d.actions : [],
+        promises: Array.isArray(d.promises) ? d.promises : [],
+        keyPoints: Array.isArray(d.keyPoints) ? d.keyPoints : [],
+        openQuestions: Array.isArray(d.openQuestions) ? d.openQuestions : [],
+      });
+    } catch {
+      setStatus("couldn't build the quick wrap-up");
+    } finally {
+      setWrapping(false);
+    }
+  }, []);
+
   const endAndSummarise = useCallback(async () => {
     // Stop any Meet bot tied to this session so it can't linger billing - works
     // by session id, so it doesn't matter that the browser holds no bot id.
@@ -1434,6 +1495,19 @@ export default function CallPage() {
     callLiveRef.current = false;
     setCallLive(false);
     setEnded(true);
+    // Final cost from WALL-CLOCK duration (start -> end), computed from refs so a
+    // throttled or backgrounded on-screen meter can never save a too-low or zero
+    // cost. The server keeps a duration-based fallback as a second guard.
+    const meetCall = sourceRef.current === "meet";
+    const finalSecs =
+      callStartedAtRef.current && callEndedAtRef.current
+        ? Math.max(0, (callEndedAtRef.current - callStartedAtRef.current) / 1000)
+        : 0;
+    const finalCostGBP = estimateCost(finalSecs, 0, {
+      deepgramStreams: meetCall ? 0 : 2,
+      transport: meetCall ? "recall" : "livekit",
+      claudeUsd: claudeUsdRef.current,
+    }).totalGBP;
     setSummaryTranscript(labelled);
     const sig = `${labelled}||${suggestedCompsRef.current.join(",")}`;
     // Same call, already summarised -> just re-show the saved results.
@@ -1458,7 +1532,7 @@ export default function CallPage() {
         body: JSON.stringify({
           sessionId: room,
           transcript: labelled,
-          totalCost: cost?.totalGBP ?? null,
+          totalCost: finalCostGBP,
         }),
       }).catch(() => {});
       const res = await fetch("/api/interview/summary", {
@@ -1473,8 +1547,9 @@ export default function CallPage() {
           callType,
           sessionId: room,
           companyId: linkedCompanyRef.current?.id || null,
-          // This call's running cost (GBP) so spend can be totalled over time.
-          cost: cost?.totalGBP ?? null,
+          // This call's cost (GBP) from wall-clock duration so spend totals stay
+          // right even if the live meter was throttled in a background tab.
+          cost: finalCostGBP,
           // Lets the server fall back to a duration-based cost if the meter
           // reported nothing (e.g. a Meet call where the in-app meter never ran).
           source: sourceRef.current,
@@ -2852,7 +2927,17 @@ export default function CallPage() {
           ))}
       </div>
 
-      <div className="mb-6 flex justify-center">
+      <div className="mb-6 flex flex-wrap justify-center gap-3">
+        {callLive && (
+          <button
+            onClick={summarizeNow}
+            disabled={wrapping}
+            title="Quick wrap-up to read out before you end - who's doing what, promises, and questions still open."
+            className="rounded-full border border-sky/50 bg-sky/10 px-6 py-3 font-mono text-sm uppercase tracking-wider text-sky transition hover:bg-sky/20 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {wrapping ? "summarising…" : "✦ Summarise so far"}
+          </button>
+        )}
         <button
           onClick={endAndSummarise}
           disabled={summarising}
@@ -2861,6 +2946,128 @@ export default function CallPage() {
           {summarising ? "summarising..." : "End call & summarise"}
         </button>
       </div>
+
+      {/* Quick mid-call wrap-up card: confirm next steps out loud, then end. */}
+      {wrapCard && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/80 p-4 backdrop-blur-sm">
+          <div className="mt-6 w-full max-w-[680px] rounded-2xl border border-amber/40 bg-panel p-5 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="font-mono text-[0.62rem] uppercase tracking-[0.2em] text-amber">
+                {"✦"} Before you end - quick wrap-up
+              </p>
+              <button
+                type="button"
+                onClick={() => setWrapCard(null)}
+                className="font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:text-bone"
+              >
+                close
+              </button>
+            </div>
+
+            {wrapCard.actions.length === 0 &&
+            wrapCard.promises.length === 0 &&
+            wrapCard.keyPoints.length === 0 &&
+            wrapCard.openQuestions.length === 0 ? (
+              <p className="font-sans text-sm text-muted">
+                Nothing concrete captured yet. Keep talking and tap Summarise
+                again.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {wrapCard.actions.length > 0 && (
+                  <div>
+                    <p className="mb-1 font-mono text-[0.56rem] uppercase tracking-[0.18em] text-amber">
+                      {"→"} Actions
+                    </p>
+                    <ul className="flex flex-col gap-1">
+                      {wrapCard.actions.map((a, i) => (
+                        <li
+                          key={i}
+                          className="font-sans text-[0.9rem] leading-snug text-bone"
+                        >
+                          <span className="text-sky">{a.who}:</span> {a.what}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {wrapCard.promises.length > 0 && (
+                  <div>
+                    <p className="mb-1 font-mono text-[0.56rem] uppercase tracking-[0.18em] text-sage">
+                      Promises
+                    </p>
+                    <ul className="flex flex-col gap-1">
+                      {wrapCard.promises.map((p, i) => (
+                        <li
+                          key={i}
+                          className="font-sans text-[0.9rem] leading-snug text-bone/90"
+                        >
+                          {"•"} {p}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {wrapCard.keyPoints.length > 0 && (
+                  <div>
+                    <p className="mb-1 font-mono text-[0.56rem] uppercase tracking-[0.18em] text-bone/70">
+                      Key points
+                    </p>
+                    <ul className="flex flex-col gap-1">
+                      {wrapCard.keyPoints.map((p, i) => (
+                        <li
+                          key={i}
+                          className="font-sans text-[0.9rem] leading-snug text-bone/90"
+                        >
+                          {"•"} {p}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {wrapCard.openQuestions.length > 0 && (
+                  <div>
+                    <p className="mb-1 font-mono text-[0.56rem] uppercase tracking-[0.18em] text-rust">
+                      {"⚠"} Still open
+                    </p>
+                    <ul className="flex flex-col gap-1">
+                      {wrapCard.openQuestions.map((p, i) => (
+                        <li
+                          key={i}
+                          className="font-sans text-[0.9rem] leading-snug text-bone/90"
+                        >
+                          {"•"} {p}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setWrapCard(null)}
+                className="rounded-full border border-edge px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:text-bone"
+              >
+                keep going
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setWrapCard(null);
+                  endAndSummarise();
+                }}
+                disabled={summarising}
+                className="rounded-full border border-amber/60 bg-amber/15 px-5 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
+              >
+                End call &amp; summarise {"▸"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {callLive && rightMin && (
         <button
