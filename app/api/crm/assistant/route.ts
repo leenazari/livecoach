@@ -337,6 +337,8 @@ MATCH THE REQUEST - this is important. Answer exactly what was asked and NO MORE
 
 DO NOT REPEAT YOURSELF - this is critical. You can see the whole conversation. NEVER restate a plan, a list, or advice you have already given in this thread. When the user adds a small fact, a name, or a correction (for example "Ajith Kumar is the director", "Joydeep was not sick"), acknowledge it in ONE short line and add ONLY what genuinely changes as a result - do NOT regenerate the earlier plan with the new detail swapped in. If the new detail doesn't materially change your earlier advice, say that in a sentence and stop (e.g. "Got it, I'll address it to Ajith - everything else we said still stands."). Re-delivering a long answer the user has already read wastes their time and is a serious mistake. Build on what's been said, never repeat it.
 
+CONTINUE, DON'T RESTART: if the user says "repeat", "continue", "carry on", "go on", "finish that" or "you cut off", do NOT begin your previous answer again from the top. Pick up exactly where the last reply ended and give only the part that was missing. A brief "Picking up where I left off," then the rest is fine. Never re-read text they already heard.
+
 EXPLAIN THE WHY. When the user DOES ask for advice or a next step, work the reasoning into your sentences so they learn the thinking, not just the instruction. Say what in the history makes it the right move. Do this in plain prose, not under a "Why:" label.
 
 BE CONCRETE: real steps, who to contact, roughly when, what to say. When you suggest an order, explain it in a sentence.
@@ -385,6 +387,10 @@ SPOKEN SUMMARY: the user often listens to your reply by voice, and hearing the w
 <one or two spoken sentences. If your written reply ends by asking the user something, repeat that question word for word as the LAST sentence here>
 ---END SPOKEN---
 ALWAYS end the spoken version with your closing question whenever your reply has one. The user is often hands-free, so hearing the question read out is what keeps the conversation going - never drop it. NEVER read out a full draft or email in the spoken version. If you wrote a draft, the spoken version should just say a draft is ready and ASK if they want you to read it out. Keep these markers out of your visible prose. The full written answer still goes in your normal reply.`,
+        // Cache the big, stable instruction block so repeat calls skip
+        // re-processing it (lower latency + cost). It only changes when the
+        // brain knowledge or lessons change.
+        cache_control: { type: "ephemeral" },
       },
       {
         type: "text",
@@ -409,7 +415,10 @@ ALWAYS end the spoken version with your closing question whenever your reply has
       /(draft|write|email|message|plan|prep|summari[sz]e|advi[sc]e|should i|why|how (do|should|can|to|would)|best|strateg|recommend|opinion|brainstorm|idea|pitch|negoti|approach|think|compare|priorit|win\b|risk|objection|pros|cons)/;
     const simple = LOOKUP.test(ml) && !SMART.test(ml);
     const model = simple ? CLAUDE_MODEL_LIVE : CLAUDE_MODEL_PRO;
-    const maxTok = simple ? 800 : 1300;
+    // Long strategic answers were getting cut off mid-sentence at 1300 tokens
+    // (and then the SPOKEN block never arrived). Give the smart model real room
+    // to finish a full game-plan; keep the fast lookups tight.
+    const maxTok = simple ? 900 : 2400;
 
     // STREAM the reply so words appear as they are written. We emit newline-
     // delimited JSON frames: {type:"delta",text} as the model writes, then one
@@ -445,9 +454,11 @@ ALWAYS end the spoken version with your closing question whenever your reply has
             }
           }
           let usage: any = null;
+          let stopReason: string | null = null;
           try {
             const fm = await aStream.finalMessage();
             usage = fm?.usage;
+            stopReason = (fm as any)?.stop_reason ?? null;
             if (!full && Array.isArray(fm?.content)) {
               full = fm.content
                 .filter((b: any) => b.type === "text")
@@ -519,6 +530,14 @@ ALWAYS end the spoken version with your closing question whenever your reply has
             .replace(/---END (SPOKEN|TASKS|ACTIONS)---/g, "")
             .replace(/---(SPOKEN|TASKS|ACTIONS)---/g, "")
             .trim();
+
+          // If we still hit the token ceiling, the prose can end mid-sentence
+          // (and the SPOKEN block never arrived). Trim back to the last complete
+          // sentence so it never dangles mid-word.
+          if (stopReason === "max_tokens" && reply) {
+            const cut = reply.match(/^[\s\S]*[.!?]["')\]]?(?=\s|$)/);
+            if (cut && cut[0].trim().length > 60) reply = cut[0].trim();
+          }
 
           if (!reply)
             reply = createdTasks.length
