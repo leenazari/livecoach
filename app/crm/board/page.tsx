@@ -96,10 +96,24 @@ function BoardInner() {
       })
     );
   const setDraftStatus = (id: string, status: string) => {
-    setDrafts((p) => p.map((x) => (x.id === id ? { ...x, status } : x)));
+    // Dismissing removes it from view (and it won't come back - the drafts feed
+    // only returns status='draft'). Other statuses (e.g. sent) stay, dimmed.
+    setDrafts((p) =>
+      status === "dismissed"
+        ? p.filter((x) => x.id !== id)
+        : p.map((x) => (x.id === id ? { ...x, status } : x))
+    );
     crmFetch(`/api/crm/follow-ups/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
+    }).catch(() => {});
+  };
+  // Dismiss an "email to draft" task - removes it from the whole pipeline.
+  const dismissTask = (id: string) => {
+    setEmailTasks((p) => p.filter((x) => x.id !== id));
+    crmFetch(`/api/crm/tasks/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "dismissed" }),
     }).catch(() => {});
   };
   const setOppStatus = (id: string, status: string) => {
@@ -202,6 +216,15 @@ function BoardInner() {
                       className="shrink-0 rounded-full border border-sky/50 bg-sky/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:bg-sky/20"
                     >
                       draft it
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => dismissTask(t.id)}
+                      title="dismiss - removes it everywhere"
+                      aria-label="dismiss"
+                      className="shrink-0 font-mono text-[0.8rem] text-muted transition hover:text-rust"
+                    >
+                      ✕
                     </button>
                   </li>
                 ))}

@@ -98,8 +98,13 @@ export default function TaskList({
   };
 
   const remove = (t: Task) => {
+    // Dismiss (not hard-delete) so it disappears from the whole pipeline and the
+    // background jobs don't re-create it from the same email/call.
     setTasks((p) => p.filter((x) => x.id !== t.id));
-    crmFetch(`/api/crm/tasks/${t.id}`, { method: "DELETE" }).catch(() => {});
+    crmFetch(`/api/crm/tasks/${t.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "dismissed" }),
+    }).catch(() => {});
   };
 
   // What clicking the task text does, by action.

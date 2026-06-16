@@ -99,9 +99,14 @@ export default function Commitments({
   };
 
   const remove = (t: Task) => {
+    // Dismiss across the whole pipeline (kept as a row so the jobs don't
+    // re-create it from the same email or call).
     setItems((p) => p.filter((x) => x.id !== t.id));
     if (openId === t.id) setOpenId(null);
-    crmFetch(`/api/crm/tasks/${t.id}`, { method: "DELETE" }).catch(() => {});
+    crmFetch(`/api/crm/tasks/${t.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "dismissed" }),
+    }).catch(() => {});
   };
 
   const gmailUrl = () => {

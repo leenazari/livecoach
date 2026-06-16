@@ -18,6 +18,10 @@ export async function PATCH(
     } else if (body.status === "open") {
       patch.status = "open";
       patch.done_at = null;
+    } else if (body.status === "dismissed") {
+      // Dismissed = gone from the whole pipeline (board, dashboard, commitments)
+      // but kept as a row so its fingerprint stops the jobs re-creating it.
+      patch.status = "dismissed";
     }
     if (typeof body.text === "string" && body.text.trim())
       patch.text = body.text.trim();

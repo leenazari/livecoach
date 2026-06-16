@@ -57,9 +57,14 @@ export async function GET(req: NextRequest) {
 
     const real = (rows || [])
       .filter((t: any) => {
-        if (t.status !== "done") return true;
-        // keep done tasks only if completed today
-        return t.done_at && new Date(t.done_at).getTime() >= startMs;
+        // Open tasks always show. Done tasks linger only for the rest of today.
+        // Dismissed (or anything else) is hidden EVERYWHERE - the whole pipeline
+        // reads this endpoint, so dismissing once removes it from the board,
+        // dashboard and commitments at once.
+        if (t.status === "open") return true;
+        if (t.status === "done")
+          return t.done_at && new Date(t.done_at).getTime() >= startMs;
+        return false;
       })
       .map((t: any) => ({
         ...t,
