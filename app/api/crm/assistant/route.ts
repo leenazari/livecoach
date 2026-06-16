@@ -423,13 +423,26 @@ NEVER read out a full draft or email in the spoken version. If you wrote a draft
     }
 
     // A short SPOKEN version for the voice, so it never reads the full answer
-    // out word for word.
+    // out word for word. Tolerant of a malformed close: the model sometimes
+    // repeats ---SPOKEN--- instead of writing ---END SPOKEN---. The spoken block
+    // is always at the END, so cut the visible reply at the first marker and
+    // take everything after it (minus any trailing markers) as the spoken text.
     let spoken = "";
-    const sp = reply.match(/---SPOKEN---\s*([\s\S]*?)\s*---END SPOKEN---/);
-    if (sp) {
-      reply = reply.replace(/---SPOKEN---[\s\S]*?---END SPOKEN---/, "").trim();
-      spoken = sp[1].trim();
+    const spIdx = reply.indexOf("---SPOKEN---");
+    if (spIdx !== -1) {
+      let after = reply.slice(spIdx + "---SPOKEN---".length);
+      reply = reply.slice(0, spIdx).trim();
+      after = after
+        .replace(/---END SPOKEN---[\s\S]*$/, "")
+        .replace(/---SPOKEN---[\s\S]*$/, "");
+      spoken = after.trim();
     }
+    // Safety net: never let stray SPOKEN / TASKS / ACTIONS markers show in the
+    // reply or get read aloud (DRAFT markers are kept - the client renders them).
+    reply = reply
+      .replace(/---END (SPOKEN|TASKS|ACTIONS)---/g, "")
+      .replace(/---(SPOKEN|TASKS|ACTIONS)---/g, "")
+      .trim();
 
     if (!reply)
       reply = createdTasks.length
