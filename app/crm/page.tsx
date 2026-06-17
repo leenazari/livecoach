@@ -59,6 +59,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let alive = true;
+    // Self-heal: summarise any call the bot captured but that never got a
+    // scorecard (e.g. the meeting just ended without pressing "End & summarise"),
+    // so a captured call can't silently go missing from the lists. Fire and
+    // forget, only does work when an orphan exists.
+    fetch("/api/interview/backfill-scorecards").catch(() => {});
     // Paint immediately from the light (no-AI) response, then fold in the
     // "Your day" blurb when the slower AI call returns - so the dashboard
     // never blocks on an LLM call.
