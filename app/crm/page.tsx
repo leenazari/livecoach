@@ -64,11 +64,12 @@ export default function DashboardPage() {
     // so a captured call can't silently go missing from the lists. Fire and
     // forget, only does work when an orphan exists.
     fetch("/api/interview/backfill-scorecards").catch(() => {});
-    // Clear to-dos that have passed (a call that's happened, a day that's gone),
-    // then refresh the lists so the cleared ones drop off.
-    fetch("/api/crm/tasks/sweep-stale")
-      .then(() => window.dispatchEvent(new CustomEvent("lc:tasks-updated")))
-      .catch(() => {});
+    // Tidy the to-do list: clear ones that have passed, fold loose ones into
+    // the opportunity they're about, then refresh so both reflect.
+    Promise.allSettled([
+      fetch("/api/crm/tasks/sweep-stale"),
+      fetch("/api/crm/tasks/fold-loose"),
+    ]).then(() => window.dispatchEvent(new CustomEvent("lc:tasks-updated")));
     // Paint immediately from the light (no-AI) response, then fold in the
     // "Your day" blurb when the slower AI call returns - so the dashboard
     // never blocks on an LLM call.
