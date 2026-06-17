@@ -151,3 +151,42 @@ export async function getTasteBlock(): Promise<string> {
     return "";
   }
 }
+
+// How the host likes to be COACHED on their speaking, learned from their thumbs
+// up/down on past speaking-debrief points. Feeds the next debrief so the coach
+// gets better at coaching this particular person.
+export async function getCoachingTasteBlock(): Promise<string> {
+  try {
+    const { data } = await supabaseAdmin
+      .from("coaching_points")
+      .select("better, why, vote, created_at")
+      .neq("vote", 0)
+      .order("created_at", { ascending: false })
+      .limit(40);
+    const liked: string[] = [];
+    const disliked: string[] = [];
+    for (const r of data || []) {
+      const better = String((r as any).better || "").trim();
+      if (!better) continue;
+      const why = String((r as any).why || "").trim();
+      const line = why ? `${better} (${why})` : better;
+      const v = Number((r as any).vote) || 0;
+      if (v > 0 && liked.length < 12) liked.push(line);
+      else if (v < 0 && disliked.length < 12) disliked.push(line);
+    }
+    if (!liked.length && !disliked.length) return "";
+    let s =
+      "HOW THE HOST LIKES TO BE COACHED (learned from their thumbs on past speaking-coaching - match this style of feedback):\n";
+    if (liked.length)
+      s += `Coaching they found USEFUL (give more like this):\n${liked
+        .map((t) => `- ${t}`)
+        .join("\n")}\n`;
+    if (disliked.length)
+      s += `Coaching they REJECTED (do not give this kind):\n${disliked
+        .map((t) => `- ${t}`)
+        .join("\n")}\n`;
+    return s + "\n";
+  } catch {
+    return "";
+  }
+}

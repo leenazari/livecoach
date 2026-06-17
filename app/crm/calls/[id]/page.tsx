@@ -21,18 +21,61 @@ type Call = {
   participants: string[];
 };
 
+type CoachPoint = {
+  id: string;
+  quote: string;
+  better: string;
+  why: string;
+  vote: number;
+};
+
 export default function CallDetailPage() {
   const params = useParams();
   const id = Array.isArray(params?.id) ? params.id[0] : (params?.id as string);
   const [call, setCall] = useState<Call | null>(null);
   const [error, setError] = useState("");
+  // Speaking-coach debrief: generated on demand, votable, learns over time.
+  const [coaching, setCoaching] = useState<CoachPoint[]>([]);
+  const [coachBusy, setCoachBusy] = useState(false);
 
   useEffect(() => {
     if (!id) return;
     crmFetch<{ call: Call }>(`/api/crm/calls/${id}`)
       .then((d) => setCall(d.call))
       .catch((e) => setError(e?.message || "Could not load this call."));
+    // Load any debrief already generated for this call (no model cost).
+    crmFetch<{ points: CoachPoint[] }>(
+      `/api/interview/coaching-debrief?callId=${id}`
+    )
+      .then((d) => setCoaching(Array.isArray(d.points) ? d.points : []))
+      .catch(() => {});
   }, [id]);
+
+  const generateCoaching = () => {
+    if (coachBusy || !id) return;
+    setCoachBusy(true);
+    crmFetch<{ points: CoachPoint[] }>("/api/interview/coaching-debrief", {
+      method: "POST",
+      body: JSON.stringify({ callId: id }),
+    })
+      .then((d) => setCoaching(Array.isArray(d.points) ? d.points : []))
+      .catch(() => {})
+      .finally(() => setCoachBusy(false));
+  };
+
+  const voteCoaching = (pointId: string, vote: number) => {
+    setCoaching((prev) =>
+      prev.map((p) =>
+        p.id === pointId ? { ...p, vote: p.vote === vote ? 0 : vote } : p
+      )
+    );
+    const next =
+      coaching.find((p) => p.id === pointId)?.vote === vote ? 0 : vote;
+    crmFetch("/api/interview/coaching-vote", {
+      method: "POST",
+      body: JSON.stringify({ id: pointId, vote: next }),
+    }).catch(() => {});
+  };
 
   const gbp = (n: number | string | null) => {
     const v = n == null ? NaN : Number(n);
@@ -297,6 +340,97 @@ export default function CallDetailPage() {
               </p>
             </section>
           )}
+
+          {/* SPEAKING COACH: a separate debrief on HOW you spoke, line by line,
+              with a sharper version of each moment. Vote each one so it learns
+              how you like to be coached. Generated on demand. */}
+          <section className="mt-4 rounded-xl border border-sky/40 bg-sky/[0.05] p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sky">
+                {"🎙"} Speaking coach
+              </p>
+              {coaching.length > 0 && (
+                <span className="font-mono text-[0.54rem] uppercase tracking-wider text-muted">
+                  vote each {"↑"}/{"↓"} so it learns
+                </span>
+              )}
+            </div>
+
+            {coaching.length === 0 ? (
+              <div className="flex flex-col items-start gap-2">
+                <p className="font-sans text-[0.82rem] leading-snug text-bone/75">
+                  A line-by-line debrief of how you spoke on this call, with a
+                  sharper way to say each moment. Separate from the summary.
+                </p>
+                <button
+                  type="button"
+                  onClick={generateCoaching}
+                  disabled={coachBusy}
+                  className="rounded-full border border-sky/60 bg-sky/15 px-4 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
+                >
+                  {coachBusy ? "coaching…" : "Coach me on this call"}
+                </button>
+              </div>
+            ) : (
+              <ul className="flex flex-col gap-3">
+                {coaching.map((p) => (
+                  <li
+                    key={p.id}
+                    className="rounded-lg border border-edge bg-ink/40 p-3"
+                  >
+                    {p.quote && (
+                      <p className="font-sans text-[0.8rem] italic leading-snug text-muted">
+                        {"“"}
+                        {p.quote}
+                        {"”"}
+                      </p>
+                    )}
+                    <p className="mt-1.5 font-sans text-[0.86rem] leading-snug text-bone">
+                      <span className="font-mono text-[0.54rem] uppercase tracking-wider text-sage">
+                        try{" "}
+                      </span>
+                      {p.better}
+                    </p>
+                    <div className="mt-1.5 flex items-center justify-between gap-2">
+                      {p.why ? (
+                        <span className="font-mono text-[0.56rem] uppercase tracking-wider text-muted">
+                          {p.why}
+                        </span>
+                      ) : (
+                        <span />
+                      )}
+                      <span className="flex flex-none items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => voteCoaching(p.id, 1)}
+                          title="useful"
+                          className={`rounded-full border px-2 py-0.5 font-mono text-[0.7rem] transition ${
+                            p.vote === 1
+                              ? "border-sage bg-sage/20 text-sage"
+                              : "border-edge text-muted hover:text-sage"
+                          }`}
+                        >
+                          {"↑"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => voteCoaching(p.id, -1)}
+                          title="not useful"
+                          className={`rounded-full border px-2 py-0.5 font-mono text-[0.7rem] transition ${
+                            p.vote === -1
+                              ? "border-rust bg-rust/20 text-rust"
+                              : "border-edge text-muted hover:text-rust"
+                          }`}
+                        >
+                          {"↓"}
+                        </button>
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </>
       )}
 

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { getAccessToken, listEvents, meetingUrlOf, titleOf } from "@/lib/google";
 import { supabaseAdmin } from "@/lib/supabase";
-import { loadAttendeeConfig, inferLink } from "@/lib/attendees";
+import {
+  loadAttendeeConfig,
+  inferLink,
+  deriveNewClientFromAttendees,
+} from "@/lib/attendees";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -68,21 +72,56 @@ export async function POST() {
     // note are the topic, not the participant.
     const attendeeConfig = await loadAttendeeConfig();
 
-    const toInsert = rows
-      .filter((r) => !existing.has(r.external_id))
-      .map((r) => {
-        const link = inferLink(r.attendees, attendeeConfig);
-        return {
-          external_id: r.external_id,
-          title: r.title,
-          scheduled_at: r.scheduled_at,
-          meeting_url: r.meeting_url,
-          attendees: r.attendees,
-          company_id: link.companyId,
-          source: "google",
-          prepped: false,
-        };
+    // Resolve a new event's client: a matched client, the internal entity, or -
+    // when the guest list is all we have - a brand-new client created from the
+    // guest's WORK email (company name + website from the domain), added as
+    // standard so the plan has context from the first invite.
+    const resolveCompanyForEvent = async (atts: any[]): Promise<string | null> => {
+      const link = inferLink(atts, attendeeConfig);
+      if (link.companyId) return link.companyId;
+      if (link.isInternal) return null;
+      const spec = deriveNewClientFromAttendees(atts, attendeeConfig);
+      if (!spec) return null;
+      const existingId = attendeeConfig.companyByDomain.get(spec.domain);
+      if (existingId) return existingId;
+      const { data: created } = await supabaseAdmin
+        .from("companies")
+        .insert({
+          name: spec.name,
+          domain: spec.domain,
+          website: spec.website,
+          profile: { auto_created_from: "calendar" },
+        })
+        .select("id")
+        .single();
+      const newId = (created as any)?.id as string | undefined;
+      if (!newId) return null;
+      attendeeConfig.companyByDomain.set(spec.domain, newId);
+      try {
+        await supabaseAdmin
+          .from("contacts")
+          .insert({ company_id: newId, email: spec.email });
+      } catch {
+        /* the contact is best-effort */
+      }
+      return newId;
+    };
+
+    const newRows = rows.filter((r) => !existing.has(r.external_id));
+    const toInsert: any[] = [];
+    for (const r of newRows) {
+      const company_id = await resolveCompanyForEvent(r.attendees);
+      toInsert.push({
+        external_id: r.external_id,
+        title: r.title,
+        scheduled_at: r.scheduled_at,
+        meeting_url: r.meeting_url,
+        attendees: r.attendees,
+        company_id,
+        source: "google",
+        prepped: false,
       });
+    }
     const toUpdate = rows.filter((r) => existing.has(r.external_id));
 
     let added = 0;
