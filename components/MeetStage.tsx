@@ -61,6 +61,16 @@ export default function MeetStage({
   const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chunkCountRef = useRef(0);
   const sawCandidateRef = useRef(false);
+  // Reconnect + recovery state. The socket can drop mid-call (wifi blip, the
+  // tab backgrounding, a worker restart); if it does, no new transcript arrives
+  // while the window keeps showing what was already captured - so it silently
+  // stops without anyone noticing. These let us reconnect automatically and
+  // backfill anything missed, so the capture is never quietly lost.
+  const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closedRef = useRef(false); // true only on intentional teardown (unmount)
+  const retryRef = useRef(0); // backoff attempt counter
+  const deliveredRef = useRef(0); // how many utterances we've delivered so far
+  const sendingRef = useRef(false); // in-flight guard so a double-tap can't send two bots
 
   useEffect(() => {
     onFinalRef.current = onFinalTranscript;
@@ -109,6 +119,7 @@ export default function MeetStage({
       }
 
       onFinalRef.current(role, text, speaker);
+      deliveredRef.current += 1;
 
       if (role === "candidate") {
         sawCandidateRef.current = true;
@@ -136,42 +147,75 @@ export default function MeetStage({
     [mapRole, fireTurnEnd]
   );
 
-  // pull anything already captured for this room (refresh recovery)
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  // Pull the worker's stored transcript for this room and deliver only the
+  // utterances we haven't shown yet (from `start`). The worker keeps the full
+  // log, so this both repopulates after a page refresh AND recovers whatever was
+  // missed while the socket was down - the transcript is never quietly lost.
+  const deliverBackfill = useCallback(
+    async (start: number) => {
       try {
         const r = await fetch(
           `/api/meet/backfill?session=${encodeURIComponent(room)}`
         );
         if (!r.ok) return;
         const d = await r.json();
-        if (cancelled || !Array.isArray(d.utterances)) return;
-        for (const u of d.utterances) {
+        if (!Array.isArray(d.utterances)) return;
+        for (let i = Math.max(0, start); i < d.utterances.length; i++) {
+          const u = d.utterances[i];
           const role = mapRole(u.speaker || "", u.role || "");
           onFinalRef.current(role, (u.text || "").trim(), u.speaker);
         }
+        if (d.utterances.length > deliveredRef.current)
+          deliveredRef.current = d.utterances.length;
       } catch {
         /* no backfill is fine */
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [room, mapRole]);
+    },
+    [room, mapRole]
+  );
+
+  // On first mount, repopulate from anything already captured (refresh recovery).
+  useEffect(() => {
+    deliverBackfill(0);
+  }, [deliverBackfill]);
 
   const connect = useCallback(() => {
+    closedRef.current = false;
+    if (reconnectRef.current) {
+      clearTimeout(reconnectRef.current);
+      reconnectRef.current = null;
+    }
     if (wsRef.current) {
-      wsRef.current.close();
+      try {
+        wsRef.current.close();
+      } catch {
+        /* ignore */
+      }
       wsRef.current = null;
     }
     const ws = new WebSocket(`${WORKER_WS}?session=${encodeURIComponent(room)}`);
     wsRef.current = ws;
     setWsState("connecting");
-    ws.onopen = () => setWsState("on");
+    ws.onopen = () => {
+      setWsState("on");
+      retryRef.current = 0;
+      // We may have missed utterances while the socket was down - recover them.
+      deliverBackfill(deliveredRef.current);
+    };
     ws.onerror = () => setWsState("error");
-    ws.onclose = () => setWsState("off");
-    ws.onmessage = (e) => {
+    ws.onclose = () => {
+      setWsState("off");
+      // Auto-reconnect with backoff unless we're intentionally tearing down. A
+      // dropped socket must never silently end the capture mid-call.
+      if (closedRef.current) return;
+      const delay = Math.min(8000, 800 * Math.pow(2, retryRef.current));
+      retryRef.current += 1;
+      if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      reconnectRef.current = setTimeout(() => {
+        if (!closedRef.current) connect();
+      }, delay);
+    };
+    ws.onmessage = (e: MessageEvent) => {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === "utterance") {
@@ -181,19 +225,31 @@ export default function MeetStage({
         /* ignore */
       }
     };
-  }, [room, handleUtterance]);
+  }, [room, handleUtterance, deliverBackfill]);
 
   // open the socket as soon as we're in the call; clean up on unmount
   useEffect(() => {
     connect();
     return () => {
+      closedRef.current = true;
+      if (reconnectRef.current) clearTimeout(reconnectRef.current);
       if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
-      if (wsRef.current) wsRef.current.close();
+      if (wsRef.current) {
+        try {
+          wsRef.current.close();
+        } catch {
+          /* ignore */
+        }
+      }
     };
   }, [connect]);
 
   async function sendBot() {
-    if (!meetingUrl.trim()) return;
+    // Guard against a double-tap firing two bots: `disabled` only updates on the
+    // next render, so a fast second click can slip through before React catches
+    // up. The ref blocks it synchronously, and we never send if a bot is live.
+    if (!meetingUrl.trim() || botId || sendingRef.current) return;
+    sendingRef.current = true;
     setStatus("sending bot...");
     try {
       const r = await fetch("/api/meet/start", {
@@ -227,6 +283,8 @@ export default function MeetStage({
       if (wsState !== "on") connect();
     } catch (e: any) {
       setStatus("error: " + e.message);
+    } finally {
+      sendingRef.current = false;
     }
   }
 
@@ -308,6 +366,19 @@ export default function MeetStage({
       </div>
 
       <p className="font-mono text-[0.6rem] text-muted">{status}</p>
+
+      {/* Loud, impossible-to-miss warning when a bot is live but the transcript
+          socket is down - this is the moment capture silently stopped before.
+          It recovers on its own; the banner just tells you not to trust the
+          window or end the call until it's back. */}
+      {botId && wsState !== "on" && (
+        <div className="rounded-lg border border-rust/60 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-rust">
+          {"⚠"} Transcriber disconnected{" "}
+          {wsState === "connecting" ? "- reconnecting now" : "- reconnecting"}.
+          New speech is not being captured this second. Keep the call open, it
+          recovers and backfills what it missed automatically.
+        </div>
+      )}
 
       {speakers.length > 0 && (
         <div className="border-t border-edge/50 pt-3">
