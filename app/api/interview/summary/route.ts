@@ -93,7 +93,7 @@ async function autoResolveCompany(opts: {
 // Returns a structured JSON summary + scorecard + contributors + style profile.
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId, companyId, cost, source } =
+    const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId, companyId, cost, source, favouriteCues } =
       await req.json();
 
     if (!transcript || transcript.length < 30) {
@@ -254,6 +254,19 @@ Return the JSON assessment now.`;
         { error: "Could not parse the summary. Try again." },
         { status: 500 }
       );
+    }
+
+    // Carry the cues the host favourited during the call onto the scorecard, so
+    // the questions they wanted to keep are saved and shown on the call page.
+    if (Array.isArray(favouriteCues) && favouriteCues.length && summary) {
+      const kept = favouriteCues
+        .filter((c: any) => c && typeof c.text === "string" && c.text.trim())
+        .slice(0, 40)
+        .map((c: any) => ({
+          text: String(c.text).trim(),
+          why: typeof c.why === "string" ? c.why.trim() : "",
+        }));
+      if (kept.length) summary.favouriteCues = kept;
     }
 
     // Robust cost: the browser meter sometimes reports nothing (a Meet/bot call

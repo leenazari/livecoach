@@ -105,3 +105,49 @@ export async function getLessonsBlock(topics?: string[]): Promise<string> {
     return "";
   }
 }
+
+// The host's CUE TASTE, learned from their own thumbs up/down (and the cues they
+// favourited) on past calls. This closes the learning loop: the live coach leans
+// toward the kind of cue the host keeps liking and away from what they reject.
+// Compact and best-effort, so it can sit in the latency-sensitive cue prompt.
+export async function getTasteBlock(): Promise<string> {
+  try {
+    const { data } = await supabaseAdmin
+      .from("call_feedback")
+      .select("liked, disliked, created_at")
+      .order("created_at", { ascending: false })
+      .limit(15);
+    const seen = new Set<string>();
+    const liked: string[] = [];
+    const disliked: string[] = [];
+    const take = (arr: any, into: string[]) => {
+      for (const x of Array.isArray(arr) ? arr : []) {
+        const t =
+          x && typeof x.text === "string" ? x.text.trim().replace(/\s+/g, " ") : "";
+        if (!t) continue;
+        const k = t.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        if (into.length < 10) into.push(t);
+      }
+    };
+    for (const r of data || []) {
+      take((r as any).liked, liked);
+      take((r as any).disliked, disliked);
+    }
+    if (!liked.length && !disliked.length) return "";
+    let s =
+      "THE HOST'S CUE TASTE (learned from their thumbs up/down and the cues they kept on past calls - match this taste):\n";
+    if (liked.length)
+      s += `Cues they LIKED (lean toward this kind of question, angle and phrasing):\n${liked
+        .map((t) => `- ${t}`)
+        .join("\n")}\n`;
+    if (disliked.length)
+      s += `Cues they DISLIKED (avoid this kind):\n${disliked
+        .map((t) => `- ${t}`)
+        .join("\n")}\n`;
+    return s + "\n";
+  } catch {
+    return "";
+  }
+}

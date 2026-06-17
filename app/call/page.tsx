@@ -270,6 +270,9 @@ export default function CallPage() {
   const claudeUsdRef = useRef(0);
   const likedRef = useRef<{ text: string; why: string; kind: string }[]>([]);
   const dislikedRef = useRef<{ text: string; why: string; kind: string }[]>([]);
+  // Cues the host favourited (pinned). Kept in a ref so end-of-call can save them
+  // even though endAndSummarise closes over stale state.
+  const favouritesRef = useRef<{ text: string; why: string; kind: string }[]>([]);
   const callStartedAtRef = useRef(0);
   const costTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callEndedAtRef = useRef<number | null>(null);
@@ -1599,6 +1602,9 @@ export default function CallPage() {
           callType,
           sessionId: room,
           companyId: linkedCompanyRef.current?.id || null,
+          // Cues the host kept (favourited) during the call, saved with the
+          // scorecard so they can be reviewed later on the call page.
+          favouriteCues: favouritesRef.current,
           // This call's cost (GBP) from wall-clock duration so spend totals stay
           // right even if the live meter was throttled in a background tab.
           cost: finalCostGBP,
@@ -1740,7 +1746,25 @@ export default function CallPage() {
 
   const togglePin = (id: number) => {
     setSuggestions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, pinned: !s.pinned } : s))
+      prev.map((s) => {
+        if (s.id !== id) return s;
+        const nowPinned = !s.pinned;
+        // Keep the favourite so it can be saved with the call, and treat a pin
+        // as a positive taste signal (like a thumbs up) so future cues learn
+        // from it. Un-pinning removes it from both.
+        const entry = { text: s.text, why: s.why, kind: s.kind };
+        if (nowPinned) {
+          if (!favouritesRef.current.some((f) => f.text === s.text))
+            favouritesRef.current = [...favouritesRef.current, entry];
+          if (!likedRef.current.some((f) => f.text === s.text))
+            likedRef.current = [...likedRef.current, entry];
+        } else {
+          favouritesRef.current = favouritesRef.current.filter(
+            (f) => f.text !== s.text
+          );
+        }
+        return { ...s, pinned: nowPinned };
+      })
     );
   };
 

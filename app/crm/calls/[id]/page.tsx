@@ -263,6 +263,30 @@ export default function CallDetailPage() {
             tone="text-muted"
           />
 
+          {Array.isArray(s.favouriteCues) && s.favouriteCues.length > 0 && (
+            <section className="mt-4 rounded-xl border border-amber/40 bg-amber/[0.06] p-4">
+              <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+                {"★"} Cues you kept
+              </p>
+              <ul className="flex flex-col gap-2">
+                {s.favouriteCues
+                  .filter((c: any) => c && typeof c.text === "string" && c.text.trim())
+                  .map((c: any, i: number) => (
+                    <li key={i} className="border-l-2 border-amber/50 pl-3">
+                      <p className="font-sans text-[0.86rem] leading-snug text-bone">
+                        {c.text}
+                      </p>
+                      {c.why && typeof c.why === "string" && c.why.trim() && (
+                        <p className="font-mono text-[0.56rem] uppercase tracking-wider text-muted">
+                          {c.why}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+              </ul>
+            </section>
+          )}
+
           {s.styleProfile && (
             <section className="mt-4 rounded-xl border border-edge bg-panel/40 p-4">
               <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-muted">

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { getTasteBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -160,8 +161,21 @@ CONTENT:
       .filter(Boolean)
       .join("\n\n");
 
+    // The host's learned cue taste (their thumbs up/down and kept cues). Best
+    // effort, so a slow or empty read never blocks a cue.
+    const taste = await getTasteBlock();
+
     const system: any[] = [
       { type: "text", text: instructions },
+      ...(taste
+        ? [
+            {
+              type: "text" as const,
+              text: taste,
+              cache_control: { type: "ephemeral" as const },
+            },
+          ]
+        : []),
       ...(planBlock
         ? [
             {
