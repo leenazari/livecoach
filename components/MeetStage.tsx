@@ -305,12 +305,9 @@ export default function MeetStage({
     }
   }
 
-  const dot =
-    wsState === "on"
-      ? "bg-sage"
-      : wsState === "connecting"
-      ? "bg-amber"
-      : "bg-rust";
+  // On-air light: green only while the bot is live (sent), red the moment it is
+  // not sent or has been stopped - like a studio on-air sign.
+  const onAir = !!botId;
 
   return (
     <div className="grid gap-4 rounded-2xl border border-edge bg-panel/50 p-5">
@@ -318,9 +315,19 @@ export default function MeetStage({
         <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
           Meet / Teams / Zoom
         </p>
-        <span className="flex items-center gap-2 font-mono text-[0.6rem] uppercase tracking-wider text-muted">
-          <span className={`h-2 w-2 rounded-full ${dot}`} />
-          {wsState === "on" ? "live" : wsState}
+        <span
+          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[0.58rem] uppercase tracking-[0.15em] ${
+            onAir
+              ? "border-sage/60 bg-sage/15 text-sage"
+              : "border-rust/55 bg-rust/15 text-rust"
+          }`}
+        >
+          <span
+            className={`h-2 w-2 rounded-full ${
+              onAir ? "bg-sage animate-pulse" : "bg-rust"
+            }`}
+          />
+          {onAir ? "On air" : "Off air"}
         </span>
       </div>
 
@@ -346,7 +353,7 @@ export default function MeetStage({
           }`}
         >
           {botId
-            ? "● bot sent"
+            ? "● on air"
             : status === "sending bot..."
             ? "sending…"
             : "Send bot"}
@@ -354,10 +361,12 @@ export default function MeetStage({
         <button
           onClick={stopBot}
           disabled={!botId}
-          title={botId ? "Remove the bot from the meeting" : "No bot is live"}
+          title={botId ? "Take the bot off air (stop transcribing)" : "No bot is live"}
+          // Neutral while live (red is reserved for the off-air state), with a
+          // red affordance on hover so it still reads as the stop action.
           className={`rounded-full border px-4 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider transition ${
             botId
-              ? "border-rust bg-rust text-white hover:brightness-110"
+              ? "border-edge text-bone hover:border-rust/60 hover:text-rust hover:bg-rust/10"
               : "border-edge text-muted disabled:cursor-not-allowed disabled:opacity-40"
           }`}
         >
