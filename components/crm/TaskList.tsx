@@ -48,6 +48,7 @@ export default function TaskList({
   showCompany = false,
   emptyText = "Nothing on your plate. Nice.",
   hideCommitments = false,
+  clientlessOnly = false,
 }: {
   companyId?: string;
   showCompany?: boolean;
@@ -55,6 +56,9 @@ export default function TaskList({
   // On the dashboard, commitments are shown in "You promised" above, so the
   // "Do next" list hides them to avoid duplicating the same item in both.
   hideCommitments?: boolean;
+  // The dashboard groups client-linked to-dos under Opportunities, so its
+  // "Do next" list shows ONLY the loose, client-less to-dos to avoid repeats.
+  clientlessOnly?: boolean;
 }) {
   const router = useRouter();
   const url = `/api/crm/tasks${companyId ? `?companyId=${companyId}` : ""}`;
@@ -182,10 +186,12 @@ export default function TaskList({
   };
 
   // Commitments live in "You promised"; drop them here when asked so the same
-  // item never appears in both lists.
-  const shown = hideCommitments
+  // item never appears in both lists. clientlessOnly keeps just the loose
+  // to-dos (the client-linked ones are grouped under Opportunities).
+  let shown = hideCommitments
     ? tasks.filter((t) => t.kind !== "commitment")
     : tasks;
+  if (clientlessOnly) shown = shown.filter((t) => !t.company_id);
 
   if (shown.length === 0) {
     return (

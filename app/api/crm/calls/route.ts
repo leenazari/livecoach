@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
+// Without this, a no-arg GET() is statically optimised and Next caches the
+// build-time snapshot, so newly assigned calls keep showing as unassigned even
+// though the assignment saved to the DB. Force dynamic so the list is live.
+export const dynamic = "force-dynamic";
 
 // GET /api/crm/calls -> every recorded call (scorecard), newest first, with the
 // linked company name. Powers the calls list (name / company / date / cost).

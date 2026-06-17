@@ -8,6 +8,86 @@ import { createHash } from "crypto";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const norm = (s: string) =>
+  (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+// Auto-resolve the client for a call that arrived WITHOUT one (an ad-hoc call,
+// or a calendar / Meet recording where no client was picked at the start). It is
+// deliberately conservative: it only links on a confident, unambiguous match,
+// otherwise the call simply stays unassigned for the one-tap picker on the
+// dashboard. Order: (a) the client is named in the call's title or subject;
+// (b) inherit from a prepped scheduled call near this time (the "lead contact in
+// the prep section" - set the client once on a recurring call and every instance
+// inherits it).
+async function autoResolveCompany(opts: {
+  sessionId?: string | null;
+  candidate?: string | null;
+  title?: string | null;
+}): Promise<{ companyId: string; how: "name" | "prep" } | null> {
+  try {
+    const { data: comps } = await supabaseAdmin
+      .from("companies")
+      .select("id, name, profile");
+    const companies = (comps || []) as any[];
+
+    // (a) An exact client name / alias appears in the call title or subject.
+    const hay = ` ${norm(`${opts.title || ""} ${opts.candidate || ""}`)} `;
+    const nameHits = companies.filter((c) => {
+      const aliases = Array.isArray((c.profile || {}).aliases)
+        ? (c.profile as any).aliases
+        : [];
+      const names = [c.name, ...aliases]
+        .map((n: any) => norm(String(n || "")))
+        .filter((n: string) => n.length >= 3);
+      return names.some((n: string) => hay.includes(` ${n} `));
+    });
+    if (nameHits.length === 1) {
+      return { companyId: nameHits[0].id as string, how: "name" };
+    }
+
+    // (b) A prepped scheduled call near this call's time, with a client set.
+    if (opts.sessionId) {
+      const { data: sess } = await supabaseAdmin
+        .from("interview_sessions")
+        .select("created_at, started_at")
+        .eq("session_id", opts.sessionId)
+        .maybeSingle();
+      const t =
+        (sess as any)?.started_at || (sess as any)?.created_at || null;
+      const callTimeMs = t ? new Date(t).getTime() : Date.now();
+      const { data: up } = await supabaseAdmin
+        .from("upcoming_calls")
+        .select("company_id, scheduled_at")
+        .not("company_id", "is", null);
+      const near = (up || [])
+        .map((u: any) => ({
+          companyId: u.company_id as string,
+          dt: Math.abs(new Date(u.scheduled_at).getTime() - callTimeMs),
+        }))
+        .filter((x) => Number.isFinite(x.dt) && x.dt <= 3 * 60 * 60 * 1000)
+        .sort((a, b) => a.dt - b.dt);
+      if (near.length) {
+        const best = near[0];
+        const conflict = near.some(
+          (x) => x.companyId !== best.companyId && x.dt <= 90 * 60 * 1000
+        );
+        // Confident: nothing else within 90 min points elsewhere, and the best
+        // is itself within 90 min (a real scheduled slot, not a vague nearby).
+        if (!conflict && best.dt <= 90 * 60 * 1000) {
+          return { companyId: best.companyId, how: "prep" };
+        }
+      }
+    }
+  } catch (e) {
+    console.error("Auto-resolve company failed:", e);
+  }
+  return null;
+}
+
 // END-OF-CALL assessment. One call, on the pro model (Sonnet) for quality.
 // Returns a structured JSON summary + scorecard + contributors + style profile.
 export async function POST(req: NextRequest) {
@@ -210,6 +290,20 @@ Return the JSON assessment now.`;
       console.error("Duration-cost fallback failed:", e);
     }
 
+    // The client for this call. Use the one passed from the start (the prep),
+    // and if there isn't one, try to auto-resolve it so the call doesn't land
+    // unassigned. Conservative - only links on a confident match.
+    let resolvedCompanyId: string | null =
+      typeof companyId === "string" && companyId ? companyId : null;
+    if (!resolvedCompanyId) {
+      const auto = await autoResolveCompany({
+        sessionId,
+        candidate,
+        title: summary?.title,
+      });
+      if (auto) resolvedCompanyId = auto.companyId;
+    }
+
     try {
       await supabaseAdmin.from("interview_summaries").insert({
         cache_key: cacheKey,
@@ -219,10 +313,17 @@ Return the JSON assessment now.`;
         summary,
         // Stamp the linked company so the scorecard rolls up into that
         // company's call history (and feeds Phase 2 auto-attach).
-        company_id:
-          typeof companyId === "string" && companyId ? companyId : null,
+        company_id: resolvedCompanyId,
         cost: finalCost,
       });
+      // Keep the call-event row in step when we auto-linked one that started
+      // without a client (matched by session_id), so both sides agree.
+      if (resolvedCompanyId && sessionId) {
+        await supabaseAdmin
+          .from("interview_sessions")
+          .update({ company_id: resolvedCompanyId })
+          .eq("session_id", sessionId);
+      }
     } catch (e) {
       console.error("Summary store failed:", e);
     }

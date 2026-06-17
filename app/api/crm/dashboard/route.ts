@@ -27,6 +27,21 @@ function sanitizeRead(s: string): string {
     .trim();
 }
 
+// Keep a day-read line short. A scheduled call's `intent` can hold a whole
+// saved game plan, which would swamp the dashboard, so we show only the first
+// sentence here (the full plan is still on the call/client page). Falls back to
+// a hard word-boundary clamp if the first sentence is itself very long.
+function firstSentence(s: string, max = 180): string {
+  const t = (s || "").trim();
+  if (!t) return "";
+  const m = t.match(/^[\s\S]*?[.!?](\s|$)/);
+  let out = (m ? m[0] : t).trim();
+  if (out.length > max) {
+    out = out.slice(0, max).replace(/\s+\S*$/, "").trim() + "…";
+  }
+  return out;
+}
+
 // The CRM dashboard: everything on your plate across all clients, in one call.
 // KPIs, a short AI read of your day, and a "do next" list pulled from follow-up
 // drafts, open opportunities and the commitments you made on recent calls.
@@ -73,7 +88,23 @@ export async function GET(req: Request) {
       ]);
 
     const nameById = new Map<string, string>();
-    for (const c of companiesRes.data || []) nameById.set(c.id, c.name);
+    const idByName = new Map<string, string>();
+    for (const c of companiesRes.data || []) {
+      nameById.set(c.id, c.name);
+      if (c.name) idByName.set(String(c.name).toLowerCase().trim(), c.id);
+    }
+    // Resolve a day-read label (a client or topic name) to a company id so the
+    // line is clickable. Exact match first, then a conservative contains match.
+    const idForLabel = (label?: string): string | undefined => {
+      const l = (label || "").toLowerCase().trim();
+      if (!l) return undefined;
+      if (idByName.has(l)) return idByName.get(l);
+      for (const [name, id] of idByName) {
+        if (name.length < 4) continue;
+        if (l.startsWith(name) || name.startsWith(l) || l.includes(name)) return id;
+      }
+      return undefined;
+    };
 
     const tasks = (tasksRes.data || []).map((t: any) => ({
       text: t.text,
@@ -146,7 +177,12 @@ export async function GET(req: Request) {
     // A short, cheap AI read of the day, BROKEN INTO SEPARATE LINES (one per
     // client or priority) rather than one bunched paragraph. Optional - never
     // block the dashboard.
-    let dayParts: { label: string; text: string; time?: string }[] = [];
+    let dayParts: {
+      label: string;
+      text: string;
+      time?: string;
+      companyId?: string;
+    }[] = [];
     try {
       if (!light && (tasks.length || openOpps.length)) {
         const lines = [
@@ -250,7 +286,12 @@ export async function GET(req: Request) {
     // Scheduled calls LEAD the day with their time, since they are fixed
     // commitments. Computed fresh each request (not cached) so the times stay
     // current, and placed above the AI priority lines.
-    let callParts: { label: string; text: string; time?: string }[] = [];
+    let callParts: {
+      label: string;
+      text: string;
+      time?: string;
+      companyId?: string;
+    }[] = [];
     try {
       if (!light) {
         const { data: upRows } = await supabaseAdmin
@@ -271,10 +312,12 @@ export async function GET(req: Request) {
             const who = u.company_id ? nameById.get(u.company_id) || "" : "";
             const intent = typeof u.intent === "string" ? u.intent.trim() : "";
             const title = typeof u.title === "string" ? u.title.trim() : "";
+            // First sentence only - the full plan lives on the call/client page.
             return {
               label: who || title || "Call",
-              text: sanitizeRead(intent || title || "Scheduled call"),
+              text: firstSentence(sanitizeRead(intent || title || "Scheduled call")),
               time: when,
+              companyId: (u.company_id as string) || undefined,
             };
           });
       }
@@ -282,7 +325,12 @@ export async function GET(req: Request) {
       /* calls in the day read are optional */
     }
 
-    const dayPartsAll = [...callParts, ...dayParts];
+    // Attach a click target to every line (cached day-read lines included) so
+    // each segment is actionable: its client page, or the to-do board fallback.
+    const withTarget = <T extends { label?: string; companyId?: string }>(
+      p: T
+    ): T => ({ ...p, companyId: p.companyId || idForLabel(p.label) });
+    const dayPartsAll = [...callParts, ...dayParts].map(withTarget);
     return NextResponse.json({
       kpis,
       tasks: tasks.slice(0, 20),

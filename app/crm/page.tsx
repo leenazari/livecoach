@@ -9,6 +9,7 @@ import TaskList from "@/components/crm/TaskList";
 import Commitments from "@/components/crm/Commitments";
 import MorningCheckin from "@/components/crm/MorningCheckin";
 import RecentCalls from "@/components/crm/RecentCalls";
+import OpportunityBoard from "@/components/crm/OpportunityBoard";
 
 type Dash = {
   kpis: {
@@ -35,8 +36,14 @@ type Dash = {
   }[];
   dayRead: string;
   // "Your day" broken into one line per client / priority. Items with a fixed
-  // time (scheduled calls) carry `time` and lead the list.
-  dayParts?: { label: string; text: string; time?: string }[];
+  // time (scheduled calls) carry `time` and lead the list. `companyId`, when
+  // present, makes the line clickable through to that client.
+  dayParts?: {
+    label: string;
+    text: string;
+    time?: string;
+    companyId?: string;
+  }[];
 };
 
 export default function DashboardPage() {
@@ -153,24 +160,43 @@ export default function DashboardPage() {
           </p>
           {dash?.dayParts?.length ? (
             <ul className="flex flex-col gap-2">
-              {dash.dayParts.map((p, i) => (
-                <li
-                  key={i}
-                  className={`border-l-2 pl-3 font-sans text-sm leading-snug text-bone/85 ${
-                    p.time ? "border-amber/60" : "border-sky/40"
-                  }`}
-                >
-                  {p.time ? (
-                    <span className="mr-1.5 rounded-full border border-amber/50 bg-amber/10 px-2 py-0.5 font-mono text-[0.56rem] uppercase tracking-wider text-amber">
-                      {p.time}
-                    </span>
-                  ) : null}
-                  {p.label ? (
-                    <span className="font-semibold text-bone">{p.label}: </span>
-                  ) : null}
-                  {p.text}
-                </li>
-              ))}
+              {dash.dayParts.map((p, i) => {
+                // Every line leads somewhere: its client when we know it,
+                // otherwise the to-do board so the segment is always actionable.
+                const href = p.companyId
+                  ? `/crm/${p.companyId}`
+                  : "/crm/board?tab=tasks";
+                return (
+                  <li
+                    key={i}
+                    className={`border-l-2 ${
+                      p.time ? "border-amber/60" : "border-sky/40"
+                    }`}
+                  >
+                    <Link
+                      href={href}
+                      className="group block rounded-md py-0.5 pl-3 transition hover:bg-bone/[0.04]"
+                    >
+                      <span className="font-sans text-sm leading-snug text-bone/85">
+                        {p.time ? (
+                          <span className="mr-1.5 rounded-full border border-amber/50 bg-amber/10 px-2 py-0.5 font-mono text-[0.56rem] uppercase tracking-wider text-amber">
+                            {p.time}
+                          </span>
+                        ) : null}
+                        {p.label ? (
+                          <span className="font-semibold text-bone">
+                            {p.label}:{" "}
+                          </span>
+                        ) : null}
+                        {p.text}
+                        <span className="ml-1 font-mono text-[0.62rem] text-muted opacity-0 transition group-hover:opacity-100">
+                          ↗
+                        </span>
+                      </span>
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className="font-sans text-sm leading-relaxed text-bone/85">
@@ -237,6 +263,11 @@ export default function DashboardPage() {
           Self-hides when empty. */}
       <Commitments showCompany />
 
+      {/* OPPORTUNITIES first: client work grouped by deal, coach-ranked, drag to
+          reorder. Each row expands to that client's to-dos. Self-hides when
+          there are no client-linked to-dos. */}
+      <OpportunityBoard />
+
       <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
         <div className="mb-2.5 flex items-center justify-between">
           <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
@@ -249,9 +280,13 @@ export default function DashboardPage() {
             see all ↗
           </Link>
         </div>
-        {/* Tick to complete, click a ticked task to remove. Done tasks clear on
-            their own the next day. Click the text to start the action. */}
-        <TaskList showCompany hideCommitments emptyText="Nothing on your plate. Nice." />
+        {/* Loose, client-less to-dos only - the client-linked ones are grouped
+            under Opportunities above. Tick to complete, click to act. */}
+        <TaskList
+          hideCommitments
+          clientlessOnly
+          emptyText="Nothing loose. Your client work is grouped above."
+        />
       </div>
 
       {/* UPCOMING CALLS first (what's ahead) - schedule, prep, start preloaded.
