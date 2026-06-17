@@ -5,9 +5,29 @@ import {
   CLAUDE_MODEL_PRO,
 } from "@/lib/anthropic";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
+import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+// When the call is with an INTERNAL entity (the caller's own team/board), the
+// plan must flip: people named in the brief are the TOPIC, not the room, and the
+// focus is decisions/positions/outputs, not questions for an outside party.
+async function internalFramingBlock(companyId: any): Promise<string> {
+  try {
+    if (typeof companyId !== "string" || !companyId) return "";
+    const { data } = await supabaseAdmin
+      .from("companies")
+      .select("profile")
+      .eq("id", companyId)
+      .maybeSingle();
+    const internal = !!(data && (data as any).profile && (data as any).profile.internal === true);
+    if (!internal) return "";
+    return `THIS IS AN INTERNAL MEETING. The people on this call are the caller's OWN team or board, NOT an external client. Any client, prospect, investor or partner named in the brief is the SUBJECT being discussed, NOT someone in the room. Plan accordingly: the focus areas, read and playbook are about the DECISIONS the team must make, the POSITIONS to agree, and the OUTPUTS to produce (what to decide, what to propose, what to send and who owns it), NOT questions to ask an external party. Internal and sensitive matters - equity, money, the team's own position, capacity, negotiating limits, what to commit to - ARE the agenda here and SHOULD be in the focus, because this is the private room where the team decides them. This OVERRIDES any instruction below that says to keep internal or sensitive matters out of the focus or to only raise things appropriate in front of the other party.\n\n`;
+  } catch {
+    return "";
+  }
+}
 
 // Turns the INTENT of a call (the top-priority input) plus any supporting
 // context (CV / JD / notes / researched background) into a plan: ranked focus
@@ -270,6 +290,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     brief = typeof body.brief === "string" ? body.brief : "";
     role = typeof body.role === "string" ? body.role : "";
+    // Internal (board/strategy) calls flip the whole framing - computed from the
+    // linked client's internal flag.
+    const internalBlock = await internalFramingBlock(body.companyId);
     const knowledgeContext = body.knowledgeContext;
     const curatedFocus: string[] = Array.isArray(body.focusAreas)
       ? body.focusAreas
@@ -305,7 +328,7 @@ export async function POST(req: NextRequest) {
         : [];
       const reconcile = existingFocus.length > 0;
 
-      const deriveSystem = `You are an expert conversation planner. From the INTENT brief and any supporting document, return ONLY this and nothing else:
+      const deriveSystem = `${internalBlock}You are an expert conversation planner. From the INTENT brief and any supporting document, return ONLY this and nothing else:
 - callType: one of "interview", "sales", "support", "general".
 - subjectName: the person/party being spoken with if discernible from the brief/context, else "".
 - focusAreas: 6-9 topics to assess or explore, RANKED most-important-first. Tight labels (2-5 words) that are CONCRETE and SPECIFIC TO THIS CALL - name the actual idea, product, people, numbers or mechanics from the brief and document. A reader should be UNABLE to use them for any other call. BANNED generic filler: "Phase 1 deliverables", "Timeline and resources", "Data privacy", "Decision authority", "Content integration". GOOD (for a relationship-AI built from 100 books, a YouTube audience, a 50/50 JV): "how the 100 books shape replies", "therapy-avatar emotional realism", "YouTube 9.7M launch fit", "JV 50/50 terms", "consent for sensitive relationship data". Every focus must be appropriate to raise OPENLY with the other party - never the caller's own internal/sensitive matters.
@@ -313,7 +336,7 @@ export async function POST(req: NextRequest) {
 
 Output ONLY valid JSON: { "callType": "...", "subjectName": "...", "focusAreas": ["..."], "character": "..." }`;
 
-      const reconcileSystem = `You are an expert conversation planner RECONCILING the caller's EXISTING focus list against new information (a freshly added document plus the intent). Return ONLY JSON.
+      const reconcileSystem = `${internalBlock}You are an expert conversation planner RECONCILING the caller's EXISTING focus list against new information (a freshly added document plus the intent). Return ONLY JSON.
 
 EXISTING FOCUS LIST - the caller has ranked and edited these; treat them as the source of truth and do NOT restate them:
 ${existingFocus.map((f, i) => `${i + 1}. ${f}`).join("\n")}
@@ -435,7 +458,7 @@ Return the JSON now.`;
       );
     }
 
-    const system = `${biz}${lessons}You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
+    const system = `${biz}${lessons}${internalBlock}You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
 
 The INTENT BRIEF defines the GOAL of the call and what KIND of call it is (interview, sales, support, discovery, general). Use it to set the goal, the call type, and the caller's angle.
 

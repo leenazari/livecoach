@@ -1106,6 +1106,9 @@ export default function CallPage() {
       body: JSON.stringify({
         brief: brief || null,
         role: role || null,
+        // The linked client, so the planner can tell an INTERNAL board/strategy
+        // call (people named in the brief are the topic) from a client call.
+        companyId: linkedCompanyRef.current?.id || null,
         // Only the full build is built AROUND the locked focus. focus/refocus
         // derive a fresh list, so don't pin the existing one.
         focusAreas: mode === "full" ? suggestedCompsRef.current : [],

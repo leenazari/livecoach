@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { estimateCost } from "@/lib/costs";
 import { completeUpcomingForCall } from "@/lib/calls";
+import { extractAttendees, matchByRoster } from "@/lib/roster";
 import { createHash } from "crypto";
 
 export const runtime = "nodejs";
@@ -28,7 +29,8 @@ async function autoResolveCompany(opts: {
   sessionId?: string | null;
   candidate?: string | null;
   title?: string | null;
-}): Promise<{ companyId: string; how: "name" | "prep" } | null> {
+  transcript?: string | null;
+}): Promise<{ companyId: string; how: "name" | "roster" | "prep" } | null> {
   try {
     const { data: comps } = await supabaseAdmin
       .from("companies")
@@ -48,6 +50,17 @@ async function autoResolveCompany(opts: {
     });
     if (nameHits.length === 1) {
       return { companyId: nameHits[0].id as string, how: "name" };
+    }
+
+    // (a2) Match WHO is on the call to a client's learned roster. This is what
+    // tells recurring meetings with overlapping people apart (the two standups),
+    // and links them with no manual step once the roster is known.
+    const attendees = extractAttendees(
+      opts.transcript || `${opts.candidate || ""}`
+    );
+    const rosterHit = matchByRoster(attendees, companies);
+    if (rosterHit) {
+      return { companyId: rosterHit.companyId, how: "roster" };
     }
 
     // (b) A prepped scheduled call near this call's time, with a client set.
@@ -314,6 +327,7 @@ Return the JSON assessment now.`;
         sessionId,
         candidate,
         title: summary?.title,
+        transcript,
       });
       if (auto) resolvedCompanyId = auto.companyId;
     }

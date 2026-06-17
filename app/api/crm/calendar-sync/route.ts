@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAccessToken, listEvents, meetingUrlOf, titleOf } from "@/lib/google";
 import { supabaseAdmin } from "@/lib/supabase";
+import { loadAttendeeConfig, inferLink } from "@/lib/attendees";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -29,13 +30,13 @@ export async function POST() {
       title: string;
       scheduled_at: string;
       meeting_url: string | null;
+      attendees: any[];
     };
     const rows: Row[] = [];
     for (const ev of events) {
       if (ev.status === "cancelled") continue;
-      const self = Array.isArray(ev.attendees)
-        ? ev.attendees.find((a: any) => a.self)
-        : null;
+      const atts = Array.isArray(ev.attendees) ? ev.attendees : [];
+      const self = atts.find((a: any) => a.self) || null;
       if (self && self.responseStatus === "declined") continue;
       const startIso =
         ev.start?.dateTime ||
@@ -46,6 +47,7 @@ export async function POST() {
         title: titleOf(ev),
         scheduled_at: startIso,
         meeting_url: meetingUrlOf(ev),
+        attendees: atts,
       });
     }
 
@@ -60,9 +62,27 @@ export async function POST() {
       for (const d of data || []) if (d.external_id) existing.add(d.external_id);
     }
 
+    // Imply the client from the GUEST LIST. The invitees are who the call is
+    // actually with; an all-internal guest list is a board/strategy call, an
+    // outside guest matched to a client links there. Names only mentioned in the
+    // note are the topic, not the participant.
+    const attendeeConfig = await loadAttendeeConfig();
+
     const toInsert = rows
       .filter((r) => !existing.has(r.external_id))
-      .map((r) => ({ ...r, company_id: null, source: "google", prepped: false }));
+      .map((r) => {
+        const link = inferLink(r.attendees, attendeeConfig);
+        return {
+          external_id: r.external_id,
+          title: r.title,
+          scheduled_at: r.scheduled_at,
+          meeting_url: r.meeting_url,
+          attendees: r.attendees,
+          company_id: link.companyId,
+          source: "google",
+          prepped: false,
+        };
+      });
     const toUpdate = rows.filter((r) => existing.has(r.external_id));
 
     let added = 0;
@@ -74,7 +94,8 @@ export async function POST() {
       added = data?.length || 0;
     }
 
-    // Reschedules: only the calendar-owned fields, never the user's data.
+    // Reschedules: only the calendar-owned fields (now including the guest list),
+    // never the user's own client link, intent or prep.
     await Promise.all(
       toUpdate.map((r) =>
         supabaseAdmin
@@ -83,6 +104,7 @@ export async function POST() {
             scheduled_at: r.scheduled_at,
             title: r.title,
             meeting_url: r.meeting_url,
+            attendees: r.attendees,
           })
           .eq("external_id", r.external_id)
       )

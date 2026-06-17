@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { extractAttendees, mergeRoster } from "@/lib/roster";
 
 export const runtime = "nodejs";
 // POST with a body, so dynamic, but be explicit (see the 405 static-route lesson).
@@ -95,7 +96,38 @@ export async function POST(
       }
     }
 
-    return NextResponse.json({ ok: true, companyId, learnedAlias });
+    // Learn the roster: remember WHO was on this call for this client, so future
+    // calls with the same people auto-link (this is what makes the standups, and
+    // any recurring meeting, file themselves). Runs after the alias write above,
+    // so it folds into the latest profile rather than clobbering it.
+    let learnedRoster: string[] = [];
+    try {
+      if (companyId && row.session_id) {
+        const { data: sess } = await supabaseAdmin
+          .from("interview_sessions")
+          .select("transcript")
+          .eq("session_id", row.session_id)
+          .maybeSingle();
+        const attendees = extractAttendees((sess as any)?.transcript || "");
+        if (attendees.size) {
+          const { data: comp } = await supabaseAdmin
+            .from("companies")
+            .select("profile")
+            .eq("id", companyId)
+            .maybeSingle();
+          const nextProfile = mergeRoster((comp as any)?.profile, attendees);
+          await supabaseAdmin
+            .from("companies")
+            .update({ profile: nextProfile })
+            .eq("id", companyId);
+          learnedRoster = Array.from(attendees);
+        }
+      }
+    } catch (e) {
+      console.error("Roster learn failed:", e);
+    }
+
+    return NextResponse.json({ ok: true, companyId, learnedAlias, learnedRoster });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to assign call" },
