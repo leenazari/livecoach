@@ -3,6 +3,18 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
+// Keep to-do text in the user's house style: no em/en dashes, no semicolons.
+const cleanText = (s: any): any =>
+  typeof s === "string"
+    ? s
+        .replace(/[—–]/g, ", ")
+        .replace(/;/g, ",")
+        .replace(/\s+([,.])/g, "$1")
+        .replace(/,\s*,/g, ",")
+        .replace(/\s{2,}/g, " ")
+        .trim()
+    : s;
+
 // GET /api/crm/tasks[?companyId=] -> the live to-do list: every OPEN task plus
 // tasks completed TODAY (so a ticked task lingers for the rest of the day then
 // drops off on its own). Newest-relevant first. Joins the company name.
@@ -71,6 +83,7 @@ export async function GET(req: NextRequest) {
       })
       .map((t: any) => ({
         ...t,
+        text: cleanText(t.text),
         company: t.company_id ? nameById.get(t.company_id) || null : null,
         upcoming_id: null,
         scheduled_at: null,
