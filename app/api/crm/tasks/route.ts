@@ -34,6 +34,9 @@ export async function GET(req: NextRequest) {
       )
       .not("company_id", "is", null)
       .eq("prepped", false)
+      // A finished call (completed_at set when the call ended) stops generating
+      // a prep to-do immediately, so a done meeting never lingers here.
+      .is("completed_at", null)
       // A prep to-do falls off once the call's time has passed by a short grace
       // window (3h), enough to still open or recap it just after, not linger.
       .gte("scheduled_at", new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString())

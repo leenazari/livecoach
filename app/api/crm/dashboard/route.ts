@@ -297,6 +297,7 @@ export async function GET(req: Request) {
         const { data: upRows } = await supabaseAdmin
           .from("upcoming_calls")
           .select("company_id, title, scheduled_at, intent")
+          .is("completed_at", null)
           .gte("scheduled_at", new Date().toISOString())
           .order("scheduled_at", { ascending: true })
           .limit(4);

@@ -21,6 +21,8 @@ export async function GET() {
         .select(
           "id, company_id, title, scheduled_at, meeting_url, intent, prepped, source, created_at"
         )
+        // A finished call (completed_at set on end) drops off here at once.
+        .is("completed_at", null)
         .or(`scheduled_at.is.null,scheduled_at.gte.${pastCutoff}`)
         .order("scheduled_at", { ascending: true, nullsFirst: false })
         .limit(200),

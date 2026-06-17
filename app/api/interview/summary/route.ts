@@ -3,6 +3,7 @@ import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
 import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { estimateCost } from "@/lib/costs";
+import { completeUpcomingForCall } from "@/lib/calls";
 import { createHash } from "crypto";
 
 export const runtime = "nodejs";
@@ -323,6 +324,14 @@ Return the JSON assessment now.`;
           .from("interview_sessions")
           .update({ company_id: resolvedCompanyId })
           .eq("session_id", sessionId);
+      }
+      // The call is over once a summary exists, so clear the scheduled call it
+      // came from (backstop for when session-end didn't fire, e.g. a Meet bot).
+      if (sessionId) {
+        await completeUpcomingForCall({
+          sessionId,
+          companyId: resolvedCompanyId,
+        });
       }
     } catch (e) {
       console.error("Summary store failed:", e);
