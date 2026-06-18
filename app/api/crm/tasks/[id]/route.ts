@@ -25,9 +25,13 @@ export async function PATCH(
     }
     if (typeof body.text === "string" && body.text.trim())
       patch.text = body.text.trim();
-    // Save an edited commitment draft (the prepared, approve-in-app action).
+    // Save an edited commitment draft, or the pinned flag (payload.pinned).
     if (body.payload && typeof body.payload === "object")
       patch.payload = body.payload;
+    // Set or clear a deadline (sorts the list; "" / null clears it).
+    if (typeof body.dueAt === "string")
+      patch.due_at = body.dueAt.trim() || null;
+    else if (body.dueAt === null) patch.due_at = null;
     if (Object.keys(patch).length === 0) return NextResponse.json({ ok: true });
 
     const { error } = await supabaseAdmin

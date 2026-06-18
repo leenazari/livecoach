@@ -96,6 +96,22 @@ export async function GET(req: NextRequest) {
     const openReal = real.filter((t: any) => t.status !== "done");
     const doneReal = real.filter((t: any) => t.status === "done");
 
+    // Priority sort for the open to-dos: PINNED first (kept at the top until
+    // done), then by DEADLINE (soonest, and overdue, first), then most recent.
+    // So a task the user pinned or gave a Friday deadline rises to the top
+    // instead of sinking by age.
+    const pinRank = (t: any) =>
+      t.payload && typeof t.payload === "object" && t.payload.pinned ? 0 : 1;
+    const dueMs = (t: any) =>
+      t.due_at ? new Date(t.due_at).getTime() : Infinity;
+    openReal.sort((a: any, b: any) => {
+      const pr = pinRank(a) - pinRank(b);
+      if (pr !== 0) return pr;
+      const dm = dueMs(a) - dueMs(b);
+      if (dm !== 0) return dm;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+
     // Build the prep to-dos from the upcoming client calls.
     const prep = (ucals || []).map((u: any) => {
       const ms = u.scheduled_at ? new Date(u.scheduled_at).getTime() : null;

@@ -25,6 +25,7 @@ export type NewTask = {
   // e.g. { actionType: "email", subject, body } or { actionType: "task", notes }.
   payload?: Record<string, any> | null;
   dueAt?: string | null; // ISO; parsed from "by Friday" etc.
+  pinned?: boolean; // keep at the top of the to-do list until done
 };
 
 // Map a spoken/loose action word to the to-do's link_kind, which drives the
@@ -230,7 +231,12 @@ export async function upsertTasks(
       link_kind: i.linkKind || "client",
       source: i.source || null,
       source_ref: i.sourceRef || null,
-      payload: i.payload ?? null,
+      payload: i.pinned
+        ? {
+            ...(i.payload && typeof i.payload === "object" ? i.payload : {}),
+            pinned: true,
+          }
+        : i.payload ?? null,
       due_at: i.dueAt || null,
       fingerprint: fingerprintTask(companyId, i.text),
       status: "open",

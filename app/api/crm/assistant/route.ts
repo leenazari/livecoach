@@ -409,9 +409,9 @@ Keep your commentary and reasoning OUTSIDE the markers. The text inside the mark
 
 TO-DOS: when the user asks you to arrange, remember, chase, follow up, add, draft, prep, or otherwise CREATE actions to do later, capture each as a to-do. In ADDITION to your normal prose reply, put ONLY a JSON array between these exact markers:
 ---TASKS---
-[{"text":"short imperative to-do","action":"email|call|task"}]
+[{"text":"short imperative to-do","action":"email|call|task","dueAt":"YYYY-MM-DD","pinned":true}]
 ---END TASKS---
-Use "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Only create to-dos the user actually wants tracked, and do not repeat ones already shown as outstanding in the context. They appear on the user's to-do list with the action attached, to trigger when they choose. Keep these markers out of your prose, and still answer naturally.
+Use "action" = "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Set "dueAt" to the deadline DATE when the user gives one, working out the real date from today's date in the context (e.g. "by Friday" becomes that Friday's YYYY-MM-DD, "by end of month" the last day of this month). Set "pinned" to true when the user says to keep it at the top, make it top priority, do it first, or that it is urgent. OMIT dueAt and pinned when the user did not give a deadline or priority. Only create to-dos the user actually wants tracked, and do not repeat ones already outstanding in the context. They appear on the user's to-do list with the action attached. Keep these markers out of your prose, and still answer naturally.
 
 CALENDAR: the user's upcoming calls, synced from their calendar, are in the context below in the calls list, each with its join link when there is one. Answer "what's on my calendar" / "what's next" from that, and give the join link when asked. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
 
@@ -544,6 +544,12 @@ ALWAYS end the spoken version with your closing question whenever your reply has
                     text: String(x.text).trim(),
                     linkKind: actionToLinkKind(x.action),
                     source: "assistant",
+                    dueAt:
+                      typeof x.dueAt === "string" &&
+                      /^\d{4}-\d{2}-\d{2}/.test(x.dueAt)
+                        ? x.dueAt
+                        : undefined,
+                    pinned: x.pinned === true,
                   }));
                 createdTasks = await upsertTasks(isGlobal ? null : companyId, items);
               }

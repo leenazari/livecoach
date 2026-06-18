@@ -19,9 +19,41 @@ type Task = {
   meeting_url?: string | null;
   intent?: string | null;
   due_soon?: boolean;
+  // A deadline (sorts the list) and whether the user pinned it to the top.
+  due_at?: string | null;
   // When an intent has more than one way to act it (e.g. call OR email the same
   // person), payload.approaches lists them and clicking asks which to use.
-  payload?: { approaches?: string[]; [k: string]: any } | null;
+  // payload.pinned keeps the to-do at the top of the list until it's done.
+  payload?: { approaches?: string[]; pinned?: boolean; [k: string]: any } | null;
+};
+
+// "Fri 19", "today", "overdue" for a deadline.
+const dueLabel = (iso?: string | null): { text: string; over: boolean } | null => {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const day = 24 * 60 * 60 * 1000;
+    const startToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    ).getTime();
+    const dDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const over = dDay < startToday;
+    let text: string;
+    if (dDay === startToday) text = "today";
+    else if (dDay === startToday + day) text = "tomorrow";
+    else if (over) text = "overdue";
+    else
+      text = d.toLocaleDateString("en-GB", {
+        weekday: "short",
+        day: "2-digit",
+      });
+    return { text, over };
+  } catch {
+    return null;
+  }
 };
 
 // "today 14:00" / "Tue 14:00" for a prep to-do's call time.
@@ -120,6 +152,23 @@ export default function TaskList({
     }).catch(() => {});
   };
 
+  // Pin / unpin a to-do so it stays at the top of the list until done. Re-fetch
+  // after so the server's priority sort re-orders it.
+  const togglePin = (t: Task) => {
+    if (t.upcoming_id) return; // prep to-dos aren't pinnable
+    const pinned = !t.payload?.pinned;
+    const payload = { ...(t.payload || {}), pinned };
+    setTasks((p) => p.map((x) => (x.id === t.id ? { ...x, payload } : x)));
+    crmFetch(`/api/crm/tasks/${t.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ payload }),
+    })
+      .then(() =>
+        crmFetch<{ tasks: Task[] }>(url).then((d) => setTasks(d.tasks || []))
+      )
+      .catch(() => {});
+  };
+
   // What clicking the task text does. If the intent has more than one approach
   // (call OR email), ask which first; otherwise just run its action.
   const start = (t: Task) => {
@@ -211,11 +260,25 @@ export default function TaskList({
           : [];
         const multi = approaches.length > 1;
         const canClick = multi || actionable(t);
+        const pinned = !!t.payload?.pinned;
+        const dl = !t.upcoming_id ? dueLabel(t.due_at) : null;
         return (
           <li
             key={t.id}
             className="flex items-center gap-2.5 border-b border-edge/40 py-2 last:border-none"
           >
+            {!t.upcoming_id && (
+              <button
+                type="button"
+                onClick={() => togglePin(t)}
+                title={pinned ? "unpin from top" : "pin to top"}
+                className={`flex-none font-mono text-[0.82rem] leading-none transition ${
+                  pinned ? "text-amber" : "text-muted/40 hover:text-amber"
+                }`}
+              >
+                {pinned ? "★" : "☆"}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => toggle(t)}
@@ -243,6 +306,19 @@ export default function TaskList({
             >
               {t.text}
             </button>
+
+            {dl && !done && (
+              <span
+                title="deadline"
+                className={`flex-none rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider ${
+                  dl.over
+                    ? "border border-rust/60 bg-rust/15 text-rust"
+                    : "border border-amber/50 bg-amber/10 text-amber"
+                }`}
+              >
+                {dl.text}
+              </span>
+            )}
 
             {t.upcoming_id && t.scheduled_at && (
               <span
