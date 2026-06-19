@@ -33,6 +33,21 @@ export default function RecentCalls() {
   };
   useEffect(() => {
     load();
+    // Live-update: a freshly summarised call (incl. the safety-net sweep)
+    // appears without a manual reload, on broadcast and on tab focus.
+    const onRefresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden")
+        return;
+      load();
+    };
+    window.addEventListener("lc:tasks-updated", onRefresh);
+    window.addEventListener("focus", onRefresh);
+    document.addEventListener("visibilitychange", onRefresh);
+    return () => {
+      window.removeEventListener("lc:tasks-updated", onRefresh);
+      window.removeEventListener("focus", onRefresh);
+      document.removeEventListener("visibilitychange", onRefresh);
+    };
   }, []);
 
   const assign = async (

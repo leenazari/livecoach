@@ -29,16 +29,29 @@ export async function completeUpcomingForCall(opts: {
       return opts.upcomingId;
     }
 
-    // Derive client + call time from the session row when not passed in.
+    // Derive client + call time from the session row when not passed in. Also
+    // read the scheduled-call link stamped at start: if the session knows the
+    // exact slot it came from, complete THAT directly. This works even for a
+    // call with no client link and for one that was never ended manually, so
+    // the safety-net sweep clears the right slot too.
     let companyId = opts.companyId || null;
     let callTimeMs = opts.callTimeMs;
-    if ((!companyId || callTimeMs == null) && opts.sessionId) {
+    if (opts.sessionId) {
       const { data: sess } = await supabaseAdmin
         .from("interview_sessions")
-        .select("company_id, started_at, created_at")
+        .select("company_id, started_at, created_at, upcoming_id")
         .eq("session_id", opts.sessionId)
         .maybeSingle();
       if (sess) {
+        const linked = (sess as any).upcoming_id as string | null;
+        if (linked) {
+          await supabaseAdmin
+            .from("upcoming_calls")
+            .update({ completed_at: nowIso })
+            .eq("id", linked)
+            .is("completed_at", null);
+          return linked;
+        }
         if (!companyId) companyId = (sess as any).company_id || null;
         if (callTimeMs == null) {
           const t = (sess as any).started_at || (sess as any).created_at;

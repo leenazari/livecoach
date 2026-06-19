@@ -29,7 +29,7 @@ async function run(req: Request) {
       supabaseAdmin
         .from("interview_sessions")
         .select(
-          "session_id, company_id, candidate, role, call_type, transcript, created_at"
+          "session_id, company_id, candidate, role, call_type, transcript, created_at, upcoming_id, updated_at, ended_at"
         )
         .gte("created_at", since)
         .order("created_at", { ascending: false })
@@ -45,10 +45,26 @@ async function run(req: Request) {
       (summaries || []).map((s: any) => s.session_id)
     );
 
+    // A call is only "over" once it has gone quiet. The sweep runs on a timer,
+    // so without this it could summarise a LONG call mid-flight (a live call
+    // looks like an orphan: transcript present, no summary yet). Treat a session
+    // as still live unless it has an explicit ended_at OR its last activity was
+    // more than QUIET_MS ago. This is also what turns the sweep into auto-end:
+    // a call that just stops, without being ended, is summarised ~12-27 min later.
+    const QUIET_MS = 12 * 60 * 1000;
+    const now = Date.now();
+    const lastActivityMs = (s: any): number => {
+      const v = s.updated_at || s.created_at;
+      const t = v ? new Date(v).getTime() : 0;
+      return Number.isFinite(t) ? t : 0;
+    };
+
     const orphans = (sessions || []).filter((s: any) => {
       if (!s.session_id || haveSummary.has(s.session_id)) return false;
       const t = typeof s.transcript === "string" ? s.transcript.trim() : "";
       if (t.length < 500) return false; // too thin to be a real call
+      // Still live: no end stamp and active within the quiet window. Leave it.
+      if (!s.ended_at && now - lastActivityMs(s) < QUIET_MS) return false;
       // Skip the user's own practice / mic-test sessions (no client, self only).
       const cand = String(s.candidate || "").toLowerCase();
       if (!s.company_id && (cand === "" || cand.includes("lee nazari")) && t.length < 1500)
@@ -72,6 +88,9 @@ async function run(req: Request) {
             callType: s.call_type || null,
             sessionId: s.session_id,
             companyId: s.company_id || null,
+            // Pass the linked slot so the summary endpoint completes the right
+            // upcoming_calls row, clearing it from the list automatically.
+            upcomingId: s.upcoming_id || null,
           }),
         });
         if (r.ok) done.push(s.session_id);

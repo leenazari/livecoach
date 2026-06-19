@@ -92,6 +92,26 @@ export default function DashboardPage() {
     };
   }, []);
 
+  // Live-update on every return to the tab: refetch the dashboard and tell the
+  // list cards (upcoming, recent, to-dos, commitments) to refresh, so a call
+  // that finished while you were away - or that the safety-net sweep just
+  // summarised - shows up without a manual reload.
+  useEffect(() => {
+    const onRefresh = () => {
+      if (document.visibilityState === "hidden") return;
+      crmFetch<Dash>("/api/crm/dashboard")
+        .then((d) => setDash(d))
+        .catch(() => {});
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    };
+    window.addEventListener("focus", onRefresh);
+    document.addEventListener("visibilitychange", onRefresh);
+    return () => {
+      window.removeEventListener("focus", onRefresh);
+      document.removeEventListener("visibilitychange", onRefresh);
+    };
+  }, []);
+
   const gbp = (n: number) =>
     `£${Number(n || 0).toLocaleString(undefined, {
       minimumFractionDigits: 2,

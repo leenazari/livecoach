@@ -81,6 +81,22 @@ export default function UpcomingCalls() {
 
   useEffect(() => {
     load();
+    // Live-update: refresh when something elsewhere changed (a call ended,
+    // a task ticked) and whenever you return to the tab, so a finished call
+    // clears itself without a manual reload.
+    const onRefresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden")
+        return;
+      load();
+    };
+    window.addEventListener("lc:tasks-updated", onRefresh);
+    window.addEventListener("focus", onRefresh);
+    document.addEventListener("visibilitychange", onRefresh);
+    return () => {
+      window.removeEventListener("lc:tasks-updated", onRefresh);
+      window.removeEventListener("focus", onRefresh);
+      document.removeEventListener("visibilitychange", onRefresh);
+    };
   }, []);
 
   const create = async () => {

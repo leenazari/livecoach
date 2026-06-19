@@ -483,6 +483,10 @@ export default function CallPage() {
         sessionId: room,
         companyId: linkedCompanyRef.current?.id || null,
         contactId: null,
+        // Tie the session to the scheduled call it was opened from, so ANY
+        // later summarise (manual, bot, or the safety-net sweep) can clear the
+        // right slot off the upcoming list even if the call is never ended.
+        upcomingId: upcomingIdRef.current || null,
       }),
     }).catch(() => {});
   }, [room]);

@@ -23,9 +23,22 @@ export async function POST(req: NextRequest) {
     const contactId =
       typeof body.contactId === "string" && body.contactId ? body.contactId : null;
 
+    const patch: Record<string, any> = {
+      company_id: companyId,
+      contact_id: contactId,
+    };
+    // The scheduled call this session was opened from. Stored so any later
+    // summarise can complete the exact upcoming_calls slot. Only touched when
+    // the key is present, so other callers never clobber an existing link.
+    if ("upcomingId" in body)
+      patch.upcoming_id =
+        typeof body.upcomingId === "string" && body.upcomingId
+          ? body.upcomingId
+          : null;
+
     const { error } = await supabaseAdmin
       .from("interview_sessions")
-      .update({ company_id: companyId, contact_id: contactId })
+      .update(patch)
       .eq("session_id", sessionId);
     if (error) throw error;
     return NextResponse.json({ ok: true });
