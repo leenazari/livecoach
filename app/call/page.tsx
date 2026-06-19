@@ -3723,7 +3723,7 @@ export default function CallPage() {
                 Live cues
               </h2>
               <span className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">
-                {pinned.length + feed.length} on screen
+                {pinned.length + ideas.length + feed.length} on screen
               </span>
             </div>
             <button
@@ -3735,18 +3735,59 @@ export default function CallPage() {
             </button>
           </div>
           <div className="flex-1 overflow-y-auto p-6">
-            {pinned.length + feed.length === 0 ? (
+            {pinned.length + ideas.length + feed.length === 0 ? (
               <p className="font-mono text-sm text-muted">
                 Live cues appear here as the conversation flows.
               </p>
             ) : (
-              <div
-                className="grid gap-3"
-                style={{
-                  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                }}
-              >
-                {[...pinned, ...feed].map((s) => renderCard(s, true))}
+              <div className="flex flex-col gap-6">
+                {pinned.length > 0 && (
+                  <div>
+                    <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-amber/70">
+                      Bulletin
+                    </p>
+                    <div
+                      className="grid gap-3"
+                      style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
+                    >
+                      {pinned.map((s) => renderCard(s, true))}
+                    </div>
+                  </div>
+                )}
+                {/* Two lanes side by side: statements to SAY on the left,
+                    questions to ASK on the right. */}
+                <div className="grid gap-6 md:grid-cols-2">
+                  <div>
+                    <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-sky/80">
+                      {"◆"} Things to say
+                    </p>
+                    {ideas.length === 0 ? (
+                      <p className="font-mono text-xs text-muted">
+                        Statements stream in here as the conversation gives you
+                        openings.
+                      </p>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        {ideas.map((s) => renderCard(s, true))}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-amber/70">
+                      {"▸"} Questions to ask
+                    </p>
+                    {feed.length === 0 ? (
+                      <p className="font-mono text-xs text-muted">
+                        Questions stream in here once the conversation gets
+                        going.
+                      </p>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        {feed.map((s) => renderCard(s, true))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>
