@@ -252,7 +252,10 @@ export default function CallPage() {
   const [publicLink, setPublicLink] = useState("");
   const [background, setBackground] = useState("");
   const [researching, setResearching] = useState(false);
-  const [researchingPerson, setResearchingPerson] = useState(false);
+  const [personStage, setPersonStage] = useState<
+    "idle" | "identifying" | "confirm" | "briefing"
+  >("idle");
+  const personIdRef = useRef<any>(null);
   const [researchNote, setResearchNote] = useState("");
   const [cost, setCost] = useState<CostBreakdown>(() => estimateCost(0, 0));
   const [overBudget, setOverBudget] = useState(false);
@@ -1440,7 +1443,55 @@ export default function CallPage() {
   // background the planner already reads, so it shapes your focus. Identity
   // hints come from the linked client, the corrected subject name, and whatever
   // is in the link box (a LinkedIn URL or a name). Saved against the call.
+  // GATE phase 2: once an identity is confirmed, write the full brief into the
+  // background channel (which the planner folds into focus) and save it.
+  const briefPerson = useCallback(async () => {
+    const id = personIdRef.current || {};
+    const isLinkedin = /linkedin\.com/i.test(publicLink);
+    setPersonStage("briefing");
+    setResearchNote("");
+    try {
+      const res = await fetch("/api/interview/research-person", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "brief",
+          upcomingId: upcomingIdRef.current || undefined,
+          person: id.name || candidateRef.current || undefined,
+          company: id.org || linkedCompanyRef.current?.name || undefined,
+          companyId: linkedCompanyRef.current?.id || undefined,
+          linkedinUrl: isLinkedin ? publicLink.trim() : undefined,
+          intent: brief || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.background) {
+        setBackground(data.background);
+        backgroundRef.current = data.background;
+        setResearchNote(`\u2713 briefed ${data.person || id.name || "them"}`);
+      } else {
+        setResearchNote(
+          data.error || "couldn't brief them \u2013 carry on without it"
+        );
+      }
+    } catch {
+      setResearchNote("couldn't brief them \u2013 carry on without it");
+    } finally {
+      setPersonStage("idle");
+      personIdRef.current = null;
+    }
+  }, [publicLink, brief]);
+
+  // GATE phase 1: find WHO this is and show it for confirmation BEFORE spending
+  // on the full brief. A second click (while in "confirm") writes the brief.
+  // Identity hints: the linked client, the corrected subject name, and whatever
+  // is in the link box (a LinkedIn URL or a name). LinkedIn is never scraped, it
+  // is only a pointer for the open-web search.
   const researchPerson = useCallback(async () => {
+    if (personStage === "confirm") {
+      briefPerson();
+      return;
+    }
     const hint = publicLink.trim();
     const isLinkedin = /linkedin\.com/i.test(hint);
     const person = candidateRef.current?.trim() || "";
@@ -1451,42 +1502,46 @@ export default function CallPage() {
       );
       return;
     }
-    setResearchingPerson(true);
+    setPersonStage("identifying");
     setResearchNote("");
     try {
       const res = await fetch("/api/interview/research-person", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          mode: "identify",
           upcomingId: upcomingIdRef.current || undefined,
-          // A non-LinkedIn hint with no known name is treated as the name.
           person: person || (hint && !isLinkedin ? hint : undefined),
           company: company || undefined,
           companyId: linkedCompanyRef.current?.id || undefined,
           linkedinUrl: isLinkedin ? hint : undefined,
-          intent: brief || undefined,
         }),
       });
       const data = await res.json();
-      if (res.ok && data.background) {
-        setBackground(data.background);
-        backgroundRef.current = data.background;
+      const id = data && data.identity;
+      if (res.ok && id && id.found) {
+        personIdRef.current = id;
+        const desc = [id.headline, id.org, id.location]
+          .filter(Boolean)
+          .join(", ");
         setResearchNote(
-          `\u2713 researched ${
-            data.person || data.company || "them"
-          } \u2013 check the brief opens with the right person`
+          `Found ${id.name}${desc ? ` \u2013 ${desc}` : ""}${
+            id.confidence ? ` (${id.confidence} confidence)` : ""
+          }. Confirm to brief, or paste their LinkedIn and run again if that's not them.`
         );
+        setPersonStage("confirm");
       } else {
+        setPersonStage("idle");
         setResearchNote(
-          data.error || "couldn't research them \u2013 carry on without it"
+          (data && data.error) ||
+            "couldn't pin down who that is \u2013 add their company or paste a LinkedIn link"
         );
       }
     } catch {
-      setResearchNote("couldn't research them \u2013 carry on without it");
-    } finally {
-      setResearchingPerson(false);
+      setPersonStage("idle");
+      setResearchNote("couldn't reach research \u2013 try again");
     }
-  }, [publicLink, brief]);
+  }, [publicLink, personStage, briefPerson]);
 
   const handleUploaded = useCallback(
     (detectedName: string | null, docType: string) => {
@@ -2435,12 +2490,34 @@ export default function CallPage() {
                     <button
                       type="button"
                       onClick={researchPerson}
-                      disabled={researchingPerson}
+                      disabled={
+                        personStage === "identifying" ||
+                        personStage === "briefing"
+                      }
                       className="shrink-0 rounded-lg border border-amber/50 bg-amber/10 px-4 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
-                      title="Search the open web for the person you're meeting and fold a sharp prep brief into your focus. Uses the linked client, the subject name, or a LinkedIn link pasted above."
+                      title="Find who you're meeting on the open web. It shows who it found first, you confirm, then it writes the brief into your focus. LinkedIn is never scraped, only used to identify them."
                     >
-                      {researchingPerson ? "researching..." : "Research person"}
+                      {personStage === "identifying"
+                        ? "checking..."
+                        : personStage === "briefing"
+                        ? "briefing..."
+                        : personStage === "confirm"
+                        ? "Confirm and brief"
+                        : "Research person"}
                     </button>
+                    {personStage === "confirm" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPersonStage("idle");
+                          personIdRef.current = null;
+                          setResearchNote("");
+                        }}
+                        className="shrink-0 rounded-lg border border-edge px-3 font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:text-bone"
+                      >
+                        not them
+                      </button>
+                    )}
                   </div>
                   {researchNote && (
                     <p className="mt-1.5 font-mono text-[0.6rem] leading-relaxed text-sky/90">

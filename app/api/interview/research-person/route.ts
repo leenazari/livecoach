@@ -119,8 +119,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const biz = await workspaceContextBlock();
-
     const idBits = [
       person ? `Name: ${person}` : "",
       role ? `Role (as known): ${role}` : "",
@@ -129,6 +127,44 @@ export async function POST(req: NextRequest) {
     ]
       .filter(Boolean)
       .join("\n");
+
+    // GATE phase 1: identify the right person cheaply BEFORE spending on the
+    // full brief. Returns a compact identity for the user to eyeball and
+    // confirm, so a wrong-person match never costs a full brief.
+    if (body.mode === "identify") {
+      const idSystem = `You are verifying WHO a person is before a deeper brief is written. Use the web_search tool to find the ONE real individual that matches the details below, using the company, role and any LinkedIn hint to disambiguate a common name. Return ONLY compact JSON and nothing else: {"found": true or false, "name": "...", "headline": "their main current role", "org": "their main organisation", "location": "city and country", "confidence": "high or medium or low"}. If you cannot confidently find them, return {"found": false}. House style: never use em dashes or semicolons.`;
+      const idMsg: any = await anthropic.messages.create({
+        model: CLAUDE_MODEL_THINK,
+        max_tokens: 400,
+        temperature: 0,
+        system: idSystem,
+        tools: [
+          { type: "web_search_20250305", name: "web_search", max_uses: 3 },
+        ] as any,
+        messages: [
+          {
+            role: "user",
+            content: `Find this person:\n${idBits}\n\nReturn the identity JSON only.`,
+          },
+        ],
+      });
+      await logModelUsage("research-person-id", "opus", idMsg?.usage);
+      const idText = (Array.isArray(idMsg?.content) ? idMsg.content : [])
+        .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
+        .map((b: any) => b.text)
+        .join("");
+      let identity: any = { found: false };
+      try {
+        const a = idText.indexOf("{");
+        const z = idText.lastIndexOf("}");
+        if (a >= 0 && z > a) identity = JSON.parse(idText.slice(a, z + 1));
+      } catch {
+        identity = { found: false };
+      }
+      return NextResponse.json({ identity });
+    }
+
+    const biz = await workspaceContextBlock();
 
     const system = `${biz}You are a world-class call-preparation researcher and strategist working for the user described above. The user is about to have a call and wants a sharp brief on the person they will be speaking with.
 

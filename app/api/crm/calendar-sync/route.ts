@@ -108,9 +108,47 @@ export async function POST() {
     };
 
     const newRows = rows.filter((r) => !existing.has(r.external_id));
+
+    // Inherit curation for recurring meetings: if a new event can't resolve a
+    // client from its (often empty) guest list, but a PRIOR call with the SAME
+    // title was already curated - a client/internal link and/or an intent set by
+    // the user or a past sync - carry that onto the new instance. This stops
+    // daily recurring meetings (standups, design reviews) landing bare each day.
+    const inheritTitles = Array.from(
+      new Set(newRows.map((r) => r.title).filter(Boolean))
+    );
+    const curationByTitle = new Map<
+      string,
+      { company_id: string | null; intent: string | null }
+    >();
+    if (inheritTitles.length) {
+      const { data: priors } = await supabaseAdmin
+        .from("upcoming_calls")
+        .select("title, company_id, intent, created_at")
+        .in("title", inheritTitles)
+        .order("created_at", { ascending: false });
+      for (const p of priors || []) {
+        const t = (p as any).title as string;
+        if (!t || curationByTitle.has(t)) continue; // most recent wins
+        const cid = ((p as any).company_id as string) || null;
+        const intent = ((p as any).intent as string) || null;
+        if (cid || intent) curationByTitle.set(t, { company_id: cid, intent });
+      }
+    }
+
     const toInsert: any[] = [];
     for (const r of newRows) {
-      const company_id = await resolveCompanyForEvent(r.attendees);
+      let company_id = await resolveCompanyForEvent(r.attendees);
+      let intent: string | null = null;
+      // Only fall back to inherited curation when the guest list gave us
+      // nothing - a freshly matched client must never be overwritten.
+      if (!company_id) {
+        const inh = curationByTitle.get(r.title);
+        if (inh) {
+          company_id = inh.company_id;
+          intent = inh.intent;
+        }
+      }
       toInsert.push({
         external_id: r.external_id,
         title: r.title,
@@ -118,6 +156,7 @@ export async function POST() {
         meeting_url: r.meeting_url,
         attendees: r.attendees,
         company_id,
+        intent,
         source: "google",
         prepped: false,
       });
