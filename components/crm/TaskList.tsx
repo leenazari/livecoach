@@ -49,6 +49,7 @@ const dueLabel = (iso?: string | null): { text: string; over: boolean } | null =
       text = d.toLocaleDateString("en-GB", {
         weekday: "short",
         day: "2-digit",
+        month: "short",
       });
     return { text, over };
   } catch {
@@ -56,14 +57,21 @@ const dueLabel = (iso?: string | null): { text: string; over: boolean } | null =
   }
 };
 
-// "today 14:00" / "Tue 14:00" for a prep to-do's call time.
+// "today 14:00" / "Tue 24 Jun 14:00" for a prep to-do's call time. Always
+// carries the real date once it's past today, so a list of calls is never just
+// a column of weekday names with no idea which date each one is.
 const whenLabel = (iso?: string | null) => {
   if (!iso) return "";
   try {
     const d = new Date(iso);
     const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     if (d.toDateString() === new Date().toDateString()) return `today ${t}`;
-    return `${d.toLocaleDateString([], { weekday: "short" })} ${t}`;
+    const date = d.toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+    });
+    return `${date} ${t}`;
   } catch {
     return "";
   }

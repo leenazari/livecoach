@@ -117,6 +117,20 @@ export default function UpcomingCalls() {
     crmFetch(`/api/crm/upcoming/${id}`, { method: "DELETE" }).catch(() => {});
   };
 
+  // Mark a call as DONE (it happened) - clears it from upcoming without deleting
+  // it. For calls you ran outside the app, or that never linked to a client, so
+  // auto-complete couldn't tie the transcript back to the slot. Different from ✕
+  // (delete) and from cancel (it did not happen).
+  const markDone = async (id: string) => {
+    setCalls((p) => p.filter((c) => c.id !== id));
+    crmFetch(`/api/crm/upcoming/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ completed: true }),
+    }).catch(() => {});
+    // The dashboard's prep to-dos read completion too, so nudge a refresh.
+    window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+  };
+
   // Open the call screen preloaded from this scheduled call. The /call screen IS
   // the prep screen: it opens at the plan stage with this client, intent and link
   // already loaded, and only goes live when speech starts or you hit Go live. Both
@@ -286,6 +300,14 @@ export default function UpcomingCalls() {
                   className="rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
                 >
                   start ▸
+                </button>
+                <button
+                  type="button"
+                  onClick={() => markDone(c.id)}
+                  title="Mark this call as done - clears it from upcoming. Use it for calls you ran outside the app or that never linked to a client."
+                  className="rounded-full border border-edge bg-bone/[0.04] px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:border-sage/60 hover:text-sage"
+                >
+                  done ✓
                 </button>
                 <button
                   type="button"

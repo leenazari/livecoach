@@ -55,6 +55,10 @@ export async function PATCH(
     if (typeof body.intent === "string")
       patch.intent = body.intent.trim() || null;
     if (typeof body.prepped === "boolean") patch.prepped = body.prepped;
+    // Mark a call done (it happened) or re-open it. Clears it from the upcoming
+    // list and the derived prep to-dos without deleting the row.
+    if (typeof body.completed === "boolean")
+      patch.completed_at = body.completed ? new Date().toISOString() : null;
     // The prep plan snapshot (focus, goals, opening questions, etc.) built in
     // advance on the call screen, so it survives leaving the page.
     if ("prep" in body) patch.prep = body.prep ?? null;
