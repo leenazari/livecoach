@@ -252,6 +252,7 @@ export default function CallPage() {
   const [publicLink, setPublicLink] = useState("");
   const [background, setBackground] = useState("");
   const [researching, setResearching] = useState(false);
+  const [researchingPerson, setResearchingPerson] = useState(false);
   const [researchNote, setResearchNote] = useState("");
   const [cost, setCost] = useState<CostBreakdown>(() => estimateCost(0, 0));
   const [overBudget, setOverBudget] = useState(false);
@@ -598,6 +599,12 @@ export default function CallPage() {
               handleLinkCompany({ id: call.company_id, name: call.company });
             }
             hydrateFromPrep(call?.prep);
+            // Reload any saved people-research so the brief and its focus
+            // influence survive without spending on the search again.
+            if (call?.research?.background) {
+              setBackground(call.research.background);
+              backgroundRef.current = call.research.background;
+            }
           }
         } catch {
           /* best-effort reload */
@@ -1427,6 +1434,59 @@ export default function CallPage() {
       setResearching(false);
     }
   }, [publicLink]);
+
+  // Research the PERSON you're about to meet (not a single page): searches the
+  // open web for who they really are and folds a sharp prep brief into the same
+  // background the planner already reads, so it shapes your focus. Identity
+  // hints come from the linked client, the corrected subject name, and whatever
+  // is in the link box (a LinkedIn URL or a name). Saved against the call.
+  const researchPerson = useCallback(async () => {
+    const hint = publicLink.trim();
+    const isLinkedin = /linkedin\.com/i.test(hint);
+    const person = candidateRef.current?.trim() || "";
+    const company = linkedCompanyRef.current?.name || "";
+    if (!person && !company && !hint) {
+      setResearchNote(
+        "add their name, link their company, or paste their LinkedIn first"
+      );
+      return;
+    }
+    setResearchingPerson(true);
+    setResearchNote("");
+    try {
+      const res = await fetch("/api/interview/research-person", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          upcomingId: upcomingIdRef.current || undefined,
+          // A non-LinkedIn hint with no known name is treated as the name.
+          person: person || (hint && !isLinkedin ? hint : undefined),
+          company: company || undefined,
+          companyId: linkedCompanyRef.current?.id || undefined,
+          linkedinUrl: isLinkedin ? hint : undefined,
+          intent: brief || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.background) {
+        setBackground(data.background);
+        backgroundRef.current = data.background;
+        setResearchNote(
+          `\u2713 researched ${
+            data.person || data.company || "them"
+          } \u2013 check the brief opens with the right person`
+        );
+      } else {
+        setResearchNote(
+          data.error || "couldn't research them \u2013 carry on without it"
+        );
+      }
+    } catch {
+      setResearchNote("couldn't research them \u2013 carry on without it");
+    } finally {
+      setResearchingPerson(false);
+    }
+  }, [publicLink, brief]);
 
   const handleUploaded = useCallback(
     (detectedName: string | null, docType: string) => {
@@ -2368,8 +2428,18 @@ export default function CallPage() {
                       onClick={research}
                       disabled={researching || !publicLink.trim()}
                       className="shrink-0 rounded-lg border border-sky/50 bg-sky/10 px-4 font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/20 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Read a single public page (a company or about page) and fold it into your plan"
                     >
-                      {researching ? "reading..." : "Research"}
+                      {researching ? "reading..." : "Research page"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={researchPerson}
+                      disabled={researchingPerson}
+                      className="shrink-0 rounded-lg border border-amber/50 bg-amber/10 px-4 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Search the open web for the person you're meeting and fold a sharp prep brief into your focus. Uses the linked client, the subject name, or a LinkedIn link pasted above."
+                    >
+                      {researchingPerson ? "researching..." : "Research person"}
                     </button>
                   </div>
                   {researchNote && (
@@ -2378,8 +2448,12 @@ export default function CallPage() {
                     </p>
                   )}
                   <p className="mt-1.5 font-mono text-[0.6rem] leading-relaxed text-muted">
-                    Public pages only - a company site, an about page. LiveCoach
-                    reads it and folds the background into your plan.
+                    Research page reads one public page (a company or about
+                    page). Research person searches the open web for who you're
+                    meeting, using the linked client, the subject name, or a
+                    LinkedIn link pasted above, and folds a prep brief into your
+                    focus. LinkedIn pages themselves can't be read, the search
+                    works around that.
                   </p>
                 </div>
                 <KnowledgePanel

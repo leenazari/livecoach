@@ -14,7 +14,7 @@ export async function GET(
     const { data, error } = await supabaseAdmin
       .from("upcoming_calls")
       .select(
-        "id, company_id, title, scheduled_at, meeting_url, intent, prepped, prep"
+        "id, company_id, title, scheduled_at, meeting_url, intent, prepped, prep, research"
       )
       .eq("id", params.id)
       .maybeSingle();
