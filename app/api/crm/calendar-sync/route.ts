@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAccessToken, listEvents, meetingUrlOf, titleOf } from "@/lib/google";
 import { supabaseAdmin } from "@/lib/supabase";
+import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 import {
   loadAttendeeConfig,
   inferLink,
@@ -9,6 +10,51 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+// When a new event has no work-email guest to derive a client from, read the
+// TITLE to decide who the call is with, so a real client call still gets a
+// profile created and can be prepped before the first call. One cheap Haiku
+// pass for the whole batch. Best-effort: returns nothing on any failure, so the
+// sync never breaks on this. Returns input title -> client name (or null).
+async function deriveClientsFromTitles(
+  titles: string[]
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  const list = titles.filter(Boolean).slice(0, 40);
+  if (!list.length) return out;
+  try {
+    const system = `You file calendar events under a CLIENT. The user runs an AI interview product called "Interviewa" / "Interviewer" - those words always mean THEIR OWN product, never the client, so extract the OTHER party. For each event title, return the external company or client name to file it under, or null. Return null for internal team meetings (standup, sprint, retro, design review, 1:1, board, all hands), for personal or admin events (lunch, coffee, dentist, doctor, holiday, gym, birthday, school run), and for anything where no specific external party can be identified. Prefer a company name over a person's name. If a company is given in parentheses, use that. Return ONLY JSON in the SAME ORDER and SAME COUNT as the input: {"results":[{"client":"<name>" or null}, ...]}.`;
+    const user = `Event titles:\n${list
+      .map((t, i) => `${i + 1}. ${t}`)
+      .join("\n")}\n\nReturn the JSON array now, one entry per title in order.`;
+    const msg: any = await anthropic.messages.create({
+      model: CLAUDE_MODEL_LIVE,
+      max_tokens: 800,
+      temperature: 0,
+      system,
+      messages: [{ role: "user", content: user }],
+    });
+    const text = (Array.isArray(msg?.content) ? msg.content : [])
+      .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
+      .map((b: any) => b.text)
+      .join("");
+    const a = text.indexOf("{");
+    const z = text.lastIndexOf("}");
+    const parsed = a >= 0 && z > a ? JSON.parse(text.slice(a, z + 1)) : {};
+    const results = Array.isArray(parsed.results) ? parsed.results : [];
+    list.forEach((t, i) => {
+      const r = results[i];
+      const c =
+        r && typeof r.client === "string" && r.client.trim()
+          ? r.client.trim()
+          : null;
+      out.set(t, c);
+    });
+  } catch {
+    /* best-effort: no title-based creation when this fails */
+  }
+  return out;
+}
 
 // POST /api/crm/calendar-sync -> pull the user's Google Calendar (now to +30d)
 // into upcoming_calls. Adds new events, applies reschedules (time/title/link),
@@ -136,7 +182,12 @@ export async function POST() {
       }
     }
 
-    const toInsert: any[] = [];
+    // Pass 1: resolve from the guest list, then inherited curation.
+    const resolved: {
+      r: Row;
+      company_id: string | null;
+      intent: string | null;
+    }[] = [];
     for (const r of newRows) {
       let company_id = await resolveCompanyForEvent(r.attendees);
       let intent: string | null = null;
@@ -149,18 +200,59 @@ export async function POST() {
           intent = inh.intent;
         }
       }
-      toInsert.push({
-        external_id: r.external_id,
-        title: r.title,
-        scheduled_at: r.scheduled_at,
-        meeting_url: r.meeting_url,
-        attendees: r.attendees,
-        company_id,
-        intent,
-        source: "google",
-        prepped: false,
-      });
+      resolved.push({ r, company_id, intent });
     }
+
+    // Pass 2: anything still without a client - create one from the TITLE, so a
+    // real client call gets a profile the moment it's booked and can be prepped
+    // before the first call. Find-or-reuse a company by name to avoid duplicates.
+    const unresolvedTitles = Array.from(
+      new Set(
+        resolved.filter((x) => !x.company_id).map((x) => x.r.title).filter(Boolean)
+      )
+    );
+    if (unresolvedTitles.length) {
+      const titleToClient = await deriveClientsFromTitles(unresolvedTitles);
+      const nameToCompanyId = new Map<string, string>();
+      const ensureCompany = async (name: string): Promise<string | null> => {
+        const key = name.toLowerCase();
+        if (nameToCompanyId.has(key)) return nameToCompanyId.get(key) || null;
+        let id: string | null = null;
+        const { data: found } = await supabaseAdmin
+          .from("companies")
+          .select("id")
+          .ilike("name", name)
+          .limit(1);
+        if (found && found[0]) id = (found[0] as any).id as string;
+        if (!id) {
+          const { data: created } = await supabaseAdmin
+            .from("companies")
+            .insert({ name, profile: { auto_created_from: "calendar-title" } })
+            .select("id")
+            .single();
+          id = ((created as any)?.id as string) || null;
+        }
+        if (id) nameToCompanyId.set(key, id);
+        return id;
+      };
+      for (const x of resolved) {
+        if (x.company_id) continue;
+        const name = titleToClient.get(x.r.title);
+        if (name) x.company_id = await ensureCompany(name);
+      }
+    }
+
+    const toInsert = resolved.map((x) => ({
+      external_id: x.r.external_id,
+      title: x.r.title,
+      scheduled_at: x.r.scheduled_at,
+      meeting_url: x.r.meeting_url,
+      attendees: x.r.attendees,
+      company_id: x.company_id,
+      intent: x.intent,
+      source: "google",
+      prepped: false,
+    }));
     const toUpdate = rows.filter((r) => existing.has(r.external_id));
 
     let added = 0;
