@@ -112,8 +112,21 @@ export async function GET(req: NextRequest) {
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
 
+    // Collapse repetitive meetings: a recurring title (a daily standup, a weekly
+    // review) should appear ONCE in the prep list, as its NEXT instance, not as
+    // a wall of identical items stretching weeks out. ucals is already ordered
+    // soonest-first, so the first time we see a title is the next occurrence.
+    const seenPrepTitles = new Set<string>();
+    const uniqueUcals = (ucals || []).filter((u: any) => {
+      const key = String(u.title || "").toLowerCase().trim();
+      if (!key) return true;
+      if (seenPrepTitles.has(key)) return false;
+      seenPrepTitles.add(key);
+      return true;
+    });
+
     // Build the prep to-dos from the upcoming client calls.
-    const prep = (ucals || []).map((u: any) => {
+    const prep = uniqueUcals.map((u: any) => {
       const ms = u.scheduled_at ? new Date(u.scheduled_at).getTime() : null;
       const due_soon = ms != null && ms <= soonCutoff;
       return {

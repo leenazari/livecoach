@@ -93,7 +93,17 @@ async function run(req: Request) {
             upcomingId: s.upcoming_id || null,
           }),
         });
-        if (r.ok) done.push(s.session_id);
+        // A 200 is NOT proof a scorecard landed - a long call can fail inside
+        // the summariser yet still return ok. Verify the row actually appeared;
+        // if not, leave it for the next sweep to retry rather than marking done.
+        if (r.ok) {
+          const { data: chk } = await supabaseAdmin
+            .from("interview_summaries")
+            .select("id")
+            .eq("session_id", s.session_id)
+            .limit(1);
+          if (chk && chk.length) done.push(s.session_id);
+        }
       } catch {
         /* skip - the next run retries this one */
       }

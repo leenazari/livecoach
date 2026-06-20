@@ -106,6 +106,9 @@ export default function TaskList({
   const [tasks, setTasks] = useState<Task[]>(cached?.tasks || []);
   // Task id currently showing its "which approach?" chooser (call vs email).
   const [choosing, setChoosing] = useState<string | null>(null);
+  // Prep calls more than a week out are collapsed behind an expand, so the list
+  // stays focused on the week ahead instead of a wall of future recurring preps.
+  const [showLater, setShowLater] = useState(false);
 
   useEffect(() => {
     crmFetch<{ tasks: Task[] }>(url)
@@ -250,6 +253,17 @@ export default function TaskList({
     : tasks;
   if (clientlessOnly) shown = shown.filter((t) => !t.company_id);
 
+  // Prep calls more than a week out collapse behind an expand, so the list
+  // stays on the week ahead rather than a wall of future recurring preps.
+  const weekAhead = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const isLaterPrep = (t: Task) =>
+    !!t.upcoming_id &&
+    !!t.scheduled_at &&
+    new Date(t.scheduled_at).getTime() > weekAhead;
+  const later = shown.filter(isLaterPrep);
+  const near = shown.filter((t) => !isLaterPrep(t));
+  const visible = showLater ? [...near, ...later] : near;
+
   if (shown.length === 0) {
     return (
       <p className="font-mono text-[0.62rem] leading-relaxed text-muted">
@@ -259,8 +273,9 @@ export default function TaskList({
   }
 
   return (
+    <>
     <ul className="flex flex-col">
-      {shown.map((t) => {
+      {visible.map((t) => {
         const done = t.status === "done";
         const c = chip(t.link_kind);
         const approaches = Array.isArray(t.payload?.approaches)
@@ -402,5 +417,17 @@ export default function TaskList({
         );
       })}
     </ul>
+      {later.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowLater((v) => !v)}
+          className="mt-1 self-start font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:text-amber"
+        >
+          {showLater
+            ? "show less"
+            : `+ ${later.length} more prep beyond this week`}
+        </button>
+      )}
+    </>
   );
 }

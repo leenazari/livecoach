@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { anthropic, CLAUDE_MODEL_PRO, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { estimateCost } from "@/lib/costs";
@@ -104,6 +104,47 @@ async function autoResolveCompany(opts: {
 
 // END-OF-CALL assessment. One call, on the pro model (Sonnet) for quality.
 // Returns a structured JSON summary + scorecard + contributors + style profile.
+// Condense a very long transcript by summarising it in chunks (map) and joining
+// the dense, speaker-attributed digests (reduce), so the scorecard pass gets a
+// faithful but far shorter input. A 3-hour, 159k-character board call assessed in
+// one pass overruns the model and the function timeout and silently fails to
+// produce a scorecard; this keeps it within bounds while preserving the content.
+// Best-effort per chunk: on a chunk failure, fall back to a trimmed raw slice so
+// nothing is silently dropped.
+async function condenseTranscript(transcript: string): Promise<string> {
+  const CHUNK = 45000;
+  const parts: string[] = [];
+  for (let i = 0; i < transcript.length; i += CHUNK)
+    parts.push(transcript.slice(i, i + CHUNK));
+  const digests: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    try {
+      const m: any = await anthropic.messages.create({
+        model: CLAUDE_MODEL_LIVE,
+        max_tokens: 1400,
+        temperature: 0,
+        system:
+          "You are condensing ONE part of a long, speaker-labelled call transcript so the whole call can be assessed without losing anything that matters. Keep the EXACT speaker labels from the transcript (e.g. 'Interviewer:', 'Mark Darling:'). Be factual and dense: preserve every decision, number, figure, date, name, company, commitment, action item, disagreement, and any striking quote (kept short and verbatim). Drop only filler and repetition. Add no interpretation.",
+        messages: [
+          {
+            role: "user",
+            content: `Part ${i + 1} of ${parts.length}:\n\n${parts[i]}`,
+          },
+        ],
+      });
+      const t = (Array.isArray(m?.content) ? m.content : [])
+        .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
+        .map((b: any) => b.text)
+        .join("")
+        .trim();
+      digests.push(t ? `--- Part ${i + 1} ---\n${t}` : parts[i].slice(0, 4000));
+    } catch {
+      digests.push(parts[i].slice(0, 4000));
+    }
+  }
+  return digests.join("\n\n");
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId, companyId, cost, source, favouriteCues } =
@@ -230,6 +271,14 @@ NEXT ACTIONS (this is the most useful part - be concrete and specific, grounded 
 
 Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Action items are short plain-English lines. Keep every bullet tight.`;
 
+    // Very long calls (multi-hour board sessions) overrun the model and the
+    // function timeout if assessed in one pass, and silently produce no scorecard.
+    // Map-reduce them down first. Normal-length calls are untouched.
+    const workingTranscript =
+      transcript.length > 90000
+        ? await condenseTranscript(transcript)
+        : transcript;
+
     const userMsg = `ROLE: ${role || "(not specified)"}
 SUBJECT (the client / other party on the call - only a "candidate" if this is an interview): ${candidate || "(unknown)"}
 
@@ -241,7 +290,7 @@ CV / FRAMEWORK:
 ${knowledgeContext || "(none provided)"}
 
 TRANSCRIPT:
-${transcript}
+${workingTranscript}
 
 Return the JSON assessment now.`;
 
