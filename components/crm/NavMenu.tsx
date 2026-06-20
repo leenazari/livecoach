@@ -38,6 +38,17 @@ function NavMenuInner() {
     }
   });
 
+  // Phone layout: a thumb-reachable bottom tab bar instead of the left sidebar.
+  const [mobile, setMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 639px)");
+    const apply = () => setMobile(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
   // Push page content right while open; remember the choice. Apply INSTANTLY
   // (no CSS transition) - a transition could be caught half-finished when you
   // navigate quickly, leaving the sidebar/content looking stuck.
@@ -48,8 +59,15 @@ function NavMenuInner() {
       /* ignore */
     }
     document.body.style.transition = "";
-    document.body.style.paddingLeft = minimised ? "" : SIDEBAR_W;
-  }, [minimised]);
+    if (mobile) {
+      // Phone: no left push, just room at the bottom for the tab bar.
+      document.body.style.paddingLeft = "";
+      document.body.style.paddingBottom = "4.75rem";
+    } else {
+      document.body.style.paddingBottom = "";
+      document.body.style.paddingLeft = minimised ? "" : SIDEBAR_W;
+    }
+  }, [minimised, mobile]);
 
   // Open the brain chat from the menu. On phones the open sidebar would sit on
   // top of the chat, so collapse it as we open.
@@ -70,6 +88,50 @@ function NavMenuInner() {
     if (it.tab) return pathname.startsWith("/crm/board") && tab === it.tab;
     return false;
   };
+
+  // PHONE: a bottom tab bar with the five core destinations, the central
+  // "Start" lifted like a call-to-action. The brain chat stays reachable via
+  // its own floating button (nudged up on mobile so it clears this bar).
+  if (mobile) {
+    const BOTTOM: Item[] = [
+      { href: "/crm", label: "Home", icon: "▣" },
+      { href: "/crm/calls", label: "Calls", icon: "☎" },
+      { href: "/call", label: "Start", icon: "▸" },
+      { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
+      { href: "/crm/call-coach", label: "Coach", icon: "◎" },
+    ];
+    return (
+      <nav
+        className="fixed inset-x-0 bottom-0 z-50 flex items-stretch justify-around border-t border-edge bg-panel/95 backdrop-blur"
+        style={{ paddingBottom: "max(0.2rem, env(safe-area-inset-bottom))" }}
+      >
+        {BOTTOM.map((t) => {
+          const active = isActive(t);
+          const center = t.href === "/call";
+          return (
+            <Link
+              key={t.href}
+              href={t.href}
+              className={`flex flex-1 flex-col items-center justify-end gap-1 py-2 font-mono text-[0.55rem] uppercase tracking-wider transition ${
+                active ? "text-amber" : "text-muted"
+              }`}
+            >
+              <span
+                className={
+                  center
+                    ? "-mt-3 flex h-11 w-11 items-center justify-center rounded-full border border-amber/60 bg-amber/20 text-[1.1rem] leading-none text-amber"
+                    : "text-[1.05rem] leading-none"
+                }
+              >
+                {t.icon}
+              </span>
+              {t.label}
+            </Link>
+          );
+        })}
+      </nav>
+    );
+  }
 
   if (minimised) {
     return (

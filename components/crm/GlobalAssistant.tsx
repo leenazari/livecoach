@@ -70,7 +70,7 @@ export default function GlobalAssistant({
         type="button"
         onClick={() => setOpen(true)}
         title="Ask the brain"
-        className="fixed bottom-4 right-4 z-[60] flex items-center gap-2 rounded-full border border-amber/70 bg-amber px-5 py-3 font-mono text-[0.66rem] font-medium uppercase tracking-wider text-ink shadow-[0_8px_26px_rgba(232,163,61,0.4)] transition hover:brightness-110"
+        className="fixed bottom-20 right-4 z-[60] flex items-center gap-2 rounded-full border border-amber/70 bg-amber px-5 py-3 font-mono text-[0.66rem] font-medium uppercase tracking-wider text-ink shadow-[0_8px_26px_rgba(232,163,61,0.4)] transition hover:brightness-110 sm:bottom-4"
       >
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ink/60" />
