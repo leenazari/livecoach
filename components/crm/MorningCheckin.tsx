@@ -113,30 +113,36 @@ export default function MorningCheckin() {
         }
       );
       const reply = (r.reply || "").trim();
-      setConvo([...turns, { role: "coach", text: reply }]);
+      const finalTurns: Turn[] = [...turns, { role: "coach", text: reply }];
+      setConvo(finalTurns);
       setCoachReply(reply);
-      setReady(!!r.ready);
       if (reply) speak(reply);
+      if (r.ready) {
+        // The coach has what it needs - take the answer as given and save it,
+        // no second confirmation. Only a genuine follow-up (ready=false) loops
+        // back for another reply.
+        await saveTurns(finalTurns);
+      }
     } catch {
-      // If the coach can't react (e.g. older endpoint), fall straight to confirm
-      // so Lee can still save what he said.
-      setReady(true);
-      setCoachReply("Got it. Confirm to save what you said?");
+      // Coach couldn't react - don't trap Lee in a confirm step, just save what
+      // he said and move on.
+      await saveTurns(turns);
     } finally {
       setBusy(false);
     }
   };
 
-  // Confirm the read-back: distil and save the whole exchange, then move on.
-  const confirmSave = async () => {
-    if (busy || !current) return;
-    setBusy(true);
+  // Distil and save the whole exchange, then move on. There is no separate
+  // confirm step: once Lee has answered (and any real follow-ups are done), his
+  // answer IS the answer, so a read-back saves itself.
+  const saveTurns = async (turns: Turn[]) => {
+    if (!current) return;
     try {
       const r = await crmFetch<{ ack?: string; createdTasks?: any[] }>(
         "/api/crm/brain/interview",
         {
           method: "POST",
-          body: JSON.stringify({ action: "save", question: current, turns: convo }),
+          body: JSON.stringify({ action: "save", question: current, turns }),
         }
       );
       if (r.createdTasks && r.createdTasks.length) {
@@ -145,10 +151,10 @@ export default function MorningCheckin() {
     } catch {
       /* still advance so the flow isn't stuck */
     } finally {
-      setBusy(false);
       next();
     }
   };
+  const confirmSave = () => saveTurns(convo);
 
   // "Not quite" - reopen the answer box so Lee can clarify; the coach reacts
   // again to the correction.

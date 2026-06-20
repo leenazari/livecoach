@@ -409,6 +409,21 @@ Return the JSON assessment now.`;
           companyId: resolvedCompanyId,
         });
       }
+      // CROSS-CALL INTELLIGENCE: push what this call said about the user's OTHER
+      // clients onto those clients (intel + next actions), so the next prep for
+      // any of them carries it. Fire-and-forget - never blocks the summary.
+      if (sessionId) {
+        try {
+          const origin = new URL(req.url).origin;
+          fetch(`${origin}/api/interview/cross-link`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId }),
+          }).catch(() => {});
+        } catch {
+          /* best-effort */
+        }
+      }
     } catch (e) {
       console.error("Summary store failed:", e);
     }
