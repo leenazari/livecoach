@@ -7,6 +7,8 @@ import { workspaceContextBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 25;
+// Live state, must never be statically optimised or cached.
+export const dynamic = "force-dynamic";
 
 // Guarantee the "your day" read is plain prose: the model sometimes ignores the
 // "no markdown / no em-dash" instruction (and a cached blurb can predate the
@@ -332,13 +334,16 @@ export async function GET(req: Request) {
       p: T
     ): T => ({ ...p, companyId: p.companyId || idForLabel(p.label) });
     const dayPartsAll = [...callParts, ...dayParts].map(withTarget);
-    return NextResponse.json({
-      kpis,
-      tasks: tasks.slice(0, 20),
-      dayParts: dayPartsAll,
-      // Joined string kept for any older client that still reads dayRead.
-      dayRead: dayPartsAll.map((p) => p.text).join(" "),
-    });
+    return NextResponse.json(
+      {
+        kpis,
+        tasks: tasks.slice(0, 20),
+        dayParts: dayPartsAll,
+        // Joined string kept for any older client that still reads dayRead.
+        dayRead: dayPartsAll.map((p) => p.text).join(" "),
+      },
+      { headers: { "Cache-Control": "no-store, max-age=0" } }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to load dashboard" },

@@ -47,6 +47,10 @@ export default function MeetStage({
   const setMeetingUrl = onMeetingUrlChange ?? setMeetingUrlInternal;
   const [botId, setBotId] = useState("");
   const [status, setStatus] = useState("not connected");
+  // Honest join state. transcribing = real audio has come through (the bot is
+  // genuinely in the room), joinWarn = the watchdog fired without any transcript.
+  const [transcribing, setTranscribing] = useState(false);
+  const [joinWarn, setJoinWarn] = useState(false);
   const [wsState, setWsState] = useState<"off" | "connecting" | "on" | "error">(
     "off"
   );
@@ -71,6 +75,8 @@ export default function MeetStage({
   const retryRef = useRef(0); // backoff attempt counter
   const deliveredRef = useRef(0); // how many utterances we've delivered so far
   const sendingRef = useRef(false); // in-flight guard so a double-tap can't send two bots
+  const botIdRef = useRef(""); // synchronous mirror of botId (closures + retry)
+  const joinWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     onFinalRef.current = onFinalTranscript;
@@ -106,6 +112,15 @@ export default function MeetStage({
   const handleUtterance = useCallback(
     (speaker: string, recallRole: string, text: string) => {
       if (!text) return;
+      // First real transcript proves the bot is actually IN the meeting and
+      // hearing audio - the honest "on air" signal, not merely that a bot was
+      // requested. Clears the join watchdog and any stall warning.
+      if (joinWatchdogRef.current) {
+        clearTimeout(joinWatchdogRef.current);
+        joinWatchdogRef.current = null;
+      }
+      setTranscribing(true);
+      setJoinWarn(false);
       const role = mapRole(speaker, recallRole);
 
       // remember this speaker (for the "who is You?" picker), default coach=host
@@ -234,6 +249,7 @@ export default function MeetStage({
       closedRef.current = true;
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
       if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
+      if (joinWatchdogRef.current) clearTimeout(joinWatchdogRef.current);
       if (wsRef.current) {
         try {
           wsRef.current.close();
@@ -248,7 +264,7 @@ export default function MeetStage({
     // Guard against a double-tap firing two bots: `disabled` only updates on the
     // next render, so a fast second click can slip through before React catches
     // up. The ref blocks it synchronously, and we never send if a bot is live.
-    if (!meetingUrl.trim() || botId || sendingRef.current) return;
+    if (!meetingUrl.trim() || botIdRef.current || sendingRef.current) return;
     sendingRef.current = true;
     setStatus("sending bot...");
     try {
@@ -279,13 +295,36 @@ export default function MeetStage({
         return;
       }
       setBotId(d.botId);
-      setStatus("bot joining the meeting");
+      botIdRef.current = d.botId;
+      setTranscribing(false);
+      setJoinWarn(false);
+      setStatus("bot requested, waiting for it to join");
       if (wsState !== "on") connect();
+      // Join watchdog: if no transcript arrives within ~90s, the bot almost
+      // certainly never got into the room - most often it is sitting in the
+      // meeting's waiting room un-admitted. Surface that, instead of leaving a
+      // green light over a bot that never actually joined.
+      if (joinWatchdogRef.current) clearTimeout(joinWatchdogRef.current);
+      joinWatchdogRef.current = setTimeout(() => {
+        joinWatchdogRef.current = null;
+        setJoinWarn(true);
+      }, 90000);
     } catch (e: any) {
       setStatus("error: " + e.message);
     } finally {
       sendingRef.current = false;
     }
+  }
+
+  // Retry: stop the (non-joined) bot and send a fresh one. Forces the synchronous
+  // botId mirror clear so the re-send isn't blocked by the in-flight guard.
+  async function retryBot() {
+    await stopBot();
+    botIdRef.current = "";
+    setBotId("");
+    setJoinWarn(false);
+    setTranscribing(false);
+    setTimeout(() => sendBot(), 400);
   }
 
   async function stopBot() {
@@ -298,16 +337,44 @@ export default function MeetStage({
         body: JSON.stringify({ botId }),
       });
       const d = await r.json();
+      if (joinWatchdogRef.current) {
+        clearTimeout(joinWatchdogRef.current);
+        joinWatchdogRef.current = null;
+      }
       setStatus(r.ok ? "bot removed" : "stop error: " + (d.error || r.status));
-      if (r.ok) setBotId("");
+      if (r.ok) {
+        setBotId("");
+        botIdRef.current = "";
+        setTranscribing(false);
+        setJoinWarn(false);
+      }
     } catch (e: any) {
       setStatus("error: " + e.message);
     }
   }
 
-  // On-air light: green only while the bot is live (sent), red the moment it is
-  // not sent or has been stopped - like a studio on-air sign.
-  const onAir = !!botId;
+  // Honest on-air state. Green ("On air") ONLY once real transcript is flowing,
+  // which proves the bot is in the room and hearing audio. Amber while we wait
+  // for it to join. A distinct "Not joined" when the watchdog has flagged that
+  // nothing is coming through (usually the bot is stuck in the waiting room).
+  // Red "Off air" when there's no bot. The old light went green the instant a
+  // bot was REQUESTED, which is exactly how a bot could read as live yet never
+  // actually join.
+  const air: "off" | "joining" | "on" | "stalled" = !botId
+    ? "off"
+    : transcribing
+    ? "on"
+    : joinWarn
+    ? "stalled"
+    : "joining";
+  const airPill =
+    air === "on"
+      ? { cls: "border-sage/60 bg-sage/15 text-sage", dot: "bg-sage animate-pulse", label: "On air" }
+      : air === "joining"
+      ? { cls: "border-amber/60 bg-amber/15 text-amber", dot: "bg-amber animate-pulse", label: "Joining…" }
+      : air === "stalled"
+      ? { cls: "border-rust/60 bg-rust/15 text-rust", dot: "bg-rust", label: "Not joined" }
+      : { cls: "border-rust/55 bg-rust/15 text-rust", dot: "bg-rust", label: "Off air" };
 
   return (
     <div className="grid gap-4 rounded-2xl border border-edge bg-panel/50 p-5">
@@ -316,18 +383,10 @@ export default function MeetStage({
           Meet / Teams / Zoom
         </p>
         <span
-          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[0.58rem] uppercase tracking-[0.15em] ${
-            onAir
-              ? "border-sage/60 bg-sage/15 text-sage"
-              : "border-rust/55 bg-rust/15 text-rust"
-          }`}
+          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[0.58rem] uppercase tracking-[0.15em] ${airPill.cls}`}
         >
-          <span
-            className={`h-2 w-2 rounded-full ${
-              onAir ? "bg-sage animate-pulse" : "bg-rust"
-            }`}
-          />
-          {onAir ? "On air" : "Off air"}
+          <span className={`h-2 w-2 rounded-full ${airPill.dot}`} />
+          {airPill.label}
         </span>
       </div>
 
@@ -353,7 +412,11 @@ export default function MeetStage({
           }`}
         >
           {botId
-            ? "● on air"
+            ? air === "on"
+              ? "● on air"
+              : air === "stalled"
+              ? "not joined"
+              : "● joining…"
             : status === "sending bot..."
             ? "sending…"
             : "Send bot"}
@@ -386,6 +449,24 @@ export default function MeetStage({
           {wsState === "connecting" ? "- reconnecting now" : "- reconnecting"}.
           New speech is not being captured this second. Keep the call open, it
           recovers and backfills what it missed automatically.
+        </div>
+      )}
+
+      {/* The join watchdog fired: a bot was requested but no transcript has come
+          through, so it very likely never got into the room. Most common cause:
+          it is waiting to be admitted. Give the fix and a one-tap retry. */}
+      {air === "stalled" && (
+        <div className="rounded-lg border border-rust/60 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-rust">
+          {"⚠"} The bot was sent but nothing is being transcribed, so it probably
+          never joined. If it is waiting to be admitted, let it into the meeting
+          from the participants list. If it is already in and you are talking,
+          retry it, or use Recap by voice to run this call without the bot.
+          <button
+            onClick={retryBot}
+            className="ml-2 rounded-full border border-rust/60 px-2.5 py-0.5 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust hover:text-ink"
+          >
+            retry bot
+          </button>
         </div>
       )}
 

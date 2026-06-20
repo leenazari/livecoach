@@ -107,6 +107,10 @@ export async function crmFetch<T = any>(
   init?: RequestInit
 ): Promise<T> {
   const res = await fetch(url, {
+    // Never serve a CRM read from the browser's HTTP cache. A just-saved change
+    // (assigning a call to a client, marking a call done) must be reflected on
+    // the very next load, not after some cache TTL expires.
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     ...init,
   });

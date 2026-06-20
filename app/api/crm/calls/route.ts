@@ -31,7 +31,12 @@ export async function GET() {
       cost: c.cost,
       ref: c.ref || null,
     }));
-    return NextResponse.json({ calls: items });
+    // Explicit no-store so no CDN/edge layer can serve a stale snapshot after a
+    // call is (re)assigned - force-dynamic alone did not stop the stale read.
+    return NextResponse.json(
+      { calls: items },
+      { headers: { "Cache-Control": "no-store, max-age=0" } }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to load calls" },

@@ -33,7 +33,10 @@ export async function GET() {
       ...c,
       company: c.company_id ? nameById.get(c.company_id) || null : null,
     }));
-    return NextResponse.json({ calls: items });
+    return NextResponse.json(
+      { calls: items },
+      { headers: { "Cache-Control": "no-store, max-age=0" } }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to load upcoming calls" },
