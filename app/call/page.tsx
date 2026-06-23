@@ -39,6 +39,27 @@ type Suggestion = {
 // Live-cue pacing presets (ms). Fast/medium/slow, set per lane by the user.
 const SPEEDS = { fast: 9000, medium: 30000, slow: 60000 } as const;
 
+// Personal/free email providers - their domain is a mail host, NOT a company
+// website, so we never turn one into a research link. Mirrors the server list
+// in lib/attendees.ts (can't import that here, it pulls in the DB client).
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "hotmail.co.uk",
+  "yahoo.com", "yahoo.co.uk", "ymail.com", "icloud.com", "me.com", "mac.com",
+  "aol.com", "proton.me", "protonmail.com", "gmx.com", "gmx.co.uk", "live.com",
+  "live.co.uk", "msn.com", "btinternet.com", "sky.com", "mail.com", "zoho.com",
+  "fastmail.com", "yandex.com", "qq.com", "163.com",
+]);
+const emailDomain = (email: string): string => {
+  const m = String(email || "").toLowerCase().match(/@([^@\s]+)$/);
+  return m ? m[1] : "";
+};
+// A company website guessed from a WORK email's domain, or "" for a personal
+// inbox (whose domain belongs to a mail provider, not the company).
+const websiteFromEmail = (email: string): string => {
+  const d = emailDomain(email);
+  return d && !PERSONAL_EMAIL_DOMAINS.has(d) ? `https://${d}` : "";
+};
+
 function timeNow() {
   return new Date().toLocaleTimeString([], {
     hour: "2-digit",
@@ -250,6 +271,9 @@ export default function CallPage() {
   const [privateNotes, setPrivateNotes] = useState<string[]>([]);
   const [goals, setGoals] = useState<{ text: string; liked?: boolean }[]>([]);
   const [publicLink, setPublicLink] = useState("");
+  // The linked client's primary contact email, surfaced on prep so the website
+  // it implies can be dropped straight into the Public link for research.
+  const [contactEmail, setContactEmail] = useState("");
   const [background, setBackground] = useState("");
   const [researching, setResearching] = useState(false);
   const [personStage, setPersonStage] = useState<
@@ -440,6 +464,7 @@ export default function CallPage() {
     const id = linkedCompany?.id;
     if (!id) {
       setClientEmailCtx("");
+      setContactEmail("");
       return;
     }
     fetch(`/api/crm/companies/${id}`)
@@ -452,10 +477,38 @@ export default function CallPage() {
         if (d?.company?.profile?.internal === true) {
           setClientEmailCtx("");
           setEmailCtxUpdatedAt(null);
+          setContactEmail("");
           return;
         }
         setClientEmailCtx(d?.company?.email_context || "");
         setEmailCtxUpdatedAt(d?.company?.email_context_updated_at || null);
+
+        // Surface the contact's email, and use the company it implies to seed
+        // the Public link so the person or their page can be researched in one
+        // tap. Prefer a contact on a real work domain (its domain IS the
+        // website); a personal inbox tells us who, but not a site to research.
+        const contacts: any[] = Array.isArray(d?.contacts) ? d.contacts : [];
+        const emails = contacts
+          .map((c) => String(c?.email || "").trim())
+          .filter(Boolean);
+        const workEmail = emails.find((e) => websiteFromEmail(e)) || "";
+        const shown = workEmail || emails[0] || "";
+        setContactEmail(shown);
+
+        // Pick a website to drop in: a website already on the client, else its
+        // stored domain, else the one implied by the work email. Only fill the
+        // Public link when it is still empty, so a pasted link or a saved prep
+        // value is never overwritten.
+        const co = d?.company || {};
+        const fromCompany =
+          (typeof co.website === "string" && co.website.trim()) ||
+          (typeof co.domain === "string" &&
+          co.domain.trim() &&
+          !PERSONAL_EMAIL_DOMAINS.has(co.domain.trim().toLowerCase())
+            ? `https://${co.domain.trim()}`
+            : "");
+        const derived = fromCompany || websiteFromEmail(workEmail);
+        if (derived) setPublicLink((prev) => (prev.trim() ? prev : derived));
       })
       .catch(() => {});
   }, [linkedCompany?.id]);
@@ -2567,6 +2620,26 @@ export default function CallPage() {
                       </button>
                     )}
                   </div>
+                  {contactEmail && (
+                    <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[0.6rem] leading-relaxed text-muted">
+                      <span>
+                        Contact:{" "}
+                        <span className="text-bone">{contactEmail}</span>
+                      </span>
+                      {websiteFromEmail(contactEmail) && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPublicLink(websiteFromEmail(contactEmail))
+                          }
+                          className="rounded border border-sky/40 px-1.5 py-0.5 uppercase tracking-wider text-sky/90 transition hover:bg-sky/10"
+                          title={`Put ${websiteFromEmail(contactEmail)} in the Public link`}
+                        >
+                          use {emailDomain(contactEmail)} as website
+                        </button>
+                      )}
+                    </p>
+                  )}
                   {researchNote && (
                     <p className="mt-1.5 font-mono text-[0.6rem] leading-relaxed text-sky/90">
                       {researchNote}

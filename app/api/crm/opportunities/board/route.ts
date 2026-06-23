@@ -236,7 +236,6 @@ export async function GET(req: Request) {
               {
                 model: CLAUDE_MODEL_THINK,
                 max_tokens: 900,
-                temperature: 0.3,
                 system: `${biz}${coachSystemBlock()}
 
 You are ranking Lee's open OPPORTUNITIES (one per client) by what most moves him toward the goal. Weigh: how close the deal is to a decision, an imminent next call, the set of to-dos that must be finished to UNLOCK the deal, and the size of the prize. Order by impact, most important first - not by recency. For any opportunity with an unknown value, estimate a rough potential value in GBP from the context (a number, clearly an estimate). Output ONLY a JSON array, most important first:

@@ -136,7 +136,6 @@ export async function POST(req: NextRequest) {
       const idMsg: any = await anthropic.messages.create({
         model: CLAUDE_MODEL_THINK,
         max_tokens: 400,
-        temperature: 0,
         system: idSystem,
         tools: [
           { type: "web_search_20250305", name: "web_search", max_uses: 3 },
@@ -199,7 +198,6 @@ Research this person now and write the call-prep brief.`;
     const msg: any = await anthropic.messages.create({
       model: CLAUDE_MODEL_THINK,
       max_tokens: 2600,
-      temperature: 0.3,
       system,
       // Server-side web search tool. Cast because the installed SDK types may
       // predate the web_search tool, but the API resolves it in one call.

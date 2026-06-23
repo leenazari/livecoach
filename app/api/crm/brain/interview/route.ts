@@ -87,7 +87,6 @@ export async function GET() {
         const msg = await anthropic.messages.create({
           model: CLAUDE_MODEL_THINK,
           max_tokens: 700,
-          temperature: 0.5,
           system: `${biz}${coachSystemBlock()}
 
 You are running your daily interview to fill the gaps you most need to coach Lee toward the goal. For EACH topic below, write ONE short, sharp, SPECIFIC question, answerable out loud in a sentence or two, whose answer would most help you move Lee toward the £5M / £650k target. Make every question specific to Lee and the business, not generic, and not something you already know from the context. Output ONLY a JSON array of objects {"topic": the topic key, "q": the question}.`,
@@ -147,7 +146,6 @@ async function react(question: string, turns: Turn[]) {
     const msg = await anthropic.messages.create({
       model: CLAUDE_MODEL_THINK,
       max_tokens: 350,
-      temperature: 0.4,
       system: `${biz}${coachSystemBlock()}
 
 You are mid-interview. Decide whether you understand Lee's answer well enough to lock it in, or need ONE more short follow-up to get the real, specific detail. ${mustClose ? "You have already followed up enough, so you MUST read back now (ready = true)." : ""} Output ONLY JSON:
@@ -199,7 +197,6 @@ async function save(question: string, turns: Turn[]) {
     const msg = await anthropic.messages.create({
       model: CLAUDE_MODEL_THINK,
       max_tokens: 600,
-      temperature: 0.3,
       system: `${biz}${coachSystemBlock()}
 
 You just finished a short back and forth with Lee in your daily interview. Distil it. Output ONLY JSON:
