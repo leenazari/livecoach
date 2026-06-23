@@ -132,7 +132,10 @@ You are running your daily interview to fill the gaps you most need to coach Lee
   }
 }
 
-// A conversation turn: decide a follow-up or read back and ask to confirm.
+// A conversation turn: decide ONE more follow-up, or a brief natural
+// acknowledgement that the answer is captured. No "confirm" step: Lee's
+// submitted answer is final, so a ready reply just acknowledges, it never asks
+// him to confirm or say "have I got that right".
 async function react(question: string, turns: Turn[]) {
   const biz = await workspaceContextBlock();
   // After two follow-ups, force a read-back so it never loops forever.
@@ -150,7 +153,7 @@ async function react(question: string, turns: Turn[]) {
 You are mid-interview. Decide whether you understand Lee's answer well enough to lock it in, or need ONE more short follow-up to get the real, specific detail. ${mustClose ? "You have already followed up enough, so you MUST read back now (ready = true)." : ""} Output ONLY JSON:
 {
  "ready": true or false,
- "reply": if ready, a one or two line read-back of exactly what you understood, ending with "have I got that right?". If not ready, ONE short, sharp follow-up question that drills into what actually matters for the goal.
+ "reply": if ready, a short natural one-line acknowledgement that you have captured Lee's answer, phrased as a statement (for example "Got it, noted" or briefly reflect his key point back as a fact). Do NOT ask Lee to confirm and never say "have I got that right", "let me confirm" or "let me make sure". If not ready, ONE short, sharp follow-up question that drills into what actually matters for the goal.
 }
 Be brief and conversational. Honest, never flattering. Never invent detail Lee did not give.`,
       messages: [{ role: "user", content: convoText(question, turns) }],
@@ -169,9 +172,9 @@ Be brief and conversational. Honest, never flattering. Never invent detail Lee d
     if (typeof parsed.ready === "boolean") ready = parsed.ready || mustClose;
   } catch {
     ready = true;
-    reply = "Let me make sure I have got that right, can you confirm?";
+    reply = "Got it, noted.";
   }
-  if (!reply) reply = "Got it. Have I understood that right?";
+  if (!reply) reply = "Got it, noted.";
   return NextResponse.json({ ok: true, ready, reply });
 }
 

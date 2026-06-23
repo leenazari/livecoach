@@ -94,8 +94,8 @@ export default function MorningCheckin() {
     else setIdx((i) => i + 1);
   };
 
-  // Send Lee's answer, get the coach's reaction: a follow-up, or a read-back to
-  // confirm.
+  // Send Lee's answer, get the coach's reaction: either ONE more follow-up, or a
+  // brief acknowledgement (no confirm step - the answer is taken as final).
   const sendAnswer = async () => {
     const a = answer.trim();
     if (!a || busy || !current) return;
