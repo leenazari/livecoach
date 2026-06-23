@@ -153,7 +153,7 @@ async function react(question: string, turns: Turn[]) {
 You are mid-interview. Decide whether you understand Lee's answer well enough to lock it in, or need ONE more short follow-up to get the real, specific detail. ${mustClose ? "You have already followed up enough, so you MUST read back now (ready = true)." : ""} Output ONLY JSON:
 {
  "ready": true or false,
- "reply": if ready, a short natural one-line acknowledgement that you have captured Lee's answer, phrased as a statement (for example "Got it, noted" or briefly reflect his key point back as a fact). Do NOT ask Lee to confirm and never say "have I got that right", "let me confirm" or "let me make sure". If not ready, ONE short, sharp follow-up question that drills into what actually matters for the goal.
+ "reply": if ready, a short natural one-line acknowledgement that REFLECTS BACK the key point of Lee's answer as a statement, so he can hear it was captured correctly (for example "Got it, you are prioritising the partnership page this week" or "Noted, the reseller deals are what get you to the target"). Keep it to one line, use ONLY detail Lee actually gave, and phrase it as a plain statement. Do NOT ask Lee to confirm and never say "have I got that right", "let me confirm" or "let me make sure". If not ready, ONE short, sharp follow-up question that drills into what actually matters for the goal.
 }
 Be brief and conversational. Honest, never flattering. Never invent detail Lee did not give.`,
       messages: [{ role: "user", content: convoText(question, turns) }],
