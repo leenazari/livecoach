@@ -60,6 +60,53 @@ const websiteFromEmail = (email: string): string => {
   return d && !PERSONAL_EMAIL_DOMAINS.has(d) ? `https://${d}` : "";
 };
 
+// Live coverage comes back keyed by the model's wording of each focus, which is
+// often a reworded or trimmed version of the exact label. Match it back to the
+// EXACT focus labels so a covered focus is never shown as 0% over a spelling
+// mismatch: exact -> normalised equality -> best token overlap.
+const normFocusKey = (s: string): string =>
+  String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+const focusTokens = (s: string): Set<string> =>
+  new Set(normFocusKey(s).split(" ").filter((w) => w.length > 2));
+function mapCoverageToFocus(
+  raw: Record<string, number>,
+  labels: string[]
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  const entries = Object.entries(raw || {});
+  if (!entries.length || !labels.length) return out;
+  const normRaw = entries.map(([k, v]) => ({
+    k,
+    v,
+    n: normFocusKey(k),
+    t: focusTokens(k),
+  }));
+  for (const label of labels) {
+    const ln = normFocusKey(label);
+    let hit = normRaw.find((r) => r.k === label || r.n === ln);
+    if (!hit) {
+      const lt = focusTokens(label);
+      let best: { r: (typeof normRaw)[number]; score: number } | null = null;
+      for (const r of normRaw) {
+        let shared = 0;
+        for (const w of lt) if (r.t.has(w)) shared++;
+        const denom = Math.min(lt.size, r.t.size) || 1;
+        const score = shared / denom;
+        if (score >= 0.5 && (!best || score > best.score)) best = { r, score };
+      }
+      if (best) hit = best.r;
+    }
+    if (hit) {
+      const n = Math.round(Number(hit.v) || 0);
+      out[label] = Math.max(0, Math.min(100, n));
+    }
+  }
+  return out;
+}
+
 function timeNow() {
   return new Date().toLocaleTimeString([], {
     hour: "2-digit",
@@ -990,7 +1037,20 @@ export default function CallPage() {
         bulletsRef.current = next;
         setBullets(next);
         if (data.coverage && typeof data.coverage === "object") {
-          setCoverage(data.coverage as Record<string, number>);
+          // Map the model's keys back to the exact focus labels, then MERGE by
+          // keeping the best score seen so far. A later cycle that rewords keys
+          // or drops a focus can no longer snap a covered focus back to 0%.
+          const mapped = mapCoverageToFocus(
+            data.coverage as Record<string, number>,
+            suggestedCompsRef.current
+          );
+          setCoverage((prev) => {
+            const merged: Record<string, number> = { ...prev };
+            for (const [k, v] of Object.entries(mapped)) {
+              merged[k] = Math.max(merged[k] ?? 0, v);
+            }
+            return merged;
+          });
         }
       }
     } catch (e) {
