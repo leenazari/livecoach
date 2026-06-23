@@ -445,6 +445,15 @@ export default function CallPage() {
     fetch(`/api/crm/companies/${id}`)
       .then((r) => r.json())
       .then((d) => {
+        // The internal team entity hosts MANY different meetings (standups,
+        // board, reviews, go-live). A single per-company email thread would
+        // bleed into EVERY one of their plans, so never load or feed email
+        // context for the internal entity - it is not a client relationship.
+        if (d?.company?.profile?.internal === true) {
+          setClientEmailCtx("");
+          setEmailCtxUpdatedAt(null);
+          return;
+        }
         setClientEmailCtx(d?.company?.email_context || "");
         setEmailCtxUpdatedAt(d?.company?.email_context_updated_at || null);
       })
@@ -1196,18 +1205,53 @@ export default function CallPage() {
         );
         return u ? u.to : label;
       };
+      // Near-duplicate guard for focus labels. Exact-match dedup let through
+      // pairs like "Partnership page build timeline and messaging" and
+      // "Partnership page launch timeline confirmation" - the same topic, worded
+      // differently. Treat two labels as the same focus when they share most of
+      // the smaller one's meaningful words.
+      const FOCUS_STOP = new Set([
+        "the","a","an","and","or","of","to","for","in","on","with","at","by",
+        "from","as","is","are","be","its","this","that","plus","via","into",
+        "about","new","our","their","your",
+      ]);
+      const salientWords = (s: string) =>
+        s
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, " ")
+          .split(/\s+/)
+          .filter((w) => w.length > 2 && !FOCUS_STOP.has(w));
+      const nearDupFocus = (a: string, b: string) => {
+        const A = new Set(salientWords(a));
+        const B = new Set(salientWords(b));
+        if (!A.size || !B.size) return false;
+        let shared = 0;
+        A.forEach((x) => {
+          if (B.has(x)) shared++;
+        });
+        return shared >= 2 && shared / Math.min(A.size, B.size) >= 0.6;
+      };
+      const notDupOf = (cand: string, against: string[]) =>
+        !against.some(
+          (x) =>
+            x.toLowerCase().trim() === cand.toLowerCase().trim() ||
+            nearDupFocus(cand, x)
+        );
       const mergeInto = (prev: string[]) => {
         const upgraded = prev.map(applyUpgrade);
-        const have = new Set(upgraded.map((p) => p.toLowerCase().trim()));
-        const newOnes = additions.filter(
-          (a) => !have.has(a.toLowerCase().trim())
-        );
-        return [...upgraded, ...newOnes];
+        const kept: string[] = [];
+        for (const a of additions) {
+          if (notDupOf(a, [...upgraded, ...kept])) kept.push(a);
+        }
+        return [...upgraded, ...kept];
       };
       // Fallback for an older route that still returns a flat focusAreas list.
       const legacyMerge = (prev: string[]) => {
-        const have = new Set(prev.map((p) => p.toLowerCase().trim()));
-        return [...prev, ...focus.filter((f) => !have.has(f.toLowerCase().trim()))];
+        const kept = [...prev];
+        for (const f of focus) {
+          if (notDupOf(f, kept)) kept.push(f);
+        }
+        return kept;
       };
       const reconciled = data.reconcile === true;
       refocusAdded = reconciled

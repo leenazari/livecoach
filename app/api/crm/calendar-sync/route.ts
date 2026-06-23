@@ -242,17 +242,40 @@ export async function POST() {
       }
     }
 
-    const toInsert = resolved.map((x) => ({
-      external_id: x.r.external_id,
-      title: x.r.title,
-      scheduled_at: x.r.scheduled_at,
-      meeting_url: x.r.meeting_url,
-      attendees: x.r.attendees,
-      company_id: x.company_id,
-      intent: x.intent,
-      source: "google",
-      prepped: false,
-    }));
+    // De-dupe id-change duplicates: Google sometimes issues a NEW event id for
+    // the SAME meeting, so it arrives as a "new" event and we would insert a
+    // second row identical in title + time to one already on the list. Skip a
+    // new event whose (title, scheduled_at) already exists (or repeats within
+    // this batch). Recurring meetings differ by time, so this never collapses a
+    // genuine series.
+    const dupKey = (title: string, at: string) =>
+      `${String(title || "").toLowerCase().trim()}|${at}`;
+    const seenKeys = new Set<string>();
+    const { data: liveRows } = await supabaseAdmin
+      .from("upcoming_calls")
+      .select("title, scheduled_at")
+      .is("completed_at", null);
+    for (const lr of liveRows || [])
+      if ((lr as any).title && (lr as any).scheduled_at)
+        seenKeys.add(dupKey((lr as any).title, (lr as any).scheduled_at));
+
+    const toInsert: any[] = [];
+    for (const x of resolved) {
+      const key = dupKey(x.r.title, x.r.scheduled_at);
+      if (seenKeys.has(key)) continue; // duplicate of an existing/just-added row
+      seenKeys.add(key);
+      toInsert.push({
+        external_id: x.r.external_id,
+        title: x.r.title,
+        scheduled_at: x.r.scheduled_at,
+        meeting_url: x.r.meeting_url,
+        attendees: x.r.attendees,
+        company_id: x.company_id,
+        intent: x.intent,
+        source: "google",
+        prepped: false,
+      });
+    }
     const toUpdate = rows.filter((r) => existing.has(r.external_id));
 
     let added = 0;
