@@ -128,6 +128,27 @@ export default function UpcomingCalls() {
     }).catch(() => {});
   };
 
+  // Change (or set) the client on a scheduled call yourself. Auto-saves the
+  // moment you pick, flips the chip straight away (optimistic), and nudges the
+  // other lists to refresh, so a mis-linked call is fixed in one tap.
+  const changeClient = async (
+    id: string,
+    v: { id: string; name: string } | null
+  ) => {
+    setCalls((p) =>
+      p.map((c) =>
+        c.id === id
+          ? { ...c, company_id: v?.id || null, company: v?.name || null }
+          : c
+      )
+    );
+    await crmFetch(`/api/crm/upcoming/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ companyId: v?.id || null }),
+    }).catch(() => {});
+    window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+  };
+
   const remove = async (id: string) => {
     setCalls((p) => p.filter((c) => c.id !== id));
     crmFetch(`/api/crm/upcoming/${id}`, { method: "DELETE" }).catch(() => {});
@@ -344,6 +365,21 @@ export default function UpcomingCalls() {
 
               {prepId === c.id && (
                 <div className="mt-2.5 flex flex-col gap-2 border-t border-edge/50 pt-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="w-12 shrink-0 font-mono text-[0.54rem] uppercase tracking-wider text-muted">
+                      Client
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <CompanyLinkPicker
+                        value={
+                          c.company_id
+                            ? { id: c.company_id, name: c.company || "client" }
+                            : null
+                        }
+                        onChange={(v) => changeClient(c.id, v)}
+                      />
+                    </div>
+                  </div>
                   <textarea
                     defaultValue={c.intent || ""}
                     rows={2}
