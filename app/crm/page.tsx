@@ -237,6 +237,35 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* UPCOMING CALLS - what's ahead, schedule + prep + start preloaded. Shows
+          the soonest 10 with a "show all" expand to keep the dashboard condensed. */}
+      <UpcomingCalls />
+
+      <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
+        <div className="mb-2.5 flex items-center justify-between">
+          <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+            {"→"} Do next
+          </p>
+          <Link
+            href="/crm/board?tab=tasks"
+            className="font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-amber"
+          >
+            see all ↗
+          </Link>
+        </div>
+        {/* Loose, client-less to-dos only - the client-linked ones are grouped
+            under Opportunities below. Tick to complete, click to act. */}
+        <TaskList
+          hideCommitments
+          clientlessOnly
+          emptyText="Nothing loose. Your client work is grouped below."
+        />
+      </div>
+
+      {/* You promised: commitments YOU made (calls + emails), each with a draft
+          to approve. Self-hides when empty. */}
+      <Commitments showCompany />
+
       {/* Weekly spend flag: only shows when this week's all-in spend is over the
           guide, names the biggest driver and the monthly pace. */}
       {overGuide && (
@@ -251,6 +280,11 @@ export default function DashboardPage() {
           </p>
         </div>
       )}
+
+      {/* OPPORTUNITIES: client work grouped by deal, coach-ranked, drag to
+          reorder. Shows the top 10 with a "show all" expand. Each row expands to
+          that client's to-dos. Self-hides when there are no client-linked to-dos. */}
+      <OpportunityBoard />
 
       {/* OVERALL STATS - each opens its drill-down board. */}
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -290,42 +324,8 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      {/* Commitments YOU made (calls + emails), each with a draft to approve.
-          Self-hides when empty. */}
-      <Commitments showCompany />
-
-      {/* OPPORTUNITIES first: client work grouped by deal, coach-ranked, drag to
-          reorder. Each row expands to that client's to-dos. Self-hides when
-          there are no client-linked to-dos. */}
-      <OpportunityBoard />
-
-      <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
-        <div className="mb-2.5 flex items-center justify-between">
-          <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-            {"→"} Do next
-          </p>
-          <Link
-            href="/crm/board?tab=tasks"
-            className="font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-amber"
-          >
-            see all ↗
-          </Link>
-        </div>
-        {/* Loose, client-less to-dos only - the client-linked ones are grouped
-            under Opportunities above. Tick to complete, click to act. */}
-        <TaskList
-          hideCommitments
-          clientlessOnly
-          emptyText="Nothing loose. Your client work is grouped above."
-        />
-      </div>
-
-      {/* UPCOMING CALLS first (what's ahead) - schedule, prep, start preloaded.
-          (Google Calendar sync is the next phase.) */}
-      <UpcomingCalls />
-
-      {/* RECENT (previous) CALLS below - so a call is never lost. Unassigned ones
-          get a one-click picker to put them under the right client. */}
+      {/* RECENT (previous) CALLS - so a call is never lost. Unassigned ones get a
+          one-click picker to put them under the right client. */}
       <RecentCalls />
 
       <NavMenu />

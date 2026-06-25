@@ -161,6 +161,9 @@ export default function OpportunityBoard() {
   const [board, setBoard] = useState<Board | null>(seed || null);
   const [open, setOpen] = useState<string | null>(null);
   const [savedNote, setSavedNote] = useState("");
+  // Show the top 10 ranked deals by default, the rest behind an expand button.
+  const [showAll, setShowAll] = useState(false);
+  const LIMIT = 10;
 
   const sensors = useSensors(
     // A little movement before a drag starts, so taps still toggle the row.
@@ -208,6 +211,10 @@ export default function OpportunityBoard() {
 
   if (!board || board.opportunities.length === 0) return null;
 
+  const visible = showAll
+    ? board.opportunities
+    : board.opportunities.slice(0, LIMIT);
+
   return (
     <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
       <div className="mb-2.5 flex items-center justify-between">
@@ -245,11 +252,11 @@ export default function OpportunityBoard() {
         onDragEnd={onDragEnd}
       >
         <SortableContext
-          items={board.opportunities.map((o) => o.companyId)}
+          items={visible.map((o) => o.companyId)}
           strategy={verticalListSortingStrategy}
         >
           <ul className="flex flex-col gap-1.5">
-            {board.opportunities.map((o) => (
+            {visible.map((o) => (
               <OppRow
                 key={o.companyId}
                 o={o}
@@ -262,6 +269,16 @@ export default function OpportunityBoard() {
           </ul>
         </SortableContext>
       </DndContext>
+
+      {board.opportunities.length > LIMIT && (
+        <button
+          type="button"
+          onClick={() => setShowAll((v) => !v)}
+          className="mt-2.5 w-full rounded-lg border border-edge px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+        >
+          {showAll ? "show less" : `show all ${board.opportunities.length}`}
+        </button>
+      )}
     </div>
   );
 }

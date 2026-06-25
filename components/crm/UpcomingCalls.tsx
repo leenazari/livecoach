@@ -187,16 +187,12 @@ export default function UpcomingCalls() {
   const inputCls =
     "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-[0.72rem] text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
 
-  // Default to the next 7 days, with the rest behind an expand button (the list
-  // gets long once the calendar is synced). Untimed calls stay in the default view.
-  const sevenDayCutoff = Date.now() + 7 * 24 * 60 * 60 * 1000;
-  const within7 = calls.filter(
-    (c) => !c.scheduled_at || new Date(c.scheduled_at).getTime() <= sevenDayCutoff
-  );
-  const later = calls.filter(
-    (c) => c.scheduled_at && new Date(c.scheduled_at).getTime() > sevenDayCutoff
-  );
-  const shown = showAll ? calls : within7;
+  // Default to the soonest 10 calls, with the rest behind an expand button, so
+  // the dashboard stays condensed once the calendar fills up. The list arrives
+  // already sorted soonest-first.
+  const LIMIT = 10;
+  const shown = showAll ? calls : calls.slice(0, LIMIT);
+  const hiddenCount = calls.length - shown.length;
 
   return (
     <div className="rounded-xl border border-edge bg-panel/40 p-4">
@@ -403,18 +399,13 @@ export default function UpcomingCalls() {
             </li>
           ))}
         </ul>
-        {shown.length === 0 && (
-          <p className="font-mono text-[0.62rem] leading-relaxed text-muted">
-            Nothing in the next 7 days.
-          </p>
-        )}
-        {later.length > 0 && (
+        {calls.length > LIMIT && (
           <button
             type="button"
             onClick={() => setShowAll((v) => !v)}
             className="mt-2.5 w-full rounded-lg border border-edge px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
           >
-            {showAll ? "show less" : `+ ${later.length} more beyond 7 days`}
+            {showAll ? "show less" : `show all ${calls.length}`}
           </button>
         )}
         </>
