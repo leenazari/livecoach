@@ -90,6 +90,52 @@ function pickGuest(attendees: any[]): { name: string; email: string } | null {
   return { name, email: String(a.email).trim() };
 }
 
+// Fallback for invites with NO guest list (Google often returns none when you
+// block the slot yourself): read the person and company straight off the title.
+// Handles the app's own "Interviewa - Tim Luft (Woote)" format plus common intro
+// titles. Best-effort: returns whatever it can confidently pull, or null.
+function guestFromTitle(title: string): { name: string; company: string } | null {
+  let t = String(title || "").replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  // Company in trailing parentheses: "... (Woote)".
+  let company = "";
+  const paren = t.match(/\(([^)]+)\)\s*$/);
+  if (paren && typeof paren.index === "number") {
+    company = paren[1].trim();
+    t = t.slice(0, paren.index).trim();
+  }
+  // Drop a leading product / meeting-type prefix up to its separator.
+  t = t
+    .replace(
+      /^(interviewa|interviewer|interview|intro(?:duction)?|demo|call|meeting|catch[\s-]?up|chat|sync|onboarding)\b[\s:–—/|-]*/i,
+      ""
+    )
+    .replace(/^with\s+/i, "")
+    .trim();
+  // Pairing separators ("Lee / Tim", "Lee <> Tim", "Tim x Lee", "Lee & Tim"):
+  // keep the side that is not me.
+  const sep = t
+    .split(/\s*(?:<->|<>|\/|&|\+|\||\bx\b|\bvs\b)\s*/i)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (sep.length > 1) {
+    const notMe = sep.find((s) => !/^(lee|me|lee nazari)$/i.test(s));
+    if (notMe) t = notMe;
+  }
+  // "Tim Luft, Woote" -> name + company when no parenthetical company was found.
+  if (!company && t.includes(",")) {
+    const [first, ...rest] = t.split(",");
+    const tail = rest.join(",").trim();
+    if (first.trim() && tail && tail.split(" ").length <= 4) {
+      company = tail;
+      t = first.trim();
+    }
+  }
+  const name = t.replace(/[-–—:|,]+$/, "").trim();
+  if (!name && !company) return null;
+  return { name, company };
+}
+
 // Live coverage comes back keyed by the model's wording of each focus, which is
 // often a reworded or trimmed version of the exact label. Match it back to the
 // EXACT focus labels so a covered focus is never shown as 0% over a spelling
@@ -351,6 +397,10 @@ export default function CallPage() {
   // The linked client's primary contact email, surfaced on prep so the website
   // it implies can be dropped straight into the Public link for research.
   const [contactEmail, setContactEmail] = useState("");
+  // The company read off the invite TITLE ("... (Woote)") when there is no guest
+  // list to derive it from. Shown on prep and used as a research hint.
+  const [titleCompany, setTitleCompany] = useState("");
+  const titleCompanyRef = useRef("");
   const [background, setBackground] = useState("");
   const [researching, setResearching] = useState(false);
   const [personStage, setPersonStage] = useState<
@@ -767,6 +817,19 @@ export default function CallPage() {
               setContactEmail((prev) => prev || guest.email);
               const site = websiteFromEmail(guest.email);
               if (site) setPublicLink((prev) => (prev.trim() ? prev : site));
+            } else {
+              // No guest list at all: pull the name and company off the title so
+              // the screen still isn't blank and Research person has something to
+              // go on. No email here, so there is no domain to auto-research.
+              const fromTitle = guestFromTitle((call as any)?.title);
+              if (fromTitle?.name && !candidateRef.current) {
+                candidateRef.current = fromTitle.name;
+                setCandidate(fromTitle.name);
+              }
+              if (fromTitle?.company) {
+                titleCompanyRef.current = fromTitle.company;
+                setTitleCompany(fromTitle.company);
+              }
             }
             if (typeof call?.intent === "string" && call.intent.trim()) {
               const it = call.intent.trim();
@@ -1670,7 +1733,11 @@ export default function CallPage() {
           mode: "brief",
           upcomingId: upcomingIdRef.current || undefined,
           person: id.name || candidateRef.current || undefined,
-          company: id.org || linkedCompanyRef.current?.name || undefined,
+          company:
+            id.org ||
+            linkedCompanyRef.current?.name ||
+            titleCompanyRef.current ||
+            undefined,
           companyId: linkedCompanyRef.current?.id || undefined,
           linkedinUrl: isLinkedin ? publicLink.trim() : undefined,
           intent: brief || undefined,
@@ -1707,7 +1774,8 @@ export default function CallPage() {
     const hint = publicLink.trim();
     const isLinkedin = /linkedin\.com/i.test(hint);
     const person = candidateRef.current?.trim() || "";
-    const company = linkedCompanyRef.current?.name || "";
+    const company =
+      linkedCompanyRef.current?.name || titleCompanyRef.current || "";
     if (!person && !company && !hint) {
       setResearchNote(
         "add their name, link their company, or paste their LinkedIn first"
@@ -2731,13 +2799,15 @@ export default function CallPage() {
                       </button>
                     )}
                   </div>
-                  {contactEmail && (
+                  {(contactEmail || titleCompany) && (
                     <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[0.6rem] leading-relaxed text-muted">
-                      <span>
-                        Contact:{" "}
-                        <span className="text-bone">{contactEmail}</span>
-                      </span>
-                      {websiteFromEmail(contactEmail) && (
+                      {contactEmail && (
+                        <span>
+                          Contact:{" "}
+                          <span className="text-bone">{contactEmail}</span>
+                        </span>
+                      )}
+                      {contactEmail && websiteFromEmail(contactEmail) && (
                         <button
                           type="button"
                           onClick={() =>
@@ -2748,6 +2818,12 @@ export default function CallPage() {
                         >
                           use {emailDomain(contactEmail)} as website
                         </button>
+                      )}
+                      {titleCompany && (
+                        <span>
+                          Company:{" "}
+                          <span className="text-bone">{titleCompany}</span>
+                        </span>
                       )}
                     </p>
                   )}

@@ -24,6 +24,11 @@ type Speaker = { name: string; lastRole: string };
 // How we decide a candidate "turn" ended (so cues/summary fire):
 const PAUSE_MS = 1600; // they stopped talking
 const CHECKPOINT_EVERY = 4; // ...or mid-monologue, every N finalised chunks
+// Mid-call capture stall: transcript was flowing, then went silent for this
+// long while the bot is still "in". Usually the notetaker dropped, was removed,
+// or lost audio - the exact failure that once read as a healthy green light
+// because a single early line had already latched the on-air state true.
+const CAPTURE_STALE_MS = 90000;
 
 // Default "You" detection for the POC (single user = Lee). Becomes a per-user
 // account setting later. We match by NAME, not the meeting host, because the
@@ -51,6 +56,8 @@ export default function MeetStage({
   // genuinely in the room), joinWarn = the watchdog fired without any transcript.
   const [transcribing, setTranscribing] = useState(false);
   const [joinWarn, setJoinWarn] = useState(false);
+  // Capture started then went quiet for too long while the bot is still live.
+  const [captureStalled, setCaptureStalled] = useState(false);
   const [wsState, setWsState] = useState<"off" | "connecting" | "on" | "error">(
     "off"
   );
@@ -77,6 +84,7 @@ export default function MeetStage({
   const sendingRef = useRef(false); // in-flight guard so a double-tap can't send two bots
   const botIdRef = useRef(""); // synchronous mirror of botId (closures + retry)
   const joinWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastUtterAtRef = useRef(0); // when the last utterance landed (stall check)
 
   useEffect(() => {
     onFinalRef.current = onFinalTranscript;
@@ -121,6 +129,8 @@ export default function MeetStage({
       }
       setTranscribing(true);
       setJoinWarn(false);
+      lastUtterAtRef.current = Date.now();
+      setCaptureStalled(false);
       const role = mapRole(speaker, recallRole);
 
       // remember this speaker (for the "who is You?" picker), default coach=host
@@ -260,6 +270,23 @@ export default function MeetStage({
     };
   }, [connect]);
 
+  // Mid-call stall watch. The join watchdog only covers getting IN; this covers
+  // capture dying AFTER it started - the socket stays "on" so the disconnect
+  // banner won't fire, and a single early line had already latched on-air true.
+  // If transcript has started and then nothing arrives for CAPTURE_STALE_MS,
+  // flag it so the green light can't lie about a bot that stopped hearing.
+  useEffect(() => {
+    if (!botId) {
+      setCaptureStalled(false);
+      return;
+    }
+    const iv = setInterval(() => {
+      if (!lastUtterAtRef.current) return; // nothing yet - the join watchdog owns that
+      setCaptureStalled(Date.now() - lastUtterAtRef.current > CAPTURE_STALE_MS);
+    }, 15000);
+    return () => clearInterval(iv);
+  }, [botId]);
+
   async function sendBot() {
     // Guard against a double-tap firing two bots: `disabled` only updates on the
     // next render, so a fast second click can slip through before React catches
@@ -324,6 +351,8 @@ export default function MeetStage({
     setBotId("");
     setJoinWarn(false);
     setTranscribing(false);
+    setCaptureStalled(false);
+    lastUtterAtRef.current = 0; // restart the stall clock for the fresh bot
     setTimeout(() => sendBot(), 400);
   }
 
@@ -360,8 +389,10 @@ export default function MeetStage({
   // Red "Off air" when there's no bot. The old light went green the instant a
   // bot was REQUESTED, which is exactly how a bot could read as live yet never
   // actually join.
-  const air: "off" | "joining" | "on" | "stalled" = !botId
+  const air: "off" | "joining" | "on" | "stalled" | "stale" = !botId
     ? "off"
+    : transcribing && captureStalled
+    ? "stale"
     : transcribing
     ? "on"
     : joinWarn
@@ -372,6 +403,8 @@ export default function MeetStage({
       ? { cls: "border-sage/60 bg-sage/15 text-sage", dot: "bg-sage animate-pulse", label: "On air" }
       : air === "joining"
       ? { cls: "border-amber/60 bg-amber/15 text-amber", dot: "bg-amber animate-pulse", label: "Joining…" }
+      : air === "stale"
+      ? { cls: "border-rust/60 bg-rust/15 text-rust", dot: "bg-rust animate-pulse", label: "Check notetaker" }
       : air === "stalled"
       ? { cls: "border-rust/60 bg-rust/15 text-rust", dot: "bg-rust", label: "Not joined" }
       : { cls: "border-rust/55 bg-rust/15 text-rust", dot: "bg-rust", label: "Off air" };
@@ -457,13 +490,41 @@ export default function MeetStage({
           it is waiting to be admitted. Give the fix and a one-tap retry. */}
       {air === "stalled" && (
         <div className="rounded-lg border border-rust/60 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-rust">
-          {"⚠"} The bot was sent but nothing is being transcribed, so it probably
-          never joined. If it is waiting to be admitted, let it into the meeting
-          from the participants list. If it is already in and you are talking,
-          retry it, or use Recap by voice to run this call without the bot.
+          {"⚠"} Nothing is being transcribed, so the notetaker isn't in the call
+          yet - almost always it's waiting in the lobby.
+          <span className="mt-1 block text-bone">
+            Fix it now: open your Meet window and ADMIT the notetaker from the
+            "asking to join" prompt or the participants list. Capture starts the
+            second it's let in.
+          </span>
+          <span className="mt-1 block">
+            Only Retry if it isn't asking to join at all - that sends a fresh one,
+            which also has to be admitted. Or run without it via Recap by voice.
+          </span>
           <button
             onClick={retryBot}
-            className="ml-2 rounded-full border border-rust/60 px-2.5 py-0.5 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust hover:text-ink"
+            className="mt-1 rounded-full border border-rust/60 px-2.5 py-0.5 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust hover:text-ink"
+          >
+            retry bot
+          </button>
+        </div>
+      )}
+
+      {/* Capture started, then went silent for too long while the bot is still
+          live and the socket is up. The bot has most likely been dropped or
+          removed from the call - the silent stop that once showed a green light. */}
+      {air === "stale" && (
+        <div className="rounded-lg border border-rust/60 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-rust">
+          {"⚠"} No transcript for over 90s. If people are talking, the notetaker
+          has dropped or been removed from the call.
+          <span className="mt-1 block text-bone">
+            Check it's still in the participants. If it's gone, Retry to send a
+            fresh one and admit it. You can keep talking - it backfills what it
+            missed once it's back.
+          </span>
+          <button
+            onClick={retryBot}
+            className="mt-1 rounded-full border border-rust/60 px-2.5 py-0.5 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust hover:text-ink"
           >
             retry bot
           </button>
