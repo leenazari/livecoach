@@ -60,6 +60,36 @@ const websiteFromEmail = (email: string): string => {
   return d && !PERSONAL_EMAIL_DOMAINS.has(d) ? `https://${d}` : "";
 };
 
+// A display name guessed from an email local part: "keith.fraser@x.com" ->
+// "Keith Fraser". Used when the invite carries no displayName for the guest.
+const nameFromEmail = (email: string): string => {
+  const local = String(email || "").split("@")[0] || "";
+  return local
+    .replace(/[._+-]+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ")
+    .trim();
+};
+// The person being met, read off a calendar invite's attendee list: the first
+// guest who isn't me (self), preferring one on a real work email so the domain
+// gives a site to research. Returns their name and email.
+function pickGuest(attendees: any[]): { name: string; email: string } | null {
+  const list = (Array.isArray(attendees) ? attendees : []).filter(
+    (a) => a && typeof a.email === "string" && a.email.trim() && a.self !== true
+  );
+  if (!list.length) return null;
+  const work = list.find((a) => websiteFromEmail(a.email));
+  const a = work || list[0];
+  const name =
+    typeof a.displayName === "string" && a.displayName.trim()
+      ? a.displayName.trim()
+      : nameFromEmail(a.email);
+  return { name, email: String(a.email).trim() };
+}
+
 // Live coverage comes back keyed by the model's wording of each focus, which is
 // often a reworded or trimmed version of the exact label. Match it back to the
 // EXACT focus labels so a covered focus is never shown as 0% over a spelling
@@ -540,7 +570,9 @@ export default function CallPage() {
           .filter(Boolean);
         const workEmail = emails.find((e) => websiteFromEmail(e)) || "";
         const shown = workEmail || emails[0] || "";
-        setContactEmail(shown);
+        // Only set when the company actually has a contact - a company with no
+        // contacts must not wipe an email already derived from the invite guest.
+        if (shown) setContactEmail(shown);
 
         // Pick a website to drop in: a website already on the client, else its
         // stored domain, else the one implied by the work email. Only fill the
@@ -720,6 +752,25 @@ export default function CallPage() {
             if (call?.research?.background) {
               setBackground(call.research.background);
               backgroundRef.current = call.research.background;
+            }
+            // Fresh intro / first call with no saved prep: seed the screen from
+            // the invite itself so it is never blank. The guest on the invite
+            // becomes the name, their work email gives the contact and a site to
+            // research, and the call's intent seeds the brief. Each only fills
+            // when still empty, so saved prep or anything typed always wins.
+            const guest = pickGuest((call as any)?.attendees);
+            if (guest) {
+              if (!candidateRef.current) {
+                candidateRef.current = guest.name;
+                setCandidate(guest.name);
+              }
+              setContactEmail((prev) => prev || guest.email);
+              const site = websiteFromEmail(guest.email);
+              if (site) setPublicLink((prev) => (prev.trim() ? prev : site));
+            }
+            if (typeof call?.intent === "string" && call.intent.trim()) {
+              const it = call.intent.trim();
+              setBrief((prev) => (prev.trim() ? prev : it));
             }
           }
         } catch {
