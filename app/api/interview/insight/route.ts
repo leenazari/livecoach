@@ -102,7 +102,7 @@ LEAN TOWARD OFFERING - the host WANTS ideas flowing, especially while brainstorm
             {
               type: "text" as const,
               text: `THIS CALL'S PLAN - let it steer what you offer. When the talk hits a problem, an objection, or a fork, you may offer a concise market-standard best move that serves the plan:\n\n${planBlock}`,
-              cache_control: { type: "ephemeral" as const },
+              cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
             },
           ]
         : []),
@@ -111,7 +111,7 @@ LEAN TOWARD OFFERING - the host WANTS ideas flowing, especially while brainstorm
         text: `KNOWLEDGE BASE (CV / docs / framework - for grounding):\n\n${
           knowledgeContext || "No knowledge base loaded."
         }`,
-        cache_control: { type: "ephemeral" },
+        cache_control: { type: "ephemeral", ttl: "1h" },
       },
     ];
 

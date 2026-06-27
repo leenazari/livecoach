@@ -33,6 +33,21 @@ const THINK_LABEL: "opus" | "sonnet" = CLAUDE_MODEL_THINK.toLowerCase().includes
   ? "opus"
   : "sonnet";
 
+// All three interview calls share the same business + coach context prefix.
+// Mark it as a cached block (1h) so the repeated calls in one check-in - and
+// back-to-back sessions - reuse it instead of re-billing the full prefix every
+// time. The changing per-call instructions sit in a second, uncached block.
+function cachedSystem(base: string, rest: string): any[] {
+  return [
+    {
+      type: "text" as const,
+      text: base,
+      cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
+    },
+    { type: "text" as const, text: rest },
+  ];
+}
+
 function parseQuestions(blob: string): string[] {
   return (blob || "")
     .split(/\n+/)
@@ -87,9 +102,12 @@ export async function GET() {
         const msg = await anthropic.messages.create({
           model: CLAUDE_MODEL_THINK,
           max_tokens: 700,
-          system: `${biz}${coachSystemBlock()}
+          system: cachedSystem(
+            `${biz}${coachSystemBlock()}`,
+            `
 
-You are running your daily interview to fill the gaps you most need to coach Lee toward the goal. For EACH topic below, write ONE short, sharp, SPECIFIC question, answerable out loud in a sentence or two, whose answer would most help you move Lee toward the £5M / £650k target. Make every question specific to Lee and the business, not generic, and not something you already know from the context. Output ONLY a JSON array of objects {"topic": the topic key, "q": the question}.`,
+You are running your daily interview to fill the gaps you most need to coach Lee toward the goal. For EACH topic below, write ONE short, sharp, SPECIFIC question, answerable out loud in a sentence or two, whose answer would most help you move Lee toward the £5M / £650k target. Make every question specific to Lee and the business, not generic, and not something you already know from the context. Output ONLY a JSON array of objects {"topic": the topic key, "q": the question}.`
+          ),
           messages: [
             {
               role: "user",
@@ -146,14 +164,17 @@ async function react(question: string, turns: Turn[]) {
     const msg = await anthropic.messages.create({
       model: CLAUDE_MODEL_THINK,
       max_tokens: 350,
-      system: `${biz}${coachSystemBlock()}
+      system: cachedSystem(
+        `${biz}${coachSystemBlock()}`,
+        `
 
 You are mid-interview. Decide whether you understand Lee's answer well enough to lock it in, or need ONE more short follow-up to get the real, specific detail. ${mustClose ? "You have already followed up enough, so you MUST read back now (ready = true)." : ""} Output ONLY JSON:
 {
  "ready": true or false,
  "reply": if ready, a short natural one-line acknowledgement that REFLECTS BACK the key point of Lee's answer as a statement, so he can hear it was captured correctly (for example "Got it, you are prioritising the partnership page this week" or "Noted, the reseller deals are what get you to the target"). Keep it to one line, use ONLY detail Lee actually gave, and phrase it as a plain statement. Do NOT ask Lee to confirm and never say "have I got that right", "let me confirm" or "let me make sure". If not ready, ONE short, sharp follow-up question that drills into what actually matters for the goal.
 }
-Be brief and conversational. Honest, never flattering. Never invent detail Lee did not give.`,
+Be brief and conversational. Honest, never flattering. Never invent detail Lee did not give.`
+      ),
       messages: [{ role: "user", content: convoText(question, turns) }],
     });
     await logModelUsage("brain-interview", THINK_LABEL, (msg as any).usage);
@@ -197,7 +218,9 @@ async function save(question: string, turns: Turn[]) {
     const msg = await anthropic.messages.create({
       model: CLAUDE_MODEL_THINK,
       max_tokens: 600,
-      system: `${biz}${coachSystemBlock()}
+      system: cachedSystem(
+        `${biz}${coachSystemBlock()}`,
+        `
 
 You just finished a short back and forth with Lee in your daily interview. Distil it. Output ONLY JSON:
 {
@@ -207,7 +230,8 @@ You just finished a short back and forth with Lee in your daily interview. Disti
  "coverage": "solid" if you now have a strong, usable understanding of that topic, otherwise "partial".
  "ack": a short, warm one line acknowledgement.
 }
-Never invent facts beyond what Lee actually said.`,
+Never invent facts beyond what Lee actually said.`
+      ),
       messages: [{ role: "user", content: convoText(question, turns) }],
     });
     await logModelUsage("brain-interview", THINK_LABEL, (msg as any).usage);

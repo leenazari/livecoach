@@ -673,7 +673,7 @@ pitchKit may be null.`,
           text: `CONTEXT - the subject of this call:\n\n${
             context || "(none provided)"
           }`,
-          cache_control: { type: "ephemeral" },
+          cache_control: { type: "ephemeral", ttl: "1h" },
         },
       ];
       const pbUser = `INTENT: ${brief || "(none given)"}

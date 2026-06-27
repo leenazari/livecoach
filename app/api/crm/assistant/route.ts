@@ -442,12 +442,12 @@ ALWAYS end the spoken version with your closing question whenever your reply has
         // Cache the big, stable instruction block so repeat calls skip
         // re-processing it (lower latency + cost). It only changes when the
         // brain knowledge or lessons change.
-        cache_control: { type: "ephemeral" },
+        cache_control: { type: "ephemeral", ttl: "1h" },
       },
       {
         type: "text",
         text: `${isGlobal ? "PIPELINE CONTEXT" : "CONTEXT"} (everything we know):\n\n${context}`,
-        cache_control: { type: "ephemeral" },
+        cache_control: { type: "ephemeral", ttl: "1h" },
       },
     ];
 

@@ -172,7 +172,7 @@ CONTENT:
             {
               type: "text" as const,
               text: taste,
-              cache_control: { type: "ephemeral" as const },
+              cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
             },
           ]
         : []),
@@ -181,14 +181,14 @@ CONTENT:
             {
               type: "text" as const,
               text: `THIS CALL'S PLAN - work from this, not generic advice. Steer every cue toward it and TIME them to the moment. When the talk hits a problem, an objection, or a fork, you may offer ONE concise best move that a strong operator would widely agree on right then - kept in service of the plan:\n\n${planBlock}`,
-              cache_control: { type: "ephemeral" as const },
+              cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
             },
           ]
         : []),
       {
         type: "text",
         text: `KNOWLEDGE BASE (candidate CV / previous summary / question framework):\n\n${knowledgeContext || "No knowledge base loaded."}`,
-        cache_control: { type: "ephemeral" },
+        cache_control: { type: "ephemeral", ttl: "1h" },
       },
     ];
 
