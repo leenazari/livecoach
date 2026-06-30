@@ -184,6 +184,18 @@ export default function UpcomingCalls() {
     router.push(`/call${qs.toString() ? `?${qs.toString()}` : ""}`);
   };
 
+  // Open the dedicated prep screen for this call: past call summaries plus a
+  // suggested, up-to-date intent. Needs a linked client (that's what the history
+  // and suggestion read from), so fall back to opening the call screen if none.
+  const openPrep = (c: Upcoming) => {
+    if (!c.company_id) return openCall(c);
+    const qs = new URLSearchParams();
+    qs.set("company", c.company_id);
+    if (c.company) qs.set("companyName", c.company);
+    qs.set("upcoming", c.id);
+    router.push(`/crm/prep?${qs.toString()}`);
+  };
+
   const inputCls =
     "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-[0.72rem] text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
 
@@ -320,8 +332,8 @@ export default function UpcomingCalls() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => openCall(c)}
-                  title="Open the prep screen for this call: build the plan, load docs, set your focus. It saves against this call."
+                  onClick={() => openPrep(c)}
+                  title="Review past call summaries and get a fresh, suggested intent for this call before you go in."
                   className="rounded-full border border-amber/60 bg-amber/15 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
                 >
                   prep ▸

@@ -172,6 +172,20 @@ export default function CompanyDetailPage() {
     }
   };
 
+  // Break a contact out into their own client record (they stay here too), then
+  // jump to the new record so you can set them up (e.g. as an investor).
+  const breakOutContact = async (contactId: string) => {
+    try {
+      const { companyId } = await crmFetch<{ companyId: string }>(
+        `/api/crm/contacts/${contactId}`,
+        { method: "POST" }
+      );
+      if (companyId) window.location.href = `/crm/${companyId}`;
+    } catch (e: any) {
+      setErr(e.message || "could not break out the contact");
+    }
+  };
+
   const deleteCompany = async () => {
     if (!confirm("Delete this company and all its contacts?")) return;
     try {
@@ -324,6 +338,15 @@ export default function CompanyDetailPage() {
               saved {savedAt}
             </span>
           )}
+          <Link
+            href={`/crm/prep?company=${id}&companyName=${encodeURIComponent(
+              company.name
+            )}`}
+            title="See past call summaries and get a fresh, suggested intent for your next call with this client"
+            className="rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
+          >
+            ✶ prep next call
+          </Link>
           <button
             type="button"
             onClick={synth}
@@ -580,14 +603,24 @@ export default function CompanyDetailPage() {
                       {[c.role, c.email].filter(Boolean).join(" · ") || "—"}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => deleteContact(c.id)}
-                    title="remove contact"
-                    className="shrink-0 rounded px-2 py-1 font-mono text-[0.7rem] text-muted transition hover:text-rust"
-                  >
-                    ×
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => breakOutContact(c.id)}
+                      title="Break this person out into their own client record (e.g. as an investor). They stay on this company too."
+                      className="rounded px-2 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:text-sky"
+                    >
+                      {"↗"} own record
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteContact(c.id)}
+                      title="remove contact"
+                      className="rounded px-2 py-1 font-mono text-[0.7rem] text-muted transition hover:text-rust"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

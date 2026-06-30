@@ -2546,14 +2546,27 @@ export default function CallPage() {
           Client
         </span>
         <CompanyLinkPicker value={linkedCompany} onChange={handleLinkCompany} />
-        <a
-          href="/crm"
-          target="_blank"
-          rel="noreferrer"
-          className="ml-auto font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:text-amber"
-        >
-          all clients ↗
-        </a>
+        <div className="ml-auto flex items-center gap-3">
+          {linkedCompany && (
+            <a
+              href={`/crm/prep?company=${linkedCompany.id}&companyName=${encodeURIComponent(
+                linkedCompany.name
+              )}`}
+              title="See past call summaries and a suggested, up-to-date intent for this client"
+              className="font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:text-bone"
+            >
+              ✶ prep
+            </a>
+          )}
+          <a
+            href="/crm"
+            target="_blank"
+            rel="noreferrer"
+            className="font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:text-amber"
+          >
+            all clients ↗
+          </a>
+        </div>
       </div>
 
       {setupCollapsed ? (
