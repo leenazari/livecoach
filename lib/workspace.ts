@@ -63,6 +63,29 @@ export async function workspaceContextBlock(): Promise<string> {
   return out;
 }
 
+// The user's honest, grounded stances on the objections that recur across
+// calls (their real product truth: what it does and does not do, where they
+// are genuinely weak, what they must not overclaim). Fed into the battlecard
+// generator and the live objection coaching so objection-handling is grounded
+// in fact, not invented. Empty string if unset.
+export async function getObjectionStancesBlock(): Promise<string> {
+  try {
+    const { data } = await supabaseAdmin
+      .from("workspace_profile")
+      .select("objection_stances")
+      .eq("id", "main")
+      .maybeSingle();
+    const s =
+      typeof data?.objection_stances === "string"
+        ? data.objection_stances.trim()
+        : "";
+    if (!s) return "";
+    return `YOUR HONEST STANCES ON RECURRING OBJECTIONS (ground all objection handling in these, never claim more than is written here, and where a point says CONFIRM be straight about where you actually are rather than inventing an audit, a number or a certification):\n${s}\n\n`;
+  } catch {
+    return "";
+  }
+}
+
 // The brain's open questions about the user's business (gaps it wants filled).
 // Surfaced to the assistant so it can raise them naturally and brainstorm.
 export async function getBrainQuestions(): Promise<string> {

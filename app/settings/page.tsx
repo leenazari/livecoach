@@ -19,14 +19,20 @@ const TOPICS = ["negotiation", "psychology", "strategy", "general"];
 // profiles, the day read, and live-call coaching) so the CRM always reasons
 // with your real-world context.
 export default function SettingsPage() {
-  const cached = getCached<{ knowledge: string }>("/api/crm/workspace");
+  const cached = getCached<{ knowledge: string; objectionStances?: string }>(
+    "/api/crm/workspace"
+  );
   const [knowledge, setKnowledge] = useState(cached?.knowledge || "");
+  const [objectionStances, setObjectionStances] = useState(
+    cached?.objectionStances || ""
+  );
   const [loaded, setLoaded] = useState(!!cached);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState("");
   const [saveErr, setSaveErr] = useState("");
   // Once you've typed, the background load must NOT overwrite your text.
   const touchedRef = useRef(false);
+  const objTouchedRef = useRef(false);
 
   // Lessons library state.
   const [lessons, setLessons] = useState<Lesson[]>(
@@ -48,10 +54,13 @@ export default function SettingsPage() {
   const [gcalNote, setGcalNote] = useState("");
 
   useEffect(() => {
-    crmFetch<{ knowledge: string }>("/api/crm/workspace")
+    crmFetch<{ knowledge: string; objectionStances?: string }>(
+      "/api/crm/workspace"
+    )
       .then((d) => {
         // Never clobber text the user has already started editing.
         if (!touchedRef.current) setKnowledge(d.knowledge || "");
+        if (!objTouchedRef.current) setObjectionStances(d.objectionStances || "");
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
@@ -129,12 +138,13 @@ export default function SettingsPage() {
     try {
       await crmFetch("/api/crm/workspace", {
         method: "PUT",
-        body: JSON.stringify({ knowledge }),
+        body: JSON.stringify({ knowledge, objectionStances }),
       });
       // Keep the in-memory cache in step so navigating away and back shows the
       // saved text, not a stale copy.
-      setCached("/api/crm/workspace", { knowledge });
+      setCached("/api/crm/workspace", { knowledge, objectionStances });
       touchedRef.current = false;
+      objTouchedRef.current = false;
       setSavedAt(new Date().toLocaleTimeString());
     } catch (e: any) {
       // Surface failures LOUDLY - a silent fail is what made edits "vanish"
@@ -244,6 +254,39 @@ export default function SettingsPage() {
               : "loading…"
           }
           className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-4 py-3 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+        />
+      </div>
+
+      {/* OBJECTION STANCES - the honest, grounded product truth used to build
+          call battlecards and coach objection-handling live. Kept separate from
+          the brain so it stays a clean, reviewable source of what you do and do
+          not claim. Saved by the same Save button up top. */}
+      <div className="mt-5 rounded-xl border border-rust/40 bg-rust/[0.05] p-5">
+        <p className="mb-1 font-mono text-[0.62rem] uppercase tracking-[0.2em] text-rust">
+          {"⚑"} Objection stances{" "}
+          <span className="text-muted">- your honest answers to the hard questions</span>
+        </p>
+        <p className="mb-3 font-mono text-[0.6rem] leading-relaxed text-muted">
+          The real truth about what your product does and does not do, and where
+          you are genuinely weak. This grounds the objection-handling in your
+          battlecards and the live prepared responses, so the AI never invents an
+          audit, a number or a claim you cannot stand behind. Where a line says
+          CONFIRM, fill in the real answer or leave it flagged so it stays honest.
+          Saved with the Save button at the top.
+        </p>
+        <textarea
+          value={objectionStances}
+          onChange={(e) => {
+            objTouchedRef.current = true;
+            setObjectionStances(e.target.value);
+          }}
+          rows={16}
+          placeholder={
+            loaded
+              ? "The objections that come up, and your honest, grounded answer to each…"
+              : "loading…"
+          }
+          className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-4 py-3 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-rust/60"
         />
       </div>
 

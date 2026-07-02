@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_PRO, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import {
+  anthropic,
+  CLAUDE_MODEL_LIVE,
+  CLAUDE_MODEL_BRAIN,
+} from "@/lib/anthropic";
 import {
   gatherClientContext,
   gatherGlobalContext,
@@ -466,7 +470,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
     const SMART =
       /(draft|write|email|message|plan|prep|summari[sz]e|advi[sc]e|should i|why|how (do|should|can|to|would)|best|strateg|recommend|opinion|brainstorm|idea|pitch|negoti|approach|think|compare|priorit|win\b|risk|objection|pros|cons)/;
     const simple = LOOKUP.test(ml) && !SMART.test(ml);
-    const model = simple ? CLAUDE_MODEL_LIVE : CLAUDE_MODEL_PRO;
+    const model = simple ? CLAUDE_MODEL_LIVE : CLAUDE_MODEL_BRAIN;
     // Long strategic answers were getting cut off mid-sentence at 1300 tokens
     // (and then the SPOKEN block never arrived). Give the smart model real room
     // to finish a full game-plan; keep the fast lookups tight.
@@ -522,7 +526,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           } catch {
             /* ignore - we still have `full` from the deltas */
           }
-          await logModelUsage("assistant", simple ? "haiku" : "sonnet", usage);
+          await logModelUsage("assistant", simple ? "haiku" : "fable", usage);
 
           let reply = full.trim();
 
@@ -623,7 +627,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           console.log(
             "assistant-timing " +
               JSON.stringify({
-                model: simple ? "haiku" : "sonnet",
+                model: simple ? "haiku" : "fable",
                 ctxMs,
                 ttftMs: firstTokenAt ? firstTokenAt - reqStart : null,
                 totalMs: Date.now() - reqStart,

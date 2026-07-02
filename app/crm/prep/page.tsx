@@ -21,6 +21,19 @@ type Task = {
   status: string;
 };
 
+type Battlecard = {
+  oneLiner: string;
+  fit: { strong: string[]; weak: string[] };
+  pitch: string;
+  flow: { minutes: string; label: string }[];
+  objections: { objection: string; response: string; haveReady: string | null }[];
+  doNotSay: string[];
+  questionsToAsk: string[];
+  nextStep: string;
+  sources: { title: string; url: string }[];
+  generatedAt?: string;
+};
+
 const fmtDate = (iso?: string) => {
   if (!iso) return "";
   try {
@@ -99,6 +112,10 @@ function PrepInner() {
   const [copied, setCopied] = useState(false);
   const [showAllCalls, setShowAllCalls] = useState(false);
 
+  const [battlecard, setBattlecard] = useState<Battlecard | null>(null);
+  const [bcBusy, setBcBusy] = useState(false);
+  const [bcErr, setBcErr] = useState("");
+
   useEffect(() => {
     if (!companyId) return;
     crmFetch<{ calls: Call[] }>(callsUrl)
@@ -116,6 +133,8 @@ function PrepInner() {
             ? pb.filter((p: any) => typeof p === "string" && p.trim())
             : []
         );
+        const bc = d.company?.profile?.battlecard;
+        if (bc && typeof bc === "object") setBattlecard(bc as Battlecard);
       })
       .catch(() => {})
       .finally(() => setLoaded(true));
@@ -150,6 +169,26 @@ function PrepInner() {
       setGenErr(e?.message || "could not suggest an intent");
     } finally {
       setGen(false);
+    }
+  };
+
+  const generateBattlecard = async () => {
+    if (bcBusy || !companyId) return;
+    setBcBusy(true);
+    setBcErr("");
+    try {
+      const d = await crmFetch<{ battlecard: Battlecard }>(
+        `/api/crm/companies/${companyId}/battlecard`,
+        {
+          method: "POST",
+          body: JSON.stringify({ intent: intent.trim() || undefined }),
+        }
+      );
+      if (d.battlecard) setBattlecard(d.battlecard);
+    } catch (e: any) {
+      setBcErr(e?.message || "could not build the battlecard");
+    } finally {
+      setBcBusy(false);
     }
   };
 
@@ -317,6 +356,240 @@ function PrepInner() {
               </button>
             </div>
           </>
+        )}
+      </section>
+
+      {/* BATTLE PLAN - the grounded, call-specific playbook: objections with
+          the right response, flow, what not to say, questions, next step. */}
+      <section className="mb-6 rounded-2xl border border-rust/40 bg-rust/[0.05] p-5">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="font-mono text-[0.62rem] uppercase tracking-[0.2em] text-rust">
+            ⚑ Battle plan
+          </p>
+          <button
+            type="button"
+            onClick={generateBattlecard}
+            disabled={bcBusy}
+            className="rounded-full border border-rust/60 bg-rust/15 px-4 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust/25 disabled:opacity-40"
+          >
+            {bcBusy
+              ? "researching…"
+              : battlecard
+              ? "↻ rebuild"
+              : "build battle plan"}
+          </button>
+        </div>
+
+        {!battlecard && !bcBusy && (
+          <p className="font-sans text-[0.84rem] leading-relaxed text-bone/75">
+            Build a call-specific playbook for {name || "this client"}: the
+            objections they will raise with the honest response, where the
+            product fits and where it does not, a timed flow, the spoken pitch,
+            what not to say, sharp questions, and the next step. It researches
+            the client on the web and grounds the product answers in your brain
+            and objection stances. Takes a few seconds and a few pence.
+          </p>
+        )}
+        {bcBusy && !battlecard && (
+          <p className="font-mono text-[0.7rem] text-muted">
+            Researching the client and assembling the plan…
+          </p>
+        )}
+        {bcErr && (
+          <p className="mt-1 font-mono text-[0.66rem] text-rust">{bcErr}</p>
+        )}
+
+        {battlecard && (
+          <div className="mt-1 flex flex-col gap-4">
+            {battlecard.oneLiner && (
+              <p className="font-sans text-[0.9rem] leading-snug text-bone">
+                {battlecard.oneLiner}
+              </p>
+            )}
+
+            {(battlecard.fit?.strong?.length > 0 ||
+              battlecard.fit?.weak?.length > 0) && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {battlecard.fit?.strong?.length > 0 && (
+                  <div className="rounded-xl border border-edge bg-ink/40 p-3">
+                    <p className="mb-1.5 font-mono text-[0.54rem] uppercase tracking-[0.18em] text-sage">
+                      Strong fit
+                    </p>
+                    <ul className="flex flex-col gap-1">
+                      {battlecard.fit.strong.map((t, i) => (
+                        <li
+                          key={i}
+                          className="flex gap-2 font-sans text-[0.8rem] leading-snug text-bone/85"
+                        >
+                          <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-sage/70" />
+                          {t}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {battlecard.fit?.weak?.length > 0 && (
+                  <div className="rounded-xl border border-edge bg-ink/40 p-3">
+                    <p className="mb-1.5 font-mono text-[0.54rem] uppercase tracking-[0.18em] text-rust">
+                      Weak fit, do not oversell
+                    </p>
+                    <ul className="flex flex-col gap-1">
+                      {battlecard.fit.weak.map((t, i) => (
+                        <li
+                          key={i}
+                          className="flex gap-2 font-sans text-[0.8rem] leading-snug text-bone/85"
+                        >
+                          <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-rust/70" />
+                          {t}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {battlecard.pitch && (
+              <div className="rounded-xl border border-edge bg-ink/40 p-3">
+                <p className="mb-1.5 font-mono text-[0.54rem] uppercase tracking-[0.18em] text-amber">
+                  The spoken pitch
+                </p>
+                <p className="font-sans text-[0.84rem] leading-relaxed text-bone/85">
+                  {battlecard.pitch}
+                </p>
+              </div>
+            )}
+
+            {battlecard.flow?.length > 0 && (
+              <div>
+                <p className="mb-1.5 font-mono text-[0.54rem] uppercase tracking-[0.18em] text-sky">
+                  Suggested flow
+                </p>
+                <ul className="flex flex-col gap-1.5">
+                  {battlecard.flow.map((f, i) => (
+                    <li key={i} className="flex gap-2.5">
+                      {f.minutes && (
+                        <span className="mt-0.5 shrink-0 font-mono text-[0.6rem] uppercase tracking-wider text-sky/80">
+                          {f.minutes} min
+                        </span>
+                      )}
+                      <span className="font-sans text-[0.82rem] leading-snug text-bone/85">
+                        {f.label}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {battlecard.objections?.length > 0 && (
+              <div>
+                <p className="mb-2 font-mono text-[0.54rem] uppercase tracking-[0.18em] text-rust">
+                  Objections and the right response
+                </p>
+                <ul className="flex flex-col gap-2.5">
+                  {battlecard.objections.map((o, i) => (
+                    <li
+                      key={i}
+                      className="rounded-xl border border-edge bg-ink/40 p-3"
+                    >
+                      <p className="font-sans text-[0.84rem] font-medium leading-snug text-bone">
+                        {o.objection}
+                      </p>
+                      {o.response && (
+                        <p className="mt-1 font-sans text-[0.82rem] leading-relaxed text-bone/80">
+                          <span className="font-mono text-[0.52rem] uppercase tracking-wider text-sage">
+                            say{" "}
+                          </span>
+                          {o.response}
+                        </p>
+                      )}
+                      {o.haveReady && (
+                        <p className="mt-1.5 rounded-lg border border-amber/40 bg-amber/10 px-2.5 py-1.5 font-sans text-[0.78rem] leading-snug text-amber">
+                          <span className="font-mono text-[0.52rem] uppercase tracking-wider">
+                            have ready{" "}
+                          </span>
+                          {o.haveReady}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {battlecard.doNotSay?.length > 0 && (
+                <div className="rounded-xl border border-edge bg-ink/40 p-3">
+                  <p className="mb-1.5 font-mono text-[0.54rem] uppercase tracking-[0.18em] text-rust">
+                    Do not say
+                  </p>
+                  <ul className="flex flex-col gap-1">
+                    {battlecard.doNotSay.map((t, i) => (
+                      <li
+                        key={i}
+                        className="flex gap-2 font-sans text-[0.8rem] leading-snug text-bone/85"
+                      >
+                        <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-rust/70" />
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {battlecard.questionsToAsk?.length > 0 && (
+                <div className="rounded-xl border border-edge bg-ink/40 p-3">
+                  <p className="mb-1.5 font-mono text-[0.54rem] uppercase tracking-[0.18em] text-sky">
+                    Questions to ask
+                  </p>
+                  <ul className="flex flex-col gap-1">
+                    {battlecard.questionsToAsk.map((t, i) => (
+                      <li
+                        key={i}
+                        className="flex gap-2 font-sans text-[0.8rem] leading-snug text-bone/85"
+                      >
+                        <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-sky/70" />
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            {battlecard.nextStep && (
+              <div className="rounded-xl border border-sage/40 bg-sage/[0.06] p-3">
+                <p className="mb-1 font-mono text-[0.54rem] uppercase tracking-[0.18em] text-sage">
+                  Next step to push for
+                </p>
+                <p className="font-sans text-[0.84rem] leading-snug text-bone/85">
+                  {battlecard.nextStep}
+                </p>
+              </div>
+            )}
+
+            {battlecard.sources?.length > 0 && (
+              <div>
+                <p className="mb-1 font-mono text-[0.52rem] uppercase tracking-[0.18em] text-muted">
+                  Researched from
+                </p>
+                <ul className="flex flex-col gap-0.5">
+                  {battlecard.sources.map((s, i) => (
+                    <li key={i} className="truncate">
+                      <a
+                        href={s.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-mono text-[0.62rem] text-sky/80 transition hover:text-amber"
+                      >
+                        {s.title}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
       </section>
 

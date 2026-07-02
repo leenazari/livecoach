@@ -34,6 +34,11 @@ export const RATES = {
   opusInPerM: 15.0,
   opusOutPerM: 75.0,
 
+  // Fable 5 (the brain's smart chat tier). Anthropic's most capable model.
+  // claude-fable-5: $10 / M input, $50 / M output (docs.anthropic.com, Jun 2026).
+  fableInPerM: 10.0,
+  fableOutPerM: 50.0,
+
   // Transport / real-time layer. ESTIMATES — verify against invoices.
   livekitPerHour: 1.5, // in-app two-party real-time
   recallPerHour: 0.65, // Google Meet bot incl. transcription
@@ -95,7 +100,7 @@ export function insightCostUSD(): number {
 // the model's real rates - no assumptions. This is what makes the meter
 // accurate (a plan rebuild, a big scorecard, etc. each cost what they used).
 export function usageCostUSD(
-  model: "haiku" | "sonnet" | "opus",
+  model: "haiku" | "sonnet" | "opus" | "fable",
   usage:
     | {
         input_tokens?: number;
@@ -108,13 +113,17 @@ export function usageCostUSD(
 ): number {
   if (!usage) return 0;
   const inRate =
-    model === "opus"
+    model === "fable"
+      ? RATES.fableInPerM
+      : model === "opus"
       ? RATES.opusInPerM
       : model === "sonnet"
       ? RATES.sonnetInPerM
       : RATES.haikuInPerM;
   const outRate =
-    model === "opus"
+    model === "fable"
+      ? RATES.fableOutPerM
+      : model === "opus"
       ? RATES.opusOutPerM
       : model === "sonnet"
       ? RATES.sonnetOutPerM

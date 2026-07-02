@@ -27,7 +27,7 @@ export async function logUsage(
 // Convenience: log straight from an Anthropic usage object.
 export async function logModelUsage(
   kind: string,
-  model: "haiku" | "sonnet" | "opus",
+  model: "haiku" | "sonnet" | "opus" | "fable",
   usage: any,
   meta: Record<string, any> = {}
 ): Promise<void> {

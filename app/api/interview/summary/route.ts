@@ -112,36 +112,42 @@ async function autoResolveCompany(opts: {
 // Best-effort per chunk: on a chunk failure, fall back to a trimmed raw slice so
 // nothing is silently dropped.
 async function condenseTranscript(transcript: string): Promise<string> {
-  const CHUNK = 45000;
+  const CHUNK = 30000;
   const parts: string[] = [];
   for (let i = 0; i < transcript.length; i += CHUNK)
     parts.push(transcript.slice(i, i + CHUNK));
-  const digests: string[] = [];
-  for (let i = 0; i < parts.length; i++) {
-    try {
-      const m: any = await anthropic.messages.create({
-        model: CLAUDE_MODEL_LIVE,
-        max_tokens: 1400,
-        temperature: 0,
-        system:
-          "You are condensing ONE part of a long, speaker-labelled call transcript so the whole call can be assessed without losing anything that matters. Keep the EXACT speaker labels from the transcript (e.g. 'Interviewer:', 'Mark Darling:'). Be factual and dense: preserve every decision, number, figure, date, name, company, commitment, action item, disagreement, and any striking quote (kept short and verbatim). Drop only filler and repetition. Add no interpretation.",
-        messages: [
-          {
-            role: "user",
-            content: `Part ${i + 1} of ${parts.length}:\n\n${parts[i]}`,
-          },
-        ],
-      });
-      const t = (Array.isArray(m?.content) ? m.content : [])
-        .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
-        .map((b: any) => b.text)
-        .join("")
-        .trim();
-      digests.push(t ? `--- Part ${i + 1} ---\n${t}` : parts[i].slice(0, 4000));
-    } catch {
-      digests.push(parts[i].slice(0, 4000));
-    }
-  }
+  // Condense the parts IN PARALLEL so the map step stays fast no matter how many
+  // chunks there are (a 3-hour call was condensing sequentially and could itself
+  // approach the time cap). Promise.all preserves order, so the digest still
+  // reads front to back. Best-effort per chunk: a failed chunk falls back to a
+  // trimmed raw slice so nothing is silently dropped.
+  const digests = await Promise.all(
+    parts.map(async (part, i) => {
+      try {
+        const m: any = await anthropic.messages.create({
+          model: CLAUDE_MODEL_LIVE,
+          max_tokens: 2000,
+          temperature: 0,
+          system:
+            "You are condensing ONE part of a long, speaker-labelled call transcript so the whole call can be assessed without losing anything that matters. Keep the EXACT speaker labels from the transcript (e.g. 'Interviewer:', 'Mark Darling:'). Be factual and dense: preserve every decision, number, figure, date, name, company, commitment, action item, disagreement, and any striking quote (kept short and verbatim). Drop only filler and repetition. Add no interpretation.",
+          messages: [
+            {
+              role: "user",
+              content: `Part ${i + 1} of ${parts.length}:\n\n${part}`,
+            },
+          ],
+        });
+        const t = (Array.isArray(m?.content) ? m.content : [])
+          .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
+          .map((b: any) => b.text)
+          .join("")
+          .trim();
+        return t ? `--- Part ${i + 1} ---\n${t}` : part.slice(0, 4000);
+      } catch {
+        return part.slice(0, 4000);
+      }
+    })
+  );
   return digests.join("\n\n");
 }
 
@@ -271,11 +277,14 @@ NEXT ACTIONS (this is the most useful part - be concrete and specific, grounded 
 
 Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Action items are short plain-English lines. Keep every bullet tight.`;
 
-    // Very long calls (multi-hour board sessions) overrun the model and the
-    // function timeout if assessed in one pass, and silently produce no scorecard.
-    // Map-reduce them down first. Normal-length calls are untouched.
+    // Real-length calls (a 30-60 min meeting is 25k-65k chars) push the single
+    // scorecard pass past Vercel's 60s function cap, which kills it with a 504
+    // and stores NOTHING - the call then vanishes from every list (this is what
+    // dropped a 42-min Insider Media call). So map-reduce anything beyond a short
+    // call into a dense, speaker-attributed digest first, which keeps the final
+    // pass fast and reliable. Short calls are untouched.
     const workingTranscript =
-      transcript.length > 90000
+      transcript.length > 20000
         ? await condenseTranscript(transcript)
         : transcript;
 
@@ -294,13 +303,28 @@ ${workingTranscript}
 
 Return the JSON assessment now.`;
 
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL_PRO,
-      max_tokens: 2600,
-      temperature: 0,
-      system,
-      messages: [{ role: "user", content: userMsg }],
-    });
+    // Budget the scorecard pass under Vercel's 60s function cap. Aborting at 52s
+    // fails cleanly (the outer catch returns an error and the orphan sweep retries
+    // on the now-condensed input) instead of riding to the hard 60s kill that
+    // produced an opaque 504 and stored nothing. max_tokens is 4096 so a rich,
+    // long call's JSON is never truncated mid-object.
+    const summaryController = new AbortController();
+    const summaryTimer = setTimeout(() => summaryController.abort(), 52000);
+    let msg: any;
+    try {
+      msg = await anthropic.messages.create(
+        {
+          model: CLAUDE_MODEL_PRO,
+          max_tokens: 4096,
+          temperature: 0,
+          system,
+          messages: [{ role: "user", content: userMsg }],
+        },
+        { signal: summaryController.signal }
+      );
+    } finally {
+      clearTimeout(summaryTimer);
+    }
 
     const raw = msg.content
       .filter((b: any) => b.type === "text")

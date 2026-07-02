@@ -24,3 +24,13 @@ export const CLAUDE_MODEL_PRO =
 // Vercel env (e.g. an Opus 4.x model) to run the coach on Opus.
 export const CLAUDE_MODEL_THINK =
   process.env.CLAUDE_MODEL_THINK || CLAUDE_MODEL_PRO;
+
+// BRAIN track: the model the CRM assistant ("the brain" you chat with) uses for
+// its SMART path (game-plans, deal coaching, drafting, strategy). Quick data
+// lookups stay on the LIVE model. Defaults to Claude Fable 5 - Anthropic's most
+// capable model (claude-fable-5, $10/M in, $50/M out, "slower" latency, so it is
+// pricier and less snappy than Sonnet but sharper on hard questions). Override
+// in Vercel env (e.g. CLAUDE_MODEL_BRAIN=claude-sonnet-5) to dial it back with no
+// code change.
+export const CLAUDE_MODEL_BRAIN =
+  process.env.CLAUDE_MODEL_BRAIN || "claude-fable-5";

@@ -14,11 +14,12 @@ export async function GET() {
   try {
     const { data } = await supabaseAdmin
       .from("workspace_profile")
-      .select("knowledge, updated_at")
+      .select("knowledge, objection_stances, updated_at")
       .eq("id", "main")
       .maybeSingle();
     return NextResponse.json({
       knowledge: data?.knowledge || "",
+      objectionStances: data?.objection_stances || "",
       updatedAt: data?.updated_at || null,
     });
   } catch (err: any) {
@@ -32,15 +33,19 @@ export async function GET() {
 // PUT /api/crm/workspace -> save the knowledge base (upsert the single row).
 export async function PUT(req: NextRequest) {
   try {
-    const { knowledge } = await req.json();
-    const { error } = await supabaseAdmin.from("workspace_profile").upsert(
-      {
-        id: "main",
-        knowledge: typeof knowledge === "string" ? knowledge : "",
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "id" }
-    );
+    const body = await req.json();
+    // Only touch the fields actually provided, so saving one does not wipe the
+    // other (upsert sets only the columns present in the object).
+    const patch: Record<string, any> = {
+      id: "main",
+      updated_at: new Date().toISOString(),
+    };
+    if (typeof body.knowledge === "string") patch.knowledge = body.knowledge;
+    if (typeof body.objectionStances === "string")
+      patch.objection_stances = body.objectionStances;
+    const { error } = await supabaseAdmin
+      .from("workspace_profile")
+      .upsert(patch, { onConflict: "id" });
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (err: any) {

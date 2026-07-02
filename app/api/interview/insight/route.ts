@@ -101,7 +101,7 @@ LEAN TOWARD OFFERING - the host WANTS ideas flowing, especially while brainstorm
         ? [
             {
               type: "text" as const,
-              text: `THIS CALL'S PLAN - let it steer what you offer. When the talk hits a problem, an objection, or a fork, you may offer a concise market-standard best move that serves the plan:\n\n${planBlock}`,
+              text: `THIS CALL'S PLAN - let it steer what you offer. When the talk hits a problem, an objection, or a fork, you may offer a concise market-standard best move that serves the plan. If the plan lists a PREPARED OBJECTION RESPONSE and the discussion raises that objection, surface that prepared response as your line, adapted to exactly what they just said. Never state a product claim, capability, audit or number that is not in the plan:\n\n${planBlock}`,
               cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
             },
           ]

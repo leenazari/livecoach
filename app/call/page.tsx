@@ -36,6 +36,21 @@ type Suggestion = {
   liked?: boolean;
 };
 
+// The pre-call battlecard built on the Prep tab: objections with the right
+// response, flow, what not to say, questions, the next step. Loaded when a
+// client is linked so the prepared responses can steer the live advisor and
+// sit in a glanceable panel during the call.
+type Battlecard = {
+  oneLiner?: string;
+  fit?: { strong?: string[]; weak?: string[] };
+  pitch?: string;
+  flow?: { minutes?: string; label?: string }[];
+  objections?: { objection: string; response: string; haveReady?: string | null }[];
+  doNotSay?: string[];
+  questionsToAsk?: string[];
+  nextStep?: string;
+};
+
 // Live-cue pacing presets (ms). Fast/medium/slow, set per lane by the user.
 const SPEEDS = { fast: 9000, medium: 30000, slow: 60000 } as const;
 
@@ -402,6 +417,10 @@ export default function CallPage() {
   const [titleCompany, setTitleCompany] = useState("");
   const titleCompanyRef = useRef("");
   const [background, setBackground] = useState("");
+  // The linked client's battlecard, loaded when a client is attached.
+  const [battlecard, setBattlecard] = useState<Battlecard | null>(null);
+  const [battlePlanOpen, setBattlePlanOpen] = useState(false);
+  const battlecardRef = useRef<Battlecard | null>(null);
   const [researching, setResearching] = useState(false);
   const [personStage, setPersonStage] = useState<
     "idle" | "identifying" | "confirm" | "briefing"
@@ -571,20 +590,36 @@ export default function CallPage() {
             ...(pitchKit.proofPoints || []).map((p: string) => `proof: ${p}`),
           ].join("; ")}`
         : "";
+    // Prepared objection responses from the battlecard. Folding them into the
+    // plan the advisor already reads means that when the talk hits one of these
+    // objections, the advisor surfaces the rehearsed response as the cue, with
+    // no change to the latency-sensitive live route.
+    const obj =
+      battlecard && Array.isArray(battlecard.objections) && battlecard.objections.length
+        ? "PREPARED OBJECTION RESPONSES (if the discussion raises one of these objections, offer the prepared response, adapted to exactly what they said, as the thing to say):\n" +
+          battlecard.objections
+            .filter((o) => o && o.objection && o.response)
+            .map((o) => `- If they raise "${o.objection}" then say: ${o.response}`)
+            .join("\n")
+        : "";
     planBriefRef.current = [
       brief?.trim() ? `INTENT: ${brief.trim()}` : "",
       character?.trim() ? `YOUR READ: ${character.trim()}` : "",
       pk,
+      obj,
       clientEmailCtx?.trim()
         ? `EMAIL THREAD SO FAR (where most of this relationship has happened):\n${clientEmailCtx.trim()}`
         : "",
     ]
       .filter(Boolean)
       .join("\n\n");
-  }, [brief, character, clientEmailCtx, pitchKit]);
+  }, [brief, character, clientEmailCtx, pitchKit, battlecard]);
   useEffect(() => {
     linkedCompanyRef.current = linkedCompany;
   }, [linkedCompany]);
+  useEffect(() => {
+    battlecardRef.current = battlecard;
+  }, [battlecard]);
 
   // Load the linked client's email summary onto the prep screen.
   useEffect(() => {
@@ -592,6 +627,7 @@ export default function CallPage() {
     if (!id) {
       setClientEmailCtx("");
       setContactEmail("");
+      setBattlecard(null);
       return;
     }
     fetch(`/api/crm/companies/${id}`)
@@ -605,10 +641,13 @@ export default function CallPage() {
           setClientEmailCtx("");
           setEmailCtxUpdatedAt(null);
           setContactEmail("");
+          setBattlecard(null);
           return;
         }
         setClientEmailCtx(d?.company?.email_context || "");
         setEmailCtxUpdatedAt(d?.company?.email_context_updated_at || null);
+        const bc = d?.company?.profile?.battlecard;
+        setBattlecard(bc && typeof bc === "object" ? (bc as Battlecard) : null);
 
         // Surface the contact's email, and use the company it implies to seed
         // the Public link so the person or their page can be researched in one
@@ -2568,6 +2607,116 @@ export default function CallPage() {
           </a>
         </div>
       </div>
+
+      {/* BATTLE PLAN - a glanceable, collapsible panel of the prepared objections
+          and reminders, available all the way through the call. The prepared
+          responses also feed the live advisor, so they surface as cues when the
+          matching objection comes up. */}
+      {battlecard &&
+        ((battlecard.objections && battlecard.objections.length > 0) ||
+          (battlecard.doNotSay && battlecard.doNotSay.length > 0) ||
+          (battlecard.questionsToAsk && battlecard.questionsToAsk.length > 0)) && (
+          <div className="mb-5 overflow-hidden rounded-xl border border-rust/30 bg-rust/[0.04]">
+            <button
+              type="button"
+              onClick={() => setBattlePlanOpen((v) => !v)}
+              className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left"
+            >
+              <span className="font-mono text-[0.58rem] uppercase tracking-[0.16em] text-rust">
+                ⚑ Battle plan
+              </span>
+              <span className="font-mono text-[0.56rem] text-muted">
+                {battlecard.objections?.length || 0} objections ready
+              </span>
+              <span className="ml-auto font-mono text-[0.58rem] uppercase tracking-wider text-muted">
+                {battlePlanOpen ? "▾ hide" : "▸ show"}
+              </span>
+            </button>
+            {battlePlanOpen && (
+              <div className="flex flex-col gap-3 border-t border-rust/20 px-4 py-3">
+                {battlecard.objections && battlecard.objections.length > 0 && (
+                  <ul className="flex flex-col gap-2">
+                    {battlecard.objections.map((o, i) => (
+                      <li
+                        key={i}
+                        className="rounded-lg border border-edge bg-ink/40 p-2.5"
+                      >
+                        <p className="font-sans text-[0.8rem] font-medium leading-snug text-bone">
+                          {o.objection}
+                        </p>
+                        {o.response && (
+                          <p className="mt-0.5 font-sans text-[0.78rem] leading-snug text-bone/75">
+                            <span className="font-mono text-[0.5rem] uppercase tracking-wider text-sage">
+                              say{" "}
+                            </span>
+                            {o.response}
+                          </p>
+                        )}
+                        {o.haveReady && (
+                          <p className="mt-1 font-sans text-[0.74rem] leading-snug text-amber/90">
+                            <span className="font-mono text-[0.5rem] uppercase tracking-wider">
+                              have ready{" "}
+                            </span>
+                            {o.haveReady}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {battlecard.doNotSay && battlecard.doNotSay.length > 0 && (
+                    <div>
+                      <p className="mb-1 font-mono text-[0.52rem] uppercase tracking-[0.16em] text-rust">
+                        Do not say
+                      </p>
+                      <ul className="flex flex-col gap-0.5">
+                        {battlecard.doNotSay.map((t, i) => (
+                          <li
+                            key={i}
+                            className="font-sans text-[0.76rem] leading-snug text-bone/75"
+                          >
+                            {t}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {battlecard.questionsToAsk &&
+                    battlecard.questionsToAsk.length > 0 && (
+                      <div>
+                        <p className="mb-1 font-mono text-[0.52rem] uppercase tracking-[0.16em] text-sky">
+                          Ask them
+                        </p>
+                        <ul className="flex flex-col gap-0.5">
+                          {battlecard.questionsToAsk.map((t, i) => (
+                            <li
+                              key={i}
+                              className="font-sans text-[0.76rem] leading-snug text-bone/75"
+                            >
+                              {t}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                </div>
+                <a
+                  href={
+                    linkedCompany
+                      ? `/crm/prep?company=${linkedCompany.id}&companyName=${encodeURIComponent(
+                          linkedCompany.name
+                        )}`
+                      : "/crm"
+                  }
+                  className="font-mono text-[0.56rem] uppercase tracking-wider text-rust/80 transition hover:text-amber"
+                >
+                  edit in prep ↗
+                </a>
+              </div>
+            )}
+          </div>
+        )}
 
       {setupCollapsed ? (
         <button
