@@ -874,6 +874,18 @@ export default function CallPage() {
               const it = call.intent.trim();
               setBrief((prev) => (prev.trim() ? prev : it));
             }
+            // Pull the invite / meeting link from the scheduled call into the bot
+            // field. Opening a call from the Prep tab passes the upcoming id, not
+            // the link in the query, so without this the Meet / Teams / Zoom link
+            // is dropped and there is nothing to send the bot to. Only fills when
+            // the field is still empty, so a link already in the query or typed by
+            // hand always wins, and switches to meet mode so the field is shown.
+            const mUrl =
+              typeof call?.meeting_url === "string" ? call.meeting_url.trim() : "";
+            if (mUrl) {
+              setMeetingUrl((prev) => (prev.trim() ? prev : mUrl));
+              setSource("meet");
+            }
           }
         } catch {
           /* best-effort reload */
