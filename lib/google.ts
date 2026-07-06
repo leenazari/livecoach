@@ -127,8 +127,34 @@ export async function listEvents(
   return Array.isArray(d.items) ? d.items : [];
 }
 
-// Best-effort meeting link: Google Meet, else a conference entry point, else a
-// Teams/Zoom/Meet link found in the description.
+// Any join link we recognise as a video meeting, across the providers other
+// people actually send. Google Meet is the common case for the user's own
+// invites; Teams / Zoom / Webex etc. turn up on invites others organise.
+const MEETING_PROVIDERS =
+  /https?:\/\/[^\s"'<>]*(?:meet\.google\.com|teams\.microsoft\.com|teams\.live\.com|teams\.microsoft\.us|zoom\.us|zoom\.com|webex\.com|gotomeeting\.com|gotomeet\.me|whereby\.com|meet\.jit\.si|chime\.aws|bluejeans\.com|around\.co|around\.com)[^\s"'<>]*/i;
+
+// Microsoft/Outlook rewrites links into a SafeLinks redirect, so a Teams URL
+// arrives url-encoded inside safelinks.protection.outlook.com. Unwrap the real
+// destination from its url= parameter so we can recognise the provider.
+function unwrapSafeLinks(haystack: string): string | null {
+  const safe = haystack.match(
+    /https?:\/\/[^\s"'<>]*safelinks\.protection\.outlook\.com\/[^\s"'<>]*/i
+  );
+  if (!safe) return null;
+  const u = safe[0].match(/[?&]url=([^&]+)/i);
+  if (!u) return null;
+  try {
+    return decodeURIComponent(u[1]);
+  } catch {
+    return null;
+  }
+}
+
+// Best-effort meeting link, in priority order: Google Meet's own field, a
+// conference entry point (Meet or any provider Google recorded), then a link
+// pasted into the LOCATION or DESCRIPTION of an invite (this is where external
+// Teams / Zoom / Webex invites put the join URL - they have no Google
+// conferenceData). SafeLinks-wrapped Teams URLs are unwrapped first.
 export function meetingUrlOf(ev: any): string | null {
   if (typeof ev.hangoutLink === "string" && ev.hangoutLink) return ev.hangoutLink;
   const eps = ev.conferenceData?.entryPoints;
@@ -136,10 +162,17 @@ export function meetingUrlOf(ev: any): string | null {
     const video = eps.find((e: any) => e.entryPointType === "video" && e.uri);
     if (video) return video.uri;
   }
+  const loc = typeof ev.location === "string" ? ev.location : "";
   const desc = typeof ev.description === "string" ? ev.description : "";
-  const m = desc.match(
-    /https?:\/\/[^\s"'<>]*(?:teams\.microsoft\.com|zoom\.us|meet\.google\.com)[^\s"'<>]*/i
-  );
+  const hay = `${loc}\n${desc}`;
+
+  // Unwrap a SafeLinks redirect first, so a wrapped Teams link is recognised.
+  const unwrapped = unwrapSafeLinks(hay);
+  if (unwrapped) {
+    const um = unwrapped.match(MEETING_PROVIDERS);
+    if (um) return um[0];
+  }
+  const m = hay.match(MEETING_PROVIDERS);
   return m ? m[0] : null;
 }
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { foldDictationEvent } from "@/lib/dictation";
 import CallStage from "@/components/CallStage";
 import MeetStage from "@/components/MeetStage";
+import CallCarryover from "@/components/crm/CallCarryover";
 import KnowledgePanel from "@/components/KnowledgePanel";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
 import SortableFocusList from "@/components/SortableFocusList";
@@ -2619,6 +2620,10 @@ export default function CallPage() {
           </a>
         </div>
       </div>
+
+      {/* CONTINUING FROM LAST TIME - recap + carried open items + a standing
+          checklist, so a recurring call never starts from a blank slate. */}
+      {linkedCompany && <CallCarryover companyId={linkedCompany.id} />}
 
       {/* BATTLE PLAN - a glanceable, collapsible panel of the prepared objections
           and reminders, available all the way through the call. The prepared
