@@ -458,6 +458,8 @@ export default function CallPage() {
   const goLiveRef = useRef<() => void>(() => {});
   const sourceRef = useRef<"inapp" | "meet">("inapp");
   const backgroundRef = useRef("");
+  // Guard so the first-meeting auto research + intent draft fires at most once.
+  const autoHelpedRef = useRef(false);
   const callTypeRef = useRef("general");
   const roleRef = useRef("");
   const personLabelRef = useRef("Them");
@@ -886,6 +888,79 @@ export default function CallPage() {
             if (mUrl) {
               setMeetingUrl((prev) => (prev.trim() ? prev : mUrl));
               setSource("meet");
+            }
+
+            // FIRST-MEETING AUTO HELP. A fresh external invite (a work-email
+            // domain, no intent yet, no saved prep) is a first meeting with a new
+            // client. There is no call history to build from, but there IS a
+            // company (the email domain) worth researching. So automatically
+            // research the company from its site (this fills the background the
+            // planner folds into the focus) and draft a starting intent, so the
+            // screen is never blank and there is something to build a plan from.
+            // Fires once, best-effort, and only fills what is still empty.
+            const ft = guestFromTitle((call as any)?.title);
+            const autoSite = guest ? websiteFromEmail(guest.email) : "";
+            const autoCompany = String(
+              (call as any)?.company || titleCompanyRef.current || ft?.company || ""
+            ).trim();
+            const autoPerson = String(
+              guest?.name || candidateRef.current || ft?.name || ""
+            ).trim();
+            const hasIntent =
+              !!(intent && intent.trim()) ||
+              !!(call?.intent && String(call.intent).trim());
+            if (
+              !autoHelpedRef.current &&
+              !hasIntent &&
+              !call?.prep &&
+              autoSite &&
+              (autoCompany || autoPerson)
+            ) {
+              autoHelpedRef.current = true;
+              (async () => {
+                let bg = "";
+                try {
+                  const r = await fetch("/api/interview/research", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ url: autoSite }),
+                  });
+                  const d = await r.json();
+                  if (r.ok && d.background) {
+                    bg = String(d.background);
+                    setBackground((prev) => (prev.trim() ? prev : bg));
+                    if (!backgroundRef.current) backgroundRef.current = bg;
+                  }
+                } catch {
+                  /* best-effort research */
+                }
+                try {
+                  const r2 = await fetch("/api/interview/first-meeting-intent", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      company: autoCompany || undefined,
+                      person: autoPerson || undefined,
+                      title: (call as any)?.title || undefined,
+                      background: bg || backgroundRef.current || undefined,
+                    }),
+                  });
+                  const d2 = await r2.json();
+                  if (r2.ok && typeof d2.intent === "string" && d2.intent.trim()) {
+                    const it2 = d2.intent.trim();
+                    setBrief((prev) => (prev.trim() ? prev : it2));
+                    if (upcomingIdRef.current) {
+                      fetch(`/api/crm/upcoming/${upcomingIdRef.current}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ intent: it2 }),
+                      }).catch(() => {});
+                    }
+                  }
+                } catch {
+                  /* best-effort intent draft */
+                }
+              })();
             }
           }
         } catch {
