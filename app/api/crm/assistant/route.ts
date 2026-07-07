@@ -526,7 +526,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           } catch {
             /* ignore - we still have `full` from the deltas */
           }
-          await logModelUsage("assistant", simple ? "haiku" : "fable", usage);
+          await logModelUsage("assistant", simple ? "haiku" : "opus", usage);
 
           let reply = full.trim();
 
@@ -627,7 +627,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           console.log(
             "assistant-timing " +
               JSON.stringify({
-                model: simple ? "haiku" : "fable",
+                model: simple ? "haiku" : "opus",
                 ctxMs,
                 ttftMs: firstTokenAt ? firstTokenAt - reqStart : null,
                 totalMs: Date.now() - reqStart,

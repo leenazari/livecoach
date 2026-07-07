@@ -1009,8 +1009,12 @@ export default function CallPage() {
       fetch(`/api/crm/upcoming/${upcomingIdRef.current}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
+        // Saving a plan against the call also marks it prepped, so the Upcoming
+        // list shows a solid "prepped" button. It STAYS on the list (prepped is
+        // not a hide condition) until the call is completed or its time passes.
         body: JSON.stringify({
           prep: { ...snapshot, savedAt: new Date().toISOString() },
+          prepped: true,
         }),
       }).catch(() => {});
     }, 1200);

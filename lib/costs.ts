@@ -30,9 +30,10 @@ export const RATES = {
   sonnetInPerM: 3.0,
   sonnetOutPerM: 15.0,
 
-  // Opus 4.x (the success coach's THINK tier). Verify against invoices.
-  opusInPerM: 15.0,
-  opusOutPerM: 75.0,
+  // Opus 4.8 (the THINK tier + the brain's smart chat). Current pricing
+  // $5 / M input, $25 / M output (docs.anthropic.com, Jun 2026).
+  opusInPerM: 5.0,
+  opusOutPerM: 25.0,
 
   // Fable 5 (the brain's smart chat tier). Anthropic's most capable model.
   // claude-fable-5: $10 / M input, $50 / M output (docs.anthropic.com, Jun 2026).

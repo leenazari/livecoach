@@ -19,13 +19,24 @@ export async function completeUpcomingForCall(opts: {
 }): Promise<string | null> {
   try {
     const nowIso = new Date().toISOString();
+    // NEVER auto-complete a call still in the FUTURE. A real call ends on or
+    // after its scheduled time, so a completion landing well before that time is
+    // spurious (e.g. a prep session that got summarised, or a same-client call
+    // earlier in the day matching by time). Completing a future call wrongly
+    // drops it off the upcoming list before it has even happened (this hid the
+    // 2pm Tarnya call). Allow a 15-min grace for a call started slightly early.
+    // A call with no set time is always completable. The user's manual "done"
+    // button uses a different path, so they can still clear a future call by hand.
+    const guardIso = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const notFuture = `scheduled_at.is.null,scheduled_at.lte.${guardIso}`;
 
     if (opts.upcomingId) {
       await supabaseAdmin
         .from("upcoming_calls")
         .update({ completed_at: nowIso })
         .eq("id", opts.upcomingId)
-        .is("completed_at", null);
+        .is("completed_at", null)
+        .or(notFuture);
       return opts.upcomingId;
     }
 
@@ -49,7 +60,8 @@ export async function completeUpcomingForCall(opts: {
             .from("upcoming_calls")
             .update({ completed_at: nowIso })
             .eq("id", linked)
-            .is("completed_at", null);
+            .is("completed_at", null)
+            .or(notFuture);
           return linked;
         }
         if (!companyId) companyId = (sess as any).company_id || null;
@@ -73,6 +85,7 @@ export async function completeUpcomingForCall(opts: {
       .is("completed_at", null)
       .gte("scheduled_at", lo)
       .lte("scheduled_at", hi)
+      .lte("scheduled_at", guardIso)
       .order("scheduled_at", { ascending: true })
       .limit(10);
     const rows = data || [];
