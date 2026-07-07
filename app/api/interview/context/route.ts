@@ -75,12 +75,46 @@ async function companyHistoryBlock(
       );
     }
 
-    const profile = company.profile || {};
+    const profile = (company.profile || {}) as any;
     if (profile && typeof profile === "object" && Object.keys(profile).length) {
+      // Render the battlecard as its own clean section below - keep it out of the
+      // raw dump so it is not a giant unusable JSON blob in the middle of things.
       const p = Object.entries(profile)
+        .filter(([k]) => k !== "battlecard")
         .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
         .join("; ");
       if (p) lines.push(`What we know: ${p}`);
+    }
+
+    // BATTLE PLAN -> feed the intent, the focus areas and the plan. This is the
+    // pre-call strategy the user built, so the plan must be shaped by it, not
+    // ignore it: the objections to be ready for, where we fit and do not, the
+    // questions to ask, and the outcome to drive toward.
+    const bc = profile.battlecard;
+    if (bc && typeof bc === "object") {
+      const list = (v: any): string[] =>
+        Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()) : [];
+      lines.push(
+        "",
+        "BATTLE PLAN FOR THIS CALL (the user's pre-call strategy - let it drive the intent, the focus areas and the plan, do not start from scratch):"
+      );
+      if (bc.oneLiner) lines.push(`Read: ${bc.oneLiner}`);
+      const strong = list(bc.fit?.strong);
+      const weak = list(bc.fit?.weak);
+      if (strong.length) lines.push(`Where we fit, lean in: ${strong.join("; ")}`);
+      if (weak.length)
+        lines.push(`Where we do NOT fit, do not oversell: ${weak.join("; ")}`);
+      const objs = Array.isArray(bc.objections) ? bc.objections : [];
+      if (objs.length) {
+        lines.push("Objections to be ready for, and the line to take:");
+        for (const o of objs.slice(0, 8)) {
+          if (o && o.objection)
+            lines.push(`- ${o.objection}${o.response ? ` -> ${o.response}` : ""}`);
+        }
+      }
+      const qs = list(bc.questionsToAsk);
+      if (qs.length) lines.push(`Questions to ask them: ${qs.slice(0, 6).join("; ")}`);
+      if (bc.nextStep) lines.push(`Outcome to drive toward: ${bc.nextStep}`);
     }
 
     const attrs = company.attributes || {};

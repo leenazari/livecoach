@@ -120,6 +120,36 @@ export async function gatherClientContext(companyId: string): Promise<string> {
       briefText ? `\n${briefText}` : " nothing recorded yet"
     }`
   );
+
+  // BATTLE PLAN, if one has been built - so the suggested intent and the
+  // assistant reason from the pre-call strategy (the objections, the fit, the
+  // questions, the outcome), instead of it being a separate unused artifact.
+  const bc = (profile as any).battlecard;
+  if (bc && typeof bc === "object") {
+    const arr = (v: any): string[] =>
+      Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()) : [];
+    const bl: string[] = [
+      "",
+      "BATTLE PLAN (the pre-call strategy already built for this client - weigh it when shaping the intent, focus and next steps):",
+    ];
+    if (bc.oneLiner) bl.push(`Read: ${bc.oneLiner}`);
+    const strong = arr(bc.fit?.strong);
+    const weak = arr(bc.fit?.weak);
+    if (strong.length) bl.push(`Where we fit: ${strong.join("; ")}`);
+    if (weak.length) bl.push(`Where we do not fit (do not oversell): ${weak.join("; ")}`);
+    const objs = Array.isArray(bc.objections) ? bc.objections : [];
+    if (objs.length) {
+      bl.push("Objections to be ready for:");
+      for (const o of objs.slice(0, 8)) {
+        if (o && o.objection)
+          bl.push(`- ${o.objection}${o.response ? ` -> ${o.response}` : ""}`);
+      }
+    }
+    const qs = arr(bc.questionsToAsk);
+    if (qs.length) bl.push(`Questions to ask: ${qs.slice(0, 6).join("; ")}`);
+    if (bc.nextStep) bl.push(`Outcome to drive toward: ${bc.nextStep}`);
+    lines.push(...bl);
+  }
   lines.push(
     `Recorded fields (budget, value, owner, priority, etc.): ${
       attrStr || "none set - no budget or deal value has been entered for this client"
