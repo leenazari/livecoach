@@ -460,6 +460,8 @@ export default function CallPage() {
   const backgroundRef = useRef("");
   // Guard so the first-meeting auto research + intent draft fires at most once.
   const autoHelpedRef = useRef(false);
+  // Guard so the battle plan is auto-applied to intent/questions/focus once.
+  const appliedBattlecardRef = useRef(false);
   const callTypeRef = useRef("general");
   const roleRef = useRef("");
   const personLabelRef = useRef("Them");
@@ -622,6 +624,56 @@ export default function CallPage() {
   }, [linkedCompany]);
   useEffect(() => {
     battlecardRef.current = battlecard;
+  }, [battlecard]);
+
+  // AUTO-APPLY THE BATTLE PLAN to the call. When a client with a battlecard is
+  // opened, the battle plan directly drives the call: its objective becomes the
+  // intent, its "questions to ask" become the opening question cards, and its
+  // fit themes seed the focus. Fires once, and only fills what is still blank,
+  // so a saved prep or anything typed always wins. This is what makes the battle
+  // plan actually run the call instead of just informing it in the background.
+  useEffect(() => {
+    const bc = battlecard;
+    if (!bc || appliedBattlecardRef.current) return;
+    appliedBattlecardRef.current = true;
+    const q = (v: any): string[] =>
+      Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()) : [];
+
+    // INTENT from the battle plan (the read + the outcome to drive toward).
+    const intentParts: string[] = [];
+    if (bc.oneLiner) intentParts.push(String(bc.oneLiner).trim());
+    const strong = q(bc.fit?.strong);
+    if (strong.length) intentParts.push(`Where we fit: ${strong.join(", ")}.`);
+    if (bc.nextStep)
+      intentParts.push(`What I want from this call: ${String(bc.nextStep).trim()}`);
+    const composedIntent = intentParts.join(" ").trim();
+    if (composedIntent) setBrief((prev) => (prev.trim() ? prev : composedIntent));
+
+    // OPENING QUESTIONS from the battle plan's "questions to ask" - verbatim.
+    const qs = q(bc.questionsToAsk).slice(0, 8);
+    if (qs.length) {
+      setSuggestions((prev) => {
+        if (prev.some((s) => s.kind === "opening")) return prev;
+        const cards = qs.map((text) => ({
+          id: ++suggestIdRef.current,
+          text,
+          why: "from your battle plan",
+          followup: "",
+          at: timeNow(),
+          pending: false,
+          kind: "opening" as const,
+          pinned: false,
+        }));
+        return [...prev, ...cards];
+      });
+    }
+
+    // FOCUS seeded from the fit areas to establish (the things worth covering).
+    if (strong.length) {
+      setSuggestedComps((prev) => (prev.length ? prev : strong.slice(0, 5)));
+      setSelectedComps((prev) => (prev.length ? prev : strong.slice(0, 5)));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [battlecard]);
 
   // Load the linked client's email summary onto the prep screen.

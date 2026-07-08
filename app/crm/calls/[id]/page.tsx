@@ -286,6 +286,11 @@ export default function CallDetailPage() {
           <Bullets title="Strengths" items={list(s.strengths)} tone="text-sage" />
           <Bullets title="Concerns" items={list(s.concerns)} tone="text-rust" />
           <Bullets
+            title="◈ Pain points they raised"
+            items={list(s.painPoints)}
+            tone="text-amber"
+          />
+          <Bullets
             title="→ Your next actions"
             items={list(s.myNextActions)}
             tone="text-amber"

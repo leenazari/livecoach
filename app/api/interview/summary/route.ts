@@ -233,6 +233,7 @@ Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
   "competencies": [{"name": "competency", "score": 3, "note": "one short line of evidence"}],
   "strengths": ["short bullet", "..."],
   "concerns": ["short bullet", "..."],
+  "painPoints": ["a specific problem, frustration, gap, cost or risk the OTHER party (the client / prospect, not the host) actually expressed - something that is not working for them, is slowing them down, or that they wish was better. Quote or paraphrase what they really said. These are gold for the pitch. 0 to 6 items, only genuine ones stated in the transcript, never invented."],
   "contributors": [{"name": "participant name", "impact": "helped", "note": "the part they played and how it bore on the outcome"}],
   "questionReview": [{"question": "short version of a key question asked", "answered": "yes", "note": "if not fully answered, say briefly how it was dodged or deflected"}],
   "myNextActions": ["a concrete thing the HOST (you / the person being coached) needs to DO after this call - an email to send, a person to speak to, a decision to make, a thing to prepare", "..."],
