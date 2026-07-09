@@ -4,6 +4,41 @@ export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 });
 
+// The newest Claude models (Opus 4.8, Sonnet 5, Fable 5, Mythos, and later)
+// DEPRECATED the `temperature` parameter and return a 400
+// ("`temperature` is deprecated for this model") if it is sent. Lots of routes
+// still pass temperature, which broke the brain the moment it moved onto Opus
+// 4.8. Rather than edit every call site, strip `temperature` centrally for those
+// models on both messages.create and messages.stream. Older models that still
+// accept it (Haiku 4.5, Sonnet 4.5/4.6) keep it, so cue/summary determinism is
+// unchanged. Extend TEMP_DEPRECATED if a new family also drops it.
+const TEMP_DEPRECATED =
+  /(opus-4-[89]|opus-[5-9]|sonnet-[5-9]|fable|mythos)/i;
+{
+  const m: any = (anthropic as any).messages;
+  const clean = (body: any) => {
+    if (
+      body &&
+      typeof body === "object" &&
+      "temperature" in body &&
+      typeof body.model === "string" &&
+      TEMP_DEPRECATED.test(body.model)
+    ) {
+      const { temperature, ...rest } = body;
+      return rest;
+    }
+    return body;
+  };
+  if (typeof m.create === "function") {
+    const origCreate = m.create.bind(m);
+    m.create = (body: any, opts?: any) => origCreate(clean(body), opts);
+  }
+  if (typeof m.stream === "function") {
+    const origStream = m.stream.bind(m);
+    m.stream = (body: any, opts?: any) => origStream(clean(body), opts);
+  }
+}
+
 // ---- Model selection ----
 // Each tier reads a Vercel env override, else a sensible default.
 //
