@@ -9,10 +9,15 @@ import { supabaseAdmin } from "@/lib/supabase";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 // calendar.events lets us read AND write events; userinfo.email is just to show
-// which account is connected.
+// which account is connected; gmail.readonly lets the app read the mail thread
+// with a contact so the brain can pull emails and build a client from them.
+// gmail.readonly is a RESTRICTED scope: it must be added to the Google Cloud
+// OAuth consent screen, and the user must re-connect Google in Settings once to
+// grant it (prompt=consent below forces the re-grant).
 const SCOPE = [
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/gmail.readonly",
 ].join(" ");
 
 export function googleConfigured(): boolean {
