@@ -339,6 +339,15 @@ export default function CompanyDetailPage() {
             </span>
           )}
           <Link
+            href={`/crm/log-call?company=${id}&companyName=${encodeURIComponent(
+              company.name
+            )}`}
+            title="Log a call you already had (no prep, no plan) - just record what happened and it lands in this client's history"
+            className="rounded-full border border-sage/60 bg-sage/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
+          >
+            ＋ log a call
+          </Link>
+          <Link
             href={`/crm/prep?company=${id}&companyName=${encodeURIComponent(
               company.name
             )}`}

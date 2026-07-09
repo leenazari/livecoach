@@ -2276,6 +2276,23 @@ export default function CallPage() {
     } finally {
       setSummarising(false);
       setSummaryLoadingMore(false);
+      // Auto-run the safety-net sweep the moment a call is finished, so a summary
+      // that failed to land (e.g. a long call that timed out) is rebuilt in
+      // seconds instead of waiting up to 15 min for the cron. It is idempotent:
+      // if the scorecard already saved, this is a no-op for this call and it just
+      // clears any older orphaned calls in the same pass. Small delay so the
+      // session-end stamp (ended_at + transcript) lands first. Fire-and-forget.
+      setTimeout(() => {
+        fetch("/api/interview/backfill-scorecards", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        })
+          .then(() => {
+            if (typeof window !== "undefined")
+              window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+          })
+          .catch(() => {});
+      }, 4000);
     }
   }, [candidate, manualRecap, recapText]);
 
