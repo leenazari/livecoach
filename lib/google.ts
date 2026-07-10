@@ -109,12 +109,13 @@ export async function getAccessToken(): Promise<string | null> {
   return access;
 }
 
-// List events on the primary calendar between two ISO times (single instances,
-// recurring expanded).
+// List events on ONE calendar between two ISO times (single instances, recurring
+// expanded). Defaults to the primary calendar.
 export async function listEvents(
   accessToken: string,
   timeMinIso: string,
-  timeMaxIso: string
+  timeMaxIso: string,
+  calendarId = "primary"
 ): Promise<any[]> {
   const p = new URLSearchParams({
     timeMin: timeMinIso,
@@ -124,12 +125,76 @@ export async function listEvents(
     maxResults: "250",
   });
   const res = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${p.toString()}`,
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
+      calendarId
+    )}/events?${p.toString()}`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
   if (!res.ok) throw new Error(`calendar list failed (${res.status})`);
   const d = await res.json();
   return Array.isArray(d.items) ? d.items : [];
+}
+
+// The calendars this account can see (its calendar list). Used to read events
+// across ALL of them, not just the primary, so a personal calendar shared into
+// the connected account (e.g. lee.nazari@gmail.com shared into lee@ai13.com)
+// flows in too.
+export async function listCalendars(accessToken: string): Promise<any[]> {
+  const res = await fetch(
+    "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250",
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!res.ok) throw new Error(`calendar list failed (${res.status})`);
+  const d = await res.json();
+  return Array.isArray(d.items) ? d.items : [];
+}
+
+// Events across EVERY calendar the account can see (owner / writer / reader),
+// skipping holiday / birthday / contacts noise calendars, deduped so a meeting
+// that appears on both the primary and a shared calendar is only counted once
+// (by iCalUID). Best-effort per calendar: one that can't be read is skipped.
+export async function listAllEvents(
+  accessToken: string,
+  timeMinIso: string,
+  timeMaxIso: string
+): Promise<any[]> {
+  let cals: any[] = [];
+  try {
+    cals = await listCalendars(accessToken);
+  } catch {
+    cals = [];
+  }
+  const NOISE = /#(holiday|contacts|weather|birthday)/i;
+  const eligible = cals.filter((c) => {
+    const id = String(c?.id || "");
+    if (!id || NOISE.test(id)) return false;
+    const role = String(c?.accessRole || "");
+    return role === "owner" || role === "writer" || role === "reader";
+  });
+  const ids = eligible.length ? eligible.map((c) => String(c.id)) : ["primary"];
+  if (!ids.includes("primary") && !eligible.some((c) => c?.primary))
+    ids.unshift("primary");
+
+  const all: any[] = [];
+  for (const id of ids) {
+    try {
+      const evs = await listEvents(accessToken, timeMinIso, timeMaxIso, id);
+      for (const e of evs) all.push(e);
+    } catch {
+      /* skip a calendar we can't read */
+    }
+  }
+  // Dedupe: the same meeting can sit on the primary (as an invitee) AND a shared
+  // calendar. Keep the first seen (primary is read first), keyed by iCalUID.
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const e of all) {
+    const key = String(e?.iCalUID || e?.id || "");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out;
 }
 
 // Any join link we recognise as a video meeting, across the providers other

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAccessToken, listEvents, meetingUrlOf, titleOf } from "@/lib/google";
+import { getAccessToken, listAllEvents, meetingUrlOf, titleOf } from "@/lib/google";
 import { supabaseAdmin } from "@/lib/supabase";
 import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 import {
@@ -73,7 +73,9 @@ export async function POST() {
     const now = Date.now();
     const timeMin = new Date(now - 3 * 60 * 60 * 1000).toISOString();
     const timeMax = new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString();
-    const events = await listEvents(access, timeMin, timeMax);
+    // Read EVERY calendar the account can see, not just the primary, so a
+    // personal calendar shared into the connected account is picked up too.
+    const events = await listAllEvents(access, timeMin, timeMax);
 
     type Row = {
       external_id: string;
