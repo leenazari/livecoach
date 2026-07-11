@@ -7,6 +7,7 @@ import {
   HOURLY_CEILING_GBP,
   type CostBreakdown,
 } from "@/lib/costs";
+import { getDeepgramToken, deepgramListenUrl } from "@/lib/deepgram";
 
 type Suggestion = {
   id: number;
@@ -272,22 +273,9 @@ export default function InterviewConsole() {
       streamRef.current = stream;
 
       setStatus("connecting…");
-      const key = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
-      if (!key) throw new Error("Missing NEXT_PUBLIC_DEEPGRAM_API_KEY");
+      const token = await getDeepgramToken();
 
-      const params = new URLSearchParams({
-        model: "nova-2",
-        smart_format: "true",
-        punctuate: "true",
-        interim_results: "true",
-        endpointing: "300",
-        language: "en",
-      });
-
-      const ws = new WebSocket(
-        `wss://api.deepgram.com/v1/listen?${params.toString()}`,
-        ["token", key]
-      );
+      const ws = new WebSocket(deepgramListenUrl(), ["bearer", token]);
       wsRef.current = ws;
 
       ws.onopen = () => {

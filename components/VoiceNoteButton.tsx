@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { getDeepgramToken, deepgramListenUrl } from "@/lib/deepgram";
 
 // Records the mic and streams it to Deepgram (same connection as CallStage),
 // calling onText with each finalised chunk - used to dictate the call brief.
@@ -40,28 +41,13 @@ export default function VoiceNoteButton({
 
   const start = async () => {
     setError("");
-    const key = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
-    if (!key) {
-      setError("missing Deepgram key");
-      return;
-    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const params = new URLSearchParams({
-        model: "nova-2",
-        smart_format: "true",
-        punctuate: "true",
-        interim_results: "true",
-        endpointing: "300",
-        language: "en",
-      });
+      const token = await getDeepgramToken();
 
-      const ws = new WebSocket(
-        `wss://api.deepgram.com/v1/listen?${params.toString()}`,
-        ["token", key]
-      );
+      const ws = new WebSocket(deepgramListenUrl(), ["bearer", token]);
       wsRef.current = ws;
 
       ws.onopen = () => {

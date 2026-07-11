@@ -8,6 +8,7 @@ import {
   type RemoteTrack,
   type Participant,
 } from "livekit-client";
+import { getDeepgramToken, deepgramListenUrl } from "@/lib/deepgram";
 
 type Props = {
   room: string;
@@ -106,24 +107,29 @@ export default function CallStage({
   );
 
   // Opens (or reopens) the Deepgram socket on the existing mic stream.
-  const openDeepgram = useCallback(() => {
+  const openDeepgram = useCallback(async () => {
     const stream = dgStreamRef.current;
-    const key = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY;
-    if (!stream || !key) return;
+    if (!stream) return;
 
-    const params = new URLSearchParams({
-      model: "nova-2",
-      smart_format: "true",
-      punctuate: "true",
-      interim_results: "true",
-      endpointing: "300",
-      language: "en",
-    });
+    // Fetch a fresh short-lived token for THIS connection (reconnect-safe).
+    let token: string;
+    try {
+      token = await getDeepgramToken();
+    } catch (e) {
+      console.error("Deepgram token error:", e);
+      // Retry shortly unless we're intentionally closing.
+      if (!dgClosingRef.current && dgStreamRef.current) {
+        if (dgReconnectRef.current) clearTimeout(dgReconnectRef.current);
+        dgReconnectRef.current = setTimeout(() => {
+          if (!dgClosingRef.current) openDeepgram();
+        }, 1000);
+      }
+      return;
+    }
+    // Aborted while the token request was in flight.
+    if (dgClosingRef.current || !dgStreamRef.current) return;
 
-    const ws = new WebSocket(
-      `wss://api.deepgram.com/v1/listen?${params.toString()}`,
-      ["token", key]
-    );
+    const ws = new WebSocket(deepgramListenUrl(), ["bearer", token]);
     dgWsRef.current = ws;
 
     ws.onopen = () => {
@@ -195,10 +201,6 @@ export default function CallStage({
 
   const startTranscription = useCallback(async () => {
     try {
-      if (!process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY) {
-        console.error("Missing NEXT_PUBLIC_DEEPGRAM_API_KEY");
-        return;
-      }
       dgClosingRef.current = false;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       dgStreamRef.current = stream;
