@@ -147,7 +147,7 @@ const sigTarget = (pa: any): string => {
   const b = pa?.body || {};
   return sigNorm(b.name || b.email || b.query || b.client || "");
 };
-export function actionSig(pa: any): { type: string; target: string; words: string[] } {
+function actionSig(pa: any): { type: string; target: string; words: string[] } {
   return { type: String(pa?.type || ""), target: sigTarget(pa), words: sigWords(pa?.label) };
 }
 function sigOverlap(a: string[], b: string[]): number {
@@ -158,7 +158,7 @@ function sigOverlap(a: string[], b: string[]): number {
   return n / Math.min(a.length, b.length);
 }
 // True if this action was effectively already proposed earlier in the thread.
-export function alreadyProposed(pa: any, prior: any[]): boolean {
+function alreadyProposed(pa: any, prior: any[]): boolean {
   const t = sigTarget(pa);
   const w = sigWords(pa?.label);
   const type = String(pa?.type || "");
