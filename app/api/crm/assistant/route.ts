@@ -120,6 +120,57 @@ function actionVerb(type: string): string {
     : "remove";
 }
 
+// --- ACTION MEMORY: stop the brain re-proposing what it already offered ---
+// The model cannot see its own past proposals (they are stripped from the saved
+// reply), so it re-lists the same actions every turn. We store a compact
+// signature of each proposed action on the message row and, next turn, drop any
+// new action that matches one already proposed in this thread. The match is
+// fuzzy (type + target + word overlap) so a reworded repeat is still caught.
+const SIG_STOP = new Set([
+  "the","a","an","and","or","for","to","of","in","on","that","this","with","record",
+  "call","note","correct","remember","add","focus","update","client","profile","set",
+  "link","them","their","from","into","have","has","been","also","just","now","who",
+  "his","her","one","two","day","take","over","around","still","worth","new",
+]);
+const sigNorm = (s: any) =>
+  String(s || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+const sigWords = (s: any): string[] =>
+  Array.from(
+    new Set(sigNorm(s).split(" ").filter((w) => w.length >= 4 && !SIG_STOP.has(w)))
+  );
+const sigTarget = (pa: any): string => {
+  const ep = String(pa?.endpoint || "");
+  let m = ep.match(/\/companies\/([^/]+)/);
+  if (m) return m[1];
+  m = ep.match(/\/upcoming\/([^/]+)/);
+  if (m) return m[1];
+  const b = pa?.body || {};
+  return sigNorm(b.name || b.email || b.query || b.client || "");
+};
+export function actionSig(pa: any): { type: string; target: string; words: string[] } {
+  return { type: String(pa?.type || ""), target: sigTarget(pa), words: sigWords(pa?.label) };
+}
+function sigOverlap(a: string[], b: string[]): number {
+  if (!a.length || !b.length) return 0;
+  const bs = new Set(b);
+  let n = 0;
+  for (const w of a) if (bs.has(w)) n++;
+  return n / Math.min(a.length, b.length);
+}
+// True if this action was effectively already proposed earlier in the thread.
+export function alreadyProposed(pa: any, prior: any[]): boolean {
+  const t = sigTarget(pa);
+  const w = sigWords(pa?.label);
+  const type = String(pa?.type || "");
+  return (prior || []).some((p) => {
+    if (!p || p.type !== type) return false;
+    const ov = sigOverlap(w, Array.isArray(p.words) ? p.words : []);
+    if (p.target && t && p.target === t && ov >= 0.34) return true; // same target, reworded
+    if (!p.target && !t && ov >= 0.5) return true; // targetless (e.g. remember)
+    return ov >= 0.7; // near-identical wording regardless
+  });
+}
+
 async function resolveActions(items: any[]): Promise<any[]> {
   const out: any[] = [];
   const callTypes = ["set_meeting_link", "set_intent", "add_intent", "link_call", "cancel_call"];
@@ -332,7 +383,7 @@ export async function POST(req: NextRequest) {
     // Recent thread for continuity. Global thread = rows with company_id null.
     let histQ = supabaseAdmin
       .from("assistant_messages")
-      .select("role, content")
+      .select("role, content, action_sigs")
       .order("created_at", { ascending: false })
       .limit(10);
     histQ = isGlobal
@@ -381,6 +432,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "client not found" }, { status: 404 });
     }
     const history = (histRes as any)?.data;
+    // Signatures of actions already proposed earlier in this thread, so we never
+    // re-offer the same one (the model can't see its own past proposals).
+    const priorSigs: any[] = [];
+    for (const m of (history || []) as any[]) {
+      if (Array.isArray(m?.action_sigs))
+        for (const s of m.action_sigs) if (s && s.type) priorSigs.push(s);
+    }
     const priorTurns: { role: "user" | "assistant"; content: string }[] = (
       history || []
     )
@@ -463,6 +521,8 @@ PREP NOTES GO INTO THE CALL: when the user says to add something to the plan or 
 EXPLICIT ASK = ACT NOW: when the user explicitly asks for one of these (create a profile, add to a plan, remember something, change or cancel a call, dismiss something), propose the action straight away in the SAME reply. Do not ask "want me to?" a second time when they have already told you to do it, and never claim it is already done. Emitting the action IS how you carry out their request. Only the destructive ones (cancel a call, dismiss a draft or to-do) and anything you are unsure about need a careful confirm. If you are not sure which call, client, draft or to-do they mean, ask them to clarify in your prose rather than guessing (the system also offers a pick-list when more than one record matches). Only include the actions the user actually asked for. Keep these markers out of your prose and still reply naturally.
 
 STATUS QUESTIONS ARE NOT ACTIONS: when the user is only asking what you have, what is already planned, or to confirm something is done (for example "have you got everything for Alain", "what's on the plan for that call", "did you add that"), answer in prose from the context and emit NO action. Never re-propose an action you already proposed earlier in the thread, or one whose change is already present in the context, because that makes the user re-confirm something already done, which is confusing. Only emit an action when the user is asking you to make a NEW change right now.
+
+CONFIRM MEANS DONE, NEVER ASK TWICE: the system automatically remembers every action you have proposed in this thread and silently drops any repeat, so you never need to re-list one to be safe. When the user says they confirmed it, pressed confirm, or that it is done, BELIEVE them: treat it as actioned, acknowledge in one short line, and move on. Do NOT re-emit that action, do NOT ask them to confirm it again, and do NOT keep offering the same one or two things in reply after reply. If everything you had to offer this thread is already proposed or done, say so plainly and stop, rather than repeating yourself.
 
 TONE: warm, sharp, brief. Plain English, like a smart colleague who knows the book of business well and respects your time.
 
@@ -601,6 +661,12 @@ ALWAYS end the spoken version with your closing question whenever your reply has
               const b = seg.lastIndexOf("]");
               const arr = a >= 0 && b > a ? JSON.parse(seg.slice(a, b + 1)) : [];
               proposedActions = await resolveActions(arr);
+              // Drop anything already proposed earlier in this thread, so the
+              // brain can never ask the user to confirm the same thing twice.
+              if (priorSigs.length)
+                proposedActions = proposedActions.filter(
+                  (pa) => !alreadyProposed(pa, priorSigs)
+                );
             } catch {
               /* ignore a malformed action block */
             }
@@ -646,6 +712,8 @@ ALWAYS end the spoken version with your closing question whenever your reply has
               company_id: isGlobal ? null : companyId,
               role: "assistant",
               content: reply,
+              // Remember what was proposed so it is never re-offered next turn.
+              action_sigs: proposedActions.map((pa) => actionSig(pa)),
             },
           ]);
 
