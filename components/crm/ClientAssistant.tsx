@@ -175,6 +175,7 @@ export default function ClientAssistant({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
+  const [flushing, setFlushing] = useState(false); // waiting for the mic tail
   // Read replies aloud by default - the brain talks back.
   const [readAloud, setReadAloud] = useState(true);
   // Hands-free conversation: it listens, replies aloud, then listens again.
@@ -194,6 +195,8 @@ export default function ClientAssistant({
   const lastSeedRef = useRef(""); // last initialPrompt auto-sent
   const convoRef = useRef(false); // mirror of convo for the stable callbacks
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushCapRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 3s cap
+  const flushingRef = useRef(false); // waiting for the transcriber to finish
   const inputElRef = useRef<HTMLTextAreaElement | null>(null);
   // Dictation transcript, kept so the box never shrinks or drops your last words.
   // committedRef holds the FINALISED transcript this session (only ever grows).
@@ -212,6 +215,16 @@ export default function ClientAssistant({
   const killMic = () => {
     suppressMicRef.current = true;
     sendOnStopRef.current = false;
+    flushingRef.current = false;
+    setFlushing(false);
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (flushCapRef.current) {
+      clearTimeout(flushCapRef.current);
+      flushCapRef.current = null;
+    }
     try {
       recRef.current?.abort?.() ?? recRef.current?.stop?.();
     } catch {
@@ -386,17 +399,26 @@ export default function ClientAssistant({
       (listening || recRef.current) &&
       !suppressMicRef.current
     ) {
+      // The phone's transcriber runs a beat behind the tap, so stopping straight
+      // away clips the last words. Instead KEEP the mic live and wait for the
+      // transcript to catch up: send once it has gone quiet for ~1.5s (the tail
+      // has landed), or after a 3s hard cap, whichever comes first. onresult
+      // keeps pushing the last words into the box during this window.
       sendOnStopRef.current = true;
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = null;
-      }
-      try {
-        recRef.current?.stop();
-      } catch {
-        /* ignore */
-      }
-      return; // onend fires send() with the flushed transcript
+      flushingRef.current = true;
+      setFlushing(true);
+      const stopAndFlush = () => {
+        try {
+          recRef.current?.stop();
+        } catch {
+          /* ignore */
+        }
+      };
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = setTimeout(stopAndFlush, 1500);
+      if (flushCapRef.current) clearTimeout(flushCapRef.current);
+      flushCapRef.current = setTimeout(stopAndFlush, 3000);
+      return; // a timer stops the mic -> onend sends the complete transcript
     }
     const t = (text ?? inputRef.current ?? input).trim();
     if (!t || busy) return;
@@ -567,8 +589,20 @@ export default function ClientAssistant({
       const text = merge(committedRef.current, interim).replace(/\s+/g, " ").trim();
       inputRef.current = text;
       setInput(text);
-      // Hands-free: when you pause for a moment, end the turn and send.
-      if (convoRef.current && text) {
+      if (flushingRef.current) {
+        // Post-Ask flush: the tail is still arriving. Keep pushing the settle
+        // timer back so we only stop ~1.5s after the LAST word lands (still
+        // capped at 3s total by flushCapRef), so nothing gets clipped.
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          try {
+            recRef.current?.stop();
+          } catch {
+            /* ignore */
+          }
+        }, 1500);
+      } else if (convoRef.current && text) {
+        // Hands-free: when you pause for a moment, end the turn and send.
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = setTimeout(() => {
           sendOnStopRef.current = true;
@@ -587,6 +621,12 @@ export default function ClientAssistant({
         clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = null;
       }
+      if (flushCapRef.current) {
+        clearTimeout(flushCapRef.current);
+        flushCapRef.current = null;
+      }
+      flushingRef.current = false;
+      setFlushing(false);
       // A send/kill already consumed this session - don't fire again.
       if (suppressMicRef.current) return;
       const t = inputRef.current.trim();
@@ -1027,10 +1067,10 @@ export default function ClientAssistant({
         <button
           type="button"
           onClick={() => send()}
-          disabled={busy || !input.trim()}
+          disabled={busy || flushing || !input.trim()}
           className="shrink-0 rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
         >
-          ask
+          {flushing ? "finishing…" : "ask"}
         </button>
       </div>
     </section>
