@@ -375,6 +375,29 @@ export default function ClientAssistant({
   );
 
   const send = async (text?: string) => {
+    // FLUSH THE MIC FIRST. If the user taps Ask while still dictating, don't grab
+    // the box as-is and abort - that clips the last few words (transcription lags
+    // the tap) and lets them leak into the next message. Instead STOP the
+    // recogniser so it emits its final result, and let onend re-call send() with
+    // the complete transcript. Only when nothing is live (or text is passed
+    // explicitly, e.g. from onend) do we actually send.
+    if (
+      text === undefined &&
+      (listening || recRef.current) &&
+      !suppressMicRef.current
+    ) {
+      sendOnStopRef.current = true;
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+      try {
+        recRef.current?.stop();
+      } catch {
+        /* ignore */
+      }
+      return; // onend fires send() with the flushed transcript
+    }
     const t = (text ?? inputRef.current ?? input).trim();
     if (!t || busy) return;
     // Silence any read-aloud still playing from the PREVIOUS reply the instant a
@@ -564,11 +587,22 @@ export default function ClientAssistant({
         clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = null;
       }
-      if (sendOnStopRef.current) {
+      // A send/kill already consumed this session - don't fire again.
+      if (suppressMicRef.current) return;
+      const t = inputRef.current.trim();
+      if (convoRef.current) {
+        // HANDS-FREE: the turn has ended - either you paused (our silence timer
+        // stopped it) OR the browser auto-stopped after a pause (common on
+        // mobile, where continuous mode still ends on its own). Either way, send
+        // what was heard, so hands-free is truly conversational with no Ask tap.
+        // An empty turn just keeps listening.
         sendOnStopRef.current = false;
-        const t = inputRef.current.trim();
         if (t) send(t);
-        else if (convoRef.current) startListening(); // empty turn, keep listening
+        else startListening();
+      } else if (sendOnStopRef.current) {
+        // Dictation: a deliberate stop (Ask or the mic button) flushes and sends.
+        sendOnStopRef.current = false;
+        if (t) send(t);
       }
     };
     rec.onerror = () => {
