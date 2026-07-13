@@ -333,10 +333,18 @@ export default function UpcomingCalls() {
                 <button
                   type="button"
                   onClick={() => openPrep(c)}
-                  title="Review past call summaries and get a fresh, suggested intent for this call before you go in."
-                  className="rounded-full border border-amber/60 bg-amber/15 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
+                  title={
+                    c.prepped
+                      ? "Prepped and ready. Tap to review the prep again."
+                      : "Review past call summaries and get a fresh, suggested intent for this call before you go in."
+                  }
+                  className={`rounded-full border px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider transition ${
+                    c.prepped
+                      ? "border-amber bg-amber text-ink hover:bg-amber/90"
+                      : "border-amber/60 bg-amber/15 text-amber hover:bg-amber/25"
+                  }`}
                 >
-                  prep ▸
+                  {c.prepped ? "prepped ✓" : "prep ▸"}
                 </button>
                 <button
                   type="button"

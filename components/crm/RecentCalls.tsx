@@ -11,7 +11,22 @@ type Call = {
   company_id: string | null;
   company: string | null;
   created_at: string;
+  scored?: boolean;
 };
+
+// A scored call opens its scorecard; a call that happened but was never
+// summarised opens the quick "log a call" recap for that client (with the
+// client pre-filled where we know it), so the gap can be closed in a tap.
+const hrefFor = (c: Call) =>
+  c.scored === false
+    ? `/crm/log-call${
+        c.company_id
+          ? `?company=${c.company_id}&companyName=${encodeURIComponent(
+              c.company || ""
+            )}`
+          : ""
+      }`
+    : `/crm/calls/${c.id}`;
 
 // Recent calls on the dashboard, so a call is never lost. Any call with no
 // client is tagged "Unassigned" with a one-click type-ahead picker to assign it
@@ -113,12 +128,15 @@ export default function RecentCalls() {
             key={c.id}
             className="flex flex-wrap items-center justify-between gap-2 py-2"
           >
-            <Link href={`/crm/calls/${c.id}`} className="min-w-0 flex-1">
+            <Link href={hrefFor(c)} className="min-w-0 flex-1">
               <span className="block truncate font-sans text-[0.86rem] text-bone">
                 {c.candidate || "Call"}
               </span>
               <span className="font-mono text-[0.53rem] uppercase tracking-wider text-muted">
                 {fmt(c.created_at)}
+                {c.scored === false && (
+                  <span className="ml-2 text-amber/80">not summarised · log it</span>
+                )}
               </span>
             </Link>
             {c.company_id ? (

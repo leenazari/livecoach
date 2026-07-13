@@ -10,10 +10,25 @@ type Call = {
   candidate: string | null;
   role: string | null;
   company: string | null;
+  company_id?: string | null;
   created_at: string;
   cost: number | string | null;
   ref: string | null;
+  scored?: boolean;
 };
+
+// Scored call -> its scorecard; a call that happened but was never summarised
+// -> the quick "log a call" recap for that client, so nothing is a dead end.
+const hrefFor = (c: Call) =>
+  c.scored === false
+    ? `/crm/log-call${
+        c.company_id
+          ? `?company=${c.company_id}&companyName=${encodeURIComponent(
+              c.company || ""
+            )}`
+          : ""
+      }`
+    : `/crm/calls/${c.id}`;
 
 export default function CallsPage() {
   // Seed from cache so a revisit shows the list instantly (no spinner blink).
@@ -125,16 +140,19 @@ export default function CallsPage() {
               </span>
               <span className="font-mono text-[0.62rem] text-muted">
                 {fmtDate(c.created_at)}
+                {c.scored === false && (
+                  <span className="ml-1.5 text-amber/80">· not summarised</span>
+                )}
               </span>
               <span className="text-right font-mono text-[0.66rem] text-sage">
-                {gbp(c.cost)}
+                {c.scored === false ? "—" : gbp(c.cost)}
               </span>
               <span className="text-right">
                 <Link
-                  href={`/crm/calls/${c.id}`}
+                  href={hrefFor(c)}
                   className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
                 >
-                  view ↗
+                  {c.scored === false ? "log ↗" : "view ↗"}
                 </Link>
               </span>
             </div>
