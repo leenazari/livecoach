@@ -462,6 +462,18 @@ export default function CallPage() {
   const autoHelpedRef = useRef(false);
   // Guard so the battle plan is auto-applied to intent/questions/focus once.
   const appliedBattlecardRef = useRef(false);
+  // Auto-suggest a fresh, concise intent when a call opens for a client, and
+  // remember once you have edited it so we never overwrite your own words.
+  const userEditedIntentRef = useRef(false);
+  const autoIntentDoneRef = useRef<string | null>(null);
+  const [intentSuggesting, setIntentSuggesting] = useState(false);
+  // Auto-prep: after the intent lands, build the focus + plan once. Refs let the
+  // intent effect (defined earlier) reach the current prep fn and plan stage.
+  const autoPreppedRef = useRef(false);
+  const planStageRef = useRef<"none" | "focus" | "full">("none");
+  const prepRef = useRef<
+    null | ((m: "focus" | "full" | "refocus") => Promise<void>)
+  >(null);
   const callTypeRef = useRef("general");
   const roleRef = useRef("");
   const personLabelRef = useRef("Them");
@@ -625,6 +637,62 @@ export default function CallPage() {
   useEffect(() => {
     battlecardRef.current = battlecard;
   }, [battlecard]);
+
+  // AUTO-FILL A FRESH INTENT ON OPEN. Whenever a call is opened for a client,
+  // ask the brain for a concise, up-to-date intent (built from the client's
+  // history, open loops, tasks and playbook) and drop it into the Intent box,
+  // replacing the old / boilerplate intent that loaded, so the intent is never
+  // stale. It only fills while you have NOT started editing it yourself, and
+  // fires once per client. New clients with no history are handled by the
+  // first-meeting draft in the preload (this call just 422s and leaves it).
+  useEffect(() => {
+    const id = linkedCompany?.id;
+    if (!id || autoIntentDoneRef.current === id) return;
+    autoIntentDoneRef.current = id;
+    userEditedIntentRef.current = false; // a fresh client = a fresh suggestion
+    setIntentSuggesting(true);
+    (async () => {
+      try {
+        const r = await fetch(`/api/crm/companies/${id}/prep-intent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ concise: true }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (
+          r.ok &&
+          typeof d.intent === "string" &&
+          d.intent.trim() &&
+          !userEditedIntentRef.current
+        ) {
+          setBrief(d.intent.trim());
+        }
+      } catch {
+        /* leave whatever intent loaded */
+      } finally {
+        setIntentSuggesting(false);
+        // AUTO-PREP ON OPEN: now the fresh intent is in, build the focus then the
+        // plan automatically, once, UNLESS a saved plan already loaded (stage off
+        // "none") or the call is live. The battle plan stays on demand. Re-opening
+        // loads the saved prep, so this never rebuilds or re-charges. Focus then
+        // full mirrors the manual two-step, done for you.
+        if (
+          !autoPreppedRef.current &&
+          prepHydratedRef.current &&
+          planStageRef.current === "none" &&
+          !callLiveRef.current &&
+          prepRef.current
+        ) {
+          autoPreppedRef.current = true;
+          const runPrep = prepRef.current;
+          runPrep("focus")
+            .then(() => runPrep("full"))
+            .catch(() => {});
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedCompany?.id]);
 
   // AUTO-APPLY THE BATTLE PLAN to the call. When a client with a battlecard is
   // opened, the battle plan directly drives the call: its objective becomes the
@@ -1814,6 +1882,14 @@ export default function CallPage() {
     },
     [loadContext, generatePlan]
   );
+  // Keep refs to the current plan stage + prep fn so the intent auto-fill effect
+  // (defined earlier) can kick off auto-prep once the fresh intent has landed.
+  useEffect(() => {
+    planStageRef.current = planStage;
+  }, [planStage]);
+  useEffect(() => {
+    prepRef.current = prep;
+  }, [prep]);
 
   const persistSession = useCallback(() => {
     // Fire-and-forget: record the call's intent server-side so a scorecard can
@@ -2305,6 +2381,7 @@ export default function CallPage() {
   }, [brief]);
 
   const appendBrief = useCallback((t: string) => {
+    userEditedIntentRef.current = true; // your voice note counts as your intent
     setBrief((prev) => (prev.trim() ? `${prev.trim()} ${t}` : t));
   }, []);
 
@@ -2963,6 +3040,11 @@ export default function CallPage() {
                 <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-bone">
                   Intent
                 </span>
+                {intentSuggesting && (
+                  <span className="font-mono text-[0.56rem] uppercase tracking-wider text-amber/80">
+                    updating…
+                  </span>
+                )}
                 <span className="ml-auto">
                   <VoiceNoteButton onText={appendBrief} />
                 </span>
@@ -2970,7 +3052,10 @@ export default function CallPage() {
               <textarea
                 ref={briefRef}
                 value={brief}
-                onChange={(e) => setBrief(e.target.value)}
+                onChange={(e) => {
+                  userEditedIntentRef.current = true;
+                  setBrief(e.target.value);
+                }}
                 rows={7}
                 placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
                 className="max-h-[40vh] min-h-[9rem] w-full resize-y overflow-y-auto rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"

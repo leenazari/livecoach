@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { anthropic, CLAUDE_MODEL_PRO, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 import { logModelUsage } from "@/lib/usage";
 import { gatherClientContext } from "@/lib/crm-context";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
@@ -17,11 +17,15 @@ export const maxDuration = 40;
 // what actually gets used, so the user reviews and edits before it drives a
 // call. Re-runnable.
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const companyId = params.id;
+    const body = await req.json().catch(() => ({}));
+    // Concise mode = a tight 1-2 sentence intent, used when the call screen
+    // auto-fills the intent box on open (vs the fuller Prep-tab suggestion).
+    const concise = (body as any)?.concise === true;
 
     const [{ data: company }, { data: summaryRows }, { data: taskRows }] =
       await Promise.all([
@@ -123,7 +127,11 @@ The intent is the single most important input to the call: it drives the focus, 
 
 Output ONLY JSON with exactly these keys:
 {
-  "intent": "the intent for the next call, first person, 2 to 5 sentences. What the host wants from THIS call and why now, anchored to the outstanding threads. Concrete, not generic.",
+  "intent": "the intent for the next call, first person, ${
+    concise
+      ? "1 to 2 short, tight sentences, nice and concise"
+      : "2 to 5 sentences"
+  }. What the host wants from THIS call and why now, anchored to the outstanding threads. Concrete, not generic.",
   "rationale": "one or two sentences naming what is still outstanding since the last call that shaped this intent, so the host can sanity-check it at a glance."
 }
 
@@ -185,15 +193,21 @@ Return the JSON now.`;
       try {
         const msg = await anthropic.messages.create(
           {
-            model: CLAUDE_MODEL_PRO,
-            max_tokens: 700,
+            // Concise = the auto-fill on call open (fires often), so use the fast
+            // cheap model. The fuller Prep-tab suggestion stays on the pro model.
+            model: concise ? CLAUDE_MODEL_LIVE : CLAUDE_MODEL_PRO,
+            max_tokens: concise ? 320 : 700,
             temperature: 0.4,
             system,
             messages: [{ role: "user", content: userMsg }],
           },
           { signal: controller.signal }
         );
-        await logModelUsage("prep-intent", "sonnet", (msg as any).usage);
+        await logModelUsage(
+          "prep-intent",
+          concise ? "haiku" : "sonnet",
+          (msg as any).usage
+        );
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
