@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
+// Live CRM data: without force-dynamic Next caches this GET response and
+// keeps serving a stale snapshot even after the database has changed (a
+// recovered call stayed invisible on the client page for exactly this reason).
+export const dynamic = "force-dynamic";
 
 // Per-client context store: notes, links, and extracted document text that
 // augment a client beyond its calls. Feeds the assistant and the next call's
