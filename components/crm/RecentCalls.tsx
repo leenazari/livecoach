@@ -5,6 +5,8 @@ import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 
+type CallState = "scored" | "summarising" | "failed" | "unrecorded";
+
 type Call = {
   id: string;
   candidate: string | null;
@@ -12,31 +14,47 @@ type Call = {
   company: string | null;
   created_at: string;
   scored?: boolean;
+  state?: CallState;
+  session_id?: string | null;
+  error?: string | null;
 };
 
-// A scored call opens its scorecard; a call that happened but was never
-// summarised opens the quick "log a call" recap for that client (with the
-// client pre-filled where we know it), so the gap can be closed in a tap.
-const hrefFor = (c: Call) =>
-  c.scored === false
-    ? `/crm/log-call${
-        c.company_id
-          ? `?company=${c.company_id}&companyName=${encodeURIComponent(
-              c.company || ""
-            )}`
-          : ""
-      }`
-    : `/crm/calls/${c.id}`;
+const stateOf = (c: Call): CallState =>
+  c.state || (c.scored === false ? "unrecorded" : "scored");
 
-// Recent calls on the dashboard, so a call is never lost. Any call with no
-// client is tagged "Unassigned" with a one-click type-ahead picker to assign it
-// to the right client whenever you get to it. Assigning links both the
-// scorecard and the call event (see /api/crm/calls/[id]/assign).
+// A scored call opens its scorecard. A call that happened but was never
+// recorded opens the quick "log a call" recap for that client (with the client
+// pre-filled where we know it). A captured call still summarising, or one whose
+// summary failed, has no scorecard page yet, so it stays put and shows its own
+// state and a retry instead of leading nowhere.
+const hrefFor = (c: Call): string | null => {
+  const s = stateOf(c);
+  if (s === "scored") return `/crm/calls/${c.id}`;
+  if (s === "unrecorded")
+    return `/crm/log-call${
+      c.company_id
+        ? `?company=${c.company_id}&companyName=${encodeURIComponent(
+            c.company || ""
+          )}`
+        : ""
+    }`;
+  return null;
+};
+
+// Recent calls on the dashboard, so a call is never lost.
+//
+// NOTHING IS INVISIBLE. Every captured call appears the moment it is recorded,
+// carrying its own state: summarising, summary failed (with a retry), or done.
+// A call with no client is tagged "unassigned" with a one-click type-ahead
+// picker to attach it to the right client whenever you get to it. Attaching
+// links the scorecard AND the call event, and works even before a summary
+// exists (see /api/crm/calls/[id]/assign).
 export default function RecentCalls() {
   const seed = getCached<{ calls: Call[] }>("/api/crm/calls")?.calls;
   const [calls, setCalls] = useState<Call[]>(() => (seed || []).slice(0, 8));
   const [loaded, setLoaded] = useState<boolean>(() => !!seed);
   const [assigningId, setAssigningId] = useState<string>("");
+  const [retrying, setRetrying] = useState<string>("");
 
   const load = () => {
     crmFetch<{ calls: Call[] }>("/api/crm/calls")
@@ -65,6 +83,14 @@ export default function RecentCalls() {
     };
   }, []);
 
+  // A call still summarising will finish on its own, so poll gently while any
+  // are in flight rather than making the user reload to find out.
+  useEffect(() => {
+    if (!calls.some((c) => stateOf(c) === "summarising")) return;
+    const t = setInterval(load, 20000);
+    return () => clearInterval(t);
+  }, [calls]);
+
   const assign = async (
     callId: string,
     c: { id: string; name: string } | null
@@ -79,13 +105,28 @@ export default function RecentCalls() {
       )
     );
     try {
-      await crmFetch(`/api/crm/calls/${callId}/assign`, {
+      await crmFetch(`/api/crm/calls/${encodeURIComponent(callId)}/assign`, {
         method: "POST",
         body: JSON.stringify({ companyId: c?.id || null }),
       });
     } catch {
       load(); // revert to truth if it failed
     }
+  };
+
+  const retry = async (c: Call) => {
+    if (!c.session_id) return;
+    setRetrying(c.id);
+    try {
+      await crmFetch("/api/interview/retry-summary", {
+        method: "POST",
+        body: JSON.stringify({ sessionId: c.session_id }),
+      });
+    } catch {
+      /* the sweep will keep trying either way */
+    }
+    setRetrying("");
+    load();
   };
 
   const fmt = (iso: string) => {
@@ -103,12 +144,18 @@ export default function RecentCalls() {
 
   if (loaded && calls.length === 0) return null;
   const unassigned = calls.filter((c) => !c.company_id).length;
+  const broken = calls.filter((c) => stateOf(c) === "failed").length;
 
   return (
     <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
       <div className="mb-2.5 flex items-center justify-between">
         <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
           {"☎"} Recent calls
+          {broken ? (
+            <span className="ml-2 rounded-full border border-rust/50 bg-rust/10 px-2 py-0.5 text-[0.5rem] text-rust">
+              {broken} need a retry
+            </span>
+          ) : null}
           {unassigned ? (
             <span className="ml-2 rounded-full border border-rust/50 bg-rust/10 px-2 py-0.5 text-[0.5rem] text-rust">
               {unassigned} unassigned
@@ -123,45 +170,75 @@ export default function RecentCalls() {
         </Link>
       </div>
       <ul className="flex flex-col divide-y divide-edge/50">
-        {calls.map((c) => (
-          <li
-            key={c.id}
-            className="flex flex-wrap items-center justify-between gap-2 py-2"
-          >
-            <Link href={hrefFor(c)} className="min-w-0 flex-1">
+        {calls.map((c) => {
+          const st = stateOf(c);
+          const href = hrefFor(c);
+          const label = (
+            <>
               <span className="block truncate font-sans text-[0.86rem] text-bone">
                 {c.candidate || "Call"}
               </span>
               <span className="font-mono text-[0.53rem] uppercase tracking-wider text-muted">
                 {fmt(c.created_at)}
-                {c.scored === false && (
-                  <span className="ml-2 text-amber/80">not summarised · log it</span>
+                {st === "summarising" && (
+                  <span className="ml-2 text-sky/80">summarising…</span>
+                )}
+                {st === "failed" && (
+                  <span className="ml-2 text-rust">summary failed</span>
+                )}
+                {st === "unrecorded" && (
+                  <span className="ml-2 text-amber/80">not recorded · log it</span>
                 )}
               </span>
-            </Link>
-            {c.company_id ? (
-              <Link
-                href={`/crm/${c.company_id}`}
-                className="shrink-0 rounded-full border border-sky/40 bg-sky/10 px-2.5 py-1 font-mono text-[0.56rem] text-sky transition hover:bg-sky/20"
-              >
-                {c.company || "client"}
-              </Link>
-            ) : assigningId === c.id ? (
-              <div className="shrink-0">
-                <CompanyLinkPicker value={null} onChange={(v) => assign(c.id, v)} />
+            </>
+          );
+          return (
+            <li
+              key={c.id}
+              className="flex flex-wrap items-center justify-between gap-2 py-2"
+            >
+              {href ? (
+                <Link href={href} className="min-w-0 flex-1">
+                  {label}
+                </Link>
+              ) : (
+                <div className="min-w-0 flex-1">{label}</div>
+              )}
+              <div className="flex shrink-0 items-center gap-1.5">
+                {st === "failed" && (
+                  <button
+                    type="button"
+                    onClick={() => retry(c)}
+                    disabled={retrying === c.id}
+                    className="rounded-full border border-amber/50 bg-amber/10 px-2.5 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-50"
+                    title={c.error || "rebuild this summary now"}
+                  >
+                    {retrying === c.id ? "retrying…" : "retry"}
+                  </button>
+                )}
+                {c.company_id ? (
+                  <Link
+                    href={`/crm/${c.company_id}`}
+                    className="rounded-full border border-sky/40 bg-sky/10 px-2.5 py-1 font-mono text-[0.56rem] text-sky transition hover:bg-sky/20"
+                  >
+                    {c.company || "client"}
+                  </Link>
+                ) : assigningId === c.id ? (
+                  <CompanyLinkPicker value={null} onChange={(v) => assign(c.id, v)} />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setAssigningId(c.id)}
+                    className="rounded-full border border-rust/50 bg-rust/10 px-2.5 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-rust transition hover:bg-rust/20"
+                    title="attach this call to a client"
+                  >
+                    unassigned · attach
+                  </button>
+                )}
               </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setAssigningId(c.id)}
-                className="shrink-0 rounded-full border border-rust/50 bg-rust/10 px-2.5 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-rust transition hover:bg-rust/20"
-                title="assign this call to a client"
-              >
-                unassigned · assign
-              </button>
-            )}
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

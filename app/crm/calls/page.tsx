@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
+import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
+
+type CallState = "scored" | "summarising" | "failed" | "unrecorded";
 
 type Call = {
   id: string;
@@ -15,20 +18,31 @@ type Call = {
   cost: number | string | null;
   ref: string | null;
   scored?: boolean;
+  state?: CallState;
+  session_id?: string | null;
+  error?: string | null;
 };
 
-// Scored call -> its scorecard; a call that happened but was never summarised
-// -> the quick "log a call" recap for that client, so nothing is a dead end.
-const hrefFor = (c: Call) =>
-  c.scored === false
-    ? `/crm/log-call${
-        c.company_id
-          ? `?company=${c.company_id}&companyName=${encodeURIComponent(
-              c.company || ""
-            )}`
-          : ""
-      }`
-    : `/crm/calls/${c.id}`;
+const stateOf = (c: Call): CallState =>
+  c.state || (c.scored === false ? "unrecorded" : "scored");
+
+// Scored call -> its scorecard. A call that happened but was never recorded ->
+// the quick "log a call" recap for that client. A captured call that is still
+// summarising, or whose summary failed, has no page yet, so it stays in the
+// list showing its state and a retry rather than leading nowhere.
+const hrefFor = (c: Call): string | null => {
+  const s = stateOf(c);
+  if (s === "scored") return `/crm/calls/${c.id}`;
+  if (s === "unrecorded")
+    return `/crm/log-call${
+      c.company_id
+        ? `?company=${c.company_id}&companyName=${encodeURIComponent(
+            c.company || ""
+          )}`
+        : ""
+    }`;
+  return null;
+};
 
 export default function CallsPage() {
   // Seed from cache so a revisit shows the list instantly (no spinner blink).
@@ -36,13 +50,62 @@ export default function CallsPage() {
   const [calls, setCalls] = useState<Call[]>(cached?.calls || []);
   const [loading, setLoading] = useState(!cached);
   const [q, setQ] = useState("");
+  const [assigningId, setAssigningId] = useState("");
+  const [retrying, setRetrying] = useState("");
 
-  useEffect(() => {
+  const load = () =>
     crmFetch<{ calls: Call[] }>("/api/crm/calls")
       .then((d) => setCalls(d.calls || []))
       .catch(() => {})
       .finally(() => setLoading(false));
+
+  useEffect(() => {
+    load();
   }, []);
+
+  // Poll gently while anything is still summarising so it fills in by itself.
+  useEffect(() => {
+    if (!calls.some((c) => stateOf(c) === "summarising")) return;
+    const t = setInterval(load, 20000);
+    return () => clearInterval(t);
+  }, [calls]);
+
+  const assign = async (
+    callId: string,
+    c: { id: string; name: string } | null
+  ) => {
+    setAssigningId("");
+    setCalls((prev) =>
+      prev.map((x) =>
+        x.id === callId
+          ? { ...x, company_id: c?.id || null, company: c?.name || null }
+          : x
+      )
+    );
+    try {
+      await crmFetch(`/api/crm/calls/${encodeURIComponent(callId)}/assign`, {
+        method: "POST",
+        body: JSON.stringify({ companyId: c?.id || null }),
+      });
+    } catch {
+      load();
+    }
+  };
+
+  const retry = async (c: Call) => {
+    if (!c.session_id) return;
+    setRetrying(c.id);
+    try {
+      await crmFetch("/api/interview/retry-summary", {
+        method: "POST",
+        body: JSON.stringify({ sessionId: c.session_id }),
+      });
+    } catch {
+      /* the sweep keeps trying either way */
+    }
+    setRetrying("");
+    load();
+  };
 
   const fmtDate = (iso: string) => {
     try {
@@ -76,6 +139,7 @@ export default function CallsPage() {
           (c.company || "").toLowerCase().includes(needle)
       )
     : calls;
+  const broken = calls.filter((c) => stateOf(c) === "failed").length;
 
   return (
     <main className="relative z-10 mx-auto max-w-[1000px] px-5 py-10">
@@ -94,6 +158,13 @@ export default function CallsPage() {
         </Link>
       </header>
 
+      {broken > 0 && (
+        <div className="mb-3 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] text-rust">
+          {broken} call{broken === 1 ? "" : "s"} captured but not summarised. The
+          transcript is safe, hit retry to rebuild the scorecard.
+        </div>
+      )}
+
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
@@ -109,7 +180,8 @@ export default function CallsPage() {
             No calls yet
           </p>
           <p className="mt-1.5 font-mono text-[0.62rem] leading-relaxed text-muted">
-            Calls appear here once you finish and summarise them.
+            Calls appear here as soon as they are captured, before the summary
+            has even finished.
           </p>
         </div>
       ) : (
@@ -122,41 +194,83 @@ export default function CallsPage() {
             <span className="text-right">Cost</span>
             <span className="text-right">View</span>
           </div>
-          {shown.map((c) => (
-            <div
-              key={c.id}
-              className="grid grid-cols-[1.4fr_1.2fr_1fr_0.6fr_auto] items-center gap-3 border-b border-edge/40 px-4 py-3 last:border-none hover:bg-bone/[0.03]"
-            >
-              <span className="truncate font-sans text-[0.84rem] text-bone">
-                {c.ref && (
-                  <span className="mr-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-muted">
-                    {c.ref}
-                  </span>
-                )}
-                {c.candidate || "Untitled call"}
-              </span>
-              <span className="truncate font-mono text-[0.66rem] text-sky">
-                {c.company || "—"}
-              </span>
-              <span className="font-mono text-[0.62rem] text-muted">
-                {fmtDate(c.created_at)}
-                {c.scored === false && (
-                  <span className="ml-1.5 text-amber/80">· not summarised</span>
-                )}
-              </span>
-              <span className="text-right font-mono text-[0.66rem] text-sage">
-                {c.scored === false ? "—" : gbp(c.cost)}
-              </span>
-              <span className="text-right">
-                <Link
-                  href={hrefFor(c)}
-                  className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
-                >
-                  {c.scored === false ? "log ↗" : "view ↗"}
-                </Link>
-              </span>
-            </div>
-          ))}
+          {shown.map((c) => {
+            const st = stateOf(c);
+            const href = hrefFor(c);
+            return (
+              <div
+                key={c.id}
+                className="grid grid-cols-[1.4fr_1.2fr_1fr_0.6fr_auto] items-center gap-3 border-b border-edge/40 px-4 py-3 last:border-none hover:bg-bone/[0.03]"
+              >
+                <span className="truncate font-sans text-[0.84rem] text-bone">
+                  {c.ref && (
+                    <span className="mr-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-muted">
+                      {c.ref}
+                    </span>
+                  )}
+                  {c.candidate || "Untitled call"}
+                </span>
+                <span className="truncate font-mono text-[0.66rem] text-sky">
+                  {c.company ? (
+                    c.company
+                  ) : assigningId === c.id ? (
+                    <CompanyLinkPicker
+                      value={null}
+                      onChange={(v) => assign(c.id, v)}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setAssigningId(c.id)}
+                      className="rounded-full border border-rust/50 bg-rust/10 px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider text-rust transition hover:bg-rust/20"
+                      title="attach this call to a client"
+                    >
+                      attach ▸
+                    </button>
+                  )}
+                </span>
+                <span className="font-mono text-[0.62rem] text-muted">
+                  {fmtDate(c.created_at)}
+                  {st === "summarising" && (
+                    <span className="ml-1.5 text-sky/80">· summarising…</span>
+                  )}
+                  {st === "failed" && (
+                    <span className="ml-1.5 text-rust">· summary failed</span>
+                  )}
+                  {st === "unrecorded" && (
+                    <span className="ml-1.5 text-amber/80">· not recorded</span>
+                  )}
+                </span>
+                <span className="text-right font-mono text-[0.66rem] text-sage">
+                  {st === "scored" ? gbp(c.cost) : "—"}
+                </span>
+                <span className="text-right">
+                  {st === "failed" ? (
+                    <button
+                      type="button"
+                      onClick={() => retry(c)}
+                      disabled={retrying === c.id}
+                      className="rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-50"
+                      title={c.error || "rebuild this summary now"}
+                    >
+                      {retrying === c.id ? "retrying…" : "retry ↻"}
+                    </button>
+                  ) : href ? (
+                    <Link
+                      href={href}
+                      className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+                    >
+                      {st === "unrecorded" ? "log ↗" : "view ↗"}
+                    </Link>
+                  ) : (
+                    <span className="font-mono text-[0.56rem] uppercase tracking-wider text-muted">
+                      working…
+                    </span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 
