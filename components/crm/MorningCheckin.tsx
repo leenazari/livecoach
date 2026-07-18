@@ -94,6 +94,35 @@ export default function MorningCheckin() {
     else setIdx((i) => i + 1);
   };
 
+  // SKIP = never ask me this again. Recorded server-side (not just for this
+  // render) so the coach cannot bring it back tomorrow in slightly different
+  // words. Fire and forget: the move to the next question never waits on it.
+  const skip = () => {
+    const q = current;
+    if (q) {
+      crmFetch("/api/crm/brain/interview", {
+        method: "POST",
+        body: JSON.stringify({ action: "skip", question: q }),
+      }).catch(() => {
+        /* worst case it gets asked once more */
+      });
+    }
+    next();
+  };
+
+  // NOT NOW = stop asking for the rest of today. Parked server-side against
+  // today's date in London, so it stays quiet across reloads and devices and
+  // comes back by itself tomorrow.
+  const notNow = () => {
+    setDismissed(true);
+    crmFetch("/api/crm/brain/interview", {
+      method: "POST",
+      body: JSON.stringify({ action: "snooze" }),
+    }).catch(() => {
+      /* it will simply reappear on the next load if this failed */
+    });
+  };
+
   // Send Lee's answer, get the coach's reaction: either ONE more follow-up, or a
   // brief acknowledgement (no confirm step - the answer is taken as final).
   const sendAnswer = async () => {
@@ -193,8 +222,8 @@ export default function MorningCheckin() {
         </p>
         <button
           type="button"
-          onClick={() => setDismissed(true)}
-          title="not now"
+          onClick={notNow}
+          title="not now - stop asking for the rest of today"
           className="font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-bone"
         >
           not now
@@ -252,7 +281,7 @@ export default function MorningCheckin() {
           </button>
           <button
             type="button"
-            onClick={next}
+            onClick={skip}
             className="ml-auto rounded-full border border-edge px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:text-bone"
           >
             skip
@@ -295,7 +324,7 @@ export default function MorningCheckin() {
             </button>
             <button
               type="button"
-              onClick={next}
+              onClick={skip}
               className="rounded-full border border-edge px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:text-bone"
             >
               skip

@@ -106,7 +106,22 @@ export async function crmFetch<T = any>(
   url: string,
   init?: RequestInit
 ): Promise<T> {
-  const res = await fetch(url, {
+  const method = (init?.method || "GET").toUpperCase();
+  // CACHE-BUST EVERY READ.
+  //
+  // `cache: "no-store"` and server-side force-dynamic were both still losing to
+  // something in front of the app: recovered calls kept showing as unsummarised,
+  // and a client page kept serving a call list from before the data changed,
+  // while the database was correct the whole time. A URL that has never been
+  // requested before cannot be served from ANY cache (browser, service worker,
+  // CDN or edge), so a unique parameter is the one thing that always wins.
+  //
+  // The cache KEY stays the clean url, so getCached(url) still seeds instantly.
+  const fetchUrl =
+    method === "GET"
+      ? `${url}${url.includes("?") ? "&" : "?"}_t=${Date.now()}`
+      : url;
+  const res = await fetch(fetchUrl, {
     // Never serve a CRM read from the browser's HTTP cache. A just-saved change
     // (assigning a call to a client, marking a call done) must be reflected on
     // the very next load, not after some cache TTL expires.
@@ -122,7 +137,7 @@ export async function crmFetch<T = any>(
     throw new Error("unexpected response from the server");
   }
   if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
-  const method = (init?.method || "GET").toUpperCase();
+  // Cache under the CLEAN url (not the cache-busted one) so getCached() hits.
   if (method === "GET") _getCache.set(url, data);
   return data as T;
 }

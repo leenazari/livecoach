@@ -61,6 +61,65 @@ function parseQuestions(blob: string): string[] {
     .filter((l) => l.length > 6);
 }
 
+// Today's date in Lee's own timezone, so "the rest of the day" means HIS day
+// rolling over at midnight in London, not at midnight UTC. Returns YYYY-MM-DD.
+function londonToday(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+// SKIPPED QUESTIONS ARE GONE FOR GOOD.
+//
+// The coach regenerates its questions from the curriculum, so the same gap
+// often comes back worded slightly differently. Matching on exact text alone
+// would let it re-ask something already dismissed, which is the annoying part.
+// So: normalised exact match first, then a salient-word overlap check that
+// recognises a reworded version of the same question.
+const Q_STOP = new Set([
+  "the","a","an","and","or","of","to","for","in","on","with","at","by","from",
+  "as","is","are","be","its","this","that","what","how","why","when","who",
+  "which","do","does","did","you","your","yours","we","our","us","i","me","my",
+  "it","if","can","could","would","should","will","have","has","had","about",
+  "right","now","most","much","many","more","there","their","them",
+]);
+function normQ(s: string): string {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function salientQ(s: string): string[] {
+  return normQ(s)
+    .split(" ")
+    .filter((w) => w.length > 2 && !Q_STOP.has(w));
+}
+function isSkipped(q: string, skipped: string[]): boolean {
+  const n = normQ(q);
+  if (!n) return false;
+  for (const s of skipped) {
+    const sn = normQ(s);
+    if (!sn) continue;
+    if (sn === n) return true;
+    const A = new Set(salientQ(q));
+    const B = new Set(salientQ(s));
+    if (A.size < 2 || B.size < 2) continue;
+    const small = A.size <= B.size ? A : B;
+    const big = A.size <= B.size ? B : A;
+    let hit = 0;
+    small.forEach((w) => {
+      if (big.has(w)) hit += 1;
+    });
+    // Most of the shorter question's meaningful words appear in the other one.
+    if (hit / small.size >= 0.7) return true;
+  }
+  return false;
+}
+
 type Turn = { role: "user" | "coach"; text: string };
 
 function convoText(question: string, turns: Turn[]): string {
@@ -76,9 +135,22 @@ export async function GET() {
   try {
     const { data } = await supabaseAdmin
       .from("workspace_profile")
-      .select("open_questions, curriculum")
+      .select("open_questions, curriculum, skipped_questions, checkin_snoozed_on")
       .eq("id", "main")
       .maybeSingle();
+
+    // "NOT NOW" MEANS NOT TODAY. Pressing it parks the whole check-in until
+    // tomorrow, so the dashboard stays quiet for the rest of the day instead of
+    // asking again on the next page load.
+    if (data?.checkin_snoozed_on && String(data.checkin_snoozed_on) === londonToday()) {
+      return NextResponse.json({ questions: [], snoozed: true });
+    }
+
+    const skipped: string[] = Array.isArray(data?.skipped_questions)
+      ? (data!.skipped_questions as any[]).filter(
+          (x) => typeof x === "string" && x.trim()
+        )
+      : [];
 
     let questions = parseQuestions(
       typeof data?.open_questions === "string" ? data.open_questions : ""
@@ -88,6 +160,8 @@ export async function GET() {
       const k = q.toLowerCase();
       if (seen.has(k)) return false;
       seen.add(k);
+      // Never re-ask something already skipped.
+      if (isSkipped(q, skipped)) return false;
       return true;
     });
 
@@ -132,7 +206,13 @@ You are running your daily interview to fill the gaps you most need to coach Lee
                 : g && typeof g.q === "string"
                 ? g.q
                 : "";
-            if (q.trim() && !seen.has(q.toLowerCase())) {
+            if (
+              q.trim() &&
+              !seen.has(q.toLowerCase()) &&
+              // A freshly generated question that is really one you already
+              // skipped (just reworded) must not sneak back in.
+              !isSkipped(q, skipped)
+            ) {
               questions.push(q.trim());
               seen.add(q.toLowerCase());
             }
@@ -318,7 +398,49 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const question = typeof body.question === "string" ? body.question.trim() : "";
-    const action = body.action === "save" ? "save" : body.action === "react" ? "react" : "";
+    const action =
+      body.action === "save"
+        ? "save"
+        : body.action === "react"
+        ? "react"
+        : body.action === "skip"
+        ? "skip"
+        : body.action === "snooze"
+        ? "snooze"
+        : "";
+
+    // SKIP = never ask me this again. Remembered server-side so it survives a
+    // reload, a different device, and the coach regenerating its question list.
+    if (action === "skip") {
+      if (!question) return NextResponse.json({ ok: true });
+      const { data } = await supabaseAdmin
+        .from("workspace_profile")
+        .select("skipped_questions")
+        .eq("id", "main")
+        .maybeSingle();
+      const existing: string[] = Array.isArray(data?.skipped_questions)
+        ? (data!.skipped_questions as any[]).filter(
+            (x) => typeof x === "string" && x.trim()
+          )
+        : [];
+      if (!isSkipped(question, existing)) existing.push(question);
+      await supabaseAdmin
+        .from("workspace_profile")
+        // Keep it bounded so this can never grow without limit.
+        .update({ skipped_questions: existing.slice(-300) })
+        .eq("id", "main");
+      return NextResponse.json({ ok: true, skipped: existing.length });
+    }
+
+    // NOT NOW = stop asking for the rest of today (Lee's day, London time).
+    if (action === "snooze") {
+      const today = londonToday();
+      await supabaseAdmin
+        .from("workspace_profile")
+        .update({ checkin_snoozed_on: today })
+        .eq("id", "main");
+      return NextResponse.json({ ok: true, snoozedOn: today });
+    }
 
     // Build the conversation turns. New clients send `turns`; the legacy
     // one-shot client sends a single `answer` and no action.
