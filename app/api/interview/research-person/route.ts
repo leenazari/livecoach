@@ -3,6 +3,12 @@ import { anthropic, CLAUDE_MODEL_THINK } from "@/lib/anthropic";
 import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
+import {
+  EntityResearch,
+  mirrorOntoUpcoming,
+  resolveContact,
+  savePersonResearch,
+} from "@/lib/research-cache";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -259,29 +265,47 @@ Research this person now and write the call-prep brief.`;
           topSources.map((s) => `- ${s.title}: ${s.url}`).join("\n")
         : "");
 
-    const research = {
-      person: person || null,
-      company: company || null,
-      linkedinUrl: linkedinUrl || null,
-      intent: intent || null,
-      background,
+    // Persist through the SHARED research cache, not straight onto the call.
+    //
+    // Two things this buys us. First, the brief lands on the CONTACT, so the
+    // next call with the same person reuses it instead of paying for the search
+    // again. Second, mirroring merges rather than replaces, so a company brief
+    // already on this call survives - the old code wrote the whole `research`
+    // object and silently threw the company research away.
+    const entity: EntityResearch = {
+      subject: person || "",
+      background: text,
       sources: topSources,
       generatedAt: new Date().toISOString(),
     };
 
+    try {
+      const contact = await resolveContact({
+        companyId: companyId || null,
+        name: person,
+        role,
+        create: true,
+      });
+      if (contact) await savePersonResearch(contact.id, entity);
+    } catch {
+      /* caching is a bonus, never fail the brief over it */
+    }
+
+    let merged = background;
     if (upcomingId) {
-      await supabaseAdmin
-        .from("upcoming_calls")
-        .update({ research })
-        .eq("id", upcomingId);
+      try {
+        merged = (await mirrorOntoUpcoming(upcomingId, null, entity)) || background;
+      } catch {
+        /* fall back to the person brief on its own */
+      }
     }
 
     return NextResponse.json({
-      background,
+      background: merged,
       sources: topSources,
       person: person || null,
       company: company || null,
-      research,
+      research: entity,
     });
   } catch (err: any) {
     return NextResponse.json(

@@ -77,13 +77,37 @@ async function companyHistoryBlock(
 
     const profile = (company.profile || {}) as any;
     if (profile && typeof profile === "object" && Object.keys(profile).length) {
-      // Render the battlecard as its own clean section below - keep it out of the
-      // raw dump so it is not a giant unusable JSON blob in the middle of things.
+      // Render the battlecard and the cached research as their own clean
+      // sections below - keep them out of the raw dump so they are not giant
+      // unusable JSON blobs in the middle of things.
       const p = Object.entries(profile)
-        .filter(([k]) => k !== "battlecard")
+        .filter(([k]) => k !== "battlecard" && k !== "research")
         .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
         .join("; ");
       if (p) lines.push(`What we know: ${p}`);
+    }
+
+    // CACHED COMPANY RESEARCH -> the open-web briefing the prep chain bought for
+    // this client. It is bought once per company and reused, so every plan and
+    // every live call reads the same grounded picture of who they are.
+    const research = (profile as any).research;
+    if (
+      research &&
+      typeof research === "object" &&
+      typeof research.background === "string" &&
+      research.background.trim()
+    ) {
+      const when =
+        typeof research.generatedAt === "string"
+          ? research.generatedAt.slice(0, 10)
+          : "";
+      lines.push(
+        "",
+        `RESEARCHED BACKGROUND on this organisation${
+          when ? ` (as at ${when})` : ""
+        } - grounded in the open web, use it, do not contradict it:`,
+        research.background.trim()
+      );
     }
 
     // BATTLE PLAN -> feed the intent, the focus areas and the plan. This is the

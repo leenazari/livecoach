@@ -179,10 +179,25 @@ Return the JSON now.`;
     }
 
     // Store profile.
+    //
+    // MERGE, NEVER REPLACE. This used to write { brief, playbook, updated } on
+    // its own, which silently destroyed every other key on the profile after a
+    // call: the battlecard, the `internal` flag that tells the planner this is
+    // your own team, and the cached company research the prep chain pays for.
+    // Spread the existing profile so only the two keys this pass owns change.
+    const existingProfile =
+      company.profile && typeof company.profile === "object"
+        ? (company.profile as any)
+        : {};
     await supabaseAdmin
       .from("companies")
       .update({
-        profile: { brief, playbook, updated: new Date().toISOString() },
+        profile: {
+          ...existingProfile,
+          brief,
+          playbook,
+          updated: new Date().toISOString(),
+        },
       })
       .eq("id", companyId);
 
