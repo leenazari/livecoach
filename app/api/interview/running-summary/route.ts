@@ -16,6 +16,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ context: [], signals: [], concerns: [] });
     }
 
+    // Clamp the transcript here as well as on the client. The call screen sends
+    // a trailing window, but this route is also reachable from anywhere else,
+    // and an unbounded transcript on a lane that fires every couple of turns is
+    // how this got expensive in the first place. previousBullets carries the
+    // earlier history, so a trailing window loses nothing.
+    const MAX_TRANSCRIPT_CHARS = 6000;
+    const recent = String(transcript).slice(-MAX_TRANSCRIPT_CHARS);
+
     const prev =
       previousBullets && typeof previousBullets === "object"
         ? previousBullets
@@ -60,8 +68,8 @@ ROLE / CONTEXT: ${role || "(not specified)"}
 CURRENT BULLETS:
 ${prevText}
 
-CONVERSATION SO FAR:
-${transcript}
+CONVERSATION SINCE THE LAST UPDATE (earlier history is already folded into the bullets above):
+${recent}
 
 Return the updated JSON bullets now.`;
 

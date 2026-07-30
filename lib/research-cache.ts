@@ -7,8 +7,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 // expensive part (Opus plus web search), so it must be bought ONCE PER ENTITY,
 // not once per meeting:
 //
-//   company research  -> companies.profile.research     (fresh for 90 days)
-//   person research   -> contacts.attributes.research   (fresh for 180 days)
+//   company research  -> companies.profile.research     (never expires)
+//   person research   -> contacts.attributes.research   (fresh for 90 days)
 //
 // Both are also mirrored onto the scheduled call as upcoming_calls.research,
 // with a single merged `background` string, because that is the exact shape the

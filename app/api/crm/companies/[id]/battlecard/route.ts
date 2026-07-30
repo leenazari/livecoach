@@ -8,6 +8,7 @@ import {
   getObjectionStancesBlock,
   getLessonsBlock,
 } from "@/lib/workspace";
+import { companyState } from "@/lib/research-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,6 +67,26 @@ export async function POST(
     const existing = (company.profile || {}) as any;
     const context = await gatherClientContext(companyId);
 
+    // THE COMPANY BRIEF IS ALREADY BOUGHT. Do not buy it twice.
+    //
+    // The prep chain researches each client company once and keeps the brief
+    // forever at companies.profile.research. This route used to ignore that and
+    // run its own Opus pass with five web searches on every click, paying full
+    // price for research already sitting on the record. Now the brief is folded
+    // straight into the prompt as grounding, and web search is only switched on
+    // when there is genuinely nothing on file.
+    const cached = companyState(company);
+    const useSearch = !cached.have;
+    const researchBlock = cached.have
+      ? `\n\nRESEARCH ALREADY ON FILE FOR THIS CLIENT, treat it as your open-web knowledge and do NOT go looking for it again:\n${cached.background}${
+          cached.sources.length
+            ? `\n\nSources behind that brief:\n${cached.sources
+                .map((s) => `- ${s.title || s.url}: ${s.url}`)
+                .join("\n")}`
+            : ""
+        }`
+      : "";
+
     const biz = await workspaceContextBlock();
     const stances = await getObjectionStancesBlock();
     const lessons = await getLessonsBlock([
@@ -76,7 +97,11 @@ export async function POST(
 
     const system = `${biz}${stances}${lessons}You are a world-class sales strategist preparing the user (described above) for a specific call with a client. Produce a grounded BATTLECARD: the plan for winning this call.
 
-Use the web_search tool to research the CLIENT organisation on the open web where it helps: their sector and how they hire or buy, any public positions relevant to the pitch (for example a published stance on fairness or AI), and any regulation that bears on the deal (for example, for hiring tools in New York, Local Law 144). Run a few focused searches. Do not rely on pages you cannot read.
+${
+      useSearch
+        ? `Use the web_search tool to research the CLIENT organisation on the open web where it helps: their sector and how they hire or buy, any public positions relevant to the pitch (for example a published stance on fairness or AI), and any regulation that bears on the deal (for example, for hiring tools in New York, Local Law 144). Run a few focused searches. Do not rely on pages you cannot read.`
+        : `A researched brief on the CLIENT organisation is supplied below. Work from it. You have NO web search on this call, so do not say you will look something up and do not invent facts that are not in the brief or the CRM context. If something you need is genuinely missing, say so plainly in the battlecard rather than guessing.`
+    }
 
 GROUNDING RULES, THESE MATTER:
 - The product truth comes ONLY from the user's brain and their objection stances above. Never claim a capability, an audit, a certification or a number that is not stated there. Where a stance says CONFIRM, do not invent an answer, put the honest "have this ready, do not wing it" note in that objection's haveReady field.
@@ -122,9 +147,13 @@ THE USER'S INTENT FOR THIS CALL:
 ${intent || "(not specified, infer a sensible objective from the context below)"}
 
 EVERYTHING THE CRM KNOWS ABOUT THIS CLIENT (profile, email thread, past calls, opportunities, notes):
-${context}
+${context}${researchBlock}
 
-Research the client where it helps, then return the battlecard JSON now.`;
+${
+      useSearch
+        ? "Research the client where it helps, then return the battlecard JSON now."
+        : "Return the battlecard JSON now, grounded in the brief and CRM context above."
+    }`;
 
     let msg: any;
     try {
@@ -132,11 +161,17 @@ Research the client where it helps, then return the battlecard JSON now.`;
         model: CLAUDE_MODEL_THINK,
         max_tokens: 3200,
         system,
-        // Server-side web search. Cast because installed SDK types may predate
-        // the tool, but the API resolves it in one call (same as research-person).
-        tools: [
-          { type: "web_search_20250305", name: "web_search", max_uses: 5 },
-        ] as any,
+        // Server-side web search, ONLY when there is no company brief on file.
+        // With a brief cached this is the single biggest saving in the app: the
+        // searches and the tokens they drag in are the expensive part.
+        // Cast because installed SDK types may predate the tool.
+        ...(useSearch
+          ? {
+              tools: [
+                { type: "web_search_20250305", name: "web_search", max_uses: 5 },
+              ] as any,
+            }
+          : {}),
         messages: [{ role: "user", content: userPrompt }],
       });
     } catch (e: any) {

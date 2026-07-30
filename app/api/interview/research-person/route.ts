@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_THINK } from "@/lib/anthropic";
+import {
+  anthropic,
+  CLAUDE_MODEL_PRO,
+  CLAUDE_MODEL_THINK,
+} from "@/lib/anthropic";
 import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
 import {
   EntityResearch,
   mirrorOntoUpcoming,
+  personState,
   resolveContact,
   savePersonResearch,
 } from "@/lib/research-cache";
@@ -125,6 +130,63 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // THE CACHE GATE. This route WRITES the person brief but never used to
+    // READ it, so the Research person button on the call screen re-bought a
+    // full identify pass plus brief even when the prep chain had briefed this
+    // exact contact minutes earlier. Same cache, same key, just never checked.
+    //
+    // Resolve the contact first and hand back what is on file when it is still
+    // fresh. create: false on purpose - looking someone up must not litter the
+    // CRM with contact rows, only an actual save does that.
+    const force = body.force === true;
+    const email =
+      (typeof body.email === "string" && body.email.trim()) ||
+      (row && typeof row.guest_email === "string" ? row.guest_email : "") ||
+      "";
+    const cachedContact = await resolveContact({
+      companyId,
+      name: person,
+      email,
+      role,
+      create: false,
+    });
+    const cached = cachedContact ? personState(cachedContact) : null;
+    const haveFresh = !force && !!cached && cached.have && cached.fresh;
+
+    if (haveFresh && cached) {
+      // Identify mode gets the confirmed identity we already paid for, so the
+      // wrong-person gate still shows something to eyeball, for free.
+      if (body.mode === "identify") {
+        const stored = (cachedContact.attributes || {}).research || {};
+        return NextResponse.json({
+          identity: stored.identity || {
+            found: true,
+            name: cached.subject || person,
+            headline: cachedContact.role || role || "",
+            org: company,
+            location: "",
+            confidence: "high",
+          },
+          cached: true,
+        });
+      }
+      if (upcomingId) {
+        await mirrorOntoUpcoming(upcomingId, null, {
+          subject: cached.subject,
+          background: cached.background,
+          sources: cached.sources,
+          generatedAt: cached.generatedAt || new Date().toISOString(),
+        } as EntityResearch).catch(() => {});
+      }
+      return NextResponse.json({
+        background: cached.background,
+        sources: cached.sources,
+        subject: cached.subject,
+        generatedAt: cached.generatedAt,
+        cached: true,
+      });
+    }
+
     const idBits = [
       person ? `Name: ${person}` : "",
       role ? `Role (as known): ${role}` : "",
@@ -139,8 +201,12 @@ export async function POST(req: NextRequest) {
     // confirm, so a wrong-person match never costs a full brief.
     if (body.mode === "identify") {
       const idSystem = `You are verifying WHO a person is before a deeper brief is written. Use the web_search tool to find the ONE real individual that matches the details below, using the company, role and any LinkedIn hint to disambiguate a common name. Return ONLY compact JSON and nothing else: {"found": true or false, "name": "...", "headline": "their main current role", "org": "their main organisation", "location": "city and country", "confidence": "high or medium or low"}. If you cannot confidently find them, return {"found": false}. House style: never use em dashes or semicolons.`;
+      // PRO, not THINK. This pass returns a five field JSON object saying which
+      // real person matches the details. That is disambiguation, not strategy,
+      // and Sonnet does it just as well as Opus for about 40 percent less. The
+      // brief itself below stays on Opus, where the thinking actually happens.
       const idMsg: any = await anthropic.messages.create({
-        model: CLAUDE_MODEL_THINK,
+        model: CLAUDE_MODEL_PRO,
         max_tokens: 400,
         system: idSystem,
         tools: [
@@ -153,7 +219,7 @@ export async function POST(req: NextRequest) {
           },
         ],
       });
-      await logModelUsage("research-person-id", "opus", idMsg?.usage);
+      await logModelUsage("research-person-id", "sonnet", idMsg?.usage);
       const idText = (Array.isArray(idMsg?.content) ? idMsg.content : [])
         .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
         .map((b: any) => b.text)

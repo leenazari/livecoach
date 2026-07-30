@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_THINK } from "@/lib/anthropic";
+import {
+  anthropic,
+  CLAUDE_MODEL_PRO,
+  CLAUDE_MODEL_THINK,
+} from "@/lib/anthropic";
 import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
@@ -278,8 +282,12 @@ Research this organisation now and write the briefing.`;
 
       const idSystem = `You are verifying WHO a person is before a deeper brief is written. Use the web_search tool to find the ONE real individual that matches the details below, using the company, role and any LinkedIn hint to disambiguate a common name. Return ONLY compact JSON and nothing else: {"found": true or false, "name": "...", "headline": "their main current role", "org": "their main organisation", "location": "city and country", "confidence": "high or medium or low"}. Use "high" ONLY when the company or role independently corroborates the match. If you cannot confidently find them, return {"found": false}. House style: never use em dashes or semicolons.`;
 
+      // PRO, not THINK. Deciding which real person matches a name, a company
+      // and a role is disambiguation, not strategy, and it returns five short
+      // JSON fields. Sonnet does it as well as Opus for about 40 percent less.
+      // The brief below stays on Opus, where the thinking actually happens.
       const idMsg: any = await anthropic.messages.create({
-        model: CLAUDE_MODEL_THINK,
+        model: CLAUDE_MODEL_PRO,
         max_tokens: 400,
         system: idSystem,
         tools: [
@@ -292,7 +300,7 @@ Research this organisation now and write the briefing.`;
           },
         ],
       });
-      await logModelUsage("research-person-id", "opus", idMsg?.usage);
+      await logModelUsage("research-person-id", "sonnet", idMsg?.usage);
 
       const identity = parseJsonish(
         textOf(Array.isArray(idMsg?.content) ? idMsg.content : [])

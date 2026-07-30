@@ -420,11 +420,15 @@ function PrepInner() {
         planStage: opts.stage,
         savedAt: new Date().toISOString(),
       };
+      // NO .catch here on purpose. crmFetch throws on a non-OK response, and
+      // swallowing that meant a failed save still reported "saved to this
+      // call" while the plan you just paid for quietly vanished. Let it throw
+      // so the caller can mark the step failed and you know to press again.
       await crmFetch(`/api/crm/upcoming/${upcomingId}`, {
         method: "PATCH",
         // Saving marks the call prepped, so the Upcoming list shows it solid.
         body: JSON.stringify({ prep: snapshot, prepped: opts.stage === "full" }),
-      }).catch(() => {});
+      });
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     },
     [upcomingId, subject]
@@ -701,7 +705,11 @@ function PrepInner() {
         // Save the focus stage against the call so leaving the page does not
         // lose it. The call screen reloads planStage "focus" happily.
         if (upcomingId && focus.length) {
-          await saveSnapshot({ focus, stage: "focus" });
+          // A failed focus save is not worth stopping the chain over, the focus
+          // is still on screen and the plan will save it again. Just say so.
+          await saveSnapshot({ focus, stage: "focus" }).catch(() => {
+            setStep("focus", "done", `${focus.length} focus areas, not saved`);
+          });
         }
         setChainDone(true);
       } catch (e: any) {
@@ -792,20 +800,27 @@ function PrepInner() {
       setBuiltGoals(goals);
       setStage("full");
 
-      await saveSnapshot({
-        focus,
-        stage: "full",
-        plan: data,
-        questions,
-        goals,
-      });
+      // The plan is only "saved to this call" if the save actually landed. A
+      // throw here drops into the catch below and marks the step failed, so a
+      // silent PATCH failure can never be reported as a successful save.
+      let saved = false;
+      if (upcomingId) {
+        await saveSnapshot({
+          focus,
+          stage: "full",
+          plan: data,
+          questions,
+          goals,
+        });
+        saved = true;
+      }
 
       setStep(
         "plan",
         "done",
         data.degraded === true
           ? "generic, sharpen the intent and rebuild"
-          : upcomingId
+          : saved
           ? "saved to this call"
           : "built"
       );

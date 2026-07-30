@@ -1385,7 +1385,15 @@ export default function CallPage() {
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
-          transcript: labelled,
+          // A TRAILING WINDOW, not the whole call. This fires every couple of
+          // candidate turns, so sending the full transcript each time made the
+          // cost of this lane grow with the SQUARE of call length: a two hour
+          // call paid roughly four times what it should. The bullets we send
+          // as previousBullets already carry everything said earlier, so the
+          // model only needs the recent exchange to fold in what is new.
+          // Wider than the cue lane's 2400 because this one runs less often
+          // and has to catch a whole exchange, not just the last answer.
+          transcript: labelled.slice(-4000),
           previousBullets: bulletsRef.current,
           focusAreas: suggestedCompsRef.current,
           role: roleRef.current || null,
