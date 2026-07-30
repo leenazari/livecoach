@@ -477,6 +477,12 @@ export default function CallPage() {
   const callTypeRef = useRef("general");
   const roleRef = useRef("");
   const personLabelRef = useRef("Them");
+
+  // YOUR NOTES, typed while the call is running. The ref shadows the state so
+  // the end-of-call request reads the latest text without waiting on a render.
+  const [notes, setNotes] = useState("");
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesRef = useRef("");
   const candidateRef = useRef("");
   const selectedCompsRef = useRef<string[]>([]);
   const suggestedCompsRef = useRef<string[]>([]);
@@ -2276,6 +2282,10 @@ export default function CallPage() {
           // Lets the server fall back to a duration-based cost if the meter
           // reported nothing (e.g. a Meet call where the in-app meter never ran).
           source: sourceRef.current,
+          // Whatever you typed in the notes pane during the call. Sent WITH the
+          // scorecard because the scorecard row does not exist until this
+          // request creates it, so a mid-call save has nothing to attach to.
+          userNotes: notesRef.current || "",
         }),
       });
       const data = await res.json();
@@ -3859,6 +3869,20 @@ export default function CallPage() {
           >
             {"⚡"} cue me
           </button>
+          {/* Collapsed by default so it never competes with the transcript for
+              attention. A dot shows when there is something in it. */}
+          <button
+            type="button"
+            onClick={() => setNotesOpen((v) => !v)}
+            title="Jot something down. It goes into the scorecard and your daily digest."
+            className={`shrink-0 rounded-full border px-3 py-1.5 font-mono text-[0.55rem] uppercase tracking-wider transition ${
+              notesOpen || notes.trim()
+                ? "border-sky/60 bg-sky/15 text-sky hover:bg-sky/25"
+                : "border-edge text-muted hover:border-sky/50 hover:text-sky"
+            }`}
+          >
+            {"✎"} notes{notes.trim() ? " •" : ""}
+          </button>
           {/* Cue pacing - dial each lane independently: fast 9s / med 30s / slow 60s. */}
           <div className="flex shrink-0 items-center gap-1">
             <span className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">
@@ -3930,6 +3954,29 @@ export default function CallPage() {
                   )
                 : 0
             }
+          />
+        </div>
+      )}
+
+      {notesOpen && (
+        <div className="mb-3 rounded-2xl border border-sky/40 bg-panel/60 px-4 py-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="font-mono text-[0.58rem] uppercase tracking-[0.16em] text-sky">
+              your notes
+            </span>
+            <span className="font-mono text-[0.52rem] text-muted">
+              saved with the scorecard when the call ends
+            </span>
+          </div>
+          <textarea
+            value={notes}
+            onChange={(e) => {
+              setNotes(e.target.value);
+              notesRef.current = e.target.value;
+            }}
+            rows={3}
+            placeholder="What you actually think. Goes into the scorecard and your daily digest."
+            className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-sky/60"
           />
         </div>
       )}

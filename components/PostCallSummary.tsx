@@ -26,6 +26,10 @@ type Summary = {
   // missing. Never assume it is there.
   actions?: { owner: string; text: string }[];
   userNotes?: string;
+  // Who "you" is on this call. Stamped by the summary route from the connected
+  // Google account, because the transcript's role flag cannot be trusted - the
+  // same person shows up as host on some calls and guest on others.
+  hostName?: string;
   notCovered: string[];
   styleProfile: string;
 };
@@ -791,7 +795,10 @@ export default function PostCallSummary({
 
           {view.actions && view.actions.length > 0 ? (
             <div className="space-y-3">
-              <OwnerActions actions={view.actions} hostName={hostName} />
+              <OwnerActions
+                actions={view.actions}
+                hostName={view.hostName || hostName}
+              />
               {/* Suggested actions are the AI's idea, not something anyone
                   committed to on the call, so they stay separate from the
                   owner list rather than being attributed to a person. */}

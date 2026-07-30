@@ -400,6 +400,11 @@ Return the JSON assessment now.`;
       const host = await loadHostIdentity();
       const map = buildSpeakerMap(labels, host.name);
 
+      // Stamp who "you" is onto the scorecard itself, so the summary screen can
+      // mark your own actions without a second round trip, and so a scorecard
+      // read months later still knows who the host was.
+      if (host.name) summary.hostName = host.name;
+
       summary.actions = summary.actions
         .filter(
           (a: any) => a && typeof a.text === "string" && a.text.trim()
