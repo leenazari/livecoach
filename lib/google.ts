@@ -14,10 +14,17 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 // gmail.readonly is a RESTRICTED scope: it must be added to the Google Cloud
 // OAuth consent screen, and the user must re-connect Google in Settings once to
 // grant it (prompt=consent below forces the re-grant).
+// gmail.send lets the app send mail AS you, which is how the daily digest
+// lands in your own inbox and shows up in your Sent folder. It is a separate
+// scope from gmail.readonly and, like it, must be added to the Google Cloud
+// OAuth consent screen. After adding it you MUST reconnect Google in Settings
+// once, or sending 403s while reading keeps working, which looks like the
+// digest silently doing nothing.
 const SCOPE = [
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.send",
 ].join(" ");
 
 export function googleConfigured(): boolean {

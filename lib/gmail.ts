@@ -126,3 +126,116 @@ export function nameFromHeader(h: string): string {
   }
   return "";
 }
+
+// ---------------------------------------------------------------------------
+// SENDING
+// ---------------------------------------------------------------------------
+
+// Send an email AS the connected Google account. Needs the gmail.send scope
+// (see SCOPE in lib/google.ts), which is separate from gmail.readonly - if you
+// added the scope but did not reconnect Google in Settings, the stored token
+// still lacks it and this returns a 403 rather than throwing.
+//
+// Returns { ok } plus a plain-English reason when it could not send, so the
+// caller can log something useful instead of a silent failure.
+export async function sendMail(opts: {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const token = await getAccessToken();
+  if (!token) {
+    return { ok: false, error: "Google is not connected, connect it in Settings" };
+  }
+
+  const to = String(opts.to || "").trim();
+  if (!to) return { ok: false, error: "no recipient" };
+
+  // RFC 2822. The subject is base64 encoded so non-ASCII (curly quotes, names
+  // with accents) survives instead of arriving as mojibake.
+  const subject = `=?UTF-8?B?${Buffer.from(
+    String(opts.subject || "").slice(0, 200),
+    "utf8"
+  ).toString("base64")}?=`;
+
+  const boundary = "lc_boundary_a7f3d2";
+  const raw = [
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "",
+    opts.text || stripHtml(opts.html),
+    "",
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "",
+    opts.html,
+    "",
+    `--${boundary}--`,
+  ].join("\r\n");
+
+  // Gmail wants base64url, not plain base64.
+  const encoded = Buffer.from(raw, "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  try {
+    const res = await fetch(`${GMAIL}/messages/send`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ raw: encoded }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      if (res.status === 403) {
+        return {
+          ok: false,
+          error:
+            "Gmail refused the send. The gmail.send scope is missing, reconnect Google in Settings.",
+        };
+      }
+      return { ok: false, error: `Gmail said ${res.status}: ${body.slice(0, 200)}` };
+    }
+    const data = await res.json().catch(() => ({}));
+    return { ok: true, id: data?.id };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || "send failed" };
+  }
+}
+
+// A readable plain-text fallback for mail clients that will not render HTML.
+function stripHtml(html: string): string {
+  return String(html || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<li[^>]*>/gi, "  - ")
+    .replace(/<\/(p|div|h1|h2|h3|tr|li)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// The address the digest goes to: whoever connected Google.
+export async function connectedEmail(): Promise<string> {
+  const { supabaseAdmin } = await import("@/lib/supabase");
+  const { data } = await supabaseAdmin
+    .from("google_oauth")
+    .select("email")
+    .eq("id", "main")
+    .maybeSingle();
+  return typeof data?.email === "string" ? data.email : "";
+}
