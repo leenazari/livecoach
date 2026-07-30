@@ -222,9 +222,13 @@ function PrepInner() {
   >([]);
   const [builtGoals, setBuiltGoals] = useState<string[]>([]);
   const [openBriefs, setOpenBriefs] = useState(false);
-  // How far prep has got. The chain takes you to "focus" and stops. "full"
-  // only happens once you have looked at the focus and pressed Build the plan.
-  const [stage, setStage] = useState<"none" | "focus" | "full">("none");
+  // How far prep has got. The chain takes you to "intent" and stops. "focus"
+  // needs you to press Build the focus, "full" needs Build the plan. Each gate
+  // is there because the next stage is built FROM the one before it, so
+  // running ahead of your approval means paying for the same step twice.
+  const [stage, setStage] = useState<
+    "none" | "intent" | "focus" | "full"
+  >("none");
 
   // Live values the chain reads and writes as it walks the steps. Refs, not
   // state, so each step sees what the step before it produced without waiting
@@ -299,6 +303,46 @@ function PrepInner() {
         setIntent((prev) => (prev.trim() ? prev : existingIntent));
         intentRef.current = existingIntent;
       }
+      // RESUME WHERE YOU LEFT OFF. Anything already built and saved against
+      // this call is restored, not rebuilt: reopening the screen must never
+      // re-spend on work you have already paid for. Pressing on then only does
+      // the steps that are genuinely still missing.
+      const saved = (d.call && d.call.prep) || null;
+      const savedFocus: string[] = Array.isArray(saved?.selectedComps)
+        ? saved.selectedComps.filter((x: any) => typeof x === "string" && x.trim())
+        : [];
+      const savedStage: string =
+        typeof saved?.planStage === "string" ? saved.planStage : "";
+
+      if (savedFocus.length) {
+        focusRef.current = savedFocus;
+        setBuiltFocus(savedFocus);
+      }
+      if (savedStage === "full") {
+        setBuiltQuestions(
+          Array.isArray(saved.openingQuestions)
+            ? saved.openingQuestions
+                .map((q: any) => ({
+                  text: typeof q === "string" ? q : q?.text || q?.q || "",
+                  why: typeof q === "string" ? "" : q?.why || "",
+                }))
+                .filter((q: any) => q.text)
+            : []
+        );
+        setBuiltGoals(
+          Array.isArray(saved.goals)
+            ? saved.goals
+                .map((g: any) => (typeof g === "string" ? g : g?.text || ""))
+                .filter(Boolean)
+            : []
+        );
+        setStage("full");
+      } else if (savedFocus.length) {
+        setStage("focus");
+      } else if (existingIntent) {
+        setStage("intent");
+      }
+
       // Pre-tick anything already on file so the checklist is honest before you
       // press anything.
       setSteps((prev) =>
@@ -325,6 +369,14 @@ function PrepInner() {
               status: "done" as StepStatus,
               note: "already set, yours is kept",
             };
+          if (s.key === "focus" && savedFocus.length)
+            return {
+              ...s,
+              status: "done" as StepStatus,
+              note: `${savedFocus.length} focus areas, saved`,
+            };
+          if (s.key === "plan" && savedStage === "full")
+            return { ...s, status: "done" as StepStatus, note: "saved to this call" };
           return s;
         })
       );
@@ -646,70 +698,16 @@ function PrepInner() {
           }
         }
 
-        // The plan is only as good as what it reads, so assemble the context
-        // AFTER the research has landed.
-        await buildKnowledge();
-
-        // 4. FOCUS ---------------------------------------------------------
-        setStep("focus", "running", "finding what matters on this call");
-        const fRes = await fetch("/api/interview/plan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            brief: intentRef.current || null,
-            role: s?.role || null,
-            companyId: companyId || null,
-            focusOnly: true,
-            focusAreas: [],
-            subjectName: person || null,
-            knowledgeContext: knowledgeRef.current,
-          }),
-        });
-        const fBody = await fRes.text();
-        let fData: any = {};
-        try {
-          fData = fBody ? JSON.parse(fBody) : {};
-        } catch {
-          throw new Error("the planner ran long, hit Prep again");
-        }
-        if (!fRes.ok) throw new Error(fData.error || "could not build the focus");
-        const focus: string[] = Array.isArray(fData.focusAreas)
-          ? fData.focusAreas.filter(
-              (x: any) => typeof x === "string" && x.trim()
-            )
-          : [];
-        focusRef.current = focus;
-        setBuiltFocus(focus);
-        setStage(focus.length ? "focus" : "none");
-        setStep(
-          "focus",
-          focus.length ? "done" : "failed",
-          focus.length
-            ? `${focus.length} focus areas, yours to rank`
-            : "nothing came back"
-        );
-
-        // 5. PLAN is NOT run here, on purpose.
+        // 4. FOCUS is NOT run here, on purpose.
         //
-        // The chain stops at focus and hands back to you. The plan is built
-        // AROUND the focus list, so a focus you have not looked at produces a
-        // plan aimed at the wrong things, and rebuilding it after you edit the
-        // focus costs another pass. Rank it, delete what does not belong, then
-        // press Build the plan.
-        setStep(
-          "plan",
-          "pending",
-          focus.length ? "rank the focus, then build" : ""
-        );
-
-        // Save the focus stage against the call so leaving the page does not
-        // lose it. The call screen reloads planStage "focus" happily.
-        if (upcomingId && focus.length) {
-          // A failed focus save is not worth stopping the chain over, the focus
-          // is still on screen and the plan will save it again. Just say so.
-          await saveSnapshot({ focus, stage: "focus" }).catch(() => {
-            setStep("focus", "done", `${focus.length} focus areas, not saved`);
-          });
+        // The chain stops at the intent. The focus is built FROM the intent,
+        // and the drafted intent is often not quite right, so building the
+        // focus in the same press meant reading a focus aimed at the wrong
+        // objective, fixing the intent, and paying for the focus twice. Read
+        // the intent, fix it if it is off, then press Build the focus.
+        if (!focusRef.current.length) {
+          setStep("focus", "pending", "check the intent first");
+          setStage("intent");
         }
         setChainDone(true);
       } catch (e: any) {
@@ -740,14 +738,90 @@ function PrepInner() {
     ]
   );
 
+  // Pressing the top button runs research and the intent. It deliberately does
+  // NOT clear a focus or plan already saved against this call: reopening the
+  // screen and pressing on should finish what is missing, not throw away work
+  // you have already paid for. Rebuilding the focus is its own button.
   const startChain = () => {
-    setSteps(freshSteps());
-    setBuiltFocus([]);
-    setBuiltQuestions([]);
-    setBuiltGoals([]);
-    setStage("none");
+    setSteps((prev) =>
+      freshSteps().map((s) => {
+        if (s.key === "focus" && focusRef.current.length) {
+          const was = prev.find((p) => p.key === "focus");
+          return was && was.status === "done" ? was : s;
+        }
+        if (s.key === "plan" && stage === "full") {
+          const was = prev.find((p) => p.key === "plan");
+          return was && was.status === "done" ? was : s;
+        }
+        return s;
+      })
+    );
     runChain(0);
   };
+
+  // STEP 4, on your say-so. Built FROM the intent as you have left it, which
+  // is the whole reason the chain stops before this.
+  const buildFocus = useCallback(async () => {
+    if (runningRef.current) return;
+    if (!intentRef.current.trim()) return;
+    runningRef.current = true;
+    setChainRunning(true);
+    setChainErr("");
+    try {
+      setStep("focus", "running", "finding what matters on this call");
+      // The planner is only as good as what it reads, so assemble the context
+      // now, after the research has landed and the intent is settled.
+      await buildKnowledge();
+
+      const res = await fetch("/api/interview/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          brief: intentRef.current || null,
+          role: subject?.role || null,
+          companyId: companyId || null,
+          focusOnly: true,
+          focusAreas: [],
+          subjectName: subject?.person || null,
+          knowledgeContext: knowledgeRef.current,
+        }),
+      });
+      const body = await res.text();
+      let data: any = {};
+      try {
+        data = body ? JSON.parse(body) : {};
+      } catch {
+        throw new Error("the planner ran long, hit Build the focus again");
+      }
+      if (!res.ok) throw new Error(data.error || "could not build the focus");
+
+      const focus: string[] = Array.isArray(data.focusAreas)
+        ? data.focusAreas.filter((x: any) => typeof x === "string" && x.trim())
+        : [];
+      focusRef.current = focus;
+      setBuiltFocus(focus);
+      setStage(focus.length ? "focus" : "intent");
+      setStep(
+        "focus",
+        focus.length ? "done" : "failed",
+        focus.length
+          ? `${focus.length} focus areas, yours to rank`
+          : "nothing came back"
+      );
+
+      if (upcomingId && focus.length) {
+        await saveSnapshot({ focus, stage: "focus" }).catch(() => {
+          setStep("focus", "done", `${focus.length} focus areas, not saved`);
+        });
+      }
+    } catch (e: any) {
+      setChainErr(e?.message || "could not build the focus");
+      setStep("focus", "failed", "stopped");
+    } finally {
+      runningRef.current = false;
+      setChainRunning(false);
+    }
+  }, [subject, companyId, upcomingId, setStep, buildKnowledge, saveSnapshot]);
 
   // STEP 5, on your say-so. Built AROUND the focus list as you have left it,
   // which is the whole reason the chain stops before this.
@@ -1222,7 +1296,7 @@ function PrepInner() {
               <div>
                 <p className="mb-1.5 font-mono text-[0.54rem] uppercase tracking-[0.18em] text-amber">
                   Focus
-                  {stage === "focus" && (
+                  {stage !== "full" && (
                     <span className="ml-2 normal-case tracking-normal text-muted">
                       rank it and drop what does not belong, the plan is built
                       around this
@@ -1239,7 +1313,7 @@ function PrepInner() {
                         {i + 1}
                       </span>
                       <span className="flex-1">{f}</span>
-                      {stage === "focus" && (
+                      {stage !== "full" && (
                         <span className="flex shrink-0 gap-1">
                           <button
                             type="button"
@@ -1266,7 +1340,7 @@ function PrepInner() {
                     </li>
                   ))}
                 </ol>
-                {stage === "focus" && (
+                {stage !== "full" && (
                   <button
                     type="button"
                     onClick={buildPlan}
@@ -1429,6 +1503,22 @@ function PrepInner() {
               </p>
             )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              {/* The focus is built FROM this intent, so it lives here, next to
+                  the words it reads. Nothing downstream runs until you press
+                  it, which is what stops a wrong intent producing a focus you
+                  then have to pay for twice. */}
+              <button
+                type="button"
+                onClick={buildFocus}
+                disabled={chainRunning || !intent.trim()}
+                className="rounded-full border border-amber/60 bg-amber/15 px-4 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
+              >
+                {chainRunning && stage === "intent"
+                  ? "building…"
+                  : builtFocus.length
+                  ? "rebuild the focus"
+                  : "build the focus ▸"}
+              </button>
               <button
                 type="button"
                 onClick={startCall}

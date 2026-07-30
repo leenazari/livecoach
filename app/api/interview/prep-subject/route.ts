@@ -156,6 +156,10 @@ export async function GET(req: NextRequest) {
             intent: typeof call.intent === "string" ? call.intent : "",
             prepped: !!call.prepped,
             hasPrep: !!call.prep,
+            // The saved prep snapshot itself, so reopening the screen can show
+            // the focus and plan you already built and paid for instead of
+            // offering to build them again from scratch.
+            prep: call.prep && typeof call.prep === "object" ? call.prep : null,
           }
         : null,
       hasHistory,
