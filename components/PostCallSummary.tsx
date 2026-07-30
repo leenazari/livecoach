@@ -21,6 +21,11 @@ type Summary = {
   myNextActions?: string[];
   theirNextActions?: string[];
   suggestedNextActions?: string[];
+  // Owner-attributed actions. Newer scorecards have this, the 80-odd older
+  // ones do not, so the UI falls back to the three lists above when it is
+  // missing. Never assume it is there.
+  actions?: { owner: string; text: string }[];
+  userNotes?: string;
   notCovered: string[];
   styleProfile: string;
 };
@@ -43,6 +48,81 @@ function CompBar({ score }: { score: number }) {
       <span className="w-9 shrink-0 text-right font-mono text-[0.7rem] tabular-nums text-muted">
         {p}%
       </span>
+    </div>
+  );
+}
+
+// WHO IS DOING WHAT. One block per person, so the answer to "what did I commit
+// to and what did they" is a glance rather than a read. Owners arrive already
+// collapsed onto one name per human (lib/speakers.ts), so the same person
+// cannot appear twice under different spellings.
+//
+// You come first, Unassigned goes last. Unassigned exists on purpose: an
+// action pinned to the wrong person is worse than one that admits nobody
+// claimed it.
+function OwnerActions({
+  actions,
+  hostName,
+}: {
+  actions?: { owner: string; text: string }[];
+  hostName?: string;
+}) {
+  if (!actions || actions.length === 0) return null;
+
+  const byOwner = new Map<string, string[]>();
+  for (const a of actions) {
+    if (!a || typeof a.text !== "string" || !a.text.trim()) continue;
+    const owner = (a.owner || "Unassigned").trim() || "Unassigned";
+    const list = byOwner.get(owner) || [];
+    list.push(a.text.trim());
+    byOwner.set(owner, list);
+  }
+  if (!byOwner.size) return null;
+
+  const owners = Array.from(byOwner.keys()).sort((x, y) => {
+    if (hostName) {
+      if (x === hostName) return -1;
+      if (y === hostName) return 1;
+    }
+    if (x === "Unassigned") return 1;
+    if (y === "Unassigned") return -1;
+    return x.localeCompare(y);
+  });
+
+  return (
+    <div className="rounded-xl border border-edge bg-panel/40 px-5 py-4">
+      <h3 className="mb-3 font-mono text-[0.66rem] uppercase tracking-[0.22em] text-bone/70">
+        Who is doing what
+      </h3>
+      <div className="flex flex-col gap-3.5">
+        {owners.map((owner) => {
+          const mine = !!hostName && owner === hostName;
+          const none = owner === "Unassigned";
+          return (
+            <div key={owner}>
+              <p
+                className={`mb-1 font-mono text-[0.6rem] uppercase tracking-[0.18em] ${
+                  mine ? "text-amber" : none ? "text-muted" : "text-sky"
+                }`}
+              >
+                {owner}
+                {mine ? " (you)" : ""}
+              </p>
+              <ul className="flex flex-col gap-1">
+                {(byOwner.get(owner) || []).map((t, i) => (
+                  <li
+                    key={i}
+                    className="flex gap-2 font-sans text-[0.84rem] leading-snug text-bone/85"
+                  >
+                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted" />
+                    {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -135,6 +215,88 @@ function impactTone(impact: string) {
 
 type FeedbackCue = { text: string; why: string; kind: string };
 
+// YOUR OWN NOTES ON THE CALL. What the model heard is one account of a call.
+// What you thought about it is usually the more useful one, and it is the part
+// the daily digest weights most heavily.
+//
+// Saves on blur and on an explicit press rather than on every keystroke, so
+// typing does not fire a write per character.
+function CallNotes({
+  sessionId,
+  initial,
+}: {
+  sessionId?: string;
+  initial: string;
+}) {
+  const [text, setText] = useState(initial);
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "failed">(
+    "idle"
+  );
+
+  useEffect(() => {
+    setText(initial);
+  }, [initial]);
+
+  const save = async () => {
+    if (!sessionId) return;
+    if (text === initial && state !== "failed") return;
+    setState("saving");
+    try {
+      const res = await fetch("/api/interview/notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, notes: text }),
+      });
+      // A non-OK response means the note did NOT save. Say so rather than
+      // showing a tick over lost text.
+      setState(res.ok ? "saved" : "failed");
+    } catch {
+      setState("failed");
+    }
+  };
+
+  if (!sessionId) return null;
+
+  return (
+    <div className="rounded-xl border border-edge bg-panel/40 px-5 py-4">
+      <h3 className="mb-2 font-mono text-[0.66rem] uppercase tracking-[0.22em] text-bone/70">
+        Your notes
+      </h3>
+      <textarea
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          setState("idle");
+        }}
+        onBlur={save}
+        rows={4}
+        placeholder="What you actually thought. Goes into your daily digest."
+        className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+      />
+      <div className="mt-2 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={save}
+          disabled={state === "saving" || text === initial}
+          className="rounded-full border border-amber/60 bg-amber/15 px-3.5 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
+        >
+          {state === "saving" ? "saving…" : "save notes"}
+        </button>
+        {state === "saved" && (
+          <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
+            saved
+          </span>
+        )}
+        {state === "failed" && (
+          <span className="font-mono text-[0.56rem] uppercase tracking-wider text-rust">
+            not saved, press again
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function PostCallSummary({
   summary,
   sessionId,
@@ -146,9 +308,14 @@ export default function PostCallSummary({
   disliked,
   onSaveFeedback,
   onClose,
+  hostName,
 }: {
   summary: Summary;
   sessionId?: string;
+  // Whose actions are "yours". Passed in rather than guessed, because the
+  // transcript's role flag is unreliable - the same person shows up as host on
+  // some calls and guest on others.
+  hostName?: string;
   loadingMore?: boolean;
   candidate?: string;
   transcript?: string;
@@ -622,27 +789,43 @@ export default function PostCallSummary({
             </div>
           )}
 
-          {(view.myNextActions?.length ||
-            view.theirNextActions?.length ||
-            view.suggestedNextActions?.length) && (
+          {view.actions && view.actions.length > 0 ? (
             <div className="space-y-3">
-              <ActionSection
-                title="Your next actions"
-                items={view.myNextActions}
-                accent="amber"
-              />
-              <ActionSection
-                title="Their next actions"
-                items={view.theirNextActions}
-                accent="sky"
-              />
+              <OwnerActions actions={view.actions} hostName={hostName} />
+              {/* Suggested actions are the AI's idea, not something anyone
+                  committed to on the call, so they stay separate from the
+                  owner list rather than being attributed to a person. */}
               <ActionSection
                 title="Suggested next actions"
                 items={view.suggestedNextActions}
                 accent="sage"
               />
             </div>
+          ) : (
+            (view.myNextActions?.length ||
+              view.theirNextActions?.length ||
+              view.suggestedNextActions?.length) && (
+              <div className="space-y-3">
+                <ActionSection
+                  title="Your next actions"
+                  items={view.myNextActions}
+                  accent="amber"
+                />
+                <ActionSection
+                  title="Their next actions"
+                  items={view.theirNextActions}
+                  accent="sky"
+                />
+                <ActionSection
+                  title="Suggested next actions"
+                  items={view.suggestedNextActions}
+                  accent="sage"
+                />
+              </div>
+            )
           )}
+
+          <CallNotes sessionId={sessionId} initial={view.userNotes || ""} />
 
           {view.contributors && view.contributors.length > 0 && (
             <div>

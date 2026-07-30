@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anthropic, CLAUDE_MODEL_PRO, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
 import { supabaseAdmin } from "@/lib/supabase";
+import {
+  buildSpeakerMap,
+  canonicalName,
+  loadHostIdentity,
+} from "@/lib/speakers";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { estimateCost } from "@/lib/costs";
 import { completeUpcomingForCall } from "@/lib/calls";
@@ -153,7 +158,7 @@ async function condenseTranscript(transcript: string): Promise<string> {
 
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId, companyId, cost, source, favouriteCues } =
+    const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId, companyId, cost, source, favouriteCues, userNotes } =
       await req.json();
 
     if (!transcript || transcript.length < 30) {
@@ -238,10 +243,18 @@ Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
   "questionReview": [{"question": "short version of a key question asked", "answered": "yes", "note": "if not fully answered, say briefly how it was dodged or deflected"}],
   "myNextActions": ["a concrete thing the HOST (you / the person being coached) needs to DO after this call - an email to send, a person to speak to, a decision to make, a thing to prepare", "..."],
   "theirNextActions": ["something another participant SAID they would do - name who, e.g. 'Mark: test the workable integration before go-live'", "..."],
+  "actions": [{"owner": "the EXACT name of the person who owns this, as spelled in the transcript, or \"Unassigned\" if the transcript genuinely does not say", "text": "a short imperative starting with a verb, under 15 words"}],
   "suggestedNextActions": ["a smart next move YOU (the AI) recommend the host take - not necessarily said on the call, but the right strategic step given how it went", "..."],
   "notCovered": ["an area or question not yet explored", "..."],
   "styleProfile": "2-3 sentences on the host's speaking style and tone"
 }
+
+ACTIONS, read this twice:
+"actions" is the single owner-attributed list of everything that has to happen after this call. It covers the same ground as myNextActions and theirNextActions, but every item names exactly one owner, so the host can see who is doing what at a glance.
+- Use the person's name EXACTLY as it appears in the transcript. Do not tidy it, do not guess a fuller version.
+- The host's own actions get the host's name as owner, not "you" and not "me".
+- If the transcript does not actually say who owns something, set owner to "Unassigned". NEVER guess. An action pinned to the wrong person is worse than one left unassigned, because they will chase someone for a commitment that person never made.
+- 0 to 12 items. Only things genuinely said or clearly implied on the call.
 
 COMPETENCIES TO SCORE:
 ${compInstruction}
@@ -354,6 +367,54 @@ Return the JSON assessment now.`;
           why: typeof c.why === "string" ? c.why.trim() : "",
         }));
       if (kept.length) summary.favouriteCues = kept;
+    }
+
+    // Notes you typed during the call ride along with the scorecard, so the
+    // daily digest can weight them and the summary screen shows them back.
+    if (summary && typeof userNotes === "string" && userNotes.trim()) {
+      summary.userNotes = userNotes.slice(0, 8000);
+    }
+
+    // OWNERS, COLLAPSED ONTO ONE NAME PER HUMAN.
+    //
+    // The Meet bot labels each utterance with whatever display name that person
+    // had set on that device, so one human turns up under several spellings
+    // ("Lee Nazari", "lee nazari", "L N", "lee"). The model copies whatever it
+    // saw in the transcript, so without this the action list splits one person
+    // into several owners and you end up chasing yourself.
+    //
+    // Blank or unknown owners stay "Unassigned" rather than being pinned to
+    // whoever spoke nearby. A wrongly assigned action is worse than an
+    // unassigned one.
+    if (summary && Array.isArray(summary.actions)) {
+      let labels: string[] = [];
+      if (sessionId) {
+        const { data: utt } = await supabaseAdmin
+          .from("meet_utterances")
+          .select("speaker")
+          .eq("session_id", sessionId);
+        labels = (utt || [])
+          .map((u: any) => u.speaker)
+          .filter((x: any) => typeof x === "string" && x.trim());
+      }
+      const host = await loadHostIdentity();
+      const map = buildSpeakerMap(labels, host.name);
+
+      summary.actions = summary.actions
+        .filter(
+          (a: any) => a && typeof a.text === "string" && a.text.trim()
+        )
+        .map((a: any) => {
+          const raw = typeof a.owner === "string" ? a.owner.trim() : "";
+          if (!raw || /^unassigned$/i.test(raw)) {
+            return { owner: "Unassigned", text: String(a.text).trim() };
+          }
+          return {
+            owner: canonicalName(map, raw) || "Unassigned",
+            text: String(a.text).trim(),
+          };
+        })
+        .slice(0, 12);
     }
 
     // Robust cost: the browser meter sometimes reports nothing (a Meet/bot call
