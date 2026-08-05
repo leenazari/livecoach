@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_THINK } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_THINK } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { gatherClientContext } from "@/lib/crm-context";
 import {
@@ -71,7 +71,7 @@ export async function POST(
     //
     // The prep chain researches each client company once and keeps the brief
     // forever at companies.profile.research. This route used to ignore that and
-    // run its own Opus pass with five web searches on every click, paying full
+    // run its own Sol pass with five web searches on every click, paying full
     // price for research already sitting on the record. Now the brief is folded
     // straight into the prompt as grounding, and web search is only switched on
     // when there is genuinely nothing on file.
@@ -157,8 +157,8 @@ ${
 
     let msg: any;
     try {
-      msg = await anthropic.messages.create({
-        model: CLAUDE_MODEL_THINK,
+      msg = await openai.messages.create({
+        model: OPENAI_MODEL_THINK,
         max_tokens: 3200,
         system,
         // Server-side web search, ONLY when there is no company brief on file.
@@ -181,7 +181,7 @@ ${
         { status: 504 }
       );
     }
-    await logModelUsage("battlecard", "opus", msg?.usage);
+    await logModelUsage("battlecard", "think", msg?.usage);
 
     const blocks: any[] = Array.isArray(msg?.content) ? msg.content : [];
     const raw = blocks

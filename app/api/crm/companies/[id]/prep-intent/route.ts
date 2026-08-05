@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_PRO, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { gatherClientContext } from "@/lib/crm-context";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
@@ -191,11 +191,11 @@ Return the JSON now.`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 34000);
       try {
-        const msg = await anthropic.messages.create(
+        const msg = await openai.messages.create(
           {
             // Concise = the auto-fill on call open (fires often), so use the fast
             // cheap model. The fuller Prep-tab suggestion stays on the pro model.
-            model: concise ? CLAUDE_MODEL_LIVE : CLAUDE_MODEL_PRO,
+            model: concise ? OPENAI_MODEL_LIVE : OPENAI_MODEL_PRO,
             max_tokens: concise ? 320 : 700,
             temperature: 0.4,
             system,
@@ -205,7 +205,7 @@ Return the JSON now.`;
         );
         await logModelUsage(
           "prep-intent",
-          concise ? "haiku" : "sonnet",
+          concise ? "live" : "pro",
           (msg as any).usage
         );
         const raw = msg.content

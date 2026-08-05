@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  anthropic,
-  CLAUDE_MODEL_LIVE,
-  CLAUDE_MODEL_PRO,
-} from "@/lib/anthropic";
+  openai,
+  OPENAI_MODEL_LIVE,
+  OPENAI_MODEL_PRO,
+} from "@/lib/openai";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -44,11 +44,11 @@ async function callModelWithTimeout(system: string, userMsg: string, ms: number)
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await anthropic.messages.create(
+    return await openai.messages.create(
       {
-        model: CLAUDE_MODEL_LIVE,
-        // The STRUCTURAL plan runs on fast Haiku so it never times out against
-        // the 60s function cap (the playbook is upgraded separately on Sonnet).
+        model: OPENAI_MODEL_LIVE,
+        // The STRUCTURAL plan runs on fast Luna so it never times out against
+        // the 60s function cap (the playbook is upgraded separately on Terra).
         // 2400 tokens leaves room for the full JSON without truncation.
         max_tokens: 2400,
         system,
@@ -63,10 +63,10 @@ async function callModelWithTimeout(system: string, userMsg: string, ms: number)
 
 // Exact USD cost of one call from its usage (so the meter stays accurate even
 // with the two-model split). Mirrors lib/costs usageCostUSD.
-function callCostUSD(model: "haiku" | "sonnet", u: any): number {
+function callCostUSD(model: "live" | "pro", u: any): number {
   if (!u) return 0;
-  const inR = model === "sonnet" ? 3 : 1;
-  const outR = model === "sonnet" ? 15 : 5;
+  const inR = model === "pro" ? 2.5 : 1;
+  const outR = model === "pro" ? 15 : 6;
   const i = Number(u.input_tokens) || 0;
   const o = Number(u.output_tokens) || 0;
   const cw = Number(u.cache_creation_input_tokens) || 0;
@@ -79,7 +79,7 @@ function callCostUSD(model: "haiku" | "sonnet", u: any): number {
   );
 }
 
-// Tolerant JSON extraction. Haiku occasionally adds a prose preamble, wraps the
+// Tolerant JSON extraction. Luna occasionally adds a prose preamble, wraps the
 // JSON in ```fences```, or (if it ever truncates) leaves the tail unclosed.
 // The old parser only stripped fences, so a preamble or truncation silently
 // produced {} -> empty focusAreas -> blank plan panel. This recovers from all
@@ -312,7 +312,7 @@ export async function POST(req: NextRequest) {
       context = context.slice(0, MAX_CONTEXT_CHARS) + "\n[context truncated]";
     }
 
-    // STEP 1 of the two-step build: focus areas only. A small, fast Haiku call
+    // STEP 1 of the two-step build: focus areas only. A small, fast Luna call
     // so the caller can lock/edit focus BEFORE we spend on the heavy full plan
     // (questions + playbook + goals). Returns callType, subjectName, a quick
     // read, and the ranked focus list - nothing else.
@@ -384,7 +384,7 @@ Return the JSON now.`;
         (typeof fPlan.subjectName === "string" ? fPlan.subjectName.trim() : "");
       const fCharacter =
         typeof fPlan.character === "string" ? fPlan.character : "";
-      const costHeader = { "x-cost-usd": String(callCostUSD("haiku", fUsage)) };
+      const costHeader = { "x-cost-usd": String(callCostUSD("live", fUsage)) };
 
       // RECONCILE: return additions + in-place upgrades, deduped by meaning.
       if (reconcile) {
@@ -524,8 +524,8 @@ Return the JSON plan now.`;
     const DEADLINE = Date.now() + 52000;
     const remaining = () => DEADLINE - Date.now();
 
-    // Fast Haiku structural plan: ONE attempt that uses most of the budget,
-    // reserving ~14s for the separate Sonnet playbook. Two short attempts were
+    // Fast Luna structural plan: ONE attempt that uses most of the budget,
+    // reserving ~14s for the separate Terra playbook. Two short attempts were
     // worse - if the model needs ~35s, both 28s attempts time out and we get
     // nothing; a single long attempt finishes. A failure here is covered by the
     // deterministic backfill further down, so a retry buys little.
@@ -638,17 +638,17 @@ Return the JSON plan now.`;
           .map((p: any) => ({ label: String(p.label), detail: String(p.detail) }))
       : [];
 
-    // PLAYBOOK on the high-quality model. A small, focused Sonnet pass (fast)
+    // PLAYBOOK on the high-quality model. A small, focused Terra pass (fast)
     // so the tactics are sharp, warm and specific, WITHOUT putting the whole
-    // slow plan on Sonnet. If it fails/times out, keep the fast Haiku playbook.
+    // slow plan on Terra. If it fails/times out, keep the fast Luna playbook.
     let sonnetPlaybook: { label: string; detail: string }[] = [];
     // For selling calls, a buyer-tailored pitch kit: which benefits to land,
     // proof points, differentiators, must-mention points, and objection prep.
     let pitchKit: any = null;
-    // Only attempt the Sonnet upgrade if there's real budget left; otherwise
-    // keep the Haiku playbook. This is what stops the 60s overrun.
+    // Only attempt the Terra upgrade if there's real budget left; otherwise
+    // keep the Luna playbook. This is what stops the 60s overrun.
     try {
-      if (remaining() < 9000) throw new Error("skip Sonnet - low budget");
+      if (remaining() < 9000) throw new Error("skip Terra - low budget");
       const pbSystem: any[] = [
         {
           type: "text",
@@ -687,9 +687,9 @@ Return the JSON object (playbook + pitchKit) now.`;
       const pbMs = Math.min(25000, remaining() - 3000);
       const pbTimer = setTimeout(() => pbController.abort(), pbMs);
       try {
-        const pbMsg = await anthropic.messages.create(
+        const pbMsg = await openai.messages.create(
           {
-            model: CLAUDE_MODEL_PRO,
+            model: OPENAI_MODEL_PRO,
             max_tokens: 900,
             temperature: 0.5,
             system: pbSystem,
@@ -767,7 +767,7 @@ Return the JSON object (playbook + pitchKit) now.`;
         clearTimeout(pbTimer);
       }
     } catch (e) {
-      console.error("Playbook (Sonnet) failed - keeping Haiku playbook:", e);
+      console.error("Playbook (Terra) failed - keeping Luna playbook:", e);
     }
 
     let playbook = sonnetPlaybook.length ? sonnetPlaybook : haikuPlaybook;
@@ -791,7 +791,7 @@ Return the JSON object (playbook + pitchKit) now.`;
     // always yields a full, usable plan.
     let degraded = false;
     // A timed-out structural call shows up as missing questions/goals (the
-    // Sonnet playbook runs separately and may still have succeeded). Backfill
+    // Terra playbook runs separately and may still have succeeded). Backfill
     // each missing piece independently so the panel is never left half-empty.
     const structuralFailed =
       openingQuestions.length === 0 && goals.length === 0;
@@ -823,7 +823,7 @@ Return the JSON object (playbook + pitchKit) now.`;
         {
           headers: {
             "x-cost-usd": String(
-              callCostUSD("haiku", planUsage) + callCostUSD("sonnet", pbUsage)
+              callCostUSD("live", planUsage) + callCostUSD("pro", pbUsage)
             ),
           },
         }
@@ -847,7 +847,7 @@ Return the JSON object (playbook + pitchKit) now.`;
       {
         headers: {
           "x-cost-usd": String(
-            callCostUSD("haiku", planUsage) + callCostUSD("sonnet", pbUsage)
+            callCostUSD("live", planUsage) + callCostUSD("pro", pbUsage)
           ),
         },
       }

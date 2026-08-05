@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -48,8 +48,8 @@ Keep it realistic and short enough to say out loud in one breath or two.`;
 
     const userMsg = `${convo}The interviewer just asked:\n"${question}"\n\nGive your spoken reply as the candidate.`;
 
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL_LIVE,
+    const msg = await openai.messages.create({
+      model: OPENAI_MODEL_LIVE,
       max_tokens: 220,
       temperature: 0.7,
       system,

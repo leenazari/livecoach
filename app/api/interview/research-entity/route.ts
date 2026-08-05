@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  anthropic,
-  CLAUDE_MODEL_PRO,
-  CLAUDE_MODEL_THINK,
-} from "@/lib/anthropic";
+  openai,
+  OPENAI_MODEL_PRO,
+  OPENAI_MODEL_THINK,
+} from "@/lib/openai";
 import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
@@ -158,8 +158,8 @@ ${intent || "(not specified, write a general pre-call briefing)"}
 
 Research this organisation now and write the briefing.`;
 
-      const msg: any = await anthropic.messages.create({
-        model: CLAUDE_MODEL_THINK,
+      const msg: any = await openai.messages.create({
+        model: OPENAI_MODEL_THINK,
         max_tokens: 2200,
         system,
         tools: [
@@ -167,7 +167,7 @@ Research this organisation now and write the briefing.`;
         ] as any,
         messages: [{ role: "user", content: userPrompt }],
       });
-      await logModelUsage("research-company", "opus", msg?.usage);
+      await logModelUsage("research-company", "think", msg?.usage);
 
       const blocks: any[] = Array.isArray(msg?.content) ? msg.content : [];
       const background = houseStyle(textOf(blocks));
@@ -284,10 +284,10 @@ Research this organisation now and write the briefing.`;
 
       // PRO, not THINK. Deciding which real person matches a name, a company
       // and a role is disambiguation, not strategy, and it returns five short
-      // JSON fields. Sonnet does it as well as Opus for about 40 percent less.
-      // The brief below stays on Opus, where the thinking actually happens.
-      const idMsg: any = await anthropic.messages.create({
-        model: CLAUDE_MODEL_PRO,
+      // JSON fields. Terra does it as well as Sol for about 40 percent less.
+      // The brief below stays on Sol, where the thinking actually happens.
+      const idMsg: any = await openai.messages.create({
+        model: OPENAI_MODEL_PRO,
         max_tokens: 400,
         system: idSystem,
         tools: [
@@ -300,7 +300,7 @@ Research this organisation now and write the briefing.`;
           },
         ],
       });
-      await logModelUsage("research-person-id", "sonnet", idMsg?.usage);
+      await logModelUsage("research-person-id", "pro", idMsg?.usage);
 
       const identity = parseJsonish(
         textOf(Array.isArray(idMsg?.content) ? idMsg.content : [])
@@ -374,8 +374,8 @@ ${intent || "(not specified, infer a sensible general prep and note that the goa
 
 Research this person now and write the call-prep brief.`;
 
-    const msg: any = await anthropic.messages.create({
-      model: CLAUDE_MODEL_THINK,
+    const msg: any = await openai.messages.create({
+      model: OPENAI_MODEL_THINK,
       max_tokens: 2600,
       system,
       tools: [
@@ -383,7 +383,7 @@ Research this person now and write the call-prep brief.`;
       ] as any,
       messages: [{ role: "user", content: userPrompt }],
     });
-    await logModelUsage("research-person", "opus", msg?.usage);
+    await logModelUsage("research-person", "think", msg?.usage);
 
     const blocks: any[] = Array.isArray(msg?.content) ? msg.content : [];
     const background = houseStyle(textOf(blocks));

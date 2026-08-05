@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_PRO, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   buildSpeakerMap,
@@ -107,7 +107,7 @@ async function autoResolveCompany(opts: {
   return null;
 }
 
-// END-OF-CALL assessment. One call, on the pro model (Sonnet) for quality.
+// END-OF-CALL assessment. One call, on the pro model (Terra) for quality.
 // Returns a structured JSON summary + scorecard + contributors + style profile.
 // Condense a very long transcript by summarising it in chunks (map) and joining
 // the dense, speaker-attributed digests (reduce), so the scorecard pass gets a
@@ -129,8 +129,8 @@ async function condenseTranscript(transcript: string): Promise<string> {
   const digests = await Promise.all(
     parts.map(async (part, i) => {
       try {
-        const m: any = await anthropic.messages.create({
-          model: CLAUDE_MODEL_LIVE,
+        const m: any = await openai.messages.create({
+          model: OPENAI_MODEL_LIVE,
           max_tokens: 2000,
           temperature: 0,
           system:
@@ -326,9 +326,9 @@ Return the JSON assessment now.`;
     const summaryTimer = setTimeout(() => summaryController.abort(), 52000);
     let msg: any;
     try {
-      msg = await anthropic.messages.create(
+      msg = await openai.messages.create(
         {
-          model: CLAUDE_MODEL_PRO,
+          model: OPENAI_MODEL_PRO,
           max_tokens: 4096,
           temperature: 0,
           system,
@@ -524,7 +524,7 @@ Return the JSON assessment now.`;
       {
         headers: {
           "x-usage": JSON.stringify(msg.usage || {}),
-          "x-model": "sonnet",
+          "x-model": "pro",
         },
       }
     );

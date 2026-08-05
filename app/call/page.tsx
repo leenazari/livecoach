@@ -220,7 +220,7 @@ function addUsageToRef(ref: { current: number }, res: Response) {
     }
     const u = res.headers.get("x-usage");
     const m = res.headers.get("x-model");
-    if (u && (m === "haiku" || m === "sonnet")) {
+    if (u && (m === "live" || m === "pro")) {
       ref.current += usageCostUSD(m, JSON.parse(u));
     }
   } catch {
@@ -441,8 +441,8 @@ export default function CallPage() {
   const [cueFull, setCueFull] = useState(false);
 
   const knowledgeRef = useRef("");
-  const claudeCallsRef = useRef(0);
-  const claudeUsdRef = useRef(0);
+  const aiCallsRef = useRef(0);
+  const aiUsdRef = useRef(0);
   const likedRef = useRef<{ text: string; why: string; kind: string }[]>([]);
   const dislikedRef = useRef<{ text: string; why: string; kind: string }[]>([]);
   // Cues the host favourited (pinned). Kept in a ref so end-of-call can save them
@@ -539,7 +539,7 @@ export default function CallPage() {
 
   // Cost meter. Turns on the moment a plan is built OR a call goes live
   // (whichever first), so the cost is visible from the first billable action.
-  // Claude cost (plan + cues + scorecard) accrues from call counts; Deepgram +
+  // OpenAI cost (plan + cues + scorecard) accrues from call counts; Deepgram +
   // transport + infra only accrue while actually transcribing (call live), so
   // sitting on the plan screen doesn't run the meter up on transport you're not
   // using yet.
@@ -557,7 +557,7 @@ export default function CallPage() {
       const c = estimateCost(transcribing, 0, {
         deepgramStreams: meet ? 0 : 2,
         transport: meet ? "recall" : "livekit",
-        claudeUsd: claudeUsdRef.current,
+        aiUsd: aiUsdRef.current,
       });
       setCost(c);
       setOverBudget(
@@ -1283,7 +1283,7 @@ export default function CallPage() {
     const controller = new AbortController();
     const cueTimer = setTimeout(() => controller.abort(), 25000);
     try {
-      claudeCallsRef.current += 1;
+      aiCallsRef.current += 1;
       const res = await fetch("/api/interview/suggest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1334,7 +1334,7 @@ export default function CallPage() {
         try {
           const parsed = JSON.parse(um[1]);
           if (parsed?.usage)
-            claudeUsdRef.current += usageCostUSD("haiku", parsed.usage);
+            aiUsdRef.current += usageCostUSD("live", parsed.usage);
         } catch {
           /* ignore */
         }
@@ -1385,7 +1385,7 @@ export default function CallPage() {
     const controller = new AbortController();
     const sumTimer = setTimeout(() => controller.abort(), 20000);
     try {
-      claudeCallsRef.current += 1;
+      aiCallsRef.current += 1;
       const res = await fetch("/api/interview/running-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1406,7 +1406,7 @@ export default function CallPage() {
         }),
       });
       const data = await res.json();
-      addUsageToRef(claudeUsdRef, res);
+      addUsageToRef(aiUsdRef, res);
       if (res.ok) {
         const next = {
           context: Array.isArray(data.context) ? data.context : [],
@@ -1441,7 +1441,7 @@ export default function CallPage() {
     }
   }, []);
 
-  // ADVISOR LANE (pro). Every ~30s a Sonnet pass offers the single best thing
+  // ADVISOR LANE (pro). Every ~30s a Terra pass offers the single best thing
   // to SAY - a technical point, example, accurate analogy, or genuine quote -
   // not a question. Only fires when there's new discussion; HOLDs are dropped.
   const requestInsight = useCallback(async () => {
@@ -1500,7 +1500,7 @@ export default function CallPage() {
           planBrief: planBriefRef.current,
         }),
       });
-      addUsageToRef(claudeUsdRef, res);
+      addUsageToRef(aiUsdRef, res);
       const text = (await res.text()).trim();
       const { ask, why } = splitCue(text);
       if (!ask || ask.toUpperCase() === "HOLD") {
@@ -1524,7 +1524,7 @@ export default function CallPage() {
     }
   }, []);
 
-  // Advisor lane: one Sonnet pass every ~30s while the call is live AND the
+  // Advisor lane: one Terra pass every ~30s while the call is live AND the
   // smart-insights switch is on (off by call when you don't want the pro cost).
   useEffect(() => {
     if (!callLive || !insightsOn) return;
@@ -1614,7 +1614,7 @@ export default function CallPage() {
   // Intent-driven plan: brief (top priority) + CV/JD context -> ranked focus
   // areas + character profile + opening questions, in one call.
   const generatePlan = useCallback(async (mode: "focus" | "full" | "refocus") => {
-    claudeCallsRef.current += 1;
+    aiCallsRef.current += 1;
     const res = await fetch("/api/interview/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1648,7 +1648,7 @@ export default function CallPage() {
           .join("\n\n"),
       }),
     });
-    addUsageToRef(claudeUsdRef, res);
+    addUsageToRef(aiUsdRef, res);
     // Be tolerant of a non-JSON body. If the planner is killed by the platform
     // time cap it returns an HTML/text error page ("An error occurred..."),
     // and a raw res.json() would throw "Unexpected token 'A'". Read text first,
@@ -2213,7 +2213,7 @@ export default function CallPage() {
     const finalCostGBP = estimateCost(finalSecs, 0, {
       deepgramStreams: meetCall ? 0 : 2,
       transport: meetCall ? "recall" : "livekit",
-      claudeUsd: claudeUsdRef.current,
+      aiUsd: aiUsdRef.current,
     }).totalGBP;
     setSummaryTranscript(labelled);
     const sig = `${labelled}||${suggestedCompsRef.current.join(",")}`;
@@ -2289,7 +2289,7 @@ export default function CallPage() {
         }),
       });
       const data = await res.json();
-      addUsageToRef(claudeUsdRef, res);
+      addUsageToRef(aiUsdRef, res);
       if (!res.ok) throw new Error(data.error || "Summary failed");
       cachedSummaryRef.current = data.summary;
       cachedSigRef.current = sig;
@@ -3924,7 +3924,7 @@ export default function CallPage() {
           </div>
           {insightsOn && insightSpeed === "fast" && (
             <span
-              title="The 'say this' advisor runs on Sonnet. At fast that is a call every 9 seconds, your most expensive mode. Use it only for short, high-stakes calls."
+              title="The 'say this' advisor runs on Terra. At fast that is a call every 9 seconds, your most expensive mode. Use it only for short, high-stakes calls."
               className="flex-none rounded-full border border-rust/50 bg-rust/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase tracking-wider text-rust"
             >
               {"⚠"} say=fast pricey
@@ -3933,7 +3933,7 @@ export default function CallPage() {
           <button
             type="button"
             onClick={() => setInsightsOn((v) => !v)}
-            title="Smart 'say this' insights (Sonnet, ~1 call/60s). Toggle off to save cost on calls that don't need it."
+            title="Smart 'say this' insights (Terra, ~1 call/60s). Toggle off to save cost on calls that don't need it."
             className={`shrink-0 rounded-full border px-3 py-1.5 font-mono text-[0.55rem] uppercase tracking-wider transition ${
               insightsOn
                 ? "border-sky/50 bg-sky/10 text-sky"

@@ -4,7 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 //
 // The prep chain researches the COMPANY and the PERSON you are about to meet,
 // then builds the intent, the focus and the plan from them. Research is the
-// expensive part (Opus plus web search), so it must be bought ONCE PER ENTITY,
+// expensive part (Sol plus web search), so it must be bought ONCE PER ENTITY,
 // not once per meeting:
 //
 //   company research  -> companies.profile.research     (never expires)

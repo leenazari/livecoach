@@ -15,7 +15,7 @@ Built for a **GitHub → Vercel** workflow. No local dev needed.
 | -------------- | -------------------------------------- |
 | Frontend / API | Next.js 14 (App Router) on Vercel      |
 | Transcription  | Deepgram (live, browser → WebSocket)   |
-| Suggestions    | Claude **Haiku 4.5** (live tier)       |
+| Suggestions    | OpenAI **GPT-5.6** tiered router        |
 | Store          | Supabase (text chunks; no vectors yet) |
 
 ---
@@ -23,7 +23,7 @@ Built for a **GitHub → Vercel** workflow. No local dev needed.
 ## Cost model — read this
 
 Target was £3/hr. This POC lands **well under** it, but only because of two
-deliberate choices. Continuous 5s suggestions = ~720 Claude calls/hour, so the
+deliberate choices. Continuous 5s suggestions = ~720 OpenAI calls/hour, so the
 model and how context is sent matter enormously.
 
 **Per-hour running cost (1 active user, continuous 5s):**
@@ -31,16 +31,16 @@ model and how context is sent matter enormously.
 | Component                    | Cost/hr (≈) |
 | ---------------------------- | ----------- |
 | Deepgram streaming           | £0.36       |
-| Claude Haiku + prompt cache  | £0.68       |
+| GPT-5.6 Luna + prompt cache  | £0.68       |
 | Vercel compute (est.)        | £0.16       |
 | Supabase reads (est.)        | £0.02       |
 | **Total**                    | **≈ £1.22** |
 
 Two levers keep it there:
 
-1. **Live track runs on Haiku 4.5, not Sonnet.** Sonnet at this cadence is
-   ~£4/hr — over the ceiling. Haiku is the cheap/fast/reactive live tier;
-   Sonnet/Opus + extended thinking every ~30s is the **pro upsell**, not the default.
+1. **Live track runs on GPT-5.6 Luna, not Terra.** Terra at this cadence is
+   ~£4/hr — over the ceiling. Luna is the cheap/fast/reactive live tier;
+   Terra/Sol + extended thinking every ~30s is the **pro upsell**, not the default.
 2. **Knowledge is loaded once and cached.** `/api/interview/context` pulls the
    candidate's CV + framework at session start; `/api/interview/suggest` pins it
    in a cached system block, so each 5s call only pays full price for the new
@@ -66,7 +66,7 @@ meter turns red if the pace crosses £3/hr. These are estimates from
    - `service_role` key → `SUPABASE_SERVICE_ROLE_KEY`
 
 ### 2. API keys
-- **Anthropic**: console.anthropic.com → `ANTHROPIC_API_KEY`
+- **OpenAI**: platform.openai.com → `OPENAI_API_KEY`
 - **Deepgram**: console.deepgram.com → `DEEPGRAM_API_KEY`
 - *(Voyage is NOT needed for the POC — only if you re-enable vector search.)*
 
@@ -88,8 +88,9 @@ meter turns red if the pace crosses £3/hr. These are estimates from
 ---
 
 ## Two things to verify on first run
-1. **Model strings** — `lib/anthropic.ts` reads `CLAUDE_MODEL_LIVE`
-   (default `claude-haiku-4-5`). 404? Set the exact string in Vercel env.
+1. **Model strings** — `lib/openai.ts` reads `OPENAI_MODEL_LIVE`
+   (default `gpt-5.6-luna`). Terra handles synthesis; Sol is reserved for
+   strategic research and brain-learning work.
 2. **Deepgram auth** — browser connects via WebSocket subprotocol
    `["token", access_token]`. 401 on connect? Flip `"token"` → `"bearer"` in
    `components/InterviewConsole.tsx`.
@@ -103,7 +104,7 @@ prompt** + **which docs load**. To add a mode:
 - branch the instructions in `app/api/interview/suggest/route.ts`,
 - scope `/context` to that mode's docs.
 
-The **pro tier** is a second parallel call: Sonnet/Opus + extended thinking,
+The **pro tier** is a second parallel call: Terra/Sol + extended thinking,
 batched every ~30s, doing anticipatory analysis (predict the next objection /
 flag strong-vs-weak answers) alongside the cheap live cues. Cost impact: roughly
 +£2–3/hr on top of the live track, hence pro-only.
@@ -125,13 +126,13 @@ app/
     deepgram/token/route.ts        mints short-lived Deepgram token
     knowledge/upload/route.ts      extract → chunk → store (text only)
     interview/context/route.ts     loads CV+framework ONCE per session
-    interview/suggest/route.ts     cached knowledge + Haiku → streamed cue
+    interview/suggest/route.ts     cached knowledge + Luna → streamed cue
 components/
   InterviewConsole.tsx             mic, transcript, 5s loop, cost meter
   KnowledgePanel.tsx               doc upload UI
 lib/
   supabase.ts                      server client
-  anthropic.ts                     Claude client + live/pro model names
+  openai.ts                        OpenAI Responses API adapter + model router
   costs.ts                         cost rates + live estimator
   chunk.ts                         text chunker
   embeddings.ts                    Voyage helper (unused; for vector track)

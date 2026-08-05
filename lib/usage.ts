@@ -24,10 +24,10 @@ export async function logUsage(
   }
 }
 
-// Convenience: log straight from an Anthropic usage object.
+// Convenience: log straight from the normalized OpenAI usage object.
 export async function logModelUsage(
   kind: string,
-  model: "haiku" | "sonnet" | "opus" | "fable",
+  model: "live" | "pro" | "think" | "brain",
   usage: any,
   meta: Record<string, any> = {}
 ): Promise<void> {

@@ -29,7 +29,7 @@ export default function CostMeter({
   const title = [
     `Deepgram (transcription): ${gbp3(cost.deepgram)}`,
     `${transportLabel} (transport): ${gbp3(cost.transport)}`,
-    `Claude (cues + scorecard): ${gbp3(cost.claude)}`,
+    `OpenAI (cues + scorecard): ${gbp3(cost.ai)}`,
     `Vercel: ${gbp3(cost.vercel)}`,
     `Supabase: ${gbp3(cost.supabase)}`,
     projectedHourly && projectedHourly > 0

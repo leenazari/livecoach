@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -93,8 +93,8 @@ export async function POST(req: NextRequest) {
 
 Write 3-5 plain sentences covering, where the page supports it: what they do, their size/stage if shown, their focus or positioning, and any notable recent signal (a launch, a stated problem, a priority). Be factual and grounded ONLY in the page text - never invent or speculate. If the page is thin or mostly navigation/marketing boilerplate, say briefly what little is clear. No preamble, no headings, no bullet points - just the brief.`;
 
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL_LIVE,
+    const msg = await openai.messages.create({
+      model: OPENAI_MODEL_LIVE,
       max_tokens: 400,
       system,
       messages: [

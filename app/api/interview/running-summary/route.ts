@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 // Maintains a LIVE running summary of the conversation as themed bullets
 // (context / signals / concerns). Incremental: it's given the current bullets
-// plus the conversation so far and folds in anything new. Cheap (Haiku), runs
+// plus the conversation so far and folds in anything new. Cheap (Luna), runs
 // on a light cadence off the cue's critical path.
 export async function POST(req: NextRequest) {
   try {
@@ -73,8 +73,8 @@ ${recent}
 
 Return the updated JSON bullets now.`;
 
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL_LIVE,
+    const msg = await openai.messages.create({
+      model: OPENAI_MODEL_LIVE,
       max_tokens: 500,
       system,
       messages: [{ role: "user", content: user }],
@@ -118,7 +118,7 @@ Return the updated JSON bullets now.`;
       {
         headers: {
           "x-usage": JSON.stringify(msg.usage || {}),
-          "x-model": "haiku",
+          "x-model": "live",
         },
       }
     );

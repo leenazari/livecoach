@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { upsertTasks } from "@/lib/tasks";
 import { workspaceContextBlock } from "@/lib/workspace";
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 // ("Joydeep wasn't the one who was sick, it was his colleague"), the chat used
 // to just acknowledge it while the STORED records stayed stale. This endpoint
 // makes the correction stick: it saves the correction as an authoritative note
-// on the client, then in ONE grounded Sonnet pass rewrites the live views (the
+// on the client, then in ONE grounded Terra pass rewrites the live views (the
 // "what we know" brief, the playbook, the next-step tasks) AND the call-history
 // summaries so nothing visibly contradicts the correction. Conservative: it
 // only changes statements that actually conflict with the correction and never
@@ -153,9 +153,9 @@ Return the JSON now.`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 34000);
       try {
-        const msg = await anthropic.messages.create(
+        const msg = await openai.messages.create(
           {
-            model: CLAUDE_MODEL_PRO,
+            model: OPENAI_MODEL_PRO,
             max_tokens: 1600,
             temperature: 0.2,
             system,
@@ -163,7 +163,7 @@ Return the JSON now.`;
           },
           { signal: controller.signal }
         );
-        await logModelUsage("correct", "sonnet", (msg as any).usage);
+        await logModelUsage("correct", "pro", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getCoachingTasteBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
@@ -155,8 +155,8 @@ Go through the HOST'S OWN lines only and pick the 6 to 10 moments that matter mo
 Coach kindly, honestly and specifically. Do NOT critique the deal content - a separate summary covers that. Focus purely on HOW the host communicates.
 Before you finalise, re-check every quote: if it is the other party's line and not the host's, drop it and replace it with a real host line. Output ONLY a JSON array: [{"quote":"...","better":"...","why":"..."}] with 6 to 10 items.`;
 
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL_PRO,
+    const msg = await openai.messages.create({
+      model: OPENAI_MODEL_PRO,
       max_tokens: 1800,
       temperature: 0.4,
       system,
@@ -169,7 +169,7 @@ Before you finalise, re-check every quote: if it is the other party's line and n
         },
       ],
     });
-    await logModelUsage("coaching-debrief", "sonnet", (msg as any).usage);
+    await logModelUsage("coaching-debrief", "pro", (msg as any).usage);
     const raw = msg.content
       .filter((b: any) => b.type === "text")
       .map((b: any) => b.text)

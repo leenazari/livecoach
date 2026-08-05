@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
@@ -7,7 +7,7 @@ export const maxDuration = 20;
 
 // Quick MID-CALL wrap-up. Before ending, the host taps Summarise and gets a fast
 // bullet card to read out loud: who is doing what, promises made, key points, and
-// important questions raised but not yet answered. Fast + cheap (Haiku, low
+// important questions raised but not yet answered. Fast + cheap (Luna, low
 // tokens) so it loads in a couple of seconds. NOT the full end summary.
 export async function POST(req: NextRequest) {
   try {
@@ -40,9 +40,9 @@ Return the JSON wrap-up now.`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
       try {
-        const msg = await anthropic.messages.create(
+        const msg = await openai.messages.create(
           {
-            model: CLAUDE_MODEL_LIVE,
+            model: OPENAI_MODEL_LIVE,
             max_tokens: 700,
             temperature: 0.2,
             system,
@@ -50,7 +50,7 @@ Return the JSON wrap-up now.`;
           },
           { signal: controller.signal }
         );
-        await logModelUsage("recap-now", "haiku", (msg as any).usage);
+        await logModelUsage("recap-now", "live", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

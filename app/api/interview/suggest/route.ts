@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { getTasteBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -230,8 +230,8 @@ ${latestLabel}
 
 Give the natural next beat: a WARM, friendly MAIN question that flows from what was just said ||WHY|| why, plus optional ||FOLLOWUP|| - or HOLD. Remember: always a usable cue, never meta-commentary.`;
 
-    const claudeStream = await anthropic.messages.stream({
-      model: CLAUDE_MODEL_LIVE,
+    const openaiStream = await openai.messages.stream({
+      model: OPENAI_MODEL_LIVE,
       max_tokens: 80,
       system,
       messages: [{ role: "user", content: userMsg }],
@@ -241,7 +241,7 @@ Give the natural next beat: a WARM, friendly MAIN question that flows from what 
     const readable = new ReadableStream({
       async start(controller) {
         try {
-          for await (const event of claudeStream) {
+          for await (const event of openaiStream) {
             if (
               event.type === "content_block_delta" &&
               event.delta.type === "text_delta"
@@ -252,11 +252,11 @@ Give the natural next beat: a WARM, friendly MAIN question that flows from what 
           // Append the real token usage as a trailing marker the client parses
           // and strips, so the cost meter bills exact tokens for this cue.
           try {
-            const finalMsg = await claudeStream.finalMessage();
+            const finalMsg = await openaiStream.finalMessage();
             controller.enqueue(
               encoder.encode(
                 `\n||USAGE||${JSON.stringify({
-                  model: "haiku",
+                  model: "live",
                   usage: finalMsg.usage,
                 })}||ENDUSAGE||`
               )

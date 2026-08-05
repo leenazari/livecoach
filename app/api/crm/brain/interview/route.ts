@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_THINK } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_THINK } from "@/lib/openai";
 import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
@@ -27,11 +27,7 @@ export const dynamic = "force-dynamic";
 // distils the whole exchange, advances that topic's coverage, and spins out any
 // to-dos. (A legacy one-shot {question, answer} POST still saves directly.)
 
-const THINK_LABEL: "opus" | "sonnet" = CLAUDE_MODEL_THINK.toLowerCase().includes(
-  "opus"
-)
-  ? "opus"
-  : "sonnet";
+const THINK_LABEL = "think" as const;
 
 // All three interview calls share the same business + coach context prefix.
 // Mark it as a cached block (1h) so the repeated calls in one check-in - and
@@ -173,8 +169,8 @@ export async function GET() {
         const topicList = topics
           .map((t, i) => `${i + 1}. [${t.key}] ${t.title}: ${t.focus}`)
           .join("\n");
-        const msg = await anthropic.messages.create({
-          model: CLAUDE_MODEL_THINK,
+        const msg = await openai.messages.create({
+          model: OPENAI_MODEL_THINK,
           max_tokens: 700,
           system: cachedSystem(
             `${biz}${coachSystemBlock()}`,
@@ -241,8 +237,8 @@ async function react(question: string, turns: Turn[]) {
   let reply = "";
   let ready = mustClose;
   try {
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL_THINK,
+    const msg = await openai.messages.create({
+      model: OPENAI_MODEL_THINK,
       max_tokens: 350,
       system: cachedSystem(
         `${biz}${coachSystemBlock()}`,
@@ -295,8 +291,8 @@ async function save(question: string, turns: Turn[]) {
   let topicKey: string | null = null;
   let coverageState: "partial" | "solid" = "partial";
   try {
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL_THINK,
+    const msg = await openai.messages.create({
+      model: OPENAI_MODEL_THINK,
       max_tokens: 600,
       system: cachedSystem(
         `${biz}${coachSystemBlock()}`,

@@ -1,14 +1,14 @@
 import { NextRequest } from "next/server";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-// THE ADVISOR LANE (pro tier). One Sonnet call every ~30s that reads the
+// THE ADVISOR LANE (pro tier). One Terra call every ~30s that reads the
 // discussion and offers the single best thing the host could SAY right now -
 // a technical point, a concrete example, an accurate analogy, or a genuine
 // quote/idea from a notable thinker - to advance or solidify the current idea.
-// NOT a question (that's the fast Haiku lane). Returns HOLD when there's
+// NOT a question (that's the fast Luna lane). Returns HOLD when there's
 // nothing substantive to add. Output reuses the ||WHY|| marker the client
 // already parses: <statement> ||WHY|| <short tag>.
 export async function POST(req: NextRequest) {
@@ -133,8 +133,8 @@ ${transcript}${recent}
 
 Give the single best thing to say now to solidify the current idea - or HOLD.`;
 
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL_PRO,
+    const msg = await openai.messages.create({
+      model: OPENAI_MODEL_PRO,
       max_tokens: 220,
       temperature: 0.4,
       system,
@@ -152,7 +152,7 @@ Give the single best thing to say now to solidify the current idea - or HOLD.`;
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-store",
         "x-usage": JSON.stringify(msg.usage || {}),
-        "x-model": "sonnet",
+        "x-model": "pro",
       },
     });
   } catch (err: any) {

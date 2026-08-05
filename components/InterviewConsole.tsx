@@ -48,7 +48,7 @@ export default function InterviewConsole() {
   const recentTextsRef = useRef<string[]>([]);
 
   const startedAtRef = useRef(0);
-  const claudeCallsRef = useRef(0);
+  const aiCallsRef = useRef(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const suggestTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -110,7 +110,7 @@ export default function InterviewConsole() {
     if (!res.ok) throw new Error(data.error || "Failed to prep questions");
 
     const qs: string[] = Array.isArray(data.questions) ? data.questions : [];
-    claudeCallsRef.current += 1;
+    aiCallsRef.current += 1;
 
     const cards: Suggestion[] = qs.map((q) => ({
       id: ++suggestIdRef.current,
@@ -186,7 +186,7 @@ export default function InterviewConsole() {
 
       lastFiredWordsRef.current = countWords(full);
       inFlightRef.current = true;
-      claudeCallsRef.current += 1;
+      aiCallsRef.current += 1;
 
       const recentWindow = full.slice(-1000);
       const latest = full.slice(-350);
@@ -302,7 +302,7 @@ export default function InterviewConsole() {
 
         tickRef.current = setInterval(() => {
           const elapsed = (Date.now() - startedAtRef.current) / 1000;
-          setCost(estimateCost(elapsed, claudeCallsRef.current));
+          setCost(estimateCost(elapsed, aiCallsRef.current));
         }, 1000);
       };
 
@@ -354,7 +354,7 @@ export default function InterviewConsole() {
     }
     if (startedAtRef.current) {
       const elapsed = (Date.now() - startedAtRef.current) / 1000;
-      setCost(estimateCost(elapsed, claudeCallsRef.current));
+      setCost(estimateCost(elapsed, aiCallsRef.current));
     }
     setRecording(false);
     setStatus("stopped");
@@ -501,10 +501,10 @@ export default function InterviewConsole() {
         </section>
       </div>
 
-      {!recording && cost && claudeCallsRef.current > 0 && (
+      {!recording && cost && aiCallsRef.current > 0 && (
         <CostBreakdownPanel
           cost={cost}
-          calls={claudeCallsRef.current}
+          calls={aiCallsRef.current}
           overBudget={overBudget}
         />
       )}
@@ -569,7 +569,7 @@ function CostBreakdownPanel({
 }) {
   const rows = [
     ["Deepgram (transcription)", cost.deepgram],
-    ["Claude Haiku (suggestions)", cost.claude],
+    ["OpenAI GPT-5.6 Luna (suggestions)", cost.ai],
     ["Vercel (compute, est.)", cost.vercel],
     ["Supabase (reads, est.)", cost.supabase],
   ] as const;
@@ -581,7 +581,7 @@ function CostBreakdownPanel({
           Session cost breakdown
         </h2>
         <span className="font-mono text-[0.65rem] uppercase tracking-wider text-muted">
-          {calls} claude call{calls === 1 ? "" : "s"}
+          {calls} OpenAI call{calls === 1 ? "" : "s"}
         </span>
       </div>
       <div className="grid gap-2 font-mono text-sm">
@@ -610,7 +610,7 @@ function CostBreakdownPanel({
       {overBudget && (
         <p className="mt-3 font-mono text-[0.7rem] text-rust">
           ⚠︎ Pace exceeds the £{HOURLY_CEILING_GBP}/hr ceiling. Biggest lever:
-          raise MIN_NEW_WORDS or keep the live track on Haiku (Sonnet is the pro tier).
+          raise MIN_NEW_WORDS or keep the live track on Luna (Terra is the pro tier).
         </p>
       )}
     </section>

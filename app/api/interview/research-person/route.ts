@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  anthropic,
-  CLAUDE_MODEL_PRO,
-  CLAUDE_MODEL_THINK,
-} from "@/lib/anthropic";
+  openai,
+  OPENAI_MODEL_PRO,
+  OPENAI_MODEL_THINK,
+} from "@/lib/openai";
 import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
@@ -203,10 +203,10 @@ export async function POST(req: NextRequest) {
       const idSystem = `You are verifying WHO a person is before a deeper brief is written. Use the web_search tool to find the ONE real individual that matches the details below, using the company, role and any LinkedIn hint to disambiguate a common name. Return ONLY compact JSON and nothing else: {"found": true or false, "name": "...", "headline": "their main current role", "org": "their main organisation", "location": "city and country", "confidence": "high or medium or low"}. If you cannot confidently find them, return {"found": false}. House style: never use em dashes or semicolons.`;
       // PRO, not THINK. This pass returns a five field JSON object saying which
       // real person matches the details. That is disambiguation, not strategy,
-      // and Sonnet does it just as well as Opus for about 40 percent less. The
-      // brief itself below stays on Opus, where the thinking actually happens.
-      const idMsg: any = await anthropic.messages.create({
-        model: CLAUDE_MODEL_PRO,
+      // and Terra does it just as well as Sol for about 40 percent less. The
+      // brief itself below stays on Sol, where the thinking actually happens.
+      const idMsg: any = await openai.messages.create({
+        model: OPENAI_MODEL_PRO,
         max_tokens: 400,
         system: idSystem,
         tools: [
@@ -219,7 +219,7 @@ export async function POST(req: NextRequest) {
           },
         ],
       });
-      await logModelUsage("research-person-id", "sonnet", idMsg?.usage);
+      await logModelUsage("research-person-id", "pro", idMsg?.usage);
       const idText = (Array.isArray(idMsg?.content) ? idMsg.content : [])
         .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
         .map((b: any) => b.text)
@@ -267,8 +267,8 @@ ${intent || "(not specified - infer a sensible general prep, and note that the g
 
 Research this person now and write the call-prep brief.`;
 
-    const msg: any = await anthropic.messages.create({
-      model: CLAUDE_MODEL_THINK,
+    const msg: any = await openai.messages.create({
+      model: OPENAI_MODEL_THINK,
       max_tokens: 2600,
       system,
       // Server-side web search tool. Cast because the installed SDK types may
@@ -278,7 +278,7 @@ Research this person now and write the call-prep brief.`;
       ] as any,
       messages: [{ role: "user", content: userPrompt }],
     });
-    await logModelUsage("research-person", "opus", msg?.usage);
+    await logModelUsage("research-person", "think", msg?.usage);
 
     const blocks: any[] = Array.isArray(msg?.content) ? msg.content : [];
     const text = houseStyle(

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { workspaceContextBlock } from "@/lib/workspace";
 
@@ -228,9 +228,9 @@ export async function GET(req: Request) {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 12000);
           try {
-            const msg = await anthropic.messages.create(
+            const msg = await openai.messages.create(
               {
-                model: CLAUDE_MODEL_LIVE,
+                model: OPENAI_MODEL_LIVE,
                 max_tokens: 400,
                 temperature: 0.4,
                 system:
@@ -240,7 +240,7 @@ export async function GET(req: Request) {
               },
               { signal: controller.signal }
             );
-            await logModelUsage("day-read", "haiku", (msg as any).usage);
+            await logModelUsage("day-read", "live", (msg as any).usage);
             const raw = msg.content
               .filter((b: any) => b.type === "text")
               .map((b: any) => b.text)

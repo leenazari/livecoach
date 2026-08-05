@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logModelUsage } from "@/lib/usage";
 
@@ -47,9 +47,9 @@ Return the full updated summary JSON now.`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 34000);
       try {
-        const msg = await anthropic.messages.create(
+        const msg = await openai.messages.create(
           {
-            model: CLAUDE_MODEL_PRO,
+            model: OPENAI_MODEL_PRO,
             max_tokens: 3000,
             temperature: 0.3,
             system,
@@ -57,7 +57,7 @@ Return the full updated summary JSON now.`;
           },
           { signal: controller.signal }
         );
-        await logModelUsage("refine-summary", "sonnet", (msg as any).usage);
+        await logModelUsage("refine-summary", "pro", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
@@ -7,7 +7,7 @@ export const maxDuration = 20;
 
 // The FAST top half of the post-call summary: a verdict, how it went, and the
 // next actions, so the caller can start reading immediately while the full
-// scorecard (strengths, scoring, question review) generates separately. Haiku +
+// scorecard (strengths, scoring, question review) generates separately. Luna +
 // low tokens so it lands in a couple of seconds. NOT persisted - the full
 // summary route is the saved record.
 export async function POST(req: NextRequest) {
@@ -39,9 +39,9 @@ Output ONLY JSON: {"recommendation":"...","headline":"...","overview":"...","myN
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
       try {
-        const msg = await anthropic.messages.create(
+        const msg = await openai.messages.create(
           {
-            model: CLAUDE_MODEL_LIVE,
+            model: OPENAI_MODEL_LIVE,
             max_tokens: 700,
             temperature: 0.3,
             system,
@@ -49,7 +49,7 @@ Output ONLY JSON: {"recommendation":"...","headline":"...","overview":"...","myN
           },
           { signal: controller.signal }
         );
-        await logModelUsage("summary-top", "haiku", (msg as any).usage);
+        await logModelUsage("summary-top", "live", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

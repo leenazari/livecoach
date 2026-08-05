@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { upsertTasks } from "@/lib/tasks";
 import { workspaceContextBlock } from "@/lib/workspace";
@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export const maxDuration = 40;
 
 // PHASE 3 - the post-call CRM pass. After a LINKED call is summarised, ONE
-// Sonnet pass turns the scorecard + the client's existing profile into three
+// Terra pass turns the scorecard + the client's existing profile into three
 // things, which we then store against the company:
 //   1. an updated running "what we know" profile brief,
 //   2. any concrete OPPORTUNITIES the call surfaced,
@@ -109,9 +109,9 @@ Return the JSON now.`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 32000);
       try {
-        const msg = await anthropic.messages.create(
+        const msg = await openai.messages.create(
           {
-            model: CLAUDE_MODEL_PRO,
+            model: OPENAI_MODEL_PRO,
             max_tokens: 1100,
             temperature: 0.3,
             system,
@@ -119,7 +119,7 @@ Return the JSON now.`;
           },
           { signal: controller.signal }
         );
-        await logModelUsage("update-profile", "sonnet", (msg as any).usage);
+        await logModelUsage("update-profile", "pro", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
