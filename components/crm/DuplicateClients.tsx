@@ -22,7 +22,7 @@ export default function DuplicateClients() {
   if (!items.length) return null;
 
   return (
-    <div className="mb-3 rounded-xl border border-amber/45 bg-amber/[0.06] p-4">
+    <div id="duplicates" className="mb-3 scroll-mt-4 rounded-xl border border-amber/45 bg-amber/[0.06] p-4">
       <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
         {"◇"} Possible duplicate clients · {items.length}
       </p>

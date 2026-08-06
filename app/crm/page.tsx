@@ -59,6 +59,12 @@ type Dash = {
     coolingDeals: TodayItem[];
     topActions: (TodayItem & { reason: string })[];
   };
+  weeklyReview?: {
+    key: string;
+    label: string;
+    count: number;
+    href: string;
+  }[];
 };
 
 type TodayItem = {
@@ -510,6 +516,56 @@ export default function DashboardPage() {
           reorder. Shows the top 10 with a "show all" expand. Each row expands to
           that client's to-dos. Self-hides when there are no client-linked to-dos. */}
       <OpportunityBoard />
+
+      {/* WEEKLY RESET: a factual pipeline hygiene checklist assembled inside
+          the existing dashboard read. No additional model or page request. */}
+      {dash?.weeklyReview?.length ? (() => {
+        const clear = dash.weeklyReview.filter((item) => item.count === 0).length;
+        const total = dash.weeklyReview.length;
+        return (
+          <section className="mb-3 rounded-xl border border-sky/35 bg-sky/[0.045] p-4">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sky">
+                  {"↻"} Weekly pipeline reset
+                </p>
+                <p className="mt-1 font-sans text-[0.76rem] text-bone/65">
+                  Clear the loose ends, then start the next week with a trustworthy CRM.
+                </p>
+              </div>
+              <span className={`rounded-full border px-2.5 py-1 font-mono text-[0.54rem] uppercase tracking-wider ${
+                clear === total
+                  ? "border-sage/45 bg-sage/10 text-sage"
+                  : "border-sky/40 bg-sky/10 text-sky"
+              }`}>
+                {clear}/{total} clear
+              </span>
+            </div>
+            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+              {dash.weeklyReview.map((item) => (
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 transition ${
+                    item.count === 0
+                      ? "border-sage/25 bg-sage/[0.04] hover:border-sage/45"
+                      : "border-edge bg-ink/35 hover:border-sky/50"
+                  }`}
+                >
+                  <span className="font-sans text-[0.8rem] text-bone/80">
+                    {item.label}
+                  </span>
+                  <span className={`font-mono text-[0.62rem] ${
+                    item.count === 0 ? "text-sage" : "text-amber"
+                  }`}>
+                    {item.count === 0 ? "✓ clear" : `${item.count} fix`}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        );
+      })() : null}
 
       {/* Data hygiene: only appears when two client records share a strong,
           deterministic identifier. Review-only; never auto-merges data. */}

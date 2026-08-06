@@ -63,7 +63,7 @@ export async function GET(req: Request) {
       recentTouchRes,
     ] =
       await Promise.all([
-        supabaseAdmin.from("companies").select("id, name"),
+        supabaseAdmin.from("companies").select("id, name, stage"),
         supabaseAdmin
           .from("follow_ups")
           .select("id, company_id, draft_subject, created_at")
@@ -253,13 +253,13 @@ export async function GET(req: Request) {
         at: u.scheduled_at,
         href: `/crm/prep?upcoming=${u.id}`,
       }));
-    const overduePromises = tasks
-      .filter(
+    const allOverduePromises = tasks.filter(
         (t: any) =>
           t.kind === "commitment" &&
           t.dueAt &&
           new Date(t.dueAt).getTime() < now
-      )
+      );
+    const overduePromises = allOverduePromises
       .slice(0, 5)
       .map((t: any) => ({
         id: t.id,
@@ -302,12 +302,12 @@ export async function GET(req: Request) {
         .filter(Boolean)
     );
     const COOLING = 14 * 24 * 60 * 60 * 1000;
-    const coolingDeals = openOpps
-      .filter((o: any) => {
+    const allCoolingDeals = openOpps.filter((o: any) => {
         const cid = o.company_id as string;
         const last = latestTouch.get(cid) || new Date(o.created_at).getTime();
         return cid && !companiesWithNextCall.has(cid) && now - last >= COOLING;
-      })
+      });
+    const coolingDeals = allCoolingDeals
       .sort((a: any, b: any) => (Number(b.value) || 0) - (Number(a.value) || 0))
       .slice(0, 5)
       .map((o: any) => ({
@@ -334,6 +334,87 @@ export async function GET(req: Request) {
       coolingDeals,
       topActions,
     };
+
+    // Model-free weekly pipeline reset. It reuses the records already fetched
+    // for the dashboard, so organisation does not add another AI call or page
+    // request. Each check links straight to the place where it can be fixed.
+    const activeCompanyIds = new Set(
+      openOpps.map((o: any) => o.company_id as string).filter(Boolean)
+    );
+    const activeWithTask = new Set(
+      tasks.map((t: any) => t.companyId as string).filter(Boolean)
+    );
+    const activeWithCall = new Set(
+      (upcomingRes.data || [])
+        .map((u: any) => u.company_id as string)
+        .filter(Boolean)
+    );
+    const stageById = new Map(
+      (companiesRes.data || []).map((c: any) => [
+        c.id as string,
+        typeof c.stage === "string" ? c.stage.trim() : "",
+      ])
+    );
+    const missingStages = [...activeCompanyIds].filter(
+      (id) => !stageById.get(id)
+    ).length;
+    const noNextStep = [...activeCompanyIds].filter(
+      (id) => !activeWithTask.has(id) && !activeWithCall.has(id)
+    ).length;
+    const normalName = (value: any) =>
+      String(value || "")
+        .toLowerCase()
+        .replace(/\b(limited|ltd|incorporated|inc|llc|plc|company|co)\b/g, "")
+        .replace(/[^a-z0-9]/g, "");
+    const companyNameCounts = new Map<string, number>();
+    for (const c of companiesRes.data || []) {
+      const key = normalName(c.name);
+      if (key.length >= 4)
+        companyNameCounts.set(key, (companyNameCounts.get(key) || 0) + 1);
+    }
+    const duplicateNames = [...companyNameCounts.values()].filter(
+      (count) => count > 1
+    ).length;
+    const weeklyReview = [
+      {
+        key: "overdue",
+        label: "Overdue promises",
+        count: allOverduePromises.length,
+        href: "/crm/board?tab=tasks",
+      },
+      {
+        key: "cooling",
+        label: "Cooling opportunities",
+        count: new Set(
+          allCoolingDeals.map((o: any) => o.company_id as string).filter(Boolean)
+        ).size,
+        href: "/crm/board?tab=opportunities",
+      },
+      {
+        key: "stages",
+        label: "Missing stages",
+        count: missingStages,
+        href: "/crm/board?tab=opportunities",
+      },
+      {
+        key: "next-step",
+        label: "No next step",
+        count: noNextStep,
+        href: "/crm/board?tab=opportunities",
+      },
+      {
+        key: "drafts",
+        label: "Drafts waiting",
+        count: (draftsRes.data || []).length,
+        href: "/crm/board?tab=drafts",
+      },
+      {
+        key: "duplicates",
+        label: "Possible duplicates",
+        count: duplicateNames,
+        href: "/crm#duplicates",
+      },
+    ];
 
     const kpis = {
       clients: (companiesRes.data || []).length,
@@ -511,6 +592,7 @@ export async function GET(req: Request) {
         kpis,
         tasks: tasks.slice(0, 20),
         today,
+        weeklyReview,
         dayParts: dayPartsAll,
         // Joined string kept for any older client that still reads dayRead.
         dayRead: dayPartsAll.map((p) => p.text).join(" "),
