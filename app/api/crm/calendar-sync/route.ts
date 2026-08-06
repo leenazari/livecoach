@@ -106,12 +106,17 @@ export async function POST() {
     // Which of these already exist (so we update vs insert).
     const ids = rows.map((r) => r.external_id);
     const existing = new Set<string>();
+    const existingCompany = new Map<string, string | null>();
     if (ids.length) {
       const { data } = await supabaseAdmin
         .from("upcoming_calls")
-        .select("external_id")
+        .select("external_id, company_id")
         .in("external_id", ids);
-      for (const d of data || []) if (d.external_id) existing.add(d.external_id);
+      for (const d of data || []) {
+        if (!d.external_id) continue;
+        existing.add(d.external_id);
+        existingCompany.set(d.external_id, d.company_id || null);
+      }
     }
 
     // Imply the client from the GUEST LIST. The invitees are who the call is
@@ -297,6 +302,12 @@ export async function POST() {
       });
     }
     const toUpdate = rows.filter((r) => existing.has(r.external_id));
+    const repairedCompany = new Map<string, string>();
+    for (const r of toUpdate) {
+      if (existingCompany.get(r.external_id)) continue;
+      const companyId = await resolveCompanyForEvent(r.attendees);
+      if (companyId) repairedCompany.set(r.external_id, companyId);
+    }
 
     let added = 0;
     if (toInsert.length) {
@@ -318,6 +329,9 @@ export async function POST() {
             title: r.title,
             meeting_url: r.meeting_url,
             attendees: r.attendees,
+            ...(repairedCompany.has(r.external_id)
+              ? { company_id: repairedCompany.get(r.external_id) }
+              : {}),
           })
           .eq("external_id", r.external_id)
       )
