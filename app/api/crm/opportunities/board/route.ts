@@ -32,6 +32,7 @@ type Opp = {
   dueSoon: boolean;
   nextCallAt: string | null;
   reason: string;
+  nextAction: string;
   // Internal, for ranking only - not sent to the client.
   _texts?: string[];
 };
@@ -60,6 +61,16 @@ function heuristicReason(o: Opp): string {
   return `${o.count} open ${o.count === 1 ? "to-do" : "to-dos"}`;
 }
 
+function heuristicNextAction(o: Opp): string {
+  if (o.dueSoon && o.nextCallAt) return "Prepare the next call and desired commitment";
+  const first = (o._texts || []).find((t) => !/^waiting on:/i.test(t));
+  if (first) return first.replace(/^call:\s*/i, "Prepare: ").slice(0, 140);
+  const waiting = (o._texts || []).find((t) => /^waiting on:/i.test(t));
+  if (waiting) return `Chase ${waiting.replace(/^waiting on:\s*/i, "")}`.slice(0, 140);
+  if (o.nextCallAt) return "Define the outcome for the next call";
+  return "Decide the next commitment or close this opportunity";
+}
+
 export async function GET(req: Request) {
   const light = new URL(req.url).searchParams.get("light") === "1";
   try {
@@ -76,9 +87,8 @@ export async function GET(req: Request) {
       supabaseAdmin.from("companies").select("id, name"),
       supabaseAdmin
         .from("tasks")
-        .select("company_id, text, due_at")
+        .select("company_id, text, due_at, kind")
         .eq("status", "open")
-        .neq("kind", "counterparty_commitment")
         .not("company_id", "is", null)
         .limit(1000),
       supabaseAdmin
@@ -115,6 +125,7 @@ export async function GET(req: Request) {
           dueSoon: false,
           nextCallAt: null,
           reason: "",
+          nextAction: "",
           _texts: [],
         };
         byCompany.set(companyId, o);
@@ -130,9 +141,10 @@ export async function GET(req: Request) {
         continue;
       }
       const o = ensure(cid);
-      o.count += 1;
-      if (o._texts!.length < 5 && typeof t.text === "string")
-        o._texts!.push(t.text);
+      const theirs = t.kind === "counterparty_commitment";
+      if (!theirs) o.count += 1;
+      if (o._texts!.length < 7 && typeof t.text === "string")
+        o._texts!.push(theirs ? `Waiting on: ${t.text}` : t.text);
       const due = t.due_at ? new Date(t.due_at as string).getTime() : null;
       if (due != null && due - nowMs <= SOON_MS) o.dueSoon = true;
     }
@@ -150,12 +162,15 @@ export async function GET(req: Request) {
         o._texts!.push(`Call: ${u.title}`);
     }
 
-    // Real opportunity value: the biggest open opp for that client.
+    // Every real open opportunity must appear, even if it has no task yet. A
+    // missing next step is itself something the engine should correct.
     for (const op of opps || []) {
       const cid = op.company_id as string | null;
-      if (!cid || !byCompany.has(cid)) continue;
+      if (!cid) continue;
       const v = Number(op.value) || 0;
-      const o = byCompany.get(cid)!;
+      const o = ensure(cid);
+      if (typeof op.title === "string" && o._texts!.length < 7)
+        o._texts!.push(`Opportunity: ${op.title}`);
       if (v > 0 && (o.value == null || v > o.value)) {
         o.value = v;
         o.valueIsEstimate = false;
@@ -174,9 +189,11 @@ export async function GET(req: Request) {
     const hasManual = posById.size > 0;
 
     // Coach ranking (THINK), cached by workload so it is not recomputed each
-    // load. Returns an order + a one-line reason + an optional value estimate.
+    // load. The same pass returns rank, reason, value and the one best action;
+    // no second model call is needed.
     let coachOrder: string[] = [];
     const coachReason = new Map<string, string>();
+    const coachAction = new Map<string, string>();
     if (!light && list.length > 1) {
       const summary = list
         .map(
@@ -191,7 +208,7 @@ export async function GET(req: Request) {
         )
         .join("\n");
       const cacheKey =
-        "oppboard1:" + createHash("sha256").update(summary).digest("hex");
+        "oppboard2:" + createHash("sha256").update(summary).digest("hex");
       try {
         const { data: hit } = await supabaseAdmin
           .from("ai_cache")
@@ -207,6 +224,8 @@ export async function GET(req: Request) {
                 coachOrder.push(list[idx].companyId);
                 if (typeof r?.reason === "string")
                   coachReason.set(list[idx].companyId, r.reason.trim());
+                if (typeof r?.action === "string" && r.action.trim())
+                  coachAction.set(list[idx].companyId, r.action.trim());
                 const est = Number(r?.value);
                 if (
                   est > 0 &&
@@ -232,11 +251,11 @@ export async function GET(req: Request) {
             const msg = await openai.messages.create(
               {
                 model: OPENAI_MODEL_THINK,
-                max_tokens: 900,
+                max_tokens: 1100,
                 system: `${biz}${coachSystemBlock()}
 
-You are ranking Lee's open OPPORTUNITIES (one per client) by what most moves him toward the goal. Weigh: how close the deal is to a decision, an imminent next call, the set of to-dos that must be finished to UNLOCK the deal, and the size of the prize. Order by impact, most important first - not by recency. For any opportunity with an unknown value, estimate a rough potential value in GBP from the context (a number, clearly an estimate). Output ONLY a JSON array, most important first:
-[{"i": the opportunity's index number, "reason": a max 8 word why-it-ranks-here, "value": a GBP number or null}]
+You are ranking Lee's open OPPORTUNITIES (one per client) by what most moves him toward the goal. Weigh: how close the deal is to a decision, an imminent next call, the work that unlocks it, promises Lee is waiting for, and the size of the prize. For each opportunity choose ONE concrete NEXT BEST ACTION Lee should take now. It must be specific and executable, such as send the proposal, confirm the decision-maker, chase promised questions, book the decision meeting, prepare a named call, or close an inactive opportunity. Do not say vague things like "follow up" or "move this forward". Do not invent facts. Order by impact, not recency. For unknown value, estimate rough potential GBP from context. Output ONLY:
+[{"i": index, "action": max 14 word imperative next action, "reason": max 10 word outcome-led reason, "value": GBP number or null}]
 Include every index exactly once. Be honest and specific, never flattering.`,
                 messages: [{ role: "user", content: summary }],
               },
@@ -251,18 +270,21 @@ Include every index exactly once. Be honest and specific, never flattering.`,
             const b = raw.lastIndexOf("]");
             const parsed = a >= 0 && b > a ? JSON.parse(raw.slice(a, b + 1)) : [];
             if (Array.isArray(parsed)) {
-              const order: { i: number; reason: string; value: number | null }[] =
+              const order: { i: number; action: string; reason: string; value: number | null }[] =
                 [];
               for (const r of parsed) {
                 const idx = Number(r?.i);
                 if (!Number.isInteger(idx) || !list[idx]) continue;
                 const reason =
                   typeof r?.reason === "string" ? r.reason.trim() : "";
+                const action =
+                  typeof r?.action === "string" ? r.action.trim() : "";
                 const est = Number(r?.value);
                 const value = est > 0 ? est : null;
-                order.push({ i: idx, reason, value });
+                order.push({ i: idx, action, reason, value });
                 coachOrder.push(list[idx].companyId);
                 if (reason) coachReason.set(list[idx].companyId, reason);
+                if (action) coachAction.set(list[idx].companyId, action);
                 if (value && list[idx].value == null) {
                   list[idx].value = value;
                   list[idx].valueIsEstimate = true;
@@ -326,6 +348,7 @@ Include every index exactly once. Be honest and specific, never flattering.`,
       dueSoon: o.dueSoon,
       nextCallAt: o.nextCallAt,
       reason: coachReason.get(o.companyId) || heuristicReason(o),
+      nextAction: coachAction.get(o.companyId) || heuristicNextAction(o),
     }));
 
     return NextResponse.json({ opportunities, looseCount, manual: hasManual });

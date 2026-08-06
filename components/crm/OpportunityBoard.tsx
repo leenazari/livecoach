@@ -29,6 +29,7 @@ type Opp = {
   dueSoon: boolean;
   nextCallAt: string | null;
   reason: string;
+  nextAction: string;
 };
 type Board = { opportunities: Opp[]; looseCount: number; manual: boolean };
 
@@ -107,9 +108,17 @@ function OppRow({
             <span className="block truncate font-sans text-[0.9rem] text-bone">
               {o.company}
             </span>
+            {o.nextAction && (
+              <span className="block truncate font-sans text-[0.76rem] leading-snug text-amber/90">
+                <span className="font-mono text-[0.5rem] uppercase tracking-wider text-amber/65">
+                  Next move ·{" "}
+                </span>
+                {o.nextAction}
+              </span>
+            )}
             {o.reason && (
-              <span className="block truncate font-mono text-[0.56rem] uppercase tracking-wider text-muted">
-                {o.reason}
+              <span className="block truncate font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                Why · {o.reason}
               </span>
             )}
           </span>
@@ -239,6 +248,10 @@ export default function OpportunityBoard() {
           </span>
         )}
       </div>
+      <p className="mb-2.5 font-sans text-[0.76rem] leading-snug text-bone/60">
+        One specific next move for every active opportunity, grounded in its
+        calls, promises, calendar and open work.
+      </p>
 
       {savedNote && (
         <p className="mb-2 font-mono text-[0.56rem] uppercase tracking-wider text-sage">
