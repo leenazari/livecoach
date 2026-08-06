@@ -17,19 +17,26 @@ export const dynamic = "force-dynamic";
 async function loadCall(callId: string) {
   const { data: sum } = await supabaseAdmin
     .from("interview_summaries")
-    .select("id, session_id, company_id, candidate")
+    .select("id, session_id, company_id, candidate, summary")
     .eq("id", callId)
     .maybeSingle();
   if (!sum?.session_id) return null;
   const { data: sess } = await supabaseAdmin
     .from("interview_sessions")
-    .select("transcript, candidate")
+    .select("transcript, candidate, brief, competencies, call_type")
     .eq("session_id", sum.session_id as string)
     .maybeSingle();
   return {
     sessionId: sum.session_id as string,
     companyId: (sum.company_id as string) || null,
     transcript: typeof sess?.transcript === "string" ? sess.transcript : "",
+    intent: typeof sess?.brief === "string" ? sess.brief.trim() : "",
+    focus: Array.isArray(sess?.competencies)
+      ? sess.competencies.map((v: any) => String(v || "").trim()).filter(Boolean)
+      : [],
+    callType: typeof sess?.call_type === "string" ? sess.call_type : "general",
+    summary:
+      sum?.summary && typeof sum.summary === "object" ? sum.summary : {},
     // The OTHER party on the call - so the coach never coaches their lines.
     other:
       (typeof sum.candidate === "string" && sum.candidate.trim()) ||
@@ -146,14 +153,27 @@ export async function POST(req: NextRequest) {
 - You coach ONLY the HOST. You must NEVER quote, rewrite or coach the OTHER party's lines, no matter how much they ramble, hedge or over-talk. Their words are off limits.
 - Be careful: on this call the HOST may be labelled "Interviewer:" even though it is a sales or business call, and the OTHER party may do a lot of the talking and questioning. Do not be fooled by who talks more - coach the HOST only.`
       : `WHO IS WHO: The HOST is the user you are coaching - their lines are labelled "You:", "Interviewer:", or by their own name like "Lee Nazari:". Any other named speaker is the OTHER party. You coach ONLY the HOST and must NEVER quote, rewrite or coach the other party's lines.`;
-    const system = `You are a world-class communication and speaking coach. You are reviewing a call transcript to help the HOST get better at SPEAKING: being clear, concise, persuasive and well understood. ${taste}
+    const system = `You are a world-class strategic call coach. You are reviewing a completed call to help the HOST achieve better outcomes, not merely sound polished. ${taste}
 ${otherBlock}
-Go through the HOST'S OWN lines only and pick the 6 to 10 moments that matter most - where they rambled, buried the point, were vague, over-talked, used weak or filler phrasing, missed a stronger frame, talked instead of listened, or simply could have landed it better. For each, output:
+Prioritise the 5 to 8 moments with the greatest practical impact, in this order:
+1. Missed opportunities to advance the stated INTENT or highest-priority FOCUS.
+2. On sales calls, missed buying signals, qualification questions, value framing, objections, decision process, next-step commitments, or appropriate opportunities to advance/close the deal. Never invent a close where the buyer was not ready.
+3. Decisions, owners, dates, success criteria or follow-ups the host should have secured but left vague.
+4. Important risks or contradictions in the SUMMARY that the host failed to challenge.
+5. Communication problems only when they materially weakened the outcome: rambling, leading questions, over-talking, weak framing or failing to listen.
+For each, output:
 - quote: a short, near-exact snippet of what the HOST actually said (trim to the relevant part, max ~25 words). It MUST be a line the HOST spoke, copied from a "You:" / "Interviewer:" / host-name turn - never a line from the other party.
-- better: a sharper, more effective way they could have said it - concrete and in their own voice, never generic advice.
-- why: one short line on what it improves (e.g. "gets to the point", "sounds more certain", "hands them the floor").
-Coach kindly, honestly and specifically. Do NOT critique the deal content - a separate summary covers that. Focus purely on HOW the host communicates.
-Before you finalise, re-check every quote: if it is the other party's line and not the host's, drop it and replace it with a real host line. Output ONLY a JSON array: [{"quote":"...","better":"...","why":"..."}] with 6 to 10 items.`;
+- better: the exact stronger question or statement the host could have used at that moment, in their own voice. Make it specific to this call, intent and focus; never generic advice.
+- why: one short outcome-led reason, such as "tests whether there is a real buying process", "turns interest into a dated next step", or "brings the call back to the priority focus".
+Coach kindly, honestly and specifically. Internal/product calls should be coached toward decisions and delivery, not forced into sales language. Sales calls should surface commercially important misses even when the host sounded articulate.
+Before you finalise, re-check every quote: if it is the other party's line and not the host's, drop it and replace it with a real host line. Output ONLY a JSON array: [{"quote":"...","better":"...","why":"..."}] with 5 to 8 items.`;
+
+    const strategicContext = JSON.stringify({
+      callType: call.callType,
+      intent: call.intent || null,
+      priorityFocus: call.focus.slice(0, 10),
+      summary: call.summary,
+    }).slice(0, 8000);
 
     const msg = await openai.messages.create({
       model: OPENAI_MODEL_PRO,
@@ -163,9 +183,9 @@ Before you finalise, re-check every quote: if it is the other party's line and n
       messages: [
         {
           role: "user",
-          content: `TRANSCRIPT (speaker-labelled):\n${call.transcript.slice(
+          content: `CALL CONTEXT (use this to judge what mattered):\n${strategicContext}\n\nTRANSCRIPT (speaker-labelled):\n${call.transcript.slice(
             -14000
-          )}\n\nReturn the JSON array of speaking-coaching points now.`,
+          )}\n\nReturn the JSON array of strategic coaching points now.`,
         },
       ],
     });

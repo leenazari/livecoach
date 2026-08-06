@@ -9,13 +9,15 @@ export const dynamic = "force-dynamic";
 // for all calls is in one place, no need to open each call.
 export async function GET() {
   try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const [{ data: summaries }, { data: companies }, { data: coachable }] =
       await Promise.all([
         supabaseAdmin
           .from("interview_summaries")
           .select("id, candidate, company_id, created_at, session_id, summary")
+          .gte("created_at", sevenDaysAgo)
           .order("created_at", { ascending: false })
-          .limit(60),
+          .limit(30),
         supabaseAdmin.from("companies").select("id, name"),
         supabaseAdmin
           .from("interview_sessions")
@@ -29,9 +31,19 @@ export async function GET() {
       (coachable || []).map((s: any) => s.session_id).filter(Boolean)
     );
 
-    const calls = (summaries || []).filter(
-      (s: any) => s.session_id && coachableSet.has(s.session_id)
-    );
+    // A retry can create more than one summary row for the same recording.
+    // Keep only the newest so the coach queue never shows duplicate calls.
+    const seenSessions = new Set<string>();
+    const calls = (summaries || []).filter((s: any) => {
+      if (
+        !s.session_id ||
+        !coachableSet.has(s.session_id) ||
+        seenSessions.has(s.session_id)
+      )
+        return false;
+      seenSessions.add(s.session_id);
+      return true;
+    });
 
     const sessionIds = calls.map((s: any) => s.session_id);
     const pointsBySession = new Map<string, any[]>();

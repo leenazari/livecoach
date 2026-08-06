@@ -138,9 +138,10 @@ export default function CallCoachPage() {
       </header>
 
       <p className="mb-4 font-sans text-[0.84rem] leading-snug text-bone/70">
-        Your speaking training across every call, in one place. Generate a
-        debrief, then thumb each tip up or down so the coach learns how you like
-        to be coached.
+        Your most important coaching from the last seven days. It checks the
+        intent and priority focus, missed decisions and follow-ups, and—in sales
+        calls—opportunities to qualify, advance or close the deal. Thumb each
+        tip up or down so the coach learns what helps you.
       </p>
 
       {!loaded ? (
@@ -148,7 +149,7 @@ export default function CallCoachPage() {
       ) : visible.length === 0 ? (
         <p className="font-mono text-[0.66rem] text-muted">
           {calls.length === 0
-            ? "No coachable calls yet. Once a call has a transcript it shows here."
+            ? "No coachable calls in the last seven days."
             : "All caught up. Nice."}
         </p>
       ) : (
