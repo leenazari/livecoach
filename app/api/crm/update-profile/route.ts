@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
 
     const { data: company } = await supabaseAdmin
       .from("companies")
-      .select("name, profile")
+      .select("name, profile, email_context_updated_at")
       .eq("id", companyId)
       .single();
     if (!company) {
@@ -210,6 +210,7 @@ Return the JSON now.`;
                 intent: nextCallIntent,
                 rationale: nextCallRationale,
                 basedOnSessionId: sessionId || null,
+                basedOnEmailAt: (company as any).email_context_updated_at || null,
                 generatedAt: new Date().toISOString(),
               }
             : existingProfile.next_call,

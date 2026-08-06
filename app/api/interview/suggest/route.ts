@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
+import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { getTasteBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -231,7 +231,7 @@ ${latestLabel}
 Give the natural next beat: a WARM, friendly MAIN question that flows from what was just said ||WHY|| why, plus optional ||FOLLOWUP|| - or HOLD. Remember: always a usable cue, never meta-commentary.`;
 
     const openaiStream = await openai.messages.stream({
-      model: OPENAI_MODEL_LIVE,
+      model: OPENAI_MODEL_PRO,
       max_tokens: 80,
       system,
       messages: [{ role: "user", content: userMsg }],
@@ -256,7 +256,7 @@ Give the natural next beat: a WARM, friendly MAIN question that flows from what 
             controller.enqueue(
               encoder.encode(
                 `\n||USAGE||${JSON.stringify({
-                  model: "live",
+                  model: "pro",
                   usage: finalMsg.usage,
                 })}||ENDUSAGE||`
               )

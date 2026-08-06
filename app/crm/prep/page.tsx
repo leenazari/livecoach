@@ -319,6 +319,22 @@ function PrepInner() {
       // free Supabase read. A saved focus/plan is left untouched.
       if (d.hasHistory && companyId && !savedFocus.length) {
         try {
+          if (d.subject?.personEmail && d.subject?.internal !== true) {
+            try {
+              const mail = await crmFetch<any>("/api/crm/email-pull", {
+                method: "POST",
+                body: JSON.stringify({
+                  companyId,
+                  name: d.subject.person || undefined,
+                  email: d.subject.personEmail,
+                }),
+              });
+              if (typeof mail.emailContext === "string")
+                setEmailContext(mail.emailContext);
+            } catch {
+              /* keep the saved context when Gmail has nothing newer */
+            }
+          }
           const fresh = await crmFetch<{ intent: string; rationale: string }>(
             `/api/crm/companies/${companyId}/prep-intent`,
             {
