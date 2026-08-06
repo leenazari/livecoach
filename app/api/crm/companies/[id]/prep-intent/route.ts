@@ -35,7 +35,7 @@ export async function POST(
       await Promise.all([
         supabaseAdmin
           .from("companies")
-          .select("name, profile")
+          .select("name, profile, email_context_updated_at")
           .eq("id", companyId)
           .single(),
         supabaseAdmin
@@ -67,6 +67,7 @@ export async function POST(
       .filter(Boolean);
 
     const newestSummaryAt = summaries[0]?.created_at || null;
+    const newestEmailAt = (company as any).email_context_updated_at || null;
     const cached = profile.next_call;
     const cacheIsCurrent = !!(
       cached &&
@@ -75,7 +76,8 @@ export async function POST(
       (!newestSummaryAt ||
         cached.basedOnSummaryAt === newestSummaryAt ||
         (cached.basedOnSessionId &&
-          cached.basedOnSessionId === summaries[0]?.session_id))
+          cached.basedOnSessionId === summaries[0]?.session_id)) &&
+      cached.basedOnEmailAt === newestEmailAt
     );
 
     const applyToUpcoming = async (
@@ -327,6 +329,7 @@ Return the JSON now.`;
             intent: cleanIntent,
             rationale: cleanRationale,
             basedOnSummaryAt: newestSummaryAt,
+            basedOnEmailAt: newestEmailAt,
             generatedAt: new Date().toISOString(),
           },
         },

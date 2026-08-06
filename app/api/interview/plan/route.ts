@@ -40,17 +40,22 @@ async function internalFramingBlock(companyId: any): Promise<string> {
 // trimmed; only the secondary context is.
 const MAX_CONTEXT_CHARS = 12000;
 
-async function callModelWithTimeout(system: string, userMsg: string, ms: number) {
+async function callModelWithTimeout(
+  system: string,
+  userMsg: string,
+  ms: number,
+  options: { model?: string; maxTokens?: number } = {}
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
     return await openai.messages.create(
       {
-        model: OPENAI_MODEL_LIVE,
+        model: options.model || OPENAI_MODEL_LIVE,
         // The STRUCTURAL plan runs on fast Luna so it never times out against
         // the 60s function cap (the playbook is upgraded separately on Terra).
         // 2400 tokens leaves room for the full JSON without truncation.
-        max_tokens: 2400,
+        max_tokens: options.maxTokens || 2400,
         system,
         messages: [{ role: "user", content: userMsg }],
       },
@@ -317,10 +322,10 @@ export async function POST(req: NextRequest) {
       context = context.slice(0, MAX_CONTEXT_CHARS) + "\n[context truncated]";
     }
 
-    // STEP 1 of the two-step build: focus areas only. A small, fast Luna call
-    // so the caller can lock/edit focus BEFORE we spend on the heavy full plan
-    // (questions + playbook + goals). Returns callType, subjectName, a quick
-    // read, and the ranked focus list - nothing else.
+    // STEP 1 of the two-step build: focus areas only. Focus determines every
+    // downstream question and cue, so this one compact pass uses Terra for
+    // judgement while remaining far smaller than the full plan. The result is
+    // saved against the scheduled call and normally paid for only once.
     if (body.focusOnly === true) {
       // When the caller already has a focus list and is REBUILDING after adding
       // a document, reconcile against it instead of deriving from scratch - so
@@ -336,7 +341,7 @@ export async function POST(req: NextRequest) {
       const deriveSystem = `${internalBlock}You are an expert conversation planner. From the INTENT brief and any supporting document, return ONLY this and nothing else:
 - callType: one of "interview", "sales", "support", "general".
 - subjectName: the person/party being spoken with if discernible from the brief/context, else "".
-- focusAreas: 6-9 topics to assess or explore, RANKED most-important-first. Tight labels (2-5 words) that are CONCRETE and SPECIFIC TO THIS CALL - name the actual idea, product, people, numbers or mechanics from the brief and document. A reader should be UNABLE to use them for any other call. BANNED generic filler: "Phase 1 deliverables", "Timeline and resources", "Data privacy", "Decision authority", "Content integration". GOOD (for a relationship-AI built from 100 books, a YouTube audience, a 50/50 JV): "how the 100 books shape replies", "therapy-avatar emotional realism", "YouTube 9.7M launch fit", "JV 50/50 terms", "consent for sensitive relationship data". Every focus must be appropriate to raise OPENLY with the other party - never the caller's own internal/sensitive matters.
+- focusAreas: 5-8 strategic focus statements, RANKED most-important-first. Each should be 4-10 words, concrete and specific enough to guide a real conversation. Prioritise the intent's desired outcome, the newest call's unfinished commitments, risks, decisions and evidence needed. Name the actual product, people, deliverable, number or mechanism. Do not reduce important reasoning to vague noun labels. A reader should be UNABLE to reuse them for another call. BANNED generic filler: "Phase 1 deliverables", "Timeline and resources", "Data privacy", "Decision authority", "Content integration". GOOD: "agree admissions-search acceptance criteria", "confirm owner and date for access fixes", "test whether the 100 books improve replies", "settle the 50/50 JV terms". Every focus must be appropriate to raise OPENLY with the other party - never the caller's own internal/sensitive matters.
 - character: 1-2 sentences - the caller's read on who/what they're dealing with and what they want from this call.
 
 Output ONLY valid JSON: { "callType": "...", "subjectName": "...", "focusAreas": ["..."], "character": "..." }`;
@@ -347,7 +352,7 @@ EXISTING FOCUS LIST - the caller has ranked and edited these; treat them as the 
 ${existingFocus.map((f, i) => `${i + 1}. ${f}`).join("\n")}
 
 Produce:
-- additions: 0-5 GENUINELY NEW focus topics the document/intent surface that are NOT already covered, even loosely, by any existing focus. Judge overlap by MEANING, not wording - if a topic is already represented by an existing focus, DO NOT add it. Tight labels (2-5 words), concrete and specific to THIS call. Empty array if the document adds nothing new.
+- additions: 0-5 GENUINELY NEW strategic focus statements the document/intent surface that are NOT already covered, even loosely, by any existing focus. Judge overlap by MEANING, not wording. Use 4-10 words, concrete and specific to THIS call, prioritising decisions, unfinished commitments, risks and evidence needed. Empty array if the document adds nothing new.
 - upgrades: 0-3 in-place improvements. ONLY when the new information yields a CLEARLY more specific / better version of an EXISTING focus. Each is {"from":"<copy the existing focus label VERBATIM from the list above>","to":"<the improved, more specific label>"}. Do NOT upgrade unless it is clearly better. Never list a focus in both additions and upgrades.
 - callType: one of "interview", "sales", "support", "general".
 - subjectName: the person/party being spoken with if discernible, else "".
@@ -368,7 +373,10 @@ Return the JSON now.`;
       let fUsage: any = null;
       let fRaw = "";
       try {
-        const fMsg = await callModelWithTimeout(fSystem, fUser, 25000);
+        const fMsg = await callModelWithTimeout(fSystem, fUser, 30000, {
+          model: OPENAI_MODEL_PRO,
+          maxTokens: 1100,
+        });
         fUsage = fMsg.usage;
         fRaw = fMsg.content
           .filter((b: any) => b.type === "text")
@@ -389,7 +397,7 @@ Return the JSON now.`;
         (typeof fPlan.subjectName === "string" ? fPlan.subjectName.trim() : "");
       const fCharacter =
         typeof fPlan.character === "string" ? fPlan.character : "";
-      const costHeader = { "x-cost-usd": String(callCostUSD("live", fUsage)) };
+      const costHeader = { "x-cost-usd": String(callCostUSD("pro", fUsage)) };
 
       // RECONCILE: return additions + in-place upgrades, deduped by meaning.
       if (reconcile) {

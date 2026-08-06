@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
+import { createHash } from "crypto";
 import {
   recentMessages,
   digestMessages,
@@ -153,6 +154,36 @@ export async function POST(req: NextRequest) {
 
     // Distil the thread into a clean context note + a company name.
     const digest = digestMessages(msgs, 12);
+    const sourceHash = createHash("sha256").update(digest).digest("hex");
+
+    // Reopening Prep should not re-summarise the same inbox thread. The digest
+    // hash changes only when the relevant recent messages change.
+    if (companyId) {
+      const { data: cachedCompany } = await supabaseAdmin
+        .from("companies")
+        .select("name, profile, email_context, email_context_updated_at")
+        .eq("id", companyId)
+        .maybeSingle();
+      if (
+        cachedCompany?.profile &&
+        (cachedCompany.profile as any).email_context_source_hash === sourceHash &&
+        typeof cachedCompany.email_context === "string" &&
+        cachedCompany.email_context.trim()
+      ) {
+        return NextResponse.json({
+          ok: true,
+          cached: true,
+          companyId,
+          name: cachedCompany.name,
+          person: personName,
+          email: counterparty,
+          emailContext: cachedCompany.email_context,
+          emailContextUpdatedAt: cachedCompany.email_context_updated_at,
+          created: false,
+          messages: msgs.length,
+        });
+      }
+    }
     let emailContext = "";
     let companyName = "";
     try {
@@ -215,10 +246,19 @@ export async function POST(req: NextRequest) {
     }
     let created = false;
     if (targetId) {
+      const { data: existingCompany } = await supabaseAdmin
+        .from("companies")
+        .select("profile")
+        .eq("id", targetId)
+        .maybeSingle();
       const patch: Record<string, any> = {
         email_context: emailContext,
         email_context_updated_at: nowIso,
         updated_at: nowIso,
+        profile: {
+          ...((existingCompany?.profile as any) || {}),
+          email_context_source_hash: sourceHash,
+        },
       };
       if (website) patch.website = website;
       if (domain) patch.domain = domain;
@@ -232,6 +272,7 @@ export async function POST(req: NextRequest) {
           website,
           email_context: emailContext,
           email_context_updated_at: nowIso,
+          profile: { email_context_source_hash: sourceHash },
         })
         .select("id")
         .single();
@@ -264,6 +305,8 @@ export async function POST(req: NextRequest) {
       email: counterparty,
       created,
       messages: msgs.length,
+      emailContext,
+      emailContextUpdatedAt: nowIso,
     });
   } catch (err: any) {
     return NextResponse.json(

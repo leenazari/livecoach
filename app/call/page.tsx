@@ -889,6 +889,38 @@ export default function CallPage() {
             // so reopening this screen does not repeatedly spend tokens.
             if (call?.company_id && !call?.prep?.selectedComps?.length) {
               try {
+                // Pull the latest conversation with the actual calendar guest
+                // before drafting the intent. email-pull hashes the thread, so
+                // an unchanged inbox returns the cached digest without AI use.
+                const emailGuest = pickGuest((call as any)?.attendees);
+                if (emailGuest?.email) {
+                  try {
+                    const mailRes = await fetch("/api/crm/email-pull", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        companyId: call.company_id,
+                        name: emailGuest.name || undefined,
+                        email: emailGuest.email,
+                      }),
+                    });
+                    const mail = await mailRes.json();
+                    if (
+                      mailRes.ok &&
+                      typeof mail.emailContext === "string" &&
+                      mail.emailContext.trim()
+                    ) {
+                      setClientEmailCtx(mail.emailContext);
+                      setEmailCtxUpdatedAt(
+                        typeof mail.emailContextUpdatedAt === "string"
+                          ? mail.emailContextUpdatedAt
+                          : new Date().toISOString()
+                      );
+                    }
+                  } catch {
+                    /* Gmail context is best-effort */
+                  }
+                }
                 const r = await fetch(
                   `/api/crm/companies/${call.company_id}/prep-intent`,
                   {
@@ -1245,7 +1277,10 @@ export default function CallPage() {
         try {
           const parsed = JSON.parse(um[1]);
           if (parsed?.usage)
-            aiUsdRef.current += usageCostUSD("live", parsed.usage);
+            aiUsdRef.current += usageCostUSD(
+              parsed.model === "pro" ? "pro" : "live",
+              parsed.usage
+            );
         } catch {
           /* ignore */
         }
@@ -2964,6 +2999,68 @@ export default function CallPage() {
                 Step 1: review or change this first. LiveCoach will not build
                 the focus or battle plan until you choose the next step.
               </p>
+
+              {/* The next action belongs directly after the intent. Keeping it
+                  here avoids making the user scan past research, source and bot
+                  controls to continue the two-step prep flow. */}
+              {planStage !== "full" && (
+                <div className="mt-3 border-t border-edge/70 pt-3">
+                  <button
+                    onClick={async () => {
+                      if (linkedCompanyRef.current?.id)
+                        await saveClientEmailCtx();
+                      prep(planStage === "none" ? "focus" : "full");
+                    }}
+                    disabled={
+                      prepping || (!brief.trim() && !(cvReady && role.trim()))
+                    }
+                    className="w-full rounded-lg border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {prepping
+                      ? planStage === "none"
+                        ? "Building focus..."
+                        : "Building the plan..."
+                      : planStage === "none"
+                      ? "Build focus"
+                      : "Build the plan from this focus"}
+                  </button>
+                  <p className="mt-1.5 font-mono text-[0.58rem] leading-relaxed text-muted">
+                    {planStage === "none"
+                      ? "Uses the intent, latest call actions, client memory and documents. Nothing else is built yet."
+                      : "Rank, edit or remove the focus below first. The full plan will follow exactly what you keep."}
+                  </p>
+
+                  {suggestedComps.length > 0 && (
+                    <div className="mt-3 rounded-xl border border-amber/40 bg-amber/[0.06] p-3">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <p className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-amber">
+                          Focus <span className="text-muted">- priority order</span>
+                        </p>
+                        <button
+                          onClick={() => prep("refocus")}
+                          disabled={prepping}
+                          title="Re-derive the focus from your intent and documents, keeping your edits"
+                          className="shrink-0 rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-40"
+                        >
+                          {"\u21BB"} Rebuild
+                        </button>
+                      </div>
+                      <p className="mb-3 font-mono text-[0.58rem] leading-relaxed text-muted">
+                        Drag or use the arrows to rank. Remove anything that
+                        should not steer the call, or add your own.
+                      </p>
+                      <SortableFocusList
+                        items={suggestedComps}
+                        activeItems={selectedComps}
+                        onReorder={setSuggestedComps}
+                        onToggle={toggleComp}
+                        onDelete={deleteComp}
+                        onAdd={addComp}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Email context - the thread so far, where most prep info lives. */}
@@ -3336,7 +3433,7 @@ export default function CallPage() {
                 )}
                 {/* FOCUS - the spine. Pinned first; once the plan is built it
                     is framed as locked, with the plan unfurled beneath it. */}
-                {suggestedComps.length > 0 && (
+                {suggestedComps.length > 0 && planStage === "full" && (
                   <div
                     className={
                       planStage === "full"
@@ -3602,32 +3699,26 @@ export default function CallPage() {
           </div>
         </div>
 
-        {/* ACTION BAR - the build gate */}
+        {/* Once the plan exists, this bar becomes the refresh / live controls.
+            The earlier Build focus / Build plan actions now sit under Intent. */}
+        {planStage === "full" && (
         <div className="flex flex-col items-start gap-3 border-t border-edge bg-ink/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="font-mono text-[0.63rem] leading-relaxed text-muted">
-            {planStage === "none"
-              ? "Step 1: build the focus only - fast. Then rank/delete it before we generate the full plan."
-              : planStage === "focus"
-              ? "Step 2: rank or delete the focus, then Build the plan - the read, questions, playbook & goals are built around your locked focus."
-              : "Edit the focus anytime, then Refresh from focus rebuilds the read, questions, playbook & goals around it - your focus list stays as you set it. The call goes live on its own the moment speech is picked up - or hit Go live to bring the cues up first."}
+            Edit the focus anytime, then Refresh from focus rebuilds the read,
+            questions, playbook and goals around it. The call goes live on its
+            own when speech is picked up, or hit Go live first.
           </p>
           <div className="flex shrink-0 gap-2">
             <button
               onClick={async () => {
                 // Persist the latest email context first so the planner reads it.
                 if (linkedCompanyRef.current?.id) await saveClientEmailCtx();
-                prep(planStage === "none" ? "focus" : "full");
+                prep("full");
               }}
               disabled={prepping || (!brief.trim() && !(cvReady && role.trim()))}
               className="rounded-full border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {prepping
-                ? "working..."
-                : planStage === "none"
-                ? "Build focus"
-                : planStage === "focus"
-                ? "Build the plan"
-                : "Refresh from focus"}
+              {prepping ? "working..." : "Refresh from focus"}
             </button>
             {planStage === "full" && (
               <button
@@ -3648,6 +3739,8 @@ export default function CallPage() {
               </button>
             )}
           </div>
+        </div>
+        )}
 
           {manualRecap && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/80 p-4 backdrop-blur-sm">
@@ -3716,7 +3809,6 @@ export default function CallPage() {
               </div>
             </div>
           )}
-        </div>
         </div>
       )}
 
