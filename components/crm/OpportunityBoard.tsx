@@ -23,6 +23,7 @@ import TaskList from "@/components/crm/TaskList";
 type Opp = {
   companyId: string;
   company: string;
+  stage: string | null;
   value: number | null;
   valueIsEstimate: boolean;
   count: number;
@@ -60,6 +61,16 @@ const whenLabel = (iso: string | null) => {
 };
 
 const gbp = (n: number) => `£${Math.round(n).toLocaleString()}`;
+const STANDARD_STAGES = [
+  "New",
+  "Discovery",
+  "Qualified",
+  "Proposal",
+  "Negotiation",
+  "Partner",
+  "Customer",
+  "Dormant",
+];
 
 // One draggable, collapsible opportunity row. The grip is the only drag handle,
 // so tapping the row toggles its to-dos and only the grip starts a reorder
@@ -68,10 +79,12 @@ function OppRow({
   o,
   open,
   onToggle,
+  onStageChange,
 }: {
   o: Opp;
   open: boolean;
   onToggle: () => void;
+  onStageChange: (stage: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: o.companyId });
@@ -87,7 +100,7 @@ function OppRow({
       style={style}
       className="overflow-hidden rounded-lg border border-edge bg-ink/40"
     >
-      <div className="flex items-center gap-2 px-2 py-2">
+      <div className="flex flex-wrap items-center gap-2 px-2 py-2 sm:flex-nowrap">
         {/* Drag handle */}
         <button
           type="button"
@@ -129,7 +142,28 @@ function OppRow({
         </button>
 
         {/* Signals: value, count, next-call time. */}
-        <span className="flex flex-none items-center gap-1.5">
+        <span className="ml-8 flex w-full flex-wrap items-center gap-1.5 sm:ml-0 sm:w-auto sm:flex-none sm:flex-nowrap">
+          <select
+            aria-label={`relationship stage for ${o.company}`}
+            value={o.stage || ""}
+            onChange={(e) => onStageChange(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            className={`max-w-[8rem] rounded-full border bg-ink px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider outline-none transition focus:border-amber/70 ${
+              o.stage
+                ? "border-edge text-bone/75"
+                : "border-amber/55 bg-amber/10 text-amber"
+            }`}
+          >
+            <option value="">set stage…</option>
+            {o.stage && !STANDARD_STAGES.includes(o.stage) ? (
+              <option value={o.stage}>{o.stage}</option>
+            ) : null}
+            {STANDARD_STAGES.map((stage) => (
+              <option key={stage} value={stage}>
+                {stage.toLowerCase()}
+              </option>
+            ))}
+          </select>
           {o.value ? (
             <span
               title={o.valueIsEstimate ? "coach estimate" : "deal value"}
@@ -238,6 +272,21 @@ export default function OpportunityBoard() {
       .catch(() => {});
   };
 
+  const setStage = (companyId: string, stage: string) => {
+    if (!board) return;
+    const previous = board;
+    setBoard({
+      ...board,
+      opportunities: board.opportunities.map((o) =>
+        o.companyId === companyId ? { ...o, stage: stage || null } : o
+      ),
+    });
+    crmFetch(`/api/crm/companies/${companyId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ stage }),
+    }).catch(() => setBoard(previous));
+  };
+
   if (!board || board.opportunities.length === 0) return null;
 
   const visible = showAll
@@ -270,8 +319,8 @@ export default function OpportunityBoard() {
       </div>
       <p className="mb-2.5 font-sans text-[0.76rem] leading-snug text-bone/60">
         One specific next move for every active opportunity, grounded in its
-        calls, email activity, promises, calendar and open work. Quiet deals are
-        flagged before they disappear.
+        calls, email activity, promises, stage, calendar and open work. Missing
+        stages and quiet deals are flagged before they disappear.
       </p>
 
       {savedNote && (
@@ -298,6 +347,7 @@ export default function OpportunityBoard() {
                 onToggle={() =>
                   setOpen((c) => (c === o.companyId ? null : o.companyId))
                 }
+                onStageChange={(stage) => setStage(o.companyId, stage)}
               />
             ))}
           </ul>
