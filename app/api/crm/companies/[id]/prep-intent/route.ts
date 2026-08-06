@@ -13,9 +13,8 @@ export const maxDuration = 40;
 // intent never goes stale. It reads everything we know (recent call scorecards,
 // the open loops they left, the things you still owe, the strategic playbook,
 // open to-dos, the email thread) and proposes a first-person intent for the
-// next conversation, plus a short why. It writes NOTHING - the call screen owns
-// what actually gets used, so the user reviews and edits before it drives a
-// call. Re-runnable.
+// next conversation, plus a short why. The result is cached on the company and
+// reused until a newer summary exists, so reopening Prep spends no more tokens.
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -26,6 +25,10 @@ export async function POST(
     // Concise mode = a tight 1-2 sentence intent, used when the call screen
     // auto-fills the intent box on open (vs the fuller Prep-tab suggestion).
     const concise = (body as any)?.concise === true;
+    const upcomingId =
+      typeof (body as any)?.upcomingId === "string"
+        ? (body as any).upcomingId
+        : "";
 
     const [{ data: company }, { data: summaryRows }, { data: taskRows }] =
       await Promise.all([
@@ -36,7 +39,7 @@ export async function POST(
           .single(),
         supabaseAdmin
           .from("interview_summaries")
-          .select("created_at, summary")
+          .select("created_at, session_id, summary")
           .eq("company_id", companyId)
           .order("created_at", { ascending: false })
           .limit(5),
@@ -61,6 +64,65 @@ export async function POST(
     const openTasks = (taskRows || [])
       .map((t: any) => (typeof t.text === "string" ? t.text.trim() : ""))
       .filter(Boolean);
+
+    const newestSummaryAt = summaries[0]?.created_at || null;
+    const cached = profile.next_call;
+    const cacheIsCurrent = !!(
+      cached &&
+      typeof cached.intent === "string" &&
+      cached.intent.trim() &&
+      (!newestSummaryAt ||
+        cached.basedOnSummaryAt === newestSummaryAt ||
+        (cached.basedOnSessionId &&
+          cached.basedOnSessionId === summaries[0]?.session_id))
+    );
+
+    const applyToUpcoming = async (
+      intent: string,
+      rationale: string,
+      source: "next_call" | "generated"
+    ) => {
+      if (!upcomingId) return intent;
+      const { data: call } = await supabaseAdmin
+        .from("upcoming_calls")
+        .select("intent, prep")
+        .eq("id", upcomingId)
+        .maybeSingle();
+      const prep = call?.prep && typeof call.prep === "object" ? call.prep : {};
+      const meta = (prep as any).intentMeta;
+      // Once the user edits this occurrence, their words win.
+      if (meta?.source === "manual") return String(call?.intent || intent);
+      await supabaseAdmin
+        .from("upcoming_calls")
+        .update({
+          intent,
+          prep: {
+            ...prep,
+            intentMeta: {
+              source,
+              basedOnSummaryAt: newestSummaryAt,
+              rationale,
+              savedAt: new Date().toISOString(),
+            },
+          },
+        })
+        .eq("id", upcomingId);
+      return intent;
+    };
+
+    if (cacheIsCurrent) {
+      const cachedIntent = await applyToUpcoming(
+        cached.intent.trim(),
+        typeof cached.rationale === "string" ? cached.rationale : "",
+        "next_call"
+      );
+      return NextResponse.json({
+        intent: cachedIntent,
+        rationale: typeof cached.rationale === "string" ? cached.rationale : "",
+        cached: true,
+        fallback: false,
+      });
+    }
 
     // Don't burn a model call on an empty record - tell the user what to add.
     const hasMaterial =
@@ -246,9 +308,32 @@ Return the JSON now.`;
         .replace(/\s{2,}/g, " ")
         .trim();
 
+    const cleanIntent = tidy(intent);
+    const cleanRationale = rationale ? tidy(rationale) : "";
+    await supabaseAdmin
+      .from("companies")
+      .update({
+        profile: {
+          ...profile,
+          next_call: {
+            intent: cleanIntent,
+            rationale: cleanRationale,
+            basedOnSummaryAt: newestSummaryAt,
+            generatedAt: new Date().toISOString(),
+          },
+        },
+      })
+      .eq("id", companyId);
+    const appliedIntent = await applyToUpcoming(
+      cleanIntent,
+      cleanRationale,
+      "generated"
+    );
+
     return NextResponse.json({
-      intent: tidy(intent),
-      rationale: rationale ? tidy(rationale) : "",
+      intent: appliedIntent,
+      rationale: cleanRationale,
+      cached: false,
       fallback,
       basedOn: {
         calls: summaries.length,

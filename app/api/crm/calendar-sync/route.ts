@@ -159,28 +159,28 @@ export async function POST() {
 
     // Inherit curation for recurring meetings: if a new event can't resolve a
     // client from its (often empty) guest list, but a PRIOR call with the SAME
-    // title was already curated - a client/internal link and/or an intent set by
-    // the user or a past sync - carry that onto the new instance. This stops
+    // title was already curated, carry the client/internal link onto the new
+    // instance. Intents are deliberately NOT inherited: each occurrence needs
+    // the latest next-call intent derived from relationship history. This stops
     // daily recurring meetings (standups, design reviews) landing bare each day.
     const inheritTitles = Array.from(
       new Set(newRows.map((r) => r.title).filter(Boolean))
     );
     const curationByTitle = new Map<
       string,
-      { company_id: string | null; intent: string | null }
+      { company_id: string | null }
     >();
     if (inheritTitles.length) {
       const { data: priors } = await supabaseAdmin
         .from("upcoming_calls")
-        .select("title, company_id, intent, created_at")
+        .select("title, company_id, created_at")
         .in("title", inheritTitles)
         .order("created_at", { ascending: false });
       for (const p of priors || []) {
         const t = (p as any).title as string;
         if (!t || curationByTitle.has(t)) continue; // most recent wins
         const cid = ((p as any).company_id as string) || null;
-        const intent = ((p as any).intent as string) || null;
-        if (cid || intent) curationByTitle.set(t, { company_id: cid, intent });
+        if (cid) curationByTitle.set(t, { company_id: cid });
       }
     }
 
@@ -199,7 +199,6 @@ export async function POST() {
         const inh = curationByTitle.get(r.title);
         if (inh) {
           company_id = inh.company_id;
-          intent = inh.intent;
         }
       }
       resolved.push({ r, company_id, intent });
@@ -244,6 +243,24 @@ export async function POST() {
       }
     }
 
+    // Reuse the compact next-call memory already produced after the last call.
+    // This is a Supabase read, not another AI call.
+    const companyIds = Array.from(
+      new Set(resolved.map((x) => x.company_id).filter(Boolean) as string[])
+    );
+    const nextIntentByCompany = new Map<string, string>();
+    if (companyIds.length) {
+      const { data: companies } = await supabaseAdmin
+        .from("companies")
+        .select("id, profile")
+        .in("id", companyIds);
+      for (const company of companies || []) {
+        const next = (company as any)?.profile?.next_call?.intent;
+        if (typeof next === "string" && next.trim())
+          nextIntentByCompany.set((company as any).id, next.trim());
+      }
+    }
+
     // De-dupe id-change duplicates: Google sometimes issues a NEW event id for
     // the SAME meeting, so it arrives as a "new" event and we would insert a
     // second row identical in title + time to one already on the list. Skip a
@@ -273,7 +290,8 @@ export async function POST() {
         meeting_url: x.r.meeting_url,
         attendees: x.r.attendees,
         company_id: x.company_id,
-        intent: x.intent,
+        intent:
+          (x.company_id && nextIntentByCompany.get(x.company_id)) || x.intent,
         source: "google",
         prepped: false,
       });

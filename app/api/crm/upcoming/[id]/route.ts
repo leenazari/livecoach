@@ -58,6 +58,26 @@ export async function PATCH(
       patch.meeting_url = body.meetingUrl.trim() || null;
     if (typeof body.intent === "string")
       patch.intent = body.intent.trim() || null;
+    if (
+      typeof body.intent === "string" &&
+      (body.intentSource === "manual" || body.intentSource === "generated")
+    ) {
+      const { data: current } = await supabaseAdmin
+        .from("upcoming_calls")
+        .select("prep")
+        .eq("id", params.id)
+        .maybeSingle();
+      const prep =
+        current?.prep && typeof current.prep === "object" ? current.prep : {};
+      patch.prep = {
+        ...prep,
+        intentMeta: {
+          ...(prep as any).intentMeta,
+          source: body.intentSource,
+          savedAt: new Date().toISOString(),
+        },
+      };
+    }
     if (typeof body.prepped === "boolean") patch.prepped = body.prepped;
     // Mark a call done (it happened) or re-open it. Clears it from the upcoming
     // list and the derived prep to-dos without deleting the row.
@@ -65,7 +85,25 @@ export async function PATCH(
       patch.completed_at = body.completed ? new Date().toISOString() : null;
     // The prep plan snapshot (focus, goals, opening questions, etc.) built in
     // advance on the call screen, so it survives leaving the page.
-    if ("prep" in body) patch.prep = body.prep ?? null;
+    if ("prep" in body) {
+      if (body.prep && typeof body.prep === "object") {
+        const { data: current } = await supabaseAdmin
+          .from("upcoming_calls")
+          .select("prep")
+          .eq("id", params.id)
+          .maybeSingle();
+        const intentMeta =
+          patch.prep?.intentMeta ||
+          (current?.prep && typeof current.prep === "object"
+            ? (current.prep as any).intentMeta
+            : null);
+        patch.prep = intentMeta
+          ? { ...body.prep, intentMeta }
+          : body.prep;
+      } else {
+        patch.prep = body.prep ?? null;
+      }
+    }
     if ("companyId" in body)
       patch.company_id =
         typeof body.companyId === "string" && body.companyId

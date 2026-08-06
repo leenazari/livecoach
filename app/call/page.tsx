@@ -460,6 +460,7 @@ export default function CallPage() {
   const backgroundRef = useRef("");
   // Guard so the first-meeting auto research + intent draft fires at most once.
   const autoHelpedRef = useRef(false);
+  const intentEditedRef = useRef(false);
   const callTypeRef = useRef("general");
   const roleRef = useRef("");
   const personLabelRef = useRef("Them");
@@ -881,7 +882,32 @@ export default function CallPage() {
             }
             if (typeof call?.intent === "string" && call.intent.trim()) {
               const it = call.intent.trim();
-              setBrief((prev) => (prev.trim() ? prev : it));
+              if (!intentEditedRef.current) setBrief(it);
+            }
+            // Existing relationships get the intent based on the newest call
+            // summary. The endpoint returns the saved copy when it is current,
+            // so reopening this screen does not repeatedly spend tokens.
+            if (call?.company_id && !call?.prep?.selectedComps?.length) {
+              try {
+                const r = await fetch(
+                  `/api/crm/companies/${call.company_id}/prep-intent`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ concise: true, upcomingId: upcoming }),
+                  }
+                );
+                const fresh = await r.json();
+                if (
+                  r.ok &&
+                  typeof fresh.intent === "string" &&
+                  fresh.intent.trim() &&
+                  !intentEditedRef.current
+                )
+                  setBrief(fresh.intent.trim());
+              } catch {
+                /* keep the current intent */
+              }
             }
             // Pull the invite / meeting link from the scheduled call into the bot
             // field. Opening a call from the Prep tab passes the upcoming id, not
@@ -959,7 +985,10 @@ export default function CallPage() {
                       fetch(`/api/crm/upcoming/${upcomingIdRef.current}`, {
                         method: "PATCH",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ intent: it2 }),
+                        body: JSON.stringify({
+                          intent: it2,
+                          intentSource: "generated",
+                        }),
                       }).catch(() => {});
                     }
                   }
@@ -1021,6 +1050,8 @@ export default function CallPage() {
         body: JSON.stringify({
           prep: { ...snapshot, savedAt: new Date().toISOString() },
           prepped: true,
+          intent: brief,
+          intentSource: intentEditedRef.current ? "manual" : undefined,
         }),
       }).catch(() => {});
     }, 1200);
@@ -2255,6 +2286,7 @@ export default function CallPage() {
   }, [brief]);
 
   const appendBrief = useCallback((t: string) => {
+    intentEditedRef.current = true;
     setBrief((prev) => (prev.trim() ? `${prev.trim()} ${t}` : t));
   }, []);
 
@@ -2920,7 +2952,10 @@ export default function CallPage() {
               <textarea
                 ref={briefRef}
                 value={brief}
-                onChange={(e) => setBrief(e.target.value)}
+                onChange={(e) => {
+                  intentEditedRef.current = true;
+                  setBrief(e.target.value);
+                }}
                 rows={7}
                 placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
                 className="max-h-[40vh] min-h-[9rem] w-full resize-y overflow-y-auto rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
