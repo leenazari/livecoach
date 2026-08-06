@@ -20,14 +20,14 @@ export async function POST(req: NextRequest) {
         ? `\nThe caller's focus areas were: ${competencies.join(", ")}.`
         : "";
 
-    const system = `You write the QUICK top of a call summary so the caller can read it the moment the call ends. From the transcript give ONLY:
+    const system = `You write the QUICK, decision-useful top of a call summary so the caller immediately knows what happened and what to do. From the transcript give ONLY:
 - recommendation: a 2-5 word verdict or next move (e.g. "Worth pursuing", "Send the proposal", "Strong fit").
 - headline: one sentence on how it went.
-- overview: 1-2 sentences of context.
-- myNextActions: what the CALLER should do next - short imperative lines, name who if relevant.
-- theirNextActions: what the OTHER party said they will do next.
+- overview: exactly 2 short sentences, first the outcome, then the decisive reason or unresolved risk.
+- myNextActions: what the CALLER should do next, short imperative bullet-ready lines.
+- theirNextActions: what the OTHER party committed to do, name the owner.
 - suggestedNextActions: 0-3 smart moves the caller could make.
-Ground ONLY in the transcript. Never invent names, numbers, amounts, dates or commitments. Keep everything short.${focus}
+Ground ONLY in the transcript. Never invent names, numbers, amounts, dates or commitments. Every list is ordered highest priority first. Keep each item under 15 words.${focus}
 Output ONLY JSON: {"recommendation":"...","headline":"...","overview":"...","myNextActions":["..."],"theirNextActions":["..."],"suggestedNextActions":["..."]}`;
 
     const user = `${candidate ? `Other party: ${candidate}\n` : ""}${

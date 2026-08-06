@@ -1,4 +1,4 @@
-// Voyage AI embeddings — Anthropic's recommended provider.
+// Voyage AI embeddings, retained as an optional vector-search provider.
 // voyage-3-lite: 512 dims, ~$0.02 per 1M tokens. Effectively free at POC scale.
 //
 // IMPORTANT: the vector dimension here (512) must match the column

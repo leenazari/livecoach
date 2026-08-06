@@ -233,8 +233,8 @@ Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
   "callType": "one of: interview, sales, support, general - the best fit for THIS call",
   "title": "a short, specific title for this call, e.g. 'Avatar roadmap sync with Mark & Jay'",
   "recommendation": "the overall verdict for THIS kind of call (interview: Strong / Lean yes / Mixed / Lean no / Too early; sales: Hot / Warm / Cold / Dead; support: Resolved / Partly resolved / Unresolved; general: a one-word read)",
-  "headline": "one sentence overall read",
-  "overview": "2-4 sentences on how the call actually went - the gist, the mood, where it landed. Plain English, no jargon.",
+  "headline": "one sentence stating the outcome and biggest implication",
+  "overview": "exactly 2 short sentences: first where the call landed, then the decisive reason or unresolved risk. Plain English.",
   "competencies": [{"name": "competency", "score": 3, "note": "one short line of evidence"}],
   "strengths": ["short bullet", "..."],
   "concerns": ["short bullet", "..."],
@@ -289,7 +289,14 @@ NEXT ACTIONS (this is the most useful part - be concrete and specific, grounded 
 - "theirNextActions": what each OTHER participant said they would do, so the host can track and chase it. Name the person. Only include things actually said. 0-6 items.
 - "suggestedNextActions": YOUR recommendations - the smart next moves the host should consider that may NOT have been said on the call (a follow-up to send, a person to bring in, a risk to close off, a decision to force). Strategic and specific to this call. 2-5 items.
 
-Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Action items are short plain-English lines. Keep every bullet tight.`;
+PRIORITY AND FORMAT RULES:
+- Every array is a bullet list and MUST be ordered most important, urgent or outcome-changing item first.
+- Lead strengths with what most helped the outcome. Lead concerns and notCovered with the biggest risk.
+- Lead every action list with the action that should happen first.
+- Keep each bullet under 18 words and remove context already stated elsewhere.
+- Prefer concrete decisions, commitments, blockers, dates and owners over general commentary.
+
+Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Action items are short plain-English lines.`;
 
     // Real-length calls (a 30-60 min meeting is 25k-65k chars) push the single
     // scorecard pass past Vercel's 60s function cap, which kills it with a 504
