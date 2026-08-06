@@ -17,7 +17,7 @@ export function fingerprintTask(companyId: string | null, text: string): string 
 
 export type NewTask = {
   text: string;
-  kind?: string; // next_step | commitment | draft | manual
+  kind?: string; // next_step | commitment | counterparty_commitment | draft | manual
   linkKind?: string; // client | drafts | call | email
   source?: string; // synthesis | call | manual | follow_up | assistant | debrief
   sourceRef?: string | null;

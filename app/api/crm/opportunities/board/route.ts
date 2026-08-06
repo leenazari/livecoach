@@ -78,6 +78,7 @@ export async function GET(req: Request) {
         .from("tasks")
         .select("company_id, text, due_at")
         .eq("status", "open")
+        .neq("kind", "counterparty_commitment")
         .not("company_id", "is", null)
         .limit(1000),
       supabaseAdmin

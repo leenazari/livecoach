@@ -130,7 +130,10 @@ export async function GET(req: Request) {
       return undefined;
     };
 
-    const tasks = (tasksRes.data || []).map((t: any) => ({
+    const openTaskRows = tasksRes.data || [];
+    const tasks = openTaskRows
+      .filter((t: any) => t.kind !== "counterparty_commitment")
+      .map((t: any) => ({
       id: t.id as string,
       text: t.text,
       company: t.company_id ? nameById.get(t.company_id) || "a client" : "—",
@@ -138,7 +141,7 @@ export async function GET(req: Request) {
       kind: t.kind as string,
       dueAt: (t.due_at as string) || null,
       createdAt: (t.created_at as string) || null,
-    }));
+      }));
 
     const openOpps = oppsRes.data || [];
     const openOppValue = openOpps.reduce(
@@ -272,6 +275,21 @@ export async function GET(req: Request) {
       at: d.created_at,
       href: "/crm/board?tab=drafts",
     }));
+    const awaitingOthers = openTaskRows
+      .filter((t: any) => t.kind === "counterparty_commitment")
+      .sort((a: any, b: any) => {
+        const ad = a.due_at ? new Date(a.due_at).getTime() : Infinity;
+        const bd = b.due_at ? new Date(b.due_at).getTime() : Infinity;
+        return ad - bd;
+      })
+      .slice(0, 5)
+      .map((t: any) => ({
+        id: t.id,
+        text: t.text,
+        company: t.company_id ? nameById.get(t.company_id) || null : null,
+        at: t.due_at || t.created_at,
+        href: t.company_id ? `/crm/${t.company_id}` : "/crm/board?tab=tasks",
+      }));
     const latestTouch = new Map<string, number>();
     for (const s of recentTouchRes.data || []) {
       const cid = s.company_id as string;
@@ -302,6 +320,9 @@ export async function GET(req: Request) {
     const topActions = [
       ...overduePromises.map((x: any) => ({ ...x, reason: "Overdue promise" })),
       ...callsToPrep.map((x: any) => ({ ...x, reason: "Call within 24 hours" })),
+      ...awaitingOthers
+        .filter((x: any) => x.at && new Date(x.at).getTime() < now)
+        .map((x: any) => ({ ...x, reason: "Chase overdue promise" })),
       ...awaitingReply.map((x: any) => ({ ...x, reason: "Reply ready to send" })),
       ...coolingDeals.map((x: any) => ({ ...x, reason: "Deal is cooling" })),
     ].slice(0, 3);
@@ -309,6 +330,7 @@ export async function GET(req: Request) {
       callsToPrep,
       overduePromises,
       awaitingReply,
+      awaitingOthers,
       coolingDeals,
       topActions,
     };

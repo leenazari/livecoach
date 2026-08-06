@@ -54,6 +54,7 @@ type Dash = {
     callsToPrep: TodayItem[];
     overduePromises: TodayItem[];
     awaitingReply: TodayItem[];
+    awaitingOthers: TodayItem[];
     coolingDeals: TodayItem[];
     topActions: (TodayItem & { reason: string })[];
   };
@@ -204,6 +205,7 @@ export default function DashboardPage() {
         ["Calls to prepare", dash.today.callsToPrep, "text-amber"],
         ["Overdue promises", dash.today.overduePromises, "text-rust"],
         ["Replies ready", dash.today.awaitingReply, "text-sky"],
+        ["Waiting on others", dash.today.awaitingOthers || [], "text-rust"],
         ["Cooling deals", dash.today.coolingDeals, "text-muted"],
       ] as const
     : [];
@@ -299,7 +301,7 @@ export default function DashboardPage() {
             Nothing urgent is waiting. You are clear to focus on planned work.
           </p>
         )}
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
           {todayGroups.map(([label, items, colour]) => (
             <div key={label} className="rounded-lg border border-edge/80 bg-panel/35 p-3">
               <div className="mb-1.5 flex items-center justify-between gap-2">

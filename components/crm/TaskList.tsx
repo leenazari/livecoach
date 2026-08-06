@@ -248,9 +248,12 @@ export default function TaskList({
   // Commitments live in "You promised"; drop them here when asked so the same
   // item never appears in both lists. clientlessOnly keeps just the loose
   // to-dos (the client-linked ones are grouped under Opportunities).
-  let shown = hideCommitments
-    ? tasks.filter((t) => t.kind !== "commitment")
-    : tasks;
+  // Counterparty promises are relationship state, not work for the user. They
+  // belong only in the Commitments tracker and must never inflate Do next.
+  let shown = tasks.filter((t) => t.kind !== "counterparty_commitment");
+  shown = hideCommitments
+    ? shown.filter((t) => t.kind !== "commitment")
+    : shown;
   if (clientlessOnly) shown = shown.filter((t) => !t.company_id);
 
   // Prep calls more than a week out collapse behind an expand, so the list
