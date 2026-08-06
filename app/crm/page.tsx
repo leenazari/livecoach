@@ -11,6 +11,7 @@ import MorningCheckin from "@/components/crm/MorningCheckin";
 import RecentCalls from "@/components/crm/RecentCalls";
 import OpportunityBoard from "@/components/crm/OpportunityBoard";
 import DuplicateClients from "@/components/crm/DuplicateClients";
+import CrmSearch from "@/components/crm/CrmSearch";
 
 type Dash = {
   kpis: {
@@ -261,6 +262,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </header>
+
+      <CrmSearch />
 
       {/* TODAY: the first decision layer, built from factual CRM state without
           another model call. The top three are deliberately first. */}
