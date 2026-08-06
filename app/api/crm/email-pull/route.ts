@@ -258,6 +258,14 @@ export async function POST(req: NextRequest) {
         .limit(1);
       if (byDomain && byDomain[0]) targetId = byDomain[0].id as string;
     }
+    if (!targetId && companyName) {
+      const { data: byName } = await supabaseAdmin
+        .from("companies")
+        .select("id")
+        .ilike("name", companyName)
+        .limit(1);
+      if (byName && byName[0]) targetId = byName[0].id as string;
+    }
     let created = false;
     if (targetId) {
       const { data: existingCompany } = await supabaseAdmin

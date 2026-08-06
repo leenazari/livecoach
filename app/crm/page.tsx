@@ -10,6 +10,7 @@ import Commitments from "@/components/crm/Commitments";
 import MorningCheckin from "@/components/crm/MorningCheckin";
 import RecentCalls from "@/components/crm/RecentCalls";
 import OpportunityBoard from "@/components/crm/OpportunityBoard";
+import DuplicateClients from "@/components/crm/DuplicateClients";
 
 type Dash = {
   kpis: {
@@ -509,6 +510,10 @@ export default function DashboardPage() {
           reorder. Shows the top 10 with a "show all" expand. Each row expands to
           that client's to-dos. Self-hides when there are no client-linked to-dos. */}
       <OpportunityBoard />
+
+      {/* Data hygiene: only appears when two client records share a strong,
+          deterministic identifier. Review-only; never auto-merges data. */}
+      <DuplicateClients />
 
       {/* OVERALL STATS - each opens its drill-down board. */}
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">

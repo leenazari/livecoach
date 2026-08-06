@@ -57,6 +57,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
 
+    // Manual creation should be idempotent. Reuse an exact existing client
+    // name (case-insensitive) instead of quietly splitting its history.
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from("companies")
+      .select("*")
+      .ilike("name", name)
+      .limit(1)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing) {
+      return NextResponse.json({ company: existing, existing: true });
+    }
+
     const row: Record<string, any> = { name };
     for (const f of CORE_FIELDS) {
       if (f === "name") continue;
