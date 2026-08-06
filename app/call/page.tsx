@@ -384,6 +384,7 @@ export default function CallPage() {
   // focus are built from the latest of the thread. Saved back to the client.
   const [clientEmailCtx, setClientEmailCtx] = useState("");
   const [emailCtxUpdatedAt, setEmailCtxUpdatedAt] = useState<string | null>(null);
+  const [emailPullNote, setEmailPullNote] = useState("");
   const [emailCtxSaving, setEmailCtxSaving] = useState(false);
   const [emailCtxSaved, setEmailCtxSaved] = useState(false);
   const [suggestedComps, setSuggestedComps] = useState<string[]>([]);
@@ -654,8 +655,13 @@ export default function CallPage() {
           setBattlecard(null);
           return;
         }
-        setClientEmailCtx(d?.company?.email_context || "");
-        setEmailCtxUpdatedAt(d?.company?.email_context_updated_at || null);
+        const savedEmailContext = d?.company?.email_context || "";
+        setClientEmailCtx(savedEmailContext);
+        setEmailCtxUpdatedAt(
+          savedEmailContext.trim()
+            ? d?.company?.email_context_updated_at || null
+            : null
+        );
         const bc = d?.company?.profile?.battlecard;
         setBattlecard(bc && typeof bc === "object" ? (bc as Battlecard) : null);
 
@@ -694,7 +700,9 @@ export default function CallPage() {
   // Save the email summary back to the client so the planner reads the latest.
   const saveClientEmailCtx = async () => {
     const id = linkedCompanyRef.current?.id;
-    if (!id) return;
+    // Blurring an untouched empty box must not pretend that email context was
+    // refreshed. It also avoids an unnecessary database write.
+    if (!id || !clientEmailCtx.trim()) return;
     setEmailCtxSaving(true);
     try {
       await fetch(`/api/crm/companies/${id}`, {
@@ -915,6 +923,19 @@ export default function CallPage() {
                         typeof mail.emailContextUpdatedAt === "string"
                           ? mail.emailContextUpdatedAt
                           : new Date().toISOString()
+                      );
+                      setEmailPullNote(
+                        mail.cached
+                          ? "Latest matching email loaded"
+                          : "Latest matching email refreshed"
+                      );
+                    } else if (mailRes.status === 404) {
+                      setEmailPullNote(
+                        "No matching email conversation found for this person"
+                      );
+                    } else if (mailRes.status === 409) {
+                      setEmailPullNote(
+                        "Reconnect Google in Settings to include email conversations"
                       );
                     }
                   } catch {
@@ -3075,9 +3096,9 @@ export default function CallPage() {
                   </span>
                   <span className="ml-auto flex items-center gap-2">
                     <span className="font-mono text-[0.52rem] tracking-wider text-muted">
-                      {emailCtxUpdatedAt
+                      {clientEmailCtx.trim() && emailCtxUpdatedAt
                         ? `updated ${new Date(emailCtxUpdatedAt).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`
-                        : "not set yet"}
+                        : emailPullNote || "no email context saved"}
                     </span>
                     {emailCtxSaved && (
                       <span className="font-mono text-[0.54rem] uppercase tracking-wider text-sage">
