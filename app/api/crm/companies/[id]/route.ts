@@ -72,7 +72,9 @@ export async function PATCH(
     }
     // Stamp when the email context last changed, so the UI can show "updated X".
     if ("email_context" in patch) {
-      patch.email_context_updated_at = new Date().toISOString();
+      patch.email_context_updated_at = patch.email_context
+        ? new Date().toISOString()
+        : null;
     }
     if (Object.keys(patch).length === 0) {
       return NextResponse.json({ error: "nothing to update" }, { status: 400 });
