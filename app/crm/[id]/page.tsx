@@ -20,6 +20,26 @@ const inputCls =
 const labelCls =
   "mb-1 block font-mono text-[0.58rem] uppercase tracking-[0.16em] text-muted";
 
+type TimelineItem = {
+  id: string;
+  type:
+    | "call"
+    | "email"
+    | "commitment"
+    | "task"
+    | "opportunity"
+    | "note"
+    | "follow_up"
+    | "meeting";
+  at: string;
+  title: string;
+  detail?: string;
+  status?: string;
+  meta?: string;
+  href?: string;
+  future?: boolean;
+};
+
 export default function CompanyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -30,6 +50,8 @@ export default function CompanyDetailPage() {
   const [calls, setCalls] = useState<any[]>([]);
   const [opps, setOpps] = useState<any[]>([]);
   const [followUps, setFollowUps] = useState<any[]>([]);
+  const [timeline, setTimeline] = useState<TimelineItem[]>([]);
+  const [timelineFilter, setTimelineFilter] = useState("all");
   const [copiedId, setCopiedId] = useState<string>("");
   const [attrs, setAttrs] = useState<Record<string, any>>({});
   const [core, setCore] = useState({
@@ -47,8 +69,10 @@ export default function CompanyDetailPage() {
   const [err, setErr] = useState("");
   const [savedAt, setSavedAt] = useState("");
   // Which data tab is showing below the always-visible AI intelligence.
-  const [tab, setTab] = useState<"details" | "notes" | "calls" | "pipeline">(
-    "calls"
+  const [tab, setTab] = useState<
+    "timeline" | "details" | "notes" | "calls" | "pipeline"
+  >(
+    "timeline"
   );
 
   // New-contact form.
@@ -63,7 +87,7 @@ export default function CompanyDetailPage() {
       // Make sure the standard fields (owner / priority / value / address) exist
       // before we read them for the stats. Idempotent, runs once effectively.
       await crmFetch(`/api/crm/fields/seed`, { method: "POST" }).catch(() => {});
-      const [{ company, contacts }, { fields }, { calls }, pipeline] =
+      const [{ company, contacts }, { fields }, { calls }, pipeline, timelineData] =
         await Promise.all([
         crmFetch<{ company: Company; contacts: Contact[] }>(
           `/api/crm/companies/${id}`
@@ -77,6 +101,9 @@ export default function CompanyDetailPage() {
         crmFetch<{ opportunities: any[]; followUps: any[] }>(
           `/api/crm/companies/${id}/pipeline`
         ).catch(() => ({ opportunities: [] as any[], followUps: [] as any[] })),
+        crmFetch<{ items: TimelineItem[] }>(
+          `/api/crm/companies/${id}/timeline`
+        ).catch(() => ({ items: [] as TimelineItem[] })),
       ]);
       setCompany(company);
       setContacts(contacts);
@@ -84,6 +111,7 @@ export default function CompanyDetailPage() {
       setCalls(calls || []);
       setOpps(pipeline.opportunities || []);
       setFollowUps(pipeline.followUps || []);
+      setTimeline(timelineData.items || []);
       setAttrs(company.attributes || {});
       setCore({
         name: company.name || "",
@@ -310,7 +338,9 @@ export default function CompanyDetailPage() {
     }
   };
   // Switch the data tab and scroll the tab strip into view (used by the stats).
-  const goTab = (t: "details" | "notes" | "calls" | "pipeline") => {
+  const goTab = (
+    t: "timeline" | "details" | "notes" | "calls" | "pipeline"
+  ) => {
     setTab(t);
     scrollToId("sec-tabs");
   };
@@ -465,6 +495,7 @@ export default function CompanyDetailPage() {
       >
         {(
           [
+            ["timeline", "Timeline"],
             ["calls", "Focus"],
             ["notes", "Notes & docs"],
             ["pipeline", "Pipeline"],
@@ -485,6 +516,145 @@ export default function CompanyDetailPage() {
           </button>
         ))}
       </div>
+
+      {tab === "timeline" && (
+        <section className="mt-2 rounded-xl border border-edge bg-panel/40 p-4">
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+                Relationship timeline
+              </p>
+              <p className="mt-1 font-sans text-[0.78rem] text-bone/65">
+                Calls, emails, promises, notes and opportunities in one history.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {[
+                ["all", "All"],
+                ["calls", "Calls"],
+                ["emails", "Emails"],
+                ["actions", "Promises"],
+                ["opportunities", "Opportunities"],
+                ["notes", "Notes"],
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setTimelineFilter(key)}
+                  className={`rounded-full border px-2.5 py-1 font-mono text-[0.52rem] uppercase tracking-wider transition ${
+                    timelineFilter === key
+                      ? "border-amber/60 bg-amber/15 text-amber"
+                      : "border-edge text-muted hover:text-bone"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {(() => {
+            const allowed: Record<string, TimelineItem["type"][]> = {
+              calls: ["call", "meeting"],
+              emails: ["email", "follow_up"],
+              actions: ["commitment", "task"],
+              opportunities: ["opportunity"],
+              notes: ["note"],
+            };
+            const visible =
+              timelineFilter === "all"
+                ? timeline
+                : timeline.filter((item) =>
+                    (allowed[timelineFilter] || []).includes(item.type)
+                  );
+            const meta: Record<
+              TimelineItem["type"],
+              { icon: string; label: string; tone: string }
+            > = {
+              meeting: { icon: "◷", label: "Upcoming", tone: "text-amber" },
+              call: { icon: "◉", label: "Call", tone: "text-sage" },
+              email: { icon: "✉", label: "Email", tone: "text-sky" },
+              follow_up: { icon: "↗", label: "Follow-up", tone: "text-sky" },
+              commitment: { icon: "✓", label: "Promise", tone: "text-rust" },
+              task: { icon: "→", label: "Action", tone: "text-bone" },
+              opportunity: { icon: "◆", label: "Opportunity", tone: "text-amber" },
+              note: { icon: "✎", label: "Note", tone: "text-muted" },
+            };
+            if (!visible.length)
+              return (
+                <p className="font-mono text-[0.6rem] text-muted">
+                  Nothing in this part of the relationship yet.
+                </p>
+              );
+            return (
+              <ol className="relative ml-2 border-l border-edge/80">
+                {visible.map((item) => {
+                  const m = meta[item.type];
+                  const when = new Date(item.at).toLocaleString("en-GB", {
+                    timeZone: "Europe/London",
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  });
+                  const external = item.href?.startsWith("http");
+                  const body = (
+                    <div
+                      className={`rounded-lg border px-3.5 py-3 transition ${
+                        item.future
+                          ? "border-amber/45 bg-amber/[0.06]"
+                          : "border-edge bg-ink/35"
+                      } ${item.href ? "hover:border-amber/50" : ""}`}
+                    >
+                      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                        <span className={`font-mono text-[0.54rem] uppercase tracking-wider ${m.tone}`}>
+                          {m.label}
+                        </span>
+                        <span className="font-mono text-[0.52rem] text-muted">
+                          {when}
+                        </span>
+                      </div>
+                      <p className="font-sans text-[0.87rem] leading-snug text-bone">
+                        {item.title}
+                      </p>
+                      {item.detail && (
+                        <p className="mt-1 font-sans text-[0.78rem] leading-relaxed text-bone/65">
+                          {item.detail}
+                        </p>
+                      )}
+                      {(item.meta || item.status) && (
+                        <p className={`mt-1.5 font-mono text-[0.51rem] uppercase tracking-wider ${
+                          item.meta === "overdue" ? "text-rust" : "text-muted"
+                        }`}>
+                          {[item.meta, item.status && item.status !== item.meta ? item.status : ""]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      )}
+                    </div>
+                  );
+                  return (
+                    <li key={item.id} className="relative mb-2.5 pl-6 last:mb-0">
+                      <span className={`absolute -left-3 top-3 flex h-6 w-6 items-center justify-center rounded-full border border-edge bg-ink font-mono text-[0.62rem] ${m.tone}`}>
+                        {m.icon}
+                      </span>
+                      {item.href ? (
+                        external ? (
+                          <a href={item.href} target="_blank" rel="noreferrer" className="block">
+                            {body}
+                          </a>
+                        ) : (
+                          <Link href={item.href} className="block">{body}</Link>
+                        )
+                      ) : body}
+                    </li>
+                  );
+                })}
+              </ol>
+            );
+          })()}
+        </section>
+      )}
 
       {tab === "details" && (
       <div className="grid gap-5 lg:grid-cols-2">
@@ -864,7 +1034,8 @@ export default function CompanyDetailPage() {
       </>
       )}
 
-      {/* CALL HISTORY - always below the tabs. The whole card is clickable. */}
+      {/* CALL HISTORY - kept with the Focus tab so Timeline does not duplicate it. */}
+      {tab === "calls" && (
       <section className="mt-5 rounded-xl border border-edge bg-panel/40 p-4">
         <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
           Call history <span className="text-muted">({calls.length})</span>
@@ -932,6 +1103,7 @@ export default function CompanyDetailPage() {
           </ul>
         )}
       </section>
+      )}
 
       <NavMenu />
     </main>
