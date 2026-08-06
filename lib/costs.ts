@@ -4,8 +4,9 @@
 //
 // Verified provider rates (May 2026):
 //   Deepgram streaming (Nova): $0.0077 / min  (PER audio stream)
-//   Claude Haiku 4.5:  $1 / M input,  $5 / M output
-//   Claude Sonnet 4.6: $3 / M input, $15 / M output
+//   GPT-5.6 Luna:  $1 / M input,  $6 / M output
+//   GPT-5.6 Terra: $2.50 / M input, $15 / M output
+//   GPT-5.6 Sol:   $5 / M input,  $30 / M output
 //   Prompt cache read: ~0.1x input rate;  cache write: ~1.25x input rate
 //
 // ESTIMATED rates — VERIFY against real invoices before using in a financial
@@ -20,25 +21,23 @@ export const USD_TO_GBP = 0.79; // rough; update as needed
 export const RATES = {
   deepgramPerMin: 0.0077, // per stream
 
-  // Haiku 4.5 (live track: cues, plan, running summary)
+  // GPT-5.6 Luna (live track: cues, plan, running summary)
   haikuInPerM: 1.0,
-  haikuOutPerM: 5.0,
+  haikuOutPerM: 6.0,
   haikuCacheReadPerM: 0.1, // 0.1x input
   haikuCacheWritePerM: 1.25, // 1.25x input
 
-  // Sonnet 4.6 (end-of-call scorecard only)
-  sonnetInPerM: 3.0,
+  // GPT-5.6 Terra (end-of-call scorecard and synthesis)
+  sonnetInPerM: 2.5,
   sonnetOutPerM: 15.0,
 
-  // Opus 4.8 (the THINK tier + the brain's smart chat). Current pricing
-  // $5 / M input, $25 / M output (docs.anthropic.com, Jun 2026).
+  // GPT-5.6 Sol (the THINK tier + the brain's smart chat).
   opusInPerM: 5.0,
-  opusOutPerM: 25.0,
+  opusOutPerM: 30.0,
 
-  // Fable 5 (the brain's smart chat tier). Anthropic's most capable model.
-  // claude-fable-5: $10 / M input, $50 / M output (docs.anthropic.com, Jun 2026).
-  fableInPerM: 10.0,
-  fableOutPerM: 50.0,
+  // Kept as a compatibility label for any older stored usage rows.
+  fableInPerM: 5.0,
+  fableOutPerM: 30.0,
 
   // Transport / real-time layer. ESTIMATES — verify against invoices.
   livekitPerHour: 1.5, // in-app two-party real-time
@@ -56,18 +55,18 @@ export const TOKENS = {
   instructions: 220, // uncached system instructions
   output: 120, // typical live suggestion length
 
-  // End-of-call scorecard (Sonnet). Estimates for a typical call.
+  // End-of-call scorecard (Terra). Estimates for a typical call.
   scorecardIn: 12000, // transcript + competencies + rubric
   scorecardOut: 1800, // structured scorecard JSON
 
-  // Live "statement" insight (Sonnet, periodic). Small: recent transcript +
+  // Live "statement" insight (Terra, periodic). Small: recent transcript +
   // cached knowledge + a short statement out.
   insightIn: 2600,
   insightOut: 180,
 };
 
-// Estimate Claude cost for ONE warm live suggestion call (Haiku, cache warm).
-export function claudeCallCostUSD(
+// Estimate OpenAI cost for ONE warm live suggestion call (Luna, cache warm).
+export function openaiCallCostUSD(
   cachingWarm: boolean,
   knowledgeTokens: number = TOKENS.knowledgeCached
 ): number {
@@ -80,7 +79,7 @@ export function claudeCallCostUSD(
   return inputCost + outputCost;
 }
 
-// End-of-call scorecard on Sonnet (one call per interview).
+// End-of-call scorecard on Terra (one call per interview).
 export function scorecardCostUSD(): number {
   return (
     (TOKENS.scorecardIn / 1_000_000) * RATES.sonnetInPerM +
@@ -88,7 +87,7 @@ export function scorecardCostUSD(): number {
   );
 }
 
-// One live "statement" insight on Sonnet (the advisory lane).
+// One live "statement" insight on Terra (the advisory lane).
 export function insightCostUSD(): number {
   return (
     (TOKENS.insightIn / 1_000_000) * RATES.sonnetInPerM +
@@ -96,12 +95,12 @@ export function insightCostUSD(): number {
   );
 }
 
-// EXACT cost of one Claude call from the usage object the API returns.
+// Exact cost of one OpenAI call from the usage object the API returns.
 // Bills uncached input, cache-write (1.25x), cache-read (0.1x) and output at
 // the model's real rates - no assumptions. This is what makes the meter
 // accurate (a plan rebuild, a big scorecard, etc. each cost what they used).
 export function usageCostUSD(
-  model: "haiku" | "sonnet" | "opus" | "fable",
+  model: "live" | "pro" | "think" | "brain",
   usage:
     | {
         input_tokens?: number;
@@ -114,19 +113,19 @@ export function usageCostUSD(
 ): number {
   if (!usage) return 0;
   const inRate =
-    model === "fable"
+    model === "brain"
       ? RATES.fableInPerM
-      : model === "opus"
+      : model === "think"
       ? RATES.opusInPerM
-      : model === "sonnet"
+      : model === "pro"
       ? RATES.sonnetInPerM
       : RATES.haikuInPerM;
   const outRate =
-    model === "fable"
+    model === "brain"
       ? RATES.fableOutPerM
-      : model === "opus"
+      : model === "think"
       ? RATES.opusOutPerM
-      : model === "sonnet"
+      : model === "pro"
       ? RATES.sonnetOutPerM
       : RATES.haikuOutPerM;
   const inp = Number(usage.input_tokens) || 0;
@@ -144,7 +143,7 @@ export function usageCostUSD(
 export type CostBreakdown = {
   deepgram: number;
   transport: number; // LiveKit (in-app) or Recall.ai (Meet)
-  claude: number; // Haiku live calls + Sonnet scorecard
+  ai: number; // OpenAI live calls + pro scorecard
   vercel: number;
   supabase: number;
   totalUSD: number;
@@ -160,17 +159,17 @@ export type EstimateOpts = {
   deepgramStreams?: number;
   // Real-time transport in use. Drives the LiveKit/Recall.ai line.
   transport?: "none" | "livekit" | "recall";
-  // Number of Sonnet scorecard calls made (0 before the call ends, 1 after).
+  // Number of Terra scorecard calls made (0 before the call ends, 1 after).
   sonnetCalls?: number;
-  // Number of live Sonnet "statement" insight calls made.
+  // Number of live Terra "statement" insight calls made.
   insightCalls?: number;
-  // ACCURATE path: real accumulated Claude cost (USD) from token usage. When
+  // ACCURATE path: real accumulated OpenAI cost (USD) from token usage. When
   // provided, it replaces the count-based estimate entirely.
-  claudeUsd?: number;
+  aiUsd?: number;
 };
 
 // Live running estimate.
-//   haikuCalls = number of Haiku live calls made (cues + plan + running summary)
+//   haikuCalls = number of Luna live calls made (cues + plan + running summary)
 //   opts       = transport / stream / scorecard / knowledge-size context
 export function estimateCost(
   elapsedSeconds: number,
@@ -193,11 +192,11 @@ export function estimateCost(
   if (transportKind === "livekit") transport = hours * RATES.livekitPerHour;
   else if (transportKind === "recall") transport = hours * RATES.recallPerHour;
 
-  // Claude cost. ACCURATE: if real usage-based cost is supplied, use it.
+  // OpenAI cost. ACCURATE: if real usage-based cost is supplied, use it.
   // Otherwise fall back to the count-based estimate (legacy console).
-  let claude = 0;
-  if (typeof opts.claudeUsd === "number") {
-    claude = opts.claudeUsd;
+  let ai = 0;
+  if (typeof opts.aiUsd === "number") {
+    ai = opts.aiUsd;
   } else {
     if (haikuCalls > 0) {
       const writeCost =
@@ -207,21 +206,21 @@ export function estimateCost(
         ((TOKENS.transcriptWindow + TOKENS.instructions) / 1_000_000) *
           RATES.haikuInPerM +
         (TOKENS.output / 1_000_000) * RATES.haikuOutPerM;
-      claude += writeCost;
-      claude += (haikuCalls - 1) * claudeCallCostUSD(true, knowledgeTokens);
+      ai += writeCost;
+      ai += (haikuCalls - 1) * openaiCallCostUSD(true, knowledgeTokens);
     }
-    claude += sonnetCalls * scorecardCostUSD();
-    claude += (opts.insightCalls ?? 0) * insightCostUSD();
+    ai += sonnetCalls * scorecardCostUSD();
+    ai += (opts.insightCalls ?? 0) * insightCostUSD();
   }
 
   const vercel = hours * RATES.vercelPerHour;
   const supabase = hours * RATES.supabasePerHour;
 
-  const totalUSD = deepgram + transport + claude + vercel + supabase;
+  const totalUSD = deepgram + transport + ai + vercel + supabase;
   return {
     deepgram,
     transport,
-    claude,
+    ai,
     vercel,
     supabase,
     totalUSD,

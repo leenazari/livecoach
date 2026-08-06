@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_THINK } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_THINK } from "@/lib/openai";
 import { coachSystemBlock } from "@/lib/brain-coach";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
@@ -11,11 +11,7 @@ export const maxDuration = 40;
 // Reads live workload and (optionally) runs the coach. Must be dynamic.
 export const dynamic = "force-dynamic";
 
-const THINK_LABEL: "opus" | "sonnet" = CLAUDE_MODEL_THINK.toLowerCase().includes(
-  "opus"
-)
-  ? "opus"
-  : "sonnet";
+const THINK_LABEL = "think" as const;
 
 // The opportunity-grouped, prioritised view of the whole to-do pile. Instead of
 // a flat list of every task, this groups the open work by client/deal into a
@@ -232,9 +228,9 @@ export async function GET(req: Request) {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 22000);
           try {
-            const msg = await anthropic.messages.create(
+            const msg = await openai.messages.create(
               {
-                model: CLAUDE_MODEL_THINK,
+                model: OPENAI_MODEL_THINK,
                 max_tokens: 900,
                 system: `${biz}${coachSystemBlock()}
 

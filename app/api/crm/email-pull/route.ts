@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import {
   recentMessages,
@@ -156,8 +156,8 @@ export async function POST(req: NextRequest) {
     let emailContext = "";
     let companyName = "";
     try {
-      const msg = await anthropic.messages.create({
-        model: CLAUDE_MODEL_LIVE,
+      const msg = await openai.messages.create({
+        model: OPENAI_MODEL_LIVE,
         max_tokens: 600,
         system: `You turn a recent email thread into a short, clean CLIENT CONTEXT note for a CRM. The user is Lee (Interviewa / AI13). Write about the OTHER party (${personName}${
           isCompanyDomain ? `, ${domain}` : ""
@@ -171,7 +171,7 @@ export async function POST(req: NextRequest) {
           },
         ],
       });
-      await logModelUsage("email-pull", "haiku", (msg as any).usage);
+      await logModelUsage("email-pull", "live", (msg as any).usage);
       const raw = msg.content
         .filter((b: any) => b.type === "text")
         .map((b: any) => b.text)

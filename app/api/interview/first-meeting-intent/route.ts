@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { workspaceContextBlock } from "@/lib/workspace";
 
@@ -12,7 +12,7 @@ export const maxDuration = 25;
 // with. But there IS a company (the email domain), often an email thread, and
 // what the host sells (the brain). This drafts a concise first-person intent for
 // a first meeting from exactly those, so the screen is never blank and the plan
-// has something to build a focus from. Cheap + fast (Haiku). Writes nothing.
+// has something to build a focus from. Cheap + fast (Luna). Writes nothing.
 
 const tidy = (s: string) =>
   String(s || "")
@@ -70,9 +70,9 @@ Draft the first-meeting intent now.`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 20000);
       try {
-        const msg = await anthropic.messages.create(
+        const msg = await openai.messages.create(
           {
-            model: CLAUDE_MODEL_LIVE,
+            model: OPENAI_MODEL_LIVE,
             max_tokens: 400,
             temperature: 0.4,
             system,
@@ -80,7 +80,7 @@ Draft the first-meeting intent now.`;
           },
           { signal: controller.signal }
         );
-        await logModelUsage("first-meeting-intent", "haiku", (msg as any).usage);
+        await logModelUsage("first-meeting-intent", "live", (msg as any).usage);
         intent = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

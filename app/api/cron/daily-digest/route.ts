@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { sendMail, connectedEmail } from "@/lib/gmail";
 import {
@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
 // A daily digest is the schedule that works without a plan upgrade. If you move
 // to Pro, the same route can be pointed at a tighter schedule.
 //
-// Cost: ONE Sonnet call for the whole day, over summaries that were already
+// Cost: ONE Terra call for the whole day, over summaries that were already
 // generated and paid for when each call ended. Nothing is re-summarised.
 //
 // House style: no em dashes, no semicolons.
@@ -179,8 +179,8 @@ Rules:
 - British English, plain and direct. No flattery, no jargon, no bold, no markdown.
 - Never use em dashes or semicolons, use commas and full stops.`;
 
-    const msg: any = await anthropic.messages.create({
-      model: CLAUDE_MODEL_PRO,
+    const msg: any = await openai.messages.create({
+      model: OPENAI_MODEL_PRO,
       max_tokens: 2500,
       system,
       messages: [
@@ -190,7 +190,7 @@ Rules:
         },
       ],
     });
-    await logModelUsage("daily-digest", "sonnet", msg?.usage);
+    await logModelUsage("daily-digest", "pro", msg?.usage);
 
     const text = (Array.isArray(msg?.content) ? msg.content : [])
       .filter((b: any) => b?.type === "text")

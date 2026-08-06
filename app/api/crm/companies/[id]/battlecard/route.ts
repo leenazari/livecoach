@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_THINK } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_THINK } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { gatherClientContext } from "@/lib/crm-context";
 import {
@@ -35,11 +35,16 @@ const houseStyle = (s: string): string =>
     .replace(/[ \t]{2,}/g, " ")
     .trim();
 
-const strArr = (v: any, n: number): string[] =>
+const limitWords = (value: any, max: number): string => {
+  const words = houseStyle(String(value || "")).split(/\s+/).filter(Boolean);
+  return words.length <= max ? words.join(" ") : `${words.slice(0, max).join(" ")}…`;
+};
+
+const strArr = (v: any, n: number, words = 14): string[] =>
   Array.isArray(v)
     ? v
         .filter((x) => typeof x === "string" && x.trim())
-        .map((x) => houseStyle(x))
+        .map((x) => limitWords(x, words))
         .slice(0, n)
     : [];
 
@@ -71,7 +76,7 @@ export async function POST(
     //
     // The prep chain researches each client company once and keeps the brief
     // forever at companies.profile.research. This route used to ignore that and
-    // run its own Opus pass with five web searches on every click, paying full
+    // run its own Sol pass with five web searches on every click, paying full
     // price for research already sitting on the record. Now the brief is folded
     // straight into the prompt as grounding, and web search is only switched on
     // when there is genuinely nothing on file.
@@ -112,12 +117,12 @@ Write in the user's plain British-English voice, no jargon, no flattery. No mark
 
 Output ONLY JSON with exactly these keys:
 {
-  "oneLiner": "who the client is and the angle, in one sentence",
+  "oneLiner": "who the client is and the angle, maximum 18 words",
   "fit": {
     "strong": ["where the product genuinely fits this client, 2 to 4 items"],
     "weak": ["where it does not fit, so the user narrows the pitch and does not oversell, 1 to 3 items"]
   },
-  "pitch": "the spoken 60-second pitch the user can say out loud, in their voice, grounded in the client's real situation",
+  "pitch": "the spoken pitch the user can say out loud, maximum 75 words, grounded in the client's real situation",
   "flow": [ { "minutes": "e.g. 2 or 5", "label": "what to do in this segment" } ],
   "objections": [
     {
@@ -132,10 +137,13 @@ Output ONLY JSON with exactly these keys:
 }
 
 Rules:
-- objections: 4 to 8, ordered with the most meeting-deciding one first. Lead with fairness, risk or the biggest blocker for this client.
-- flow: 4 to 6 segments that add up to a sensible meeting.
-- doNotSay: 3 to 6 items. questionsToAsk: 3 to 6 items.
-- Every array item is a short, plain line. haveReady is a string or null, never invent to fill it.`;
+- Cut total wording by roughly 40 percent compared with a conventional battlecard. Remove explanation, repetition and generic advice before useful facts.
+- Treat every array as a PRIORITY LIST, most important or meeting-deciding item first.
+- objections: 4 to 6. Objection max 12 words, response max 24 words, haveReady max 12 words. Lead with the biggest blocker.
+- flow: exactly 4 short segments. Label max 8 words.
+- fit, doNotSay and questionsToAsk: 3 to 5 items each, every item max 14 words.
+- nextStep: one concrete outcome, max 16 words.
+- Every array item is one short bullet-ready line. haveReady is a string or null, never invent to fill it.`;
 
     const userPrompt = `CLIENT: ${company.name}${
       company.sector ? ` (sector: ${company.sector})` : ""
@@ -157,9 +165,9 @@ ${
 
     let msg: any;
     try {
-      msg = await anthropic.messages.create({
-        model: CLAUDE_MODEL_THINK,
-        max_tokens: 3200,
+      msg = await openai.messages.create({
+        model: OPENAI_MODEL_THINK,
+        max_tokens: 2200,
         system,
         // Server-side web search, ONLY when there is no company brief on file.
         // With a brief cached this is the single biggest saving in the app: the
@@ -181,7 +189,7 @@ ${
         { status: 504 }
       );
     }
-    await logModelUsage("battlecard", "opus", msg?.usage);
+    await logModelUsage("battlecard", "think", msg?.usage);
 
     const blocks: any[] = Array.isArray(msg?.content) ? msg.content : [];
     const raw = blocks
@@ -228,14 +236,14 @@ ${
     const objections = Array.isArray(parsed.objections)
       ? parsed.objections
           .filter((o: any) => o && typeof o.objection === "string" && o.objection.trim())
-          .slice(0, 8)
+          .slice(0, 6)
           .map((o: any) => ({
-            objection: houseStyle(o.objection),
+            objection: limitWords(o.objection, 12),
             response:
-              typeof o.response === "string" ? houseStyle(o.response) : "",
+              typeof o.response === "string" ? limitWords(o.response, 24) : "",
             haveReady:
               typeof o.haveReady === "string" && o.haveReady.trim()
-                ? houseStyle(o.haveReady)
+                ? limitWords(o.haveReady, 12)
                 : null,
           }))
       : [];
@@ -243,30 +251,30 @@ ${
     const flow = Array.isArray(parsed.flow)
       ? parsed.flow
           .filter((f: any) => f && (f.label || f.minutes))
-          .slice(0, 6)
+          .slice(0, 4)
           .map((f: any) => ({
             minutes:
               typeof f.minutes === "string" || typeof f.minutes === "number"
                 ? String(f.minutes)
                 : "",
-            label: typeof f.label === "string" ? houseStyle(f.label) : "",
+            label: typeof f.label === "string" ? limitWords(f.label, 8) : "",
           }))
       : [];
 
     const card = {
       oneLiner:
-        typeof parsed.oneLiner === "string" ? houseStyle(parsed.oneLiner) : "",
+        typeof parsed.oneLiner === "string" ? limitWords(parsed.oneLiner, 18) : "",
       fit: {
-        strong: strArr(parsed?.fit?.strong, 4),
-        weak: strArr(parsed?.fit?.weak, 3),
+        strong: strArr(parsed?.fit?.strong, 4, 14),
+        weak: strArr(parsed?.fit?.weak, 3, 14),
       },
-      pitch: typeof parsed.pitch === "string" ? houseStyle(parsed.pitch) : "",
+      pitch: typeof parsed.pitch === "string" ? limitWords(parsed.pitch, 75) : "",
       flow,
       objections,
-      doNotSay: strArr(parsed.doNotSay, 6),
-      questionsToAsk: strArr(parsed.questionsToAsk, 6),
+      doNotSay: strArr(parsed.doNotSay, 5, 14),
+      questionsToAsk: strArr(parsed.questionsToAsk, 5, 14),
       nextStep:
-        typeof parsed.nextStep === "string" ? houseStyle(parsed.nextStep) : "",
+        typeof parsed.nextStep === "string" ? limitWords(parsed.nextStep, 16) : "",
       sources: sources.slice(0, 8),
       intent: intent || null,
       generatedAt: new Date().toISOString(),

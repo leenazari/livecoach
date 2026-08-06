@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { extractTextFromPDF } from "@/lib/pdf-extract";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -14,8 +14,8 @@ function cleanName(raw: string): string {
 
 async function extractCandidateName(cvText: string): Promise<string | null> {
   try {
-    const msg = await anthropic.messages.create({
-      model: CLAUDE_MODEL_LIVE,
+    const msg = await openai.messages.create({
+      model: OPENAI_MODEL_LIVE,
       max_tokens: 30,
       system:
         "Extract the candidate's full name from this CV. Reply with ONLY the name - no labels, no punctuation. If you cannot find a name, reply exactly: UNKNOWN",

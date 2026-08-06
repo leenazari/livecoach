@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAccessToken, listAllEvents, meetingUrlOf, titleOf } from "@/lib/google";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import {
   loadAttendeeConfig,
   inferLink,
@@ -13,7 +13,7 @@ export const maxDuration = 60;
 
 // When a new event has no work-email guest to derive a client from, read the
 // TITLE to decide who the call is with, so a real client call still gets a
-// profile created and can be prepped before the first call. One cheap Haiku
+// profile created and can be prepped before the first call. One cheap Luna
 // pass for the whole batch. Best-effort: returns nothing on any failure, so the
 // sync never breaks on this. Returns input title -> client name (or null).
 async function deriveClientsFromTitles(
@@ -27,8 +27,8 @@ async function deriveClientsFromTitles(
     const user = `Event titles:\n${list
       .map((t, i) => `${i + 1}. ${t}`)
       .join("\n")}\n\nReturn the JSON array now, one entry per title in order.`;
-    const msg: any = await anthropic.messages.create({
-      model: CLAUDE_MODEL_LIVE,
+    const msg: any = await openai.messages.create({
+      model: OPENAI_MODEL_LIVE,
       max_tokens: 800,
       temperature: 0,
       system,

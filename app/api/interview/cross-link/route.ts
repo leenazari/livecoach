@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { supabaseAdmin } from "@/lib/supabase";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
 import { logModelUsage } from "@/lib/usage";
@@ -80,14 +80,14 @@ ${briefIn}
 
 Return the JSON now.`;
 
-    const msg: any = await anthropic.messages.create({
-      model: CLAUDE_MODEL_PRO,
+    const msg: any = await openai.messages.create({
+      model: OPENAI_MODEL_PRO,
       max_tokens: 1500,
       temperature: 0.2,
       system,
       messages: [{ role: "user", content: user }],
     });
-    await logModelUsage("cross-link", "sonnet", msg?.usage);
+    await logModelUsage("cross-link", "pro", msg?.usage);
     const raw = (Array.isArray(msg?.content) ? msg.content : [])
       .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
       .map((b: any) => b.text)

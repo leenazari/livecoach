@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { anthropic, CLAUDE_MODEL_LIVE } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
 import { logModelUsage } from "@/lib/usage";
 
@@ -39,9 +39,9 @@ Rules:
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 24000);
       try {
-        const msg = await anthropic.messages.create(
+        const msg = await openai.messages.create(
           {
-            model: CLAUDE_MODEL_LIVE,
+            model: OPENAI_MODEL_LIVE,
             max_tokens: 600,
             temperature: 0.2,
             system,
@@ -49,7 +49,7 @@ Rules:
           },
           { signal: controller.signal }
         );
-        await logModelUsage("extract-tasks", "haiku", (msg as any).usage);
+        await logModelUsage("extract-tasks", "live", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

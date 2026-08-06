@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { gatherClientContext } from "@/lib/crm-context";
 import { upsertTasks } from "@/lib/tasks";
@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export const maxDuration = 40;
 
 // THE SYNTHESIS ENGINE. Turns everything we know about a client (calls, notes,
-// pulled emails, opportunities) into their working intelligence in one Sonnet
+// pulled emails, opportunities) into their working intelligence in one Terra
 // pass: an updated "what we know" brief, a strategic playbook, the open
 // opportunities, and a concrete next-steps to-do list. Unlike the post-call
 // pass it does NOT need a call - it runs off the client's whole context, so it
@@ -86,9 +86,9 @@ Return the JSON now.`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 34000);
       try {
-        const msg = await anthropic.messages.create(
+        const msg = await openai.messages.create(
           {
-            model: CLAUDE_MODEL_PRO,
+            model: OPENAI_MODEL_PRO,
             max_tokens: 1300,
             temperature: 0.3,
             system,
@@ -96,7 +96,7 @@ Return the JSON now.`;
           },
           { signal: controller.signal }
         );
-        await logModelUsage("synthesize", "sonnet", (msg as any).usage);
+        await logModelUsage("synthesize", "pro", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

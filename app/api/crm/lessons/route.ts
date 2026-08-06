@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { anthropic, CLAUDE_MODEL_PRO } from "@/lib/anthropic";
+import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
@@ -109,9 +109,9 @@ Rules:
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 32000);
       try {
-        const msg = await anthropic.messages.create(
+        const msg = await openai.messages.create(
           {
-            model: CLAUDE_MODEL_PRO,
+            model: OPENAI_MODEL_PRO,
             max_tokens: 900,
             temperature: 0.3,
             system,
@@ -121,7 +121,7 @@ Rules:
           },
           { signal: controller.signal }
         );
-        await logModelUsage("lessons", "sonnet", (msg as any).usage);
+        await logModelUsage("lessons", "pro", (msg as any).usage);
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)

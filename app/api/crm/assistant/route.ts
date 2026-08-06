@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
-  anthropic,
-  CLAUDE_MODEL_LIVE,
-  CLAUDE_MODEL_BRAIN,
-} from "@/lib/anthropic";
+  openai,
+  OPENAI_MODEL_LIVE,
+  OPENAI_MODEL_BRAIN,
+} from "@/lib/openai";
 import {
   gatherClientContext,
   gatherGlobalContext,
@@ -558,7 +558,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
     const SMART =
       /(draft|write|email|message|plan|prep|summari[sz]e|advi[sc]e|should i|why|how (do|should|can|to|would)|best|strateg|recommend|opinion|brainstorm|idea|pitch|negoti|approach|think|compare|priorit|win\b|risk|objection|pros|cons)/;
     const simple = LOOKUP.test(ml) && !SMART.test(ml);
-    const model = simple ? CLAUDE_MODEL_LIVE : CLAUDE_MODEL_BRAIN;
+    const model = simple ? OPENAI_MODEL_LIVE : OPENAI_MODEL_BRAIN;
     // Long strategic answers were getting cut off mid-sentence at 1300 tokens
     // (and then the SPOKEN block never arrived). Give the smart model real room
     // to finish a full game-plan; keep the fast lookups tight.
@@ -579,14 +579,14 @@ ALWAYS end the spoken version with your closing question whenever your reply has
         let full = "";
         let firstTokenAt = 0; // when the first word arrived (for TTFT)
         try {
-          const aStream: any = (anthropic as any).messages.stream({
+          const oaiStream: any = (openai as any).messages.stream({
             model,
             max_tokens: maxTok,
             temperature: 0.4,
             system,
             messages,
           });
-          for await (const ev of aStream) {
+          for await (const ev of oaiStream) {
             if (
               ev?.type === "content_block_delta" &&
               ev?.delta?.type === "text_delta"
@@ -602,7 +602,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           let usage: any = null;
           let stopReason: string | null = null;
           try {
-            const fm = await aStream.finalMessage();
+            const fm = await oaiStream.finalMessage();
             usage = fm?.usage;
             stopReason = (fm as any)?.stop_reason ?? null;
             if (!full && Array.isArray(fm?.content)) {
@@ -614,7 +614,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           } catch {
             /* ignore - we still have `full` from the deltas */
           }
-          await logModelUsage("assistant", simple ? "haiku" : "opus", usage);
+          await logModelUsage("assistant", simple ? "live" : "think", usage);
 
           let reply = full.trim();
 
@@ -723,7 +723,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           console.log(
             "assistant-timing " +
               JSON.stringify({
-                model: simple ? "haiku" : "opus",
+                model: simple ? "live" : "think",
                 ctxMs,
                 ttftMs: firstTokenAt ? firstTokenAt - reqStart : null,
                 totalMs: Date.now() - reqStart,
