@@ -5,7 +5,10 @@ import { supabaseAdmin } from "@/lib/supabase";
 // follow-up drafts, contacts, custom fields, and the company-scoped context
 // store (notes / links / documents). Used by the client assistant, and (the
 // context items) by the call planner's auto-attach.
-export async function gatherClientContext(companyId: string): Promise<string> {
+export async function gatherClientContext(
+  companyId: string,
+  options: { includeUpcomingIntents?: boolean } = {}
+): Promise<string> {
   const cut = (s: any, n: number) =>
     typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : "";
 
@@ -204,7 +207,11 @@ export async function gatherClientContext(companyId: string): Promise<string> {
       lines.push(
         `- ${when}${past ? " [ALREADY PASSED]" : ""}: ${u.title || "call"}${
           u.prepped ? " [prepped]" : ""
-        }${u.intent ? ` - ${cut(u.intent, 160)}` : ""}${
+        }${
+          options.includeUpcomingIntents !== false && u.intent
+            ? ` - ${cut(u.intent, 160)}`
+            : ""
+        }${
           u.meeting_url ? ` (join link: ${u.meeting_url})` : ""
         }`
       );

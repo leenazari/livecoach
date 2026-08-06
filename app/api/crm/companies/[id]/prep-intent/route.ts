@@ -25,6 +25,7 @@ export async function POST(
     // Concise mode = a tight 1-2 sentence intent, used when the call screen
     // auto-fills the intent box on open (vs the fuller Prep-tab suggestion).
     const concise = (body as any)?.concise === true;
+    const force = (body as any)?.force === true;
     const upcomingId =
       typeof (body as any)?.upcomingId === "string"
         ? (body as any).upcomingId
@@ -110,7 +111,7 @@ export async function POST(
       return intent;
     };
 
-    if (cacheIsCurrent) {
+    if (cacheIsCurrent && !force) {
       const cachedIntent = await applyToUpcoming(
         cached.intent.trim(),
         typeof cached.rationale === "string" ? cached.rationale : "",
@@ -179,7 +180,12 @@ export async function POST(
       ? loopLines.join("\n\n")
       : "No past call scorecards on file for this client yet.";
 
-    const context = await gatherClientContext(companyId);
+    // The scheduled call's existing intent is deliberately excluded. It may be
+    // the stale text we are here to replace and must never compete with the
+    // newest scorecard and its open actions.
+    const context = await gatherClientContext(companyId, {
+      includeUpcomingIntents: false,
+    });
 
     const biz = await workspaceContextBlock();
     const lessons = await getLessonsBlock(["strategy", "negotiation"]);
@@ -199,6 +205,8 @@ Output ONLY JSON with exactly these keys:
 
 Rules:
 - Ground everything only in the context. Never invent facts, names, numbers, dates or commitments. If the record is thin, write a sensible opening intent and say in the rationale that there is little history yet.
+- The MOST RECENT CALL and its unfinished actions are authoritative. If older profile, email, research or playbook context conflicts with them, follow the most recent call.
+- Never repeat or lightly rephrase an old discovery intent merely because a similarly titled meeting is upcoming.
 - Plain English. No markdown, no headings, no bold. No em-dashes or semicolons, use commas and full stops.
 - Write the intent as the host would say it ("I want to ...", "I need to ..."), not as instructions to them.`;
 

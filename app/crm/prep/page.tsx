@@ -1043,7 +1043,7 @@ function PrepInner() {
     try {
       const d = await crmFetch<{ intent: string; rationale: string }>(
         `/api/crm/companies/${companyId}/prep-intent`,
-        { method: "POST" }
+        { method: "POST", body: JSON.stringify({ force: true }) }
       );
       setIntent(d.intent || "");
       intentRef.current = d.intent || "";
