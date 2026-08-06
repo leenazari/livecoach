@@ -52,24 +52,33 @@ export async function GET(req: Request) {
   // it loads instantly. The dashboard home fetches the blurb separately.
   const light = new URL(req.url).searchParams.get("light") === "1";
   try {
-    const [companiesRes, draftsRes, oppsRes, tasksRes, costRes, usageRes] =
+    const [
+      companiesRes,
+      draftsRes,
+      oppsRes,
+      tasksRes,
+      costRes,
+      usageRes,
+      upcomingRes,
+      recentTouchRes,
+    ] =
       await Promise.all([
         supabaseAdmin.from("companies").select("id, name"),
         supabaseAdmin
           .from("follow_ups")
-          .select("company_id, draft_subject, created_at")
+          .select("id, company_id, draft_subject, created_at")
           .eq("status", "draft")
           .order("created_at", { ascending: false })
           .limit(50),
         supabaseAdmin
           .from("opportunities")
-          .select("company_id, title, value, status")
+          .select("id, company_id, title, value, status, created_at")
           .eq("status", "open")
           .limit(100),
         // Open to-dos from the tasks table (next steps + call commitments).
         supabaseAdmin
           .from("tasks")
-          .select("text, company_id, kind")
+          .select("id, text, company_id, kind, due_at, created_at")
           .eq("status", "open")
           .order("created_at", { ascending: true })
           .limit(300),
@@ -84,9 +93,22 @@ export async function GET(req: Request) {
         // extraction, lessons) plus the background automation jobs.
         supabaseAdmin
           .from("usage_log")
-          .select("kind, cost_gbp, created_at")
+          .select("kind, cost_gbp, meta, created_at")
           .order("created_at", { ascending: false })
           .limit(5000),
+        supabaseAdmin
+          .from("upcoming_calls")
+          .select("id, company_id, title, scheduled_at, intent, prepped")
+          .is("completed_at", null)
+          .gte("scheduled_at", new Date().toISOString())
+          .order("scheduled_at", { ascending: true })
+          .limit(50),
+        supabaseAdmin
+          .from("interview_summaries")
+          .select("company_id, created_at")
+          .not("company_id", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1000),
       ]);
 
     const nameById = new Map<string, string>();
@@ -109,10 +131,13 @@ export async function GET(req: Request) {
     };
 
     const tasks = (tasksRes.data || []).map((t: any) => ({
+      id: t.id as string,
       text: t.text,
       company: t.company_id ? nameById.get(t.company_id) || "a client" : "—",
       companyId: t.company_id as string,
       kind: t.kind as string,
+      dueAt: (t.due_at as string) || null,
+      createdAt: (t.created_at as string) || null,
     }));
 
     const openOpps = oppsRes.data || [];
@@ -164,6 +189,130 @@ export async function GET(req: Request) {
       automation: { week: autoW, month: autoM, all: autoA },
     };
 
+    type WindowCost = { week: number; month: number; all: number };
+    const featureMap = new Map<string, WindowCost>();
+    const addFeature = (name: string, cost: number, age: number) => {
+      const row = featureMap.get(name) || { week: 0, month: 0, all: 0 };
+      row.all += cost;
+      if (age <= WEEK) row.week += cost;
+      if (age <= MONTH) row.month += cost;
+      featureMap.set(name, row);
+    };
+    for (const r of costRes.data || []) {
+      const c = Number(r.cost) || 0;
+      if (!c) continue;
+      addFeature(
+        "Live calls & cues",
+        c,
+        now - new Date(r.created_at as string).getTime()
+      );
+    }
+    const featureForKind = (value: any): string => {
+      const kind = String(value || "").toLowerCase();
+      if (kind.startsWith("automation")) return "Automation";
+      if (/intent|research|battlecard|prep/.test(kind))
+        return "Preparation & intent";
+      if (/summary|profile|commitment|extract|digest|cross-link/.test(kind))
+        return "Summaries & CRM sync";
+      if (/coach|brain|lesson|assistant|correct/.test(kind))
+        return "Brain & coaching";
+      if (/opp|day-read|pipeline/.test(kind)) return "CRM organisation";
+      return "Other AI";
+    };
+    for (const r of usageRes.data || []) {
+      const c = Number(r.cost_gbp) || 0;
+      if (!c) continue;
+      addFeature(
+        featureForKind(r.kind),
+        c,
+        now - new Date(r.created_at as string).getTime()
+      );
+    }
+    const featureCosts = [...featureMap.entries()]
+      .map(([feature, cost]) => ({ feature, ...cost }))
+      .sort((a, b) => b.week - a.week);
+
+    // Deterministic Today control centre. This is deliberately model-free: it
+    // should be instant, cheap and grounded in deadlines/calendar state.
+    const next24h = now + 24 * 60 * 60 * 1000;
+    const callsToPrep = (upcomingRes.data || [])
+      .filter(
+        (u: any) =>
+          !u.prepped &&
+          u.scheduled_at &&
+          new Date(u.scheduled_at).getTime() <= next24h
+      )
+      .slice(0, 5)
+      .map((u: any) => ({
+        id: u.id,
+        text: u.title || "Upcoming call",
+        company: u.company_id ? nameById.get(u.company_id) || null : null,
+        at: u.scheduled_at,
+        href: `/crm/prep?upcoming=${u.id}`,
+      }));
+    const overduePromises = tasks
+      .filter(
+        (t: any) =>
+          t.kind === "commitment" &&
+          t.dueAt &&
+          new Date(t.dueAt).getTime() < now
+      )
+      .slice(0, 5)
+      .map((t: any) => ({
+        id: t.id,
+        text: t.text,
+        company: t.company === "—" ? null : t.company,
+        at: t.dueAt,
+        href: t.companyId ? `/crm/${t.companyId}` : "/crm/board?tab=tasks",
+      }));
+    const awaitingReply = (draftsRes.data || []).slice(0, 5).map((d: any) => ({
+      id: d.id,
+      text: d.draft_subject || "Follow-up ready to review",
+      company: d.company_id ? nameById.get(d.company_id) || null : null,
+      at: d.created_at,
+      href: "/crm/board?tab=drafts",
+    }));
+    const latestTouch = new Map<string, number>();
+    for (const s of recentTouchRes.data || []) {
+      const cid = s.company_id as string;
+      if (!cid || latestTouch.has(cid)) continue;
+      latestTouch.set(cid, new Date(s.created_at as string).getTime());
+    }
+    const companiesWithNextCall = new Set(
+      (upcomingRes.data || [])
+        .map((u: any) => u.company_id as string)
+        .filter(Boolean)
+    );
+    const COOLING = 14 * 24 * 60 * 60 * 1000;
+    const coolingDeals = openOpps
+      .filter((o: any) => {
+        const cid = o.company_id as string;
+        const last = latestTouch.get(cid) || new Date(o.created_at).getTime();
+        return cid && !companiesWithNextCall.has(cid) && now - last >= COOLING;
+      })
+      .sort((a: any, b: any) => (Number(b.value) || 0) - (Number(a.value) || 0))
+      .slice(0, 5)
+      .map((o: any) => ({
+        id: o.id,
+        text: o.title || "Open opportunity",
+        company: o.company_id ? nameById.get(o.company_id) || null : null,
+        at: latestTouch.get(o.company_id) || o.created_at,
+        href: o.company_id ? `/crm/${o.company_id}` : "/crm/board?tab=opportunities",
+      }));
+    const topActions = [
+      ...overduePromises.map((x: any) => ({ ...x, reason: "Overdue promise" })),
+      ...callsToPrep.map((x: any) => ({ ...x, reason: "Call within 24 hours" })),
+      ...awaitingReply.map((x: any) => ({ ...x, reason: "Reply ready to send" })),
+      ...coolingDeals.map((x: any) => ({ ...x, reason: "Deal is cooling" })),
+    ].slice(0, 3);
+    const today = {
+      callsToPrep,
+      overduePromises,
+      awaitingReply,
+      coolingDeals,
+      topActions,
+    };
+
     const kpis = {
       clients: (companiesRes.data || []).length,
       tasks: tasks.length,
@@ -174,6 +323,7 @@ export async function GET(req: Request) {
       monthCost,
       allCost,
       costBreakdown,
+      featureCosts,
     };
 
     // A short, cheap AI read of the day, BROKEN INTO SEPARATE LINES (one per
@@ -338,6 +488,7 @@ export async function GET(req: Request) {
       {
         kpis,
         tasks: tasks.slice(0, 20),
+        today,
         dayParts: dayPartsAll,
         // Joined string kept for any older client that still reads dayRead.
         dayRead: dayPartsAll.map((p) => p.text).join(" "),

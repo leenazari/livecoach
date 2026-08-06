@@ -587,6 +587,30 @@ export default function CallPage() {
     cueGapMsRef.current = SPEEDS[cueSpeed];
   }, [cueSpeed]);
 
+  // Apply the CRM-wide live intelligence cadence. This deliberately changes
+  // frequency, not model quality: a requested cue still uses Terra in every
+  // mode. The user can still override each control during the call.
+  useEffect(() => {
+    fetch("/api/crm/ai-mode", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.mode === "economical") {
+          setCueSpeed("slow");
+          setInsightSpeed("slow");
+          setInsightsOn(false);
+        } else if (d?.mode === "high") {
+          setCueSpeed("fast");
+          setInsightSpeed("medium");
+          setInsightsOn(true);
+        } else {
+          setCueSpeed("medium");
+          setInsightSpeed("slow");
+          setInsightsOn(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     coachingPausedRef.current = coachingPaused;
     if (coachingPaused && cueGapTimerRef.current) {

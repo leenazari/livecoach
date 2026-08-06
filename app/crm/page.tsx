@@ -26,6 +26,12 @@ type Dash = {
       ai: { week: number; month: number; all: number };
       automation: { week: number; month: number; all: number };
     };
+    featureCosts?: {
+      feature: string;
+      week: number;
+      month: number;
+      all: number;
+    }[];
   };
   tasks: {
     text: string;
@@ -44,7 +50,24 @@ type Dash = {
     time?: string;
     companyId?: string;
   }[];
+  today?: {
+    callsToPrep: TodayItem[];
+    overduePromises: TodayItem[];
+    awaitingReply: TodayItem[];
+    coolingDeals: TodayItem[];
+    topActions: (TodayItem & { reason: string })[];
+  };
 };
+
+type TodayItem = {
+  id: string;
+  text: string;
+  company?: string | null;
+  at?: string | number | null;
+  href: string;
+};
+
+type AiMode = "economical" | "balanced" | "high";
 
 export default function DashboardPage() {
   // Seed from the last response (cached in-memory) so a revisit renders
@@ -56,6 +79,8 @@ export default function DashboardPage() {
       null
   );
   const [costMode, setCostMode] = useState<"week" | "month">("week");
+  const [aiMode, setAiMode] = useState<AiMode>("balanced");
+  const [modeSaving, setModeSaving] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -91,6 +116,27 @@ export default function DashboardPage() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    crmFetch<{ mode: AiMode }>("/api/crm/ai-mode")
+      .then((d) => setAiMode(d.mode || "balanced"))
+      .catch(() => {});
+  }, []);
+
+  const chooseAiMode = async (mode: AiMode) => {
+    setAiMode(mode);
+    setModeSaving(true);
+    try {
+      await crmFetch("/api/crm/ai-mode", {
+        method: "PUT",
+        body: JSON.stringify({ mode }),
+      });
+    } catch {
+      setAiMode(aiMode);
+    } finally {
+      setModeSaving(false);
+    }
+  };
 
   // Live-update on every return to the tab: refetch the dashboard and tell the
   // list cards (upcoming, recent, to-dos, commitments) to refresh, so a call
@@ -141,6 +187,33 @@ export default function DashboardPage() {
   const statCls =
     "rounded-lg border border-edge bg-ink/40 px-3 py-2.5 text-left transition hover:border-amber/50";
 
+  const shortDate = (value?: string | number | null) => {
+    if (!value) return "";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString("en-GB", {
+      timeZone: "Europe/London",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const todayGroups = dash?.today
+    ? [
+        ["Calls to prepare", dash.today.callsToPrep, "text-amber"],
+        ["Overdue promises", dash.today.overduePromises, "text-rust"],
+        ["Replies ready", dash.today.awaitingReply, "text-sky"],
+        ["Cooling deals", dash.today.coolingDeals, "text-muted"],
+      ] as const
+    : [];
+
+  const modeCopy: Record<AiMode, string> = {
+    economical: "Slow automatic cues, Terra ideas off",
+    balanced: "Normal cues, occasional Terra ideas",
+    high: "Fast cues, frequent Terra ideas",
+  };
+
   return (
     <main className="relative z-10 mx-auto max-w-[1000px] px-5 py-10">
       <header className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
@@ -179,6 +252,155 @@ export default function DashboardPage() {
           </div>
         </div>
       </header>
+
+      {/* TODAY: the first decision layer, built from factual CRM state without
+          another model call. The top three are deliberately first. */}
+      <section className="mb-3 rounded-2xl border border-amber/45 bg-gradient-to-br from-amber/[0.09] to-transparent p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="font-mono text-[0.62rem] uppercase tracking-[0.22em] text-amber">
+              {"◆"} Today
+            </p>
+            <p className="mt-1 font-sans text-[0.8rem] text-bone/65">
+              The three moves that need your attention first.
+            </p>
+          </div>
+          <span className="rounded-full border border-edge px-2.5 py-1 font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+            live CRM state
+          </span>
+        </div>
+        {dash?.today?.topActions?.length ? (
+          <ol className="mb-4 grid gap-2 md:grid-cols-3">
+            {dash.today.topActions.map((item, i) => (
+              <li key={`${item.reason}-${item.id}`}>
+                <Link
+                  href={item.href}
+                  className="group block h-full rounded-xl border border-edge bg-ink/55 p-3 transition hover:border-amber/60"
+                >
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="font-mono text-[0.55rem] uppercase tracking-wider text-amber">
+                      {i + 1}. {item.reason}
+                    </span>
+                    <span className="text-muted transition group-hover:text-amber">↗</span>
+                  </div>
+                  <p className="font-sans text-[0.86rem] leading-snug text-bone">
+                    {item.text}
+                  </p>
+                  <p className="mt-1 font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                    {item.company || "General"}
+                    {item.at ? ` · ${shortDate(item.at)}` : ""}
+                  </p>
+                </Link>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="mb-4 rounded-xl border border-sage/30 bg-sage/[0.06] p-3 font-sans text-sm text-sage">
+            Nothing urgent is waiting. You are clear to focus on planned work.
+          </p>
+        )}
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {todayGroups.map(([label, items, colour]) => (
+            <div key={label} className="rounded-lg border border-edge/80 bg-panel/35 p-3">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className={`font-mono text-[0.53rem] uppercase tracking-wider ${colour}`}>
+                  {label}
+                </span>
+                <span className="font-mono text-sm tabular-nums text-bone">{items.length}</span>
+              </div>
+              {items[0] ? (
+                <Link href={items[0].href} className="block font-sans text-[0.76rem] leading-snug text-bone/70 hover:text-bone">
+                  {items[0].company ? `${items[0].company}: ` : ""}{items[0].text}
+                </Link>
+              ) : (
+                <span className="font-mono text-[0.56rem] text-muted">clear</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* COST CONTROL: true recorded spend, split by feature, plus a persisted
+          live-intelligence cadence. Terra quality remains available in all modes. */}
+      <section className="mb-3 rounded-xl border border-sage/35 bg-sage/[0.045] p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
+              {"◫"} Token & cost control
+            </p>
+            <p className="mt-1 font-sans text-[0.78rem] text-bone/65">
+              Recorded spend by feature. Choose how often live intelligence runs.
+            </p>
+          </div>
+          <div className="flex overflow-hidden rounded-full border border-edge">
+            {(["week", "month"] as const).map((m) => (
+              <button
+                key={`cost-panel-${m}`}
+                type="button"
+                onClick={() => setCostMode(m)}
+                className={`px-3 py-1.5 font-mono text-[0.52rem] uppercase tracking-wider ${
+                  costMode === m ? "bg-sage/15 text-sage" : "text-muted hover:text-bone"
+                }`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-[1.1fr_1fr]">
+          <div>
+            <div className="mb-2 flex items-end justify-between">
+              <span className="font-mono text-[0.54rem] uppercase tracking-wider text-muted">total</span>
+              <span className="font-sans text-2xl tabular-nums text-sage">{dash ? gbp(costNow || 0) : "—"}</span>
+            </div>
+            <ul className="space-y-1.5">
+              {(dash?.kpis.featureCosts || []).map((row) => {
+                const value = costMode === "week" ? row.week : row.month;
+                const total = Number(costNow) || 0;
+                return (
+                  <li key={row.feature}>
+                    <div className="mb-0.5 flex items-center justify-between gap-3 font-mono text-[0.55rem]">
+                      <span className="text-bone/70">{row.feature}</span>
+                      <span className="tabular-nums text-muted">{gbp(value)}</span>
+                    </div>
+                    <div className="h-1 overflow-hidden rounded-full bg-ink/70">
+                      <div className="h-full rounded-full bg-sage/60" style={{ width: `${total ? Math.max(2, (value / total) * 100) : 0}%` }} />
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+          <div>
+            <p className="mb-2 font-mono text-[0.54rem] uppercase tracking-wider text-muted">
+              Live intelligence mode {modeSaving ? "· saving…" : ""}
+            </p>
+            <div className="grid gap-1.5">
+              {(["economical", "balanced", "high"] as AiMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => chooseAiMode(mode)}
+                  disabled={modeSaving}
+                  className={`rounded-lg border px-3 py-2 text-left transition ${
+                    aiMode === mode
+                      ? "border-sage/60 bg-sage/10"
+                      : "border-edge bg-ink/30 hover:border-sage/40"
+                  }`}
+                >
+                  <span className={`block font-mono text-[0.56rem] uppercase tracking-wider ${aiMode === mode ? "text-sage" : "text-bone/70"}`}>
+                    {aiMode === mode ? "✓ " : ""}{mode === "high" ? "high intelligence" : mode}
+                  </span>
+                  <span className="mt-0.5 block font-sans text-[0.72rem] text-muted">{modeCopy[mode]}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 font-mono text-[0.5rem] leading-relaxed text-muted">
+              Terra remains available in every mode. This changes cadence, not the quality of a requested cue.
+            </p>
+          </div>
+        </div>
+      </section>
 
       {/* The brain interviews you with a few questions each morning - answer by
           voice and it learns. Self-hides when there's nothing to ask. */}
