@@ -56,11 +56,11 @@ export async function GET(
             .not("company_id", "is", null)
             .order("created_at", { ascending: false })
             .limit(10);
-          const ids = new Set(
-            (history || []).map((row: any) => row.company_id).filter(Boolean)
-          );
-          if (ids.size === 1) {
-            repairedCompanyId = Array.from(ids)[0] as string;
+          // Rows are newest first. The most recent linked call is the best home
+          // for this recurring relationship when legacy data was split across
+          // several auto-created calendar-title records.
+          if (history?.[0]?.company_id) {
+            repairedCompanyId = history[0].company_id;
             break;
           }
         }
