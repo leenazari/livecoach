@@ -34,11 +34,15 @@ export async function PATCH(
     else if (body.dueAt === null) patch.due_at = null;
     if (Object.keys(patch).length === 0) return NextResponse.json({ ok: true });
 
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("tasks")
       .update(patch)
-      .eq("id", params.id);
+      .eq("id", params.id)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!data)
+      return NextResponse.json({ error: "task not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json(

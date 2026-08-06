@@ -101,11 +101,15 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("companies")
       .delete()
-      .eq("id", params.id);
+      .eq("id", params.id)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!data)
+      return NextResponse.json({ error: "company not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json(

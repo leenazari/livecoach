@@ -101,16 +101,21 @@ export default function UpcomingCalls() {
 
   const create = async () => {
     if (!title.trim() && !company) return;
-    await crmFetch("/api/crm/upcoming", {
-      method: "POST",
-      body: JSON.stringify({
-        title: title.trim(),
-        companyId: company?.id || null,
-        scheduledAt: when ? new Date(when).toISOString() : null,
-        meetingUrl: url.trim(),
-        intent: intent.trim(),
-      }),
-    }).catch(() => {});
+    try {
+      await crmFetch("/api/crm/upcoming", {
+        method: "POST",
+        body: JSON.stringify({
+          title: title.trim(),
+          companyId: company?.id || null,
+          scheduledAt: when ? new Date(when).toISOString() : null,
+          meetingUrl: url.trim(),
+          intent: intent.trim(),
+        }),
+      });
+    } catch (e: any) {
+      setSyncMsg(e?.message || "Call did not save. Please try again.");
+      return;
+    }
     setTitle("");
     setCompany(null);
     setWhen("");
@@ -121,11 +126,17 @@ export default function UpcomingCalls() {
   };
 
   const patch = async (id: string, body: any) => {
+    const previous = calls;
     setCalls((p) => p.map((c) => (c.id === id ? { ...c, ...body } : c)));
-    await crmFetch(`/api/crm/upcoming/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/upcoming/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+    } catch (e: any) {
+      setCalls(previous);
+      setSyncMsg(e?.message || "Change did not save. Please try again.");
+    }
   };
 
   // Change (or set) the client on a scheduled call yourself. Auto-saves the
@@ -135,6 +146,7 @@ export default function UpcomingCalls() {
     id: string,
     v: { id: string; name: string } | null
   ) => {
+    const previous = calls;
     setCalls((p) =>
       p.map((c) =>
         c.id === id
@@ -142,16 +154,27 @@ export default function UpcomingCalls() {
           : c
       )
     );
-    await crmFetch(`/api/crm/upcoming/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ companyId: v?.id || null }),
-    }).catch(() => {});
-    window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    try {
+      await crmFetch(`/api/crm/upcoming/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ companyId: v?.id || null }),
+      });
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    } catch (e: any) {
+      setCalls(previous);
+      setSyncMsg(e?.message || "Client change did not save.");
+    }
   };
 
   const remove = async (id: string) => {
+    const previous = calls;
     setCalls((p) => p.filter((c) => c.id !== id));
-    crmFetch(`/api/crm/upcoming/${id}`, { method: "DELETE" }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/upcoming/${id}`, { method: "DELETE" });
+    } catch (e: any) {
+      setCalls(previous);
+      setSyncMsg(e?.message || "Call was not removed. Please try again.");
+    }
   };
 
   // Mark a call as DONE (it happened) - clears it from upcoming without deleting
@@ -159,11 +182,18 @@ export default function UpcomingCalls() {
   // auto-complete couldn't tie the transcript back to the slot. Different from ✕
   // (delete) and from cancel (it did not happen).
   const markDone = async (id: string) => {
+    const previous = calls;
     setCalls((p) => p.filter((c) => c.id !== id));
-    crmFetch(`/api/crm/upcoming/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ completed: true }),
-    }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/upcoming/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ completed: true }),
+      });
+    } catch (e: any) {
+      setCalls(previous);
+      setSyncMsg(e?.message || "Call was not marked done. Please try again.");
+      return;
+    }
     // The dashboard's prep to-dos read completion too, so nudge a refresh.
     window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
   };

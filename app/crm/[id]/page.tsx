@@ -225,23 +225,35 @@ export default function CompanyDetailPage() {
   };
 
   const setOppStatus = async (oppId: string, status: string) => {
+    const previous = opps;
     setOpps((prev) =>
       prev.map((o) => (o.id === oppId ? { ...o, status } : o))
     );
-    crmFetch(`/api/crm/opportunities/${oppId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/opportunities/${oppId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+    } catch (e: any) {
+      setOpps(previous);
+      setErr(e?.message || "opportunity change did not save");
+    }
   };
 
   const setFollowUpStatus = async (fuId: string, status: string) => {
+    const previous = followUps;
     setFollowUps((prev) =>
       prev.map((f) => (f.id === fuId ? { ...f, status } : f))
     );
-    crmFetch(`/api/crm/follow-ups/${fuId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/follow-ups/${fuId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+    } catch (e: any) {
+      setFollowUps(previous);
+      setErr(e?.message || "follow-up change did not save");
+    }
   };
 
   const copyDraft = async (fu: any) => {

@@ -19,22 +19,18 @@ const cleanText = (s: any): any =>
         .trim()
     : s;
 
-// GET /api/crm/tasks[?companyId=] -> the live to-do list: every OPEN task plus
-// tasks completed TODAY (so a ticked task lingers for the rest of the day then
-// drops off on its own). Newest-relevant first. Joins the company name.
+// GET /api/crm/tasks[?companyId=] -> the live OPEN to-do list. A ticked or
+// dismissed item must disappear immediately and stay gone after refresh.
 export async function GET(req: NextRequest) {
   try {
     const companyId = new URL(req.url).searchParams.get("companyId");
-
-    // Start of today (server local) - done tasks older than this are hidden.
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
 
     let q = supabaseAdmin
       .from("tasks")
       .select(
         "id, company_id, text, kind, link_kind, status, done_at, created_at, payload, due_at"
       )
+      .eq("status", "open")
       .order("created_at", { ascending: true })
       .limit(500);
     if (companyId) q = q.eq("company_id", companyId);
@@ -70,22 +66,10 @@ export async function GET(req: NextRequest) {
     const nameById = new Map<string, string>();
     for (const c of companies || []) nameById.set(c.id, c.name);
 
-    const startMs = startOfToday.getTime();
     // "Takes priority if within 48hrs of the call or the same day."
     const soonCutoff = Date.now() + 48 * 60 * 60 * 1000;
 
-    const real = (rows || [])
-      .filter((t: any) => {
-        // Open tasks always show. Done tasks linger only for the rest of today.
-        // Dismissed (or anything else) is hidden EVERYWHERE - the whole pipeline
-        // reads this endpoint, so dismissing once removes it from the board,
-        // dashboard and commitments at once.
-        if (t.status === "open") return true;
-        if (t.status === "done")
-          return t.done_at && new Date(t.done_at).getTime() >= startMs;
-        return false;
-      })
-      .map((t: any) => ({
+    const real = (rows || []).map((t: any) => ({
         ...t,
         text: cleanText(t.text),
         company: t.company_id ? nameById.get(t.company_id) || null : null,
@@ -97,8 +81,6 @@ export async function GET(req: NextRequest) {
         payload: t.payload ?? null,
         due_at: t.due_at ?? null,
       }));
-    const openReal = real.filter((t: any) => t.status !== "done");
-    const doneReal = real.filter((t: any) => t.status === "done");
 
     // Priority sort for the open to-dos: PINNED first (kept at the top until
     // done), then by DEADLINE (soonest, and overdue, first), then most recent.
@@ -108,7 +90,7 @@ export async function GET(req: NextRequest) {
       t.payload && typeof t.payload === "object" && t.payload.pinned ? 0 : 1;
     const dueMs = (t: any) =>
       t.due_at ? new Date(t.due_at).getTime() : Infinity;
-    openReal.sort((a: any, b: any) => {
+    real.sort((a: any, b: any) => {
       const pr = pinRank(a) - pinRank(b);
       if (pr !== 0) return pr;
       const dm = dueMs(a) - dueMs(b);
@@ -153,9 +135,9 @@ export async function GET(req: NextRequest) {
     const dueSoonPrep = prep.filter((p) => p.due_soon);
     const laterPrep = prep.filter((p) => !p.due_soon);
 
-    // Order: imminent prep first (soonest first), then the rest of the open
-    // list, then prep that's further out, then today's completed tasks.
-    const tasks = [...dueSoonPrep, ...openReal, ...laterPrep, ...doneReal];
+    // Order: imminent prep first, then open work, then later prep. Completed or
+    // dismissed work is never returned, so it cannot resurrect on refresh.
+    const tasks = [...dueSoonPrep, ...real, ...laterPrep];
 
     return NextResponse.json({ tasks });
   } catch (err: any) {
