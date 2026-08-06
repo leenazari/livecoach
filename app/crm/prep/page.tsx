@@ -314,6 +314,28 @@ function PrepInner() {
       const savedStage: string =
         typeof saved?.planStage === "string" ? saved.planStage : "";
 
+      // Refresh only the intent from the latest relationship memory. The API
+      // caches this against the newest summary, so reopening Prep is normally a
+      // free Supabase read. A saved focus/plan is left untouched.
+      if (d.hasHistory && companyId && !savedFocus.length) {
+        try {
+          const fresh = await crmFetch<{ intent: string; rationale: string }>(
+            `/api/crm/companies/${companyId}/prep-intent`,
+            {
+              method: "POST",
+              body: JSON.stringify({ concise: true, upcomingId }),
+            }
+          );
+          if (fresh.intent) {
+            setIntent(fresh.intent);
+            intentRef.current = fresh.intent;
+          }
+          if (fresh.rationale) setRationale(fresh.rationale);
+        } catch {
+          // Keep the existing intent if refreshing relationship memory fails.
+        }
+      }
+
       if (savedFocus.length) {
         focusRef.current = savedFocus;
         setBuiltFocus(savedFocus);
@@ -686,7 +708,10 @@ function PrepInner() {
             if (upcomingId) {
               crmFetch(`/api/crm/upcoming/${upcomingId}`, {
                 method: "PATCH",
-                body: JSON.stringify({ intent: drafted }),
+                body: JSON.stringify({
+                  intent: drafted,
+                  intentSource: "generated",
+                }),
               }).catch(() => {});
             }
           } else {
@@ -1067,7 +1092,7 @@ function PrepInner() {
     if (!upcomingId || !intent.trim()) return;
     await crmFetch(`/api/crm/upcoming/${upcomingId}`, {
       method: "PATCH",
-      body: JSON.stringify({ intent: intent.trim() }),
+      body: JSON.stringify({ intent: intent.trim(), intentSource: "manual" }),
     }).catch(() => {});
     intentRef.current = intent.trim();
     setSavedToCall(true);

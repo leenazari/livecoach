@@ -70,11 +70,13 @@ export async function POST(req: NextRequest) {
       .join("\n");
 
     const biz = await workspaceContextBlock();
-    const system = `${biz}After a call with a client, you produce three things from the call and the client's existing profile. Output ONLY JSON with exactly these keys:
+    const system = `${biz}After a call with a client, you produce the durable relationship memory and the starting intent for the next call. Output ONLY JSON with exactly these keys:
 
 {
   "brief": [ "the UPDATED running profile as a SCANNABLE BULLET LIST - one short bullet per distinct subject, person or thread (who they are, what they want, key people, decisions, open threads on either side, preferences). Lead with the subject or name where it helps. Never a paragraph. Merge with the existing brief: keep what's true, update what changed, add what's new, drop one-off noise. 3-8 bullets, no call-by-call log." ],
   "playbook": [ "3-6 short, punchy strategic plays - the MAIN moves to advance THIS specific client toward the outcome the host wants (win the deal, land the project, get the yes). Ordered most important first. Each is ONE short sentence, practical and specific to this client and the open threads - not generic sales advice. This is the host's game plan for the relationship." ],
+  "nextCallIntent": "1-2 concise first-person sentences for the NEXT conversation, based on this call's outcome, unresolved commitments and the most valuable next step",
+  "nextCallRationale": "one short sentence explaining which unresolved thread or action makes that the priority",
   "opportunities": [ { "title": "short name for a concrete opportunity FOR US this call surfaced (a deal, upsell, a need we can serve, a next project)", "detail": "one line grounding it in what was said", "value": <rough GBP number or null> } ],
   "followUp": { "subject": "email subject", "body": "a warm, ready-to-review DRAFT follow-up email to the client referencing what was discussed and the sensible next steps" }
 }
@@ -82,6 +84,7 @@ export async function POST(req: NextRequest) {
 Rules:
 - Ground everything ONLY in the inputs - never invent facts, names, numbers or promises.
 - opportunities: 0-4, ONLY real ones clearly implied by the call. Empty array if none. value is a rough number or null - never a string.
+- nextCallIntent must move the existing relationship forward. Never reset to a first-meeting discovery objective unless this genuinely was the first interaction.
 - followUp: warm and human, not pushy; reference the actual discussion and any agreed next steps; sign off generically (the host reviews and sends it themselves). It is a DRAFT, never sent automatically.`;
 
     const userMsg = `CLIENT: ${company.name}${candidate ? ` | spoke with: ${candidate}` : ""}${
@@ -104,6 +107,8 @@ Return the JSON now.`;
     let playbook: string[] = existingPlaybook;
     let opportunities: { title: string; detail: string; value: number | null }[] = [];
     let followUp: { subject: string; body: string } | null = null;
+    let nextCallIntent = "";
+    let nextCallRationale = "";
 
     try {
       const controller = new AbortController();
@@ -170,6 +175,10 @@ Return the JSON now.`;
               body: String(parsed.followUp.body || "").trim(),
             };
           }
+          if (typeof parsed.nextCallIntent === "string")
+            nextCallIntent = parsed.nextCallIntent.trim();
+          if (typeof parsed.nextCallRationale === "string")
+            nextCallRationale = parsed.nextCallRationale.trim();
         }
       } finally {
         clearTimeout(timer);
@@ -196,6 +205,14 @@ Return the JSON now.`;
           ...existingProfile,
           brief,
           playbook,
+          next_call: nextCallIntent
+            ? {
+                intent: nextCallIntent,
+                rationale: nextCallRationale,
+                basedOnSessionId: sessionId || null,
+                generatedAt: new Date().toISOString(),
+              }
+            : existingProfile.next_call,
           updated: new Date().toISOString(),
         },
       })
