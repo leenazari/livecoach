@@ -92,7 +92,15 @@ async function run(req: Request) {
       try {
         const r = await fetch(`${origin}/api/crm/email-pull`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(req.headers.get("cookie")
+              ? { Cookie: req.headers.get("cookie") as string }
+              : {}),
+            ...(req.headers.get("authorization")
+              ? { Authorization: req.headers.get("authorization") as string }
+              : {}),
+          },
           body: JSON.stringify({ email }),
         });
         if (r.ok) {

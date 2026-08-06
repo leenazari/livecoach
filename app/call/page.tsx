@@ -2097,24 +2097,9 @@ export default function CallPage() {
     setSummarising(true);
     setSummaryLoadingMore(true);
     setStatus("building summary...");
-    // FAST top half: show the verdict, how it went and the next actions within a
-    // couple of seconds while the full scorecard generates below. The full
-    // result overwrites this when it lands. Fire-and-forget.
-    fetch("/api/interview/summary-top", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        transcript: labelled,
-        role: roleRef.current || null,
-        candidate: candidate || null,
-        competencies: suggestedCompsRef.current,
-      }),
-    })
-      .then((r) => r.json())
-      .then((top) => {
-        if (top && top.recommendation) setSummary((prev: any) => prev || top);
-      })
-      .catch(() => {});
+    // Build the transcript summary once. The former "fast top" request sent the
+    // full transcript to a second model immediately before the full scorecard,
+    // doubling input tokens for a temporary result that was then overwritten.
     try {
       sonnetCallsRef.current += 1;
       // Make sure the session row carries the company link before we store the

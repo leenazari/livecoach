@@ -75,7 +75,15 @@ export async function POST(req: NextRequest) {
     try {
       const r = await fetch(`${origin}/api/interview/summary`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(req.headers.get("cookie")
+            ? { Cookie: req.headers.get("cookie") as string }
+            : {}),
+          ...(req.headers.get("authorization")
+            ? { Authorization: req.headers.get("authorization") as string }
+            : {}),
+        },
         body: JSON.stringify({
           transcript,
           role: (sess as any).role || null,

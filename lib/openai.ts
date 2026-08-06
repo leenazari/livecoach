@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+
 type ModelTier = "live" | "pro" | "think" | "brain";
 
 type LegacyMessage = {
@@ -68,9 +70,16 @@ function requestBody(body: LegacyRequest, stream: boolean) {
       : "medium";
 
   const usesWebSearch = Array.isArray(body.tools) && body.tools.length > 0;
+  const instructions = textOf(body.system);
+  // Route repeated, stable prompt prefixes to the same cache shard. OpenAI's
+  // implicit prompt cache still validates the exact prefix, so this cannot
+  // return stale content; it only improves the chance of a discounted cache hit.
+  const promptCacheKey = createHash("sha256")
+    .update(`${body.model}\n${instructions.slice(0, 6000)}`)
+    .digest("hex");
   return {
     model: body.model,
-    instructions: textOf(body.system),
+    instructions,
     input: body.messages.map((message) => ({
       role: message.role,
       content: textOf(message.content),
@@ -78,6 +87,7 @@ function requestBody(body: LegacyRequest, stream: boolean) {
     max_output_tokens: maxOutput,
     reasoning: { effort },
     text: { verbosity: tier === "live" ? "low" : "medium" },
+    prompt_cache_key: promptCacheKey,
     ...(usesWebSearch ? { tools: [{ type: "web_search" }] } : {}),
     stream,
     store: false,
@@ -97,7 +107,10 @@ function normalizeUsage(usage: any) {
     input_tokens: Math.max(0, totalInput - cached),
     output_tokens: Number(usage?.output_tokens) || 0,
     cache_read_input_tokens: cached,
-    cache_creation_input_tokens: Number(usage?.cache_write_tokens) || 0,
+    cache_creation_input_tokens:
+      Number(usage?.input_tokens_details?.cache_write_tokens) ||
+      Number(usage?.cache_write_tokens) ||
+      0,
   };
 }
 

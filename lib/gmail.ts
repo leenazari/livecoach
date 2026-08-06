@@ -47,6 +47,22 @@ export async function gmailConnected(): Promise<boolean> {
   return !!(await getAccessToken());
 }
 
+// Verify Gmail itself, not merely the shared Google token. This distinguishes
+// a healthy calendar-only connection from a missing Gmail scope/API.
+export async function gmailAccessStatus(): Promise<"ok" | "missing" | "disconnected"> {
+  const token = await getAccessToken();
+  if (!token) return "disconnected";
+  try {
+    const res = await fetch(`${GMAIL}/profile`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    return res.ok ? "ok" : "missing";
+  } catch {
+    return "missing";
+  }
+}
+
 // Recent messages matching a Gmail query (e.g. "from:x@y.com OR to:x@y.com"),
 // newest first, metadata + snippet only.
 export async function recentMessages(
@@ -65,18 +81,19 @@ export async function recentMessages(
   const ids: string[] = Array.isArray(list?.messages)
     ? list.messages.map((m: any) => m?.id).filter(Boolean)
     : [];
-  const out: GmailMsg[] = [];
-  for (const id of ids) {
+  // Metadata requests are independent. Fetch them concurrently so refreshing
+  // an email thread takes one network round-trip window instead of up to 25.
+  const fetched = await Promise.all(ids.map(async (id): Promise<GmailMsg | null> => {
     const m = await api(
       `/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date`,
       token
     );
-    if (!m) continue;
+    if (!m) return null;
     const headers = m.payload?.headers || [];
     const dateMs = m.internalDate
       ? Number(m.internalDate)
       : Date.parse(header(headers, "Date")) || 0;
-    out.push({
+    return {
       id: String(m.id),
       threadId: String(m.threadId || ""),
       date: dateMs ? new Date(dateMs).toISOString() : "",
@@ -85,8 +102,9 @@ export async function recentMessages(
       cc: header(headers, "Cc"),
       subject: header(headers, "Subject"),
       snippet: typeof m.snippet === "string" ? m.snippet : "",
-    });
-  }
+    };
+  }));
+  const out = fetched.filter((m): m is GmailMsg => !!m);
   out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   return out;
 }
