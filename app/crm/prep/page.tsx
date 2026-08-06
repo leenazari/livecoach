@@ -1151,10 +1151,9 @@ function PrepInner() {
         </Link>
       </header>
 
-      {/* THE PREP CHAIN. One press runs it in order: research the company, then
-          the person, then build the intent, then the focus, then the plan. Each
-          step feeds the next, and anything already researched is reused, not
-          bought again. */}
+      {/* THE PREP CHAIN researches the company/person and drafts the intent,
+          then deliberately stops so the user can review it before building
+          either the focus or the plan. Existing research is reused. */}
       <section className="mb-6 rounded-2xl border border-sky/40 bg-sky/[0.05] p-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="font-mono text-[0.62rem] uppercase tracking-[0.2em] text-sky">
@@ -1183,13 +1182,13 @@ function PrepInner() {
                   at <span className="text-bone">{subject.companyName}</span>
                 </>
               ) : null}
-              . One press researches them both, drafts the intent and builds the
-              focus, then stops so you can rank it before the plan is built
-              around it. Research is bought once per company and once per person
-              and reused for every call with them after that.
+              . One press researches them both and drafts the intent, then stops.
+              Review or change the intent before you choose to build the focus.
+              Research is bought once per company and once per person and reused
+              for every call with them after that.
             </>
           ) : (
-            "One press researches the company and the person, drafts the intent and builds the focus, then stops so you can rank it before the plan is built around it. Research is bought once per company and once per person and reused for every call with them after that."
+            "One press researches the company and the person and drafts the intent, then stops. Review or change the intent before you choose to build the focus. Research is bought once per company and once per person and reused for every call with them after that."
           )}
         </p>
 

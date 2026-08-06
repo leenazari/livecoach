@@ -18,8 +18,9 @@ export async function getWorkspaceContext(): Promise<string> {
   }
 }
 
-// A live "now" stamp so every AI pass knows the exact current moment and never
-// treats a past meeting as upcoming. UK time, since that's where the user works.
+// A current-hour stamp so AI passes understand today's calendar without changing
+// the reusable prompt prefix every minute. UK time, since that's where the user
+// works; server-side calendar queries still enforce the exact cutoff.
 function nowLine(): string {
   const formatted = new Date().toLocaleString("en-GB", {
     timeZone: "Europe/London",
@@ -28,9 +29,8 @@ function nowLine(): string {
     month: "long",
     year: "numeric",
     hour: "2-digit",
-    minute: "2-digit",
   });
-  return `CURRENT DATE AND TIME (UK): ${formatted}. Anything scheduled before this moment has ALREADY HAPPENED - never present a past meeting as upcoming, never suggest preparing for or attending a call whose time has passed, and focus only on what is still ahead.\n\n`;
+  return `CURRENT DATE AND HOUR (UK): ${formatted}. Calendar data supplied by the app already applies the exact live cutoff. Never suggest preparing for a call identified as already past.\n\n`;
 }
 
 // Wraps the brain in a labelled block for prompts. Always includes the current
@@ -53,14 +53,16 @@ export async function workspaceContextBlock(): Promise<string> {
   } catch {
     /* best-effort */
   }
-  let out = now;
+  // Keep the stable brain first for prompt-cache reuse. The changing clock line
+  // belongs at the end; putting it first invalidated the whole reusable prefix.
+  let out = "";
   if (knowledge)
-    out += `ABOUT THE USER AND THEIR BUSINESS (background for everything below - use it to frame your reasoning, never contradict or override the specific data provided later):\n${knowledge}\n\n`;
+    out += `ABOUT THE USER AND THEIR BUSINESS (background for everything below - use it to frame your reasoning, never contradict or override the specific data provided later):\n${knowledge.slice(0, 8000)}\n\n`;
   if (learned)
-    out += `WHAT YOU HAVE LEARNED SO FAR (durable patterns picked up from the user's calls, emails and chats - apply them, but treat them as secondary to the curated profile above and to the specific data provided later):\n${learned}\n\n`;
+    out += `WHAT YOU HAVE LEARNED SO FAR (durable patterns picked up from the user's calls, emails and chats - apply them, but treat them as secondary to the curated profile above and to the specific data provided later):\n${learned.slice(-4000)}\n\n`;
   if (coaching)
-    out += `THE USER'S DEVELOPMENT (what they are training toward: becoming a world-class technology expert in systems development and AI concepts, and articulating why their products fit each client's scenario - plus their pitch and closing habits. These are their recurring areas to improve and their strengths, learned from past calls. Coach gently toward these, build on the strengths, and help them close the gaps at the right moments):\n${coaching}\n\n`;
-  return out;
+    out += `THE USER'S DEVELOPMENT (what they are training toward: becoming a world-class technology expert in systems development and AI concepts, and articulating why their products fit each client's scenario - plus their pitch and closing habits. These are their recurring areas to improve and their strengths, learned from past calls. Coach gently toward these, build on the strengths, and help them close the gaps at the right moments):\n${coaching.slice(0, 2500)}\n\n`;
+  return out + now;
 }
 
 // The user's honest, grounded stances on the objections that recur across
@@ -113,7 +115,7 @@ export async function getLessonsBlock(topics?: string[]): Promise<string> {
       .from("lessons")
       .select("topic, content")
       .order("created_at", { ascending: false })
-      .limit(60);
+      .limit(12);
     if (topics && topics.length) q = q.in("topic", topics);
     const { data } = await q;
     const rows = (data || []).filter(
@@ -122,7 +124,8 @@ export async function getLessonsBlock(topics?: string[]): Promise<string> {
     if (!rows.length) return "";
     const body = rows
       .map((r: any) => `[${r.topic}]\n${String(r.content).trim()}`)
-      .join("\n\n");
+      .join("\n\n")
+      .slice(0, 6000);
     return `LESSONS THE USER HAS TAUGHT YOU (apply the relevant ones as your operating principles - negotiation, reading people, strategy):\n${body}\n\n`;
   } catch {
     return "";

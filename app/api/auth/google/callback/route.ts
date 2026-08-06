@@ -51,7 +51,10 @@ export async function GET(req: NextRequest) {
     if (refresh) row.refresh_token = refresh;
     if (email) row.email = email;
 
-    await supabaseAdmin.from("google_oauth").upsert(row, { onConflict: "id" });
+    const { error: saveError } = await supabaseAdmin
+      .from("google_oauth")
+      .upsert(row, { onConflict: "id" });
+    if (saveError) throw saveError;
 
     const res = NextResponse.redirect(`${base}/settings?google=connected`);
     res.cookies.set("g_oauth_state", "", { maxAge: 0, path: "/" });

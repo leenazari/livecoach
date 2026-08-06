@@ -515,7 +515,15 @@ Return the JSON assessment now.`;
           const origin = new URL(req.url).origin;
           fetch(`${origin}/api/interview/cross-link`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...(req.headers.get("cookie")
+                ? { Cookie: req.headers.get("cookie") as string }
+                : {}),
+              ...(req.headers.get("authorization")
+                ? { Authorization: req.headers.get("authorization") as string }
+                : {}),
+            },
             body: JSON.stringify({ sessionId }),
           }).catch(() => {});
         } catch {

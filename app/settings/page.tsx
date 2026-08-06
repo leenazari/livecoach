@@ -50,6 +50,7 @@ export default function SettingsPage() {
     connected: boolean;
     email: string | null;
     configured: boolean;
+    gmail?: "ok" | "missing" | "disconnected";
   } | null>(null);
   const [gcalNote, setGcalNote] = useState("");
 
@@ -67,7 +68,7 @@ export default function SettingsPage() {
     crmFetch<{ lessons: Lesson[] }>("/api/crm/lessons")
       .then((d) => setLessons(d.lessons || []))
       .catch(() => {});
-    crmFetch<{ connected: boolean; email: string | null; configured: boolean }>(
+    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected" }>(
       "/api/auth/google/status"
     )
       .then((d) => setGcal(d))
@@ -186,7 +187,13 @@ export default function SettingsPage() {
               {gcal?.connected
                 ? `Connected${
                     gcal.email ? ` as ${gcal.email}` : ""
-                  }. Your calendar feeds Upcoming calls, and the Sync button on the dashboard pulls changes on demand.`
+                  }. Calendar is working${
+                    gcal.gmail === "ok"
+                      ? " and Gmail context is working"
+                      : gcal.gmail === "missing"
+                      ? ", but Gmail permission or the Gmail API is missing"
+                      : ""
+                  }. The Sync button on the dashboard pulls calendar changes on demand.`
                 : "Connect your Google Calendar so the app can pull your meetings and apply reschedules live."}
             </p>
             {gcalNote && (
