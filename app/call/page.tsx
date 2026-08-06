@@ -432,6 +432,8 @@ export default function CallPage() {
   const [overBudget, setOverBudget] = useState(false);
   const [meterOn, setMeterOn] = useState(false);
   const [insightsOn, setInsightsOn] = useState(true);
+  const [coachingPaused, setCoachingPaused] = useState(false);
+  const coachingPausedRef = useRef(false);
   // Live-cue pacing the user can dial: fast 9s / medium 30s / slow 60s, per lane.
   const [cueSpeed, setCueSpeed] = useState<"fast" | "medium" | "slow">("medium");
   const [insightSpeed, setInsightSpeed] = useState<"fast" | "medium" | "slow">(
@@ -583,6 +585,14 @@ export default function CallPage() {
   useEffect(() => {
     cueGapMsRef.current = SPEEDS[cueSpeed];
   }, [cueSpeed]);
+
+  useEffect(() => {
+    coachingPausedRef.current = coachingPaused;
+    if (coachingPaused && cueGapTimerRef.current) {
+      clearTimeout(cueGapTimerRef.current);
+      cueGapTimerRef.current = null;
+    }
+  }, [coachingPaused]);
   useEffect(() => {
     clientEmailCtxRef.current = clientEmailCtx;
     // A compact pitch-kit line so the LIVE cues can surface the right benefit /
@@ -1473,7 +1483,7 @@ export default function CallPage() {
   // Advisor lane: one Terra pass every ~30s while the call is live AND the
   // smart-insights switch is on (off by call when you don't want the pro cost).
   useEffect(() => {
-    if (!callLive || !insightsOn) return;
+    if (!callLive || !insightsOn || coachingPaused) return;
     // Cadence is user-dialled (fast 9s / medium 30s / slow 60s). Defaults to
     // slow so the advisor only chimes in occasionally. It still self-censors via
     // HOLD. Changing the speed re-arms the interval (insightSpeed is a dep).
@@ -1481,7 +1491,7 @@ export default function CallPage() {
       requestInsight();
     }, SPEEDS[insightSpeed]);
     return () => clearInterval(id);
-  }, [callLive, insightsOn, requestInsight, insightSpeed]);
+  }, [callLive, insightsOn, coachingPaused, requestInsight, insightSpeed]);
 
   // Fires on every candidate turn-end: always request a live cue, and update
   // the running summary on a LIGHT cadence (first turn, then every 2nd) so we
@@ -1490,18 +1500,21 @@ export default function CallPage() {
     // Pace the cues to the user's chosen speed (fast 9s / medium 30s / slow
     // 60s). You can also tap "Cue me" for one on demand. Rapid turns coalesce
     // into a single, well-timed cue built from the latest context.
-    const MIN_CUE_GAP_MS = cueGapMsRef.current;
-    const now = Date.now();
-    const since = now - lastCueAtRef.current;
-    if (since >= MIN_CUE_GAP_MS) {
-      lastCueAtRef.current = now;
-      requestLiveSuggestion();
-    } else {
-      if (cueGapTimerRef.current) clearTimeout(cueGapTimerRef.current);
-      cueGapTimerRef.current = setTimeout(() => {
-        lastCueAtRef.current = Date.now();
+    if (!coachingPausedRef.current) {
+      const MIN_CUE_GAP_MS = cueGapMsRef.current;
+      const now = Date.now();
+      const since = now - lastCueAtRef.current;
+      if (since >= MIN_CUE_GAP_MS) {
+        lastCueAtRef.current = now;
         requestLiveSuggestion();
-      }, MIN_CUE_GAP_MS - since);
+      } else {
+        if (cueGapTimerRef.current) clearTimeout(cueGapTimerRef.current);
+        cueGapTimerRef.current = setTimeout(() => {
+          if (coachingPausedRef.current) return;
+          lastCueAtRef.current = Date.now();
+          requestLiveSuggestion();
+        }, MIN_CUE_GAP_MS - since);
+      }
     }
     turnsSinceSummaryRef.current += 1;
     const candCount = linesRef.current.filter(
@@ -1520,7 +1533,12 @@ export default function CallPage() {
     const hasCandidateTurn = linesRef.current.some(
       (l) => l.role === "candidate"
     );
-    if (!hasCandidateTurn || selectedComps.length === 0) return;
+    if (
+      !hasCandidateTurn ||
+      selectedComps.length === 0 ||
+      coachingPausedRef.current
+    )
+      return;
     if (focusChangeTimerRef.current) clearTimeout(focusChangeTimerRef.current);
     focusChangeTimerRef.current = setTimeout(() => {
       requestLiveSuggestion();
@@ -4466,7 +4484,7 @@ export default function CallPage() {
 
       {cueFull && (
         <div className="fixed inset-0 z-50 flex flex-col bg-ink">
-          <div className="flex items-center justify-between border-b border-edge px-6 py-4">
+          <div className="flex flex-wrap items-center gap-3 border-b border-edge px-4 py-3 sm:px-6">
             <div className="flex items-baseline gap-4">
               <h2 className="font-mono text-sm uppercase tracking-[0.25em] text-amber">
                 Live cues
@@ -4475,6 +4493,79 @@ export default function CallPage() {
                 {pinned.length + ideas.length + feed.length} on screen
               </span>
             </div>
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => requestLiveSuggestion(true)}
+                title="Create a fresh question from the conversation right now"
+                className="rounded-full border border-amber/60 bg-amber/15 px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
+              >
+                {"⚡"} new cue
+              </button>
+              <button
+                type="button"
+                onClick={() => setCoachingPaused((v) => !v)}
+                title={
+                  coachingPaused
+                    ? "Resume automatic questions and insights"
+                    : "Pause automatic questions and insights; listening and the transcript continue"
+                }
+                className={`rounded-full border px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider transition ${
+                  coachingPaused
+                    ? "border-sage/60 bg-sage/15 text-sage"
+                    : "border-edge text-bone hover:border-amber/60"
+                }`}
+              >
+                {coachingPaused ? "▶ resume cues" : "Ⅱ pause cues"}
+              </button>
+              <div className="flex items-center gap-1 rounded-full border border-edge px-2 py-1">
+                <span className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">
+                  questions
+                </span>
+                {(["fast", "medium", "slow"] as const).map((sp) => (
+                  <button
+                    key={`full-cue-${sp}`}
+                    type="button"
+                    onClick={() => setCueSpeed(sp)}
+                    title={`New questions about every ${SPEEDS[sp] / 1000} seconds`}
+                    className={`rounded px-1.5 py-0.5 font-mono text-[0.52rem] uppercase transition ${
+                      cueSpeed === sp
+                        ? "bg-amber/20 text-amber"
+                        : "text-muted hover:text-bone"
+                    }`}
+                  >
+                    {sp[0]}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1 rounded-full border border-edge px-2 py-1">
+                <button
+                  type="button"
+                  onClick={() => setInsightsOn((v) => !v)}
+                  title="Turn Terra 'things to say' suggestions on or off"
+                  className={`font-mono text-[0.5rem] uppercase tracking-wider ${
+                    insightsOn ? "text-sky" : "text-muted"
+                  }`}
+                >
+                  ideas {insightsOn ? "on" : "off"}
+                </button>
+                {insightsOn &&
+                  (["fast", "medium", "slow"] as const).map((sp) => (
+                    <button
+                      key={`full-say-${sp}`}
+                      type="button"
+                      onClick={() => setInsightSpeed(sp)}
+                      title={`New Terra ideas about every ${SPEEDS[sp] / 1000} seconds`}
+                      className={`rounded px-1.5 py-0.5 font-mono text-[0.52rem] uppercase transition ${
+                        insightSpeed === sp
+                          ? "bg-sky/20 text-sky"
+                          : "text-muted hover:text-bone"
+                      }`}
+                    >
+                      {sp[0]}
+                    </button>
+                  ))}
+              </div>
             <button
               type="button"
               onClick={() => setCueFull(false)}
@@ -4482,6 +4573,7 @@ export default function CallPage() {
             >
               Exit full screen
             </button>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-6">
             {pinned.length + ideas.length + feed.length === 0 ? (
