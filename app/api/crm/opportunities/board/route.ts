@@ -31,6 +31,10 @@ type Opp = {
   count: number;
   dueSoon: boolean;
   nextCallAt: string | null;
+  lastTouchAt: string | null;
+  daysQuiet: number | null;
+  cooling: boolean;
+  contactUnknown: boolean;
   reason: string;
   nextAction: string;
   // Internal, for ranking only - not sent to the client.
@@ -55,6 +59,8 @@ function heuristicSort(a: Opp, b: Opp): number {
 
 function heuristicReason(o: Opp): string {
   if (o.dueSoon && o.nextCallAt) return "Call coming up, prep now";
+  if (o.cooling && o.daysQuiet != null) return `Quiet for ${o.daysQuiet} days`;
+  if (o.contactUnknown) return "No contact history on file";
   if (o.nextCallAt) return "Next call scheduled";
   if (o.value && o.value > 0)
     return `£${Math.round(o.value).toLocaleString()} in play`;
@@ -67,6 +73,8 @@ function heuristicNextAction(o: Opp): string {
   if (first) return first.replace(/^call:\s*/i, "Prepare: ").slice(0, 140);
   const waiting = (o._texts || []).find((t) => /^waiting on:/i.test(t));
   if (waiting) return `Chase ${waiting.replace(/^waiting on:\s*/i, "")}`.slice(0, 140);
+  if (o.cooling) return "Re-engage with a specific decision or close the opportunity";
+  if (o.contactUnknown) return "Confirm a real next step or close the opportunity";
   if (o.nextCallAt) return "Define the outcome for the next call";
   return "Decide the next commitment or close this opportunity";
 }
@@ -83,8 +91,9 @@ export async function GET(req: Request) {
       { data: ucals },
       { data: opps },
       { data: prio },
+      { data: recentCalls },
     ] = await Promise.all([
-      supabaseAdmin.from("companies").select("id, name"),
+      supabaseAdmin.from("companies").select("id, name, profile"),
       supabaseAdmin
         .from("tasks")
         .select("company_id, text, due_at, kind")
@@ -106,10 +115,30 @@ export async function GET(req: Request) {
       supabaseAdmin
         .from("company_priority")
         .select("company_id, position"),
+      supabaseAdmin
+        .from("interview_summaries")
+        .select("company_id, created_at")
+        .not("company_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1000),
     ]);
 
     const nameById = new Map<string, string>();
-    for (const c of companies || []) nameById.set(c.id, c.name);
+    const lastTouchById = new Map<string, number>();
+    for (const c of companies || []) {
+      nameById.set(c.id, c.name);
+      const emailAt = (c.profile as any)?.email_last_message_at;
+      if (emailAt) {
+        const ms = new Date(emailAt as string).getTime();
+        if (Number.isFinite(ms)) lastTouchById.set(c.id, ms);
+      }
+    }
+    for (const call of recentCalls || []) {
+      const cid = call.company_id as string;
+      const ms = new Date(call.created_at as string).getTime();
+      if (cid && Number.isFinite(ms) && ms > (lastTouchById.get(cid) || 0))
+        lastTouchById.set(cid, ms);
+    }
 
     // Group open tasks + prep calls by client into opportunity rows.
     const byCompany = new Map<string, Opp>();
@@ -124,6 +153,10 @@ export async function GET(req: Request) {
           count: 0,
           dueSoon: false,
           nextCallAt: null,
+          lastTouchAt: null,
+          daysQuiet: null,
+          cooling: false,
+          contactUnknown: false,
           reason: "",
           nextAction: "",
           _texts: [],
@@ -178,6 +211,19 @@ export async function GET(req: Request) {
     }
 
     let list = [...byCompany.values()];
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    for (const o of list) {
+      const touched = lastTouchById.get(o.companyId);
+      if (!touched) {
+        o.contactUnknown = !o.nextCallAt;
+        continue;
+      }
+      o.lastTouchAt = new Date(touched).toISOString();
+      o.daysQuiet = Math.max(0, Math.floor((nowMs - touched) / DAY_MS));
+      // A scheduled conversation means the relationship already has momentum,
+      // so do not call it cooling even if the previous touch was weeks ago.
+      o.cooling = !o.nextCallAt && o.daysQuiet >= 14;
+    }
     if (list.length === 0) {
       return NextResponse.json({ opportunities: [], looseCount, manual: false });
     }
@@ -204,11 +250,13 @@ export async function GET(req: Request) {
               o.nextCallAt
                 ? new Date(o.nextCallAt).toISOString().slice(0, 16)
                 : "none"
-            } | work: ${(o._texts || []).join("; ").slice(0, 240)}`
+            } | work: ${(o._texts || []).join("; ").slice(0, 240)} | last contact: ${
+              o.daysQuiet == null ? "unknown" : `${o.daysQuiet} days ago`
+            }${o.cooling ? " (COOLING)" : ""}`
         )
         .join("\n");
       const cacheKey =
-        "oppboard2:" + createHash("sha256").update(summary).digest("hex");
+        "oppboard3:" + createHash("sha256").update(summary).digest("hex");
       try {
         const { data: hit } = await supabaseAdmin
           .from("ai_cache")
@@ -254,7 +302,7 @@ export async function GET(req: Request) {
                 max_tokens: 1100,
                 system: `${biz}${coachSystemBlock()}
 
-You are ranking Lee's open OPPORTUNITIES (one per client) by what most moves him toward the goal. Weigh: how close the deal is to a decision, an imminent next call, the work that unlocks it, promises Lee is waiting for, and the size of the prize. For each opportunity choose ONE concrete NEXT BEST ACTION Lee should take now. It must be specific and executable, such as send the proposal, confirm the decision-maker, chase promised questions, book the decision meeting, prepare a named call, or close an inactive opportunity. Do not say vague things like "follow up" or "move this forward". Do not invent facts. Order by impact, not recency. For unknown value, estimate rough potential GBP from context. Output ONLY:
+You are ranking Lee's open OPPORTUNITIES (one per client) by what most moves him toward the goal. Weigh: how close the deal is to a decision, an imminent next call, the work that unlocks it, promises Lee is waiting for, how long the relationship has been quiet, and the size of the prize. A valuable cooling deal may need a specific re-engagement; an old weak opportunity may need closing so it stops creating noise. For each opportunity choose ONE concrete NEXT BEST ACTION Lee should take now. It must be specific and executable, such as send the proposal, confirm the decision-maker, chase promised questions, book the decision meeting, prepare a named call, ask a specific re-engagement question, or close an inactive opportunity. Do not say vague things like "follow up" or "move this forward". Do not invent facts. Order by impact, not recency. For unknown value, estimate rough potential GBP from context. Output ONLY:
 [{"i": index, "action": max 14 word imperative next action, "reason": max 10 word outcome-led reason, "value": GBP number or null}]
 Include every index exactly once. Be honest and specific, never flattering.`,
                 messages: [{ role: "user", content: summary }],
@@ -347,6 +395,10 @@ Include every index exactly once. Be honest and specific, never flattering.`,
       count: o.count,
       dueSoon: o.dueSoon,
       nextCallAt: o.nextCallAt,
+      lastTouchAt: o.lastTouchAt,
+      daysQuiet: o.daysQuiet,
+      cooling: o.cooling,
+      contactUnknown: o.contactUnknown,
       reason: coachReason.get(o.companyId) || heuristicReason(o),
       nextAction: coachAction.get(o.companyId) || heuristicNextAction(o),
     }));

@@ -28,6 +28,10 @@ type Opp = {
   count: number;
   dueSoon: boolean;
   nextCallAt: string | null;
+  lastTouchAt: string | null;
+  daysQuiet: number | null;
+  cooling: boolean;
+  contactUnknown: boolean;
   reason: string;
   nextAction: string;
 };
@@ -150,6 +154,22 @@ function OppRow({
               {whenLabel(o.nextCallAt)}
             </span>
           ) : null}
+          {o.cooling && o.daysQuiet != null ? (
+            <span
+              title={`No recorded call or email activity for ${o.daysQuiet} days`}
+              className="rounded-full border border-rose/45 bg-rose/10 px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider text-rose"
+            >
+              quiet {o.daysQuiet}d
+            </span>
+          ) : null}
+          {o.contactUnknown ? (
+            <span
+              title="No call or email date is recorded for this opportunity"
+              className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider text-muted"
+            >
+              no contact date
+            </span>
+          ) : null}
         </span>
       </div>
 
@@ -250,7 +270,8 @@ export default function OpportunityBoard() {
       </div>
       <p className="mb-2.5 font-sans text-[0.76rem] leading-snug text-bone/60">
         One specific next move for every active opportunity, grounded in its
-        calls, promises, calendar and open work.
+        calls, email activity, promises, calendar and open work. Quiet deals are
+        flagged before they disappear.
       </p>
 
       {savedNote && (

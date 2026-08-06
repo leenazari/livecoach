@@ -170,6 +170,20 @@ export async function POST(req: NextRequest) {
         typeof cachedCompany.email_context === "string" &&
         cachedCompany.email_context.trim()
       ) {
+        // Keep the actual newest message time separately from the time we
+        // refreshed its AI summary. The opportunity board uses this to spot a
+        // quiet relationship without mistaking a refresh for a new email.
+        if (msgs[0]?.date) {
+          await supabaseAdmin
+            .from("companies")
+            .update({
+              profile: {
+                ...((cachedCompany.profile as any) || {}),
+                email_last_message_at: msgs[0].date,
+              },
+            })
+            .eq("id", companyId);
+        }
         return NextResponse.json({
           ok: true,
           cached: true,
@@ -258,6 +272,7 @@ export async function POST(req: NextRequest) {
         profile: {
           ...((existingCompany?.profile as any) || {}),
           email_context_source_hash: sourceHash,
+          email_last_message_at: msgs[0]?.date || null,
         },
       };
       if (website) patch.website = website;
@@ -272,7 +287,10 @@ export async function POST(req: NextRequest) {
           website,
           email_context: emailContext,
           email_context_updated_at: nowIso,
-          profile: { email_context_source_hash: sourceHash },
+          profile: {
+            email_context_source_hash: sourceHash,
+            email_last_message_at: msgs[0]?.date || null,
+          },
         })
         .select("id")
         .single();
