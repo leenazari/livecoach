@@ -26,6 +26,7 @@ const THINK_LABEL = "think" as const;
 type Opp = {
   companyId: string;
   company: string;
+  stage: string | null;
   value: number | null;
   valueIsEstimate: boolean;
   count: number;
@@ -93,7 +94,7 @@ export async function GET(req: Request) {
       { data: prio },
       { data: recentCalls },
     ] = await Promise.all([
-      supabaseAdmin.from("companies").select("id, name, profile"),
+      supabaseAdmin.from("companies").select("id, name, stage, profile"),
       supabaseAdmin
         .from("tasks")
         .select("company_id, text, due_at, kind")
@@ -124,9 +125,14 @@ export async function GET(req: Request) {
     ]);
 
     const nameById = new Map<string, string>();
+    const stageById = new Map<string, string | null>();
     const lastTouchById = new Map<string, number>();
     for (const c of companies || []) {
       nameById.set(c.id, c.name);
+      stageById.set(
+        c.id,
+        typeof c.stage === "string" && c.stage.trim() ? c.stage.trim() : null
+      );
       const emailAt = (c.profile as any)?.email_last_message_at;
       if (emailAt) {
         const ms = new Date(emailAt as string).getTime();
@@ -148,6 +154,7 @@ export async function GET(req: Request) {
         o = {
           companyId,
           company: nameById.get(companyId) || "a client",
+          stage: stageById.get(companyId) || null,
           value: null,
           valueIsEstimate: false,
           count: 0,
@@ -244,7 +251,7 @@ export async function GET(req: Request) {
       const summary = list
         .map(
           (o, i) =>
-            `${i}. ${o.company} | value: ${
+            `${i}. ${o.company} | stage: ${o.stage || "not set"} | value: ${
               o.value ? `£${o.value}` : "unknown"
             } | open items: ${o.count} | next call: ${
               o.nextCallAt
@@ -256,7 +263,7 @@ export async function GET(req: Request) {
         )
         .join("\n");
       const cacheKey =
-        "oppboard3:" + createHash("sha256").update(summary).digest("hex");
+        "oppboard4:" + createHash("sha256").update(summary).digest("hex");
       try {
         const { data: hit } = await supabaseAdmin
           .from("ai_cache")
@@ -302,7 +309,7 @@ export async function GET(req: Request) {
                 max_tokens: 1100,
                 system: `${biz}${coachSystemBlock()}
 
-You are ranking Lee's open OPPORTUNITIES (one per client) by what most moves him toward the goal. Weigh: how close the deal is to a decision, an imminent next call, the work that unlocks it, promises Lee is waiting for, how long the relationship has been quiet, and the size of the prize. A valuable cooling deal may need a specific re-engagement; an old weak opportunity may need closing so it stops creating noise. For each opportunity choose ONE concrete NEXT BEST ACTION Lee should take now. It must be specific and executable, such as send the proposal, confirm the decision-maker, chase promised questions, book the decision meeting, prepare a named call, ask a specific re-engagement question, or close an inactive opportunity. Do not say vague things like "follow up" or "move this forward". Do not invent facts. Order by impact, not recency. For unknown value, estimate rough potential GBP from context. Output ONLY:
+You are ranking Lee's open OPPORTUNITIES (one per client) by what most moves him toward the goal. Weigh: the recorded relationship stage, how close the deal is to a decision, an imminent next call, the work that unlocks it, promises Lee is waiting for, how long the relationship has been quiet, and the size of the prize. Never infer a missing stage. A valuable cooling deal may need a specific re-engagement; an old weak opportunity may need closing so it stops creating noise. For each opportunity choose ONE concrete NEXT BEST ACTION Lee should take now. It must be specific and executable, such as send the proposal, confirm the decision-maker, chase promised questions, book the decision meeting, prepare a named call, ask a specific re-engagement question, or close an inactive opportunity. Do not say vague things like "follow up" or "move this forward". Do not invent facts. Order by impact, not recency. For unknown value, estimate rough potential GBP from context. Output ONLY:
 [{"i": index, "action": max 14 word imperative next action, "reason": max 10 word outcome-led reason, "value": GBP number or null}]
 Include every index exactly once. Be honest and specific, never flattering.`,
                 messages: [{ role: "user", content: summary }],
@@ -390,6 +397,7 @@ Include every index exactly once. Be honest and specific, never flattering.`,
     const opportunities = list.map((o) => ({
       companyId: o.companyId,
       company: o.company,
+      stage: o.stage,
       value: o.value,
       valueIsEstimate: o.valueIsEstimate,
       count: o.count,
