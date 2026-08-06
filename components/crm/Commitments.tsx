@@ -9,6 +9,8 @@ type Payload = {
   subject?: string;
   body?: string;
   notes?: string;
+  ownerType?: "me" | "counterparty";
+  ownerName?: string;
 };
 type Task = {
   id: string;
@@ -33,20 +35,26 @@ export default function Commitments({
 }) {
   const url = `/api/crm/tasks${companyId ? `?companyId=${companyId}` : ""}`;
   const seed = (getCached<{ tasks: Task[] }>(url)?.tasks || []).filter(
-    (t) => t.kind === "commitment" && t.status !== "done"
+    (t) =>
+      (t.kind === "commitment" || t.kind === "counterparty_commitment") &&
+      t.status !== "done"
   );
   const [items, setItems] = useState<Task[]>(seed);
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Payload>({});
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [dueDraft, setDueDraft] = useState("");
 
   const load = () =>
     crmFetch<{ tasks: Task[] }>(url)
       .then((d) =>
         setItems(
           (d.tasks || []).filter(
-            (t) => t.kind === "commitment" && t.status !== "done"
+            (t) =>
+              (t.kind === "commitment" ||
+                t.kind === "counterparty_commitment") &&
+              t.status !== "done"
           )
         )
       )
@@ -68,6 +76,7 @@ export default function Commitments({
     setOpenId(t.id);
     setCopied(false);
     setDraft({ ...(t.payload || {}) });
+    setDueDraft(t.due_at ? String(t.due_at).slice(0, 10) : "");
   };
 
   const saveDraft = async (t: Task) => {
@@ -75,11 +84,24 @@ export default function Commitments({
     try {
       await crmFetch(`/api/crm/tasks/${t.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ payload: { ...(t.payload || {}), ...draft } }),
+        body: JSON.stringify({
+          payload: { ...(t.payload || {}), ...draft },
+          dueAt: dueDraft
+            ? new Date(`${dueDraft}T12:00:00`).toISOString()
+            : null,
+        }),
       });
       setItems((p) =>
         p.map((x) =>
-          x.id === t.id ? { ...x, payload: { ...(x.payload || {}), ...draft } } : x
+          x.id === t.id
+            ? {
+                ...x,
+                payload: { ...(x.payload || {}), ...draft },
+                due_at: dueDraft
+                  ? new Date(`${dueDraft}T12:00:00`).toISOString()
+                  : null,
+              }
+            : x
         )
       );
     } catch {
@@ -161,13 +183,16 @@ export default function Commitments({
 
   if (items.length === 0) return null;
 
+  const mineCount = items.filter((t) => t.kind === "commitment").length;
+  const theirCount = items.length - mineCount;
+
   return (
     <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.05] p-4">
       <div className="mb-2.5 flex items-center justify-between">
         <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sky">
-          {"✓"} You promised{" "}
+          {"✓"} Commitments{" "}
           <span className="text-muted">
-            - {items.length} to approve &amp; send
+            - {mineCount} yours, {theirCount} theirs
           </span>
         </p>
       </div>
@@ -175,7 +200,10 @@ export default function Commitments({
       <ul className="flex flex-col">
         {items.map((t) => {
           const open = openId === t.id;
-          const isEmail = (t.payload?.actionType || "task") === "email";
+          const theirs = t.kind === "counterparty_commitment";
+          const isEmail = !theirs && (t.payload?.actionType || "task") === "email";
+          const ownerName =
+            t.payload?.ownerName || (theirs ? "They" : "You");
           return (
             <li
               key={t.id}
@@ -185,7 +213,7 @@ export default function Commitments({
                 <button
                   type="button"
                   onClick={() => complete(t)}
-                  title="mark done"
+                  title={theirs ? "mark received" : "mark done"}
                   className="flex h-4 w-4 flex-none items-center justify-center rounded border border-muted text-[0.6rem] transition hover:border-sage"
                 />
                 <button
@@ -197,6 +225,15 @@ export default function Commitments({
                 </button>
                 {dueBadge(t.due_at)}
                 <span
+                  className={`flex-none rounded-full border px-2 py-0.5 font-mono text-[0.52rem] uppercase tracking-wider ${
+                    theirs
+                      ? "border-rust/45 bg-rust/10 text-rust"
+                      : "border-sage/45 bg-sage/10 text-sage"
+                  }`}
+                >
+                  {theirs ? `${ownerName} owes` : "you owe"}
+                </span>
+                <span
                   className="flex-none rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider"
                   style={{
                     background: isEmail
@@ -207,7 +244,7 @@ export default function Commitments({
                       : "var(--color-text-warning)",
                   }}
                 >
-                  {isEmail ? "email" : "prepare"}
+                  {isEmail ? "email" : theirs ? "waiting" : "prepare"}
                 </span>
                 {showCompany && t.company && (
                   <span className="flex-none font-mono text-[0.58rem] text-sky">
@@ -227,6 +264,27 @@ export default function Commitments({
 
               {open && (
                 <div className="mt-2 rounded-lg border border-edge bg-ink/50 p-3">
+                  <div className="mb-2 flex flex-wrap items-end gap-3">
+                    <label className="block">
+                      <span className="mb-1 block font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                        Owner
+                      </span>
+                      <span className="block rounded-md border border-edge bg-ink/60 px-3 py-2 font-sans text-[0.78rem] text-bone">
+                        {ownerName}
+                      </span>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                        Due date
+                      </span>
+                      <input
+                        type="date"
+                        value={dueDraft}
+                        onChange={(e) => setDueDraft(e.target.value)}
+                        className="rounded-md border border-edge bg-ink/60 px-3 py-2 font-sans text-[0.78rem] text-bone outline-none focus:border-sky/60"
+                      />
+                    </label>
+                  </div>
                   {isEmail ? (
                     <>
                       <input
@@ -247,6 +305,11 @@ export default function Commitments({
                         className="w-full resize-y rounded-md border border-edge bg-ink/60 px-3 py-2 font-sans text-[0.82rem] leading-relaxed text-bone outline-none placeholder:text-muted/50 focus:border-sky/60"
                       />
                     </>
+                  ) : theirs ? (
+                    <p className="rounded-md border border-rust/25 bg-rust/[0.04] px-3 py-2 font-sans text-[0.8rem] leading-relaxed text-bone/75">
+                      Waiting for {ownerName}. Add or correct the due date, then
+                      mark it received when they deliver.
+                    </p>
                   ) : (
                     <textarea
                       value={draft.notes || ""}
@@ -260,7 +323,7 @@ export default function Commitments({
                   )}
 
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <VoiceNoteButton
+                    {!theirs && <VoiceNoteButton
                       onText={(tx) =>
                         setDraft((d) =>
                           isEmail
@@ -268,15 +331,15 @@ export default function Commitments({
                             : { ...d, notes: d.notes ? `${d.notes} ${tx}` : tx }
                         )
                       }
-                    />
-                    <button
+                    />}
+                    {!theirs && <button
                       type="button"
                       onClick={() => saveDraft(t)}
                       disabled={saving}
                       className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber disabled:opacity-40"
                     >
                       {saving ? "saving…" : "save edit"}
-                    </button>
+                    </button>}
                     <button
                       type="button"
                       onClick={copyDraft}
@@ -299,7 +362,7 @@ export default function Commitments({
                       onClick={() => complete(t)}
                       className="ml-auto rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
                     >
-                      ✓ done
+                      ✓ {theirs ? "received" : "done"}
                     </button>
                   </div>
                 </div>

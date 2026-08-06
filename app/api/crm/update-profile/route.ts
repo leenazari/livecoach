@@ -257,7 +257,37 @@ Return the JSON now.`;
           linkKind: "client",
           source: "call",
           sourceRef: sessionId || null,
+          payload: { ownerType: "me", ownerName: "You" },
         }))
+    );
+
+    // Track what the other party explicitly promised as well. These are not
+    // placed in the user's ordinary to-do list; they live in Commitments so the
+    // user can see what to wait for/chase and mark it received.
+    const theirActions = Array.isArray(s.theirNextActions)
+      ? s.theirNextActions
+      : [];
+    await upsertTasks(
+      companyId,
+      theirActions
+        .filter((a: any) => typeof a === "string" && a.trim())
+        .slice(0, 8)
+        .map((raw: string) => {
+          const value = raw.trim();
+          const colon = value.indexOf(":");
+          const ownerName =
+            colon > 0 && colon < 80 ? value.slice(0, colon).trim() : "They";
+          const action =
+            colon > 0 && colon < 80 ? value.slice(colon + 1).trim() : value;
+          return {
+            text: action || value,
+            kind: "counterparty_commitment",
+            linkKind: "client",
+            source: "call",
+            sourceRef: sessionId || null,
+            payload: { ownerType: "counterparty", ownerName },
+          };
+        })
     );
 
     if (followUp && (followUp.subject || followUp.body)) {

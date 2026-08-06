@@ -61,7 +61,7 @@ export async function GET(
         .limit(100),
       supabaseAdmin
         .from("tasks")
-        .select("id, text, kind, status, created_at, done_at, due_at")
+        .select("id, text, kind, status, created_at, done_at, due_at, payload")
         .eq("company_id", params.id)
         .order("created_at", { ascending: false })
         .limit(150),
@@ -122,7 +122,12 @@ export async function GET(
     }
 
     for (const t of tasks || []) {
-      const commitment = t.kind === "commitment";
+      const commitment =
+        t.kind === "commitment" || t.kind === "counterparty_commitment";
+      const owner =
+        t.payload && typeof t.payload === "object"
+          ? String(t.payload.ownerName || "").trim()
+          : "";
       const due = t.due_at ? new Date(t.due_at).getTime() : null;
       items.push({
         id: `task:${t.id}`,
@@ -132,12 +137,16 @@ export async function GET(
         status: t.status,
         meta:
           t.status === "done"
-            ? "completed"
+            ? owner
+              ? `${owner} · completed`
+              : "completed"
             : due && due < now
-            ? "overdue"
+            ? owner
+              ? `${owner} · overdue`
+              : "overdue"
             : due
-            ? `due ${new Date(due).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "2-digit", month: "short" })}`
-            : undefined,
+            ? `${owner ? `${owner} · ` : ""}due ${new Date(due).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "2-digit", month: "short" })}`
+            : owner || undefined,
         href: "/crm/board?tab=tasks",
       });
     }
