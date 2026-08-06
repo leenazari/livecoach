@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { crmFetch, getCached } from "@/lib/crm";
+import { crmFetch, getCached, setCached } from "@/lib/crm";
 
 type Task = {
   id: string;
@@ -78,9 +78,8 @@ const whenLabel = (iso?: string | null) => {
 };
 
 // A tickable to-do list backed by the tasks table.
-// - Tick the box to mark done; tick again to UN-tick (no data loss).
+// - Tick the box to mark done and remove it from every open-work view.
 // - The separate ✕ removes a task for good.
-// - Done tasks also auto-clear the next day.
 // - Clicking the text starts the action: email -> opens the assistant to draft
 //   it, call -> starts a preloaded call, anything else -> opens the client.
 export default function TaskList({
@@ -109,6 +108,12 @@ export default function TaskList({
   // Prep calls more than a week out are collapsed behind an expand, so the list
   // stays focused on the week ahead instead of a wall of future recurring preps.
   const [showLater, setShowLater] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  const showTasks = (next: Task[]) => {
+    setTasks(next);
+    setCached(url, { tasks: next });
+  };
 
   useEffect(() => {
     crmFetch<{ tasks: Task[] }>(url)
@@ -127,40 +132,57 @@ export default function TaskList({
     return () => window.removeEventListener("lc:tasks-updated", onUpd);
   }, [url]);
 
-  // Tick / un-tick (toggle done). Never deletes - that's the ✕.
-  const toggle = (t: Task) => {
+  const toggle = async (t: Task) => {
+    const previous = tasks;
+    setSaveError("");
+    showTasks(tasks.filter((x) => x.id !== t.id));
     // A prep to-do is derived from an upcoming call: ticking it marks that call
     // prepped, which drops it off the list, rather than writing a tasks row.
     if (t.upcoming_id) {
-      crmFetch(`/api/crm/upcoming/${t.upcoming_id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ prepped: true }),
-      }).catch(() => {});
-      setTasks((p) => p.filter((x) => x.id !== t.id));
+      try {
+        await crmFetch(`/api/crm/upcoming/${t.upcoming_id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ prepped: true }),
+        });
+      } catch {
+        showTasks(previous);
+        setSaveError("That change did not save. Please try again.");
+      }
       return;
     }
-    const next = t.status === "done" ? "open" : "done";
-    setTasks((p) =>
-      p.map((x) =>
-        x.id === t.id
-          ? { ...x, status: next, done_at: next === "done" ? new Date().toISOString() : null }
-          : x
-      )
-    );
-    crmFetch(`/api/crm/tasks/${t.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: next }),
-    }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/tasks/${t.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "done" }),
+      });
+    } catch {
+      showTasks(previous);
+      setSaveError("That change did not save. Please try again.");
+    }
   };
 
-  const remove = (t: Task) => {
+  const remove = async (t: Task) => {
     // Dismiss (not hard-delete) so it disappears from the whole pipeline and the
     // background jobs don't re-create it from the same email/call.
-    setTasks((p) => p.filter((x) => x.id !== t.id));
-    crmFetch(`/api/crm/tasks/${t.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: "dismissed" }),
-    }).catch(() => {});
+    const previous = tasks;
+    setSaveError("");
+    showTasks(tasks.filter((x) => x.id !== t.id));
+    try {
+      if (t.upcoming_id) {
+        await crmFetch(`/api/crm/upcoming/${t.upcoming_id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ prepped: true }),
+        });
+      } else {
+        await crmFetch(`/api/crm/tasks/${t.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "dismissed" }),
+        });
+      }
+    } catch {
+      showTasks(previous);
+      setSaveError("That change did not save. Please try again.");
+    }
   };
 
   // Pin / unpin a to-do so it stays at the top of the list until done. Re-fetch
@@ -277,6 +299,11 @@ export default function TaskList({
 
   return (
     <>
+    {saveError ? (
+      <p className="mb-2 rounded-md border border-rust/50 bg-rust/10 px-2 py-1.5 font-sans text-[0.76rem] text-rust">
+        {saveError}
+      </p>
+    ) : null}
     <ul className="flex flex-col">
       {visible.map((t) => {
         const done = t.status === "done";

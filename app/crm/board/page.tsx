@@ -27,6 +27,7 @@ function BoardInner() {
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState("");
   const [newName, setNewName] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   // Follow the ?tab= param. Using useSearchParams means this re-runs when the
   // query changes (e.g. clicking Drafts in the side menu while already on the
@@ -95,33 +96,54 @@ function BoardInner() {
         detail: { companyId: t.company_id, companyName: t.company, text: t.text },
       })
     );
-  const setDraftStatus = (id: string, status: string) => {
+  const setDraftStatus = async (id: string, status: string) => {
     // Dismissing removes it from view (and it won't come back - the drafts feed
     // only returns status='draft'). Other statuses (e.g. sent) stay, dimmed.
+    const previous = drafts;
+    setSaveError("");
     setDrafts((p) =>
       status === "dismissed"
         ? p.filter((x) => x.id !== id)
         : p.map((x) => (x.id === id ? { ...x, status } : x))
     );
-    crmFetch(`/api/crm/follow-ups/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/follow-ups/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+    } catch {
+      setDrafts(previous);
+      setSaveError("That draft change did not save. Please try again.");
+    }
   };
   // Dismiss an "email to draft" task - removes it from the whole pipeline.
-  const dismissTask = (id: string) => {
+  const dismissTask = async (id: string) => {
+    const previous = emailTasks;
+    setSaveError("");
     setEmailTasks((p) => p.filter((x) => x.id !== id));
-    crmFetch(`/api/crm/tasks/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: "dismissed" }),
-    }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/tasks/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "dismissed" }),
+      });
+    } catch {
+      setEmailTasks(previous);
+      setSaveError("That task was not removed. Please try again.");
+    }
   };
-  const setOppStatus = (id: string, status: string) => {
+  const setOppStatus = async (id: string, status: string) => {
+    const previous = opps;
+    setSaveError("");
     setOpps((p) => p.filter((x) => x.id !== id));
-    crmFetch(`/api/crm/opportunities/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/opportunities/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+    } catch {
+      setOpps(previous);
+      setSaveError("That opportunity change did not save. Please try again.");
+    }
   };
   const createCompany = async () => {
     if (!newName.trim()) return;
@@ -138,8 +160,15 @@ function BoardInner() {
   };
   const deleteCompany = async (id: string, name: string) => {
     if (!confirm(`Delete ${name} and all its contacts and history?`)) return;
+    const previous = companies;
+    setSaveError("");
     setCompanies((p) => p.filter((c) => c.id !== id));
-    crmFetch(`/api/crm/companies/${id}`, { method: "DELETE" }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/companies/${id}`, { method: "DELETE" });
+    } catch {
+      setCompanies(previous);
+      setSaveError("That client was not deleted. Please try again.");
+    }
   };
 
   const shown = companies.filter((c) =>
@@ -162,6 +191,11 @@ function BoardInner() {
           ◂ dashboard
         </Link>
       </header>
+      {saveError ? (
+        <p className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 font-sans text-[0.8rem] text-rust">
+          {saveError}
+        </p>
+      ) : null}
 
       <nav className="mb-5 flex flex-wrap gap-2">
         {TABS.map((t) => (

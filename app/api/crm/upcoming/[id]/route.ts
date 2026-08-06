@@ -162,11 +162,15 @@ export async function PATCH(
     if (Object.keys(patch).length === 0) {
       return NextResponse.json({ ok: true });
     }
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("upcoming_calls")
       .update(patch)
-      .eq("id", params.id);
+      .eq("id", params.id)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!data)
+      return NextResponse.json({ error: "call not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json(
@@ -221,11 +225,15 @@ export async function POST(
     } catch {
       /* noting the reason is best-effort */
     }
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("upcoming_calls")
       .delete()
-      .eq("id", params.id);
+      .eq("id", params.id)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!data)
+      return NextResponse.json({ error: "call not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json(
@@ -241,11 +249,15 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("upcoming_calls")
       .delete()
-      .eq("id", params.id);
+      .eq("id", params.id)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!data)
+      return NextResponse.json({ error: "call not found" }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json(

@@ -246,7 +246,7 @@ export default function OpportunityBoard() {
       .catch(() => {});
   }, []);
 
-  const onDragEnd = (e: DragEndEvent) => {
+  const onDragEnd = async (e: DragEndEvent) => {
     const { active, over } = e;
     if (!over || active.id === over.id || !board) return;
     const ids = board.opportunities.map((o) => o.companyId);
@@ -255,10 +255,15 @@ export default function OpportunityBoard() {
     if (from < 0 || to < 0) return;
     const next = arrayMove(board.opportunities, from, to);
     setBoard({ ...board, opportunities: next, manual: true });
-    crmFetch("/api/crm/opportunities/order", {
-      method: "POST",
-      body: JSON.stringify({ order: next.map((o) => o.companyId) }),
-    }).catch(() => {});
+    try {
+      await crmFetch("/api/crm/opportunities/order", {
+        method: "POST",
+        body: JSON.stringify({ order: next.map((o) => o.companyId) }),
+      });
+    } catch {
+      setBoard(board);
+      setSavedNote("Order did not save. Please try again.");
+    }
   };
 
   const resetOrder = () => {

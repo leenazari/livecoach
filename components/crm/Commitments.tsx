@@ -45,6 +45,7 @@ export default function Commitments({
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [dueDraft, setDueDraft] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   const load = () =>
     crmFetch<{ tasks: Task[] }>(url)
@@ -111,24 +112,40 @@ export default function Commitments({
     }
   };
 
-  const complete = (t: Task) => {
+  const complete = async (t: Task) => {
+    const previous = items;
+    setSaveError("");
     setItems((p) => p.filter((x) => x.id !== t.id));
     if (openId === t.id) setOpenId(null);
-    crmFetch(`/api/crm/tasks/${t.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: "done" }),
-    }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/tasks/${t.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "done" }),
+      });
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    } catch {
+      setItems(previous);
+      setSaveError("That change did not save. Please try again.");
+    }
   };
 
-  const remove = (t: Task) => {
+  const remove = async (t: Task) => {
     // Dismiss across the whole pipeline (kept as a row so the jobs don't
     // re-create it from the same email or call).
+    const previous = items;
+    setSaveError("");
     setItems((p) => p.filter((x) => x.id !== t.id));
     if (openId === t.id) setOpenId(null);
-    crmFetch(`/api/crm/tasks/${t.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: "dismissed" }),
-    }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/tasks/${t.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "dismissed" }),
+      });
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    } catch {
+      setItems(previous);
+      setSaveError("That change did not save. Please try again.");
+    }
   };
 
   const gmailUrl = () => {
@@ -196,6 +213,11 @@ export default function Commitments({
           </span>
         </p>
       </div>
+      {saveError ? (
+        <p className="mb-2 rounded-md border border-rust/50 bg-rust/10 px-2 py-1.5 font-sans text-[0.76rem] text-rust">
+          {saveError}
+        </p>
+      ) : null}
 
       <ul className="flex flex-col">
         {items.map((t) => {
