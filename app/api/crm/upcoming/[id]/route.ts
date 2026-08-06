@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { inferLink, loadAttendeeConfig } from "@/lib/attendees";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -24,6 +25,55 @@ export async function GET(
       .maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "not found" }, { status: 404 });
+    // Repair older calendar rows that have a guest but were never linked to a
+    // client. Exact saved contact-email matches are conservative and give Prep
+    // access to the correct relationship history immediately.
+    if (!data.company_id && Array.isArray(data.attendees)) {
+      const config = await loadAttendeeConfig();
+      const link = inferLink(data.attendees, config);
+      let repairedCompanyId = link.companyId;
+      // Legacy calls did not always create a contact. In that case, a unique
+      // prior linked summary for the same named attendee is the next strongest
+      // signal. Never guess if that person appears under multiple clients.
+      if (!repairedCompanyId) {
+        const names = data.attendees
+          .filter((a: any) => a && !a.self)
+          .map((a: any) => {
+            const display = String(a.displayName || "").trim();
+            if (display) return display;
+            return String(a.email || "")
+              .split("@")[0]
+              .replace(/[._+-]+/g, " ")
+              .trim();
+          })
+          .filter(Boolean)
+          .slice(0, 3);
+        for (const name of names) {
+          const { data: history } = await supabaseAdmin
+            .from("interview_summaries")
+            .select("company_id")
+            .ilike("candidate", name)
+            .not("company_id", "is", null)
+            .order("created_at", { ascending: false })
+            .limit(10);
+          const ids = new Set(
+            (history || []).map((row: any) => row.company_id).filter(Boolean)
+          );
+          if (ids.size === 1) {
+            repairedCompanyId = Array.from(ids)[0] as string;
+            break;
+          }
+        }
+      }
+      if (repairedCompanyId) {
+        data.company_id = repairedCompanyId;
+        await supabaseAdmin
+          .from("upcoming_calls")
+          .update({ company_id: repairedCompanyId })
+          .eq("id", params.id)
+          .is("company_id", null);
+      }
+    }
     let company: string | null = null;
     if (data.company_id) {
       const { data: co } = await supabaseAdmin

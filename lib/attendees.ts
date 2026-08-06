@@ -108,6 +108,21 @@ export function inferLink(
     .filter(Boolean);
   if (!emails.length) return { companyId: null, isInternal: false };
 
+  // An exact saved contact is stronger evidence than the email domain. This
+  // matters when a client/contact happens to share one of the host's domains,
+  // or when an internal domain was configured broadly. Only use an unambiguous
+  // match, and let the normal internal rule handle the internal company itself.
+  const exactHits = new Set<string>();
+  for (const e of emails) {
+    const cid = config.contactEmailToCompany.get(e);
+    if (cid) exactHits.add(cid);
+  }
+  if (exactHits.size === 1) {
+    const companyId = Array.from(exactHits)[0];
+    if (companyId !== config.internalCompanyId)
+      return { companyId, isInternal: false };
+  }
+
   const external = emails.filter(
     (e) => !config.internalDomains.has(domainOf(e))
   );
