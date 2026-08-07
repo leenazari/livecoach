@@ -1,5 +1,10 @@
-import { NextResponse } from "next/server";
-import { getAccessToken, listAllEvents, meetingUrlOf, titleOf } from "@/lib/google";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  getAccessToken,
+  listAllEventsSnapshot,
+  meetingUrlOf,
+  titleOf,
+} from "@/lib/google";
 import { supabaseAdmin } from "@/lib/supabase";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import {
@@ -60,7 +65,7 @@ async function deriveClientsFromTitles(
 // into upcoming_calls. Adds new events, applies reschedules (time/title/link),
 // skips cancelled and self-declined events, and never touches the client link,
 // intent or prep on an existing row. Requires a connected Google account.
-export async function POST() {
+async function runCalendarSync() {
   try {
     const access = await getAccessToken();
     if (!access) {
@@ -75,7 +80,8 @@ export async function POST() {
     const timeMax = new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString();
     // Read EVERY calendar the account can see, not just the primary, so a
     // personal calendar shared into the connected account is picked up too.
-    const events = await listAllEvents(access, timeMin, timeMax);
+    const snapshot = await listAllEventsSnapshot(access, timeMin, timeMax);
+    const events = snapshot.events;
 
     type Row = {
       external_id: string;
@@ -101,6 +107,64 @@ export async function POST() {
         meeting_url: meetingUrlOf(ev),
         attendees: atts,
       });
+    }
+
+    // Full reconciliation, not just add/update. Google omits deleted events
+    // from a normal bounded list, so any future calendar-owned row absent from
+    // that list is stale and must leave Upcoming Calls. Manual rows are never
+    // touched. When only Google's event id changed, relink the matching title +
+    // time row so saved client, intent and prep survive.
+    const liveId = new Set(rows.map((r) => r.external_id));
+    const keyOf = (title: string | null, at: string | null) =>
+      `${String(title || "").toLowerCase().trim()}|${at || ""}`;
+    const liveByKey = new Map(rows.map((r) => [keyOf(r.title, r.scheduled_at), r]));
+    let removed = 0;
+    let relinked = 0;
+    // An incomplete Google snapshot can still safely add/update events, but it
+    // cannot prove an absent event was cancelled. Reconcile only after every
+    // eligible calendar returned successfully.
+    if (snapshot.complete) {
+      const { data: storedCalendarRows, error: storedError } = await supabaseAdmin
+        .from("upcoming_calls")
+        .select("id, external_id, title, scheduled_at")
+        .eq("source", "google")
+        .is("completed_at", null)
+        .gte("scheduled_at", timeMin)
+        .lte("scheduled_at", timeMax)
+        .limit(1000);
+      if (storedError) throw storedError;
+
+      const staleIds: string[] = [];
+      const storedLiveIds = new Set(
+        (storedCalendarRows || [])
+          .map((row: any) => row.external_id as string)
+          .filter((id: string) => id && liveId.has(id))
+      );
+      for (const stored of storedCalendarRows || []) {
+        if (stored.external_id && liveId.has(stored.external_id)) continue;
+        const replacement = liveByKey.get(keyOf(stored.title, stored.scheduled_at));
+        if (replacement && !storedLiveIds.has(replacement.external_id)) {
+          const { error } = await supabaseAdmin
+            .from("upcoming_calls")
+            .update({ external_id: replacement.external_id })
+            .eq("id", stored.id);
+          if (error) throw error;
+          storedLiveIds.add(replacement.external_id);
+          relinked += 1;
+        } else {
+          staleIds.push(stored.id);
+        }
+      }
+      if (staleIds.length) {
+        const { data: deleted, error } = await supabaseAdmin
+          .from("upcoming_calls")
+          .delete()
+          .in("id", staleIds)
+          .eq("source", "google")
+          .select("id");
+        if (error) throw error;
+        removed = deleted?.length || 0;
+      }
     }
 
     // Which of these already exist (so we update vs insert).
@@ -341,6 +405,9 @@ export async function POST() {
       ok: true,
       added,
       updated: toUpdate.length,
+      removed,
+      relinked,
+      reconciled: snapshot.complete,
       total: rows.length,
     });
   } catch (err: any) {
@@ -349,4 +416,19 @@ export async function POST() {
       { status: 500 }
     );
   }
+}
+
+// Manual refresh from the Upcoming Calls card.
+export async function POST() {
+  return runCalendarSync();
+}
+
+// Vercel invokes cron paths with GET and sends CRON_SECRET as a bearer token.
+export async function GET(req: NextRequest) {
+  const secret = process.env.CRON_SECRET || "";
+  const auth = req.headers.get("authorization") || "";
+  if (!secret || auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "not authorised" }, { status: 401 });
+  }
+  return runCalendarSync();
 }

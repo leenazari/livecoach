@@ -160,16 +160,18 @@ export async function listCalendars(accessToken: string): Promise<any[]> {
 // skipping holiday / birthday / contacts noise calendars, deduped so a meeting
 // that appears on both the primary and a shared calendar is only counted once
 // (by iCalUID). Best-effort per calendar: one that can't be read is skipped.
-export async function listAllEvents(
+export async function listAllEventsSnapshot(
   accessToken: string,
   timeMinIso: string,
   timeMaxIso: string
-): Promise<any[]> {
+): Promise<{ events: any[]; complete: boolean }> {
   let cals: any[] = [];
+  let complete = true;
   try {
     cals = await listCalendars(accessToken);
   } catch {
     cals = [];
+    complete = false;
   }
   const NOISE = /#(holiday|contacts|weather|birthday)/i;
   const eligible = cals.filter((c) => {
@@ -188,7 +190,10 @@ export async function listAllEvents(
       const evs = await listEvents(accessToken, timeMinIso, timeMaxIso, id);
       for (const e of evs) all.push(e);
     } catch {
-      /* skip a calendar we can't read */
+      // Keep the usable events, but flag the snapshot as incomplete. Callers
+      // may safely add/update from it, but must not infer that absent events
+      // were cancelled.
+      complete = false;
     }
   }
   // Dedupe: the same meeting can sit on the primary (as an invitee) AND a shared
@@ -201,7 +206,20 @@ export async function listAllEvents(
     seen.add(key);
     out.push(e);
   }
-  return out;
+  return { events: out, complete };
+}
+
+export async function listAllEvents(
+  accessToken: string,
+  timeMinIso: string,
+  timeMaxIso: string
+): Promise<any[]> {
+  const snapshot = await listAllEventsSnapshot(
+    accessToken,
+    timeMinIso,
+    timeMaxIso
+  );
+  return snapshot.events;
 }
 
 // Any join link we recognise as a video meeting, across the providers other
