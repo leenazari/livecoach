@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { crmFetch, getCached } from "@/lib/crm";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
 
@@ -46,20 +46,30 @@ export default function Commitments({
   const [copied, setCopied] = useState(false);
   const [dueDraft, setDueDraft] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState("");
+  // Every load gets a sequence number. A tick/delete invalidates requests that
+  // started before the click, so a slow stale response cannot repaint the item
+  // two seconds after it was successfully saved.
+  const loadSeq = useRef(0);
 
-  const load = () =>
-    crmFetch<{ tasks: Task[] }>(url)
-      .then((d) =>
-        setItems(
-          (d.tasks || []).filter(
-            (t) =>
-              (t.kind === "commitment" ||
-                t.kind === "counterparty_commitment") &&
-              t.status !== "done"
-          )
+  const load = async () => {
+    const seq = ++loadSeq.current;
+    try {
+      const d = await crmFetch<{ tasks: Task[] }>(url);
+      if (seq !== loadSeq.current) return;
+      setItems(
+        (d.tasks || []).filter(
+          (t) =>
+            (t.kind === "commitment" ||
+              t.kind === "counterparty_commitment") &&
+            t.status !== "done"
         )
-      )
-      .catch(() => {});
+      );
+    } catch {
+      /* keep the last confirmed list */
+    }
+  };
 
   useEffect(() => {
     load();
@@ -81,6 +91,7 @@ export default function Commitments({
   };
 
   const saveDraft = async (t: Task) => {
+    loadSeq.current += 1;
     setSaving(true);
     try {
       await crmFetch(`/api/crm/tasks/${t.id}`, {
@@ -92,19 +103,8 @@ export default function Commitments({
             : null,
         }),
       });
-      setItems((p) =>
-        p.map((x) =>
-          x.id === t.id
-            ? {
-                ...x,
-                payload: { ...(x.payload || {}), ...draft },
-                due_at: dueDraft
-                  ? new Date(`${dueDraft}T12:00:00`).toISOString()
-                  : null,
-              }
-            : x
-        )
-      );
+      await load();
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
       /* ignore */
     } finally {
@@ -114,6 +114,7 @@ export default function Commitments({
 
   const complete = async (t: Task) => {
     const previous = items;
+    loadSeq.current += 1;
     setSaveError("");
     setItems((p) => p.filter((x) => x.id !== t.id));
     if (openId === t.id) setOpenId(null);
@@ -122,6 +123,7 @@ export default function Commitments({
         method: "PATCH",
         body: JSON.stringify({ status: "done" }),
       });
+      await load();
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
       setItems(previous);
@@ -133,6 +135,7 @@ export default function Commitments({
     // Dismiss across the whole pipeline (kept as a row so the jobs don't
     // re-create it from the same email or call).
     const previous = items;
+    loadSeq.current += 1;
     setSaveError("");
     setItems((p) => p.filter((x) => x.id !== t.id));
     if (openId === t.id) setOpenId(null);
@@ -141,10 +144,40 @@ export default function Commitments({
         method: "PATCH",
         body: JSON.stringify({ status: "dismissed" }),
       });
+      await load();
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
       setItems(previous);
       setSaveError("That change did not save. Please try again.");
+    }
+  };
+
+  const beginEdit = (t: Task) => {
+    setEditingId(t.id);
+    setEditingText(t.text);
+    setSaveError("");
+  };
+
+  const saveText = async (t: Task) => {
+    const text = editingText.trim();
+    if (!text || text === t.text) {
+      setEditingId(null);
+      return;
+    }
+    const previous = items;
+    loadSeq.current += 1;
+    setItems((p) => p.map((x) => (x.id === t.id ? { ...x, text } : x)));
+    setEditingId(null);
+    try {
+      await crmFetch(`/api/crm/tasks/${t.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ text }),
+      });
+      await load();
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    } catch {
+      setItems(previous);
+      setSaveError("That edit did not save. Please try again.");
     }
   };
 
@@ -238,13 +271,28 @@ export default function Commitments({
                   title={theirs ? "mark received" : "mark done"}
                   className="flex h-4 w-4 flex-none items-center justify-center rounded border border-muted text-[0.6rem] transition hover:border-sage"
                 />
-                <button
-                  type="button"
-                  onClick={() => expand(t)}
-                  className="flex-1 text-left font-sans text-[0.84rem] leading-snug text-bone transition hover:text-amber"
-                >
-                  {t.text}
-                </button>
+                {editingId === t.id ? (
+                  <input
+                    autoFocus
+                    value={editingText}
+                    onChange={(e) => setEditingText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") setEditingId(null);
+                    }}
+                    onBlur={() => saveText(t)}
+                    aria-label="Edit commitment"
+                    className="min-w-0 flex-1 rounded-md border border-amber/50 bg-ink/70 px-2 py-1.5 font-sans text-[0.84rem] text-bone outline-none"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => expand(t)}
+                    className="flex-1 text-left font-sans text-[0.84rem] leading-snug text-bone transition hover:text-amber"
+                  >
+                    {t.text}
+                  </button>
+                )}
                 {dueBadge(t.due_at)}
                 <span
                   className={`flex-none rounded-full border px-2 py-0.5 font-mono text-[0.52rem] uppercase tracking-wider ${
@@ -273,6 +321,15 @@ export default function Commitments({
                     {t.company}
                   </span>
                 )}
+                <button
+                  type="button"
+                  onClick={() => beginEdit(t)}
+                  aria-label="edit commitment"
+                  title="edit"
+                  className="flex-none font-mono text-[0.58rem] uppercase text-muted transition hover:text-amber"
+                >
+                  edit
+                </button>
                 <button
                   type="button"
                   onClick={() => remove(t)}
