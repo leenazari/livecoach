@@ -50,12 +50,15 @@ export async function PATCH(
       .from("tasks")
       .update(patch)
       .eq("id", params.id)
-      .select("id")
+      .select("id, company_id, text, kind, status, due_at, payload")
       .maybeSingle();
     if (error) throw error;
     if (!data)
       return NextResponse.json({ error: "task not found" }, { status: 404 });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json(
+      { ok: true, task: data },
+      { headers: { "Cache-Control": "no-store, max-age=0" } }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to update task" },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { crmFetch, getCached } from "@/lib/crm";
+import { crmFetch, getCached, setCached } from "@/lib/crm";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
 
 type Payload = {
@@ -37,7 +37,8 @@ export default function Commitments({
   const seed = (getCached<{ tasks: Task[] }>(url)?.tasks || []).filter(
     (t) =>
       (t.kind === "commitment" || t.kind === "counterparty_commitment") &&
-      t.status !== "done"
+      t.status !== "done" &&
+      t.status !== "dismissed"
   );
   const [items, setItems] = useState<Task[]>(seed);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -52,6 +53,19 @@ export default function Commitments({
   // started before the click, so a slow stale response cannot repaint the item
   // two seconds after it was successfully saved.
   const loadSeq = useRef(0);
+  // Once this screen has received confirmation that a commitment was closed,
+  // never let a delayed list response paint that id again. The database remains
+  // the source of truth; this only protects the UI from an older in-flight read.
+  const closedIds = useRef(new Set<string>());
+
+  const removeFromCachedList = (id: string) => {
+    const cached = getCached<{ tasks: Task[] }>(url);
+    if (!cached) return;
+    setCached(url, {
+      ...cached,
+      tasks: (cached.tasks || []).filter((task) => task.id !== id),
+    });
+  };
 
   const load = async () => {
     const seq = ++loadSeq.current;
@@ -63,7 +77,9 @@ export default function Commitments({
           (t) =>
             (t.kind === "commitment" ||
               t.kind === "counterparty_commitment") &&
-            t.status !== "done"
+            t.status !== "done" &&
+            t.status !== "dismissed" &&
+            !closedIds.current.has(t.id)
         )
       );
     } catch {
@@ -115,17 +131,20 @@ export default function Commitments({
   const complete = async (t: Task) => {
     const previous = items;
     loadSeq.current += 1;
+    closedIds.current.add(t.id);
+    removeFromCachedList(t.id);
     setSaveError("");
     setItems((p) => p.filter((x) => x.id !== t.id));
     if (openId === t.id) setOpenId(null);
     try {
-      await crmFetch(`/api/crm/tasks/${t.id}`, {
+      const result = await crmFetch<{ task: Task }>(`/api/crm/tasks/${t.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status: "done" }),
       });
-      await load();
+      if (result.task?.status !== "done") throw new Error("status not saved");
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
+      closedIds.current.delete(t.id);
       setItems(previous);
       setSaveError("That change did not save. Please try again.");
     }
@@ -136,17 +155,21 @@ export default function Commitments({
     // re-create it from the same email or call).
     const previous = items;
     loadSeq.current += 1;
+    closedIds.current.add(t.id);
+    removeFromCachedList(t.id);
     setSaveError("");
     setItems((p) => p.filter((x) => x.id !== t.id));
     if (openId === t.id) setOpenId(null);
     try {
-      await crmFetch(`/api/crm/tasks/${t.id}`, {
+      const result = await crmFetch<{ task: Task }>(`/api/crm/tasks/${t.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status: "dismissed" }),
       });
-      await load();
+      if (result.task?.status !== "dismissed")
+        throw new Error("status not saved");
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
+      closedIds.current.delete(t.id);
       setItems(previous);
       setSaveError("That change did not save. Please try again.");
     }
