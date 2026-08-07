@@ -139,7 +139,10 @@ export async function GET(req: NextRequest) {
     // dismissed work is never returned, so it cannot resurrect on refresh.
     const tasks = [...dueSoonPrep, ...real, ...laterPrep];
 
-    return NextResponse.json({ tasks });
+    return NextResponse.json(
+      { tasks },
+      { headers: { "Cache-Control": "no-store, max-age=0" } }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to load tasks" },
