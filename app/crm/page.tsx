@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
@@ -74,6 +74,7 @@ type TodayItem = {
   company?: string | null;
   at?: string | number | null;
   href: string;
+  entity?: "task";
 };
 
 type AiMode = "economical" | "balanced" | "high";
@@ -90,6 +91,40 @@ export default function DashboardPage() {
   const [costMode, setCostMode] = useState<"week" | "month">("week");
   const [aiMode, setAiMode] = useState<AiMode>("balanced");
   const [modeSaving, setModeSaving] = useState(false);
+  const [editingTodayId, setEditingTodayId] = useState<string | null>(null);
+  const [editingTodayText, setEditingTodayText] = useState("");
+  const [todaySavingId, setTodaySavingId] = useState<string | null>(null);
+  const [todaySaveError, setTodaySaveError] = useState("");
+
+  const refreshDashboard = useCallback(async () => {
+    const next = await crmFetch<Dash>("/api/crm/dashboard?light=1");
+    setDash((prev) =>
+      prev
+        ? { ...next, dayRead: prev.dayRead, dayParts: prev.dayParts }
+        : next
+    );
+  }, []);
+
+  const saveTodayTask = async (
+    item: TodayItem,
+    change: { text?: string; status?: "done" | "dismissed" }
+  ) => {
+    setTodaySaveError("");
+    setTodaySavingId(item.id);
+    try {
+      await crmFetch(`/api/crm/tasks/${item.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(change),
+      });
+      setEditingTodayId(null);
+      await refreshDashboard();
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    } catch {
+      setTodaySaveError("That change did not save. Please try again.");
+    } finally {
+      setTodaySavingId(null);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -124,7 +159,16 @@ export default function DashboardPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [refreshDashboard]);
+
+  // A task can be changed from Do next, an opportunity, commitments, or the
+  // Today cards. Keep the entire dashboard snapshot in lockstep with all of
+  // them instead of leaving stale points visible until a page reload.
+  useEffect(() => {
+    const onTasksUpdated = () => refreshDashboard().catch(() => {});
+    window.addEventListener("lc:tasks-updated", onTasksUpdated);
+    return () => window.removeEventListener("lc:tasks-updated", onTasksUpdated);
+  }, [refreshDashboard]);
 
   useEffect(() => {
     crmFetch<{ mode: AiMode }>("/api/crm/ai-mode")
@@ -281,28 +325,57 @@ export default function DashboardPage() {
             live CRM state
           </span>
         </div>
+        {todaySaveError && (
+          <p className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 font-sans text-[0.78rem] text-rust">
+            {todaySaveError}
+          </p>
+        )}
         {dash?.today?.topActions?.length ? (
           <ol className="mb-4 grid gap-2 md:grid-cols-3">
             {dash.today.topActions.map((item, i) => (
               <li key={`${item.reason}-${item.id}`}>
-                <Link
-                  href={item.href}
-                  className="group block h-full rounded-xl border border-edge bg-ink/55 p-3 transition hover:border-amber/60"
-                >
+                <div className="group flex h-full flex-col rounded-xl border border-edge bg-ink/55 p-3 transition hover:border-amber/60">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <span className="font-mono text-[0.55rem] uppercase tracking-wider text-amber">
                       {i + 1}. {item.reason}
                     </span>
                     <span className="text-muted transition group-hover:text-amber">↗</span>
                   </div>
-                  <p className="font-sans text-[0.86rem] leading-snug text-bone">
-                    {item.text}
-                  </p>
-                  <p className="mt-1 font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-                    {item.company || "General"}
-                    {item.at ? ` · ${shortDate(item.at)}` : ""}
-                  </p>
-                </Link>
+                  {editingTodayId === item.id ? (
+                    <input
+                      autoFocus
+                      value={editingTodayText}
+                      onChange={(e) => setEditingTodayText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                        if (e.key === "Escape") setEditingTodayId(null);
+                      }}
+                      onBlur={() => {
+                        const text = editingTodayText.trim();
+                        if (text && text !== item.text) saveTodayTask(item, { text });
+                        else setEditingTodayId(null);
+                      }}
+                      className="w-full rounded-md border border-amber/50 bg-ink px-2 py-1 font-sans text-[0.86rem] text-bone outline-none"
+                    />
+                  ) : (
+                    <Link href={item.href} className="font-sans text-[0.86rem] leading-snug text-bone hover:text-amber">
+                      {item.text}
+                    </Link>
+                  )}
+                  <div className="mt-auto flex items-end justify-between gap-2 pt-2">
+                    <p className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                      {item.company || "General"}
+                      {item.at ? ` · ${shortDate(item.at)}` : ""}
+                    </p>
+                    {item.entity === "task" && (
+                      <span className="flex items-center gap-1">
+                        <button type="button" disabled={todaySavingId === item.id} onClick={() => { setEditingTodayId(item.id); setEditingTodayText(item.text); }} className="rounded px-2 py-1 font-mono text-[0.52rem] uppercase text-muted hover:text-amber disabled:opacity-40">edit</button>
+                        <button type="button" disabled={todaySavingId === item.id} onClick={() => saveTodayTask(item, { status: "done" })} aria-label="Mark done" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-sage disabled:opacity-40">✓</button>
+                        <button type="button" disabled={todaySavingId === item.id} onClick={() => saveTodayTask(item, { status: "dismissed" })} aria-label="Delete point" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-rust disabled:opacity-40">✕</button>
+                      </span>
+                    )}
+                  </div>
+                </div>
               </li>
             ))}
           </ol>

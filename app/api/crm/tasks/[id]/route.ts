@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { fingerprintTask } from "@/lib/tasks";
 
 export const runtime = "nodejs";
 
@@ -23,8 +24,19 @@ export async function PATCH(
       // but kept as a row so its fingerprint stops the jobs re-creating it.
       patch.status = "dismissed";
     }
-    if (typeof body.text === "string" && body.text.trim())
-      patch.text = body.text.trim();
+    if (typeof body.text === "string" && body.text.trim()) {
+      const text = body.text.trim();
+      const { data: current, error: currentError } = await supabaseAdmin
+        .from("tasks")
+        .select("company_id")
+        .eq("id", params.id)
+        .maybeSingle();
+      if (currentError) throw currentError;
+      if (!current)
+        return NextResponse.json({ error: "task not found" }, { status: 404 });
+      patch.text = text;
+      patch.fingerprint = fingerprintTask(current.company_id || null, text);
+    }
     // Save an edited commitment draft, or the pinned flag (payload.pinned).
     if (body.payload && typeof body.payload === "object")
       patch.payload = body.payload;

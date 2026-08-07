@@ -267,6 +267,7 @@ export async function GET(req: Request) {
         company: t.company === "—" ? null : t.company,
         at: t.dueAt,
         href: t.companyId ? `/crm/${t.companyId}` : "/crm/board?tab=tasks",
+        entity: "task" as const,
       }));
     const awaitingReply = (draftsRes.data || []).slice(0, 5).map((d: any) => ({
       id: d.id,
@@ -289,6 +290,7 @@ export async function GET(req: Request) {
         company: t.company_id ? nameById.get(t.company_id) || null : null,
         at: t.due_at || t.created_at,
         href: t.company_id ? `/crm/${t.company_id}` : "/crm/board?tab=tasks",
+        entity: "task" as const,
       }));
     const latestTouch = new Map<string, number>();
     for (const s of recentTouchRes.data || []) {

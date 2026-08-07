@@ -109,15 +109,29 @@ export default function TaskList({
   // stays focused on the week ahead instead of a wall of future recurring preps.
   const [showLater, setShowLater] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [savingId, setSavingId] = useState<string | null>(null);
 
   const showTasks = (next: Task[]) => {
     setTasks(next);
     setCached(url, { tasks: next });
   };
 
+  const loadTasks = async () => {
+    const d = await crmFetch<{ tasks: Task[] }>(url);
+    showTasks(d.tasks || []);
+    return d.tasks || [];
+  };
+
+  const savedEverywhere = async () => {
+    await loadTasks();
+    window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+  };
+
   useEffect(() => {
     crmFetch<{ tasks: Task[] }>(url)
-      .then((d) => setTasks(d.tasks || []))
+      .then((d) => showTasks(d.tasks || []))
       .catch(() => {});
   }, [url]);
 
@@ -140,24 +154,32 @@ export default function TaskList({
     // prepped, which drops it off the list, rather than writing a tasks row.
     if (t.upcoming_id) {
       try {
+        setSavingId(t.id);
         await crmFetch(`/api/crm/upcoming/${t.upcoming_id}`, {
           method: "PATCH",
           body: JSON.stringify({ prepped: true }),
         });
+        await savedEverywhere();
       } catch {
         showTasks(previous);
         setSaveError("That change did not save. Please try again.");
+      } finally {
+        setSavingId(null);
       }
       return;
     }
     try {
+      setSavingId(t.id);
       await crmFetch(`/api/crm/tasks/${t.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status: "done" }),
       });
+      await savedEverywhere();
     } catch {
       showTasks(previous);
       setSaveError("That change did not save. Please try again.");
+    } finally {
+      setSavingId(null);
     }
   };
 
@@ -168,6 +190,7 @@ export default function TaskList({
     setSaveError("");
     showTasks(tasks.filter((x) => x.id !== t.id));
     try {
+      setSavingId(t.id);
       if (t.upcoming_id) {
         await crmFetch(`/api/crm/upcoming/${t.upcoming_id}`, {
           method: "PATCH",
@@ -179,27 +202,69 @@ export default function TaskList({
           body: JSON.stringify({ status: "dismissed" }),
         });
       }
+      await savedEverywhere();
     } catch {
       showTasks(previous);
       setSaveError("That change did not save. Please try again.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const beginEdit = (t: Task) => {
+    if (t.upcoming_id) return;
+    setEditingId(t.id);
+    setEditText(t.text);
+    setSaveError("");
+  };
+
+  const saveEdit = async (t: Task) => {
+    const text = editText.trim();
+    if (!text) return;
+    if (text === t.text) {
+      setEditingId(null);
+      return;
+    }
+    const previous = tasks;
+    showTasks(tasks.map((x) => (x.id === t.id ? { ...x, text } : x)));
+    setEditingId(null);
+    setSavingId(t.id);
+    try {
+      await crmFetch(`/api/crm/tasks/${t.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ text }),
+      });
+      await savedEverywhere();
+    } catch {
+      showTasks(previous);
+      setSaveError("That edit did not save. Please try again.");
+    } finally {
+      setSavingId(null);
     }
   };
 
   // Pin / unpin a to-do so it stays at the top of the list until done. Re-fetch
   // after so the server's priority sort re-orders it.
-  const togglePin = (t: Task) => {
+  const togglePin = async (t: Task) => {
     if (t.upcoming_id) return; // prep to-dos aren't pinnable
+    const previous = tasks;
     const pinned = !t.payload?.pinned;
     const payload = { ...(t.payload || {}), pinned };
-    setTasks((p) => p.map((x) => (x.id === t.id ? { ...x, payload } : x)));
-    crmFetch(`/api/crm/tasks/${t.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ payload }),
-    })
-      .then(() =>
-        crmFetch<{ tasks: Task[] }>(url).then((d) => setTasks(d.tasks || []))
-      )
-      .catch(() => {});
+    showTasks(tasks.map((x) => (x.id === t.id ? { ...x, payload } : x)));
+    setSavingId(t.id);
+    setSaveError("");
+    try {
+      await crmFetch(`/api/crm/tasks/${t.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ payload }),
+      });
+      await savedEverywhere();
+    } catch {
+      showTasks(previous);
+      setSaveError("That pin did not save. Please try again.");
+    } finally {
+      setSavingId(null);
+    }
   };
 
   // What clicking the task text does. If the intent has more than one approach
@@ -345,20 +410,35 @@ export default function TaskList({
               {done ? "✓" : ""}
             </button>
 
-            <button
-              type="button"
-              onClick={() => canClick && start(t)}
-              disabled={!canClick}
-              className={`flex-1 text-left font-sans text-[0.84rem] leading-snug transition ${
-                done
-                  ? "text-muted line-through"
-                  : canClick
-                  ? "text-bone hover:text-amber hover:underline"
-                  : "cursor-default text-bone"
-              }`}
-            >
-              {t.text}
-            </button>
+            {editingId === t.id ? (
+              <input
+                autoFocus
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Escape") setEditingId(null);
+                }}
+                onBlur={() => saveEdit(t)}
+                aria-label="Edit task"
+                className="min-w-0 flex-1 rounded-md border border-amber/50 bg-ink/70 px-2 py-1.5 font-sans text-[0.84rem] text-bone outline-none"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => canClick && start(t)}
+                disabled={!canClick || savingId === t.id}
+                className={`flex-1 text-left font-sans text-[0.84rem] leading-snug transition ${
+                  done
+                    ? "text-muted line-through"
+                    : canClick
+                    ? "text-bone hover:text-amber hover:underline"
+                    : "cursor-default text-bone"
+                }`}
+              >
+                {t.text}
+              </button>
+            )}
 
             {dl && !done && (
               <span
@@ -435,10 +515,23 @@ export default function TaskList({
             {!t.upcoming_id && (
               <button
                 type="button"
+                onClick={() => beginEdit(t)}
+                disabled={savingId === t.id}
+                aria-label="edit task"
+                title="edit"
+                className="flex-none font-mono text-[0.64rem] text-muted transition hover:text-amber disabled:opacity-40"
+              >
+                edit
+              </button>
+            )}
+            {!t.upcoming_id && (
+              <button
+                type="button"
                 onClick={() => remove(t)}
                 aria-label="remove task"
                 title="remove"
-                className="flex-none font-mono text-[0.7rem] text-muted transition hover:text-rust"
+                disabled={savingId === t.id}
+                className="flex-none font-mono text-[0.7rem] text-muted transition hover:text-rust disabled:opacity-40"
               >
                 ✕
               </button>
