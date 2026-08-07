@@ -705,9 +705,9 @@ export default function PostCallSummary({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/80 p-4 backdrop-blur-sm sm:p-8">
-      <div className="my-6 w-full max-w-[760px] rounded-2xl border border-edge bg-panel shadow-2xl">
-        <div className="flex items-center justify-between border-b border-edge px-6 py-4">
-          <div>
+      <div className="my-2 w-full max-w-[760px] rounded-2xl border border-edge bg-panel shadow-2xl sm:my-6">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-edge px-4 py-4 sm:px-6">
+          <div className="min-w-0 flex-1">
             <h2 className="font-display text-2xl text-bone">
               {view.title || "Call summary"}
             </h2>
@@ -716,23 +716,23 @@ export default function PostCallSummary({
               {candidate ? ` · ${candidate}` : ""}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex w-full gap-2 sm:w-auto">
             <button
               onClick={downloadPdf}
-              className="rounded-full border border-amber/50 bg-amber/10 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20"
+              className="flex-1 rounded-full border border-amber/50 bg-amber/10 px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 sm:flex-none"
             >
               download pdf
             </button>
             <button
               onClick={onClose}
-              className="rounded-full border border-edge px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-muted transition hover:border-rust hover:text-rust"
+              className="flex-1 rounded-full border border-edge px-4 py-2 font-mono text-[0.7rem] uppercase tracking-wider text-muted transition hover:border-rust hover:text-rust sm:flex-none"
             >
               close
             </button>
           </div>
         </div>
 
-        <div className="space-y-6 px-6 py-6">
+        <div className="space-y-6 px-4 py-5 sm:px-6 sm:py-6">
           {/* On-the-spot low-capture warning. A real call produces thousands of
               characters, so under ~400 means the mic/transcription was almost
               certainly not picking up. Tell the user NOW, while they can still

@@ -187,7 +187,7 @@ export default function CallsPage() {
       ) : (
         <div className="overflow-hidden rounded-xl border border-edge">
           {/* header row */}
-          <div className="grid grid-cols-[1.4fr_1.2fr_1fr_0.6fr_auto] gap-3 border-b border-edge bg-panel/60 px-4 py-2.5 font-mono text-[0.54rem] uppercase tracking-wider text-muted">
+          <div className="hidden grid-cols-[1.4fr_1.2fr_1fr_0.6fr_auto] gap-3 border-b border-edge bg-panel/60 px-4 py-2.5 font-mono text-[0.54rem] uppercase tracking-wider text-muted sm:grid">
             <span>Name</span>
             <span>Company</span>
             <span>Date / time</span>
@@ -200,9 +200,9 @@ export default function CallsPage() {
             return (
               <div
                 key={c.id}
-                className="grid grid-cols-[1.4fr_1.2fr_1fr_0.6fr_auto] items-center gap-3 border-b border-edge/40 px-4 py-3 last:border-none hover:bg-bone/[0.03]"
+                className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-2 border-b border-edge/40 px-4 py-3 last:border-none hover:bg-bone/[0.03] sm:grid-cols-[1.4fr_1.2fr_1fr_0.6fr_auto]"
               >
-                <span className="truncate font-sans text-[0.84rem] text-bone">
+                <span className="truncate font-sans text-[0.9rem] text-bone sm:text-[0.84rem]">
                   {c.ref && (
                     <span className="mr-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-muted">
                       {c.ref}
@@ -210,7 +210,7 @@ export default function CallsPage() {
                   )}
                   {c.candidate || "Untitled call"}
                 </span>
-                <span className="truncate font-mono text-[0.66rem] text-sky">
+                <span className="col-start-1 row-start-2 truncate font-mono text-[0.66rem] text-sky sm:col-auto sm:row-auto">
                   {c.company ? (
                     c.company
                   ) : assigningId === c.id ? (
@@ -229,7 +229,7 @@ export default function CallsPage() {
                     </button>
                   )}
                 </span>
-                <span className="font-mono text-[0.62rem] text-muted">
+                <span className="col-start-1 row-start-3 font-mono text-[0.62rem] text-muted sm:col-auto sm:row-auto">
                   {fmtDate(c.created_at)}
                   {st === "summarising" && (
                     <span className="ml-1.5 text-sky/80">· summarising…</span>
@@ -241,10 +241,11 @@ export default function CallsPage() {
                     <span className="ml-1.5 text-amber/80">· not recorded</span>
                   )}
                 </span>
-                <span className="text-right font-mono text-[0.66rem] text-sage">
+                <span className="col-start-2 row-start-2 text-right font-mono text-[0.66rem] text-sage sm:col-auto sm:row-auto">
+                  <span className="mr-1 text-[0.5rem] uppercase text-muted sm:hidden">cost</span>
                   {st === "scored" ? gbp(c.cost) : "—"}
                 </span>
-                <span className="text-right">
+                <span className="col-start-2 row-span-2 row-start-1 self-center text-right sm:col-auto sm:row-auto">
                   {st === "failed" ? (
                     <button
                       type="button"

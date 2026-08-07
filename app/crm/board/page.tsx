@@ -177,7 +177,7 @@ function BoardInner() {
 
   return (
     <main className="relative z-10 mx-auto max-w-[1000px] px-5 py-10">
-      <header className="mb-5 flex items-center justify-between gap-3 border-b border-edge pb-3">
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
         <h1 className="font-display text-[1.4rem] leading-none tracking-tight text-bone">
           <span className="italic text-amber">Live</span>Coach{" "}
           <span className="font-mono text-[0.7rem] uppercase tracking-[0.2em] text-muted">

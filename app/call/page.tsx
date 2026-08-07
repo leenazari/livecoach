@@ -2772,7 +2772,7 @@ export default function CallPage() {
       {/* STAGE STEPPER - always visible, click to move between the three
           stages. Stages 2 and 3 unlock once a plan exists. */}
       <nav
-        className={`mb-5 flex items-center gap-1 sm:gap-2 ${
+        className={`mobile-scroll mb-5 flex items-center gap-1 sm:gap-2 ${
           callLive
             ? "sticky top-0 z-30 -mx-5 border-b border-edge bg-ink/90 px-5 py-2 backdrop-blur"
             : ""
@@ -2812,7 +2812,7 @@ export default function CallPage() {
                 >
                   {n}
                 </span>
-                <span className="hidden sm:inline">{label}</span>
+                <span>{label}</span>
               </button>
             </span>
           );
