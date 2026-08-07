@@ -440,6 +440,21 @@ export async function GET(req: Request) {
       time?: string;
       companyId?: string;
     }[] = [];
+    // The no-AI dashboard response still needs a fresh "Your day" after a
+    // task mutation. Build a compact deterministic version from the current
+    // open rows. This is immediate, costs no tokens, and can never preserve a
+    // dismissed task from an older AI snapshot.
+    if (light) {
+      dayParts = tasks
+        .filter((t: any) => t.kind !== "counterparty_commitment")
+        .slice(0, 6)
+        .map((t: any) => ({
+          label: t.company && t.company !== "—" ? t.company : "Priority",
+          text: String(t.text || "").trim(),
+          companyId: t.companyId || undefined,
+        }))
+        .filter((p: any) => p.text);
+    }
     try {
       if (!light && (tasks.length || openOpps.length)) {
         const lines = [
@@ -550,17 +565,12 @@ export async function GET(req: Request) {
       companyId?: string;
     }[] = [];
     try {
-      if (!light) {
-        const { data: upRows } = await supabaseAdmin
-          .from("upcoming_calls")
-          .select("company_id, title, scheduled_at, intent")
-          .is("completed_at", null)
-          .gte("scheduled_at", new Date().toISOString())
-          .order("scheduled_at", { ascending: true })
-          .limit(4);
-        callParts = (upRows || [])
-          .filter((u: any) => u.scheduled_at)
-          .map((u: any) => {
+      // upcomingRes was already fetched for the Today panel, so reuse it for
+      // both full and light reads instead of making another database request.
+      callParts = (upcomingRes.data || [])
+        .slice(0, 4)
+        .filter((u: any) => u.scheduled_at)
+        .map((u: any) => {
             const when = new Date(u.scheduled_at).toLocaleString("en-GB", {
               timeZone: "Europe/London",
               weekday: "short",
@@ -577,8 +587,7 @@ export async function GET(req: Request) {
               time: when,
               companyId: (u.company_id as string) || undefined,
             };
-          });
-      }
+        });
     } catch {
       /* calls in the day read are optional */
     }

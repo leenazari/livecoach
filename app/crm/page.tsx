@@ -98,11 +98,10 @@ export default function DashboardPage() {
 
   const refreshDashboard = useCallback(async () => {
     const next = await crmFetch<Dash>("/api/crm/dashboard?light=1");
-    setDash((prev) =>
-      prev
-        ? { ...next, dayRead: prev.dayRead, dayParts: prev.dayParts }
-        : next
-    );
+    // The light response now contains deterministic, current day points. Do
+    // not preserve the old AI snapshot after a tick/delete/edit, because that
+    // is exactly what made a successfully saved task appear to come back.
+    setDash(next);
   }, []);
 
   const saveTodayTask = async (
