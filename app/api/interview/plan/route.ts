@@ -706,7 +706,10 @@ Return the JSON object (playbook + pitchKit) now.`;
         const pbMsg = await openai.messages.create(
           {
             model: OPENAI_MODEL_PRO,
-            max_tokens: 900,
+            // A tailored sales pitch kit can legitimately exceed 900 tokens.
+            // The previous cap cut JSON mid-string, making the whole Terra
+            // upgrade unparsable and silently falling back to Luna.
+            max_tokens: 1500,
             temperature: 0.5,
             system: pbSystem,
             messages: [{ role: "user", content: pbUser }],
@@ -720,9 +723,10 @@ Return the JSON object (playbook + pitchKit) now.`;
           .join("")
           .replace(/```json|```/g, "")
           .trim();
-        const a = pbRaw.indexOf("{");
-        const b = pbRaw.lastIndexOf("}");
-        const obj = a >= 0 && b > a ? JSON.parse(pbRaw.slice(a, b + 1)) : {};
+        // Reuse the tolerant parser used for the structural plan. It accepts
+        // harmless prose/fences and can retain a complete playbook even if an
+        // optional pitch-kit tail is malformed.
+        const obj = extractPlan(pbRaw) || {};
         const arr = Array.isArray(obj.playbook) ? obj.playbook : [];
         sonnetPlaybook = arr
           .filter(

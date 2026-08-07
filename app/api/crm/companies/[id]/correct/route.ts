@@ -107,6 +107,7 @@ Rules:
 - The correction is AUTHORITATIVE. Where the existing text conflicts with it, rewrite to match the correction. Where it does not conflict, leave the text EXACTLY as it was.
 - Ground everything only in what you are given plus the correction. NEVER invent new facts, names, numbers, dates or commitments.
 - Only include a summary in "summaries" if at least one of its fields actually needed changing. Omit unchanged summaries entirely.
+- Keep each rewritten headline under 18 words, each overview under 80 words, and each recommendation under 45 words.
 - Only list a task id in "dismissTaskIds" if it genuinely contradicts the correction. If a dismissed task still needs doing in a corrected form, add the corrected version to "addNextSteps" (action exactly one of email, call, task). If nothing needs adding, return an empty array.
 - Plain English only. No markdown, no "#" headings, no "**bold**". No em-dashes or semicolons, use commas and full stops.`;
 
@@ -156,7 +157,11 @@ Return the JSON now.`;
         const msg = await openai.messages.create(
           {
             model: OPENAI_MODEL_PRO,
-            max_tokens: 1600,
+            // A correction may need to return several corrected summaries.
+            // 1600 tokens occasionally truncated otherwise valid JSON, after
+            // the authoritative note had already been saved. The prompt keeps
+            // fields concise; this cap leaves enough room to close the object.
+            max_tokens: 2800,
             temperature: 0.2,
             system,
             messages: [{ role: "user", content: userMsg }],
