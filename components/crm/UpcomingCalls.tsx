@@ -62,7 +62,13 @@ export default function UpcomingCalls() {
     setSyncing(true);
     setSyncMsg("");
     try {
-      const r = await crmFetch<{ added: number; updated: number }>(
+      const r = await crmFetch<{
+        added: number;
+        updated: number;
+        removed?: number;
+        relinked?: number;
+        reconciled?: boolean;
+      }>(
         "/api/crm/calendar-sync",
         { method: "POST" }
       );
@@ -71,6 +77,9 @@ export default function UpcomingCalls() {
       const bits: string[] = [];
       if (r.added) bits.push(`${r.added} new`);
       if (r.updated) bits.push(`${r.updated} updated`);
+      if (r.removed) bits.push(`${r.removed} cancelled removed`);
+      if (r.relinked) bits.push(`${r.relinked} relinked`);
+      if (r.reconciled === false) bits.push("partial sync - cancellations kept safely");
       setSyncMsg(bits.length ? `synced - ${bits.join(", ")}` : "already up to date");
     } catch (e: any) {
       setSyncMsg(e?.message || "sync failed");
