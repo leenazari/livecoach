@@ -1162,7 +1162,7 @@ function PrepInner() {
   return (
     <main className="relative z-10 mx-auto max-w-[860px] px-5 py-10">
       <header className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
-        <div className="flex items-baseline gap-3">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-3">
           <Link
             href={companyId ? `/crm/${companyId}` : "/crm"}
             className="font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:text-amber"
@@ -1195,7 +1195,7 @@ function PrepInner() {
       {/* THE PREP CHAIN researches the company/person and drafts the intent,
           then deliberately stops so the user can review it before building
           either the focus or the plan. Existing research is reused. */}
-      <section className="mb-6 rounded-2xl border border-sky/40 bg-sky/[0.05] p-5">
+      <section className="mb-6 rounded-2xl border border-sky/40 bg-sky/[0.05] p-4 sm:p-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="font-mono text-[0.62rem] uppercase tracking-[0.2em] text-sky">
             ⚙ Prep chain

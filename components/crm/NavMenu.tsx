@@ -37,6 +37,7 @@ function NavMenuInner() {
       return false;
     }
   });
+  const [mobileMore, setMobileMore] = useState(false);
 
   // Phone layout: a thumb-reachable bottom tab bar instead of the left sidebar.
   const [mobile, setMobile] = useState(false);
@@ -61,12 +62,19 @@ function NavMenuInner() {
     document.body.style.transition = "";
     if (mobile) {
       // Phone: no left push, just room at the bottom for the tab bar.
+      document.body.classList.add("lc-mobile-nav");
       document.body.style.paddingLeft = "";
       document.body.style.paddingBottom = "4.75rem";
     } else {
+      document.body.classList.remove("lc-mobile-nav");
       document.body.style.paddingBottom = "";
       document.body.style.paddingLeft = minimised ? "" : SIDEBAR_W;
     }
+    return () => {
+      document.body.classList.remove("lc-mobile-nav");
+      document.body.style.paddingLeft = "";
+      document.body.style.paddingBottom = "";
+    };
   }, [minimised, mobile]);
 
   // Open the brain chat from the menu. On phones the open sidebar would sit on
@@ -98,38 +106,61 @@ function NavMenuInner() {
       { href: "/crm/calls", label: "Calls", icon: "☎" },
       { href: "/call", label: "Start", icon: "▸" },
       { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
-      { href: "/crm/call-coach", label: "Coach", icon: "◎" },
     ];
     return (
-      <nav
-        className="fixed inset-x-0 bottom-0 z-50 flex items-stretch justify-around border-t border-edge bg-panel/95 backdrop-blur"
-        style={{ paddingBottom: "max(0.2rem, env(safe-area-inset-bottom))" }}
-      >
-        {BOTTOM.map((t) => {
-          const active = isActive(t);
-          const center = t.href === "/call";
-          return (
-            <Link
-              key={t.href}
-              href={t.href}
-              className={`flex flex-1 flex-col items-center justify-end gap-1 py-2 font-mono text-[0.55rem] uppercase tracking-wider transition ${
-                active ? "text-amber" : "text-muted"
-              }`}
-            >
-              <span
-                className={
-                  center
-                    ? "-mt-3 flex h-11 w-11 items-center justify-center rounded-full border border-amber/60 bg-amber/20 text-[1.1rem] leading-none text-amber"
-                    : "text-[1.05rem] leading-none"
-                }
+      <>
+        {mobileMore && (
+          <div className="fixed inset-0 z-[49] flex items-end bg-ink/70 px-3 pb-20 backdrop-blur-sm" onClick={() => setMobileMore(false)}>
+            <div className="w-full rounded-2xl border border-edge bg-panel p-3 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-2 flex items-center justify-between px-2">
+                <span className="font-mono text-[0.62rem] uppercase tracking-wider text-amber">More</span>
+                <button type="button" onClick={() => setMobileMore(false)} aria-label="Close more menu" className="h-11 w-11 rounded-full text-muted">✕</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {ITEMS.filter((item) => !BOTTOM.some((b) => b.href === item.href) && item.href !== "/call").map((item) => (
+                  <Link key={item.href} href={item.href} onClick={() => setMobileMore(false)} className="flex min-h-12 items-center gap-3 rounded-xl border border-edge bg-ink/40 px-3 font-mono text-[0.62rem] uppercase tracking-wider text-bone">
+                    <span className="text-amber">{item.icon}</span>{item.label}
+                  </Link>
+                ))}
+                <button type="button" onClick={() => { setMobileMore(false); openBrain(); }} className="flex min-h-12 items-center gap-3 rounded-xl border border-amber/40 bg-amber/10 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-amber">
+                  <span>▤</span>Talk to brain
+                </button>
+                <button type="button" onClick={() => router.push("/login")} className="flex min-h-12 items-center gap-3 rounded-xl border border-edge bg-ink/40 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-muted">
+                  <span>⎋</span>Logout
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        <nav
+          aria-label="Main navigation"
+          className="fixed inset-x-0 bottom-0 z-50 flex items-stretch justify-around border-t border-edge bg-panel/95 backdrop-blur"
+          style={{ paddingBottom: "max(0.2rem, env(safe-area-inset-bottom))" }}
+        >
+          {BOTTOM.map((t) => {
+            const active = isActive(t);
+            const center = t.href === "/call";
+            return (
+              <Link
+                key={t.href}
+                href={t.href}
+                aria-current={active ? "page" : undefined}
+                className={`flex min-h-14 flex-1 flex-col items-center justify-end gap-1 py-2 font-mono text-[0.55rem] uppercase tracking-wider transition ${
+                  active ? "text-amber" : "text-muted"
+                }`}
               >
-                {t.icon}
-              </span>
-              {t.label}
-            </Link>
-          );
-        })}
-      </nav>
+                <span className={center ? "-mt-3 flex h-11 w-11 items-center justify-center rounded-full border border-amber/60 bg-amber/20 text-[1.1rem] leading-none text-amber" : "text-[1.05rem] leading-none"}>
+                  {t.icon}
+                </span>
+                {t.label}
+              </Link>
+            );
+          })}
+          <button type="button" onClick={() => setMobileMore(true)} aria-expanded={mobileMore} className={`flex min-h-14 flex-1 flex-col items-center justify-end gap-1 py-2 font-mono text-[0.55rem] uppercase tracking-wider ${mobileMore ? "text-amber" : "text-muted"}`}>
+            <span className="text-[1.05rem] leading-none">•••</span>More
+          </button>
+        </nav>
+      </>
     );
   }
 

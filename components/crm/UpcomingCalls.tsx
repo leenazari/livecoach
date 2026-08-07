@@ -247,13 +247,13 @@ export default function UpcomingCalls() {
 
   return (
     <div className="rounded-xl border border-edge bg-panel/40 p-4">
-      <div className="mb-2.5 flex items-center justify-between">
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
         <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
           {"▦"} Upcoming calls
         </p>
-        <div className="flex items-center gap-2">
+        <div className="mobile-full flex flex-wrap items-center justify-end gap-2 sm:w-auto">
           {syncMsg && (
-            <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+            <span className="mr-auto font-mono text-[0.52rem] uppercase tracking-wider text-muted sm:mr-0">
               {syncMsg}
             </span>
           )}
@@ -344,7 +344,7 @@ export default function UpcomingCalls() {
               key={c.id}
               className="rounded-lg border border-edge bg-ink/40 px-3.5 py-3"
             >
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <button
                   type="button"
                   onClick={() => patch(c.id, { prepped: !c.prepped })}
@@ -361,7 +361,7 @@ export default function UpcomingCalls() {
                 <span className="font-mono text-[0.6rem] uppercase tracking-wider text-sky">
                   {fmtWhen(c.scheduled_at)}
                 </span>
-                <span className="flex-1 font-sans text-[0.9rem] text-bone">
+                <span className="min-w-[11rem] flex-1 font-sans text-[0.9rem] text-bone">
                   {c.title || "Untitled call"}
                   {c.company && (
                     <span className="ml-1.5 font-mono text-[0.6rem] text-muted">

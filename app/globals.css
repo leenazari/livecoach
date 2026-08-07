@@ -77,3 +77,58 @@ body::before {
   color: transparent;
   animation: shimmer 1.6s linear infinite;
 }
+
+/* The CRM is used from a phone during a working day. NavMenu adds this class
+   only at phone widths, keeping desktop density unchanged while giving every
+   CRM/call page a consistent safe, readable mobile canvas. */
+@media (max-width: 639px) {
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .lc-mobile-nav main {
+    width: 100%;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    padding-top: 1.25rem !important;
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom)) !important;
+  }
+
+  .lc-mobile-nav main button,
+  .lc-mobile-nav main input,
+  .lc-mobile-nav main select {
+    min-height: 2.75rem;
+  }
+
+  .lc-mobile-nav main input,
+  .lc-mobile-nav main select,
+  .lc-mobile-nav main textarea {
+    min-width: 0 !important;
+    max-width: 100%;
+    font-size: 16px;
+  }
+
+  .lc-mobile-nav main header {
+    align-items: flex-start;
+  }
+
+  .lc-mobile-nav .mobile-full {
+    width: 100%;
+  }
+
+  .lc-mobile-nav .mobile-scroll {
+    margin-left: -1rem;
+    margin-right: -1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+
+  .lc-mobile-nav .mobile-scroll::-webkit-scrollbar {
+    display: none;
+  }
+}
