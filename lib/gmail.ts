@@ -20,11 +20,42 @@ export type GmailMsg = {
   snippet: string;
 };
 
+type GmailFetchInit = Omit<RequestInit, "headers"> & {
+  headers?: Record<string, string>;
+};
+
+// Google can reject a cached access token before its advertised expiry (for
+// example after a new consent grant). Refresh once on 401 so Gmail recovers
+// immediately instead of appearing disconnected until the cache expires.
+async function gmailFetch(
+  path: string,
+  token: string,
+  init: GmailFetchInit = {}
+): Promise<Response | null> {
+  const request = (accessToken: string) =>
+    fetch(`${GMAIL}${path}`, {
+      ...init,
+      headers: {
+        ...init.headers,
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+  try {
+    let res = await request(token);
+    if (res.status === 401) {
+      const refreshed = await getAccessToken(true);
+      if (refreshed) res = await request(refreshed);
+    }
+    return res;
+  } catch {
+    return null;
+  }
+}
+
 async function api(path: string, token: string): Promise<any | null> {
   try {
-    const res = await fetch(`${GMAIL}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await gmailFetch(path, token);
+    if (!res) return null;
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -66,10 +97,10 @@ export async function gmailAccessDiagnostic(): Promise<{
   const token = await getAccessToken();
   if (!token) return { status: "disconnected", issue: "disconnected" };
   try {
-    const res = await fetch(`${GMAIL}/profile`, {
-      headers: { Authorization: `Bearer ${token}` },
+    const res = await gmailFetch("/profile", token, {
       cache: "no-store",
     });
+    if (!res) return { status: "missing", issue: "google_error" };
     if (res.ok) return { status: "ok", issue: "none" };
 
     const body = await res.text();
@@ -254,14 +285,14 @@ export async function sendMail(opts: {
     .replace(/=+$/, "");
 
   try {
-    const res = await fetch(`${GMAIL}/messages/send`, {
+    const res = await gmailFetch("/messages/send", token, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ raw: encoded, ...(opts.threadId ? { threadId: opts.threadId } : {}) }),
     });
+    if (!res) return { ok: false, error: "Gmail could not be reached" };
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       if (res.status === 403) {
