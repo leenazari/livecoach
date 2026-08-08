@@ -12,8 +12,9 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   try {
     const status = req.nextUrl.searchParams.get("status");
-    const [{ data: companies }, oppRes] = await Promise.all([
-      supabaseAdmin.from("companies").select("id, name"),
+    const nowMs = Date.now();
+    const [{ data: companies }, oppRes, { data: calls }, { data: upcoming }] = await Promise.all([
+      supabaseAdmin.from("companies").select("id, name, profile"),
       (async () => {
         let q = supabaseAdmin
           .from("opportunities")
@@ -23,12 +24,81 @@ export async function GET(req: NextRequest) {
         if (status) q = q.eq("status", status);
         return q;
       })(),
+      supabaseAdmin
+        .from("interview_summaries")
+        .select("company_id, created_at")
+        .not("company_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1000),
+      supabaseAdmin
+        .from("upcoming_calls")
+        .select("company_id, scheduled_at")
+        .not("company_id", "is", null)
+        .is("completed_at", null)
+        .gte("scheduled_at", new Date(nowMs).toISOString())
+        .order("scheduled_at", { ascending: true })
+        .limit(500),
     ]);
     const nameById = new Map<string, string>();
-    for (const c of companies || []) nameById.set(c.id, c.name);
+    const lastTouchById = new Map<string, number>();
+    const nextMeetingById = new Map<string, string>();
+    for (const c of companies || []) {
+      nameById.set(c.id, c.name);
+      const emailAt = (c.profile as any)?.email_last_message_at;
+      const ms = emailAt ? new Date(emailAt).getTime() : NaN;
+      if (Number.isFinite(ms)) lastTouchById.set(c.id, ms);
+    }
+    for (const call of calls || []) {
+      const companyId = call.company_id as string;
+      const ms = new Date(call.created_at as string).getTime();
+      if (companyId && Number.isFinite(ms) && ms > (lastTouchById.get(companyId) || 0))
+        lastTouchById.set(companyId, ms);
+    }
+    for (const meeting of upcoming || []) {
+      const companyId = meeting.company_id as string;
+      if (companyId && !nextMeetingById.has(companyId))
+        nextMeetingById.set(companyId, meeting.scheduled_at as string);
+    }
     const items = (oppRes.data || []).map((o: any) => ({
       ...o,
       company: nameById.get(o.company_id) || "a client",
+      ...(() => {
+        const alerts: { code: string; label: string; priority: number }[] = [];
+        const nextMeetingAt = nextMeetingById.get(o.company_id) || null;
+        const touched = lastTouchById.get(o.company_id);
+        const daysQuiet = touched
+          ? Math.max(0, Math.floor((nowMs - touched) / (24 * 60 * 60 * 1000)))
+          : null;
+        const plan = o.close_plan && typeof o.close_plan === "object" ? o.close_plan : {};
+        const milestones = Array.isArray(plan.milestones) ? plan.milestones : [];
+        const overdue = milestones.filter((m: any) => {
+          if (m?.status === "done" || typeof m?.dueAt !== "string") return false;
+          const due = new Date(`${m.dueAt}T23:59:59`).getTime();
+          return Number.isFinite(due) && due < nowMs;
+        });
+        if (overdue.length)
+          alerts.push({
+            code: "milestone_overdue",
+            label: `${overdue.length} close-plan milestone${overdue.length === 1 ? "" : "s"} overdue`,
+            priority: 1,
+          });
+        if (typeof plan.targetCloseDate === "string") {
+          const target = new Date(`${plan.targetCloseDate}T23:59:59`).getTime();
+          if (Number.isFinite(target) && target < nowMs)
+            alerts.push({ code: "decision_passed", label: "Target decision date has passed", priority: 1 });
+        }
+        if (!nextMeetingAt)
+          alerts.push({ code: "no_next_meeting", label: "No next meeting booked", priority: 2 });
+        if (daysQuiet != null && daysQuiet >= 7 && !nextMeetingAt)
+          alerts.push({ code: "quiet", label: `No recorded contact for ${daysQuiet} days`, priority: daysQuiet >= 14 ? 1 : 2 });
+        const proposalSent = milestones.some(
+          (m: any) => m?.status === "done" && /proposal|commercial/i.test(String(m?.label || ""))
+        );
+        if (proposalSent && !nextMeetingAt)
+          alerts.push({ code: "proposal_no_followup", label: "Proposal sent without a follow-up meeting", priority: 1 });
+        alerts.sort((a, b) => a.priority - b.priority);
+        return { alerts, daysQuiet, nextMeetingAt };
+      })(),
     }));
     return NextResponse.json({ opportunities: items });
   } catch (err: any) {

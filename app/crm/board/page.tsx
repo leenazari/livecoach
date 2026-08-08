@@ -6,6 +6,9 @@ import { useSearchParams } from "next/navigation";
 import { crmFetch, type Company } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import TaskList from "@/components/crm/TaskList";
+import OpportunityClosePlan, {
+  type ClosePlan,
+} from "@/components/crm/OpportunityClosePlan";
 
 type Tab = "tasks" | "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
@@ -28,6 +31,7 @@ function BoardInner() {
   const [copiedId, setCopiedId] = useState("");
   const [newName, setNewName] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [openOpportunity, setOpenOpportunity] = useState("");
 
   // Follow the ?tab= param. Using useSearchParams means this re-runs when the
   // query changes (e.g. clicking Drafts in the side menu while already on the
@@ -315,29 +319,77 @@ function BoardInner() {
             <li className="font-mono text-[0.66rem] text-muted">No open opportunities.</li>
           )}
           {opps.map((o) => (
-            <li key={o.id} className="flex items-start justify-between gap-3 rounded-xl border border-edge bg-panel/40 px-4 py-3">
-              <div className="min-w-0">
-                <p className="font-sans text-[0.9rem] text-bone">
-                  {o.title}
-                  {typeof o.value === "number" && (
-                    <span className="ml-2 font-mono text-[0.62rem] text-sage">~£{Number(o.value).toLocaleString()}</span>
-                  )}
-                </p>
-                {o.detail && <p className="mt-0.5 font-sans text-[0.8rem] text-bone/70">{o.detail}</p>}
-                <Link href={`/crm/${o.company_id}`} className="font-mono text-[0.58rem] text-sky hover:text-amber">
-                  {o.company}
-                </Link>
+            <li key={o.id} className="rounded-xl border border-edge bg-panel/40 px-4 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setOpenOpportunity((id) => (id === o.id ? "" : o.id))}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <p className="font-sans text-[0.9rem] text-bone">
+                    <span className="mr-1.5 font-mono text-[0.65rem] text-muted">
+                      {openOpportunity === o.id ? "▾" : "▸"}
+                    </span>
+                    {o.title}
+                    {o.value != null && Number(o.value) > 0 && (
+                      <span className="ml-2 font-mono text-[0.62rem] text-sage">£{Number(o.value).toLocaleString()}</span>
+                    )}
+                  </p>
+                  {o.detail && <p className="mt-0.5 font-sans text-[0.8rem] text-bone/70">{o.detail}</p>}
+                  <span className="font-mono text-[0.58rem] text-sky">{o.company}</span>
+                </button>
+                <select
+                  value={o.status}
+                  onChange={(e) => setOppStatus(o.id, e.target.value)}
+                  className="shrink-0 rounded-md border border-edge bg-ink/60 px-2 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-bone outline-none focus:border-amber/60"
+                >
+                  <option value="open">open</option>
+                  <option value="won">won</option>
+                  <option value="lost">lost</option>
+                  <option value="dismissed">dismissed</option>
+                </select>
               </div>
-              <select
-                value={o.status}
-                onChange={(e) => setOppStatus(o.id, e.target.value)}
-                className="shrink-0 rounded-md border border-edge bg-ink/60 px-2 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-bone outline-none focus:border-amber/60"
-              >
-                <option value="open">open</option>
-                <option value="won">won</option>
-                <option value="lost">lost</option>
-                <option value="dismissed">dismissed</option>
-              </select>
+              {Array.isArray(o.alerts) && o.alerts.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {o.alerts.slice(0, 4).map((alert: any) => (
+                    <span
+                      key={alert.code}
+                      className={`rounded-full border px-2 py-0.5 font-mono text-[0.52rem] uppercase tracking-wider ${
+                        alert.priority === 1
+                          ? "border-rust/55 bg-rust/10 text-rust"
+                          : "border-amber/45 bg-amber/10 text-amber"
+                      }`}
+                    >
+                      {alert.priority === 1 ? "▲ " : ""}{alert.label}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {openOpportunity === o.id && (
+                <>
+                  <OpportunityClosePlan
+                    opportunityId={o.id}
+                    initialPlan={o.close_plan}
+                    onSaved={(closePlan: ClosePlan) =>
+                      setOpps((items) =>
+                        items.map((item) =>
+                          item.id === o.id
+                            ? { ...item, close_plan: closePlan }
+                            : item
+                        )
+                      )
+                    }
+                  />
+                  <div className="mt-2 text-right">
+                    <Link
+                      href={`/crm/${o.company_id}`}
+                      className="font-mono text-[0.54rem] uppercase tracking-wider text-sky hover:text-amber"
+                    >
+                      open full client record ↗
+                    </Link>
+                  </div>
+                </>
+              )}
             </li>
           ))}
         </ul>
