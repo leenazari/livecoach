@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { GMAIL_SEND_SCOPE, googleConnected, googleHasScope } from "@/lib/google";
-import { gmailAccessStatus, OUTREACH_FROM_EMAIL } from "@/lib/gmail";
+import {
+  GMAIL_READ_SCOPE,
+  GMAIL_SEND_SCOPE,
+  googleConnected,
+  googleGrantedScopes,
+} from "@/lib/google";
+import { OUTREACH_FROM_EMAIL } from "@/lib/gmail";
 import { londonDate, OUTREACH_DAILY_HARD_LIMIT } from "@/lib/outreach";
 
 export const dynamic = "force-dynamic";
@@ -44,10 +49,9 @@ export async function GET() {
           .eq("from_email", OUTREACH_FROM_EMAIL),
       ]);
 
-    const [gmailStatus, sendScope] = await Promise.all([
-      gmailAccessStatus(),
-      google.connected ? googleHasScope(GMAIL_SEND_SCOPE) : Promise.resolve(false),
-    ]);
+    const scopes = google.connected ? await googleGrantedScopes() : new Set<string>();
+    const readScope = scopes.has(GMAIL_READ_SCOPE);
+    const sendScope = scopes.has(GMAIL_SEND_SCOPE);
     const databaseError =
       campaignResult.error ||
       eligibleResult.error ||
@@ -85,13 +89,13 @@ export async function GET() {
       {
         id: "gmail",
         label: "Gmail permissions",
-        status: gmailStatus === "ok" && sendScope ? "pass" : "fail",
+        status: readScope && sendScope ? "pass" : "fail",
         detail:
-          gmailStatus === "ok" && sendScope
+          readScope && sendScope
             ? "Reading replies and sending approved messages are permitted."
             : "Gmail read/send permission is missing. Reconnect Google once in Settings.",
         href: "/settings",
-        action: gmailStatus === "ok" && sendScope ? undefined : "Reconnect Google",
+        action: readScope && sendScope ? undefined : "Reconnect Google",
       },
       {
         id: "sender",
