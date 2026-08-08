@@ -16,6 +16,7 @@ const ITEMS: Item[] = [
   { href: "/crm/board?tab=drafts", label: "Drafts", icon: "✉", tab: "drafts" },
   { href: "/crm/calls", label: "Calls", icon: "☎" },
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
+  { href: "/crm/outreach", label: "Outreach", icon: "↗" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
 
@@ -89,6 +90,8 @@ function NavMenuInner() {
     if (it.href === "/call") return pathname.startsWith("/call");
     if (it.href === "/crm/call-coach")
       return pathname.startsWith("/crm/call-coach");
+    if (it.href === "/crm/outreach")
+      return pathname.startsWith("/crm/outreach");
     if (it.href === "/crm/calls")
       return pathname.startsWith("/crm/calls") &&
         !pathname.startsWith("/crm/call-coach");
