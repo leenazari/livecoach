@@ -160,6 +160,21 @@ export async function GET(req: NextRequest) {
             // the focus and plan you already built and paid for instead of
             // offering to build them again from scratch.
             prep: call.prep && typeof call.prep === "object" ? call.prep : null,
+            outreach:
+              call.research?.outreach && typeof call.research.outreach === "object"
+                ? {
+                    source: call.research.outreach.source || "Interviewa outreach",
+                    summary: call.research.outreach.research?.summary || "",
+                    bestAngle: call.research.outreach.research?.bestAngle || "",
+                    signals: Array.isArray(call.research.outreach.research?.signals)
+                      ? call.research.outreach.research.signals.slice(0, 3)
+                      : [],
+                    emailContext:
+                      typeof call.research.outreach.emailContext === "string"
+                        ? call.research.outreach.emailContext.slice(0, 6000)
+                        : "",
+                  }
+                : null,
           }
         : null,
       hasHistory,

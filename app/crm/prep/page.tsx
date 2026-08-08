@@ -55,6 +55,14 @@ type EntityState = {
   ttlDays: number;
 };
 
+type OutreachOrigin = {
+  source: string;
+  summary: string;
+  bestAngle: string;
+  signals: string[];
+  emailContext: string;
+};
+
 type StepKey = "company" | "person" | "intent" | "focus" | "plan";
 type StepStatus =
   | "pending"
@@ -222,6 +230,8 @@ function PrepInner() {
   >([]);
   const [builtGoals, setBuiltGoals] = useState<string[]>([]);
   const [openBriefs, setOpenBriefs] = useState(false);
+  const [outreachOrigin, setOutreachOrigin] = useState<OutreachOrigin | null>(null);
+  const [openOutreach, setOpenOutreach] = useState(false);
   // How far prep has got. The chain takes you to "intent" and stops. "focus"
   // needs you to press Build the focus, "full" needs Build the plan. Each gate
   // is there because the next stage is built FROM the one before it, so
@@ -293,6 +303,7 @@ function PrepInner() {
       setEmailContext(typeof d.emailContext === "string" ? d.emailContext : "");
       setCompanyResearch(d.company || null);
       setPersonResearch(d.person || null);
+      setOutreachOrigin(d.call?.outreach || null);
       bgRef.current = {
         company: d.company?.background || "",
         person: d.person?.background || "",
@@ -1232,6 +1243,50 @@ function PrepInner() {
             "One press researches the company and the person and drafts the intent, then stops. Review or change the intent before you choose to build the focus. Research is bought once per company and once per person and reused for every call with them after that."
           )}
         </p>
+
+        {outreachOrigin && (
+          <div className="mb-4 rounded-xl border border-sage/40 bg-sage/[0.06] p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-mono text-[0.56rem] uppercase tracking-[0.18em] text-sage">
+                ↗ Booked from outreach
+              </p>
+              {outreachOrigin.emailContext && (
+                <button
+                  type="button"
+                  onClick={() => setOpenOutreach((value) => !value)}
+                  className="min-h-9 rounded-full border border-sage/40 px-3 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/10"
+                >
+                  {openOutreach ? "hide email trail" : "see email trail"}
+                </button>
+              )}
+            </div>
+            <p className="mt-2 font-sans text-[0.8rem] leading-relaxed text-bone/80">
+              The research, message and reply that led to this meeting are already
+              included in the intent and focus.
+            </p>
+            {(outreachOrigin.bestAngle || outreachOrigin.summary) && (
+              <p className="mt-2 font-sans text-[0.82rem] leading-relaxed text-bone">
+                <span className="text-sage">Commercial angle: </span>
+                {outreachOrigin.bestAngle || outreachOrigin.summary}
+              </p>
+            )}
+            {outreachOrigin.signals.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {outreachOrigin.signals.map((signal, index) => (
+                  <li key={`${signal}-${index}`} className="flex gap-2 font-sans text-[0.76rem] leading-snug text-bone/70">
+                    <span className="text-sage">•</span>
+                    <span>{signal}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {openOutreach && outreachOrigin.emailContext && (
+              <p className="mt-3 max-h-72 overflow-y-auto whitespace-pre-wrap border-t border-sage/20 pt-3 font-sans text-[0.74rem] leading-relaxed text-bone/70">
+                {outreachOrigin.emailContext}
+              </p>
+            )}
+          </div>
+        )}
 
         <ul className="flex flex-col gap-1.5">
           {steps.map((st) => {

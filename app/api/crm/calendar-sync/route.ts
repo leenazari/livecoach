@@ -15,8 +15,9 @@ import {
 import {
   attachOutreachMeeting,
   ensureOutreachCompany,
-  findOutreachProspectForAttendees,
   firstOutreachCallIntent,
+  loadOutreachProspectsForAttendees,
+  matchOutreachProspectForAttendees,
 } from "@/lib/outreach-crm";
 
 export const runtime = "nodejs";
@@ -177,14 +178,16 @@ async function runCalendarSync() {
     const ids = rows.map((r) => r.external_id);
     const existing = new Set<string>();
     const existingCompany = new Map<string, string | null>();
+    const existingId = new Map<string, string>();
     if (ids.length) {
       const { data } = await supabaseAdmin
         .from("upcoming_calls")
-        .select("external_id, company_id")
+        .select("id, external_id, company_id")
         .in("external_id", ids);
       for (const d of data || []) {
         if (!d.external_id) continue;
         existing.add(d.external_id);
+        existingId.set(d.external_id, d.id);
         existingCompany.set(d.external_id, d.company_id || null);
       }
     }
@@ -194,6 +197,11 @@ async function runCalendarSync() {
     // outside guest matched to a client links there. Names only mentioned in the
     // note are the topic, not the participant.
     const attendeeConfig = await loadAttendeeConfig();
+    // One lookup for the whole calendar snapshot. This keeps the daily repair
+    // fast even when there are dozens of existing meetings.
+    const outreachByEmail = await loadOutreachProspectsForAttendees(
+      rows.map((row) => row.attendees)
+    );
 
     // Resolve a new event's client: a matched client, the internal entity, or -
     // when the guest list is all we have - a brand-new client created from the
@@ -267,7 +275,10 @@ async function runCalendarSync() {
       outreachProspectId: string | null;
     }[] = [];
     for (const r of newRows) {
-      const outreachProspect = await findOutreachProspectForAttendees(r.attendees);
+      const outreachProspect = matchOutreachProspectForAttendees(
+        r.attendees,
+        outreachByEmail
+      );
       const outreachContext = outreachProspect
         ? await ensureOutreachCompany(outreachProspect.id, "booked")
         : null;
@@ -379,7 +390,23 @@ async function runCalendarSync() {
     }
     const toUpdate = rows.filter((r) => existing.has(r.external_id));
     const repairedCompany = new Map<string, string>();
+    const outreachRepairs: { prospectId: string; upcomingId: string; scheduledAt: string }[] = [];
     for (const r of toUpdate) {
+      // Existing calendar rows may pre-date the prospect import/reply. Re-run
+      // the free attendee match so the daily sync repairs that handoff too.
+      const outreachProspect = matchOutreachProspectForAttendees(
+        r.attendees,
+        outreachByEmail
+      );
+      const upcomingId = existingId.get(r.external_id);
+      if (outreachProspect && upcomingId) {
+        outreachRepairs.push({
+          prospectId: outreachProspect.id,
+          upcomingId,
+          scheduledAt: r.scheduled_at,
+        });
+        continue;
+      }
       if (existingCompany.get(r.external_id)) continue;
       const companyId = await resolveCompanyForEvent(r.attendees);
       if (companyId) repairedCompany.set(r.external_id, companyId);
@@ -424,6 +451,22 @@ async function runCalendarSync() {
       )
     );
 
+    let outreachLinked = 0;
+    for (const repair of outreachRepairs) {
+      try {
+        await attachOutreachMeeting(
+          repair.prospectId,
+          repair.upcomingId,
+          repair.scheduledAt
+        );
+        outreachLinked += 1;
+      } catch (error) {
+        // The calendar refresh remains successful and tomorrow's sync retries
+        // this non-destructive CRM enrichment.
+        console.error("existing outreach calendar handoff failed", error);
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       added,
@@ -431,6 +474,7 @@ async function runCalendarSync() {
       removed,
       relinked,
       reconciled: snapshot.complete,
+      outreachLinked,
       total: rows.length,
     });
   } catch (err: any) {
