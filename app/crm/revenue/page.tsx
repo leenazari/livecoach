@@ -16,6 +16,9 @@ type Opportunity = Record<string, any> & {
   forecast_category: string;
   opportunity_type: "revenue" | "investment" | "internal" | "strategic";
   expected_close_at: string | null;
+  next_action: string | null;
+  next_action_due_at: string | null;
+  next_action_owner: "us" | "buyer" | "joint";
   weightedValue: number;
   risks: { code: string; label: string; severity: "high" | "medium" }[];
   nextAction: string;
@@ -45,7 +48,16 @@ export default function RevenuePage() {
     try {
       const next = await crmFetch<Pipeline>("/api/crm/revenue");
       setData(next);
-      setRows([...(next.opportunities || []), ...(next.excludedOpportunities || [])]);
+      setRows(
+        [...(next.opportunities || []), ...(next.excludedOpportunities || [])].map(
+          (row: Opportunity) => ({
+            ...row,
+            // Put the deterministic suggestion into editable state. Pressing
+            // Save deal therefore confirms exactly what the user can see.
+            next_action: row.next_action ?? row.nextAction ?? "",
+          })
+        )
+      );
       setTarget(next.goal?.target || 5_000_000);
     } catch (e: any) {
       setError(e.message || "Could not load the revenue pipeline");
@@ -73,6 +85,9 @@ export default function RevenuePage() {
           forecastCategory: row.forecast_category,
           opportunityType: row.opportunity_type,
           expectedCloseAt: row.expected_close_at || null,
+          nextAction: row.next_action || null,
+          nextActionDueAt: row.next_action_due_at ? row.next_action_due_at.slice(0, 10) : null,
+          nextActionOwner: row.next_action_owner || "us",
         }),
       });
       setNotice(`${row.company} forecast saved.`);
@@ -187,7 +202,12 @@ export default function RevenuePage() {
               <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Forecast</span><select className={input} value={row.forecast_category} onChange={(e) => updateRow(row.id, { forecast_category: e.target.value })}><option value="pipeline">Pipeline</option><option value="best_case">Best case</option><option value="commit">Commit</option><option value="omitted">Omitted</option></select></label>
               <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Expected close</span><input type="date" className={input} value={row.expected_close_at || ""} onChange={(e) => updateRow(row.id, { expected_close_at: e.target.value || null })} /></label>
             </div>
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-1.5">{row.risks.map((risk) => <span key={risk.code} className={`rounded-full border px-2 py-0.5 font-mono text-[0.49rem] uppercase ${risk.severity === "high" ? "border-rust/50 text-rust" : "border-edge text-muted"}`}>{risk.label}</span>)}</div><button onClick={() => saveOpportunity(row)} disabled={!!busy} className={`${button} shrink-0`}>{busy === `opp:${row.id}` ? "Saving…" : "Save forecast"}</button></div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_9rem]">
+              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-amber">Primary next action</span><input className={input} value={row.next_action ?? row.nextAction ?? ""} onChange={(e) => updateRow(row.id, { next_action: e.target.value })} placeholder="The one move that progresses this deal" /></label>
+              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Due</span><input type="date" className={input} value={row.next_action_due_at?.slice(0, 10) || ""} onChange={(e) => updateRow(row.id, { next_action_due_at: e.target.value || null })} /></label>
+              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Owner</span><select className={input} value={row.next_action_owner || "us"} onChange={(e) => updateRow(row.id, { next_action_owner: e.target.value as Opportunity["next_action_owner"] })}><option value="us">Us</option><option value="buyer">Buyer</option><option value="joint">Joint</option></select></label>
+            </div>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-1.5">{row.risks.map((risk) => <span key={risk.code} className={`rounded-full border px-2 py-0.5 font-mono text-[0.49rem] uppercase ${risk.severity === "high" ? "border-rust/50 text-rust" : "border-edge text-muted"}`}>{risk.label}</span>)}</div><button onClick={() => saveOpportunity(row)} disabled={!!busy} className={`${button} shrink-0`}>{busy === `opp:${row.id}` ? "Saving…" : "Save deal"}</button></div>
           </article>)}</div>
           {revenueRows.length > 8 ? <button onClick={() => setShowAll((value) => !value)} className="mt-3 min-h-11 w-full rounded-lg border border-edge font-mono text-[0.58rem] uppercase text-muted">{showAll ? "Show less" : `Show all ${revenueRows.length} customer deals`}</button> : null}
         </section>

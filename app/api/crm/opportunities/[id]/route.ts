@@ -11,6 +11,7 @@ const OWNER_TYPES = ["us", "buyer", "joint"];
 const PIPELINE_STAGES = ["new", "discovery", "qualified", "proposal", "negotiation", "verbal", "won", "lost"];
 const FORECAST_CATEGORIES = ["pipeline", "best_case", "commit", "omitted"];
 const OPPORTUNITY_TYPES = ["revenue", "investment", "internal", "strategic"];
+const NEXT_ACTION_OWNERS = ["us", "buyer", "joint"];
 
 const cleanClosePlan = (value: any) => {
   const targetCloseDate =
@@ -80,6 +81,25 @@ export async function PATCH(
       patch.expected_close_at = body.expectedCloseAt;
     }
     if (typeof body.outcomeReason === "string") patch.outcome_reason = body.outcomeReason.trim().slice(0, 1000) || null;
+    if (body.nextAction === null || body.nextAction === "") {
+      patch.next_action = null;
+    } else if (typeof body.nextAction === "string") {
+      patch.next_action = body.nextAction.trim().slice(0, 500) || null;
+    }
+    if (body.nextActionDueAt === null || body.nextActionDueAt === "") {
+      patch.next_action_due_at = null;
+    } else if (
+      typeof body.nextActionDueAt === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(body.nextActionDueAt)
+    ) {
+      patch.next_action_due_at = `${body.nextActionDueAt}T12:00:00Z`;
+    }
+    if (
+      typeof body.nextActionOwner === "string" &&
+      NEXT_ACTION_OWNERS.includes(body.nextActionOwner)
+    ) {
+      patch.next_action_owner = body.nextActionOwner;
+    }
     if (body.closePlan && typeof body.closePlan === "object") {
       patch.close_plan = cleanClosePlan(body.closePlan);
     }

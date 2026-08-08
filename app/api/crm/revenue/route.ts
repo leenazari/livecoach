@@ -92,11 +92,14 @@ export async function GET() {
       if (!nextMeetingAt) risks.push({ code: "no_meeting", label: "No next meeting", severity: probability >= 60 ? "high" : "medium" });
       if (daysQuiet != null && daysQuiet >= 14) risks.push({ code: "quiet", label: `Quiet for ${daysQuiet} days`, severity: "high" });
       if (op.forecast_category === "commit" && probability < 70) risks.push({ code: "weak_commit", label: "Commit probability is below 70%", severity: "high" });
+      if (!op.next_action) risks.push({ code: "missing_next_action", label: "Primary next action not confirmed", severity: "medium" });
+      if (op.next_action_due_at && new Date(op.next_action_due_at).getTime() < Date.now()) risks.push({ code: "next_action_overdue", label: "Primary next action is overdue", severity: "high" });
       const companyTasks = tasksByCompany.get(companyId) || [];
       const overdue = companyTasks.filter((task: any) => task.due_at && new Date(task.due_at).getTime() < Date.now());
       if (overdue.length) risks.push({ code: "overdue_actions", label: `${overdue.length} overdue action${overdue.length === 1 ? "" : "s"}`, severity: "high" });
 
-      let nextAction = companyTasks.find((task: any) => task.due_at)?.text || companyTasks[0]?.text || "";
+      let nextAction = String(op.next_action || "").trim();
+      if (!nextAction) nextAction = companyTasks.find((task: any) => task.due_at)?.text || companyTasks[0]?.text || "";
       if (!nextAction && !value) nextAction = "Set a realistic opportunity value";
       else if (!nextAction && !nextMeetingAt) nextAction = "Secure the next decision-focused meeting";
       else if (!nextAction && op.pipeline_stage === "discovery") nextAction = "Confirm buyer need, urgency and decision process";
@@ -115,6 +118,7 @@ export async function GET() {
         daysQuiet,
         risks,
         nextAction,
+        nextActionIsSaved: !!op.next_action,
         actionScore,
       };
     }).sort((a: any, b: any) => b.actionScore - a.actionScore);
