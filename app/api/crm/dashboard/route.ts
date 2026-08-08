@@ -61,6 +61,9 @@ export async function GET(req: Request) {
       usageRes,
       upcomingRes,
       recentTouchRes,
+      outreachProspectsRes,
+      outreachEnrolmentsRes,
+      approvedOutreachRes,
     ] =
       await Promise.all([
         supabaseAdmin.from("companies").select("id, name, stage"),
@@ -110,6 +113,24 @@ export async function GET(req: Request) {
           .not("company_id", "is", null)
           .order("created_at", { ascending: false })
           .limit(1000),
+        // Lightweight outreach state for the same Today decision layer. We do
+        // not load message bodies or research here, only the facts needed to
+        // decide whether Lee should reply or send an already-approved draft.
+        supabaseAdmin
+          .from("outreach_prospects")
+          .select("id, first_name, last_name, company_name, reply_category, reply_summary, last_reply_at")
+          .limit(1000),
+        supabaseAdmin
+          .from("outreach_enrolments")
+          .select("prospect_id, status, updated_at")
+          .order("updated_at", { ascending: false })
+          .limit(500),
+        supabaseAdmin
+          .from("outreach_messages")
+          .select("id, prospect_id, subject, approved_at, updated_at")
+          .eq("status", "approved")
+          .order("approved_at", { ascending: true })
+          .limit(20),
       ]);
 
     const nameById = new Map<string, string>();
@@ -309,6 +330,56 @@ export async function GET(req: Request) {
         href: t.company_id ? `/crm/${t.company_id}` : "/crm/board?tab=tasks",
         entity: "task" as const,
       }));
+    const outreachProspectById = new Map<string, any>();
+    for (const prospect of outreachProspectsRes.data || []) {
+      outreachProspectById.set(prospect.id as string, prospect);
+    }
+    // The enrolments query is newest-first, so the first row retained is the
+    // current journey state if a prospect ever entered more than one campaign.
+    const outreachStatusByProspect = new Map<string, string>();
+    for (const enrolment of outreachEnrolmentsRes.data || []) {
+      if (!outreachStatusByProspect.has(enrolment.prospect_id as string)) {
+        outreachStatusByProspect.set(
+          enrolment.prospect_id as string,
+          String(enrolment.status || "")
+        );
+      }
+    }
+    const interestedReplies = (outreachProspectsRes.data || [])
+      .filter(
+        (prospect: any) =>
+          prospect.reply_category === "interested" &&
+          outreachStatusByProspect.get(prospect.id) !== "booked"
+      )
+      .sort(
+        (a: any, b: any) =>
+          new Date(b.last_reply_at || 0).getTime() -
+          new Date(a.last_reply_at || 0).getTime()
+      )
+      .slice(0, 5)
+      .map((prospect: any) => ({
+        id: prospect.id,
+        text: prospect.reply_summary || "Positive outreach reply needs a response",
+        company: prospect.company_name ||
+          [prospect.first_name, prospect.last_name].filter(Boolean).join(" ") ||
+          "Outreach prospect",
+        at: prospect.last_reply_at,
+        href: "/crm/outreach?tab=replies",
+      }));
+    const approvedOutreach = (approvedOutreachRes.data || [])
+      .map((message: any) => {
+        const prospect = outreachProspectById.get(message.prospect_id as string);
+        return {
+          id: message.id,
+          text: message.subject || "Approved outreach email ready to send",
+          company: prospect?.company_name ||
+            [prospect?.first_name, prospect?.last_name].filter(Boolean).join(" ") ||
+            "Outreach prospect",
+          at: message.approved_at || message.updated_at,
+          href: "/crm/outreach?tab=queue",
+        };
+      })
+      .slice(0, 5);
     const latestTouch = new Map<string, number>();
     for (const s of recentTouchRes.data || []) {
       const cid = s.company_id as string;
@@ -384,7 +455,9 @@ export async function GET(req: Request) {
       })
       .sort((a: any, b: any) => b.score - a.score);
     const topCandidates = [
+      ...interestedReplies.map((x: any) => ({ ...x, reason: "Interested reply", score: 170 })),
       ...overduePromises.map((x: any) => ({ ...x, reason: "Overdue promise", score: 150 })),
+      ...approvedOutreach.map((x: any) => ({ ...x, reason: "Approved and ready", score: 140 })),
       ...callsToPrep.map((x: any) => ({ ...x, reason: "Call within 24 hours", score: 130 })),
       ...awaitingOthers
         .filter((x: any) => x.at && new Date(x.at).getTime() < now)
@@ -406,6 +479,8 @@ export async function GET(req: Request) {
       awaitingReply,
       awaitingOthers,
       coolingDeals,
+      interestedReplies,
+      approvedOutreach,
       topActions,
     };
 
