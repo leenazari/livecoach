@@ -128,6 +128,7 @@ export async function ensureOutreachCompany(prospectId: string, reason: "interes
       status: "open",
       surfaced_by_ai: false,
       source: "outreach",
+      opportunity_type: "revenue",
       pipeline_stage: reason === "booked" ? "qualified" : "discovery",
       probability: reason === "booked" ? 40 : 25,
       forecast_category: "pipeline",

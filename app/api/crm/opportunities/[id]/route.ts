@@ -10,6 +10,7 @@ const STATUSES = ["open", "won", "lost", "dismissed"];
 const OWNER_TYPES = ["us", "buyer", "joint"];
 const PIPELINE_STAGES = ["new", "discovery", "qualified", "proposal", "negotiation", "verbal", "won", "lost"];
 const FORECAST_CATEGORIES = ["pipeline", "best_case", "commit", "omitted"];
+const OPPORTUNITY_TYPES = ["revenue", "investment", "internal", "strategic"];
 
 const cleanClosePlan = (value: any) => {
   const targetCloseDate =
@@ -66,6 +67,12 @@ export async function PATCH(
     }
     if (typeof body.forecastCategory === "string" && FORECAST_CATEGORIES.includes(body.forecastCategory)) {
       patch.forecast_category = body.forecastCategory;
+    }
+    if (typeof body.opportunityType === "string" && OPPORTUNITY_TYPES.includes(body.opportunityType)) {
+      patch.opportunity_type = body.opportunityType;
+      if (body.opportunityType !== "revenue" && body.forecastCategory == null) {
+        patch.forecast_category = "omitted";
+      }
     }
     if (body.expectedCloseAt === null || body.expectedCloseAt === "") {
       patch.expected_close_at = null;

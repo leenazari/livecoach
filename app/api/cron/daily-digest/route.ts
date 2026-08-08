@@ -100,6 +100,7 @@ export async function GET(req: NextRequest) {
         .from("opportunities")
         .select("id, company_id, title, value, created_at")
         .eq("status", "open")
+        .eq("opportunity_type", "revenue")
         .order("value", { ascending: false })
         .limit(200),
     ]);
