@@ -161,7 +161,9 @@ export async function sendMail(opts: {
   subject: string;
   html: string;
   text?: string;
-}): Promise<{ ok: boolean; id?: string; error?: string }> {
+  from?: string;
+  replyTo?: string;
+}): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
   const token = await getAccessToken();
   if (!token) {
     return { ok: false, error: "Google is not connected, connect it in Settings" };
@@ -180,6 +182,8 @@ export async function sendMail(opts: {
   const boundary = "lc_boundary_a7f3d2";
   const raw = [
     `To: ${to}`,
+    ...(opts.from ? [`From: ${opts.from}`] : []),
+    ...(opts.replyTo ? [`Reply-To: ${opts.replyTo}`] : []),
     `Subject: ${subject}`,
     "MIME-Version: 1.0",
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
@@ -225,10 +229,44 @@ export async function sendMail(opts: {
       return { ok: false, error: `Gmail said ${res.status}: ${body.slice(0, 200)}` };
     }
     const data = await res.json().catch(() => ({}));
-    return { ok: true, id: data?.id };
+    return { ok: true, id: data?.id, threadId: data?.threadId };
   } catch (e: any) {
     return { ok: false, error: e?.message || "send failed" };
   }
+}
+
+// Prospect outreach must never silently fall back to the connected account.
+// Gmail accepts this From header only when the address is an approved "Send
+// mail as" alias. If the alias is removed or becomes invalid, Gmail refuses the
+// request and the prospect stays unsent for the user to fix safely.
+export const OUTREACH_FROM_EMAIL = "lee@interviewa.com";
+
+export async function sendOutreachMail(opts: {
+  to: string;
+  subject: string;
+  text: string;
+}): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
+  const safeText = String(opts.text || "").trim();
+  return sendMail({
+    to: opts.to,
+    subject: opts.subject,
+    text: safeText,
+    html: safeText
+      .split(/\n{2,}/)
+      .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
+      .join(""),
+    from: `Lee Nazari <${OUTREACH_FROM_EMAIL}>`,
+    replyTo: OUTREACH_FROM_EMAIL,
+  });
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // A readable plain-text fallback for mail clients that will not render HTML.
