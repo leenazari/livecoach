@@ -9,6 +9,10 @@ import TaskList from "@/components/crm/TaskList";
 import OpportunityClosePlan, {
   type ClosePlan,
 } from "@/components/crm/OpportunityClosePlan";
+import ClientPortfolio, {
+  type ClientPortfolioRow,
+  type ClientPortfolioTotals,
+} from "@/components/crm/ClientPortfolio";
 
 type Tab = "tasks" | "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
@@ -25,13 +29,21 @@ function BoardInner() {
   const [drafts, setDrafts] = useState<any[]>([]);
   const [emailTasks, setEmailTasks] = useState<any[]>([]);
   const [opps, setOpps] = useState<any[]>([]);
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [q, setQ] = useState("");
+  const [companies, setCompanies] = useState<ClientPortfolioRow[]>([]);
+  const [clientTotals, setClientTotals] = useState<ClientPortfolioTotals>({
+    all: 0,
+    red: 0,
+    amber: 0,
+    green: 0,
+    grey: 0,
+    opportunities: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState("");
   const [newName, setNewName] = useState("");
   const [saveError, setSaveError] = useState("");
   const [openOpportunity, setOpenOpportunity] = useState("");
+  const [savingClientId, setSavingClientId] = useState("");
 
   // Follow the ?tab= param. Using useSearchParams means this re-runs when the
   // query changes (e.g. clicking Drafts in the side menu while already on the
@@ -45,6 +57,7 @@ function BoardInner() {
 
   const load = useCallback(async (which: Tab) => {
     setLoading(true);
+    setSaveError("");
     try {
       if (which === "tasks") {
         // light=1 skips the AI "your day" blurb the board doesn't show, so the
@@ -68,11 +81,22 @@ function BoardInner() {
         const d = await crmFetch<any>("/api/crm/opportunities?status=open");
         setOpps(d.opportunities || []);
       } else {
-        const d = await crmFetch<{ companies: Company[] }>("/api/crm/companies");
-        setCompanies(d.companies || []);
+        const d = await crmFetch<{
+          clients: ClientPortfolioRow[];
+          totals: ClientPortfolioTotals;
+        }>("/api/crm/clients/portfolio");
+        setCompanies(d.clients || []);
+        setClientTotals(d.totals || {
+          all: 0,
+          red: 0,
+          amber: 0,
+          green: 0,
+          grey: 0,
+          opportunities: 0,
+        });
       }
-    } catch {
-      /* ignore */
+    } catch (error: any) {
+      setSaveError(error?.message || "That section could not be loaded. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -152,12 +176,12 @@ function BoardInner() {
   const createCompany = async () => {
     if (!newName.trim()) return;
     try {
-      const { company } = await crmFetch<{ company: Company }>("/api/crm/companies", {
+      await crmFetch<{ company: Company }>("/api/crm/companies", {
         method: "POST",
         body: JSON.stringify({ name: newName.trim() }),
       });
-      setCompanies((p) => [company, ...p]);
       setNewName("");
+      await load("clients");
     } catch {
       /* ignore */
     }
@@ -165,22 +189,56 @@ function BoardInner() {
   const deleteCompany = async (id: string, name: string) => {
     if (!confirm(`Delete ${name} and all its contacts and history?`)) return;
     const previous = companies;
+    const previousTotals = clientTotals;
     setSaveError("");
+    const deleted = previous.find((row) => row.id === id);
     setCompanies((p) => p.filter((c) => c.id !== id));
+    setClientTotals((totals) => ({
+      ...totals,
+      all: Math.max(0, totals.all - 1),
+      red: Math.max(0, totals.red - (deleted?.health === "red" ? 1 : 0)),
+      amber: Math.max(0, totals.amber - (deleted?.health === "amber" ? 1 : 0)),
+      green: Math.max(0, totals.green - (deleted?.health === "green" ? 1 : 0)),
+      grey: Math.max(0, totals.grey - (deleted?.health === "grey" ? 1 : 0)),
+      opportunities: Math.max(0, totals.opportunities - (deleted?.opportunity ? 1 : 0)),
+    }));
     try {
       await crmFetch(`/api/crm/companies/${id}`, { method: "DELETE" });
     } catch {
       setCompanies(previous);
+      setClientTotals(previousTotals);
       setSaveError("That client was not deleted. Please try again.");
     }
   };
-
-  const shown = companies.filter((c) =>
-    q.trim() ? c.name.toLowerCase().includes(q.trim().toLowerCase()) : true
-  );
+  const setCompanyStage = async (id: string, stage: string) => {
+    const previous = companies;
+    setSavingClientId(id);
+    setSaveError("");
+    setCompanies((rows) =>
+      rows.map((row) =>
+        row.id === id ? { ...row, relationshipStage: stage || null } : row
+      )
+    );
+    try {
+      await crmFetch(`/api/crm/companies/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ stage }),
+      });
+      await load("clients");
+    } catch {
+      setCompanies(previous);
+      setSaveError("That relationship stage did not save. Please try again.");
+    } finally {
+      setSavingClientId("");
+    }
+  };
 
   return (
-    <main className="relative z-10 mx-auto max-w-[1000px] px-5 py-10">
+    <main
+      className={`relative z-10 mx-auto px-3 py-6 sm:px-5 sm:py-10 ${
+        tab === "clients" ? "max-w-[1440px]" : "max-w-[1000px]"
+      }`}
+    >
       <header className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
         <h1 className="font-display text-[1.4rem] leading-none tracking-tight text-bone">
           <span className="italic text-amber">Live</span>Coach{" "}
@@ -394,46 +452,16 @@ function BoardInner() {
           ))}
         </ul>
       ) : (
-        <div className="flex flex-col gap-3">
-          <div className="flex gap-2">
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && createCompany()}
-              placeholder="New client name"
-              className="flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none focus:border-amber/60"
-            />
-            <button type="button" onClick={createCompany} disabled={!newName.trim()} className="rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber hover:bg-amber/25 disabled:opacity-40">
-              add
-            </button>
-          </div>
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search clients…"
-            className="w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none focus:border-amber/60"
-          />
-          <ul className="flex flex-col gap-2">
-            {shown.map((c) => (
-              <li key={c.id} className="flex items-center justify-between gap-3 rounded-xl border border-edge bg-panel/40 px-4 py-3">
-                <Link href={`/crm/${c.id}`} className="min-w-0 flex-1">
-                  <p className="truncate font-sans text-[0.95rem] text-bone">{c.name}</p>
-                  <p className="truncate font-mono text-[0.58rem] uppercase tracking-wider text-muted">
-                    {[c.sector, c.stage].filter(Boolean).join(" · ") || "no details yet"}
-                  </p>
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => deleteCompany(c.id, c.name)}
-                  title="delete client"
-                  className="shrink-0 rounded px-2 py-1 font-mono text-[0.8rem] text-muted transition hover:text-rust"
-                >
-                  ×
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <ClientPortfolio
+          clients={companies}
+          totals={clientTotals}
+          newName={newName}
+          setNewName={setNewName}
+          onCreate={createCompany}
+          onDelete={deleteCompany}
+          onStageChange={setCompanyStage}
+          savingId={savingClientId}
+        />
       )}
       <NavMenu />
     </main>
