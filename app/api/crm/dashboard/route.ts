@@ -149,11 +149,29 @@ export async function GET(req: Request) {
       0
     );
 
-    // Spend so far, split into a rolling 7-day and 30-day window (GBP). The
-    // dashboard toggles between the two; allCost is the lifetime total.
+    // Spend so far in calendar periods (London time): Monday-to-now for the
+    // week and the 1st-to-now for the month. Exact boundaries are returned so
+    // the dashboard never leaves the user guessing what "week" means.
     const now = Date.now();
-    const WEEK = 7 * 24 * 60 * 60 * 1000;
-    const MONTH = 30 * 24 * 60 * 60 * 1000;
+    const londonDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/London",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const todayKey = londonDate.format(new Date(now));
+    const [todayYear, todayMonth, todayDay] = todayKey.split("-").map(Number);
+    const weekday = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/London",
+      weekday: "short",
+    }).format(new Date(now));
+    const weekdayNumber = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(weekday);
+    const weekStartKey = new Date(
+      Date.UTC(todayYear, todayMonth - 1, todayDay - Math.max(0, weekdayNumber))
+    ).toISOString().slice(0, 10);
+    const monthStartKey = `${todayYear}-${String(todayMonth).padStart(2, "0")}-01`;
+    const inWeek = (createdAt: string) => londonDate.format(new Date(createdAt)) >= weekStartKey;
+    const inMonth = (createdAt: string) => londonDate.format(new Date(createdAt)) >= monthStartKey;
     // Calls (costed per session), in-app AI, and background automation - all in,
     // so the dashboard shows true spend, not just calls.
     let callsW = 0, callsM = 0, callsA = 0;
@@ -162,9 +180,8 @@ export async function GET(req: Request) {
       const c = Number(r.cost) || 0;
       if (!c) continue;
       callsA += c;
-      const age = now - new Date(r.created_at as string).getTime();
-      if (age <= WEEK) callsW += c;
-      if (age <= MONTH) callsM += c;
+      if (inWeek(r.created_at as string)) callsW += c;
+      if (inMonth(r.created_at as string)) callsM += c;
     }
     let aiW = 0, aiM = 0, aiA = 0;
     let autoW = 0, autoM = 0, autoA = 0;
@@ -172,15 +189,14 @@ export async function GET(req: Request) {
       const c = Number(r.cost_gbp) || 0;
       if (!c) continue;
       const isAuto = String(r.kind || "").startsWith("automation");
-      const age = now - new Date(r.created_at as string).getTime();
       if (isAuto) {
         autoA += c;
-        if (age <= WEEK) autoW += c;
-        if (age <= MONTH) autoM += c;
+        if (inWeek(r.created_at as string)) autoW += c;
+        if (inMonth(r.created_at as string)) autoM += c;
       } else {
         aiA += c;
-        if (age <= WEEK) aiW += c;
-        if (age <= MONTH) aiM += c;
+        if (inWeek(r.created_at as string)) aiW += c;
+        if (inMonth(r.created_at as string)) aiM += c;
       }
     }
     const weekCost = callsW + aiW + autoW;
@@ -194,11 +210,11 @@ export async function GET(req: Request) {
 
     type WindowCost = { week: number; month: number; all: number };
     const featureMap = new Map<string, WindowCost>();
-    const addFeature = (name: string, cost: number, age: number) => {
+    const addFeature = (name: string, cost: number, createdAt: string) => {
       const row = featureMap.get(name) || { week: 0, month: 0, all: 0 };
       row.all += cost;
-      if (age <= WEEK) row.week += cost;
-      if (age <= MONTH) row.month += cost;
+      if (inWeek(createdAt)) row.week += cost;
+      if (inMonth(createdAt)) row.month += cost;
       featureMap.set(name, row);
     };
     for (const r of costRes.data || []) {
@@ -207,7 +223,7 @@ export async function GET(req: Request) {
       addFeature(
         "Live calls & cues",
         c,
-        now - new Date(r.created_at as string).getTime()
+        r.created_at as string
       );
     }
     const featureForKind = (value: any): string => {
@@ -228,7 +244,7 @@ export async function GET(req: Request) {
       addFeature(
         featureForKind(r.kind),
         c,
-        now - new Date(r.created_at as string).getTime()
+        r.created_at as string
       );
     }
     const featureCosts = [...featureMap.entries()]
@@ -484,6 +500,10 @@ export async function GET(req: Request) {
       allCost,
       costBreakdown,
       featureCosts,
+      costPeriods: {
+        week: { start: weekStartKey, end: todayKey },
+        month: { start: monthStartKey, end: todayKey },
+      },
     };
 
     // A short, cheap AI read of the day, BROKEN INTO SEPARATE LINES (one per

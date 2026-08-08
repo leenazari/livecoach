@@ -34,6 +34,10 @@ type Dash = {
       month: number;
       all: number;
     }[];
+    costPeriods?: {
+      week: { start: string; end: string };
+      month: { start: string; end: string };
+    };
   };
   tasks: {
     text: string;
@@ -217,6 +221,15 @@ export default function DashboardPage() {
     })}`;
   const costNow =
     costMode === "week" ? dash?.kpis.weekCost : dash?.kpis.monthCost;
+  const costPeriod = dash?.kpis.costPeriods?.[costMode];
+  const dateLabel = (value?: string) => {
+    if (!value) return "";
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+    });
+  };
 
   // Weekly spend guide. A soft budget: when this week's all-in spend goes over
   // it, the dashboard flags it and names the biggest driver. Change
@@ -413,8 +426,13 @@ export default function DashboardPage() {
               {"◫"} Token & cost control
             </p>
             <p className="mt-1 font-sans text-[0.78rem] text-bone/65">
-              Recorded spend by feature. Choose how often live intelligence runs.
+              Recorded spend by feature. Week starts Monday; month starts on the 1st.
             </p>
+            {costPeriod ? (
+              <p className="mt-1 font-mono text-[0.52rem] uppercase tracking-wider text-sage/80">
+                {dateLabel(costPeriod.start)} to {dateLabel(costPeriod.end)}
+              </p>
+            ) : null}
           </div>
           <div className="flex overflow-hidden rounded-full border border-edge">
             {(["week", "month"] as const).map((m) => (
