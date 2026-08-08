@@ -32,7 +32,7 @@ export async function gatherClientContext(
         .limit(6),
       supabaseAdmin
         .from("opportunities")
-        .select("title, detail, value, status")
+        .select("title, detail, value, status, opportunity_type")
         .eq("company_id", companyId)
         .order("created_at", { ascending: false })
         .limit(20),
@@ -168,12 +168,12 @@ export async function gatherClientContext(
     }`
   );
   lines.push(
-    `Open opportunities: ${
+    `Open CRM opportunity records: ${
       opps.length
         ? opps
             .map(
               (o: any) =>
-                `${o.title}${o.value ? ` (~£${o.value})` : ""}${o.detail ? ` - ${o.detail}` : ""}`
+                `[${o.opportunity_type || "revenue"}] ${o.title}${o.value ? ` (~£${o.value})` : ""}${o.detail ? ` - ${o.detail}` : ""}`
             )
             .join("; ")
         : "none recorded - no deal value or budget on file"
@@ -282,8 +282,9 @@ export async function gatherGlobalContext(): Promise<string> {
         .limit(500),
       supabaseAdmin
         .from("opportunities")
-        .select("company_id, value")
+        .select("company_id, value, opportunity_type")
         .eq("status", "open")
+        .eq("opportunity_type", "revenue")
         .limit(500),
       supabaseAdmin
         .from("tasks")

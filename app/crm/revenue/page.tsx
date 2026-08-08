@@ -14,6 +14,7 @@ type Opportunity = Record<string, any> & {
   probability: number;
   pipeline_stage: string;
   forecast_category: string;
+  opportunity_type: "revenue" | "investment" | "internal" | "strategic";
   expected_close_at: string | null;
   weightedValue: number;
   risks: { code: string; label: string; severity: "high" | "medium" }[];
@@ -24,6 +25,12 @@ const input = "min-h-11 w-full rounded-lg border border-edge bg-ink/60 px-3 py-2
 const button = "min-h-11 rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.61rem] uppercase tracking-wider text-amber disabled:opacity-40";
 const gbp = (value: number) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0, notation: Math.abs(value) >= 1_000_000 ? "compact" : "standard" }).format(value || 0);
 const pct = (value: number) => `${Math.round((value || 0) * 10) / 10}%`;
+const typeLabels: Record<Opportunity["opportunity_type"], string> = {
+  revenue: "Customer revenue",
+  investment: "Investment",
+  internal: "Internal project",
+  strategic: "Strategic idea",
+};
 
 export default function RevenuePage() {
   const [data, setData] = useState<Pipeline | null>(null);
@@ -38,7 +45,7 @@ export default function RevenuePage() {
     try {
       const next = await crmFetch<Pipeline>("/api/crm/revenue");
       setData(next);
-      setRows(next.opportunities || []);
+      setRows([...(next.opportunities || []), ...(next.excludedOpportunities || [])]);
       setTarget(next.goal?.target || 5_000_000);
     } catch (e: any) {
       setError(e.message || "Could not load the revenue pipeline");
@@ -48,6 +55,12 @@ export default function RevenuePage() {
   useEffect(() => { load(); }, [load]);
 
   const updateRow = (id: string, patch: Partial<Opportunity>) => setRows((all) => all.map((row) => row.id === id ? { ...row, ...patch } : row));
+  const changeType = (row: Opportunity, opportunity_type: Opportunity["opportunity_type"]) => updateRow(row.id, {
+    opportunity_type,
+    forecast_category: opportunity_type === "revenue"
+      ? (row.forecast_category === "omitted" ? "pipeline" : row.forecast_category)
+      : "omitted",
+  });
   const saveOpportunity = async (row: Opportunity) => {
     setBusy(`opp:${row.id}`); setError(""); setNotice("");
     try {
@@ -58,6 +71,7 @@ export default function RevenuePage() {
           pipelineStage: row.pipeline_stage,
           probability: Number(row.probability) || 0,
           forecastCategory: row.forecast_category,
+          opportunityType: row.opportunity_type,
           expectedCloseAt: row.expected_close_at || null,
         }),
       });
@@ -78,7 +92,9 @@ export default function RevenuePage() {
 
   const wonProgress = data?.goal?.target ? Math.min(100, (data.goal.wonYtd / data.goal.target) * 100) : 0;
   const maxStage = useMemo(() => Math.max(1, ...(data?.stages || []).map((stage: any) => stage.value || 0)), [data]);
-  const visibleRows = showAll ? rows : rows.slice(0, 8);
+  const revenueRows = rows.filter((row) => row.opportunity_type === "revenue");
+  const excludedRows = rows.filter((row) => row.opportunity_type !== "revenue");
+  const visibleRows = showAll ? revenueRows : revenueRows.slice(0, 8);
 
   return (
     <main className="relative z-10 mx-auto max-w-[1220px] px-3 py-5 sm:px-5 sm:py-9">
@@ -112,9 +128,22 @@ export default function RevenuePage() {
           <div className="mt-2 flex justify-between font-mono text-[0.55rem] uppercase text-muted"><span>{pct(wonProgress)} achieved</span><span>{gbp(data.goal.requiredPerMonth)}/month needed</span></div>
         </section>
 
+        <section className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.07] p-4">
+          <h2 className="font-display text-lg text-bone">The forecast now counts sales only</h2>
+          <p className="mt-1 text-sm leading-6 text-muted">The original 16 records mixed customer deals with fundraising, internal work and future routes. Nothing was deleted, but only genuine customer revenue is included in the figures below.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              ["Customer revenue", data.classification.revenue],
+              ["Strategic ideas", data.classification.strategic],
+              ["Internal projects", data.classification.internal],
+              ["Investment", data.classification.investment],
+            ].map(([label, value]) => <div key={String(label)} className="rounded-lg border border-edge bg-ink/30 p-3"><strong className="block font-display text-xl text-bone">{value}</strong><span className="font-mono text-[0.52rem] uppercase text-muted">{label}</span></div>)}
+          </div>
+        </section>
+
         <section className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
           {[
-            ["Raw pipeline", data.kpis.rawPipeline, "Everything open"],
+            ["Raw pipeline", data.kpis.rawPipeline, "Customer sales only"],
             ["Weighted", data.kpis.weightedPipeline, "Value × probability"],
             ["Best case", data.kpis.bestCase, "Best case + commit"],
             ["Commit", data.kpis.commit, "Deals you expect"],
@@ -147,10 +176,11 @@ export default function RevenuePage() {
         </section>
 
         <section className="rounded-xl border border-edge bg-panel p-4">
-          <div className="mb-3"><h2 className="font-display text-lg text-bone">Forecast every opportunity</h2><p className="mt-1 text-sm text-muted">Save value, stage, probability, category and close date so the forecast stays honest.</p></div>
+          <div className="mb-3"><h2 className="font-display text-lg text-bone">Forecast every customer deal</h2><p className="mt-1 text-sm text-muted">Save value, stage, probability, category and close date so the forecast stays honest.</p></div>
           <div className="space-y-3">{visibleRows.map((row) => <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-ink/30 p-3">
             <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-display text-lg text-bone">{row.company}</h3><p className="text-sm text-muted">{row.title}</p></div><div className="text-right"><strong className="block text-bone">{gbp(row.weightedValue)}</strong><span className="font-mono text-[0.52rem] uppercase text-muted">weighted</span></div></div>
-            <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+            <div className="grid grid-cols-2 gap-2 lg:grid-cols-6">
+              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Counts as</span><select className={input} value={row.opportunity_type} onChange={(e) => changeType(row, e.target.value as Opportunity["opportunity_type"])}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Value</span><input type="number" min="0" className={input} value={row.value || ""} onChange={(e) => updateRow(row.id, { value: Number(e.target.value) })} /></label>
               <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Stage</span><select className={input} value={row.pipeline_stage} onChange={(e) => updateRow(row.id, { pipeline_stage: e.target.value })}>{data.stageDefinitions.map((stage: any) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}</select></label>
               <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Probability</span><div className="relative"><input type="number" min="0" max="100" className={input} value={row.probability} onChange={(e) => updateRow(row.id, { probability: Math.min(100, Math.max(0, Number(e.target.value))) })} /><span className="pointer-events-none absolute right-3 top-3 text-sm text-muted">%</span></div></label>
@@ -159,10 +189,16 @@ export default function RevenuePage() {
             </div>
             <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-1.5">{row.risks.map((risk) => <span key={risk.code} className={`rounded-full border px-2 py-0.5 font-mono text-[0.49rem] uppercase ${risk.severity === "high" ? "border-rust/50 text-rust" : "border-edge text-muted"}`}>{risk.label}</span>)}</div><button onClick={() => saveOpportunity(row)} disabled={!!busy} className={`${button} shrink-0`}>{busy === `opp:${row.id}` ? "Saving…" : "Save forecast"}</button></div>
           </article>)}</div>
-          {rows.length > 8 ? <button onClick={() => setShowAll((value) => !value)} className="mt-3 min-h-11 w-full rounded-lg border border-edge font-mono text-[0.58rem] uppercase text-muted">{showAll ? "Show less" : `Show all ${rows.length} opportunities`}</button> : null}
+          {revenueRows.length > 8 ? <button onClick={() => setShowAll((value) => !value)} className="mt-3 min-h-11 w-full rounded-lg border border-edge font-mono text-[0.58rem] uppercase text-muted">{showAll ? "Show less" : `Show all ${revenueRows.length} customer deals`}</button> : null}
         </section>
+
+        {excludedRows.length ? <section className="mt-4 rounded-xl border border-edge bg-panel p-4">
+          <div className="mb-3"><h2 className="font-display text-lg text-bone">Kept outside the revenue forecast</h2><p className="mt-1 text-sm leading-6 text-muted">These records are still available as useful CRM context. Change the classification if any should become a real customer deal.</p></div>
+          <div className="space-y-2">{excludedRows.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-ink/30 p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><strong className="text-bone">{row.company}</strong><p className="mt-0.5 text-sm text-muted">{row.title}</p>{row.value ? <p className="mt-1 text-xs text-amber">Recorded value {gbp(row.value)}, excluded from revenue</p> : null}</div><div className="flex w-full gap-2 sm:w-auto"><select aria-label={`Classification for ${row.title}`} className={`${input} sm:w-44`} value={row.opportunity_type} onChange={(e) => changeType(row, e.target.value as Opportunity["opportunity_type"])}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><button onClick={() => saveOpportunity(row)} disabled={!!busy} className={`${button} shrink-0`}>{busy === `opp:${row.id}` ? "Saving…" : "Save"}</button></div></div>
+          </article>)}</div>
+        </section> : null}
       </> : null}
     </main>
   );
 }
-

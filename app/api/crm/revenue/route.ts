@@ -66,8 +66,10 @@ export async function GET() {
       tasksByCompany.set(task.company_id, [...(tasksByCompany.get(task.company_id) || []), task]);
     }
 
-    const open = (opportunities || []).filter((op: any) => op.status === "open");
-    const wonYtd = (opportunities || []).filter((op: any) => op.status === "won" && new Date(op.won_at || op.updated_at || op.created_at).toISOString() >= yearStart);
+    const openAll = (opportunities || []).filter((op: any) => op.status === "open");
+    const open = openAll.filter((op: any) => (op.opportunity_type || "revenue") === "revenue");
+    const excluded = openAll.filter((op: any) => (op.opportunity_type || "revenue") !== "revenue");
+    const wonYtd = (opportunities || []).filter((op: any) => op.status === "won" && (op.opportunity_type || "revenue") === "revenue" && new Date(op.won_at || op.updated_at || op.created_at).toISOString() >= yearStart);
     const wonValue = wonYtd.reduce((sum: number, op: any) => sum + (Number(op.value) || 0), 0);
     const rawPipeline = open.reduce((sum: number, op: any) => sum + (Number(op.value) || 0), 0);
     const weightedPipeline = open.reduce((sum: number, op: any) => sum + (Number(op.value) || 0) * (Math.max(0, Math.min(100, Number(op.probability) || 0)) / 100), 0);
@@ -117,6 +119,12 @@ export async function GET() {
       };
     }).sort((a: any, b: any) => b.actionScore - a.actionScore);
 
+    const excludedRows = excluded.map((op: any) => ({
+      ...op,
+      value: Number(op.value) || 0,
+      company: nameByCompany.get(op.company_id) || "a client",
+    })).sort((a: any, b: any) => a.company.localeCompare(b.company) || a.title.localeCompare(b.title));
+
     const stages = STAGES.map((stage) => {
       const members = rows.filter((row: any) => row.pipeline_stage === stage.key);
       return {
@@ -132,13 +140,20 @@ export async function GET() {
     const replied = new Set((outreachEvents || []).filter((event: any) => replyKinds.has(event.kind)).map((event: any) => event.prospect_id).filter(Boolean));
     const positive = new Set((outreachEvents || []).filter((event: any) => event.kind === "positive_reply").map((event: any) => event.prospect_id).filter(Boolean));
     const booked = new Set((outreachEvents || []).filter((event: any) => event.kind === "meeting_booked").map((event: any) => event.prospect_id).filter(Boolean));
-    const outreachOpps = (opportunities || []).filter((op: any) => op.source === "outreach");
+    const outreachOpps = (opportunities || []).filter((op: any) => op.source === "outreach" && (op.opportunity_type || "revenue") === "revenue");
 
     return NextResponse.json({
       goal: { target, wonYtd: wonValue, gap, monthsRemaining, requiredPerMonth: gap / monthsRemaining },
       kpis: { rawPipeline, weightedPipeline, commit, bestCase, wonYtd: wonValue, coverage: gap ? rawPipeline / gap : 0 },
       stages,
       opportunities: rows,
+      excludedOpportunities: excludedRows,
+      classification: {
+        revenue: open.length,
+        investment: excluded.filter((op: any) => op.opportunity_type === "investment").length,
+        internal: excluded.filter((op: any) => op.opportunity_type === "internal").length,
+        strategic: excluded.filter((op: any) => op.opportunity_type === "strategic").length,
+      },
       priorities: rows.slice(0, 8),
       funnel: [
         { key: "prospects", label: "Prospects", value: prospectCount || 0 },
@@ -176,4 +191,3 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: error?.message || "failed to save revenue target" }, { status: 500 });
   }
 }
-

@@ -50,14 +50,14 @@ export async function POST(
 {
   "brief": [ "the running 'what we know' profile as a SCANNABLE BULLET LIST - one short bullet per distinct subject, person or thread (who they are, what they want, the state of play, open threads). Group by subject or contact so it never reads as a paragraph. Each bullet is one line, lead with the subject or name where it helps (e.g. 'Alain / KIN: ...'). 3-8 bullets. Merge with the existing brief if given." ],
   "playbook": [ "3-6 short, ordered strategic plays - the main moves to advance THIS client toward the outcome the host wants. Specific to this client and the open threads, most important first. Not generic advice." ],
-  "opportunities": [ { "title": "short name for a concrete opportunity FOR US", "detail": "one line grounding it in the context", "value": <rough GBP number or null> } ],
+  "opportunities": [ { "title": "short name for a concrete CUSTOMER REVENUE opportunity for Interviewa", "detail": "one line grounding it in a buyer need or commercial commitment", "value": <rough GBP number or null> } ],
   "nextSteps": [ { "text": "a concrete to-do, short action line (who to contact, what to send, what to decide)", "action": "one of: email (write/send a message), call (prep for or make a call/meeting), task (anything else)" } ]
 }
 
 Rules:
 - Ground EVERYTHING only in the context below. Never invent facts, names, numbers, dates or commitments. If something isn't there, leave it out.
 - Write in plain English. No markdown, no "#" headings, no "**bold**". No em-dashes or semicolons - use commas and full stops.
-- opportunities: 0-4, only real ones clearly implied. Empty array if none. value is a rough number or null, never a string.
+- opportunities: 0-4, only genuine customer revenue deals clearly implied. Do NOT return investment, fundraising, internal product work, vendor savings, general ideas, partnerships without a buyer, or future possibilities without a current commercial conversation. Empty array if none. value is a rough number or null, never a string.
 - nextSteps: real and actionable, drawn from the open threads in the context. action must be exactly one of "email", "call", "task". If genuinely none, return an empty array.`;
 
     const userMsg = `CLIENT: ${company.name}
@@ -208,6 +208,7 @@ Return the JSON now.`;
           value: o.value,
           status: "open",
           surfaced_by_ai: true,
+          opportunity_type: "revenue",
         }))
       );
     }

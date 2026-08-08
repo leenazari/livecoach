@@ -72,8 +72,9 @@ export async function GET(req: Request) {
           .limit(50),
         supabaseAdmin
           .from("opportunities")
-          .select("id, company_id, title, value, status, created_at")
+          .select("id, company_id, title, value, status, created_at, opportunity_type")
           .eq("status", "open")
+          .eq("opportunity_type", "revenue")
           .limit(100),
         // Open to-dos from the tasks table (next steps + call commitments).
         supabaseAdmin

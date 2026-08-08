@@ -77,13 +77,13 @@ export async function POST(req: NextRequest) {
   "playbook": [ "3-6 short, punchy strategic plays - the MAIN moves to advance THIS specific client toward the outcome the host wants (win the deal, land the project, get the yes). Ordered most important first. Each is ONE short sentence, practical and specific to this client and the open threads - not generic sales advice. This is the host's game plan for the relationship." ],
   "nextCallIntent": "1-2 concise first-person sentences for the NEXT conversation, based on this call's outcome, unresolved commitments and the most valuable next step",
   "nextCallRationale": "one short sentence explaining which unresolved thread or action makes that the priority",
-  "opportunities": [ { "title": "short name for a concrete opportunity FOR US this call surfaced (a deal, upsell, a need we can serve, a next project)", "detail": "one line grounding it in what was said", "value": <rough GBP number or null> } ],
+  "opportunities": [ { "title": "short name for a concrete CUSTOMER REVENUE opportunity for Interviewa", "detail": "one line grounding it in a buyer need or commercial commitment", "value": <rough GBP number or null> } ],
   "followUp": { "subject": "email subject", "body": "a warm, ready-to-review DRAFT follow-up email to the client referencing what was discussed and the sensible next steps" }
 }
 
 Rules:
 - Ground everything ONLY in the inputs - never invent facts, names, numbers or promises.
-- opportunities: 0-4, ONLY real ones clearly implied by the call. Empty array if none. value is a rough number or null - never a string.
+- opportunities: 0-4, ONLY genuine customer revenue deals clearly implied by the call. Do NOT return investment, fundraising, internal product work, vendor savings, general ideas, partnerships without a buyer, or future possibilities without a current commercial conversation. Empty array if none. value is a rough number or null - never a string.
 - nextCallIntent must move the existing relationship forward. Never reset to a first-meeting discovery objective unless this genuinely was the first interaction.
 - followUp: warm and human, not pushy; reference the actual discussion and any agreed next steps; sign off generically (the host reviews and sends it themselves). It is a DRAFT, never sent automatically.`;
 
@@ -239,6 +239,7 @@ Return the JSON now.`;
           value: o.value,
           status: "open",
           surfaced_by_ai: true,
+          opportunity_type: "revenue",
         }))
       );
     }
