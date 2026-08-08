@@ -123,7 +123,11 @@ export async function GET() {
     }
 
     const clients = (companies || [])
-      .filter((company: any) => company.profile?.internal !== true)
+      .filter(
+        (company: any) =>
+          company.profile?.internal !== true &&
+          !String(company.sector || "").toLowerCase().startsWith("internal")
+      )
       .map((company: any) => {
       const companyContacts = contactsByCompany.get(company.id) || [];
       const primaryContact =
@@ -164,22 +168,34 @@ export async function GET() {
       if (!company.stage) reasons.push("Relationship stage missing");
       if (daysQuiet != null && daysQuiet >= 21) reasons.push(`Quiet for ${daysQuiet} days`);
 
+      const stageKey = String(company.stage || "").toLowerCase();
+      const establishedRelationship = [
+        "discovery",
+        "qualified",
+        "proposal",
+        "negotiation",
+        "partner",
+        "customer",
+        "demo",
+      ].includes(stageKey);
+      const hasCommercialWork = !!opportunity || openTasks.length > 0;
+
       if (overdue || (opportunity && daysQuiet != null && daysQuiet >= 21)) {
         health = "red";
       } else if (
-        reasons.length > 0 ||
-        (daysQuiet != null && daysQuiet >= 7) ||
-        (openTasks.length > 0 && !nextMeeting)
+        (hasCommercialWork && (!nextMeeting || !nextActionText)) ||
+        (hasCommercialWork && daysQuiet != null && daysQuiet >= 7) ||
+        (establishedRelationship && daysQuiet != null && daysQuiet >= 14)
       ) {
         health = "amber";
         if (daysQuiet != null && daysQuiet >= 7 && daysQuiet < 21) {
           reasons.unshift(`Quiet for ${daysQuiet} days`);
         }
-      } else if (nextMeeting || (daysQuiet != null && daysQuiet < 7)) {
+      } else if (nextMeeting || (daysQuiet != null && daysQuiet < 7 && reasons.length === 0)) {
         health = "green";
         reasons.push(nextMeeting ? "Next meeting booked" : "Recently active");
       } else {
-        reasons.push("Not enough activity data yet");
+        if (!reasons.length) reasons.push("Not enough activity data yet");
       }
 
       const lastCall = memory.lastCall && typeof memory.lastCall === "object" ? memory.lastCall : {};

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, Suspense } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { crmFetch, type Company } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import TaskList from "@/components/crm/TaskList";
@@ -23,9 +23,9 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 function BoardInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>("tasks");
-  const [tasks, setTasks] = useState<any[]>([]);
   const [drafts, setDrafts] = useState<any[]>([]);
   const [emailTasks, setEmailTasks] = useState<any[]>([]);
   const [opps, setOpps] = useState<any[]>([]);
@@ -55,15 +55,18 @@ function BoardInner() {
     }
   }, [searchParams]);
 
+  const switchTab = (next: Tab) => {
+    setTab(next);
+    router.replace(`/crm/board?tab=${next}`, { scroll: false });
+  };
+
   const load = useCallback(async (which: Tab) => {
     setLoading(true);
     setSaveError("");
     try {
       if (which === "tasks") {
-        // light=1 skips the AI "your day" blurb the board doesn't show, so the
-        // To-do list loads fast instead of waiting on an LLM call.
-        const d = await crmFetch<any>("/api/crm/dashboard?light=1");
-        setTasks(d.tasks || []);
+        // TaskList owns this request and its optimistic persistence. Avoid a
+        // second dashboard fetch for data this page never renders itself.
       } else if (which === "drafts") {
         // Drafts = emails already written (follow_ups, ready to send) PLUS the
         // email next steps that still need drafting (ready to be drafted).
@@ -113,8 +116,8 @@ function BoardInner() {
       );
       setCopiedId(d.id);
       setTimeout(() => setCopiedId(""), 1500);
-    } catch {
-      /* ignore */
+    } catch (error: any) {
+      setSaveError(error?.message || "That client could not be created. Please try again.");
     }
   };
   // An "email to draft" task -> open the assistant to write it.
@@ -264,7 +267,7 @@ function BoardInner() {
           <button
             key={t.key}
             type="button"
-            onClick={() => setTab(t.key)}
+            onClick={() => switchTab(t.key)}
             className={`rounded-full px-3.5 py-1.5 font-mono text-[0.62rem] uppercase tracking-wider transition ${
               tab === t.key
                 ? "border border-amber/60 bg-amber/15 text-amber"

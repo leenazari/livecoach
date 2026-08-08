@@ -91,6 +91,21 @@ const compactDate = (iso: string | null) => {
   });
 };
 
+const activityDate = (iso: string | null) => {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Europe/London",
+  });
+};
+
 const meetingDate = (iso: string | null) => {
   if (!iso) return "Not booked";
   const date = new Date(iso);
@@ -101,6 +116,7 @@ const meetingDate = (iso: string | null) => {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
     timeZone: "Europe/London",
   });
 };
@@ -111,13 +127,15 @@ const gbp = (value: number | null) =>
 function HealthBadge({ row }: { row: ClientPortfolioRow }) {
   const style = HEALTH[row.health];
   return (
-    <span
+    <Link
+      href={`/crm/${row.id}`}
       title={row.healthReasons.join(" · ")}
-      className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1 font-mono text-[0.52rem] uppercase tracking-wider ${style.border} ${style.surface} ${style.text}`}
+      aria-label={`Open ${row.name}: ${style.label}`}
+      className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1 font-mono text-[0.52rem] uppercase tracking-wider transition hover:brightness-125 ${style.border} ${style.surface} ${style.text}`}
     >
       <span className={`h-2 w-2 shrink-0 rounded-full ${style.dot}`} />
       <span className="truncate">{style.label}</span>
-    </span>
+    </Link>
   );
 }
 
@@ -200,7 +218,7 @@ function MobileClientCard({
         <div className="min-w-0">
           <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Last activity</p>
           <p className="truncate font-sans text-[0.76rem] text-bone/80">
-            {compactDate(row.lastTouchAt)}
+            {activityDate(row.lastTouchAt)}
             {row.daysQuiet != null ? ` · ${row.daysQuiet}d` : ""}
           </p>
         </div>
@@ -270,6 +288,10 @@ export default function ClientPortfolio({
   const [health, setHealth] = useState<"all" | ClientHealth>("all");
   const [stage, setStage] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
+  const [sort, setSort] = useState<{
+    key: "priority" | "health" | "name" | "contact" | "stage" | "lastActivity" | "nextMeeting" | "commercial" | "nextMove";
+    direction: "asc" | "desc";
+  }>({ key: "priority", direction: "asc" });
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
 
   const stages = useMemo(
@@ -279,9 +301,8 @@ export default function ClientPortfolio({
     [clients]
   );
 
-  const shown = useMemo(
-    () =>
-      clients.filter((row) => {
+  const shown = useMemo(() => {
+      const filtered = clients.filter((row) => {
         if (health !== "all" && row.health !== health) return false;
         if (stage !== "all" && row.relationshipStage !== stage) return false;
         if (!deferredQuery) return true;
@@ -294,14 +315,61 @@ export default function ClientPortfolio({
           row.primaryContact?.email,
           row.nextAction,
           row.buyingSignal,
+          activityDate(row.lastTouchAt),
+          meetingDate(row.nextMeetingAt),
         ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
         return haystack.includes(deferredQuery);
-      }),
-    [clients, deferredQuery, health, stage]
-  );
+      });
+      if (sort.key === "priority") return filtered;
+      const healthRank = { red: 0, amber: 1, green: 2, grey: 3 } as const;
+      const timestamp = (value: string | null, empty: number) => {
+        if (!value) return empty;
+        const parsed = new Date(value).getTime();
+        return Number.isFinite(parsed) ? parsed : empty;
+      };
+      const textValue = (row: ClientPortfolioRow) => {
+        if (sort.key === "name") return row.name;
+        if (sort.key === "contact") return row.primaryContact?.name || "";
+        if (sort.key === "stage") return row.relationshipStage || "";
+        if (sort.key === "nextMove") return row.nextAction || row.healthReason;
+        return "";
+      };
+      return [...filtered].sort((a, b) => {
+        let comparison = 0;
+        if (sort.key === "health") comparison = healthRank[a.health] - healthRank[b.health];
+        else if (["name", "contact", "stage", "nextMove"].includes(sort.key)) {
+          comparison = textValue(a).localeCompare(textValue(b), "en-GB", { sensitivity: "base" });
+        } else if (sort.key === "lastActivity") {
+          comparison = timestamp(a.lastTouchAt, -Infinity) - timestamp(b.lastTouchAt, -Infinity);
+        } else if (sort.key === "nextMeeting") {
+          comparison = timestamp(a.nextMeetingAt, Infinity) - timestamp(b.nextMeetingAt, Infinity);
+        } else if (sort.key === "commercial") {
+          comparison =
+            (a.opportunity?.value ?? a.opportunity?.probability ?? -1) -
+            (b.opportunity?.value ?? b.opportunity?.probability ?? -1);
+        }
+        if (comparison === 0) comparison = a.name.localeCompare(b.name, "en-GB", { sensitivity: "base" });
+        return sort.direction === "asc" ? comparison : -comparison;
+      });
+    }, [clients, deferredQuery, health, sort, stage]);
+
+  const chooseSort = (key: typeof sort.key) => {
+    setSort((current) => {
+      if (current.key === key) {
+        return { key, direction: current.direction === "asc" ? "desc" : "asc" };
+      }
+      return {
+        key,
+        direction: key === "lastActivity" || key === "commercial" ? "desc" : "asc",
+      };
+    });
+  };
+
+  const sortMark = (key: typeof sort.key) =>
+    sort.key === key ? (sort.direction === "asc" ? " ↑" : " ↓") : " ↕";
 
   const healthFilters: { key: "all" | ClientHealth; label: string; count: number }[] = [
     { key: "all", label: "All", count: totals.all },
@@ -422,20 +490,29 @@ export default function ClientPortfolio({
           <thead className="sticky top-0 z-10 bg-ink">
             <tr className="border-b border-edge">
               {[
-                "Status",
-                "Client & category",
-                "Main contact",
-                "Stage",
-                "Last activity",
-                "Next meeting",
-                "Commercial position",
-                "Priority next move",
-                "",
-              ].map((label) => (
-                <th key={label || "actions"} className="whitespace-nowrap px-3 py-2.5 font-mono text-[0.5rem] font-normal uppercase tracking-[0.14em] text-muted">
-                  {label}
-                </th>
-              ))}
+                ["health", "Status"],
+                ["name", "Client & category"],
+                ["contact", "Main contact"],
+                ["stage", "Stage"],
+                ["lastActivity", "Last activity"],
+                ["nextMeeting", "Next meeting"],
+                ["commercial", "Commercial position"],
+                ["nextMove", "Priority next move"],
+              ].map(([key, label]) => {
+                const typedKey = key as typeof sort.key;
+                return (
+                  <th
+                    key={key}
+                    aria-sort={sort.key === typedKey ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}
+                    className="whitespace-nowrap px-3 py-2.5 font-mono text-[0.5rem] font-normal uppercase tracking-[0.14em] text-muted"
+                  >
+                    <button type="button" onClick={() => chooseSort(typedKey)} className="transition hover:text-amber">
+                      {label}{sortMark(typedKey)}
+                    </button>
+                  </th>
+                );
+              })}
+              <th className="px-3 py-2.5"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -464,9 +541,13 @@ export default function ClientPortfolio({
                     <StageSelect row={row} saving={savingId === row.id} onChange={onStageChange} />
                   </td>
                   <td className="whitespace-nowrap px-3 py-3">
-                    <p className="font-sans text-[0.74rem] text-bone/80">{compactDate(row.lastTouchAt)}</p>
+                    <p className="font-sans text-[0.74rem] text-bone/80">{activityDate(row.lastTouchAt)}</p>
                     <p className="font-mono text-[0.49rem] uppercase tracking-wider text-muted">
-                      {row.daysQuiet == null ? "Unknown" : row.daysQuiet === 0 ? "Today" : `${row.daysQuiet} days ago`}
+                      {row.daysQuiet == null
+                        ? "Unknown"
+                        : row.daysQuiet === 0
+                          ? "Today"
+                          : `${row.daysQuiet} ${row.daysQuiet === 1 ? "day" : "days"} ago`}
                     </p>
                   </td>
                   <td className="max-w-[150px] px-3 py-3">

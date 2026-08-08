@@ -33,6 +33,8 @@ export type Company = {
   profile: Record<string, any>;
   attributes: Record<string, any>;
   notes: string | null;
+  commercial_memory?: Record<string, any> | null;
+  commercial_memory_updated_at?: string | null;
   created_at: string;
   updated_at: string;
 };

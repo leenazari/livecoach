@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { createSupabaseBrowser } from "@/lib/supabase-browser";
 
 // Persistent left sidebar, OPEN by default. Minimise collapses it to a ☰ button;
 // the choice is remembered (localStorage). When open it pushes the page content
@@ -45,6 +46,7 @@ function NavMenuInner() {
     }
   });
   const [mobileMore, setMobileMore] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   // Phone layout: a thumb-reachable bottom tab bar instead of the left sidebar.
   const [mobile, setMobile] = useState(false);
@@ -89,6 +91,18 @@ function NavMenuInner() {
   const openBrain = () => {
     window.dispatchEvent(new CustomEvent("lc:open-brain"));
     if (typeof window !== "undefined" && window.innerWidth < 640) setMinimised(true);
+  };
+
+  const logout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await createSupabaseBrowser().auth.signOut();
+      router.replace("/login");
+      router.refresh();
+    } finally {
+      setLoggingOut(false);
+    }
   };
 
   const isActive = (it: Item) => {
@@ -136,8 +150,8 @@ function NavMenuInner() {
                 <button type="button" onClick={() => { setMobileMore(false); openBrain(); }} className="flex min-h-12 items-center gap-3 rounded-xl border border-amber/40 bg-amber/10 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-amber">
                   <span>▤</span>Talk to brain
                 </button>
-                <button type="button" onClick={() => router.push("/login")} className="flex min-h-12 items-center gap-3 rounded-xl border border-edge bg-ink/40 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-muted">
-                  <span>⎋</span>Logout
+                <button type="button" onClick={logout} disabled={loggingOut} className="flex min-h-12 items-center gap-3 rounded-xl border border-edge bg-ink/40 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-muted disabled:opacity-50">
+                  <span>⎋</span>{loggingOut ? "Signing out…" : "Logout"}
                 </button>
               </div>
             </div>
@@ -255,11 +269,12 @@ function NavMenuInner() {
       <div className="border-t border-edge px-3 py-3">
         <button
           type="button"
-          onClick={() => router.push("/login")}
+          onClick={logout}
+          disabled={loggingOut}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-muted transition hover:bg-rust/10 hover:text-rust"
         >
           <span className="w-4 text-center">⎋</span>
-          Logout
+          {loggingOut ? "Signing out…" : "Logout"}
         </button>
       </div>
     </aside>

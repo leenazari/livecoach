@@ -335,6 +335,36 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       continue;
     }
 
+    if (it.type === "log_client_update") {
+      const content = typeof it.content === "string" ? it.content.trim() : "";
+      if (!content) continue;
+      const company = it.client ? await findCompany(String(it.client)) : null;
+      const companyId = company?.id || defaultCompanyId;
+      if (!companyId) continue;
+      const channel = ["phone", "text", "voice", "note"].includes(it.channel)
+        ? it.channel
+        : "note";
+      const titleByChannel: Record<string, string> = {
+        phone: "Phone call",
+        text: "Text message",
+        voice: "Voice note",
+        note: "General note",
+      };
+      out.push({
+        key,
+        type: it.type,
+        label: `Log ${titleByChannel[channel].toLowerCase()} for ${company?.name || "this client"}: ${content.slice(0, 180)}`,
+        endpoint: `/api/crm/companies/${companyId}/context`,
+        method: "POST",
+        body: {
+          kind: "note",
+          title: titleByChannel[channel],
+          content: content.slice(0, 2000),
+        },
+      });
+      continue;
+    }
+
     if (it.type === "create_task") {
       const text = typeof it.text === "string" ? it.text.trim() : "";
       if (!text) continue;
@@ -737,7 +767,7 @@ CALENDAR: the user's upcoming calls, synced from their calendar, are in the cont
 
 ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles and to-dos, update opportunities, pull email context, remember durable rules, correct records, and dismiss stale work. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
-[{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<call title>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
+[{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<call title>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
 ---END ACTIONS---
 Additional supported actions are:
 {"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":20}
@@ -745,6 +775,7 @@ Additional supported actions are:
 {"type":"build_outreach_queue","limit":20}
 {"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed"}
 For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
+Use log_client_update when the user reports an off-system phone call, text message, voice note or relationship update. Keep the content factual and concise. It enters that client's timeline and commercial memory, which automatically affects future Brain context and next-call intent.
 For update_campaign you may also include "voice":{"tone":"...","style":"...","rules":["..."],"signature":"Lee"}, "bannedPhrases":["..."], "bookingUrl":"https://...", "bookingCtaMode":"interested_reply|final_step|always|never", and "sequence":[{"step":1,"delayDays":0,"purpose":"...","contentType":"plain|insight|case_study|video|close_loop","guidance":"...","assetUrl":null}]. Only include settings the user asked for or approved in the conversation.
 
 CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Exact outreach drafts and external sends stay in the dedicated Outreach approval flow.
