@@ -17,6 +17,7 @@ import TaskList from "@/components/crm/TaskList";
 import QuickClientUpdate, {
   type QuickUpdateItem,
 } from "@/components/crm/QuickClientUpdate";
+import StakeholderMap from "@/components/crm/StakeholderMap";
 
 const inputCls =
   "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
@@ -354,7 +355,16 @@ export default function CompanyDetailPage() {
     : null;
   const priorityOverdue =
     priorityDueMs != null && Number.isFinite(priorityDueMs) && priorityDueMs < Date.now();
-  const primaryContact = contacts.find((contact) => contact.email) || contacts[0] || null;
+  const primaryContact =
+    contacts.find(
+      (contact) => contact.attributes?.stakeholderRole === "decision_maker"
+    ) ||
+    contacts.find(
+      (contact) => contact.attributes?.stakeholderRole === "champion"
+    ) ||
+    contacts.find((contact) => contact.email) ||
+    contacts[0] ||
+    null;
   const latestCallAt = calls[0]?.created_at || null;
   const nextMeeting = timeline.find(
     (item) => item.future && item.type === "meeting"
@@ -419,6 +429,11 @@ export default function CompanyDetailPage() {
         ...current.slice(firstPast),
       ];
     });
+  };
+  const updateContact = (saved: Contact) => {
+    setContacts((current) =>
+      current.map((contact) => (contact.id === saved.id ? saved : contact))
+    );
   };
 
   const statCls =
@@ -631,6 +646,8 @@ export default function CompanyDetailPage() {
           ) : null}
         </section>
       ) : null}
+
+      <StakeholderMap contacts={contacts} onSaved={updateContact} />
 
       {(() => {
         const raw = (company.profile as any)?.brief;

@@ -142,6 +142,7 @@ export async function POST(
       commercialMemory?.email ||
       commercialMemory?.outreach ||
       commercialMemory?.opportunity ||
+      commercialMemory?.stakeholders?.length ||
       commercialMemory?.openActions.length ||
       commercialMemory?.addedContext.length
     );
