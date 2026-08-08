@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { openai, OPENAI_MODEL_PRO, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
-import { gatherClientContext } from "@/lib/crm-context";
+import { formatCommercialMemoryBlock, getCommercialMemory } from "@/lib/commercial-memory";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -31,7 +31,7 @@ export async function POST(
         ? (body as any).upcomingId
         : "";
 
-    const [{ data: company }, { data: summaryRows }, { data: taskRows }] =
+    const [{ data: company }, { data: summaryRows }, { data: taskRows }, commercialMemory] =
       await Promise.all([
         supabaseAdmin
           .from("companies")
@@ -43,14 +43,15 @@ export async function POST(
           .select("created_at, session_id, summary")
           .eq("company_id", companyId)
           .order("created_at", { ascending: false })
-          .limit(5),
+          .limit(3),
         supabaseAdmin
           .from("tasks")
           .select("text, kind, status, created_at")
           .eq("company_id", companyId)
           .eq("status", "open")
           .order("created_at", { ascending: false })
-          .limit(20),
+          .limit(12),
+        getCommercialMemory(companyId),
       ]);
 
     if (!company) {
@@ -78,6 +79,7 @@ export async function POST(
         (cached.basedOnSessionId &&
           cached.basedOnSessionId === summaries[0]?.session_id)) &&
       cached.basedOnEmailAt === newestEmailAt
+      && cached.basedOnMemoryHash === (commercialMemory?.sourceHash || null)
     );
 
     const applyToUpcoming = async (
@@ -134,7 +136,16 @@ export async function POST(
       playbook.length > 0 ||
       (typeof profile.brief === "string" ? profile.brief.trim() : "") ||
       (Array.isArray(profile.brief) && profile.brief.length > 0);
-    if (!hasMaterial) {
+    const hasCommercialMaterial = !!(
+      commercialMemory?.relationship ||
+      commercialMemory?.lastCall ||
+      commercialMemory?.email ||
+      commercialMemory?.outreach ||
+      commercialMemory?.opportunity ||
+      commercialMemory?.openActions.length ||
+      commercialMemory?.addedContext.length
+    );
+    if (!hasMaterial && !hasCommercialMaterial) {
       return NextResponse.json(
         {
           error:
@@ -185,9 +196,7 @@ export async function POST(
     // The scheduled call's existing intent is deliberately excluded. It may be
     // the stale text we are here to replace and must never compete with the
     // newest scorecard and its open actions.
-    const context = await gatherClientContext(companyId, {
-      includeUpcomingIntents: false,
-    });
+    const context = formatCommercialMemoryBlock(commercialMemory);
 
     const biz = await workspaceContextBlock();
     const lessons = await getLessonsBlock(["strategy", "negotiation"]);
@@ -330,6 +339,7 @@ Return the JSON now.`;
             rationale: cleanRationale,
             basedOnSummaryAt: newestSummaryAt,
             basedOnEmailAt: newestEmailAt,
+            basedOnMemoryHash: commercialMemory?.sourceHash || null,
             generatedAt: new Date().toISOString(),
           },
         },
