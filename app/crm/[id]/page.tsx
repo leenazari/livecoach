@@ -30,7 +30,8 @@ type TimelineItem = {
     | "opportunity"
     | "note"
     | "follow_up"
-    | "meeting";
+    | "meeting"
+    | "outreach";
   at: string;
   title: string;
   detail?: string;
@@ -545,6 +546,7 @@ export default function CompanyDetailPage() {
                 ["all", "All"],
                 ["calls", "Calls"],
                 ["emails", "Emails"],
+                ["outreach", "Outreach"],
                 ["actions", "Promises"],
                 ["opportunities", "Opportunities"],
                 ["notes", "Notes"],
@@ -568,6 +570,7 @@ export default function CompanyDetailPage() {
             const allowed: Record<string, TimelineItem["type"][]> = {
               calls: ["call", "meeting"],
               emails: ["email", "follow_up"],
+              outreach: ["outreach"],
               actions: ["commitment", "task"],
               opportunities: ["opportunity"],
               notes: ["note"],
@@ -586,6 +589,7 @@ export default function CompanyDetailPage() {
               call: { icon: "◉", label: "Call", tone: "text-sage" },
               email: { icon: "✉", label: "Email", tone: "text-sky" },
               follow_up: { icon: "↗", label: "Follow-up", tone: "text-sky" },
+              outreach: { icon: "◎", label: "Outreach", tone: "text-moss" },
               commitment: { icon: "✓", label: "Promise", tone: "text-rust" },
               task: { icon: "→", label: "Action", tone: "text-bone" },
               opportunity: { icon: "◆", label: "Opportunity", tone: "text-amber" },
