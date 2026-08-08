@@ -64,6 +64,7 @@ export async function GET(req: Request) {
       outreachProspectsRes,
       outreachEnrolmentsRes,
       approvedOutreachRes,
+      pendingActivityRes,
     ] =
       await Promise.all([
         supabaseAdmin.from("companies").select("id, name, stage"),
@@ -131,6 +132,16 @@ export async function GET(req: Request) {
           .eq("status", "approved")
           .order("approved_at", { ascending: true })
           .limit(20),
+        // Only unresolved activity plans are loaded. This is a tiny JSONB
+        // subset and makes off-system phone/text updates visible on Today
+        // without another model call or loading every client profile.
+        supabaseAdmin
+          .from("companies")
+          .select("id, name, commercial_memory")
+          .contains("commercial_memory", {
+            latestActivity: { status: "pending" },
+          })
+          .limit(50),
       ]);
 
     const nameById = new Map<string, string>();
@@ -253,7 +264,7 @@ export async function GET(req: Request) {
       if (kind.startsWith("automation")) return "Automation";
       if (/intent|research|battlecard|prep/.test(kind))
         return "Preparation & intent";
-      if (/summary|profile|commitment|extract|digest|cross-link/.test(kind))
+      if (/summary|profile|commitment|extract|digest|cross-link|activity/.test(kind))
         return "Summaries & CRM sync";
       if (/coach|brain|lesson|assistant|correct/.test(kind))
         return "Brain & coaching";
@@ -489,8 +500,26 @@ export async function GET(req: Request) {
         };
       })
       .sort((a: any, b: any) => b.score - a.score);
+    const pendingActivityPlans = (pendingActivityRes.data || [])
+      .map((company: any) => {
+        const latest = company.commercial_memory?.latestActivity;
+        if (!latest?.contextId) return null;
+        return {
+          id: `activity:${latest.contextId}`,
+          text:
+            String(latest.nextAction || "").trim() ||
+            String(latest.overview || "Review the latest client update").trim(),
+          company: company.name || null,
+          at: latest.at || null,
+          href: `/crm/${company.id}#sec-quick-update`,
+          reason: "Review client update",
+          score: 165,
+        };
+      })
+      .filter(Boolean);
     const topCandidates = [
       ...interestedReplies.map((x: any) => ({ ...x, reason: "Interested reply", score: 170 })),
+      ...pendingActivityPlans,
       ...overduePromises.map((x: any) => ({ ...x, reason: "Overdue promise", score: 150 })),
       ...approvedOutreach.map((x: any) => ({ ...x, reason: "Approved and ready", score: 140 })),
       ...callsToPrep.map((x: any) => ({ ...x, reason: "Call within 24 hours", score: 130 })),

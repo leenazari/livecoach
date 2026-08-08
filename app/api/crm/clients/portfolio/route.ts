@@ -153,7 +153,9 @@ export async function GET() {
         validDateMs(memory.outreach?.lastReplyAt) || 0,
         validDateMs(memory.outreach?.lastContactedAt) || 0
       ) || null;
-      const lastTouchMs = Math.max(emailMs || 0, callMs || 0, outreachMs || 0) || null;
+      const activityMs = validDateMs(memory.latestActivity?.at);
+      const lastTouchMs =
+        Math.max(emailMs || 0, callMs || 0, outreachMs || 0, activityMs || 0) || null;
       const lastTouchAt = lastTouchMs ? new Date(lastTouchMs).toISOString() : null;
       const daysQuiet = lastTouchMs
         ? Math.max(0, Math.floor((nowMs - lastTouchMs) / DAY_MS))
@@ -167,6 +169,12 @@ export async function GET() {
       if (!primaryContact) reasons.push("No contact recorded");
       if (!company.stage) reasons.push("Relationship stage missing");
       if (daysQuiet != null && daysQuiet >= 21) reasons.push(`Quiet for ${daysQuiet} days`);
+      const activityRisk = firstText(memory.latestActivity?.risks);
+      const pendingActivityPlan =
+        memory.latestActivity?.status === "pending" &&
+        String(memory.latestActivity?.nextAction || "").trim();
+      if (pendingActivityPlan) reasons.unshift("New client update needs approval");
+      if (activityRisk) reasons.unshift(`New risk: ${activityRisk}`);
 
       const stageKey = String(company.stage || "").toLowerCase();
       const establishedRelationship = [
@@ -183,6 +191,8 @@ export async function GET() {
       if (overdue || (opportunity && daysQuiet != null && daysQuiet >= 21)) {
         health = "red";
       } else if (
+        activityRisk ||
+        pendingActivityPlan ||
         (hasCommercialWork && (!nextMeeting || !nextActionText)) ||
         (hasCommercialWork && daysQuiet != null && daysQuiet >= 7) ||
         (establishedRelationship && daysQuiet != null && daysQuiet >= 14)
@@ -200,7 +210,9 @@ export async function GET() {
 
       const lastCall = memory.lastCall && typeof memory.lastCall === "object" ? memory.lastCall : {};
       const buyingSignal =
-        firstText(lastCall.buyingSignals) || firstText(lastCall.commercialOpportunities);
+        firstText(memory.latestActivity?.buyingSignals) ||
+        firstText(lastCall.buyingSignals) ||
+        firstText(lastCall.commercialOpportunities);
       const stage = String(company.stage || opportunity?.pipeline_stage || "").trim();
 
       return {

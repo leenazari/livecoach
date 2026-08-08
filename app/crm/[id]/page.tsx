@@ -627,6 +627,10 @@ export default function CompanyDetailPage() {
           companyId={id}
           companyName={company.name}
           onSaved={addQuickUpdateToTimeline}
+          onApplied={load}
+          initialIntelligence={
+            (company.profile as any)?.activity_intelligence?.latest || null
+          }
         />
       </div>
 
