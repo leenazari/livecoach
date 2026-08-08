@@ -309,7 +309,7 @@ export default function DashboardPage() {
       <CrmSearch />
 
       {/* TODAY: the first decision layer, built from factual CRM state without
-          another model call. The top three are deliberately first. */}
+          another model call. The highest-ranked moves are deliberately first. */}
       <section className="mb-3 rounded-2xl border border-amber/45 bg-gradient-to-br from-amber/[0.09] to-transparent p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
           <div>
@@ -317,7 +317,7 @@ export default function DashboardPage() {
               {"◆"} Today
             </p>
             <p className="mt-1 font-sans text-[0.8rem] text-bone/65">
-              The three moves that need your attention first.
+              Your most important moves, ranked across deadlines, promises and revenue.
             </p>
           </div>
           <span className="rounded-full border border-edge px-2.5 py-1 font-mono text-[0.52rem] uppercase tracking-wider text-muted">
@@ -330,7 +330,7 @@ export default function DashboardPage() {
           </p>
         )}
         {dash?.today?.topActions?.length ? (
-          <ol className="mb-4 grid gap-2 md:grid-cols-3">
+          <ol className="mb-4 grid gap-2 md:grid-cols-2 lg:grid-cols-3">
             {dash.today.topActions.map((item, i) => (
               <li key={`${item.reason}-${item.id}`}>
                 <div className="group flex h-full flex-col rounded-xl border border-edge bg-ink/55 p-3 transition hover:border-amber/60">

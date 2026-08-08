@@ -319,15 +319,70 @@ export async function GET(req: Request) {
         at: latestTouch.get(o.company_id) || o.created_at,
         href: o.company_id ? `/crm/${o.company_id}` : "/crm/board?tab=opportunities",
       }));
-    const topActions = [
-      ...overduePromises.map((x: any) => ({ ...x, reason: "Overdue promise" })),
-      ...callsToPrep.map((x: any) => ({ ...x, reason: "Call within 24 hours" })),
+    // Rank the whole workload, not just rows that happen to have a deadline.
+    // This stops important older actions and high-value opportunity work from
+    // disappearing behind the many dashboard checklists.
+    const oppValueByCompany = new Map<string, number>();
+    for (const opp of openOpps) {
+      const companyId = opp.company_id as string;
+      if (!companyId) continue;
+      oppValueByCompany.set(
+        companyId,
+        Math.max(oppValueByCompany.get(companyId) || 0, Number(opp.value) || 0)
+      );
+    }
+    const rankedOpenTasks = tasks
+      .map((task: any) => {
+        const due = task.dueAt ? new Date(task.dueAt).getTime() : NaN;
+        const ageDays = task.createdAt
+          ? Math.max(0, (now - new Date(task.createdAt).getTime()) / (24 * 60 * 60 * 1000))
+          : 0;
+        const value = oppValueByCompany.get(task.companyId) || 0;
+        let score = Math.min(25, ageDays / 2) + Math.min(35, value / 50_000);
+        let reason = value ? "Revenue opportunity" : "Important open action";
+        if (Number.isFinite(due) && due < now) {
+          score += 120;
+          reason = "Overdue";
+        } else if (Number.isFinite(due) && due <= next24h) {
+          score += 90;
+          reason = "Due within 24 hours";
+        } else if (Number.isFinite(due) && due <= now + 7 * 24 * 60 * 60 * 1000) {
+          score += 55;
+          reason = "Due this week";
+        }
+        if (task.kind === "commitment") {
+          score += 35;
+          if (!Number.isFinite(due)) reason = "Promise you made";
+        }
+        return {
+          id: task.id,
+          text: task.text,
+          company: task.company === "—" ? null : task.company,
+          at: task.dueAt || task.createdAt,
+          href: task.companyId ? `/crm/${task.companyId}` : "/crm/board?tab=tasks",
+          entity: "task" as const,
+          reason,
+          score,
+        };
+      })
+      .sort((a: any, b: any) => b.score - a.score);
+    const topCandidates = [
+      ...overduePromises.map((x: any) => ({ ...x, reason: "Overdue promise", score: 150 })),
+      ...callsToPrep.map((x: any) => ({ ...x, reason: "Call within 24 hours", score: 130 })),
       ...awaitingOthers
         .filter((x: any) => x.at && new Date(x.at).getTime() < now)
-        .map((x: any) => ({ ...x, reason: "Chase overdue promise" })),
-      ...awaitingReply.map((x: any) => ({ ...x, reason: "Reply ready to send" })),
-      ...coolingDeals.map((x: any) => ({ ...x, reason: "Deal is cooling" })),
-    ].slice(0, 3);
+        .map((x: any) => ({ ...x, reason: "Chase overdue promise", score: 115 })),
+      ...awaitingReply.map((x: any) => ({ ...x, reason: "Reply ready to send", score: 70 })),
+      ...coolingDeals.map((x: any) => ({ ...x, reason: "Deal is cooling", score: 60 })),
+      ...rankedOpenTasks,
+    ].sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
+    const seenTopActions = new Set<string>();
+    const topActions = topCandidates.filter((item: any) => {
+      const key = `${item.entity || "item"}:${item.id}`;
+      if (seenTopActions.has(key)) return false;
+      seenTopActions.add(key);
+      return true;
+    }).slice(0, 5);
     const today = {
       callsToPrep,
       overduePromises,
