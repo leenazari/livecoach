@@ -42,6 +42,7 @@ function BoardInner() {
   const [copiedId, setCopiedId] = useState("");
   const [newName, setNewName] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [saveNotice, setSaveNotice] = useState("");
   const [openOpportunity, setOpenOpportunity] = useState("");
   const [savingClientId, setSavingClientId] = useState("");
 
@@ -216,8 +217,10 @@ function BoardInner() {
   const setCompanyStage = async (id: string, stage: string) => {
     const previous = companies;
     const requestedStage = stage || null;
+    const clientName = previous.find((row) => row.id === id)?.name || "Client";
     setSavingClientId(id);
     setSaveError("");
+    setSaveNotice("");
     setCompanies((rows) =>
       rows.map((row) =>
         row.id === id ? { ...row, relationshipStage: requestedStage } : row
@@ -243,9 +246,16 @@ function BoardInner() {
           row.id === id ? { ...row, relationshipStage: savedStage } : row
         )
       );
-    } catch {
+      setSaveNotice(
+        `${clientName} saved as ${savedStage || "stage not set"}.`
+      );
+    } catch (error: any) {
       setCompanies(previous);
-      setSaveError("That relationship stage did not save. Please try again.");
+      setSaveError(
+        error?.message
+          ? `That relationship stage did not save: ${error.message}`
+          : "That relationship stage did not save. Please try again."
+      );
     } finally {
       setSavingClientId("");
     }
@@ -272,8 +282,13 @@ function BoardInner() {
         </Link>
       </header>
       {saveError ? (
-        <p className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 font-sans text-[0.8rem] text-rust">
+        <p role="alert" className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 font-sans text-[0.8rem] text-rust">
           {saveError}
+        </p>
+      ) : null}
+      {saveNotice ? (
+        <p aria-live="polite" className="mb-3 rounded-lg border border-sage/45 bg-sage/10 px-3 py-2 font-sans text-[0.8rem] text-sage">
+          ✓ {saveNotice}
         </p>
       ) : null}
 

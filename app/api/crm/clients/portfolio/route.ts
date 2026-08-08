@@ -3,6 +3,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Supabase documents force-no-store/revalidate=0 as the explicit defence for
+// Next.js 13/14 returning table data from before a recent change. Keep both on
+// this high-value aggregate read in addition to the shared database fetch
+// guard: client stages must never revert visually after a confirmed save.
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -283,7 +289,13 @@ export async function GET() {
         ),
         generatedAt: new Date().toISOString(),
       },
-      { headers: { "Cache-Control": "no-store, max-age=0" } }
+      {
+        headers: {
+          "Cache-Control": "private, no-store, no-cache, max-age=0, must-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
+        },
+      }
     );
   } catch (error: any) {
     return NextResponse.json(
