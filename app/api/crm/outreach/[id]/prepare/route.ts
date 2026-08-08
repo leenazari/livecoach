@@ -35,6 +35,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const voice = campaign.voice && typeof campaign.voice === "object" ? campaign.voice : {};
     const banned = Array.isArray(campaign.banned_phrases) ? campaign.banned_phrases.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 20) : [];
     const sequence = Array.isArray(campaign.sequence) ? campaign.sequence : [];
+    const sequenceStep = sequence.find((row: any) => Number(row?.step) === step) || {
+      step,
+      purpose: step === 1 ? "Relevant opening and one easy question" : "Useful follow-up that adds a new reason to respond",
+      contentType: "plain",
+      guidance: "",
+      assetUrl: null,
+    };
     const lastStep = Math.max(1, ...sequence.map((row: any) => Number(row?.step) || 0));
     const includeBooking = !!campaign.booking_url && (campaign.booking_cta_mode === "always" || (campaign.booking_cta_mode === "final_step" && step >= lastStep));
     const system = `You are Lee Nazari's careful B2B outreach researcher and copywriter for Interviewa. Use web_search to check this exact person and company today. Return ONLY compact JSON.
@@ -46,6 +53,12 @@ COACHING RULES: ${Array.isArray(voice.rules) ? voice.rules.join(" | ").slice(0, 
 BANNED PHRASES: ${banned.join(" | ") || "quick question | hope you are well | reaching out"}.
 
 The email must be plain text, 60 to 105 words, short mobile-friendly paragraphs, one easy question as the CTA, and signed "${clean(voice.signature || "Lee", 80)}". End with a natural one-line opt-out such as "If this is not relevant, tell me and I will not follow up." It must sound individually written, not like a template. Subject under 45 characters. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit-led subject" : "use a short natural question-led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? "This is a follow-up, do not repeat the opening email and make it easy to close the loop." : "This is the first email."} ${includeBooking ? `Include this booking link once, naturally, as the optional next step: ${campaign.booking_url}` : "Do not include a calendar or booking link. Earn interest first."}
+
+APPROVED SEQUENCE BRIEF FOR THIS STEP:
+Purpose: ${clean(sequenceStep.purpose, 240)}
+Content type: ${clean(sequenceStep.contentType || "plain", 60)}
+Extra guidance: ${clean(sequenceStep.guidance, 500) || "none"}
+${sequenceStep.assetUrl ? `Approved asset link: ${clean(sequenceStep.assetUrl, 600)}. Include it once only if it directly supports this step, never invent what the asset contains.` : "No asset link is approved for this step."}
 
 Before writing, choose ONE evidence-backed reason this person should care now and ONE Interviewa angle. The first sentence must be grounded in a verified fact or transparently framed hypothesis. Never mix several random use cases. Explain your evidence and choice in strategy so Lee can approve the thinking as well as the words.
 
@@ -125,7 +138,15 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDA
       persona: clean(parsed.strategy.persona || prospect.job_title, 180),
       qualityChecks: { wordCount, questionCount, bannedHits },
     };
-    const messageTags = { angle: strategy.angle, tone: strategy.tone, cta: strategy.cta, persona: strategy.persona, step, variant };
+    const messageTags = {
+      angle: strategy.angle,
+      tone: strategy.tone,
+      cta: strategy.cta,
+      persona: strategy.persona,
+      step,
+      variant,
+      sequenceContentType: sequenceStep.contentType || "plain",
+    };
 
     const { data: draft, error: draftError } = await supabaseAdmin.from("outreach_messages").upsert({
       enrolment_id: enrolment.id, campaign_id: campaign.id, prospect_id: prospect.id,
