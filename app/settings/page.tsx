@@ -182,10 +182,8 @@ export default function SettingsPage() {
         className={`mb-5 rounded-xl border p-5 ${
           gcal === null
             ? "border-edge bg-panel/40"
-            : gcal.connected && gcal.gmail === "ok"
+            : gcal.connected
               ? "border-sage/45 bg-sage/[0.06]"
-              : gcal.connected
-                ? "border-amber/50 bg-amber/[0.07]"
               : "border-rust/50 bg-rust/[0.07]"
         }`}
       >
@@ -195,18 +193,16 @@ export default function SettingsPage() {
               className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
                 gcal === null
                   ? "text-muted"
-                  : gcal.connected && gcal.gmail === "ok"
+                  : gcal.connected
                     ? "text-sage"
-                    : gcal.connected
-                      ? "text-amber"
-                      : "text-rust"
+                    : "text-rust"
               }`}
             >
               {gcal === null
                 ? "◷"
-                : gcal.connected && gcal.gmail === "ok"
+                : gcal.connected
                   ? "✓"
-                  : "!"} Google & Gmail
+                  : "!"} Google connection
             </p>
             <p className="mt-1 font-mono text-[0.6rem] leading-relaxed text-muted">
               {gcal === null
@@ -216,7 +212,7 @@ export default function SettingsPage() {
                     gcal.email ? ` as ${gcal.email}` : ""
                   }. Calendar is working${
                     gcal.gmail !== "ok"
-                      ? ", but Gmail access needs reconnecting"
+                      ? ". Google has not made Gmail reading available to LiveCoach, so email context and automatic reply checks are paused; reconnecting again is not required"
                       : !gcal.gmailSend
                         ? " and Gmail context is working; Outreach will safely verify sending on the first approved email"
                         : " and Gmail reading and sending are working"
@@ -233,17 +229,10 @@ export default function SettingsPage() {
               </p>
             )}
           </div>
-          {gcal?.connected && gcal.gmail === "ok" ? (
+          {gcal?.connected ? (
             <span className="shrink-0 rounded-full border border-sage/55 bg-sage/10 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage">
-              ● Connected
+              ● Calendar connected
             </span>
-          ) : gcal?.connected ? (
-            <a
-              href="/api/auth/google/start"
-              className="shrink-0 rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
-            >
-              reconnect gmail
-            </a>
           ) : gcal ? (
             <a
               href="/api/auth/google/start"

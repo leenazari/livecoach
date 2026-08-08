@@ -97,9 +97,9 @@ export async function GET() {
             ? "Reading replies and sending approved messages are permitted."
             : readAccess
               ? "Gmail reading works. Sending will be verified safely on the first approved email."
-              : "Gmail reading permission is unavailable. Check the Google connection in Settings.",
+              : "Google has not made Gmail reading available to LiveCoach. Reply monitoring stays paused; reconnecting again is not required.",
         href: "/settings",
-        action: readAccess ? undefined : "Check Google",
+        action: undefined,
       },
       {
         id: "sender",
