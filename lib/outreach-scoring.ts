@@ -185,13 +185,18 @@ export function scoreOutreachProspect(
     : evidenceCount >= 2
       ? "medium"
       : "low";
-  const action: OutreachRecommendationAction = options.dueFollowUp || score >= 62
+  const action: OutreachRecommendationAction = options.dueFollowUp
     ? "contact_today"
-    : score >= 38
+    : status === "contacted"
       ? "hold"
-      : "skip";
+      : score >= 62
+        ? "contact_today"
+        : score >= 38
+          ? "hold"
+          : "skip";
 
-  if (action === "hold") risks.unshift("Worth keeping, but stronger fit evidence is needed before using a daily send slot");
+  if (status === "contacted" && !options.dueFollowUp) risks.unshift("Already contacted; wait until the next sequence step is due");
+  else if (action === "hold") risks.unshift("Worth keeping, but stronger fit evidence is needed before using a daily send slot");
   if (action === "skip") risks.unshift("Current fit is too weak for a limited outreach slot");
 
   return {

@@ -34,6 +34,8 @@ export async function GET(req: NextRequest) {
     const blockedTargets = new Set(
       (suppressions || []).map((row: any) => String(row.target || "").toLowerCase())
     );
+    const dailyLimit = Math.min(20, Math.max(1, Number(campaign?.daily_limit) || 20));
+    let contactSlots = dailyLimit;
     const prospects = (data || [])
       .map((prospect: any) => ({
         ...prospect,
@@ -47,7 +49,26 @@ export async function GET(req: NextRequest) {
       .sort((a: any, b: any) =>
         b.recommendation.score - a.recommendation.score ||
         String(a.company_name || "").localeCompare(String(b.company_name || ""))
-      );
+      )
+      .map((prospect: any) => {
+        if (prospect.recommendation.action !== "contact_today") return prospect;
+        if (contactSlots > 0) {
+          contactSlots -= 1;
+          return prospect;
+        }
+        return {
+          ...prospect,
+          recommendation: {
+            ...prospect.recommendation,
+            action: "hold",
+            label: "Hold",
+            risks: [
+              `Strong fit, but below today’s top ${dailyLimit}`,
+              ...prospect.recommendation.risks,
+            ].slice(0, 3),
+          },
+        };
+      });
     return NextResponse.json({ prospects });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "failed to load outreach prospects" }, { status: 500 });
