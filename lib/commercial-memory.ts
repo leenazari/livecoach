@@ -27,6 +27,16 @@ export type CommercialMemory = {
     lastReplyAt: string | null;
     lastContactedAt: string | null;
   };
+  latestActivity?: null | {
+    contextId: string;
+    at: string;
+    channel: string;
+    overview: string;
+    buyingSignals: string[];
+    risks: string[];
+    nextAction: string;
+    status: string;
+  };
   opportunity: null | {
     id: string;
     title: string;
@@ -118,10 +128,17 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
     const prospect: any = prospectsRes.data?.[0] || null;
     const contacts: any[] = contactsRes.data || [];
     const profile = company.profile && typeof company.profile === "object" ? company.profile : {};
+    const rawActivity =
+      profile.activity_intelligence &&
+      typeof profile.activity_intelligence === "object" &&
+      profile.activity_intelligence.latest &&
+      typeof profile.activity_intelligence.latest === "object"
+        ? profile.activity_intelligence.latest
+        : null;
     const brief = Array.isArray(profile.brief) ? profile.brief.join(" ") : profile.brief;
     const relationship = cut(brief || company.notes, 600);
     const sourceHash = createHash("sha256").update(JSON.stringify({
-      schema: 3,
+      schema: 4,
       name: company.name,
       relationship,
       emailAt: company.email_context_updated_at,
@@ -130,6 +147,15 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
       tasks: tasks.map((row) => [row.id, row.text, row.kind, row.due_at]),
       opportunity: opportunity ? [opportunity.id, opportunity.updated_at, opportunity.status, opportunity.next_action] : null,
       context: contexts.map((row) => [row.id, row.created_at, cut(row.content || row.url, 400)]),
+      activity: rawActivity
+        ? [
+            rawActivity.contextId,
+            rawActivity.createdAt,
+            rawActivity.status,
+            cut(rawActivity.overview, 320),
+            cut(rawActivity.nextAction?.text, 300),
+          ]
+        : null,
       outreach: prospect ? [prospect.id, prospect.updated_at, prospect.reply_category, prospect.last_reply_at] : null,
       stakeholders: contacts.map((row) => [
         row.id,
@@ -177,6 +203,18 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
         lastReplyAt: prospect.last_reply_at || null,
         lastContactedAt: prospect.last_contacted_at || null,
       } : null,
+      latestActivity: rawActivity
+        ? {
+            contextId: cut(rawActivity.contextId, 80),
+            at: rawActivity.createdAt || "",
+            channel: cut(rawActivity.channel, 30),
+            overview: cut(rawActivity.overview, 320),
+            buyingSignals: list(rawActivity.buyingSignals),
+            risks: list(rawActivity.risks),
+            nextAction: cut(rawActivity.nextAction?.text, 300),
+            status: cut(rawActivity.status, 30),
+          }
+        : null,
       opportunity: opportunity ? {
         id: opportunity.id,
         title: cut(opportunity.title, 180),
@@ -212,10 +250,12 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
         kind: cut(row.kind, 50),
         dueAt: row.due_at || null,
       })),
-      addedContext: contexts.map((row) => ({
-        title: cut(row.title || row.kind, 100),
-        content: cut(row.content || row.url, 400),
-      })),
+      addedContext: contexts
+        .filter((row) => row.id !== rawActivity?.contextId)
+        .map((row) => ({
+          title: cut(row.title || row.kind, 100),
+          content: cut(row.content || row.url, 400),
+        })),
     };
     await supabaseAdmin
       .from("companies")
@@ -255,6 +295,19 @@ export function formatCommercialMemoryBlock(memory: CommercialMemory | null): st
   }
   if (memory.email) lines.push(`Latest email context (${memory.email.at || "date unknown"}): ${memory.email.summary}`);
   if (memory.outreach) lines.push(`Outreach with ${memory.outreach.person}: ${memory.outreach.category || "no reply category"}. ${memory.outreach.summary}`.trim());
+  if (memory.latestActivity) {
+    lines.push(
+      `Latest logged ${memory.latestActivity.channel || "activity"} (${memory.latestActivity.at || "date unknown"}): ${memory.latestActivity.overview}`
+    );
+    if (memory.latestActivity.buyingSignals.length)
+      lines.push(`Latest activity buying signals: ${memory.latestActivity.buyingSignals.join(" | ")}`);
+    if (memory.latestActivity.risks.length)
+      lines.push(`Latest activity risks: ${memory.latestActivity.risks.join(" | ")}`);
+    if (memory.latestActivity.nextAction)
+      lines.push(
+        `Latest activity next move (${memory.latestActivity.status || "pending"}): ${memory.latestActivity.nextAction}`
+      );
+  }
   if (memory.opportunity) lines.push(`Revenue opportunity: ${memory.opportunity.title}. Stage ${memory.opportunity.stage}, ${memory.opportunity.probability}%, ${memory.opportunity.value == null ? "value not set" : `£${memory.opportunity.value}`}. Next: ${memory.opportunity.nextAction || "not confirmed"}${memory.opportunity.nextActionDueAt ? `, due ${memory.opportunity.nextActionDueAt.slice(0, 10)}` : ""}, owner ${memory.opportunity.nextActionOwner}.`);
   if (memory.openActions.length) lines.push(`Open CRM actions: ${memory.openActions.map((row) => `${row.text}${row.dueAt ? ` (due ${row.dueAt.slice(0, 10)})` : ""}`).join(" | ")}`);
   if (memory.addedContext.length) lines.push(`Latest added context: ${memory.addedContext.map((row) => `${row.title}: ${row.content}`).join(" | ")}`);
