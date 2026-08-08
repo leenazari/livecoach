@@ -4,6 +4,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "rea
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import RevenueToday from "@/components/crm/RevenueToday";
+import OutreachReadiness from "@/components/crm/OutreachReadiness";
 import { crmFetch } from "@/lib/crm";
 
 type Tab = "queue" | "prospects" | "campaign" | "intelligence" | "replies" | "safety";
@@ -195,6 +196,7 @@ export default function OutreachPage() {
 
       {!loading && tab === "queue" ? <section>
         <RevenueToday />
+        <OutreachReadiness />
         <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s controlled queue</h2><p className="mt-1 text-sm text-muted">Only the strongest safe fits use today’s limited slots. Scoring is free; research happens only when you press Prepare, and every draft waits for approval.</p></div><button onClick={buildQueue} disabled={!!busy || queue.length >= (activeCampaign?.daily_limit || 20)} className={primary}>{busy === "queue" ? "Ranking…" : queue.length ? `Top up to ${activeCampaign?.daily_limit || 20}` : "Rank + build today’s queue"}</button></div>
         <div className="space-y-3">{queue.map((row, index) => { const p = row.prospect; const m = row.message; const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="font-mono text-[0.55rem] uppercase text-muted">#{index + 1} · step {row.current_step}</p><h3 className="mt-1 font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>{p.priority}</span><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[m?.status] || "border-edge text-muted"}`}>{m?.status || "not prepared"}</span></div></div>{!m ? <button onClick={() => prepare(p.id)} disabled={!!busy} className={`${primary} w-full sm:w-auto`}>{busy === `prepare:${p.id}` ? "Researching…" : "Prepare research + draft"}</button> : null}</div>
