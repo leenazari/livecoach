@@ -51,6 +51,7 @@ export default function SettingsPage() {
     email: string | null;
     configured: boolean;
     gmail?: "ok" | "missing" | "disconnected";
+    gmailSend?: boolean;
   } | null>(null);
   const [gcalNote, setGcalNote] = useState("");
 
@@ -68,7 +69,7 @@ export default function SettingsPage() {
     crmFetch<{ lessons: Lesson[] }>("/api/crm/lessons")
       .then((d) => setLessons(d.lessons || []))
       .catch(() => {});
-    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected" }>(
+    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected"; gmailSend?: boolean }>(
       "/api/auth/google/status"
     )
       .then((d) => setGcal(d))
@@ -181,8 +182,10 @@ export default function SettingsPage() {
         className={`mb-5 rounded-xl border p-5 ${
           gcal === null
             ? "border-edge bg-panel/40"
-            : gcal.connected
+            : gcal.connected && gcal.gmail === "ok" && gcal.gmailSend
               ? "border-sage/45 bg-sage/[0.06]"
+              : gcal.connected
+                ? "border-amber/50 bg-amber/[0.07]"
               : "border-rust/50 bg-rust/[0.07]"
         }`}
       >
@@ -190,10 +193,20 @@ export default function SettingsPage() {
           <div>
             <p
               className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
-                gcal === null ? "text-muted" : gcal.connected ? "text-sage" : "text-rust"
+                gcal === null
+                  ? "text-muted"
+                  : gcal.connected && gcal.gmail === "ok" && gcal.gmailSend
+                    ? "text-sage"
+                    : gcal.connected
+                      ? "text-amber"
+                      : "text-rust"
               }`}
             >
-              {gcal === null ? "◷" : gcal.connected ? "✓" : "!"} Google Calendar
+              {gcal === null
+                ? "◷"
+                : gcal.connected && gcal.gmail === "ok" && gcal.gmailSend
+                  ? "✓"
+                  : "!"} Google & Gmail
             </p>
             <p className="mt-1 font-mono text-[0.6rem] leading-relaxed text-muted">
               {gcal === null
@@ -202,11 +215,11 @@ export default function SettingsPage() {
                 ? `Connected${
                     gcal.email ? ` as ${gcal.email}` : ""
                   }. Calendar is working${
-                    gcal.gmail === "ok"
-                      ? " and Gmail context is working"
-                      : gcal.gmail === "missing"
-                      ? ", but Gmail permission or the Gmail API is missing"
-                      : ""
+                    gcal.gmail !== "ok"
+                      ? ", but Gmail access needs reconnecting"
+                      : !gcal.gmailSend
+                        ? ", but Gmail sending permission needs reconnecting"
+                        : " and Gmail reading and sending are working"
                   }. The Sync button on the dashboard pulls calendar changes on demand.`
                 : "Not connected. Reconnect Google Calendar so meetings, cancellations and reschedules stay in sync."}
             </p>
@@ -220,10 +233,17 @@ export default function SettingsPage() {
               </p>
             )}
           </div>
-          {gcal?.connected ? (
+          {gcal?.connected && gcal.gmail === "ok" && gcal.gmailSend ? (
             <span className="shrink-0 rounded-full border border-sage/55 bg-sage/10 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage">
               ● Connected
             </span>
+          ) : gcal?.connected ? (
+            <a
+              href="/api/auth/google/start"
+              className="shrink-0 rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
+            >
+              reconnect gmail
+            </a>
           ) : gcal ? (
             <a
               href="/api/auth/google/start"

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { getAccessToken, googleConnected } from "@/lib/google";
+import { GMAIL_SEND_SCOPE, googleConnected, googleHasScope } from "@/lib/google";
 import { gmailAccessStatus, OUTREACH_FROM_EMAIL } from "@/lib/gmail";
 import { londonDate, OUTREACH_DAILY_HARD_LIMIT } from "@/lib/outreach";
 
@@ -15,20 +15,6 @@ type ReadinessCheck = {
   href?: string;
   action?: string;
 };
-
-async function grantedGoogleScopes(token: string): Promise<Set<string>> {
-  try {
-    const response = await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`,
-      { cache: "no-store", signal: AbortSignal.timeout(6_000) }
-    );
-    if (!response.ok) return new Set();
-    const data = await response.json();
-    return new Set(String(data.scope || "").split(/\s+/).filter(Boolean));
-  } catch {
-    return new Set();
-  }
-}
 
 export async function GET() {
   try {
@@ -58,10 +44,9 @@ export async function GET() {
           .eq("from_email", OUTREACH_FROM_EMAIL),
       ]);
 
-    const token = google.connected ? await getAccessToken() : null;
-    const [gmailStatus, scopes] = await Promise.all([
+    const [gmailStatus, sendScope] = await Promise.all([
       gmailAccessStatus(),
-      token ? grantedGoogleScopes(token) : Promise.resolve(new Set<string>()),
+      google.connected ? googleHasScope(GMAIL_SEND_SCOPE) : Promise.resolve(false),
     ]);
     const databaseError =
       campaignResult.error ||
@@ -85,7 +70,6 @@ export async function GET() {
     const eligible = eligibleResult.count || 0;
     const queued = queuedResult.count || 0;
     const aliasPreviouslyVerified = (sentAliasResult.count || 0) > 0;
-    const sendScope = scopes.has("https://www.googleapis.com/auth/gmail.send");
 
     const checks: ReadinessCheck[] = [
       {
