@@ -6,6 +6,8 @@ export const runtime = "nodejs";
 // keeps serving a stale snapshot even after the database has changed (a
 // recovered call stayed invisible on the client page for exactly this reason).
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 // GET    /api/crm/companies/:id -> the company + its contacts
 // PATCH  /api/crm/companies/:id -> update core fields + custom attributes
@@ -87,7 +89,16 @@ export async function PATCH(
       .select()
       .single();
     if (error) throw error;
-    return NextResponse.json({ company: data });
+    return NextResponse.json(
+      { company: data },
+      {
+        headers: {
+          "Cache-Control": "private, no-store, no-cache, max-age=0, must-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
+        },
+      }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to update company" },
