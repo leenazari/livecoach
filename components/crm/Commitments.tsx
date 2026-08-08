@@ -110,7 +110,7 @@ export default function Commitments({
     loadSeq.current += 1;
     setSaving(true);
     try {
-      await crmFetch(`/api/crm/tasks/${t.id}`, {
+      const result = await crmFetch<{ task: Task }>(`/api/crm/tasks/${t.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           payload: { ...(t.payload || {}), ...draft },
@@ -119,7 +119,12 @@ export default function Commitments({
             : null,
         }),
       });
-      await load();
+      if (!result.task?.id) throw new Error("draft not saved");
+      setItems((all) =>
+        all.map((item) =>
+          item.id === t.id ? { ...item, ...result.task } : item
+        )
+      );
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
       /* ignore */
@@ -192,11 +197,16 @@ export default function Commitments({
     setItems((p) => p.map((x) => (x.id === t.id ? { ...x, text } : x)));
     setEditingId(null);
     try {
-      await crmFetch(`/api/crm/tasks/${t.id}`, {
+      const result = await crmFetch<{ task: Task }>(`/api/crm/tasks/${t.id}`, {
         method: "PATCH",
         body: JSON.stringify({ text }),
       });
-      await load();
+      if (result.task?.text !== text) throw new Error("text not saved");
+      setItems((all) =>
+        all.map((item) =>
+          item.id === t.id ? { ...item, ...result.task } : item
+        )
+      );
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
       setItems(previous);

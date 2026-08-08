@@ -731,15 +731,23 @@ function PrepInner() {
           if (drafted) {
             intentRef.current = drafted;
             setIntent(drafted);
-            setStep("intent", "done", "drafted, edit it if you want");
             if (upcomingId) {
-              crmFetch(`/api/crm/upcoming/${upcomingId}`, {
-                method: "PATCH",
-                body: JSON.stringify({
-                  intent: drafted,
-                  intentSource: "generated",
-                }),
-              }).catch(() => {});
+              try {
+                const saved = await crmFetch<{ ok: boolean }>(`/api/crm/upcoming/${upcomingId}`, {
+                  method: "PATCH",
+                  body: JSON.stringify({
+                    intent: drafted,
+                    intentSource: "generated",
+                  }),
+                });
+                if (!saved.ok) throw new Error("intent not saved");
+                setStep("intent", "done", "drafted and saved, edit it if you want");
+              } catch {
+                setStep("intent", "failed", "drafted, but not saved — press save below");
+                setChainErr("The intent was created, but it did not save to this scheduled call.");
+              }
+            } else {
+              setStep("intent", "done", "drafted, edit it if you want");
             }
           } else {
             setStep(
@@ -1117,13 +1125,20 @@ function PrepInner() {
 
   const saveToScheduled = async () => {
     if (!upcomingId || !intent.trim()) return;
-    await crmFetch(`/api/crm/upcoming/${upcomingId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ intent: intent.trim(), intentSource: "manual" }),
-    }).catch(() => {});
-    intentRef.current = intent.trim();
-    setSavedToCall(true);
-    window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    setChainErr("");
+    try {
+      const saved = await crmFetch<{ ok: boolean }>(`/api/crm/upcoming/${upcomingId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ intent: intent.trim(), intentSource: "manual" }),
+      });
+      if (!saved.ok) throw new Error("intent not saved");
+      intentRef.current = intent.trim();
+      setSavedToCall(true);
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    } catch (e: any) {
+      setSavedToCall(false);
+      setChainErr(e?.message || "That intent did not save. Please try again.");
+    }
   };
 
   const copyIntent = async () => {

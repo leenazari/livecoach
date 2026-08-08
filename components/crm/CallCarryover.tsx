@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { crmFetch, getCached } from "@/lib/crm";
 
 type LastCall = {
@@ -46,6 +46,9 @@ export default function CallCarryover({
   const [open, setOpen] = useState(true);
   const [checklist, setChecklist] = useState<string[]>(seed?.checklist || []);
   const [newItem, setNewItem] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const lastSaved = useRef<string[]>(seed?.checklist || []);
+  const saveSeq = useRef(0);
   // Ephemeral tick state (per call, not saved) - the standing list is reused
   // every time, so ticking is just to track coverage during this call.
   const [ticked, setTicked] = useState<Record<string, boolean>>({});
@@ -56,18 +59,34 @@ export default function CallCarryover({
       .then((d) => {
         setData(d);
         setChecklist(Array.isArray(d.checklist) ? d.checklist : []);
+        lastSaved.current = Array.isArray(d.checklist) ? d.checklist : [];
       })
       .catch(() => {})
       .finally(() => setLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
 
-  const persist = (next: string[]) => {
+  const persist = async (next: string[]) => {
+    const seq = ++saveSeq.current;
+    const previous = lastSaved.current;
     setChecklist(next);
-    crmFetch(url, {
-      method: "PUT",
-      body: JSON.stringify({ checklist: next }),
-    }).catch(() => {});
+    setSaveError("");
+    try {
+      const saved = await crmFetch<{ ok: boolean; checklist: string[] }>(url, {
+        method: "PUT",
+        body: JSON.stringify({ checklist: next }),
+      });
+      if (!saved.ok) throw new Error("checklist not saved");
+      if (seq === saveSeq.current) {
+        lastSaved.current = saved.checklist || next;
+        setChecklist(saved.checklist || next);
+      }
+    } catch {
+      if (seq === saveSeq.current) {
+        setChecklist(previous);
+        setSaveError("That checklist change did not save. Please try again.");
+      }
+    }
   };
 
   const addItem = () => {
@@ -224,6 +243,9 @@ export default function CallCarryover({
             <p className="mb-1 font-mono text-[0.52rem] uppercase tracking-[0.16em] text-bone/70">
               Your standing checklist
             </p>
+            {saveError ? (
+              <p className="mb-2 text-xs text-rust">{saveError}</p>
+            ) : null}
             <ul className="flex flex-col gap-1">
               {checklist.map((t, i) => {
                 const key = `chk:${i}`;

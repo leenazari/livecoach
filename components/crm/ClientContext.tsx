@@ -172,8 +172,15 @@ export default function ClientContext({ companyId }: { companyId: string }) {
   };
 
   const remove = async (id: string) => {
+    const previous = items;
+    setErr("");
     setItems((p) => p.filter((x) => x.id !== id));
-    crmFetch(`/api/crm/context/${id}`, { method: "DELETE" }).catch(() => {});
+    try {
+      await crmFetch(`/api/crm/context/${id}`, { method: "DELETE" });
+    } catch (e: any) {
+      setItems(previous);
+      setErr(e.message || "That note did not delete. Please try again.");
+    }
   };
 
   const tabCls = (t: string) =>

@@ -230,6 +230,7 @@ export default function ClientAssistant({
   // Hands-free conversation: it listens, replies aloud, then listens again.
   const [convo, setConvo] = useState(false);
   const [savedDrafts, setSavedDrafts] = useState<Record<string, boolean>>({});
+  const [threadError, setThreadError] = useState("");
   // Per-proposed-action state: pending | busy | done | cancelled.
   const [actionState, setActionState] = useState<Record<string, string>>({});
   const [batchBusy, setBatchBusy] = useState(false);
@@ -795,10 +796,15 @@ export default function ClientAssistant({
       // Close the loop: if this draft came from an email task, tick that task
       // done now that it's written and filed.
       if (draftTaskId) {
-        crmFetch(`/api/crm/tasks/${draftTaskId}`, {
+        crmFetch<{ task: { status: string } }>(`/api/crm/tasks/${draftTaskId}`, {
           method: "PATCH",
           body: JSON.stringify({ status: "done" }),
-        }).catch(() => {});
+        })
+          .then((result) => {
+            if (result.task?.status === "done")
+              window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+          })
+          .catch(() => {});
       }
     } catch {
       setSavedDrafts((p) => ({ ...p, [key]: false }));
@@ -866,8 +872,15 @@ export default function ClientAssistant({
 
   const clearThread = async () => {
     if (!confirm("Clear this assistant conversation?")) return;
+    const previous = messages;
+    setThreadError("");
     setMessages([]);
-    crmFetch(threadUrl, { method: "DELETE" }).catch(() => {});
+    try {
+      await crmFetch(threadUrl, { method: "DELETE" });
+    } catch {
+      setMessages(previous);
+      setThreadError("That conversation did not clear. Please try again.");
+    }
   };
 
   const chips = isGlobal
@@ -934,6 +947,12 @@ export default function ClientAssistant({
           )}
         </div>
       </div>
+
+      {threadError ? (
+        <p className="mb-2 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-xs text-rust">
+          {threadError}
+        </p>
+      ) : null}
 
       <div
         ref={threadRef}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
@@ -83,6 +83,30 @@ type TodayItem = {
 
 type AiMode = "economical" | "balanced" | "high";
 
+const todayTaskGroups = [
+  "callsToPrep",
+  "overduePromises",
+  "awaitingReply",
+  "awaitingOthers",
+  "coolingDeals",
+  "topActions",
+] as const;
+
+const changeTodayTask = (
+  current: Dash | null,
+  id: string,
+  change: (item: TodayItem) => TodayItem | null
+) => {
+  if (!current?.today) return current;
+  const today = { ...current.today };
+  for (const key of todayTaskGroups) {
+    today[key] = (today[key] || [])
+      .map((item) => (item.id === id && item.entity === "task" ? change(item) : item))
+      .filter(Boolean) as any;
+  }
+  return { ...current, today };
+};
+
 export default function DashboardPage() {
   // Seed from the last response (cached in-memory) so a revisit renders
   // instantly with no blink; the fetches below refresh it in the background.
@@ -99,9 +123,15 @@ export default function DashboardPage() {
   const [editingTodayText, setEditingTodayText] = useState("");
   const [todaySavingId, setTodaySavingId] = useState<string | null>(null);
   const [todaySaveError, setTodaySaveError] = useState("");
+  const dashboardSeq = useRef(0);
+  const closedTodayIds = useRef(new Set<string>());
 
   const refreshDashboard = useCallback(async () => {
-    const next = await crmFetch<Dash>("/api/crm/dashboard?light=1");
+    const seq = ++dashboardSeq.current;
+    let next: Dash | null = await crmFetch<Dash>("/api/crm/dashboard?light=1");
+    if (seq !== dashboardSeq.current) return;
+    for (const id of closedTodayIds.current)
+      next = changeTodayTask(next, id, () => null);
     // The light response now contains deterministic, current day points. Do
     // not preserve the old AI snapshot after a tick/delete/edit, because that
     // is exactly what made a successfully saved task appear to come back.
@@ -112,17 +142,32 @@ export default function DashboardPage() {
     item: TodayItem,
     change: { text?: string; status?: "done" | "dismissed" }
   ) => {
+    const previous = dash;
+    dashboardSeq.current += 1;
+    if (change.status) {
+      closedTodayIds.current.add(item.id);
+      setDash((current) => changeTodayTask(current, item.id, () => null));
+    } else if (change.text) {
+      setDash((current) =>
+        changeTodayTask(current, item.id, (task) => ({ ...task, text: change.text! }))
+      );
+    }
     setTodaySaveError("");
     setTodaySavingId(item.id);
     try {
-      await crmFetch(`/api/crm/tasks/${item.id}`, {
+      const result = await crmFetch<{ task: { id: string; text: string; status: string } }>(`/api/crm/tasks/${item.id}`, {
         method: "PATCH",
         body: JSON.stringify(change),
       });
+      if (change.status && result.task?.status !== change.status)
+        throw new Error("status not saved");
+      if (change.text && result.task?.text !== change.text)
+        throw new Error("text not saved");
       setEditingTodayId(null);
-      await refreshDashboard();
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
+      closedTodayIds.current.delete(item.id);
+      setDash(previous);
       setTodaySaveError("That change did not save. Please try again.");
     } finally {
       setTodaySavingId(null);
@@ -145,9 +190,7 @@ export default function DashboardPage() {
     // Paint immediately from the light (no-AI) response, then fold in the
     // "Your day" blurb when the slower AI call returns - so the dashboard
     // never blocks on an LLM call.
-    crmFetch<Dash>("/api/crm/dashboard?light=1")
-      .then((d) => alive && setDash(d))
-      .catch(() => {});
+    refreshDashboard().catch(() => {});
     crmFetch<Dash>("/api/crm/dashboard")
       .then(
         (d) =>
@@ -202,7 +245,12 @@ export default function DashboardPage() {
     const onRefresh = () => {
       if (document.visibilityState === "hidden") return;
       crmFetch<Dash>("/api/crm/dashboard")
-        .then((d) => setDash(d))
+        .then((d) => {
+          let next: Dash | null = d;
+          for (const id of closedTodayIds.current)
+            next = changeTodayTask(next, id, () => null);
+          setDash(next);
+        })
         .catch(() => {});
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     };

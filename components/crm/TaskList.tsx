@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { crmFetch, getCached, setCached } from "@/lib/crm";
 
@@ -112,6 +112,9 @@ export default function TaskList({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
+  // A confirmed close must win over any list request that began before it.
+  const loadSeq = useRef(0);
+  const closedIds = useRef(new Set<string>());
 
   const showTasks = (next: Task[]) => {
     setTasks(next);
@@ -119,35 +122,36 @@ export default function TaskList({
   };
 
   const loadTasks = async () => {
+    const seq = ++loadSeq.current;
     const d = await crmFetch<{ tasks: Task[] }>(url);
-    showTasks(d.tasks || []);
-    return d.tasks || [];
+    if (seq !== loadSeq.current) return [];
+    const next = (d.tasks || []).filter((task) => !closedIds.current.has(task.id));
+    showTasks(next);
+    return next;
   };
 
-  const savedEverywhere = async () => {
-    await loadTasks();
+  const savedEverywhere = () => {
     window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
   };
 
   useEffect(() => {
-    crmFetch<{ tasks: Task[] }>(url)
-      .then((d) => showTasks(d.tasks || []))
-      .catch(() => {});
+    loadTasks().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
   // Refresh when something elsewhere creates to-dos (the assistant, or the
   // post-call voice debrief) so new items appear without a manual reload.
   useEffect(() => {
-    const onUpd = () =>
-      crmFetch<{ tasks: Task[] }>(url)
-        .then((d) => setTasks(d.tasks || []))
-        .catch(() => {});
+    const onUpd = () => loadTasks().catch(() => {});
     window.addEventListener("lc:tasks-updated", onUpd);
     return () => window.removeEventListener("lc:tasks-updated", onUpd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
   const toggle = async (t: Task) => {
     const previous = tasks;
+    loadSeq.current += 1;
+    if (!t.upcoming_id) closedIds.current.add(t.id);
     setSaveError("");
     showTasks(tasks.filter((x) => x.id !== t.id));
     // A prep to-do is derived from an upcoming call: ticking it marks that call
@@ -159,7 +163,7 @@ export default function TaskList({
           method: "PATCH",
           body: JSON.stringify({ prepped: true }),
         });
-        await savedEverywhere();
+        savedEverywhere();
       } catch {
         showTasks(previous);
         setSaveError("That change did not save. Please try again.");
@@ -170,12 +174,14 @@ export default function TaskList({
     }
     try {
       setSavingId(t.id);
-      await crmFetch(`/api/crm/tasks/${t.id}`, {
+      const result = await crmFetch<{ task: Task }>(`/api/crm/tasks/${t.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status: "done" }),
       });
-      await savedEverywhere();
+      if (result.task?.status !== "done") throw new Error("status not saved");
+      savedEverywhere();
     } catch {
+      closedIds.current.delete(t.id);
       showTasks(previous);
       setSaveError("That change did not save. Please try again.");
     } finally {
@@ -187,6 +193,8 @@ export default function TaskList({
     // Dismiss (not hard-delete) so it disappears from the whole pipeline and the
     // background jobs don't re-create it from the same email/call.
     const previous = tasks;
+    loadSeq.current += 1;
+    if (!t.upcoming_id) closedIds.current.add(t.id);
     setSaveError("");
     showTasks(tasks.filter((x) => x.id !== t.id));
     try {
@@ -197,13 +205,16 @@ export default function TaskList({
           body: JSON.stringify({ prepped: true }),
         });
       } else {
-        await crmFetch(`/api/crm/tasks/${t.id}`, {
+        const result = await crmFetch<{ task: Task }>(`/api/crm/tasks/${t.id}`, {
           method: "PATCH",
           body: JSON.stringify({ status: "dismissed" }),
         });
+        if (result.task?.status !== "dismissed")
+          throw new Error("status not saved");
       }
-      await savedEverywhere();
+      savedEverywhere();
     } catch {
+      closedIds.current.delete(t.id);
       showTasks(previous);
       setSaveError("That change did not save. Please try again.");
     } finally {
@@ -226,15 +237,17 @@ export default function TaskList({
       return;
     }
     const previous = tasks;
+    loadSeq.current += 1;
     showTasks(tasks.map((x) => (x.id === t.id ? { ...x, text } : x)));
     setEditingId(null);
     setSavingId(t.id);
     try {
-      await crmFetch(`/api/crm/tasks/${t.id}`, {
+      const result = await crmFetch<{ task: Task }>(`/api/crm/tasks/${t.id}`, {
         method: "PATCH",
         body: JSON.stringify({ text }),
       });
-      await savedEverywhere();
+      if (result.task?.text !== text) throw new Error("text not saved");
+      savedEverywhere();
     } catch {
       showTasks(previous);
       setSaveError("That edit did not save. Please try again.");
@@ -248,17 +261,20 @@ export default function TaskList({
   const togglePin = async (t: Task) => {
     if (t.upcoming_id) return; // prep to-dos aren't pinnable
     const previous = tasks;
+    loadSeq.current += 1;
     const pinned = !t.payload?.pinned;
     const payload = { ...(t.payload || {}), pinned };
     showTasks(tasks.map((x) => (x.id === t.id ? { ...x, payload } : x)));
     setSavingId(t.id);
     setSaveError("");
     try {
-      await crmFetch(`/api/crm/tasks/${t.id}`, {
+      const result = await crmFetch<{ task: Task }>(`/api/crm/tasks/${t.id}`, {
         method: "PATCH",
         body: JSON.stringify({ payload }),
       });
-      await savedEverywhere();
+      if (Boolean(result.task?.payload?.pinned) !== pinned)
+        throw new Error("pin not saved");
+      savedEverywhere();
     } catch {
       showTasks(previous);
       setSaveError("That pin did not save. Please try again.");
