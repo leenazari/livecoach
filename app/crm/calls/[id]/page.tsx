@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { crmFetch } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
+import PostCallDealUpdate from "@/components/crm/PostCallDealUpdate";
 
 type Call = {
   id: string;
@@ -245,6 +246,8 @@ export default function CallDetailPage() {
               </p>
             )}
           </div>
+
+          {call.company_id ? <PostCallDealUpdate callId={call.id} /> : null}
 
           {/* Competencies */}
           {Array.isArray(s.competencies) && s.competencies.length > 0 && (
