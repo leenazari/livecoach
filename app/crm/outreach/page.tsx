@@ -8,8 +8,10 @@ import { crmFetch } from "@/lib/crm";
 
 type Tab = "queue" | "prospects" | "campaign" | "intelligence" | "replies" | "safety";
 type Priority = "high" | "medium" | "low";
-type Prospect = Record<string, any> & { id: string; email: string; company_name: string; priority: Priority; priority_score: number };
-type QueueRow = Record<string, any> & { id: string; prospect: Prospect; campaign: Record<string, any>; message: Record<string, any> | null };
+type RecommendationAction = "contact_today" | "hold" | "skip";
+type Recommendation = { action: RecommendationAction; label: string; score: number; confidence: "high" | "medium" | "low"; reasons: string[]; risks: string[] };
+type Prospect = Record<string, any> & { id: string; email: string; company_name: string; priority: Priority; priority_score: number; recommendation: Recommendation };
+type QueueRow = Record<string, any> & { id: string; prospect: Prospect; campaign: Record<string, any>; message: Record<string, any> | null; recommendation: Recommendation };
 type SequenceStep = { step: number; delayDays: number; purpose: string; contentType?: "plain" | "insight" | "case_study" | "video" | "close_loop"; guidance?: string; assetUrl?: string | null };
 type Campaign = Record<string, any> & { id: string; name: string; goal: string; audience: string; offer_angle: string; status: string; daily_limit: number; sequence: SequenceStep[] };
 
@@ -31,9 +33,29 @@ const pill: Record<string, string> = {
   drafted: "border-amber/50 bg-amber/10 text-amber",
 };
 
+const recommendationPill: Record<RecommendationAction, string> = {
+  contact_today: "border-moss/50 bg-moss/10 text-moss",
+  hold: "border-amber/50 bg-amber/10 text-amber",
+  skip: "border-rust/50 bg-rust/10 text-rust",
+};
+
 const button = "min-h-11 rounded-lg border border-edge px-3 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-bone transition hover:border-amber/60 hover:text-amber disabled:cursor-not-allowed disabled:opacity-40";
 const primary = "min-h-11 rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40";
 const input = "w-full rounded-lg border border-edge bg-ink/50 px-3 py-2.5 text-sm text-bone placeholder:text-muted focus:border-amber/60 focus:outline-none";
+
+function RecommendationCard({ recommendation, compact = false }: { recommendation: Recommendation; compact?: boolean }) {
+  if (!recommendation) return null;
+  return <div className="mt-3 rounded-lg border border-edge bg-ink/35 p-3">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className={`rounded-full border px-2.5 py-1 font-mono text-[0.55rem] uppercase tracking-wider ${recommendationPill[recommendation.action]}`}>{recommendation.label}</span>
+      <span className="font-mono text-[0.56rem] uppercase text-muted"><strong className="text-bone">{recommendation.score}/100</strong> · {recommendation.confidence} confidence</span>
+    </div>
+    <ul className="mt-2 space-y-1 text-xs leading-5 text-bone/75">
+      {recommendation.reasons.slice(0, compact ? 2 : 4).map((reason) => <li key={reason} className="flex gap-2"><span className="text-moss">+</span><span>{reason}</span></li>)}
+      {recommendation.risks.slice(0, compact ? 1 : 3).map((risk) => <li key={risk} className="flex gap-2"><span className="text-amber">!</span><span>{risk}</span></li>)}
+    </ul>
+  </div>;
+}
 
 export default function OutreachPage() {
   const [tab, setTab] = useState<Tab>("queue");
@@ -52,6 +74,7 @@ export default function OutreachPage() {
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
   const [priority, setPriority] = useState<"all" | Priority>("all");
+  const [recommendationFilter, setRecommendationFilter] = useState<"all" | RecommendationAction>("all");
   const [blockTarget, setBlockTarget] = useState("");
   const [draftEdits, setDraftEdits] = useState<Record<string, { subject: string; body_text: string }>>({});
 
@@ -92,7 +115,7 @@ export default function OutreachPage() {
 
   const buildQueue = async () => {
     setBusy("queue"); setError(""); setNotice("");
-    try { const data = await crmFetch<any>("/api/crm/outreach/queue", { method: "POST", body: JSON.stringify({ limit: activeCampaign?.daily_limit || 20 }) }); setQueue(data.queue || []); setNotice(`${data.added || 0} people added to today's queue.`); await load(); }
+    try { const data = await crmFetch<any>("/api/crm/outreach/queue", { method: "POST", body: JSON.stringify({ limit: activeCampaign?.daily_limit || 20 }) }); setQueue(data.queue || []); const held = data.selection?.held || 0; const skipped = data.selection?.skipped || 0; setNotice(`${data.added || 0} best-fit people added. ${held} held for stronger evidence${skipped ? ` and ${skipped} skipped` : ""}.`); await load(); }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const prepare = async (prospectId: string) => {
@@ -113,7 +136,7 @@ export default function OutreachPage() {
   };
   const updatePriority = async (id: string, value: Priority) => {
     setProspects((all) => all.map((p) => p.id === id ? { ...p, priority: value } : p));
-    try { await crmFetch(`/api/crm/outreach/${id}`, { method: "PATCH", body: JSON.stringify({ priority: value }) }); }
+    try { await crmFetch(`/api/crm/outreach/${id}`, { method: "PATCH", body: JSON.stringify({ priority: value }) }); await load(); }
     catch (e: any) { setError(e.message); await load(); }
   };
   const saveCampaign = async (campaign: Campaign) => {
@@ -141,9 +164,14 @@ export default function OutreachPage() {
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
 
-  const counts = useMemo(() => ({ all: prospects.length, high: prospects.filter((p) => p.priority === "high").length, medium: prospects.filter((p) => p.priority === "medium").length, low: prospects.filter((p) => p.priority === "low").length }), [prospects]);
+  const recommendationCounts = useMemo(() => ({
+    all: prospects.length,
+    contact_today: prospects.filter((p) => p.recommendation?.action === "contact_today").length,
+    hold: prospects.filter((p) => p.recommendation?.action === "hold").length,
+    skip: prospects.filter((p) => p.recommendation?.action === "skip").length,
+  }), [prospects]);
   const needle = useDeferredValue(q).trim().toLowerCase();
-  const shown = prospects.filter((p) => (priority === "all" || p.priority === priority) && (!needle || `${p.first_name || ""} ${p.last_name || ""} ${p.company_name} ${p.job_title || ""} ${p.email}`.toLowerCase().includes(needle)));
+  const shown = prospects.filter((p) => (priority === "all" || p.priority === priority) && (recommendationFilter === "all" || p.recommendation?.action === recommendationFilter) && (!needle || `${p.first_name || ""} ${p.last_name || ""} ${p.company_name} ${p.job_title || ""} ${p.email}`.toLowerCase().includes(needle)));
 
   return (
     <main className="relative z-10 mx-auto max-w-[1180px] px-3 py-5 sm:px-5 sm:py-9">
@@ -167,15 +195,21 @@ export default function OutreachPage() {
 
       {!loading && tab === "queue" ? <section>
         <RevenueToday />
-        <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s controlled queue</h2><p className="mt-1 text-sm text-muted">Research happens only when you press Prepare. Every draft waits for your approval.</p></div><button onClick={buildQueue} disabled={!!busy || queue.length >= (activeCampaign?.daily_limit || 20)} className={primary}>{busy === "queue" ? "Building…" : queue.length ? `Top up to ${activeCampaign?.daily_limit || 20}` : "Build today’s queue"}</button></div>
+        <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s controlled queue</h2><p className="mt-1 text-sm text-muted">Only the strongest safe fits use today’s limited slots. Scoring is free; research happens only when you press Prepare, and every draft waits for approval.</p></div><button onClick={buildQueue} disabled={!!busy || queue.length >= (activeCampaign?.daily_limit || 20)} className={primary}>{busy === "queue" ? "Ranking…" : queue.length ? `Top up to ${activeCampaign?.daily_limit || 20}` : "Rank + build today’s queue"}</button></div>
         <div className="space-y-3">{queue.map((row, index) => { const p = row.prospect; const m = row.message; const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="font-mono text-[0.55rem] uppercase text-muted">#{index + 1} · step {row.current_step}</p><h3 className="mt-1 font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>{p.priority}</span><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[m?.status] || "border-edge text-muted"}`}>{m?.status || "not prepared"}</span></div></div>{!m ? <button onClick={() => prepare(p.id)} disabled={!!busy} className={primary}>{busy === `prepare:${p.id}` ? "Researching…" : "Prepare research + draft"}</button> : null}</div>
+          <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="font-mono text-[0.55rem] uppercase text-muted">#{index + 1} · step {row.current_step}</p><h3 className="mt-1 font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>{p.priority}</span><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[m?.status] || "border-edge text-muted"}`}>{m?.status || "not prepared"}</span></div></div>{!m ? <button onClick={() => prepare(p.id)} disabled={!!busy} className={`${primary} w-full sm:w-auto`}>{busy === `prepare:${p.id}` ? "Researching…" : "Prepare research + draft"}</button> : null}</div>
+          <RecommendationCard recommendation={row.recommendation || p.recommendation} compact />
           {row.research ? <details className="mt-4 rounded-lg border border-edge bg-ink/30 p-3"><summary className="cursor-pointer font-mono text-[0.6rem] uppercase tracking-wider text-amber">Why this message {m?.quality_score ? `· quality ${m.quality_score}/100` : ""}</summary><p className="mt-2 text-sm leading-6 text-bone/80">{m?.strategy?.reasoning || row.research.summary}</p><p className="mt-2 text-xs text-muted"><strong className="text-bone">Chosen angle:</strong> {m?.strategy?.angle || row.research.bestAngle}</p>{m?.strategy?.evidenceUsed?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Evidence actually used</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{m.strategy.evidenceUsed.map((fact: string) => <li key={fact}>• {fact}</li>)}</ul></div> : null}{(row.research_sources || []).length ? <div className="mt-2 flex flex-wrap gap-2">{row.research_sources.slice(0, 4).map((source: any) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="text-xs text-amber hover:underline">{source.title || "Source"} ↗</a>)}</div> : null}</details> : null}
           {m && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-edge bg-ink/40 px-3 py-2 font-mono text-[0.58rem] text-muted">From: <span className="text-bone">Lee Nazari &lt;lee@interviewa.com&gt;</span> · To: {p.email}</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(m.id, { subject: e.target.value })} disabled={m.status === "sent"} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Email</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(m.id, { body_text: e.target.value })} disabled={m.status === "sent"} /></label><div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => saveDraft(m.id)} disabled={!!busy || m.status === "sent"} className={button}>Save changes</button>{m.status === "draft" || m.status === "failed" ? <button onClick={() => saveDraft(m.id, true)} disabled={!!busy} className={primary}>{busy === `approve:${m.id}` ? "Approving…" : "Approve exact draft"}</button> : null}{m.status === "approved" ? <button onClick={() => send(m.id)} disabled={!!busy} className={primary}>{busy === `send:${m.id}` ? "Sending…" : "Send now"}</button> : null}{m.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Sent safely</span> : null}</div></div> : null}
         </article>; })}{!queue.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">The morning queue can be selected automatically, or you can build it now. Nobody is researched or contacted until you act.</div> : null}</div>
       </section> : null}
 
-      {!loading && tab === "prospects" ? <section><div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{(["all", "high", "medium", "low"] as const).map((key) => <button key={key} onClick={() => setPriority(key)} className={`rounded-xl border p-3 text-left ${priority === key ? "border-amber bg-amber/10" : "border-edge bg-panel"}`}><strong className="block font-display text-xl text-bone">{counts[key]}</strong><span className="font-mono text-[0.54rem] uppercase text-muted">{key}</span></button>)}</div><input className={`${input} mb-3`} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search person, company, role or email…" /><div className="space-y-2">{shown.map((p) => <article key={p.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h3 className="font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><p className="mt-1 text-xs text-muted">{p.employee_range} employees · {p.industry}</p><div className="mt-2 flex flex-wrap gap-3 text-xs"><span className="text-amber">{p.email}</span>{p.person_linkedin_url ? <a href={p.person_linkedin_url} target="_blank" rel="noreferrer" className="text-bone">Person LinkedIn ↗</a> : null}{p.company_linkedin_url ? <a href={p.company_linkedin_url} target="_blank" rel="noreferrer" className="text-bone">Company LinkedIn ↗</a> : null}</div></div><select aria-label={`Priority for ${p.first_name} ${p.last_name}`} value={p.priority} onChange={(e) => updatePriority(p.id, e.target.value as Priority)} className="min-h-11 rounded-lg border border-edge bg-ink px-3 text-sm text-bone"><option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option></select></div></article>)}</div></section> : null}
+      {!loading && tab === "prospects" ? <section>
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{(["all", "contact_today", "hold", "skip"] as const).map((key) => <button key={key} onClick={() => setRecommendationFilter(key)} className={`rounded-xl border p-3 text-left ${recommendationFilter === key ? "border-amber bg-amber/10" : "border-edge bg-panel"}`}><strong className="block font-display text-xl text-bone">{recommendationCounts[key]}</strong><span className="font-mono text-[0.54rem] uppercase text-muted">{key === "contact_today" ? "contact today" : key}</span></button>)}</div>
+        <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_11rem]"><input className={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search person, company, role or email…" /><select aria-label="Manual priority filter" value={priority} onChange={(e) => setPriority(e.target.value as "all" | Priority)} className={input}><option value="all">All manual priorities</option><option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option></select></div>
+        <p className="mb-3 rounded-lg border border-edge bg-panel px-3 py-2 text-sm leading-6 text-muted">The score combines your priority, likely buying authority, campaign fit, data quality, saved research and proven conversion patterns. It never spends AI tokens.</p>
+        <div className="space-y-2">{shown.map((p) => <article key={p.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0"><h3 className="font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><p className="mt-1 text-xs text-muted">{p.employee_range || "Unknown size"} employees · {p.industry || "Industry not saved"}</p><div className="mt-2 flex flex-wrap gap-3 text-xs"><span className="break-all text-amber">{p.email}</span>{p.person_linkedin_url ? <a href={p.person_linkedin_url} target="_blank" rel="noreferrer" className="text-bone">Person LinkedIn ↗</a> : null}{p.company_linkedin_url ? <a href={p.company_linkedin_url} target="_blank" rel="noreferrer" className="text-bone">Company LinkedIn ↗</a> : null}</div></div><label className="shrink-0"><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Your priority</span><select aria-label={`Priority for ${p.first_name} ${p.last_name}`} value={p.priority} onChange={(e) => updatePriority(p.id, e.target.value as Priority)} className="min-h-11 w-full rounded-lg border border-edge bg-ink px-3 text-sm text-bone sm:w-auto"><option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option></select></label></div><RecommendationCard recommendation={p.recommendation} /></article>)}</div>
+      </section> : null}
 
       {!loading && tab === "campaign" ? <section className="space-y-3">
         <div className="grid grid-cols-2 gap-2">{variants.map((row) => <div key={row.variant} className="rounded-xl border border-edge bg-panel p-3"><p className="font-mono text-[0.56rem] uppercase text-muted">Subject variant {row.variant}</p><strong className="mt-1 block font-display text-xl text-bone">{row.replyRate}% replies</strong><span className="text-xs text-muted">{row.replies} replies from {row.sent} sent</span></div>)}</div>
