@@ -8,6 +8,8 @@ export const runtime = "nodejs";
 // DELETE /api/crm/opportunities/:id
 const STATUSES = ["open", "won", "lost", "dismissed"];
 const OWNER_TYPES = ["us", "buyer", "joint"];
+const PIPELINE_STAGES = ["new", "discovery", "qualified", "proposal", "negotiation", "verbal", "won", "lost"];
+const FORECAST_CATEGORIES = ["pipeline", "best_case", "commit", "omitted"];
 
 const cleanClosePlan = (value: any) => {
   const targetCloseDate =
@@ -52,6 +54,25 @@ export async function PATCH(
     if (typeof body.detail === "string") patch.detail = body.detail.trim() || null;
     if (typeof body.value === "number") patch.value = body.value;
     if (body.value === null) patch.value = null;
+    if (typeof body.pipelineStage === "string" && PIPELINE_STAGES.includes(body.pipelineStage)) {
+      patch.pipeline_stage = body.pipelineStage;
+    }
+    if (body.probability != null) {
+      const probability = Math.round(Number(body.probability));
+      if (!Number.isFinite(probability) || probability < 0 || probability > 100) {
+        return NextResponse.json({ error: "probability must be between 0 and 100" }, { status: 400 });
+      }
+      patch.probability = probability;
+    }
+    if (typeof body.forecastCategory === "string" && FORECAST_CATEGORIES.includes(body.forecastCategory)) {
+      patch.forecast_category = body.forecastCategory;
+    }
+    if (body.expectedCloseAt === null || body.expectedCloseAt === "") {
+      patch.expected_close_at = null;
+    } else if (typeof body.expectedCloseAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.expectedCloseAt)) {
+      patch.expected_close_at = body.expectedCloseAt;
+    }
+    if (typeof body.outcomeReason === "string") patch.outcome_reason = body.outcomeReason.trim().slice(0, 1000) || null;
     if (body.closePlan && typeof body.closePlan === "object") {
       patch.close_plan = cleanClosePlan(body.closePlan);
     }
@@ -59,6 +80,22 @@ export async function PATCH(
       return NextResponse.json({ error: "nothing to update" }, { status: 400 });
     }
     patch.updated_at = new Date().toISOString();
+    if (patch.status === "won") {
+      patch.pipeline_stage = "won";
+      patch.probability = 100;
+      patch.forecast_category = "commit";
+      patch.won_at = patch.updated_at;
+      patch.lost_at = null;
+    } else if (patch.status === "lost") {
+      patch.pipeline_stage = "lost";
+      patch.probability = 0;
+      patch.forecast_category = "omitted";
+      patch.lost_at = patch.updated_at;
+      patch.won_at = null;
+    } else if (patch.status === "open") {
+      patch.won_at = null;
+      patch.lost_at = null;
+    }
     const { data, error } = await supabaseAdmin
       .from("opportunities")
       .update(patch)

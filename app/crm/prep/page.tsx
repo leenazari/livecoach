@@ -1385,9 +1385,10 @@ function PrepInner() {
                     type="button"
                     onClick={buildPlan}
                     disabled={chainRunning || !builtFocus.length}
-                    className="mt-2.5 rounded-full border border-amber/60 bg-amber/15 px-4 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
+                    className="mt-3 flex min-h-12 w-full items-center justify-between rounded-xl border border-amber/60 bg-amber/15 px-4 py-2.5 font-mono text-[0.6rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
                   >
-                    {chainRunning ? "building…" : "build the plan ▸"}
+                    <span>{chainRunning ? "building…" : "Focus ready, build the plan"}</span>
+                    <span aria-hidden="true">▸</span>
                   </button>
                 )}
               </div>

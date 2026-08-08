@@ -3,6 +3,8 @@ import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { supabaseAdmin } from "@/lib/supabase";
 import { modelText, parseObject } from "@/lib/outreach";
+import { ensureOutreachCompany } from "@/lib/outreach-crm";
+import { refreshOutreachLearnings } from "@/lib/outreach-learning";
 
 type Category = "interested" | "objection" | "later" | "referral" | "unsubscribe" | "irrelevant";
 
@@ -45,13 +47,20 @@ export async function sweepOutreachReplies(limit = 20) {
     const eventKind = classified.category === "interested" ? "positive_reply" : classified.category === "irrelevant" ? "reply" : classified.category;
     const { data: enrolments } = await supabaseAdmin.from("outreach_enrolments").select("id,campaign_id").eq("prospect_id", prospect.id).in("status", ["contacted", "queued", "drafted", "approved"]);
     await Promise.all([
-      supabaseAdmin.from("outreach_prospects").update({ status: prospectStatus, last_reply_at: now, reply_category: classified.category, reply_summary: classified.summary, updated_at: new Date().toISOString() }).eq("id", prospect.id),
+      supabaseAdmin.from("outreach_prospects").update({ status: prospectStatus, last_reply_at: now, reply_category: classified.category, reply_summary: classified.summary, last_reply_text: `${reply.subject}\n${reply.snippet}`.slice(0, 4000), reply_thread_id: reply.threadId || lastSent.gmail_thread_id || null, updated_at: new Date().toISOString() }).eq("id", prospect.id),
       supabaseAdmin.from("outreach_enrolments").update({ status: enrolmentStatus, replied_at: now, next_action_at: null, updated_at: new Date().toISOString() }).eq("prospect_id", prospect.id).in("status", ["contacted", "queued", "drafted", "approved"]),
       supabaseAdmin.from("outreach_messages").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("prospect_id", prospect.id).in("status", ["draft", "approved"]),
       ...(suppress ? [supabaseAdmin.from("outreach_suppressions").upsert({ target: String(prospect.email).toLowerCase(), kind: "email", reason: classified.summary, source: "reply" })] : []),
     ]);
-    for (const enrolment of enrolments || []) await supabaseAdmin.from("outreach_events").insert({ campaign_id: enrolment.campaign_id, prospect_id: prospect.id, message_id: lastSent.id, kind: eventKind, metadata: { summary: classified.summary, variant: lastSent.variant || "A" } });
+    for (const enrolment of enrolments || []) await supabaseAdmin.from("outreach_events").insert({ campaign_id: enrolment.campaign_id, prospect_id: prospect.id, message_id: lastSent.id, kind: eventKind, metadata: { summary: classified.summary, variant: lastSent.variant || "A", tags: lastSent.message_tags || {} } });
+    // A positive reply is the point where a cold prospect becomes a real CRM
+    // relationship and revenue opportunity. This is best-effort so a profile
+    // sync problem can never stop reply detection or sequence suppression.
+    if (classified.category === "interested") {
+      try { await ensureOutreachCompany(prospect.id, "interested"); } catch (error) { console.error("outreach CRM promotion failed", error); }
+    }
     found += 1;
   }
-  return { checked: prospects?.length || 0, replies: found };
+  const learning = await refreshOutreachLearnings().catch(() => ({ groups: 0, promoted: 0 }));
+  return { checked: prospects?.length || 0, replies: found, learning };
 }
