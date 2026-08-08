@@ -215,19 +215,34 @@ function BoardInner() {
   };
   const setCompanyStage = async (id: string, stage: string) => {
     const previous = companies;
+    const requestedStage = stage || null;
     setSavingClientId(id);
     setSaveError("");
     setCompanies((rows) =>
       rows.map((row) =>
-        row.id === id ? { ...row, relationshipStage: stage || null } : row
+        row.id === id ? { ...row, relationshipStage: requestedStage } : row
       )
     );
     try {
-      await crmFetch(`/api/crm/companies/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ stage }),
-      });
-      await load("clients");
+      const { company } = await crmFetch<{ company: Company }>(
+        `/api/crm/companies/${id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ stage }),
+        }
+      );
+      const savedStage = company.stage || null;
+      if (savedStage !== requestedStage) {
+        throw new Error("The database returned a different relationship stage");
+      }
+      // The PATCH response is the authoritative database row. Do not
+      // immediately reload the whole portfolio: a slower/stale portfolio read
+      // can otherwise repaint the old stage a moment after this confirmed save.
+      setCompanies((rows) =>
+        rows.map((row) =>
+          row.id === id ? { ...row, relationshipStage: savedStage } : row
+        )
+      );
     } catch {
       setCompanies(previous);
       setSaveError("That relationship stage did not save. Please try again.");
