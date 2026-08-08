@@ -126,7 +126,14 @@ export default function OutreachPage() {
   };
   const saveDraft = async (messageId: string, approve = false) => {
     setBusy(`${approve ? "approve" : "save"}:${messageId}`); setError("");
-    try { await crmFetch(`/api/crm/outreach/messages/${messageId}`, { method: "PATCH", body: JSON.stringify({ ...draftEdits[messageId], ...(approve ? { status: "approved" } : {}) }) }); setNotice(approve ? "Approved. It is now eligible to send." : "Draft saved."); await load(); }
+    try {
+      const { message } = await crmFetch<{ message: Record<string, any> }>(`/api/crm/outreach/messages/${messageId}`, { method: "PATCH", body: JSON.stringify({ ...draftEdits[messageId], ...(approve ? { status: "approved" } : {}) }) });
+      if (!message?.id) throw new Error("Draft was not confirmed");
+      setQueue((all) => all.map((row) => row.message?.id === messageId ? { ...row, message: { ...row.message, ...message } } : row));
+      setReplies((all) => all.map((reply) => reply.bookingDraft?.id === messageId ? { ...reply, bookingDraft: { ...reply.bookingDraft, ...message } } : reply));
+      setDraftEdits((all) => ({ ...all, [messageId]: { subject: message.subject || "", body_text: message.body_text || "" } }));
+      setNotice(approve ? "Approved. It is now eligible to send." : "Draft saved.");
+    }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const send = async (messageId: string) => {
@@ -136,13 +143,26 @@ export default function OutreachPage() {
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const updatePriority = async (id: string, value: Priority) => {
+    const previous = prospects.find((prospect) => prospect.id === id);
     setProspects((all) => all.map((p) => p.id === id ? { ...p, priority: value } : p));
-    try { await crmFetch(`/api/crm/outreach/${id}`, { method: "PATCH", body: JSON.stringify({ priority: value }) }); await load(); }
-    catch (e: any) { setError(e.message); await load(); }
+    try {
+      const { prospect } = await crmFetch<{ prospect: Prospect }>(`/api/crm/outreach/${id}`, { method: "PATCH", body: JSON.stringify({ priority: value }) });
+      if (prospect?.priority !== value) throw new Error("Priority was not confirmed");
+      setProspects((all) => all.map((item) => item.id === id ? { ...item, ...prospect } : item));
+    }
+    catch (e: any) {
+      if (previous) setProspects((all) => all.map((item) => item.id === id ? previous : item));
+      setError(e.message);
+    }
   };
   const saveCampaign = async (campaign: Campaign) => {
     setBusy(`campaign:${campaign.id}`); setError("");
-    try { await crmFetch(`/api/crm/outreach/campaigns/${campaign.id}`, { method: "PATCH", body: JSON.stringify(campaign) }); setNotice("Campaign settings saved."); await load(); }
+    try {
+      const { campaign: saved } = await crmFetch<{ campaign: Campaign }>(`/api/crm/outreach/campaigns/${campaign.id}`, { method: "PATCH", body: JSON.stringify(campaign) });
+      if (!saved?.id) throw new Error("Campaign was not confirmed");
+      setCampaigns((all) => all.map((item) => item.id === saved.id ? { ...item, ...saved } : saved.status === "active" && item.status === "active" ? { ...item, status: "paused" } : item));
+      setNotice("Campaign settings saved.");
+    }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const updateSequence = (campaignId: string, index: number, patch: Partial<SequenceStep>) => setCampaigns((all) => all.map((campaign) => campaign.id === campaignId ? { ...campaign, sequence: (campaign.sequence || []).map((step, stepIndex) => stepIndex === index ? { ...step, ...patch } : step) } : campaign));

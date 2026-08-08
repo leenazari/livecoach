@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { crmFetch } from "@/lib/crm";
 
@@ -26,6 +26,31 @@ type TodayData = {
   };
 };
 
+const taskGroups = [
+  "topActions",
+  "interestedReplies",
+  "approvedOutreach",
+  "callsToPrep",
+  "primaryOpportunityActions",
+  "overduePromises",
+  "coolingDeals",
+] as const;
+
+const changeTask = (
+  current: TodayData | null,
+  id: string,
+  change: (item: TodayItem) => TodayItem | null
+) => {
+  if (!current?.today) return current;
+  const today = { ...current.today };
+  for (const key of taskGroups) {
+    today[key] = (today[key] || [])
+      .map((item) => (item.id === id && item.entity === "task" ? change(item) : item))
+      .filter(Boolean) as TodayItem[];
+  }
+  return { ...current, today };
+};
+
 const shortDate = (value?: string | number | null) => {
   if (!value) return "";
   const date = new Date(value);
@@ -44,10 +69,15 @@ export default function RevenueToday() {
   const [savingId, setSavingId] = useState("");
   const [editingId, setEditingId] = useState("");
   const [editingText, setEditingText] = useState("");
+  const loadSeq = useRef(0);
+  const closedIds = useRef(new Set<string>());
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     try {
-      const next = await crmFetch<TodayData>("/api/crm/dashboard?light=1");
+      let next: TodayData | null = await crmFetch<TodayData>("/api/crm/dashboard?light=1");
+      if (seq !== loadSeq.current) return;
+      for (const id of closedIds.current) next = changeTask(next, id, () => null);
       setData(next);
       setError("");
     } catch {
@@ -70,17 +100,30 @@ export default function RevenueToday() {
     item: TodayItem,
     change: { text?: string; status?: "done" | "dismissed" }
   ) => {
+    const previous = data;
+    loadSeq.current += 1;
+    if (change.status) {
+      closedIds.current.add(item.id);
+      setData((current) => changeTask(current, item.id, () => null));
+    } else if (change.text) {
+      setData((current) => changeTask(current, item.id, (task) => ({ ...task, text: change.text! })));
+    }
     setSavingId(item.id);
     setError("");
     try {
-      await crmFetch(`/api/crm/tasks/${item.id}`, {
+      const result = await crmFetch<{ task: { id: string; text: string; status: string } }>(`/api/crm/tasks/${item.id}`, {
         method: "PATCH",
         body: JSON.stringify(change),
       });
+      if (change.status && result.task?.status !== change.status)
+        throw new Error("status not saved");
+      if (change.text && result.task?.text !== change.text)
+        throw new Error("text not saved");
       setEditingId("");
-      await load();
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
+      closedIds.current.delete(item.id);
+      setData(previous);
       setError("That change did not save. Please try again.");
     } finally {
       setSavingId("");

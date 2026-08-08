@@ -76,7 +76,7 @@ export default function RevenuePage() {
   const saveOpportunity = async (row: Opportunity) => {
     setBusy(`opp:${row.id}`); setError(""); setNotice("");
     try {
-      await crmFetch(`/api/crm/opportunities/${row.id}`, {
+      const { opportunity: saved } = await crmFetch<{ opportunity: Opportunity }>(`/api/crm/opportunities/${row.id}`, {
         method: "PATCH",
         body: JSON.stringify({
           value: Number(row.value) || null,
@@ -90,8 +90,19 @@ export default function RevenuePage() {
           nextActionOwner: row.next_action_owner || "us",
         }),
       });
+      if (!saved?.id) throw new Error("Forecast was not confirmed");
       setNotice(`${row.company} forecast saved.`);
       await load();
+      // Keep the exact confirmed row authoritative even if the aggregate read
+      // briefly reaches an older database snapshot.
+      setRows((all) => all.map((item) => item.id === saved.id ? {
+        ...item,
+        ...saved,
+        company: item.company,
+        risks: item.risks,
+        nextAction: saved.next_action || item.nextAction,
+        weightedValue: (Number(saved.value) || 0) * (Number(saved.probability) || 0) / 100,
+      } : item));
     } catch (e: any) { setError(e.message || "That opportunity did not save"); }
     finally { setBusy(""); }
   };
@@ -99,8 +110,12 @@ export default function RevenuePage() {
   const saveTarget = async () => {
     setBusy("target"); setError(""); setNotice("");
     try {
-      await crmFetch("/api/crm/revenue", { method: "PATCH", body: JSON.stringify({ target }) });
-      setNotice("Revenue target saved."); await load();
+      const result = await crmFetch<{ target: number }>("/api/crm/revenue", { method: "PATCH", body: JSON.stringify({ target }) });
+      if (result.target !== target) throw new Error("Revenue target was not confirmed");
+      setNotice("Revenue target saved.");
+      await load();
+      setTarget(result.target);
+      setData((current) => current ? { ...current, goal: { ...(current.goal || {}), target: result.target } } : current);
     } catch (e: any) { setError(e.message); }
     finally { setBusy(""); }
   };
