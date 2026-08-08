@@ -20,6 +20,11 @@ import { CSS } from "@dnd-kit/utilities";
 import { crmFetch, getCached } from "@/lib/crm";
 import TaskList from "@/components/crm/TaskList";
 import Link from "next/link";
+import {
+  isInHouseRelationship,
+  isRelationshipStageOption,
+  RELATIONSHIP_STAGE_OPTIONS,
+} from "@/lib/relationship-stages";
 
 type Opp = {
   companyId: string;
@@ -63,16 +68,6 @@ const whenLabel = (iso: string | null) => {
 };
 
 const gbp = (n: number) => `£${Math.round(n).toLocaleString()}`;
-const STANDARD_STAGES = [
-  "New",
-  "Discovery",
-  "Qualified",
-  "Proposal",
-  "Negotiation",
-  "Partner",
-  "Customer",
-  "Dormant",
-];
 
 // One draggable, collapsible opportunity row. The grip is the only drag handle,
 // so tapping the row toggles its to-dos and only the grip starts a reorder
@@ -151,16 +146,18 @@ function OppRow({
             onChange={(e) => onStageChange(e.target.value)}
             onClick={(e) => e.stopPropagation()}
             className={`max-w-[8rem] rounded-full border bg-ink px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider outline-none transition focus:border-amber/70 ${
-              o.stage
-                ? "border-edge text-bone/75"
-                : "border-amber/55 bg-amber/10 text-amber"
+              isInHouseRelationship(o.stage)
+                ? "border-sky/55 bg-sky/10 text-sky"
+                : o.stage
+                  ? "border-edge text-bone/75"
+                  : "border-amber/55 bg-amber/10 text-amber"
             }`}
           >
             <option value="">set stage…</option>
-            {o.stage && !STANDARD_STAGES.includes(o.stage) ? (
+            {o.stage && !isRelationshipStageOption(o.stage) ? (
               <option value={o.stage}>{o.stage}</option>
             ) : null}
-            {STANDARD_STAGES.map((stage) => (
+            {RELATIONSHIP_STAGE_OPTIONS.map((stage) => (
               <option key={stage} value={stage}>
                 {stage.toLowerCase()}
               </option>

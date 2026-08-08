@@ -14,6 +14,7 @@ import {
 import { getCommercialMemoryBlock } from "@/lib/commercial-memory";
 import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
+import { RELATIONSHIP_STAGE_BY_KEY } from "@/lib/relationship-stages";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -102,18 +103,6 @@ async function findContacts(name: string, companyId: string): Promise<any[]> {
     .limit(4);
   return data || [];
 }
-const RELATIONSHIP_STAGES = new Map(
-  [
-    "New",
-    "Discovery",
-    "Qualified",
-    "Proposal",
-    "Negotiation",
-    "Partner",
-    "Customer",
-    "Dormant",
-  ].map((stage) => [stage.toLowerCase(), stage])
-);
 async function findDraft(subject: string) {
   const term = likeTerm(subject);
   if (!term) return null;
@@ -382,7 +371,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       if (!company) continue;
       const patch: Record<string, string> = {};
       if (typeof it.stage === "string") {
-        const stage = RELATIONSHIP_STAGES.get(it.stage.trim().toLowerCase());
+        const stage = RELATIONSHIP_STAGE_BY_KEY.get(it.stage.trim().toLowerCase());
         if (stage) patch.stage = stage;
       }
       for (const field of ["sector", "website", "domain"] as const) {
@@ -982,7 +971,7 @@ ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does th
 [{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<call title>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
 ---END ACTIONS---
 Additional supported actions are:
-{"type":"update_client","client":"<client name, omit on their profile>","stage":"New|Discovery|Qualified|Proposal|Negotiation|Partner|Customer|Dormant","sector":"<optional>","website":"<optional>","domain":"<optional>"}
+{"type":"update_client","client":"<client name, omit on their profile>","stage":"New|Discovery|Qualified|Proposal|Negotiation|Partner|Customer|In House|Dormant","sector":"<optional>","website":"<optional>","domain":"<optional>"}
 {"type":"upsert_stakeholder","client":"<client name, omit on their profile>","person":"<contact name>","buyingRole":"decision_maker|champion|user|influencer|blocker|unknown","influence":"high|medium|low","engagement":"warm|neutral|cold","jobTitle":"<optional>","email":"<optional>"}
 {"type":"update_task","client":"<client name, omit on their profile>","item":"<existing to-do text>","status":"done|open","newText":"<optional replacement>","dueAt":"YYYY-MM-DD or null","pinned":true}
 {"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":20}

@@ -2,6 +2,11 @@
 
 import Link from "next/link";
 import { useDeferredValue, useMemo, useState } from "react";
+import {
+  isInHouseRelationship,
+  isRelationshipStageOption,
+  RELATIONSHIP_STAGE_OPTIONS,
+} from "@/lib/relationship-stages";
 
 export type ClientHealth = "red" | "amber" | "green" | "grey";
 
@@ -67,17 +72,6 @@ const HEALTH = {
     text: "text-muted",
   },
 } as const;
-
-const STANDARD_STAGES = [
-  "New",
-  "Discovery",
-  "Qualified",
-  "Proposal",
-  "Negotiation",
-  "Partner",
-  "Customer",
-  "Dormant",
-];
 
 const compactDate = (iso: string | null) => {
   if (!iso) return "—";
@@ -156,14 +150,18 @@ function StageSelect({
       disabled={saving}
       onChange={(event) => onChange(row.id, event.target.value)}
       className={`max-w-full rounded-full border bg-ink/80 px-2 py-1 font-mono text-[0.55rem] uppercase tracking-wider outline-none transition focus:border-amber/70 disabled:opacity-50 ${
-        current ? "border-edge text-bone/80" : "border-amber/50 text-amber"
+        isInHouseRelationship(current)
+          ? "border-sky/55 bg-sky/10 text-sky"
+          : current
+            ? "border-edge text-bone/80"
+            : "border-amber/50 text-amber"
       }`}
     >
       <option value="">Set stage…</option>
-      {current && !STANDARD_STAGES.includes(current) ? (
+      {current && !isRelationshipStageOption(current) ? (
         <option value={current}>{current}</option>
       ) : null}
-      {STANDARD_STAGES.map((stage) => (
+      {RELATIONSHIP_STAGE_OPTIONS.map((stage) => (
         <option key={stage} value={stage}>
           {stage}
         </option>
