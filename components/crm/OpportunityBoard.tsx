@@ -19,6 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { crmFetch, getCached } from "@/lib/crm";
 import TaskList from "@/components/crm/TaskList";
+import Link from "next/link";
 
 type Opp = {
   companyId: string;
@@ -35,6 +36,7 @@ type Opp = {
   contactUnknown: boolean;
   reason: string;
   nextAction: string;
+  alerts: { code: string; label: string; priority: number }[];
 };
 type Board = { opportunities: Opp[]; looseCount: number; manual: boolean };
 
@@ -207,10 +209,33 @@ function OppRow({
         </span>
       </div>
 
+      {o.alerts?.length ? (
+        <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+          {o.alerts.slice(0, 3).map((alert) => (
+            <span
+              key={alert.code}
+              className={`rounded-full border px-2 py-0.5 font-mono text-[0.5rem] uppercase tracking-wider ${
+                alert.priority === 1
+                  ? "border-rust/55 bg-rust/10 text-rust"
+                  : "border-amber/45 bg-amber/10 text-amber"
+              }`}
+            >
+              {alert.priority === 1 ? "▲ " : ""}{alert.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
       {open && (
         <div className="border-t border-edge/60 px-3 pb-2 pt-1">
           {/* Reuse the full to-do behaviour (tick / dismiss / click-to-act). */}
           <TaskList companyId={o.companyId} emptyText="No open to-dos here." />
+          <Link
+            href="/crm/board?tab=opportunities"
+            className="mt-2 inline-block font-mono text-[0.52rem] uppercase tracking-wider text-amber hover:text-bone"
+          >
+            edit mutual close plan ↗
+          </Link>
         </div>
       )}
     </li>

@@ -26,6 +26,24 @@ async function loadCall(callId: string) {
     .select("transcript, candidate, brief, competencies, call_type")
     .eq("session_id", sum.session_id as string)
     .maybeSingle();
+  const [{ data: company }, { data: opportunities }] = await Promise.all([
+    sum.company_id
+      ? supabaseAdmin
+          .from("companies")
+          .select("name, stage")
+          .eq("id", sum.company_id as string)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    sum.company_id
+      ? supabaseAdmin
+          .from("opportunities")
+          .select("id, title, detail, value, status, close_plan")
+          .eq("company_id", sum.company_id as string)
+          .eq("status", "open")
+          .order("value", { ascending: false })
+          .limit(10)
+      : Promise.resolve({ data: [] }),
+  ]);
   return {
     sessionId: sum.session_id as string,
     companyId: (sum.company_id as string) || null,
@@ -37,6 +55,16 @@ async function loadCall(callId: string) {
     callType: typeof sess?.call_type === "string" ? sess.call_type : "general",
     summary:
       sum?.summary && typeof sum.summary === "object" ? sum.summary : {},
+    dealContext: {
+      company: company?.name || null,
+      relationshipStage: company?.stage || null,
+      opportunities: (opportunities || []).map((o: any) => ({
+        title: o.title,
+        detail: o.detail || null,
+        value: Number(o.value) || null,
+        closePlan: o.close_plan || null,
+      })),
+    },
     // The OTHER party on the call - so the coach never coaches their lines.
     other:
       (typeof sum.candidate === "string" && sum.candidate.trim()) ||
@@ -161,6 +189,15 @@ Prioritise the 5 to 8 moments with the greatest practical impact, in this order:
 3. Decisions, owners, dates, success criteria or follow-ups the host should have secured but left vague.
 4. Important risks or contradictions in the SUMMARY that the host failed to challenge.
 5. Communication problems only when they materially weakened the outcome: rambling, leading questions, over-talking, weak framing or failing to listen.
+When DEAL CONTEXT is present, explicitly compare the call with the real opportunity stage and unfinished close-plan milestones. Surface missed chances to:
+- confirm measurable value or urgency,
+- reach the economic decision-maker,
+- clarify the buying and approval process,
+- resolve a stalled or overdue milestone,
+- book the next meeting while both parties are present,
+- agree owners and dates,
+- or appropriately ask for the decision.
+Do not praise routine conversation. Prefer advice that moves the opportunity toward a verifiable buyer commitment.
 For each, output:
 - quote: a short, near-exact snippet of what the HOST actually said (trim to the relevant part, max ~25 words). It MUST be a line the HOST spoke, copied from a "You:" / "Interviewer:" / host-name turn - never a line from the other party.
 - better: the exact stronger question or statement the host could have used at that moment, in their own voice. Make it specific to this call, intent and focus; never generic advice.
@@ -172,6 +209,7 @@ Before you finalise, re-check every quote: if it is the other party's line and n
       callType: call.callType,
       intent: call.intent || null,
       priorityFocus: call.focus.slice(0, 10),
+      dealContext: call.dealContext,
       summary: call.summary,
     }).slice(0, 8000);
 

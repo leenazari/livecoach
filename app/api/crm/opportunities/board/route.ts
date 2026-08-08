@@ -38,6 +38,7 @@ type Opp = {
   contactUnknown: boolean;
   reason: string;
   nextAction: string;
+  alerts: { code: string; label: string; priority: number }[];
   // Internal, for ranking only - not sent to the client.
   _texts?: string[];
 };
@@ -110,7 +111,7 @@ export async function GET(req: Request) {
         .limit(300),
       supabaseAdmin
         .from("opportunities")
-        .select("company_id, value, title")
+        .select("id, company_id, value, title, close_plan")
         .eq("status", "open")
         .limit(300),
       supabaseAdmin
@@ -166,6 +167,7 @@ export async function GET(req: Request) {
           contactUnknown: false,
           reason: "",
           nextAction: "",
+          alerts: [],
           _texts: [],
         };
         byCompany.set(companyId, o);
@@ -215,6 +217,45 @@ export async function GET(req: Request) {
         o.value = v;
         o.valueIsEstimate = false;
       }
+      const plan =
+        op.close_plan && typeof op.close_plan === "object"
+          ? (op.close_plan as any)
+          : {};
+      const milestones = Array.isArray(plan.milestones)
+        ? plan.milestones
+        : [];
+      const overdue = milestones.filter((m: any) => {
+        if (m?.status === "done" || typeof m?.dueAt !== "string") return false;
+        const due = new Date(`${m.dueAt}T23:59:59`).getTime();
+        return Number.isFinite(due) && due < nowMs;
+      });
+      if (overdue.length) {
+        o.alerts.push({
+          code: `milestone_overdue:${op.id}`,
+          label: `${overdue.length} close-plan milestone${overdue.length === 1 ? "" : "s"} overdue`,
+          priority: 1,
+        });
+      }
+      if (typeof plan.targetCloseDate === "string") {
+        const target = new Date(`${plan.targetCloseDate}T23:59:59`).getTime();
+        if (Number.isFinite(target) && target < nowMs)
+          o.alerts.push({
+            code: `decision_passed:${op.id}`,
+            label: "Target decision date has passed",
+            priority: 1,
+          });
+      }
+      const proposalSent = milestones.some(
+        (m: any) =>
+          m?.status === "done" &&
+          /proposal|commercial/i.test(String(m?.label || ""))
+      );
+      if (proposalSent && !o.nextCallAt)
+        o.alerts.push({
+          code: `proposal_sent:${op.id}`,
+          label: "Proposal sent, secure a follow-up meeting",
+          priority: 2,
+        });
     }
 
     let list = [...byCompany.values()];
@@ -229,7 +270,25 @@ export async function GET(req: Request) {
       o.daysQuiet = Math.max(0, Math.floor((nowMs - touched) / DAY_MS));
       // A scheduled conversation means the relationship already has momentum,
       // so do not call it cooling even if the previous touch was weeks ago.
-      o.cooling = !o.nextCallAt && o.daysQuiet >= 14;
+      o.cooling = !o.nextCallAt && o.daysQuiet >= 7;
+      if (!o.nextCallAt)
+        o.alerts.push({
+          code: "no_next_meeting",
+          label: "No next meeting booked",
+          priority: 2,
+        });
+      if (o.cooling && o.daysQuiet != null)
+        o.alerts.push({
+          code: "quiet",
+          label: `No recorded contact for ${o.daysQuiet} days`,
+          priority: o.daysQuiet >= 14 ? 1 : 2,
+        });
+      o.alerts = o.alerts
+        .filter(
+          (alert, index, all) =>
+            all.findIndex((other) => other.label === alert.label) === index
+        )
+        .sort((a, b) => a.priority - b.priority);
     }
     if (list.length === 0) {
       return NextResponse.json({ opportunities: [], looseCount, manual: false });
@@ -259,11 +318,13 @@ export async function GET(req: Request) {
                 : "none"
             } | work: ${(o._texts || []).join("; ").slice(0, 240)} | last contact: ${
               o.daysQuiet == null ? "unknown" : `${o.daysQuiet} days ago`
-            }${o.cooling ? " (COOLING)" : ""}`
+            }${o.cooling ? " (COOLING)" : ""} | warnings: ${
+              o.alerts.map((alert) => alert.label).join("; ") || "none"
+            }`
         )
         .join("\n");
       const cacheKey =
-        "oppboard4:" + createHash("sha256").update(summary).digest("hex");
+        "oppboard5:" + createHash("sha256").update(summary).digest("hex");
       try {
         const { data: hit } = await supabaseAdmin
           .from("ai_cache")
@@ -409,6 +470,7 @@ Include every index exactly once. Be honest and specific, never flattering.`,
       contactUnknown: o.contactUnknown,
       reason: coachReason.get(o.companyId) || heuristicReason(o),
       nextAction: coachAction.get(o.companyId) || heuristicNextAction(o),
+      alerts: o.alerts,
     }));
 
     return NextResponse.json({ opportunities, looseCount, manual: hasManual });
