@@ -8,18 +8,23 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 // the choice is remembered (localStorage). When open it pushes the page content
 // right by padding the body, so nothing is hidden behind it.
 type Item = { href: string; label: string; icon: string; tab?: string };
-const ITEMS: Item[] = [
+const PRIMARY_ITEMS: Item[] = [
   { href: "/crm/outreach", label: "Outreach", icon: "↗" },
-  { href: "/crm", label: "Dashboard", icon: "▣" },
+  { href: "/crm", label: "Today", icon: "▣" },
   { href: "/crm/revenue", label: "Revenue", icon: "◆" },
   { href: "/call", label: "Start new call", icon: "▸" },
+];
+const RELATIONSHIP_ITEMS: Item[] = [
   { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
   { href: "/crm/board?tab=tasks", label: "To do", icon: "→", tab: "tasks" },
-  { href: "/crm/board?tab=drafts", label: "Drafts", icon: "✉", tab: "drafts" },
   { href: "/crm/calls", label: "Calls", icon: "☎" },
+];
+const MORE_ITEMS: Item[] = [
+  { href: "/crm/board?tab=drafts", label: "Drafts", icon: "✉", tab: "drafts" },
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
+const ITEMS = [...PRIMARY_ITEMS, ...RELATIONSHIP_ITEMS, ...MORE_ITEMS];
 
 const SIDEBAR_W = "15rem";
 
@@ -109,9 +114,9 @@ function NavMenuInner() {
   if (mobile) {
     const BOTTOM: Item[] = [
       { href: "/crm/outreach", label: "Outreach", icon: "↗" },
-      { href: "/crm/calls", label: "Calls", icon: "☎" },
+      { href: "/crm", label: "Today", icon: "▣" },
       { href: "/call", label: "Start", icon: "▸" },
-      { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
+      { href: "/crm/revenue", label: "Revenue", icon: "◆" },
     ];
     return (
       <>
@@ -221,20 +226,29 @@ function NavMenuInner() {
             Back
           </button>
         )}
-        {ITEMS.map((it) => (
-          <Link
-            key={it.href}
-            href={it.href}
-            aria-current={isActive(it) ? "page" : undefined}
-            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider transition ${
-              isActive(it)
-                ? "bg-amber/15 text-amber"
-                : "text-muted hover:bg-bone/[0.05] hover:text-bone"
-            }`}
-          >
-            <span className="w-4 text-center">{it.icon}</span>
-            {it.label}
-          </Link>
+        {[
+          ["Revenue journey", PRIMARY_ITEMS],
+          ["Relationships", RELATIONSHIP_ITEMS],
+          ["More", MORE_ITEMS],
+        ].map(([label, group]) => (
+          <div key={label as string} className="mt-2 first:mt-0">
+            <p className="mb-1 px-3 font-mono text-[0.48rem] uppercase tracking-[0.18em] text-muted/60">{label as string}</p>
+            {(group as Item[]).map((it) => (
+              <Link
+                key={it.href}
+                href={it.href}
+                aria-current={isActive(it) ? "page" : undefined}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2 font-mono text-[0.66rem] uppercase tracking-wider transition ${
+                  isActive(it)
+                    ? "bg-amber/15 text-amber"
+                    : "text-muted hover:bg-bone/[0.05] hover:text-bone"
+                }`}
+              >
+                <span className="w-4 text-center">{it.icon}</span>
+                {it.label}
+              </Link>
+            ))}
+          </div>
         ))}
       </nav>
 
