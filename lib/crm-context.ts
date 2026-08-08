@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { londonDayBounds } from "@/lib/outreach";
 
 // Gathers EVERYTHING we know about one client into a single grounding string:
 // profile, recent call scorecards (incl. focus scores), open opportunities,
@@ -479,4 +480,129 @@ export async function findCompaniesNamedIn(
     if (out.length >= 3) break;
   }
   return out;
+}
+
+// Give the Brain live outreach awareness without putting the contact database,
+// full email bodies or research JSON into every model request. The normal block
+// is one compact roll-up. Deeper breakdowns and a few recent replies are added
+// only for an outreach/priority question, while explicitly named prospects are
+// included on demand.
+export async function gatherOutreachContext(
+  message: string,
+  options: { detailed?: boolean } = {}
+): Promise<string> {
+  const cut = (value: unknown, max: number) => {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    return text.length > max ? `${text.slice(0, max)}…` : text;
+  };
+  const normal = (value: unknown) =>
+    String(value || "").toLowerCase().replace(/[^a-z0-9@.\s-]/g, " ").replace(/\s+/g, " ").trim();
+  const { start, end } = londonDayBounds();
+  const learningsQuery = options.detailed
+    ? supabaseAdmin
+        .from("outreach_learnings")
+        .select("dimension,label,insight,confidence,positive_reply_count,meeting_count")
+        .eq("status", "promoted")
+        .order("meeting_count", { ascending: false })
+        .order("positive_reply_count", { ascending: false })
+        .limit(5)
+    : Promise.resolve({ data: [] as any[] });
+
+  const [campaignRes, prospectsRes, sentRes, approvedRes, learningsRes] =
+    await Promise.all([
+      supabaseAdmin
+        .from("outreach_campaigns")
+        .select("name,goal,audience,daily_limit,status")
+        .eq("status", "active")
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("outreach_prospects")
+        .select("first_name,last_name,company_name,email,job_title,priority,status,reply_category,reply_summary,last_reply_at")
+        .limit(1000),
+      supabaseAdmin
+        .from("outreach_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "sent")
+        .gte("sent_at", start)
+        .lt("sent_at", end),
+      supabaseAdmin
+        .from("outreach_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "approved"),
+      learningsQuery,
+    ]);
+
+  const prospects = (prospectsRes.data || []) as any[];
+  const campaign = campaignRes.data as any;
+  const priority = { high: 0, medium: 0, low: 0 };
+  const status = new Map<string, number>();
+  for (const prospect of prospects) {
+    const p = String(prospect.priority || "").toLowerCase();
+    if (p === "high" || p === "medium" || p === "low") priority[p]++;
+    const s = String(prospect.status || "not set");
+    status.set(s, (status.get(s) || 0) + 1);
+  }
+  const replies = prospects.filter((p) => p.last_reply_at);
+  const positive = replies.filter((p) => p.reply_category === "interested").length;
+  const sentToday = sentRes.count || 0;
+  const approved = approvedRes.count || 0;
+  const dailyLimit = Math.min(20, Math.max(1, Number(campaign?.daily_limit) || 20));
+  const lines = [
+    `OUTREACH SNAPSHOT (compact live roll-up, no full emails or research loaded): ${prospects.length} prospects, ${priority.high} high priority, ${sentToday}/${dailyLimit} sent today, ${approved} approved, ${replies.length} replies (${positive} interested). Active campaign: ${campaign?.name || "none"}.`,
+  ];
+
+  const needle = normal(message);
+  const named = prospects.filter((p) => {
+    const email = normal(p.email);
+    const name = normal(`${p.first_name || ""} ${p.last_name || ""}`);
+    const company = normal(p.company_name);
+    return (
+      (email.length >= 6 && needle.includes(email)) ||
+      (name.length >= 4 && needle.includes(name)) ||
+      (company.length >= 4 && needle.includes(company))
+    );
+  }).slice(0, 3);
+
+  if (options.detailed) {
+    const statusSummary = [...status.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([label, count]) => `${label} ${count}`)
+      .join(", ");
+    lines.push(
+      `Priorities: high ${priority.high}, medium ${priority.medium}, low ${priority.low}. Statuses: ${statusSummary || "none"}.`
+    );
+    const recent = [...replies]
+      .sort((a, b) => new Date(b.last_reply_at).getTime() - new Date(a.last_reply_at).getTime())
+      .slice(0, 5);
+    if (recent.length) {
+      lines.push(
+        "Recent replies: " +
+          recent
+            .map((p) => `${cut(`${p.first_name || ""} ${p.last_name || ""}`, 50)} at ${cut(p.company_name, 60)} [${p.reply_category || "unclassified"}]: ${cut(p.reply_summary, 180) || "no summary"}`)
+            .join(" | ")
+      );
+    }
+    const learnings = ((learningsRes as any).data || []) as any[];
+    if (learnings.length) {
+      lines.push(
+        "Promoted outreach learnings: " +
+          learnings.map((l) => `${cut(l.dimension, 24)} ${cut(l.label, 60)}: ${cut(l.insight, 160)}`).join(" | ")
+      );
+    }
+  }
+
+  if (named.length) {
+    lines.push(
+      "Named outreach prospects: " +
+        named
+          .map((p) => `${cut(`${p.first_name || ""} ${p.last_name || ""}`, 50)} at ${cut(p.company_name, 60)}, ${cut(p.job_title, 60) || "role not recorded"}, ${p.priority || "priority not set"}, status ${p.status || "not set"}${p.reply_summary ? `, last reply: ${cut(p.reply_summary, 200)}` : ""}`)
+          .join(" | ")
+    );
+  }
+
+  // Defensive prompt budget cap even if future labels or summaries grow.
+  return lines.join("\n").slice(0, 3_500);
 }

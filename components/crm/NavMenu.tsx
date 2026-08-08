@@ -9,6 +9,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 // right by padding the body, so nothing is hidden behind it.
 type Item = { href: string; label: string; icon: string; tab?: string };
 const ITEMS: Item[] = [
+  { href: "/crm/outreach", label: "Outreach", icon: "↗" },
   { href: "/crm", label: "Dashboard", icon: "▣" },
   { href: "/crm/revenue", label: "Revenue", icon: "◆" },
   { href: "/call", label: "Start new call", icon: "▸" },
@@ -17,7 +18,6 @@ const ITEMS: Item[] = [
   { href: "/crm/board?tab=drafts", label: "Drafts", icon: "✉", tab: "drafts" },
   { href: "/crm/calls", label: "Calls", icon: "☎" },
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
-  { href: "/crm/outreach", label: "Outreach", icon: "↗" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
 
@@ -108,7 +108,7 @@ function NavMenuInner() {
   // its own floating button (nudged up on mobile so it clears this bar).
   if (mobile) {
     const BOTTOM: Item[] = [
-      { href: "/crm", label: "Home", icon: "▣" },
+      { href: "/crm/outreach", label: "Outreach", icon: "↗" },
       { href: "/crm/calls", label: "Calls", icon: "☎" },
       { href: "/call", label: "Start", icon: "▸" },
       { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
@@ -209,9 +209,9 @@ function NavMenuInner() {
           <span className="w-4 text-center">▤</span>
           Talk to brain
         </button>
-        {/* Go back one step in history - but NOT on the dashboard, which is the
-            CRM home, there's nowhere to go back to from there. */}
-        {pathname !== "/crm" && (
+        {/* Outreach is the default CRM home, so there is nowhere to go back to
+            from there. Dashboard remains available as its own destination. */}
+        {pathname !== "/crm/outreach" && (
           <button
             type="button"
             onClick={() => router.back()}
@@ -225,6 +225,7 @@ function NavMenuInner() {
           <Link
             key={it.href}
             href={it.href}
+            aria-current={isActive(it) ? "page" : undefined}
             className={`flex items-center gap-3 rounded-lg px-3 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider transition ${
               isActive(it)
                 ? "bg-amber/15 text-amber"
