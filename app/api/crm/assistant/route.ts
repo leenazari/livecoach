@@ -8,6 +8,7 @@ import {
 import {
   gatherClientContext,
   gatherGlobalContext,
+  gatherOutreachContext,
   findCompaniesNamedIn,
 } from "@/lib/crm-context";
 import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib/workspace";
@@ -402,20 +403,26 @@ export async function POST(req: NextRequest) {
         if (!detailIds.includes(n.id) && detailIds.length < 3)
           detailIds.push(n.id);
       }
-      const [digest, ...details] = await Promise.all([
+      const wantsOutreachDetail =
+        /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(
+          message
+        );
+      const [digest, outreach, ...details] = await Promise.all([
         gatherGlobalContext(),
+        gatherOutreachContext(message, { detailed: wantsOutreachDetail }),
         ...detailIds.map((id) => gatherClientContext(id)),
       ]);
       const detailBlocks = (details as (string | null)[]).filter(
         (d): d is string => !!d && d.trim().length > 0
       );
-      if (!detailBlocks.length) return digest || null;
+      const wider = [digest, outreach].filter(Boolean).join("\n\n==========\n\n");
+      if (!detailBlocks.length) return wider || null;
       const label = focus
         ? "FOCUSED / NAMED CLIENTS - full detail. Lead here when the question is about them:"
         : "NAMED CLIENTS - full detail on the client(s) the user mentioned:";
       return `${label}\n\n${detailBlocks.join(
         "\n\n----------\n\n"
-      )}\n\n==========\n\nTHE WIDER PIPELINE - one line per client (full detail comes up when you name a client):\n\n${digest}`;
+      )}\n\n==========\n\nTHE WIDER PIPELINE AND OUTREACH - compact by default; full client or prospect detail comes up when needed:\n\n${wider}`;
     };
 
     // Everything the model needs, fetched in PARALLEL instead of one-after-
