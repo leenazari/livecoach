@@ -23,6 +23,12 @@ export const maxDuration = 30;
 
 const DAY = 24 * 60 * 60 * 1000;
 
+const validDateMs = (value: unknown): number | null => {
+  if (typeof value !== "string" || !value) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const titleCase = (value: string) =>
   String(value || "")
     .replace(/[_-]+/g, " ")
@@ -99,6 +105,7 @@ export async function GET() {
       summariesRes,
       draftsRes,
       usageRes,
+      precallEmailRes,
       google,
     ] = await Promise.all([
       supabaseAdmin
@@ -146,6 +153,11 @@ export async function GET() {
         .gte("created_at", eightDaysAgo)
         .order("created_at", { ascending: false })
         .limit(5000),
+      supabaseAdmin
+        .from("app_config")
+        .select("value,updated_at")
+        .eq("key", "precall_email_context_last_run")
+        .maybeSingle(),
       googleHealth(),
     ]);
 
@@ -158,6 +170,7 @@ export async function GET() {
       summariesRes,
       draftsRes,
       usageRes,
+      precallEmailRes,
     ]) {
       if (result.error) throw result.error;
     }
@@ -217,6 +230,29 @@ export async function GET() {
         : "Gmail send permission is missing or could not be confirmed.",
       why: "Sending is separate from reading and is required for approved messages.",
       href: google.send ? "/crm/outreach?tab=safety" : "/settings",
+    });
+
+    let precallReport: any = null;
+    try {
+      precallReport = precallEmailRes.data?.value
+        ? JSON.parse(String(precallEmailRes.data.value))
+        : null;
+    } catch {
+      precallReport = null;
+    }
+    const precallUpdatedAt = validDateMs(precallEmailRes.data?.updated_at);
+    const precallIsRecent = !!precallUpdatedAt && now - precallUpdatedAt < 6 * 60 * 60 * 1000;
+    const precallFailures = Number(precallReport?.failed) || 0;
+    checks.push({
+      id: "precall-email-context",
+      title: "Pre-call email automation",
+      status: precallIsRecent && precallFailures === 0 ? "healthy" : "attention",
+      count: precallFailures || (precallIsRecent ? 0 : 1),
+      detail: precallIsRecent
+        ? `${Number(precallReport?.checked) || 0} client${Number(precallReport?.checked) === 1 ? "" : "s"} checked in the latest run, ${Number(precallReport?.contextRefreshed) || 0} email context update${Number(precallReport?.contextRefreshed) === 1 ? "" : "s"}, ${precallFailures} failed.`
+        : "The two-hour pre-call email check has not completed recently yet.",
+      why: "Upcoming external calls need the newest email promises and objections before their intent is prepared.",
+      href: "/crm/board?tab=clients",
     });
 
     const duplicateCompanies = findDuplicateCompanies(companies, contacts, 40);
