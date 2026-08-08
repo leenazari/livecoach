@@ -328,7 +328,6 @@ export default function CompanyDetailPage() {
       }
     );
   });
-  const openOppCount = opps.filter((o: any) => o.status === "open").length;
   const priorityOpportunity = opps.find(
     (o: any) =>
       o.status === "open" && (o.opportunity_type || "revenue") === "revenue"
@@ -365,10 +364,10 @@ export default function CompanyDetailPage() {
     contacts.find((contact) => contact.email) ||
     contacts[0] ||
     null;
-  const latestCallAt = calls[0]?.created_at || null;
   const nextMeeting = timeline.find(
     (item) => item.future && item.type === "meeting"
   );
+  const latestActivity = timeline.find((item) => !item.future) || null;
   const lastCallMemory =
     commercialMemory.lastCall && typeof commercialMemory.lastCall === "object"
       ? commercialMemory.lastCall
@@ -379,18 +378,9 @@ export default function CompanyDetailPage() {
   const blockers = Array.isArray(lastCallMemory.objections)
     ? lastCallMemory.objections.slice(0, 3)
     : [];
-  const priorityVal = (attrs as any).priority || "";
-  const dealVal = (attrs as any).value;
-
-  // Total spend on this client across all linked calls. (Postgres numeric
-  // arrives as a string from supabase, so coerce with Number.)
-  const totalSpend = calls.reduce(
-    (sum: number, c: any) => sum + (Number(c?.cost) || 0),
-    0
-  );
-  const hasSpend = calls.some(
-    (c: any) => c?.cost != null && Number.isFinite(Number(c.cost))
-  );
+  const primaryBuyingRole = String(
+    primaryContact?.attributes?.stakeholderRole || ""
+  ).replace(/_/g, " ");
   const gbp = (n: number) =>
     `£${Number(n || 0).toLocaleString(undefined, {
       minimumFractionDigits: 2,
@@ -440,8 +430,8 @@ export default function CompanyDetailPage() {
     "cursor-pointer rounded-lg border border-edge bg-ink/40 px-3 py-2.5 text-left transition hover:border-amber/50";
 
   return (
-    <main className="relative z-10 mx-auto max-w-[1000px] px-5 py-10">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
+    <main className="relative z-10 mx-auto max-w-[1000px] px-3 py-5 sm:px-5 sm:py-10">
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3 sm:mb-6">
         <div className="flex items-baseline gap-3">
           <Link
             href="/crm/board?tab=clients"
@@ -453,7 +443,7 @@ export default function CompanyDetailPage() {
             {company.name}
           </h1>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           {savedAt && (
             <span className="font-mono text-[0.58rem] uppercase tracking-wider text-sage">
               saved {savedAt}
@@ -464,7 +454,7 @@ export default function CompanyDetailPage() {
               company.name
             )}`}
             title="Log a call you already had (no prep, no plan) - just record what happened and it lands in this client's history"
-            className="rounded-full border border-sage/60 bg-sage/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
+            className="min-h-10 flex-1 rounded-full border border-sage/60 bg-sage/15 px-3 py-2 text-center font-mono text-[0.58rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 sm:flex-none sm:px-4 sm:text-[0.62rem]"
           >
             ＋ log a call
           </Link>
@@ -473,7 +463,7 @@ export default function CompanyDetailPage() {
               company.name
             )}`}
             title="See past call summaries and get a fresh, suggested intent for your next call with this client"
-            className="rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
+            className="min-h-10 flex-1 rounded-full border border-amber/60 bg-amber/15 px-3 py-2 text-center font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 sm:flex-none sm:px-4 sm:text-[0.62rem]"
           >
             ✶ prep next call
           </Link>
@@ -482,7 +472,7 @@ export default function CompanyDetailPage() {
             onClick={synth}
             disabled={synthing}
             title="Build this client's summary, playbook, next steps and opportunities from everything we know (calls, notes, emails)"
-            className="rounded-full border border-sky/60 bg-sky/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
+            className="min-h-10 flex-1 rounded-full border border-sky/60 bg-sky/15 px-3 py-2 font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40 sm:flex-none sm:px-4 sm:text-[0.62rem]"
           >
             {synthing ? "building…" : "↻ build from context"}
           </button>
@@ -490,7 +480,7 @@ export default function CompanyDetailPage() {
             type="button"
             onClick={save}
             disabled={saving}
-            className="rounded-full border border-amber/60 bg-amber/15 px-5 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
+            className="min-h-10 flex-1 rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40 sm:flex-none sm:px-5 sm:text-[0.62rem]"
           >
             {saving ? "saving…" : "save"}
           </button>
@@ -546,35 +536,62 @@ export default function CompanyDetailPage() {
               ) : null}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => scrollToId("sec-tasks")}
-            className="shrink-0 rounded-full border border-amber/50 bg-amber/10 px-3 py-1.5 font-mono text-[0.54rem] uppercase tracking-wider text-amber transition hover:bg-amber/20"
-          >
-            Open next steps ↓
-          </button>
+          <div className="flex w-full gap-2 sm:w-auto">
+            <button
+              type="button"
+              onClick={() => scrollToId("sec-quick-update")}
+              className="min-h-10 flex-1 rounded-full border border-sky/45 bg-sky/[0.08] px-3 py-1.5 font-mono text-[0.52rem] uppercase tracking-wider text-sky transition hover:bg-sky/15 sm:flex-none"
+            >
+              Log update ↓
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToId("sec-tasks")}
+              className="min-h-10 flex-1 rounded-full border border-amber/50 bg-amber/10 px-3 py-1.5 font-mono text-[0.52rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 sm:flex-none"
+            >
+              Next steps ↓
+            </button>
+          </div>
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-2 border-t border-edge/50 pt-3 sm:grid-cols-4">
-          <div className="min-w-0">
+        <div className="mt-4 grid grid-cols-2 gap-2 border-t border-edge/50 pt-3 lg:grid-cols-5">
+          <button type="button" onClick={() => goTab("details")} className={statCls}>
             <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Relationship</p>
             <p className="mt-0.5 truncate font-sans text-[0.76rem] text-bone/85">
               {company.stage || "Stage not set"}
             </p>
-          </div>
-          <div className="min-w-0">
-            <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Main contact</p>
+          </button>
+          <button type="button" onClick={() => goTab("details")} className={statCls}>
+            <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Key stakeholder</p>
             <p className="mt-0.5 truncate font-sans text-[0.76rem] text-bone/85">
               {primaryContact?.name || "Not recorded"}
             </p>
-            {primaryContact?.role ? (
-              <p className="truncate font-sans text-[0.64rem] text-muted">{primaryContact.role}</p>
+            {primaryBuyingRole || primaryContact?.role ? (
+              <p className="truncate font-sans text-[0.64rem] capitalize text-muted">
+                {primaryBuyingRole || primaryContact?.role}
+              </p>
             ) : null}
-          </div>
-          <div className="min-w-0">
-            <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Last call</p>
+          </button>
+          <button type="button" onClick={() => goTab("pipeline")} className={statCls}>
+            <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Deal position</p>
             <p className="mt-0.5 truncate font-sans text-[0.76rem] text-bone/85">
-              {latestCallAt
-                ? new Date(latestCallAt).toLocaleString("en-GB", {
+              {priorityOpportunity
+                ? `${String(priorityOpportunity.pipeline_stage || "discovery").replace(/_/g, " ")} · ${Number(priorityOpportunity.probability) || 0}%`
+                : "No revenue deal yet"}
+            </p>
+            {priorityOpportunity?.value ? (
+              <p className="truncate font-sans text-[0.64rem] text-sage">
+                {gbp(Number(priorityOpportunity.value))}
+              </p>
+            ) : null}
+          </button>
+          <button type="button" onClick={() => goTab("timeline")} className={statCls}>
+            <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Latest activity</p>
+            <p className="mt-0.5 truncate font-sans text-[0.76rem] text-bone/85">
+              {latestActivity?.title || "No activity recorded"}
+            </p>
+            {latestActivity?.at ? (
+              <p className="truncate font-sans text-[0.64rem] text-muted">
+                {new Date(latestActivity.at).toLocaleString("en-GB", {
                     timeZone: "Europe/London",
                     day: "numeric",
                     month: "short",
@@ -582,10 +599,11 @@ export default function CompanyDetailPage() {
                     minute: "2-digit",
                     hour12: false,
                   })
-                : "No call recorded"}
-            </p>
-          </div>
-          <div className="min-w-0">
+                }
+              </p>
+            ) : null}
+          </button>
+          <button type="button" onClick={() => goTab("timeline")} className={statCls}>
             <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Next meeting</p>
             <p className={`mt-0.5 truncate font-sans text-[0.76rem] ${nextMeeting ? "text-sage" : "text-muted"}`}>
               {nextMeeting
@@ -600,15 +618,17 @@ export default function CompanyDetailPage() {
                   })
                 : "Not booked"}
             </p>
-          </div>
+          </button>
         </div>
       </section>
 
-      <QuickClientUpdate
-        companyId={id}
-        companyName={company.name}
-        onSaved={addQuickUpdateToTimeline}
-      />
+      <div id="sec-quick-update" className="scroll-mt-4">
+        <QuickClientUpdate
+          companyId={id}
+          companyName={company.name}
+          onSaved={addQuickUpdateToTimeline}
+        />
+      </div>
 
       {/* Actionable work stays above the longer intelligence and history. */}
       <div id="sec-tasks" className="mb-3 rounded-xl border border-sage/35 bg-sage/[0.045] p-4">
