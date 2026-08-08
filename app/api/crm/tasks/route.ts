@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { actionToLinkKind, upsertTasks } from "@/lib/tasks";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -18,6 +19,40 @@ const cleanText = (s: any): any =>
         .replace(/\s{2,}/g, " ")
         .trim()
     : s;
+
+// POST /api/crm/tasks -> create one confirmed Brain/manual to-do. The assistant
+// shows the exact item first, then calls this route only after approval.
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const text = cleanText(body.text);
+    if (typeof text !== "string" || !text.trim())
+      return NextResponse.json({ error: "task text is required" }, { status: 400 });
+    const companyId =
+      typeof body.companyId === "string" && /^[0-9a-f-]{36}$/i.test(body.companyId)
+        ? body.companyId
+        : null;
+    const dueAt =
+      typeof body.dueAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(body.dueAt)
+        ? body.dueAt
+        : null;
+    const created = await upsertTasks(companyId, [
+      {
+        text: text.slice(0, 500),
+        linkKind: actionToLinkKind(body.action),
+        source: "assistant",
+        dueAt,
+        pinned: body.pinned === true,
+      },
+    ]);
+    return NextResponse.json({ task: created[0] || null, created: created.length > 0 });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err?.message || "failed to create task" },
+      { status: 500 }
+    );
+  }
+}
 
 // GET /api/crm/tasks[?companyId=] -> the live OPEN to-do list. A ticked or
 // dismissed item must disappear immediately and stay gone after refresh.

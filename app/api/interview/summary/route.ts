@@ -8,6 +8,7 @@ import {
 } from "@/lib/speakers";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { estimateCost } from "@/lib/costs";
+import { getCommercialMemory } from "@/lib/commercial-memory";
 import { completeUpcomingForCall } from "@/lib/calls";
 import { extractAttendees, matchByRoster } from "@/lib/roster";
 import { createHash } from "crypto";
@@ -239,6 +240,11 @@ Output ONLY valid JSON (no markdown, no preamble) in exactly this shape:
   "strengths": ["short bullet", "..."],
   "concerns": ["short bullet", "..."],
   "painPoints": ["a specific problem, frustration, gap, cost or risk the OTHER party (the client / prospect, not the host) actually expressed - something that is not working for them, is slowing them down, or that they wish was better. Quote or paraphrase what they really said. These are gold for the pitch. 0 to 6 items, only genuine ones stated in the transcript, never invented."],
+  "decisions": ["a concrete decision made on the call, 0 to 4 items"],
+  "buyingSignals": ["a specific sign of interest, urgency, authority, fit or willingness to progress, 0 to 4 items"],
+  "objections": ["a stated concern, blocker, hesitation or reason not to proceed, 0 to 4 items"],
+  "commercialOpportunities": ["a credible route to a customer deal, valuable relationship or partnership grounded in an expressed need, 0 to 4 items"],
+  "missedOpportunities": ["a high-value question, close or next-step opportunity the host missed, 0 to 4 items"],
   "contributors": [{"name": "participant name", "impact": "helped", "note": "the part they played and how it bore on the outcome"}],
   "questionReview": [{"question": "short version of a key question asked", "answered": "yes", "note": "if not fully answered, say briefly how it was dodged or deflected"}],
   "myNextActions": ["a concrete thing the HOST (you / the person being coached) needs to DO after this call - an email to send, a person to speak to, a decision to make, a thing to prepare", "..."],
@@ -295,6 +301,8 @@ PRIORITY AND FORMAT RULES:
 - Lead every action list with the action that should happen first.
 - Keep each bullet under 18 words and remove context already stated elsewhere.
 - Prefer concrete decisions, commitments, blockers, dates and owners over general commentary.
+- The five commercial arrays above are the compact memory future Brain and prep requests will reuse instead of rereading the transcript. Make them dense, non-overlapping and strictly evidence-based.
+- Do not assign a speculative deal value or close probability to a prospect. Those only become meaningful after the conversation establishes usage, buying process, urgency and next-step evidence.
 
 Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "answered" must be "yes", "partial", or "no". "impact" must be "helped", "blocked", "mixed", or "neutral". Action items are short plain-English lines.`;
 
@@ -498,6 +506,12 @@ Return the JSON assessment now.`;
           .from("interview_sessions")
           .update({ company_id: resolvedCompanyId })
           .eq("session_id", sessionId);
+      }
+      // Refresh the compact commercial memory immediately after the scorecard
+      // lands. Future Brain, intent and prep requests reuse this facts-only
+      // digest instead of paying to reread the transcript or full scorecard.
+      if (resolvedCompanyId) {
+        getCommercialMemory(resolvedCompanyId).catch(() => {});
       }
       // The call is over once a summary exists, so clear the scheduled call it
       // came from (backstop for when session-end didn't fire, e.g. a Meet bot).

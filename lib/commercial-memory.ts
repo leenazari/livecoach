@@ -13,6 +13,11 @@ export type CommercialMemory = {
     theirActions: string[];
     gaps: string[];
     painPoints: string[];
+    decisions: string[];
+    buyingSignals: string[];
+    objections: string[];
+    commercialOpportunities: string[];
+    missedOpportunities: string[];
   };
   email: null | { at: string | null; summary: string };
   outreach: null | {
@@ -102,6 +107,7 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
     const brief = Array.isArray(profile.brief) ? profile.brief.join(" ") : profile.brief;
     const relationship = cut(brief || company.notes, 600);
     const sourceHash = createHash("sha256").update(JSON.stringify({
+      schema: 2,
       name: company.name,
       relationship,
       emailAt: company.email_context_updated_at,
@@ -131,6 +137,11 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
         theirActions: list(summary.theirNextActions),
         gaps: list(summary.notCovered),
         painPoints: list(summary.painPoints),
+        decisions: list(summary.decisions),
+        buyingSignals: list(summary.buyingSignals),
+        objections: list(summary.objections),
+        commercialOpportunities: list(summary.commercialOpportunities),
+        missedOpportunities: list(summary.missedOpportunities),
       } : null,
       email: company.email_context ? {
         at: company.email_context_updated_at || null,
@@ -183,6 +194,11 @@ export function formatCommercialMemoryBlock(memory: CommercialMemory | null): st
     if (memory.lastCall.theirActions.length) lines.push(`They owe: ${memory.lastCall.theirActions.join(" | ")}`);
     if (memory.lastCall.gaps.length) lines.push(`Not covered: ${memory.lastCall.gaps.join(" | ")}`);
     if (memory.lastCall.painPoints.length) lines.push(`Pain points: ${memory.lastCall.painPoints.join(" | ")}`);
+    if (memory.lastCall.decisions?.length) lines.push(`Decisions: ${memory.lastCall.decisions.join(" | ")}`);
+    if (memory.lastCall.buyingSignals?.length) lines.push(`Buying signals: ${memory.lastCall.buyingSignals.join(" | ")}`);
+    if (memory.lastCall.objections?.length) lines.push(`Objections or blockers: ${memory.lastCall.objections.join(" | ")}`);
+    if (memory.lastCall.commercialOpportunities?.length) lines.push(`Commercial opportunities: ${memory.lastCall.commercialOpportunities.join(" | ")}`);
+    if (memory.lastCall.missedOpportunities?.length) lines.push(`Missed opportunities: ${memory.lastCall.missedOpportunities.join(" | ")}`);
   }
   if (memory.email) lines.push(`Latest email context (${memory.email.at || "date unknown"}): ${memory.email.summary}`);
   if (memory.outreach) lines.push(`Outreach with ${memory.outreach.person}: ${memory.outreach.category || "no reply category"}. ${memory.outreach.summary}`.trim());
