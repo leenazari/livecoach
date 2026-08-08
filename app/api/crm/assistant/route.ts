@@ -66,17 +66,54 @@ async function findCompany(name: string) {
     .limit(1);
   return data && data[0] ? data[0] : null;
 }
-async function findOpenTask(text: string) {
-  const term = likeTerm(text);
-  if (!term) return null;
+async function findCompanyById(id: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(String(id || ""))) return null;
   const { data } = await supabaseAdmin
-    .from("tasks")
-    .select("id, text")
-    .eq("status", "open")
-    .ilike("text", `%${term}%`)
-    .limit(1);
-  return data && data[0] ? data[0] : null;
+    .from("companies")
+    .select("id, name")
+    .eq("id", id)
+    .maybeSingle();
+  return data || null;
 }
+async function findOpenTasks(text: string, companyId?: string | null): Promise<any[]> {
+  const term = likeTerm(text);
+  if (!term) return [];
+  let query = supabaseAdmin
+    .from("tasks")
+    .select("id, text, due_at, payload, company_id")
+    .eq("status", "open")
+    .ilike("text", `%${term}%`);
+  if (companyId) query = query.eq("company_id", companyId);
+  const { data } = await query.limit(4);
+  return data || [];
+}
+async function findOpenTask(text: string) {
+  const tasks = await findOpenTasks(text);
+  return tasks[0] || null;
+}
+async function findContacts(name: string, companyId: string): Promise<any[]> {
+  const term = likeTerm(name);
+  if (!term || !companyId) return [];
+  const { data } = await supabaseAdmin
+    .from("contacts")
+    .select("id, name, role, email, attributes")
+    .eq("company_id", companyId)
+    .ilike("name", `%${term}%`)
+    .limit(4);
+  return data || [];
+}
+const RELATIONSHIP_STAGES = new Map(
+  [
+    "New",
+    "Discovery",
+    "Qualified",
+    "Proposal",
+    "Negotiation",
+    "Partner",
+    "Customer",
+    "Dormant",
+  ].map((stage) => [stage.toLowerCase(), stage])
+);
 async function findDraft(subject: string) {
   const term = likeTerm(subject);
   if (!term) return null;
@@ -211,6 +248,8 @@ const sigTarget = (pa: any): string => {
   if (m) return m[1];
   m = ep.match(/\/upcoming\/([^/]+)/);
   if (m) return m[1];
+  m = ep.match(/\/(?:contacts|opportunities|tasks|campaigns)\/([^/]+)/);
+  if (m) return m[1];
   const b = pa?.body || {};
   return sigNorm(b.name || b.email || b.query || b.client || "");
 };
@@ -335,6 +374,120 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       continue;
     }
 
+    if (it.type === "update_client") {
+      const named = it.client ? await findCompany(String(it.client)) : null;
+      const company = named || (!it.client && defaultCompanyId
+        ? await findCompanyById(defaultCompanyId)
+        : null);
+      if (!company) continue;
+      const patch: Record<string, string> = {};
+      if (typeof it.stage === "string") {
+        const stage = RELATIONSHIP_STAGES.get(it.stage.trim().toLowerCase());
+        if (stage) patch.stage = stage;
+      }
+      for (const field of ["sector", "website", "domain"] as const) {
+        if (typeof it[field] === "string" && it[field].trim())
+          patch[field] = it[field].trim().slice(0, 240);
+      }
+      if (!Object.keys(patch).length) continue;
+      out.push({
+        key,
+        type: it.type,
+        label: `Update ${company.name}: ${Object.entries(patch)
+          .map(([field, value]) => `${field} "${value}"`)
+          .join(", ")}`,
+        endpoint: `/api/crm/companies/${company.id}`,
+        method: "PATCH",
+        body: patch,
+      });
+      continue;
+    }
+
+    if (it.type === "upsert_stakeholder") {
+      const person = String(it.person || it.name || "").trim();
+      const named = it.client ? await findCompany(String(it.client)) : null;
+      const company = named || (!it.client && defaultCompanyId
+        ? await findCompanyById(defaultCompanyId)
+        : null);
+      if (!person || !company) continue;
+      const buyingRoles = new Set([
+        "decision_maker",
+        "champion",
+        "user",
+        "influencer",
+        "blocker",
+        "unknown",
+      ]);
+      const influences = new Set(["high", "medium", "low"]);
+      const engagements = new Set(["warm", "neutral", "cold"]);
+      const stakeholderPatch: Record<string, string> = {};
+      if (buyingRoles.has(it.buyingRole))
+        stakeholderPatch.stakeholderRole = it.buyingRole;
+      if (influences.has(it.influence))
+        stakeholderPatch.stakeholderInfluence = it.influence;
+      if (engagements.has(it.engagement))
+        stakeholderPatch.stakeholderEngagement = it.engagement;
+      const jobTitle = typeof it.jobTitle === "string" ? it.jobTitle.trim().slice(0, 160) : "";
+      const email = typeof it.email === "string" ? it.email.trim().slice(0, 240) : "";
+      if (!Object.keys(stakeholderPatch).length && !jobTitle && !email) continue;
+
+      let contacts = await findContacts(person, company.id);
+      const exact = contacts.filter(
+        (contact) => String(contact.name).trim().toLowerCase() === person.toLowerCase()
+      );
+      if (exact.length === 1) contacts = exact;
+      const roleLabel = stakeholderPatch.stakeholderRole
+        ? stakeholderPatch.stakeholderRole.replace(/_/g, " ")
+        : "stakeholder details";
+      const updateFor = (contact: any) => ({
+        label: `${contact.name} at ${company.name}`,
+        endpoint: `/api/crm/contacts/${contact.id}`,
+        method: "PATCH",
+        body: {
+          ...(jobTitle ? { role: jobTitle } : {}),
+          ...(email ? { email } : {}),
+          attributes: { ...(contact.attributes || {}), ...stakeholderPatch },
+        },
+      });
+
+      if (contacts.length === 1) {
+        const exec = updateFor(contacts[0]);
+        out.push({
+          key,
+          type: it.type,
+          label: stakeholderPatch.stakeholderRole
+            ? `Set ${exec.label} as ${roleLabel}`
+            : `Update stakeholder details for ${exec.label}`,
+          endpoint: exec.endpoint,
+          method: exec.method,
+          body: exec.body,
+        });
+      } else if (contacts.length > 1) {
+        out.push({
+          key,
+          type: it.type,
+          label: `Which ${person} at ${company.name} should I set as ${roleLabel}?`,
+          choices: contacts.map(updateFor),
+        });
+      } else {
+        out.push({
+          key,
+          type: it.type,
+          label: `Add ${person} to ${company.name} as ${roleLabel}`,
+          endpoint: "/api/crm/contacts",
+          method: "POST",
+          body: {
+            company_id: company.id,
+            name: person,
+            ...(jobTitle ? { role: jobTitle } : {}),
+            ...(email ? { email } : {}),
+            attributes: stakeholderPatch,
+          },
+        });
+      }
+      continue;
+    }
+
     if (it.type === "log_client_update") {
       const content = typeof it.content === "string" ? it.content.trim() : "";
       if (!content) continue;
@@ -386,6 +539,65 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
           pinned: it.pinned === true,
         },
       });
+      continue;
+    }
+
+    if (it.type === "update_task") {
+      const query = String(it.item || it.task || "").trim();
+      const namedCompany = it.client ? await findCompany(String(it.client)) : null;
+      if (it.client && !namedCompany) continue;
+      const taskCompanyId = namedCompany?.id || (!it.client ? defaultCompanyId : null);
+      const tasks = await findOpenTasks(query, taskCompanyId);
+      if (!tasks.length) continue;
+      const patchFor = (task: any) => {
+        const patch: Record<string, any> = {};
+        if (it.status === "done" || it.status === "open") patch.status = it.status;
+        if (typeof it.newText === "string" && it.newText.trim())
+          patch.text = it.newText.trim().slice(0, 500);
+        if (typeof it.dueAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(it.dueAt))
+          patch.dueAt = it.dueAt.slice(0, 10);
+        else if (it.dueAt === null) patch.dueAt = null;
+        if (typeof it.pinned === "boolean")
+          patch.payload = { ...(task.payload || {}), pinned: it.pinned };
+        return patch;
+      };
+      const describe = (task: any) => {
+        const patch = patchFor(task);
+        const changes: string[] = [];
+        if (patch.status === "done") changes.push("mark done");
+        if (patch.status === "open") changes.push("re-open");
+        if (patch.text) changes.push(`rename to "${patch.text}"`);
+        if ("dueAt" in patch) changes.push(patch.dueAt ? `due ${patch.dueAt}` : "clear deadline");
+        if (patch.payload) changes.push(patch.payload.pinned ? "pin" : "unpin");
+        return changes.join(", ");
+      };
+      const executable = tasks
+        .map((task) => ({ task, patch: patchFor(task) }))
+        .filter(({ patch }) => Object.keys(patch).length > 0);
+      if (!executable.length) continue;
+      if (executable.length === 1) {
+        const { task, patch } = executable[0];
+        out.push({
+          key,
+          type: it.type,
+          label: `Update to-do "${task.text}": ${describe(task)}`,
+          endpoint: `/api/crm/tasks/${task.id}`,
+          method: "PATCH",
+          body: patch,
+        });
+      } else {
+        out.push({
+          key,
+          type: it.type,
+          label: `Which to-do should I ${describe(executable[0].task)}?`,
+          choices: executable.map(({ task, patch }) => ({
+            label: task.text,
+            endpoint: `/api/crm/tasks/${task.id}`,
+            method: "PATCH",
+            body: patch,
+          })),
+        });
+      }
       continue;
     }
 
@@ -765,16 +977,22 @@ Use "action" = "email" for anything to write or send, "call" to prep or schedule
 
 CALENDAR: the user's upcoming calls, synced from their calendar, are in the context below in the calls list, each with its join link when there is one. Answer "what's on my calendar" / "what's next" from that, and give the join link when asked. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
 
-ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles and to-dos, update opportunities, pull email context, remember durable rules, correct records, and dismiss stale work. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
+ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, client stages, stakeholders and to-dos, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles, update opportunities, pull email context, remember durable rules, correct records, and dismiss stale work. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
 [{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<call title>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
 ---END ACTIONS---
 Additional supported actions are:
+{"type":"update_client","client":"<client name, omit on their profile>","stage":"New|Discovery|Qualified|Proposal|Negotiation|Partner|Customer|Dormant","sector":"<optional>","website":"<optional>","domain":"<optional>"}
+{"type":"upsert_stakeholder","client":"<client name, omit on their profile>","person":"<contact name>","buyingRole":"decision_maker|champion|user|influencer|blocker|unknown","influence":"high|medium|low","engagement":"warm|neutral|cold","jobTitle":"<optional>","email":"<optional>"}
+{"type":"update_task","client":"<client name, omit on their profile>","item":"<existing to-do text>","status":"done|open","newText":"<optional replacement>","dueAt":"YYYY-MM-DD or null","pinned":true}
 {"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":20}
 {"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":20,"status":"draft|active|paused|completed"}
 {"type":"build_outreach_queue","limit":20}
 {"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed"}
 For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
+Use update_client for the relationship-level client stage and core facts. Use update_opportunity for a real revenue deal stage. When "move this client to qualified" clearly refers to a deal, update the opportunity. When it refers to the overall relationship or there is no deal, update the client stage. Never update both unless the user explicitly asks.
+Use upsert_stakeholder when the user identifies a decision-maker, champion, influencer, user or blocker. It updates an existing contact or clearly proposes creating the named contact when none exists. Do not guess buying roles from a job title alone.
+Use update_task when the user explicitly asks to complete, rename, pin, unpin or reschedule an existing to-do. If several match, the interface will ask which one.
 Use log_client_update when the user reports an off-system phone call, text message, voice note or relationship update. Keep the content factual and concise. It enters that client's timeline and commercial memory, which automatically affects future Brain context and next-call intent.
 For update_campaign you may also include "voice":{"tone":"...","style":"...","rules":["..."],"signature":"Lee"}, "bannedPhrases":["..."], "bookingUrl":"https://...", "bookingCtaMode":"interested_reply|final_step|always|never", and "sequence":[{"step":1,"delayDays":0,"purpose":"...","contentType":"plain|insight|case_study|video|close_loop","guidance":"...","assetUrl":null}]. Only include settings the user asked for or approved in the conversation.
 
