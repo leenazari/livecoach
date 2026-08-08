@@ -11,6 +11,7 @@ import {
   gatherOutreachContext,
   findCompaniesNamedIn,
 } from "@/lib/crm-context";
+import { getCommercialMemoryBlock } from "@/lib/commercial-memory";
 import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib/workspace";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
 import { logModelUsage } from "@/lib/usage";
@@ -407,10 +408,16 @@ export async function POST(req: NextRequest) {
         /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(
           message
         );
+      const wantsDeepHistory =
+        /\b(full history|all calls|previous calls|older|past conversations|documents?|detailed notes?|email thread|what did .* say)\b/i.test(
+          message
+        );
       const [digest, outreach, ...details] = await Promise.all([
         gatherGlobalContext(),
         gatherOutreachContext(message, { detailed: wantsOutreachDetail }),
-        ...detailIds.map((id) => gatherClientContext(id)),
+        ...detailIds.map((id) =>
+          wantsDeepHistory ? gatherClientContext(id) : getCommercialMemoryBlock(id)
+        ),
       ]);
       const detailBlocks = (details as (string | null)[]).filter(
         (d): d is string => !!d && d.trim().length > 0
