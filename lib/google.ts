@@ -20,11 +20,13 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 // OAuth consent screen. After adding it you MUST reconnect Google in Settings
 // once, or sending 403s while reading keeps working, which looks like the
 // digest silently doing nothing.
+export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+
 const SCOPE = [
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.send",
+  GMAIL_SEND_SCOPE,
 ].join(" ");
 
 export function googleConfigured(): boolean {
@@ -114,6 +116,25 @@ export async function getAccessToken(): Promise<string | null> {
     .update({ access_token: access, expiry, updated_at: new Date().toISOString() })
     .eq("id", "main");
   return access;
+}
+
+// Google can be connected while the stored grant is missing a newer scope.
+// Tokeninfo lets Settings distinguish that partial state without sending a
+// test email or exposing the access token to the browser.
+export async function googleHasScope(scope: string): Promise<boolean> {
+  const token = await getAccessToken();
+  if (!token) return false;
+  try {
+    const response = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`,
+      { cache: "no-store", signal: AbortSignal.timeout(6_000) }
+    );
+    if (!response.ok) return false;
+    const data = await response.json();
+    return String(data.scope || "").split(/\s+/).includes(scope);
+  } catch {
+    return false;
+  }
 }
 
 // List events on ONE calendar between two ISO times (single instances, recurring
