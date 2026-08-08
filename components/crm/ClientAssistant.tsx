@@ -233,6 +233,7 @@ export default function ClientAssistant({
   const [threadError, setThreadError] = useState("");
   // Per-proposed-action state: pending | busy | done | cancelled.
   const [actionState, setActionState] = useState<Record<string, string>>({});
+  const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const [batchBusy, setBatchBusy] = useState(false);
   const [contextMode, setContextMode] = useState<"memory" | "extended">("memory");
   const recRef = useRef<any>(null);
@@ -816,6 +817,11 @@ export default function ClientAssistant({
   // dismiss) and refreshes any open lists.
   const confirmAction = async (a: any): Promise<boolean> => {
     if (!a || !a.endpoint) return false;
+    setActionErrors((errors) => {
+      const next = { ...errors };
+      delete next[a.key];
+      return next;
+    });
     setActionState((s) => ({ ...s, [a.key]: "busy" }));
     try {
       await crmFetch(a.endpoint, {
@@ -826,8 +832,12 @@ export default function ClientAssistant({
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
       return true;
-    } catch {
+    } catch (error: any) {
       setActionState((s) => ({ ...s, [a.key]: "pending" }));
+      setActionErrors((errors) => ({
+        ...errors,
+        [a.key]: error?.message || "That change did not save. Please try again.",
+      }));
       return false;
     }
   };
@@ -837,6 +847,11 @@ export default function ClientAssistant({
   // one to run the action against exactly that record.
   const confirmChoice = async (a: any, c: any) => {
     if (!c || !c.endpoint) return;
+    setActionErrors((errors) => {
+      const next = { ...errors };
+      delete next[a.key];
+      return next;
+    });
     setActionState((s) => ({ ...s, [a.key]: "busy" }));
     try {
       await crmFetch(c.endpoint, {
@@ -845,8 +860,13 @@ export default function ClientAssistant({
       });
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-    } catch {
+      window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+    } catch (error: any) {
       setActionState((s) => ({ ...s, [a.key]: "pending" }));
+      setActionErrors((errors) => ({
+        ...errors,
+        [a.key]: error?.message || "That change did not save. Please try again.",
+      }));
     }
   };
 
@@ -1060,6 +1080,20 @@ export default function ClientAssistant({
                 Array.isArray(m.actions) &&
                 m.actions.length > 0 && (
                   <div className="mt-2 flex flex-col gap-1.5">
+                    <div className="rounded-lg border border-amber/35 bg-amber/[0.06] p-2.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-mono text-[0.6rem] uppercase tracking-[0.14em] text-amber">
+                          CRM action plan
+                        </span>
+                        <span className="font-mono text-[0.55rem] uppercase tracking-wider text-muted">
+                          {m.actions.length} {m.actions.length === 1 ? "change" : "changes"}
+                        </span>
+                      </div>
+                      <p className="mt-1 font-sans text-[0.7rem] leading-snug text-muted">
+                        Review the exact changes below. Nothing changes until you approve it.
+                        External or destructive actions always need separate approval.
+                      </p>
+                    </div>
                     {m.actions.filter(
                       (a: any) =>
                         a?.batchSafe === true &&
@@ -1075,13 +1109,13 @@ export default function ClientAssistant({
                       >
                         {batchBusy
                           ? "applying approved plan…"
-                          : `approve ${m.actions.filter(
+                          : `approve safe plan (${m.actions.filter(
                               (a: any) =>
                                 a?.batchSafe === true &&
                                 a?.endpoint &&
                                 !Array.isArray(a?.choices) &&
                                 (actionState[a.key] || "pending") === "pending"
-                            ).length} safe changes`}
+                            ).length})`}
                       </button>
                     )}
                     {m.actions.map((a: any) => {
@@ -1092,6 +1126,20 @@ export default function ClientAssistant({
                           key={a.key}
                           className="rounded-lg border border-sky/40 bg-sky/[0.06] p-2"
                         >
+                          <div className="mb-1.5 flex items-center justify-between gap-2">
+                            <span className="font-mono text-[0.5rem] uppercase tracking-wider text-sky/80">
+                              proposed change
+                            </span>
+                            <span
+                              className={`rounded-full border px-2 py-0.5 font-mono text-[0.48rem] uppercase tracking-wider ${
+                                a.batchSafe
+                                  ? "border-sage/35 bg-sage/10 text-sage"
+                                  : "border-amber/35 bg-amber/10 text-amber"
+                              }`}
+                            >
+                              {a.batchSafe ? "safe internal" : "separate approval"}
+                            </span>
+                          </div>
                           <p className="mb-1.5 font-sans text-[0.78rem] leading-snug text-bone/90">
                             {"⚙"} {a.label}
                           </p>
@@ -1140,6 +1188,11 @@ export default function ClientAssistant({
                                 cancel
                               </button>
                             </div>
+                          )}
+                          {actionErrors[a.key] && (
+                            <p className="mt-1.5 font-sans text-[0.68rem] leading-snug text-rust">
+                              Could not save: {actionErrors[a.key]}
+                            </p>
                           )}
                         </div>
                       );
