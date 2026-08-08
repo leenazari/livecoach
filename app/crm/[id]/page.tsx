@@ -96,9 +96,12 @@ export default function CompanyDetailPage() {
       // Make sure the standard fields (owner / priority / value / address) exist
       // before we read them for the stats. Idempotent, runs once effectively.
       await crmFetch(`/api/crm/fields/seed`, { method: "POST" }).catch(() => {});
-      const [{ company, contacts }, { fields }, { calls }, pipeline, timelineData] =
+      const [companyResponse, { fields }, { calls }, pipeline, timelineData] =
         await Promise.all([
-        crmFetch<{ company: Company; contacts: Contact[] }>(
+        crmFetch<
+          | { company: Company; contacts: Contact[] }
+          | { redirectTo: string }
+        >(
           `/api/crm/companies/${id}`
         ),
         crmFetch<{ fields: FieldDefinition[] }>(
@@ -114,6 +117,11 @@ export default function CompanyDetailPage() {
           `/api/crm/companies/${id}/timeline`
         ).catch(() => ({ items: [] as TimelineItem[] })),
       ]);
+      if ("redirectTo" in companyResponse) {
+        router.replace(`/crm/${companyResponse.redirectTo}`);
+        return;
+      }
+      const { company, contacts } = companyResponse;
       setCompany(company);
       setContacts(contacts);
       setFields(fields);
@@ -135,7 +143,7 @@ export default function CompanyDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, router]);
 
   useEffect(() => {
     load();

@@ -34,8 +34,33 @@ export async function GET(
       .from("companies")
       .select("*")
       .eq("id", params.id)
-      .single();
+      .maybeSingle();
     if (error) throw error;
+
+    // A safely merged client gets a permanent pointer to the surviving
+    // record. Old bookmarks, timeline links and browser history continue to
+    // work instead of landing on a confusing 404.
+    if (!company) {
+      const { data: redirect, error: redirectError } = await supabaseAdmin
+        .from("crm_company_redirects")
+        .select("target_id")
+        .eq("source_id", params.id)
+        .maybeSingle();
+      if (redirectError) throw redirectError;
+      if (redirect?.target_id) {
+        return NextResponse.json(
+          { redirectTo: redirect.target_id },
+          {
+            headers: {
+              "Cache-Control": "private, no-store, no-cache, max-age=0, must-revalidate",
+              Pragma: "no-cache",
+              Expires: "0",
+            },
+          }
+        );
+      }
+      return NextResponse.json({ error: "company not found" }, { status: 404 });
+    }
 
     const { data: contacts, error: cErr } = await supabaseAdmin
       .from("contacts")
