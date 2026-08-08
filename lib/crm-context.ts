@@ -22,7 +22,7 @@ export async function gatherClientContext(
         .single(),
       supabaseAdmin
         .from("contacts")
-        .select("name, role, email")
+        .select("name, role, email, attributes")
         .eq("company_id", companyId)
         .limit(20),
       supabaseAdmin
@@ -163,7 +163,22 @@ export async function gatherClientContext(
     `Contacts: ${
       contacts.length
         ? contacts
-            .map((c: any) => `${c.name}${c.role ? ` (${c.role})` : ""}`)
+            .map((c: any) => {
+              const stakeholder = c.attributes || {};
+              const buyingRole = String(
+                stakeholder.stakeholderRole || ""
+              ).replace(/_/g, " ");
+              const commercial = [
+                buyingRole && buyingRole !== "unknown" ? buyingRole : "",
+                stakeholder.stakeholderInfluence
+                  ? `${stakeholder.stakeholderInfluence} influence`
+                  : "",
+                stakeholder.stakeholderEngagement || "",
+              ].filter(Boolean);
+              return `${c.name}${c.role ? ` (${c.role})` : ""}${
+                commercial.length ? ` [${commercial.join(", ")}]` : ""
+              }`;
+            })
             .join(", ")
         : "none recorded"
     }`

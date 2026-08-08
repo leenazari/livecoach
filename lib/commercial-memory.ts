@@ -37,6 +37,13 @@ export type CommercialMemory = {
     nextActionDueAt: string | null;
     nextActionOwner: string;
   };
+  stakeholders: {
+    name: string;
+    jobTitle: string;
+    buyingRole: string;
+    influence: string;
+    engagement: string;
+  }[];
   openActions: { text: string; kind: string; dueAt: string | null }[];
   addedContext: { title: string; content: string }[];
 };
@@ -57,7 +64,7 @@ const list = (value: any, max = 3): string[] =>
 // changed and also invalidates the cached next-call intent when something has.
 export async function getCommercialMemory(companyId: string): Promise<CommercialMemory | null> {
   try {
-    const [companyRes, callsRes, tasksRes, opportunitiesRes, contextRes, prospectsRes] = await Promise.all([
+    const [companyRes, callsRes, tasksRes, opportunitiesRes, contextRes, prospectsRes, contactsRes] = await Promise.all([
       supabaseAdmin
         .from("companies")
         .select("name, profile, notes, email_context, email_context_updated_at, commercial_memory")
@@ -95,6 +102,12 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
         .eq("crm_company_id", companyId)
         .order("updated_at", { ascending: false })
         .limit(3),
+      supabaseAdmin
+        .from("contacts")
+        .select("id, name, role, attributes, updated_at")
+        .eq("company_id", companyId)
+        .order("created_at", { ascending: true })
+        .limit(20),
     ]);
     const company: any = companyRes.data;
     if (!company) return null;
@@ -103,11 +116,12 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
     const opportunity: any = (opportunitiesRes.data || []).find((row: any) => row.status === "open") || opportunitiesRes.data?.[0] || null;
     const contexts: any[] = contextRes.data || [];
     const prospect: any = prospectsRes.data?.[0] || null;
+    const contacts: any[] = contactsRes.data || [];
     const profile = company.profile && typeof company.profile === "object" ? company.profile : {};
     const brief = Array.isArray(profile.brief) ? profile.brief.join(" ") : profile.brief;
     const relationship = cut(brief || company.notes, 600);
     const sourceHash = createHash("sha256").update(JSON.stringify({
-      schema: 2,
+      schema: 3,
       name: company.name,
       relationship,
       emailAt: company.email_context_updated_at,
@@ -117,6 +131,15 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
       opportunity: opportunity ? [opportunity.id, opportunity.updated_at, opportunity.status, opportunity.next_action] : null,
       context: contexts.map((row) => [row.id, row.created_at, cut(row.content || row.url, 400)]),
       outreach: prospect ? [prospect.id, prospect.updated_at, prospect.reply_category, prospect.last_reply_at] : null,
+      stakeholders: contacts.map((row) => [
+        row.id,
+        row.name,
+        row.role,
+        row.updated_at,
+        row.attributes?.stakeholderRole,
+        row.attributes?.stakeholderInfluence,
+        row.attributes?.stakeholderEngagement,
+      ]),
     })).digest("hex");
 
     const existing = company.commercial_memory as CommercialMemory | null;
@@ -164,6 +187,26 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
         nextActionDueAt: opportunity.next_action_due_at || null,
         nextActionOwner: cut(opportunity.next_action_owner, 30) || "us",
       } : null,
+      stakeholders: contacts
+        .map((row) => ({
+          name: cut(row.name, 100),
+          jobTitle: cut(row.role, 100),
+          buyingRole: cut(row.attributes?.stakeholderRole, 30) || "unknown",
+          influence: cut(row.attributes?.stakeholderInfluence, 20) || "medium",
+          engagement: cut(row.attributes?.stakeholderEngagement, 20) || "neutral",
+        }))
+        .sort((a, b) => {
+          const roleRank: Record<string, number> = {
+            decision_maker: 0,
+            champion: 1,
+            influencer: 2,
+            user: 3,
+            blocker: 4,
+            unknown: 5,
+          };
+          return (roleRank[a.buyingRole] ?? 5) - (roleRank[b.buyingRole] ?? 5);
+        })
+        .slice(0, 8),
       openActions: tasks.slice(0, 8).map((row) => ({
         text: cut(row.text, 220),
         kind: cut(row.kind, 50),
@@ -188,6 +231,16 @@ export function formatCommercialMemoryBlock(memory: CommercialMemory | null): st
   if (!memory) return "";
   const lines = [`CLIENT COMMERCIAL MEMORY: ${memory.company}`];
   if (memory.relationship) lines.push(`Relationship: ${memory.relationship}`);
+  if (memory.stakeholders?.length) {
+    lines.push(
+      `Stakeholders: ${memory.stakeholders
+        .map(
+          (person) =>
+            `${person.name}${person.jobTitle ? ` (${person.jobTitle})` : ""} [${person.buyingRole.replace(/_/g, " ")}, ${person.influence} influence, ${person.engagement}]`
+        )
+        .join(" | ")}`
+    );
+  }
   if (memory.lastCall) {
     lines.push(`Latest call (${memory.lastCall.at}): ${memory.lastCall.headline} ${memory.lastCall.overview}`.trim());
     if (memory.lastCall.ourActions.length) lines.push(`We owe: ${memory.lastCall.ourActions.join(" | ")}`);
