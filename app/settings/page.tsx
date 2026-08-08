@@ -177,14 +177,28 @@ export default function SettingsPage() {
         </Link>
       </header>
 
-      <div className="mb-5 rounded-xl border border-sky/40 bg-sky/[0.05] p-5">
+      <div
+        className={`mb-5 rounded-xl border p-5 ${
+          gcal === null
+            ? "border-edge bg-panel/40"
+            : gcal.connected
+              ? "border-sage/45 bg-sage/[0.06]"
+              : "border-rust/50 bg-rust/[0.07]"
+        }`}
+      >
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="font-mono text-[0.62rem] uppercase tracking-[0.2em] text-sky">
-              {"◷"} Google Calendar
+            <p
+              className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
+                gcal === null ? "text-muted" : gcal.connected ? "text-sage" : "text-rust"
+              }`}
+            >
+              {gcal === null ? "◷" : gcal.connected ? "✓" : "!"} Google Calendar
             </p>
             <p className="mt-1 font-mono text-[0.6rem] leading-relaxed text-muted">
-              {gcal?.connected
+              {gcal === null
+                ? "Checking the live connection…"
+                : gcal.connected
                 ? `Connected${
                     gcal.email ? ` as ${gcal.email}` : ""
                   }. Calendar is working${
@@ -194,7 +208,7 @@ export default function SettingsPage() {
                       ? ", but Gmail permission or the Gmail API is missing"
                       : ""
                   }. The Sync button on the dashboard pulls calendar changes on demand.`
-                : "Connect your Google Calendar so the app can pull your meetings and apply reschedules live."}
+                : "Not connected. Reconnect Google Calendar so meetings, cancellations and reschedules stay in sync."}
             </p>
             {gcalNote && (
               <p className="mt-1 font-mono text-[0.58rem] text-sage">{gcalNote}</p>
@@ -206,12 +220,22 @@ export default function SettingsPage() {
               </p>
             )}
           </div>
-          <a
-            href="/api/auth/google/start"
-            className="shrink-0 rounded-full border border-sky/60 bg-sky/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/25"
-          >
-            {gcal?.connected ? "reconnect" : "connect google"}
-          </a>
+          {gcal?.connected ? (
+            <span className="shrink-0 rounded-full border border-sage/55 bg-sage/10 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage">
+              ● Connected
+            </span>
+          ) : gcal ? (
+            <a
+              href="/api/auth/google/start"
+              className="shrink-0 rounded-full border border-rust/60 bg-rust/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-rust transition hover:bg-rust/25"
+            >
+              reconnect google
+            </a>
+          ) : (
+            <span className="shrink-0 rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted">
+              checking…
+            </span>
+          )}
         </div>
       </div>
 

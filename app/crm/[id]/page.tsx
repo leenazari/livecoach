@@ -14,6 +14,9 @@ import AddFieldForm from "@/components/crm/AddFieldForm";
 import ClientContext from "@/components/crm/ClientContext";
 import NavMenu from "@/components/crm/NavMenu";
 import TaskList from "@/components/crm/TaskList";
+import QuickClientUpdate, {
+  type QuickUpdateItem,
+} from "@/components/crm/QuickClientUpdate";
 
 const inputCls =
   "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
@@ -281,7 +284,7 @@ export default function CompanyDetailPage() {
       <main className="mx-auto max-w-[1000px] px-5 py-10">
         <p className="font-mono text-sm text-rust">{err || "not found"}</p>
         <Link
-          href="/crm"
+          href="/crm/board?tab=clients"
           className="mt-3 inline-block font-mono text-[0.66rem] uppercase tracking-wider text-amber"
         >
           ◂ all companies
@@ -325,6 +328,47 @@ export default function CompanyDetailPage() {
     );
   });
   const openOppCount = opps.filter((o: any) => o.status === "open").length;
+  const priorityOpportunity = opps.find(
+    (o: any) =>
+      o.status === "open" && (o.opportunity_type || "revenue") === "revenue"
+  );
+  const commercialMemory =
+    company.commercial_memory && typeof company.commercial_memory === "object"
+      ? (company.commercial_memory as any)
+      : {};
+  const memoryAction = Array.isArray(commercialMemory.openActions)
+    ? commercialMemory.openActions.find((action: any) => action?.text)
+    : null;
+  const playbookAction = Array.isArray((company.profile as any)?.playbook)
+    ? (company.profile as any).playbook.find(
+        (action: any) => typeof action === "string" && action.trim()
+      )
+    : "";
+  const priorityAction = String(
+    priorityOpportunity?.next_action || memoryAction?.text || playbookAction || ""
+  ).trim();
+  const priorityDueAt =
+    priorityOpportunity?.next_action_due_at || memoryAction?.dueAt || null;
+  const priorityDueMs = priorityDueAt
+    ? new Date(priorityDueAt).getTime()
+    : null;
+  const priorityOverdue =
+    priorityDueMs != null && Number.isFinite(priorityDueMs) && priorityDueMs < Date.now();
+  const primaryContact = contacts.find((contact) => contact.email) || contacts[0] || null;
+  const latestCallAt = calls[0]?.created_at || null;
+  const nextMeeting = timeline.find(
+    (item) => item.future && item.type === "meeting"
+  );
+  const lastCallMemory =
+    commercialMemory.lastCall && typeof commercialMemory.lastCall === "object"
+      ? commercialMemory.lastCall
+      : {};
+  const buyingSignals = Array.isArray(lastCallMemory.buyingSignals)
+    ? lastCallMemory.buyingSignals.slice(0, 3)
+    : [];
+  const blockers = Array.isArray(lastCallMemory.objections)
+    ? lastCallMemory.objections.slice(0, 3)
+    : [];
   const priorityVal = (attrs as any).priority || "";
   const dealVal = (attrs as any).value;
 
@@ -357,6 +401,25 @@ export default function CompanyDetailPage() {
     setTab(t);
     scrollToId("sec-tabs");
   };
+  const addQuickUpdateToTimeline = (item: QuickUpdateItem) => {
+    const update: TimelineItem = {
+      id: `context:${item.id}`,
+      type: "note",
+      at: item.created_at,
+      title: item.title || "Client update",
+      detail: item.content || undefined,
+      meta: "logged now",
+    };
+    setTimeline((current) => {
+      const firstPast = current.findIndex((timelineItem) => !timelineItem.future);
+      if (firstPast < 0) return [...current, update];
+      return [
+        ...current.slice(0, firstPast),
+        update,
+        ...current.slice(firstPast),
+      ];
+    });
+  };
 
   const statCls =
     "cursor-pointer rounded-lg border border-edge bg-ink/40 px-3 py-2.5 text-left transition hover:border-amber/50";
@@ -366,7 +429,7 @@ export default function CompanyDetailPage() {
       <header className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
         <div className="flex items-baseline gap-3">
           <Link
-            href="/crm"
+            href="/crm/board?tab=clients"
             className="font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:text-amber"
           >
             ◂ clients
@@ -420,6 +483,154 @@ export default function CompanyDetailPage() {
       </header>
 
       {err && <p className="mb-3 font-mono text-[0.66rem] text-rust">{err}</p>}
+
+      <section
+        className={`mb-3 rounded-xl border p-4 ${
+          priorityOverdue
+            ? "border-rust/55 bg-rust/[0.08]"
+            : "border-amber/50 bg-amber/[0.07]"
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p
+              className={`font-mono text-[0.58rem] uppercase tracking-[0.2em] ${
+                priorityOverdue ? "text-rust" : "text-amber"
+              }`}
+            >
+              {priorityOverdue ? "▲" : "→"} Priority now
+            </p>
+            <p className="mt-1.5 font-sans text-[0.98rem] font-medium leading-snug text-bone">
+              {priorityAction ||
+                "Confirm the next relationship or commercial commitment."}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {priorityDueAt ? (
+                <span
+                  className={`rounded-full border px-2 py-0.5 font-mono text-[0.5rem] uppercase tracking-wider ${
+                    priorityOverdue
+                      ? "border-rust/45 bg-rust/10 text-rust"
+                      : "border-edge text-muted"
+                  }`}
+                >
+                  {priorityOverdue ? "overdue · " : "due · "}
+                  {new Date(priorityDueAt).toLocaleString("en-GB", {
+                    timeZone: "Europe/London",
+                    day: "numeric",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: false,
+                  })}
+                </span>
+              ) : null}
+              {priorityOpportunity ? (
+                <span className="rounded-full border border-sage/35 bg-sage/[0.07] px-2 py-0.5 font-mono text-[0.5rem] uppercase tracking-wider text-sage">
+                  {priorityOpportunity.pipeline_stage || "discovery"} · {Number(priorityOpportunity.probability) || 0}%
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => scrollToId("sec-tasks")}
+            className="shrink-0 rounded-full border border-amber/50 bg-amber/10 px-3 py-1.5 font-mono text-[0.54rem] uppercase tracking-wider text-amber transition hover:bg-amber/20"
+          >
+            Open next steps ↓
+          </button>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 border-t border-edge/50 pt-3 sm:grid-cols-4">
+          <div className="min-w-0">
+            <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Relationship</p>
+            <p className="mt-0.5 truncate font-sans text-[0.76rem] text-bone/85">
+              {company.stage || "Stage not set"}
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Main contact</p>
+            <p className="mt-0.5 truncate font-sans text-[0.76rem] text-bone/85">
+              {primaryContact?.name || "Not recorded"}
+            </p>
+            {primaryContact?.role ? (
+              <p className="truncate font-sans text-[0.64rem] text-muted">{primaryContact.role}</p>
+            ) : null}
+          </div>
+          <div className="min-w-0">
+            <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Last call</p>
+            <p className="mt-0.5 truncate font-sans text-[0.76rem] text-bone/85">
+              {latestCallAt
+                ? new Date(latestCallAt).toLocaleString("en-GB", {
+                    timeZone: "Europe/London",
+                    day: "numeric",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: false,
+                  })
+                : "No call recorded"}
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Next meeting</p>
+            <p className={`mt-0.5 truncate font-sans text-[0.76rem] ${nextMeeting ? "text-sage" : "text-muted"}`}>
+              {nextMeeting
+                ? new Date(nextMeeting.at).toLocaleString("en-GB", {
+                    timeZone: "Europe/London",
+                    weekday: "short",
+                    day: "numeric",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: false,
+                  })
+                : "Not booked"}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <QuickClientUpdate
+        companyId={id}
+        companyName={company.name}
+        onSaved={addQuickUpdateToTimeline}
+      />
+
+      {/* Actionable work stays above the longer intelligence and history. */}
+      <div id="sec-tasks" className="mb-3 rounded-xl border border-sage/35 bg-sage/[0.045] p-4">
+        <p className="mb-2.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
+          {"→"} Next steps{" "}
+          <span className="text-muted">- what to do for {company.name}</span>
+        </p>
+        <TaskList
+          companyId={id}
+          emptyText="No next steps yet. Log an update above or build from context."
+        />
+      </div>
+
+      {buyingSignals.length || blockers.length ? (
+        <section className="mb-3 grid gap-2 sm:grid-cols-2">
+          {buyingSignals.length ? (
+            <div className="rounded-xl border border-sage/35 bg-sage/[0.05] p-3.5">
+              <p className="font-mono text-[0.54rem] uppercase tracking-[0.16em] text-sage">◆ Buying signals</p>
+              <ul className="mt-1.5 space-y-1">
+                {buyingSignals.map((signal: string, index: number) => (
+                  <li key={`${signal}:${index}`} className="font-sans text-[0.76rem] leading-snug text-bone/80">• {signal}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {blockers.length ? (
+            <div className="rounded-xl border border-rust/35 bg-rust/[0.05] p-3.5">
+              <p className="font-mono text-[0.54rem] uppercase tracking-[0.16em] text-rust">▲ Blockers to resolve</p>
+              <ul className="mt-1.5 space-y-1">
+                {blockers.map((blocker: string, index: number) => (
+                  <li key={`${blocker}:${index}`} className="font-sans text-[0.76rem] leading-snug text-bone/80">• {blocker}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {(() => {
         const raw = (company.profile as any)?.brief;
@@ -486,19 +697,6 @@ export default function CompanyDetailPage() {
             </ul>
           </div>
         )}
-
-      {/* NEXT STEPS - trackable to-dos for this client. Tick to complete,
-          click ticked to remove, done tasks clear next day. */}
-      <div id="sec-tasks" className="mb-5 rounded-xl border border-edge bg-panel/40 p-4">
-        <p className="mb-2.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
-          {"→"} Next steps{" "}
-          <span className="text-muted">- what to do for {company.name}</span>
-        </p>
-        <TaskList
-          companyId={id}
-          emptyText="No next steps yet. Hit “build from context” above, or finish a call."
-        />
-      </div>
 
       {/* DATA TABS - the AI intelligence above stays put; the raw client data
           lives in these tabs so the page isn't one long scroll. */}
