@@ -3,18 +3,45 @@ import { emailFromHeader } from "@/lib/gmail";
 
 const asText = (value: any, max = 1000) => String(value || "").trim().slice(0, max);
 
-export async function findOutreachProspectForAttendees(attendees: any[]): Promise<any | null> {
-  const emails = (Array.isArray(attendees) ? attendees : [])
+export function outreachEmailsForAttendees(attendees: any[]): string[] {
+  return (Array.isArray(attendees) ? attendees : [])
     .filter((attendee: any) => !attendee?.self)
     .map((attendee: any) => emailFromHeader(attendee?.email || ""))
     .filter(Boolean);
-  if (!emails.length) return null;
+}
+
+export async function loadOutreachProspectsForAttendees(attendeeSets: any[][]): Promise<Map<string, any>> {
+  const emails = Array.from(
+    new Set(attendeeSets.flatMap(outreachEmailsForAttendees))
+  );
+  const byEmail = new Map<string, any>();
+  if (!emails.length) return byEmail;
   const { data } = await supabaseAdmin
     .from("outreach_prospects")
     .select("*")
-    .in("email", emails)
-    .limit(1);
-  return data?.[0] || null;
+    .in("email", emails);
+  for (const prospect of data || []) {
+    if (prospect.email) byEmail.set(String(prospect.email).toLowerCase(), prospect);
+  }
+  return byEmail;
+}
+
+export function matchOutreachProspectForAttendees(
+  attendees: any[],
+  prospectsByEmail: Map<string, any>
+): any | null {
+  for (const email of outreachEmailsForAttendees(attendees)) {
+    const prospect = prospectsByEmail.get(email.toLowerCase());
+    if (prospect) return prospect;
+  }
+  return null;
+}
+
+export async function findOutreachProspectForAttendees(attendees: any[]): Promise<any | null> {
+  const emails = outreachEmailsForAttendees(attendees);
+  if (!emails.length) return null;
+  const matches = await loadOutreachProspectsForAttendees([attendees]);
+  return matchOutreachProspectForAttendees(attendees, matches);
 }
 
 export async function ensureOutreachCompany(prospectId: string, reason: "interested" | "booked") {
@@ -71,24 +98,40 @@ export async function ensureOutreachCompany(prospectId: string, reason: "interes
 
   const [{ data: sent }, { data: enrolment }] = await Promise.all([
     supabaseAdmin.from("outreach_messages").select("subject,body_text,sent_at,step_number").eq("prospect_id", prospect.id).eq("status", "sent").order("sent_at", { ascending: true }).limit(5),
-    supabaseAdmin.from("outreach_enrolments").select("id,campaign_id,research,research_sources,status").eq("prospect_id", prospect.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    supabaseAdmin.from("outreach_enrolments").select("id,campaign_id,research,research_sources,status,booked_at").eq("prospect_id", prospect.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
   const research = enrolment?.research || prospect.research || {};
+  // Use the newest real source timestamp, not the time calendar sync happened
+  // to run. Re-writing `updatedAt` on every daily sync invalidated the compact
+  // commercial-memory cache even when the underlying outreach was unchanged.
+  const contextUpdatedAt =
+    prospect.last_reply_at ||
+    prospect.last_contacted_at ||
+    research?.generatedAt ||
+    prospect.created_at ||
+    new Date().toISOString();
   if (contactId) {
-    await supabaseAdmin.from("contacts").update({
-      attributes: {
-        ...((contacts?.[0]?.attributes && typeof contacts[0].attributes === "object") ? contacts[0].attributes : {}),
+    const existingAttributes =
+      contacts?.[0]?.attributes && typeof contacts[0].attributes === "object"
+        ? contacts[0].attributes
+        : {};
+    const nextAttributes = {
+        ...existingAttributes,
         source: "outreach",
         personLinkedIn: prospect.person_linkedin_url || null,
         research: {
           subject: fullName,
           background: [prospect.job_title ? `${fullName} is recorded as ${prospect.job_title} at ${prospect.company_name}.` : "", research?.personalisationFact, ...(Array.isArray(research?.signals) ? research.signals : [])].filter(Boolean).join("\n"),
           sources: enrolment?.research_sources || [],
-          generatedAt: research?.generatedAt || new Date().toISOString(),
+          generatedAt: research?.generatedAt || contextUpdatedAt,
         },
-      },
-      updated_at: new Date().toISOString(),
-    }).eq("id", contactId);
+      };
+    if (JSON.stringify(existingAttributes) !== JSON.stringify(nextAttributes)) {
+      await supabaseAdmin.from("contacts").update({
+        attributes: nextAttributes,
+        updated_at: new Date().toISOString(),
+      }).eq("id", contactId);
+    }
   }
   const outreachContext = [
     "OUTREACH ORIGIN, use this when preparing the first call:",
@@ -98,25 +141,48 @@ export async function ensureOutreachCompany(prospectId: string, reason: "interes
     prospect.last_reply_text ? `Their reply: ${asText(prospect.last_reply_text, 1000)}` : prospect.reply_summary ? `Their reply: ${asText(prospect.reply_summary, 400)}` : "",
   ].filter(Boolean).join("\n\n");
   const existingProfile = company?.profile && typeof company.profile === "object" ? company.profile : {};
-  await Promise.all([
-    supabaseAdmin.from("companies").update({
-      stage: reason === "booked" ? "Qualified" : (company?.stage || "Discovery"),
-      email_context: outreachContext,
-      email_context_updated_at: new Date().toISOString(),
-      profile: {
-        ...existingProfile,
-        research: existingProfile.research || {
-          subject: prospect.company_name,
-          background: [research?.summary, research?.bestAngle ? `Interviewa relevance: ${research.bestAngle}` : ""].filter(Boolean).join("\n\n"),
-          sources: enrolment?.research_sources || [],
-          generatedAt: research?.generatedAt || new Date().toISOString(),
-        },
-        outreach: { prospectId: prospect.id, research, replyCategory: prospect.reply_category, source: "Interviewa outreach", updatedAt: new Date().toISOString() },
-      },
-      updated_at: new Date().toISOString(),
-    }).eq("id", companyId),
-    supabaseAdmin.from("outreach_prospects").update({ crm_company_id: companyId, updated_at: new Date().toISOString() }).eq("id", prospect.id),
-  ]);
+  const nextStage = reason === "booked" ? "Qualified" : (company?.stage || "Discovery");
+  const nextProfile = {
+    ...existingProfile,
+    research: existingProfile.research || {
+      subject: prospect.company_name,
+      background: [research?.summary, research?.bestAngle ? `Interviewa relevance: ${research.bestAngle}` : ""].filter(Boolean).join("\n\n"),
+      sources: enrolment?.research_sources || [],
+      generatedAt: research?.generatedAt || contextUpdatedAt,
+    },
+    outreach: {
+      prospectId: prospect.id,
+      research,
+      replyCategory: prospect.reply_category,
+      source: "Interviewa outreach",
+      updatedAt: contextUpdatedAt,
+    },
+  };
+  const companyChanged =
+    company?.stage !== nextStage ||
+    company?.email_context !== outreachContext ||
+    JSON.stringify(existingProfile) !== JSON.stringify(nextProfile);
+  const writes: PromiseLike<any>[] = [];
+  if (companyChanged) {
+    writes.push(
+      supabaseAdmin.from("companies").update({
+        stage: nextStage,
+        email_context: outreachContext,
+        email_context_updated_at: contextUpdatedAt,
+        profile: nextProfile,
+        updated_at: new Date().toISOString(),
+      }).eq("id", companyId)
+    );
+  }
+  if (prospect.crm_company_id !== companyId) {
+    writes.push(
+      supabaseAdmin.from("outreach_prospects").update({
+        crm_company_id: companyId,
+        updated_at: new Date().toISOString(),
+      }).eq("id", prospect.id)
+    );
+  }
+  await Promise.all(writes);
 
   const { data: openOpps } = await supabaseAdmin.from("opportunities").select("id,probability,pipeline_stage").eq("company_id", companyId).eq("status", "open").limit(1);
   let opportunityId = openOpps?.[0]?.id || null;
@@ -163,18 +229,69 @@ export async function attachOutreachMeeting(prospectId: string, upcomingId: stri
   const context = await ensureOutreachCompany(prospectId, "booked");
   if (!context) return null;
   const intent = firstOutreachCallIntent(context);
-  const { data: call } = await supabaseAdmin.from("upcoming_calls").select("prep,research").eq("id", upcomingId).maybeSingle();
+  const { data: call } = await supabaseAdmin.from("upcoming_calls").select("company_id,intent,prep,research").eq("id", upcomingId).maybeSingle();
   const prep = call?.prep && typeof call.prep === "object" ? call.prep : {};
   const research = call?.research && typeof call.research === "object" ? call.research : {};
+  const manualIntent = prep?.intentMeta?.source === "manual";
+  const outreachResearch = {
+    prospectId,
+    research: context.research,
+    emailContext: context.outreachContext,
+    source: "Interviewa outreach",
+  };
+  const nextResearch = { ...research, outreach: outreachResearch };
+  const callPatch: Record<string, any> = {};
+  if (call?.company_id !== context.companyId) callPatch.company_id = context.companyId;
+  if (JSON.stringify(research?.outreach || null) !== JSON.stringify(outreachResearch)) {
+    callPatch.research = nextResearch;
+  }
+  // A calendar repair may discover the outreach relationship after the user
+  // has already edited the call. Link all the commercial context, but their
+  // explicit intent always wins.
+  if (!manualIntent) {
+    if (call?.intent !== intent) callPatch.intent = intent;
+    if (prep?.intentMeta?.source !== "outreach") {
+      callPatch.prep = {
+        ...prep,
+        intentMeta: {
+          source: "outreach",
+          rationale: "Built from the personalised email, reply and saved prospect research.",
+          savedAt: new Date().toISOString(),
+        },
+      };
+    }
+  }
+  const statusWrites: PromiseLike<any>[] = [];
+  if (context.enrolment && (
+    context.enrolment.status !== "booked" ||
+    context.enrolment.booked_at !== scheduledAt
+  )) {
+    statusWrites.push(
+      supabaseAdmin.from("outreach_enrolments").update({
+        status: "booked",
+        booked_at: scheduledAt,
+        next_action_at: null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", context.enrolment.id)
+    );
+  }
+  if (
+    context.prospect.status !== "qualified" ||
+    context.prospect.crm_company_id !== context.companyId
+  ) {
+    statusWrites.push(
+      supabaseAdmin.from("outreach_prospects").update({
+        status: "qualified",
+        crm_company_id: context.companyId,
+        updated_at: new Date().toISOString(),
+      }).eq("id", prospectId)
+    );
+  }
   await Promise.all([
-    supabaseAdmin.from("upcoming_calls").update({
-      company_id: context.companyId,
-      intent,
-      research: { ...research, outreach: { prospectId, research: context.research, emailContext: context.outreachContext, source: "Interviewa outreach" } },
-      prep: { ...prep, intentMeta: { source: "outreach", rationale: "Built from the personalised email, reply and saved prospect research.", savedAt: new Date().toISOString() } },
-    }).eq("id", upcomingId),
-    supabaseAdmin.from("outreach_enrolments").update({ status: "booked", booked_at: scheduledAt, next_action_at: null, updated_at: new Date().toISOString() }).eq("prospect_id", prospectId),
-    supabaseAdmin.from("outreach_prospects").update({ status: "qualified", crm_company_id: context.companyId, updated_at: new Date().toISOString() }).eq("id", prospectId),
+    ...(Object.keys(callPatch).length
+      ? [supabaseAdmin.from("upcoming_calls").update(callPatch).eq("id", upcomingId)]
+      : []),
+    ...statusWrites,
   ]);
   const { data: already } = await supabaseAdmin.from("outreach_events").select("id").eq("prospect_id", prospectId).eq("kind", "meeting_booked").contains("metadata", { upcomingId }).limit(1);
   if (!already?.length) {
@@ -185,5 +302,5 @@ export async function attachOutreachMeeting(prospectId: string, upcomingId: stri
       metadata: { upcomingId, companyId: context.companyId, scheduledAt },
     });
   }
-  return { ...context, intent };
+  return { ...context, intent: manualIntent ? call?.intent : intent, manualIntentPreserved: manualIntent };
 }
