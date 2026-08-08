@@ -75,7 +75,7 @@ export async function GET(req: Request) {
           .limit(50),
         supabaseAdmin
           .from("opportunities")
-          .select("id, company_id, title, value, status, created_at, opportunity_type")
+          .select("id, company_id, title, value, status, created_at, opportunity_type, next_action, next_action_due_at, next_action_owner")
           .eq("status", "open")
           .eq("opportunity_type", "revenue")
           .limit(100),
@@ -407,6 +407,41 @@ export async function GET(req: Request) {
         at: latestTouch.get(o.company_id) || o.created_at,
         href: o.company_id ? `/crm/${o.company_id}` : "/crm/board?tab=opportunities",
       }));
+    const primaryOpportunityActions = openOpps
+      .filter((opportunity: any) => String(opportunity.next_action || "").trim())
+      .map((opportunity: any) => {
+        const due = opportunity.next_action_due_at
+          ? new Date(opportunity.next_action_due_at).getTime()
+          : NaN;
+        const owner = String(opportunity.next_action_owner || "us");
+        let score = 75 + Math.min(35, (Number(opportunity.value) || 0) / 50_000);
+        let reason = owner === "buyer"
+          ? "Waiting on buyer"
+          : owner === "joint"
+            ? "Joint deal action"
+            : "Progress this deal";
+        if (Number.isFinite(due) && due < now) {
+          score += 75;
+          reason = owner === "buyer" ? "Buyer action overdue" : "Deal action overdue";
+        } else if (Number.isFinite(due) && due <= next24h) {
+          score += 50;
+          reason = "Deal action due within 24 hours";
+        } else if (Number.isFinite(due) && due <= now + 7 * 24 * 60 * 60 * 1000) {
+          score += 25;
+          reason = "Deal action due this week";
+        }
+        return {
+          id: opportunity.id,
+          text: String(opportunity.next_action).trim(),
+          company: opportunity.company_id ? nameById.get(opportunity.company_id) || null : null,
+          at: opportunity.next_action_due_at,
+          href: "/crm/revenue",
+          reason,
+          score,
+        };
+      })
+      .sort((a: any, b: any) => b.score - a.score)
+      .slice(0, 5);
     // Rank the whole workload, not just rows that happen to have a deadline.
     // This stops important older actions and high-value opportunity work from
     // disappearing behind the many dashboard checklists.
@@ -459,6 +494,7 @@ export async function GET(req: Request) {
       ...overduePromises.map((x: any) => ({ ...x, reason: "Overdue promise", score: 150 })),
       ...approvedOutreach.map((x: any) => ({ ...x, reason: "Approved and ready", score: 140 })),
       ...callsToPrep.map((x: any) => ({ ...x, reason: "Call within 24 hours", score: 130 })),
+      ...primaryOpportunityActions,
       ...awaitingOthers
         .filter((x: any) => x.at && new Date(x.at).getTime() < now)
         .map((x: any) => ({ ...x, reason: "Chase overdue promise", score: 115 })),
@@ -481,6 +517,7 @@ export async function GET(req: Request) {
       coolingDeals,
       interestedReplies,
       approvedOutreach,
+      primaryOpportunityActions,
       topActions,
     };
 

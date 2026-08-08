@@ -20,6 +20,7 @@ type TodayData = {
     interestedReplies?: TodayItem[];
     approvedOutreach?: TodayItem[];
     callsToPrep?: TodayItem[];
+    primaryOpportunityActions?: TodayItem[];
     overduePromises?: TodayItem[];
     coolingDeals?: TodayItem[];
   };
@@ -91,6 +92,7 @@ export default function RevenueToday() {
         ["Interested replies", data.today.interestedReplies || [], "text-moss"],
         ["Approved to send", data.today.approvedOutreach || [], "text-amber"],
         ["Calls to prepare", data.today.callsToPrep || [], "text-sky"],
+        ["Deal next actions", data.today.primaryOpportunityActions || [], "text-amber"],
         ["Overdue promises", data.today.overduePromises || [], "text-rust"],
         ["Cooling deals", data.today.coolingDeals || [], "text-muted"],
       ] as const
@@ -201,7 +203,7 @@ export default function RevenueToday() {
         </p>
       )}
 
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-3 xl:grid-cols-6">
         {groups.map(([label, items, colour]) => (
           <Link
             key={label}
