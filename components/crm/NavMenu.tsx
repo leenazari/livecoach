@@ -21,6 +21,7 @@ const RELATIONSHIP_ITEMS: Item[] = [
   { href: "/crm/calls", label: "Calls", icon: "☎" },
 ];
 const MORE_ITEMS: Item[] = [
+  { href: "/crm/health", label: "Health", icon: "✓" },
   { href: "/crm/board?tab=drafts", label: "Drafts", icon: "✉", tab: "drafts" },
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
   { href: "/settings", label: "Settings", icon: "⚙" },
@@ -112,6 +113,8 @@ function NavMenuInner() {
       return pathname.startsWith("/crm/revenue");
     if (it.href === "/crm/call-coach")
       return pathname.startsWith("/crm/call-coach");
+    if (it.href === "/crm/health")
+      return pathname.startsWith("/crm/health");
     if (it.href === "/crm/outreach")
       return pathname.startsWith("/crm/outreach");
     if (it.href === "/crm/calls")

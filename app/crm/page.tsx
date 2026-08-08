@@ -478,7 +478,7 @@ export default function DashboardPage() {
 
       {/* COST CONTROL: true recorded spend, split by feature, plus a persisted
           live-intelligence cadence. Terra quality remains available in all modes. */}
-      <section className="mb-3 rounded-xl border border-sage/35 bg-sage/[0.045] p-4">
+      <section id="costs" className="mb-3 scroll-mt-4 rounded-xl border border-sage/35 bg-sage/[0.045] p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
