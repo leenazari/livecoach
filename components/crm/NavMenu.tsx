@@ -10,6 +10,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 type Item = { href: string; label: string; icon: string; tab?: string };
 const ITEMS: Item[] = [
   { href: "/crm", label: "Dashboard", icon: "▣" },
+  { href: "/crm/revenue", label: "Revenue", icon: "◆" },
   { href: "/call", label: "Start new call", icon: "▸" },
   { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
   { href: "/crm/board?tab=tasks", label: "To do", icon: "→", tab: "tasks" },
@@ -88,6 +89,8 @@ function NavMenuInner() {
   const isActive = (it: Item) => {
     if (it.href === "/crm") return pathname === "/crm";
     if (it.href === "/call") return pathname.startsWith("/call");
+    if (it.href === "/crm/revenue")
+      return pathname.startsWith("/crm/revenue");
     if (it.href === "/crm/call-coach")
       return pathname.startsWith("/crm/call-coach");
     if (it.href === "/crm/outreach")

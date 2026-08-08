@@ -12,6 +12,12 @@ import {
   inferLink,
   deriveNewClientFromAttendees,
 } from "@/lib/attendees";
+import {
+  attachOutreachMeeting,
+  ensureOutreachCompany,
+  findOutreachProspectForAttendees,
+  firstOutreachCallIntent,
+} from "@/lib/outreach-crm";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -258,10 +264,16 @@ async function runCalendarSync() {
       r: Row;
       company_id: string | null;
       intent: string | null;
+      outreachProspectId: string | null;
     }[] = [];
     for (const r of newRows) {
-      let company_id = await resolveCompanyForEvent(r.attendees);
+      const outreachProspect = await findOutreachProspectForAttendees(r.attendees);
+      const outreachContext = outreachProspect
+        ? await ensureOutreachCompany(outreachProspect.id, "booked")
+        : null;
+      let company_id = outreachContext?.companyId || await resolveCompanyForEvent(r.attendees);
       let intent: string | null = null;
+      if (outreachContext) intent = firstOutreachCallIntent(outreachContext);
       // Only fall back to inherited curation when the guest list gave us
       // nothing - a freshly matched client must never be overwritten.
       if (!company_id) {
@@ -270,7 +282,7 @@ async function runCalendarSync() {
           company_id = inh.company_id;
         }
       }
-      resolved.push({ r, company_id, intent });
+      resolved.push({ r, company_id, intent, outreachProspectId: outreachProspect?.id || null });
     }
 
     // Pass 2: anything still without a client - create one from the TITLE, so a
@@ -378,8 +390,19 @@ async function runCalendarSync() {
       const { data } = await supabaseAdmin
         .from("upcoming_calls")
         .insert(toInsert)
-        .select("id");
+        .select("id,external_id,scheduled_at");
       added = data?.length || 0;
+      const resolvedByExternal = new Map(resolved.map((item) => [item.r.external_id, item]));
+      for (const inserted of data || []) {
+        const matched = resolvedByExternal.get(inserted.external_id);
+        if (!matched?.outreachProspectId) continue;
+        try {
+          await attachOutreachMeeting(matched.outreachProspectId, inserted.id, inserted.scheduled_at);
+        } catch (error) {
+          // Calendar truth still lands even if the outreach handoff needs a retry.
+          console.error("outreach calendar handoff failed", error);
+        }
+      }
     }
 
     // Reschedules: only the calendar-owned fields (now including the guest list),

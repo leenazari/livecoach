@@ -163,6 +163,7 @@ export async function sendMail(opts: {
   text?: string;
   from?: string;
   replyTo?: string;
+  threadId?: string;
 }): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
   const token = await getAccessToken();
   if (!token) {
@@ -215,7 +216,7 @@ export async function sendMail(opts: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ raw: encoded }),
+      body: JSON.stringify({ raw: encoded, ...(opts.threadId ? { threadId: opts.threadId } : {}) }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -245,6 +246,7 @@ export async function sendOutreachMail(opts: {
   to: string;
   subject: string;
   text: string;
+  threadId?: string;
 }): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
   const safeText = String(opts.text || "").trim();
   return sendMail({
@@ -257,6 +259,7 @@ export async function sendOutreachMail(opts: {
       .join(""),
     from: `Lee Nazari <${OUTREACH_FROM_EMAIL}>`,
     replyTo: OUTREACH_FROM_EMAIL,
+    threadId: opts.threadId,
   });
 }
 

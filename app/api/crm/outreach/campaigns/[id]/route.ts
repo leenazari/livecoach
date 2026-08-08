@@ -8,6 +8,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     for (const key of ["name", "goal", "audience", "offer_angle"]) if (typeof body[key] === "string" && body[key].trim()) patch[key] = body[key].trim();
     if (["draft", "active", "paused", "completed"].includes(body.status)) patch.status = body.status;
     if (body.daily_limit != null) patch.daily_limit = Math.min(20, Math.max(1, Number(body.daily_limit) || 20));
+    if (body.voice && typeof body.voice === "object") {
+      patch.voice = {
+        tone: String(body.voice.tone || "warm, commercially curious and concise").trim().slice(0, 300),
+        style: String(body.voice.style || "founder-to-founder, plain English and respectful").trim().slice(0, 500),
+        rules: Array.isArray(body.voice.rules) ? body.voice.rules.map((rule: any) => String(rule).trim().slice(0, 240)).filter(Boolean).slice(0, 12) : [],
+        signature: String(body.voice.signature || "Lee").trim().slice(0, 80),
+      };
+    }
+    if (Array.isArray(body.banned_phrases)) {
+      patch.banned_phrases = body.banned_phrases.map((phrase: any) => String(phrase).trim().toLowerCase().slice(0, 100)).filter(Boolean).slice(0, 30);
+    }
+    if (typeof body.booking_url === "string") {
+      const bookingUrl = body.booking_url.trim();
+      if (bookingUrl && !/^https:\/\//i.test(bookingUrl)) return NextResponse.json({ error: "The booking link must start with https://" }, { status: 400 });
+      patch.booking_url = bookingUrl || null;
+    }
+    if (["interested_reply", "final_step", "always", "never"].includes(body.booking_cta_mode)) patch.booking_cta_mode = body.booking_cta_mode;
     // Approval mode is deliberately locked on for this first safe release.
     patch.approval_mode = true;
     if (patch.status === "active") {

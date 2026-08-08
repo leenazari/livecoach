@@ -321,6 +321,17 @@ export default function DashboardPage() {
 
       <CrmSearch />
 
+      <Link
+        href="/crm/revenue"
+        className="mb-3 flex min-h-12 items-center justify-between rounded-xl border border-moss/45 bg-moss/[0.07] px-4 py-3 transition hover:border-moss hover:bg-moss/[0.12]"
+      >
+        <span>
+          <span className="block font-mono text-[0.58rem] uppercase tracking-[0.2em] text-moss">◆ Revenue command centre</span>
+          <span className="mt-1 block text-sm text-bone/75">Weighted forecast, target coverage, pipeline stages and the highest-priority moves.</span>
+        </span>
+        <span className="ml-3 text-moss">↗</span>
+      </Link>
+
       {/* TODAY: the first decision layer, built from factual CRM state without
           another model call. The highest-ranked moves are deliberately first. */}
       <section className="mb-3 rounded-2xl border border-amber/45 bg-gradient-to-br from-amber/[0.09] to-transparent p-4">
