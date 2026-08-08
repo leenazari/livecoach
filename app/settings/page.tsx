@@ -13,6 +13,29 @@ type Lesson = {
   source_url: string | null;
 };
 const TOPICS = ["negotiation", "psychology", "strategy", "general"];
+type GmailIssue =
+  | "none"
+  | "disconnected"
+  | "scope_missing"
+  | "workspace_policy"
+  | "api_disabled"
+  | "token_rejected"
+  | "rate_limited"
+  | "google_error";
+
+function gmailIssueCopy(issue?: GmailIssue): string {
+  if (issue === "scope_missing")
+    return "The Google token does not contain Gmail read permission.";
+  if (issue === "workspace_policy")
+    return "Google Workspace policy is blocking Gmail access for LiveCoach.";
+  if (issue === "api_disabled")
+    return "The Gmail API is disabled in the connected Google Cloud project.";
+  if (issue === "token_rejected")
+    return "Google rejected the saved access token.";
+  if (issue === "rate_limited")
+    return "Google temporarily rate-limited the Gmail check.";
+  return "Google did not make Gmail reading available to LiveCoach.";
+}
 
 // Settings = the global "brain". One knowledge base about you and your business
 // that gets fed into every AI pass (assistant, build-from-context, post-call
@@ -52,6 +75,7 @@ export default function SettingsPage() {
     configured: boolean;
     gmail?: "ok" | "missing" | "disconnected";
     gmailSend?: boolean;
+    gmailIssue?: GmailIssue;
   } | null>(null);
   const [gcalNote, setGcalNote] = useState("");
 
@@ -69,7 +93,7 @@ export default function SettingsPage() {
     crmFetch<{ lessons: Lesson[] }>("/api/crm/lessons")
       .then((d) => setLessons(d.lessons || []))
       .catch(() => {});
-    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected"; gmailSend?: boolean }>(
+    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected"; gmailSend?: boolean; gmailIssue?: GmailIssue }>(
       "/api/auth/google/status"
     )
       .then((d) => setGcal(d))
@@ -212,7 +236,7 @@ export default function SettingsPage() {
                     gcal.email ? ` as ${gcal.email}` : ""
                   }. Calendar is working${
                     gcal.gmail !== "ok"
-                      ? ". Google has not made Gmail reading available to LiveCoach, so email context and automatic reply checks are paused; reconnecting again is not required"
+                      ? `. ${gmailIssueCopy(gcal.gmailIssue)} Email context and automatic reply checks are paused; reconnecting again is not required`
                       : !gcal.gmailSend
                         ? " and Gmail context is working; Outreach will safely verify sending on the first approved email"
                         : " and Gmail reading and sending are working"
