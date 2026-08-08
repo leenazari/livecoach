@@ -12,7 +12,8 @@ type TimelineType =
   | "opportunity"
   | "note"
   | "follow_up"
-  | "meeting";
+  | "meeting"
+  | "outreach";
 
 type TimelineItem = {
   id: string;
@@ -47,6 +48,7 @@ export async function GET(
       { data: opportunities },
       { data: context },
       { data: upcoming },
+      { data: outreachProspects },
     ] = await Promise.all([
       supabaseAdmin
         .from("companies")
@@ -73,7 +75,7 @@ export async function GET(
         .limit(50),
       supabaseAdmin
         .from("opportunities")
-        .select("id, title, detail, value, status, created_at")
+        .select("id, title, detail, value, status, pipeline_stage, probability, next_action, next_action_due_at, next_action_owner, created_at, updated_at")
         .eq("company_id", params.id)
         .order("created_at", { ascending: false })
         .limit(80),
@@ -91,9 +93,72 @@ export async function GET(
         .gte("scheduled_at", new Date().toISOString())
         .order("scheduled_at", { ascending: true })
         .limit(20),
+      supabaseAdmin
+        .from("outreach_prospects")
+        .select("id, first_name, last_name, email, company_name")
+        .eq("crm_company_id", params.id)
+        .limit(50),
     ]);
 
+    const prospectIds = (outreachProspects || []).map((prospect: any) => prospect.id);
+    const outreachEvents = prospectIds.length
+      ? (
+          await supabaseAdmin
+            .from("outreach_events")
+            .select("id, prospect_id, message_id, kind, metadata, created_at")
+            .in("prospect_id", prospectIds)
+            .order("created_at", { ascending: false })
+            .limit(150)
+        ).data || []
+      : [];
+    const messageIds = [...new Set(outreachEvents.map((event: any) => event.message_id).filter(Boolean))];
+    const outreachMessages = messageIds.length
+      ? (
+          await supabaseAdmin
+            .from("outreach_messages")
+            .select("id, subject")
+            .in("id", messageIds)
+        ).data || []
+      : [];
+
     const items: TimelineItem[] = [];
+    const prospectById = new Map((outreachProspects || []).map((prospect: any) => [prospect.id, prospect]));
+    const subjectByMessageId = new Map((outreachMessages || []).map((message: any) => [message.id, message.subject]));
+    const outreachLabels: Record<string, string> = {
+      queued: "Added to outreach queue",
+      researched: "Prospect research completed",
+      drafted: "Outreach email drafted",
+      approved: "Outreach email approved",
+      sent: "Outreach email sent",
+      reply: "Outreach reply received",
+      positive_reply: "Interested reply received",
+      objection: "Prospect raised an objection",
+      later: "Prospect asked to reconnect later",
+      referral: "Prospect made a referral",
+      unsubscribe: "Prospect opted out",
+      meeting_booked: "Meeting booked from outreach",
+      booking_link_shared: "Booking link shared",
+      crm_created: "Outreach prospect became a CRM relationship",
+      learning_promoted: "Campaign learning promoted",
+      failed: "Outreach action failed",
+    };
+    for (const event of outreachEvents) {
+      const prospect: any = prospectById.get(event.prospect_id);
+      const who = [prospect?.first_name, prospect?.last_name].filter(Boolean).join(" ");
+      const metadata = event.metadata && typeof event.metadata === "object" ? event.metadata : {};
+      const subject = subjectByMessageId.get(event.message_id) || metadata.subject || "";
+      const reply = metadata.reply_summary || metadata.summary || metadata.reply_text || "";
+      items.push({
+        id: `outreach:${event.id}`,
+        type: "outreach",
+        at: event.created_at,
+        title: outreachLabels[event.kind] || `Outreach: ${text(event.kind, 80)}`,
+        detail: text(reply || subject, 300),
+        status: text(event.kind, 40),
+        meta: text(who || prospect?.email || prospect?.company_name, 100),
+        href: "/crm/outreach",
+      });
+    }
     const seenSessions = new Set<string>();
     for (const c of calls || []) {
       const session = String(c.session_id || "");
@@ -165,15 +230,27 @@ export async function GET(
 
     for (const o of opportunities || []) {
       const value = Number(o.value) || 0;
+      const stage = text(String(o.pipeline_stage || o.status || "").replace(/_/g, " "), 60);
+      const owner = o.next_action_owner === "buyer"
+        ? "buyer owns next step"
+        : o.next_action_owner === "joint"
+          ? "joint next step"
+          : "we own next step";
+      const nextAction = text(o.next_action, 220);
       items.push({
         id: `opp:${o.id}`,
         type: "opportunity",
-        at: o.created_at,
+        at: o.updated_at || o.created_at,
         title: text(o.title || "Opportunity", 160),
-        detail: text(o.detail, 260),
+        detail: nextAction ? `Next: ${nextAction}` : text(o.detail, 260),
         status: o.status,
-        meta: value ? `£${Math.round(value).toLocaleString("en-GB")}` : undefined,
-        href: "/crm/board?tab=opportunities",
+        meta: [
+          stage,
+          `${Number(o.probability) || 0}%`,
+          value ? `£${Math.round(value).toLocaleString("en-GB")}` : "",
+          nextAction ? owner : "",
+        ].filter(Boolean).join(" · "),
+        href: "/crm/revenue",
       });
     }
 
