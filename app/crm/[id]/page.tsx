@@ -18,6 +18,10 @@ import QuickClientUpdate, {
   type QuickUpdateItem,
 } from "@/components/crm/QuickClientUpdate";
 import StakeholderMap from "@/components/crm/StakeholderMap";
+import {
+  isRelationshipStageOption,
+  RELATIONSHIP_STAGE_OPTIONS,
+} from "@/lib/relationship-stages";
 
 const inputCls =
   "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
@@ -941,11 +945,21 @@ export default function CompanyDetailPage() {
                 </label>
                 <label className="block">
                   <span className={labelCls}>Stage</span>
-                  <input
+                  <select
                     value={core.stage}
                     onChange={(e) => setCore({ ...core, stage: e.target.value })}
                     className={inputCls}
-                  />
+                  >
+                    <option value="">Set stage…</option>
+                    {core.stage && !isRelationshipStageOption(core.stage) ? (
+                      <option value={core.stage}>{core.stage}</option>
+                    ) : null}
+                    {RELATIONSHIP_STAGE_OPTIONS.map((stage) => (
+                      <option key={stage} value={stage}>
+                        {stage}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label className="block">
                   <span className={labelCls}>Website</span>

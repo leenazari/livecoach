@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { isInHouseRelationship } from "@/lib/relationship-stages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -167,6 +168,8 @@ export async function GET() {
         ? Math.max(0, Math.floor((nowMs - lastTouchMs) / DAY_MS))
         : null;
 
+      const stageKey = String(company.stage || "").toLowerCase();
+      const isInHouse = isInHouseRelationship(company.stage);
       const reasons: string[] = [];
       let health: "red" | "amber" | "green" | "grey" = "grey";
       if (overdue) reasons.push("Overdue next action");
@@ -174,7 +177,9 @@ export async function GET() {
       if (opportunity && !nextMeeting) reasons.push("No next meeting booked");
       if (!primaryContact) reasons.push("No contact recorded");
       if (!company.stage) reasons.push("Relationship stage missing");
-      if (daysQuiet != null && daysQuiet >= 21) reasons.push(`Quiet for ${daysQuiet} days`);
+      if (!isInHouse && daysQuiet != null && daysQuiet >= 21) {
+        reasons.push(`Quiet for ${daysQuiet} days`);
+      }
       const activityRisk = firstText(memory.latestActivity?.risks);
       const pendingActivityPlan =
         memory.latestActivity?.status === "pending" &&
@@ -182,7 +187,6 @@ export async function GET() {
       if (pendingActivityPlan) reasons.unshift("New client update needs approval");
       if (activityRisk) reasons.unshift(`New risk: ${activityRisk}`);
 
-      const stageKey = String(company.stage || "").toLowerCase();
       const establishedRelationship = [
         "discovery",
         "qualified",
@@ -207,6 +211,9 @@ export async function GET() {
         if (daysQuiet != null && daysQuiet >= 7 && daysQuiet < 21) {
           reasons.unshift(`Quiet for ${daysQuiet} days`);
         }
+      } else if (isInHouse) {
+        health = "green";
+        reasons.unshift("Internal contact");
       } else if (nextMeeting || (daysQuiet != null && daysQuiet < 7 && reasons.length === 0)) {
         health = "green";
         reasons.push(nextMeeting ? "Next meeting booked" : "Recently active");
@@ -229,9 +236,11 @@ export async function GET() {
         category:
           opportunity
             ? "Opportunity"
-            : String(company.stage || "").toLowerCase() === "customer"
-              ? "Customer"
-              : "Relationship",
+            : isInHouse
+              ? "In House"
+              : String(company.stage || "").toLowerCase() === "customer"
+                ? "Customer"
+                : "Relationship",
         primaryContact: primaryContact
           ? {
               name: primaryContact.name,
