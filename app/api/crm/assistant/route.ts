@@ -13,7 +13,6 @@ import {
 } from "@/lib/crm-context";
 import { getCommercialMemoryBlock } from "@/lib/commercial-memory";
 import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib/workspace";
-import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
 import { logModelUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
@@ -88,6 +87,72 @@ async function findDraft(subject: string) {
     .ilike("draft_subject", `%${term}%`)
     .limit(1);
   return data && data[0] ? data[0] : null;
+}
+async function findCampaign(name: string) {
+  const term = likeTerm(name);
+  const wantsActive =
+    !term || ["active", "current", "active campaign", "current campaign"].includes(term.toLowerCase());
+  let q = supabaseAdmin
+    .from("outreach_campaigns")
+    .select("id, name, status")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (wantsActive) q = q.eq("status", "active");
+  else q = q.ilike("name", `%${term}%`);
+  const { data } = await q;
+  return data && data[0] ? data[0] : null;
+}
+async function findOpportunities(title: string, client: string): Promise<any[]> {
+  const company = client ? await findCompany(client) : null;
+  const term = likeTerm(title);
+  let q = supabaseAdmin
+    .from("opportunities")
+    .select("id, title, company_id, status, pipeline_stage")
+    .order("updated_at", { ascending: false })
+    .limit(4);
+  if (company) q = q.eq("company_id", company.id);
+  if (term) q = q.ilike("title", `%${term}%`);
+  if (!company && !term) return [];
+  const { data } = await q;
+  return (data || []).map((row: any) => ({ ...row, companyName: company?.name || "client" }));
+}
+
+function opportunityPatch(item: any): Record<string, any> {
+  const patch: Record<string, any> = {};
+  const stages = ["new", "discovery", "qualified", "proposal", "negotiation", "verbal", "won", "lost"];
+  const forecasts = ["pipeline", "best_case", "commit", "omitted"];
+  const statuses = ["open", "won", "lost", "dismissed"];
+  const owners = ["us", "buyer", "joint"];
+  const types = ["revenue", "investment", "internal", "strategic"];
+  if (stages.includes(item.pipelineStage)) patch.pipelineStage = item.pipelineStage;
+  if (forecasts.includes(item.forecastCategory)) patch.forecastCategory = item.forecastCategory;
+  if (statuses.includes(item.status)) patch.status = item.status;
+  if (owners.includes(item.nextActionOwner)) patch.nextActionOwner = item.nextActionOwner;
+  if (types.includes(item.opportunityType)) patch.opportunityType = item.opportunityType;
+  if (typeof item.probability === "number" && item.probability >= 0 && item.probability <= 100)
+    patch.probability = Math.round(item.probability);
+  if (typeof item.value === "number" && item.value >= 0) patch.value = item.value;
+  if (item.value === null) patch.value = null;
+  if (typeof item.nextAction === "string") patch.nextAction = item.nextAction.trim().slice(0, 500);
+  if (typeof item.nextActionDueAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.nextActionDueAt))
+    patch.nextActionDueAt = item.nextActionDueAt;
+  if (typeof item.expectedCloseAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.expectedCloseAt))
+    patch.expectedCloseAt = item.expectedCloseAt;
+  if (typeof item.detail === "string") patch.detail = item.detail.trim().slice(0, 1000);
+  return patch;
+}
+
+function opportunityChangeLabel(patch: Record<string, any>): string {
+  const bits: string[] = [];
+  if (patch.pipelineStage) bits.push(`stage ${patch.pipelineStage}`);
+  if (patch.probability != null) bits.push(`probability ${patch.probability}%`);
+  if (patch.forecastCategory) bits.push(`forecast ${patch.forecastCategory.replace("_", " ")}`);
+  if (patch.nextAction) bits.push(`next action "${patch.nextAction}"`);
+  if (patch.nextActionDueAt) bits.push(`due ${patch.nextActionDueAt}`);
+  if (patch.expectedCloseAt) bits.push(`expected close ${patch.expectedCloseAt}`);
+  if (patch.value != null) bits.push(`value £${patch.value}`);
+  if (patch.status) bits.push(`status ${patch.status}`);
+  return bits.slice(0, 4).join(", ");
 }
 // Build the ready-to-fire request for a call-targeting action against ONE call.
 function callExec(call: any, type: string, x: any) {
@@ -173,7 +238,7 @@ function alreadyProposed(pa: any, prior: any[]): boolean {
   });
 }
 
-async function resolveActions(items: any[]): Promise<any[]> {
+async function resolveActions(items: any[], defaultCompanyId: string | null = null): Promise<any[]> {
   const out: any[] = [];
   const callTypes = ["set_meeting_link", "set_intent", "add_intent", "link_call", "cancel_call"];
   for (const it of Array.isArray(items) ? items : []) {
@@ -270,6 +335,129 @@ async function resolveActions(items: any[]): Promise<any[]> {
       continue;
     }
 
+    if (it.type === "create_task") {
+      const text = typeof it.text === "string" ? it.text.trim() : "";
+      if (!text) continue;
+      const company = it.client ? await findCompany(String(it.client)) : null;
+      out.push({
+        key,
+        type: it.type,
+        label: `Add to-do: "${text.slice(0, 180)}"${company ? ` for ${company.name}` : ""}`,
+        endpoint: "/api/crm/tasks",
+        method: "POST",
+        body: {
+          companyId: company?.id || defaultCompanyId,
+          text: text.slice(0, 500),
+          action: ["email", "call", "task"].includes(it.action) ? it.action : "task",
+          dueAt:
+            typeof it.dueAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(it.dueAt)
+              ? it.dueAt
+              : null,
+          pinned: it.pinned === true,
+        },
+      });
+      continue;
+    }
+
+    if (it.type === "create_campaign") {
+      const name = typeof it.name === "string" ? it.name.trim() : "";
+      const goal = typeof it.goal === "string" ? it.goal.trim() : "";
+      const audience = typeof it.audience === "string" ? it.audience.trim() : "";
+      const offerAngle = typeof it.offerAngle === "string" ? it.offerAngle.trim() : "";
+      if (!name || !goal || !audience || !offerAngle || (await findCampaign(name))) continue;
+      out.push({
+        key,
+        type: it.type,
+        label: `Create draft outreach campaign "${name}" for ${audience.slice(0, 100)}`,
+        endpoint: "/api/crm/outreach/campaigns",
+        method: "POST",
+        body: {
+          name,
+          goal,
+          audience,
+          offer_angle: offerAngle,
+          daily_limit: Math.min(20, Math.max(1, Number(it.dailyLimit) || 20)),
+        },
+      });
+      continue;
+    }
+
+    if (it.type === "update_campaign") {
+      const campaign = await findCampaign(String(it.campaign || it.name || ""));
+      if (!campaign) continue;
+      const patch: Record<string, any> = {};
+      if (typeof it.goal === "string" && it.goal.trim()) patch.goal = it.goal.trim();
+      if (typeof it.audience === "string" && it.audience.trim()) patch.audience = it.audience.trim();
+      if (typeof it.offerAngle === "string" && it.offerAngle.trim()) patch.offer_angle = it.offerAngle.trim();
+      if (it.dailyLimit != null) patch.daily_limit = Math.min(20, Math.max(1, Number(it.dailyLimit) || 20));
+      if (["draft", "active", "paused", "completed"].includes(it.status)) patch.status = it.status;
+      if (it.voice && typeof it.voice === "object") patch.voice = it.voice;
+      if (Array.isArray(it.bannedPhrases)) patch.banned_phrases = it.bannedPhrases;
+      if (typeof it.bookingUrl === "string") patch.booking_url = it.bookingUrl;
+      if (["interested_reply", "final_step", "always", "never"].includes(it.bookingCtaMode))
+        patch.booking_cta_mode = it.bookingCtaMode;
+      if (Array.isArray(it.sequence)) patch.sequence = it.sequence;
+      if (!Object.keys(patch).length) continue;
+      const summaryFields = Object.keys(patch).map((field) => field.replace(/_/g, " "));
+      out.push({
+        key,
+        type: it.type,
+        label: `Update campaign "${campaign.name}": ${summaryFields.join(", ")}`,
+        endpoint: `/api/crm/outreach/campaigns/${campaign.id}`,
+        method: "PATCH",
+        body: patch,
+      });
+      continue;
+    }
+
+    if (it.type === "build_outreach_queue") {
+      const campaign = await findCampaign("");
+      if (!campaign || campaign.status !== "active") continue;
+      const limit = Math.min(20, Math.max(1, Number(it.limit) || 20));
+      out.push({
+        key,
+        type: it.type,
+        label: `Select up to ${limit} best-fit prospects for today's review queue, no research or sending`,
+        endpoint: "/api/crm/outreach/queue",
+        method: "POST",
+        body: { limit },
+      });
+      continue;
+    }
+
+    if (it.type === "update_opportunity") {
+      const opportunities = await findOpportunities(
+        String(it.opportunity || it.title || ""),
+        String(it.client || "")
+      );
+      const patch = opportunityPatch(it);
+      if (!opportunities.length || !Object.keys(patch).length) continue;
+      const detail = opportunityChangeLabel(patch);
+      if (opportunities.length === 1) {
+        out.push({
+          key,
+          type: it.type,
+          label: `Update "${opportunities[0].title}": ${detail}`,
+          endpoint: `/api/crm/opportunities/${opportunities[0].id}`,
+          method: "PATCH",
+          body: patch,
+        });
+      } else {
+        out.push({
+          key,
+          type: it.type,
+          label: `Which opportunity should I update: ${detail}?`,
+          choices: opportunities.map((opportunity) => ({
+            label: `${opportunity.title} (${opportunity.companyName})`,
+            endpoint: `/api/crm/opportunities/${opportunity.id}`,
+            method: "PATCH",
+            body: patch,
+          })),
+        });
+      }
+      continue;
+    }
+
     if (it.type === "pull_emails") {
       // Pull the recent Gmail thread with a person and build / refresh their
       // client from it. The client fires this endpoint on confirm; the route
@@ -355,15 +543,49 @@ async function resolveActions(items: any[]): Promise<any[]> {
       }
     }
   }
-  return out;
+  const excludedFromBatch = new Set(["cancel_call", "dismiss", "pull_emails"]);
+  return out.map((action) => ({
+    ...action,
+    batchSafe: !excludedFromBatch.has(action.type) && !action.choices,
+  }));
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { companyId, focusCompanyId, message } = await req.json();
+    const { companyId, focusCompanyId, message, screenContext: rawScreen } = await req.json();
     if (typeof message !== "string" || !message.trim()) {
       return NextResponse.json({ error: "message is required" }, { status: 400 });
     }
+    const allowedSections = new Set([
+      "dashboard",
+      "client",
+      "outreach",
+      "revenue",
+      "work_board",
+      "client_portfolio",
+      "opportunities",
+      "drafts",
+      "tasks",
+      "call_coach",
+      "calls",
+      "prep",
+      "live_call",
+    ]);
+    const screenContext = {
+      section: allowedSections.has(rawScreen?.section) ? rawScreen.section : "dashboard",
+      label:
+        typeof rawScreen?.label === "string"
+          ? rawScreen.label.replace(/[^a-z0-9 _-]/gi, "").trim().slice(0, 40) || "CRM dashboard"
+          : "CRM dashboard",
+      path:
+        typeof rawScreen?.path === "string" && /^\/(crm|call)(\/|$)/.test(rawScreen.path)
+          ? rawScreen.path.slice(0, 100)
+          : "/crm",
+    };
+    const wantsDeepHistory =
+      /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|documents?|detailed notes?|email thread|what did .* say)\b/i.test(
+        message
+      );
     // Lightweight timing so we can SEE where a reply spends its time (context
     // gather vs model) and whether prompt caching is hitting, before optimising
     // further. Logged once per reply as "assistant-timing {...}".
@@ -405,13 +627,7 @@ export async function POST(req: NextRequest) {
           detailIds.push(n.id);
       }
       const wantsOutreachDetail =
-        /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(
-          message
-        );
-      const wantsDeepHistory =
-        /\b(full history|all calls|previous calls|older|past conversations|documents?|detailed notes?|email thread|what did .* say)\b/i.test(
-          message
-        );
+        /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(message);
       const [digest, outreach, ...details] = await Promise.all([
         gatherGlobalContext(),
         gatherOutreachContext(message, { detailed: wantsOutreachDetail }),
@@ -461,7 +677,9 @@ export async function POST(req: NextRequest) {
         role: (m.role === "assistant" ? "assistant" : "user") as
           | "user"
           | "assistant",
-        content: String(m.content),
+        // Conversation continuity matters, but old long plans should not be
+        // paid for on every turn. The full thread stays saved in Supabase.
+        content: String(m.content).slice(-1400),
       }));
 
     const scope = isGlobal
@@ -509,18 +727,29 @@ DRAFTS - ONLY WHEN ASKED (this keeps replies fast): do NOT write a full email, m
 ---END DRAFT---
 Keep your commentary and reasoning OUTSIDE the markers. The text inside the markers can be plain and clean since it is what gets sent.
 
-TO-DOS: when the user asks you to arrange, remember, chase, follow up, add, draft, prep, or otherwise CREATE actions to do later, capture each as a to-do. In ADDITION to your normal prose reply, put ONLY a JSON array between these exact markers:
+TO-DOS: when the user asks you to arrange, remember, chase, follow up, add, draft, prep, or otherwise CREATE actions to do later, propose each as a to-do. It is shown in the visible action plan and is only created after approval. In ADDITION to your normal prose reply, put ONLY a JSON array between these exact markers:
 ---TASKS---
 [{"text":"short imperative to-do","action":"email|call|task","dueAt":"YYYY-MM-DD","pinned":true}]
 ---END TASKS---
-Use "action" = "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Set "dueAt" to the deadline DATE when the user gives one, working out the real date from today's date in the context (e.g. "by Friday" becomes that Friday's YYYY-MM-DD, "by end of month" the last day of this month). Set "pinned" to true when the user says to keep it at the top, make it top priority, do it first, or that it is urgent. OMIT dueAt and pinned when the user did not give a deadline or priority. Only create to-dos the user actually wants tracked, and do not repeat ones already outstanding in the context. They appear on the user's to-do list with the action attached. Keep these markers out of your prose, and still answer naturally.
+Use "action" = "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Set "dueAt" to the deadline DATE when the user gives one, working out the real date from today's date in the context (e.g. "by Friday" becomes that Friday's YYYY-MM-DD, "by end of month" the last day of this month). Set "pinned" to true when the user says to keep it at the top, make it top priority, do it first, or that it is urgent. OMIT dueAt and pinned when the user did not give a deadline or priority. Only propose to-dos the user actually wants tracked, and do not repeat ones already outstanding in the context. Keep these markers out of your prose, and still answer naturally.
 
 CALENDAR: the user's upcoming calls, synced from their calendar, are in the context below in the calls list, each with its join link when there is one. Answer "what's on my calendar" / "what's next" from that, and give the join link when asked. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
 
-ACTIONS YOU CAN TAKE (never claim you already did them - the Confirm button is what does the work): when the user explicitly asks you to attach or change a meeting link on a call, set or clear a call's intent, ADD a note to a call's focus (add_intent), link a call to a client, cancel/remove a call that is no longer happening (it was cancelled or already happened separately) and note why, dismiss a draft or a to-do, or CREATE a profile for someone new (create_client), or CORRECT a fact the records currently have wrong about a client (correct), propose it. ALSO watch for the user stating a durable PREFERENCE, habit, standard practice, rule, or lasting fact about how they work or their business (for example "I wait 48 hours before chasing a follow-up", "I never call before 10am", "always cc Mark on proposals", "my standard pilot is two weeks"). When they do, offer to REMEMBER it with a "remember" action so it sticks for future plans, cues and chats - acknowledge it in your prose AND propose saving it; never save silently. In ADDITION to a short prose reply, put ONLY a JSON array between these exact markers:
+ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles and to-dos, update opportunities, pull email context, remember durable rules, correct records, and dismiss stale work. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
 [{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<call title>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
 ---END ACTIONS---
+Additional supported actions are:
+{"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":20}
+{"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":20,"status":"draft|active|paused|completed"}
+{"type":"build_outreach_queue","limit":20}
+{"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed"}
+For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
+For update_campaign you may also include "voice":{"tone":"...","style":"...","rules":["..."],"signature":"Lee"}, "bannedPhrases":["..."], "bookingUrl":"https://...", "bookingCtaMode":"interested_reply|final_step|always|never", and "sequence":[{"step":1,"delayDays":0,"purpose":"...","contentType":"plain|insight|case_study|video|close_loop","guidance":"...","assetUrl":null}]. Only include settings the user asked for or approved in the conversation.
+
+CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Exact outreach drafts and external sends stay in the dedicated Outreach approval flow.
+
+BATCH APPROVAL: when the user asks for several safe internal changes, emit them together. The interface shows every exact change and offers one approval for the safe subset. Destructive changes, Gmail pulls and any future external send stay separately confirmed.
 When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too. If you are not sure which call, client, draft or to-do the user means, ask them to clarify in your prose reply rather than guessing (the system will also offer a pick-list if more than one record matches the name).
 Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done.
 
@@ -552,7 +781,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
       },
       {
         type: "text",
-        text: `${isGlobal ? "PIPELINE CONTEXT" : "CONTEXT"} (everything we know):\n\n${context}`,
+        text: `CURRENT SCREEN: ${screenContext.label} (${screenContext.path}). Lead with what is useful on this screen, but remain the one universal Brain and act across the whole CRM whenever the user asks.\nINTELLIGENCE MODE: ${wantsDeepHistory ? "extended scorecard history, user accepted the higher-token warning" : "concise commercial memory, the normal lower-token mode"}.\n\n${isGlobal ? "PIPELINE CONTEXT" : "CONTEXT"} (everything we know):\n\n${context}`,
         cache_control: { type: "ephemeral", ttl: "1h" },
       },
     ];
@@ -570,7 +799,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
     const LOOKUP =
       /(to.?do|task list|my tasks|what.?s on|what.?s next|what is next|upcoming|my calls?|my schedule|my calendar|show me|^list\b|list (my|the)|my drafts|my commitments|what do i owe|outstanding|who have i)/;
     const SMART =
-      /(draft|write|email|message|plan|prep|summari[sz]e|advi[sc]e|should i|why|how (do|should|can|to|would)|best|strateg|recommend|opinion|brainstorm|idea|pitch|negoti|approach|think|compare|priorit|win\b|risk|objection|pros|cons)/;
+      /(draft|write|email|message|plan|prep|summari[sz]e|advi[sc]e|should i|why|how (do|should|can|to|would)|best|strateg|recommend|opinion|brainstorm|idea|pitch|negoti|approach|think|compare|priorit|win\b|risk|objection|pros|cons|create|campaign|approve|update|move|change|action)/;
     const simple = LOOKUP.test(ml) && !SMART.test(ml);
     const model = simple ? OPENAI_MODEL_LIVE : OPENAI_MODEL_BRAIN;
     // Long strategic answers were getting cut off mid-sentence at 1300 tokens
@@ -632,8 +861,10 @@ ALWAYS end the spoken version with your closing question whenever your reply has
 
           let reply = full.trim();
 
-          // --- TO-DOS: create them (deduped) and strip the markers ---
+          // --- TO-DOS: convert them into the same visible, confirm-gated plan
+          // as every other write. Brain chat never silently creates work now.
           let createdTasks: any[] = [];
+          let taskActionItems: any[] = [];
           const tm = reply.match(/---TASKS---\s*([\s\S]*?)\s*---END TASKS---/);
           if (tm) {
             reply = reply.replace(/---TASKS---[\s\S]*?---END TASKS---/, "").trim();
@@ -643,13 +874,13 @@ ALWAYS end the spoken version with your closing question whenever your reply has
               const b = seg.lastIndexOf("]");
               const arr = a >= 0 && b > a ? JSON.parse(seg.slice(a, b + 1)) : [];
               if (Array.isArray(arr)) {
-                const items = arr
+                taskActionItems = arr
                   .filter((x: any) => x && typeof x.text === "string" && x.text.trim())
-                  .slice(0, 12)
+                  .slice(0, 6)
                   .map((x: any) => ({
+                    type: "create_task",
                     text: String(x.text).trim(),
-                    linkKind: actionToLinkKind(x.action),
-                    source: "assistant",
+                    action: x.action,
                     dueAt:
                       typeof x.dueAt === "string" &&
                       /^\d{4}-\d{2}-\d{2}/.test(x.dueAt)
@@ -657,7 +888,6 @@ ALWAYS end the spoken version with your closing question whenever your reply has
                         : undefined,
                     pinned: x.pinned === true,
                   }));
-                createdTasks = await upsertTasks(isGlobal ? null : companyId, items);
               }
             } catch {
               /* ignore a malformed task block */
@@ -666,6 +896,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
 
           // --- WRITE ACTIONS: resolve targets, never execute (client confirms) ---
           let proposedActions: any[] = [];
+          let writeActionItems: any[] = [];
           const am = reply.match(/---ACTIONS---\s*([\s\S]*?)\s*---END ACTIONS---/);
           if (am) {
             reply = reply.replace(/---ACTIONS---[\s\S]*?---END ACTIONS---/, "").trim();
@@ -673,18 +904,21 @@ ALWAYS end the spoken version with your closing question whenever your reply has
               const seg = am[1];
               const a = seg.indexOf("[");
               const b = seg.lastIndexOf("]");
-              const arr = a >= 0 && b > a ? JSON.parse(seg.slice(a, b + 1)) : [];
-              proposedActions = await resolveActions(arr);
-              // Drop anything already proposed earlier in this thread, so the
-              // brain can never ask the user to confirm the same thing twice.
-              if (priorSigs.length)
-                proposedActions = proposedActions.filter(
-                  (pa) => !alreadyProposed(pa, priorSigs)
-                );
+              writeActionItems = a >= 0 && b > a ? JSON.parse(seg.slice(a, b + 1)) : [];
             } catch {
               /* ignore a malformed action block */
             }
           }
+          proposedActions = await resolveActions(
+            [...taskActionItems, ...(Array.isArray(writeActionItems) ? writeActionItems : [])],
+            focus
+          );
+          // Drop anything already proposed earlier in this thread, so the brain
+          // can never ask the user to confirm the same thing twice.
+          if (priorSigs.length)
+            proposedActions = proposedActions.filter(
+              (pa) => !alreadyProposed(pa, priorSigs)
+            );
 
           // --- SPOKEN summary (tolerant of a malformed close) ---
           let spoken = "";
@@ -712,8 +946,8 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           }
 
           if (!reply)
-            reply = createdTasks.length
-              ? `Added ${createdTasks.length} to your to-do list.`
+            reply = proposedActions.length
+              ? `I have prepared the exact changes for your approval.`
               : "Sorry, I couldn't form a reply just then. Try again?";
 
           await supabaseAdmin.from("assistant_messages").insert([
@@ -746,6 +980,8 @@ ALWAYS end the spoken version with your closing question whenever your reply has
                 outTok: usage?.output_tokens ?? null,
                 cacheRead: usage?.cache_read_input_tokens ?? null,
                 cacheWrite: usage?.cache_creation_input_tokens ?? null,
+                contextMode: wantsDeepHistory ? "extended" : "memory",
+                screen: screenContext.section,
               })
           );
           frame(controller, {
@@ -754,6 +990,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
             spoken,
             createdTasks,
             proposedActions,
+            contextMode: wantsDeepHistory ? "extended" : "memory",
           });
         } catch (e: any) {
           console.error("Assistant stream failed:", e);

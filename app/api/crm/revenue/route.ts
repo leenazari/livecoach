@@ -41,7 +41,7 @@ export async function GET() {
       supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,created_at").in("kind", ["reply", "positive_reply", "objection", "later", "referral", "meeting_booked"]).limit(5000),
     ]);
 
-    const target = Math.max(1, Number((config || []).find((row: any) => row.key === "revenue_target_gbp")?.value) || 5_000_000);
+    const target = Math.max(1, Number((config || []).find((row: any) => row.key === "revenue_target_gbp")?.value) || 2_000_000);
     const nameByCompany = new Map<string, string>();
     const stageByCompany = new Map<string, string>();
     const lastTouchByCompany = new Map<string, number>();

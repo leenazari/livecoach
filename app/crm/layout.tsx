@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 
 // One assistant for the whole CRM. Mounted here in the layout so it PERSISTS
@@ -9,7 +9,9 @@ export default function CrmLayout({ children }: { children: ReactNode }) {
   return (
     <>
       {children}
-      <GlobalAssistant />
+      <Suspense fallback={null}>
+        <GlobalAssistant />
+      </Suspense>
     </>
   );
 }

@@ -1,8 +1,31 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import ClientAssistant from "@/components/crm/ClientAssistant";
+
+function describeScreen(pathname: string | null, hasClient: boolean, tab: string) {
+  const path = pathname || "/crm";
+  if (path === "/call") return { section: "live_call", label: "Live call", path };
+  if (hasClient) return { section: "client", label: "Client profile", path };
+  if (path.startsWith("/crm/outreach"))
+    return { section: "outreach", label: "Outreach", path };
+  if (path.startsWith("/crm/revenue"))
+    return { section: "revenue", label: "Revenue", path };
+  if (path.startsWith("/crm/board")) {
+    if (tab === "clients") return { section: "client_portfolio", label: "Clients", path: `${path}?tab=clients` };
+    if (tab === "opportunities") return { section: "opportunities", label: "Opportunities", path: `${path}?tab=opportunities` };
+    if (tab === "drafts") return { section: "drafts", label: "Drafts", path: `${path}?tab=drafts` };
+    return { section: "tasks", label: "To-do list", path: `${path}?tab=${tab || "tasks"}` };
+  }
+  if (path.startsWith("/crm/call-coach"))
+    return { section: "call_coach", label: "Call coach", path };
+  if (path.startsWith("/crm/calls"))
+    return { section: "calls", label: "Call history", path };
+  if (path.startsWith("/crm/prep"))
+    return { section: "prep", label: "Call prep", path };
+  return { section: "dashboard", label: "CRM dashboard", path };
+}
 
 // The assistant trigger + panel. A top-centre pill opens a top-anchored,
 // height-capped panel (never runs off the page). With a client context it's
@@ -30,11 +53,17 @@ export default function GlobalAssistant({
   // Used to LEAD the answer, without scoping the conversation thread, so the
   // chat stays one continuous thread as you move between pages.
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const pathMatch = pathname
     ? pathname.match(/\/crm\/([0-9a-fA-F-]{36})/)
     : null;
   const pathFocusId = pathMatch ? pathMatch[1] : null;
   const focusId = eventClient?.id || pathFocusId || undefined;
+  const screenContext = describeScreen(
+    pathname,
+    Boolean(pathFocusId),
+    searchParams.get("tab") || ""
+  );
 
   // A "draft email" next step (anywhere) opens the assistant, scopes it to that
   // client, and asks it to draft the email - so the task actually starts the
@@ -87,10 +116,12 @@ export default function GlobalAssistant({
         <div className="flex items-center justify-between gap-2 border-b border-edge bg-ink/50 px-4 py-2.5">
           <span className="font-mono text-[0.62rem] uppercase tracking-[0.16em] text-amber">
             {"▤"} The brain{active ? ` · ${active.name}` : ""}
+            <span className="text-muted"> · {screenContext.label}</span>
           </span>
           <button
             type="button"
             onClick={() => setOpen(false)}
+            aria-label="Close the brain"
             className="font-mono text-sm text-muted transition hover:text-bone"
           >
             ✕
@@ -106,6 +137,7 @@ export default function GlobalAssistant({
             autoListen={!seed}
             initialPrompt={seed}
             draftTaskId={draftTaskId}
+            screenContext={screenContext}
           />
         </div>
       </div>

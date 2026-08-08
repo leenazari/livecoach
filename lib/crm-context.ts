@@ -347,10 +347,19 @@ export async function gatherGlobalContext(): Promise<string> {
   };
 
   const lines: string[] = [
-    "YOUR CLIENTS AND PIPELINE - one compact line per client (name, stage, open opportunities and value, open to-dos, drafts, last contact, and a one-line note). Match a client the user names even if the spelling is slightly off. When the question is about a specific client, their FULL detail is given separately above. Answer pipeline-wide questions (which deal is closest, who has gone quiet, where the workload is) from these lines.",
+    "YOUR CLIENTS AND PIPELINE - the most actionable clients, one compact line each. The named-client memory above is authoritative for a specific person. This roll-up is for prioritisation without loading every full record.",
     "",
   ];
-  for (const c of companies as any[]) {
+  const activityScore = (c: any) =>
+    (oppCount.get(c.id) || 0) * 20 +
+    (taskCount.get(c.id) || 0) * 8 +
+    (draftCount.get(c.id) || 0) * 5 +
+    (lastCall.has(c.id) ? 3 : 0);
+  const digestClients = [...(companies as any[])]
+    .sort((a, b) => activityScore(b) - activityScore(a) || String(a.name).localeCompare(String(b.name)))
+    .slice(0, 100);
+  lines.push(`Showing ${digestClients.length} of ${companies.length} clients, ranked by open opportunity, action, draft and recent-call activity.`);
+  for (const c of digestClients) {
     const head = `• ${c.name}${
       c.stage || c.sector
         ? ` (${[c.stage, c.sector].filter(Boolean).join(", ")})`
@@ -373,7 +382,7 @@ export async function gatherGlobalContext(): Promise<string> {
       ? rawBrief
       : "";
     let line = `${head} - ${bits.join(", ")}`;
-    if (brief) line += `. ${cut(brief, 110)}`;
+    if (brief) line += `. ${cut(brief, 90)}`;
     else if (!oc && !tc && !dc && !lc)
       line += ". no details recorded yet - thin record, do not infer any";
     lines.push(line);

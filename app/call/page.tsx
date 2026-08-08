@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { foldDictationEvent } from "@/lib/dictation";
 import CallStage from "@/components/CallStage";
@@ -4702,10 +4702,12 @@ export default function CallPage() {
           }}
         />
       )}
-      <GlobalAssistant
-        companyId={linkedCompany?.id}
-        companyName={linkedCompany?.name}
-      />
+      <Suspense fallback={null}>
+        <GlobalAssistant
+          companyId={linkedCompany?.id}
+          companyName={linkedCompany?.name}
+        />
+      </Suspense>
       {/* Hide the sidebar while a full-screen overlay is up (the cue wall or the
           end-of-call summary) so nothing pokes through on the left. */}
       {!cueFull && !summary && <NavMenu />}

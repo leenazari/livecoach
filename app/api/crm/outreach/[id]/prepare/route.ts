@@ -15,10 +15,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const prospectId = params.id;
     const body = await req.json().catch(() => ({}));
-    const [{ data: prospect }, { data: enrolments }, { data: brain }] = await Promise.all([
+    const [{ data: prospect }, { data: enrolments }, { data: brain }, { data: revenueConfig }] = await Promise.all([
       supabaseAdmin.from("outreach_prospects").select("*").eq("id", prospectId).single(),
       supabaseAdmin.from("outreach_enrolments").select("*").eq("prospect_id", prospectId).eq("queued_for", londonDate()).in("status", ["queued", "researched", "drafted"]).limit(1),
       supabaseAdmin.from("workspace_profile").select("knowledge,learned").eq("id", "main").maybeSingle(),
+      supabaseAdmin.from("app_config").select("value").eq("key", "revenue_target_gbp").maybeSingle(),
     ]);
     const enrolment = enrolments?.[0];
     if (!prospect || !enrolment) return NextResponse.json({ error: "This person is not in today's queue" }, { status: 400 });
@@ -32,6 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const variant = parseInt(String(prospect.id).replace(/-/g, "").slice(-2), 16) % 2 === 0 ? "A" : "B";
     const existingResearch = enrolment.research && typeof enrolment.research === "object" ? enrolment.research : null;
     const productTruth = `${brain?.knowledge || ""}\n${brain?.learned || ""}`.slice(0, 5000);
+    const revenueTarget = Math.max(1_000, Number(revenueConfig?.value) || 2_000_000);
     const voice = campaign.voice && typeof campaign.voice === "object" ? campaign.voice : {};
     const banned = Array.isArray(campaign.banned_phrases) ? campaign.banned_phrases.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 20) : [];
     const sequence = Array.isArray(campaign.sequence) ? campaign.sequence : [];
@@ -46,7 +48,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const includeBooking = !!campaign.booking_url && (campaign.booking_cta_mode === "always" || (campaign.booking_cta_mode === "final_step" && step >= lastStep));
     const system = `You are Lee Nazari's careful B2B outreach researcher and copywriter for Interviewa. Use web_search to check this exact person and company today. Return ONLY compact JSON.
 
+COMMERCIAL NORTH STAR: help Interviewa build toward £${revenueTarget.toLocaleString("en-GB")} revenue over the next 12 months, in support of a roughly £10m valuation. Use this to prioritise credible routes to revenue and strong strategic relationships. Never invent a prospect's budget, deal value, urgency or buying authority to make them look valuable.
+
 Do not invent personal facts, clients, results, product capabilities or problems. A weak or absent signal must be stated as such. Do not use information from people with similar names. Do not mention that AI researched them. Use British English, no jargon, flattery, em dashes or semicolons.
+
+RESEARCH DISCIPLINE: bring back only information that changes the decision or message. Prefer recent primary company sources and current role evidence. Ignore generic biography, old news and facts that do not affect the campaign intent. Tie every retained fact to one of three outcomes: close a customer deal, build a commercially useful relationship, or start a credible partnership. Reuse saved research when still current and refresh only facts likely to have changed. The saved research must be concise enough to reuse in future Brain, intent and call-prep prompts without reopening the web.
 
 VOICE TO FOLLOW: ${clean(voice.tone || "warm, commercially curious and concise", 300)}. ${clean(voice.style || "Founder-to-founder, plain English and respectful", 400)}
 COACHING RULES: ${Array.isArray(voice.rules) ? voice.rules.join(" | ").slice(0, 1000) : "Lead with one verified relevance signal | make one useful commercial observation | ask one easy question | never pretend familiarity"}
@@ -63,7 +69,7 @@ ${sequenceStep.assetUrl ? `Approved asset link: ${clean(sequenceStep.assetUrl, 6
 Before writing, choose ONE evidence-backed reason this person should care now and ONE Interviewa angle. The first sentence must be grounded in a verified fact or transparently framed hypothesis. Never mix several random use cases. Explain your evidence and choice in strategy so Lee can approve the thinking as well as the words.
 
 Output exactly:
-{"research":{"summary":"max 70 words","signals":["max 3 factual current signals"],"likelyNeeds":["max 3 clearly labelled hypotheses"],"bestAngle":"one grounded Interviewa angle","personalisationFact":"one verifiable fact or empty string","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 50 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."}}`;
+{"research":{"summary":"max 55 words, only decision-useful facts","signals":["max 3 factual current signals"],"likelyNeeds":["max 2 clearly labelled hypotheses"],"bestAngle":"one grounded Interviewa angle","commercialPath":"customer deal|relationship|partnership plus one short reason","fitDecision":"contact now|hold|skip plus one short reason","personalisationFact":"one verifiable fact or empty string","freshness":"what was checked and how current it is, max 25 words","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 45 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."}}`;
     const user = `PERSON
 Name: ${prospect.first_name || ""} ${prospect.last_name || ""}
 Role: ${prospect.job_title || ""}
@@ -105,7 +111,10 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDA
       signals: Array.isArray(parsed.research.signals) ? parsed.research.signals.map((x: any) => clean(x, 240)).filter(Boolean).slice(0, 3) : [],
       likelyNeeds: Array.isArray(parsed.research.likelyNeeds) ? parsed.research.likelyNeeds.map((x: any) => clean(x, 240)).filter(Boolean).slice(0, 3) : [],
       bestAngle: clean(parsed.research.bestAngle, 400),
+      commercialPath: clean(parsed.research.commercialPath, 240),
+      fitDecision: clean(parsed.research.fitDecision, 240),
       personalisationFact: clean(parsed.research.personalisationFact, 400),
+      freshness: clean(parsed.research.freshness, 180),
       confidence: ["high", "medium", "low"].includes(parsed.research.confidence) ? parsed.research.confidence : "low",
       generatedAt: new Date().toISOString(),
     };

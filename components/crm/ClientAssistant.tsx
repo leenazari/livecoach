@@ -5,6 +5,54 @@ import Link from "next/link";
 import { crmFetch } from "@/lib/crm";
 
 type Msg = { id?: string; role: string; content: string; actions?: any[] };
+type ScreenContext = { section: string; label: string; path: string };
+
+const DEEP_HISTORY_REQUEST =
+  /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|documents?|detailed notes?|email thread|what did .* say)\b/i;
+const CONTEXTUAL_CHIPS: Record<string, string[]> = {
+  outreach: [
+    "Create a campaign for my ideal customer",
+    "Build today's best prospect queue",
+    "What outreach should I approve next?",
+    "What is converting and what should change?",
+  ],
+  revenue: [
+    "Which opportunity should I move today?",
+    "Update this deal's next action",
+    "Where is revenue most at risk?",
+    "What should I prioritise to close?",
+  ],
+  client: [
+    "What do I do next to win this?",
+    "Update this opportunity's next action",
+    "What buying signals have we seen?",
+    "Prep me for the next call",
+  ],
+  client_portfolio: [
+    "Which client needs attention first?",
+    "Who has gone quiet without a next meeting?",
+    "Show me the strongest buying signals",
+    "Create actions for the red-risk clients",
+  ],
+  opportunities: [
+    "Which opportunity should I move today?",
+    "Update the most important next actions",
+    "Which deals have no decision path?",
+    "Where is revenue most at risk?",
+  ],
+  tasks: [
+    "Prioritise my to-do list",
+    "Create today's most important actions",
+    "Which overdue item threatens revenue?",
+    "What can I safely dismiss?",
+  ],
+  drafts: [
+    "Which draft should I send first?",
+    "Which follow-up has the best commercial reason?",
+    "What stale draft can I dismiss?",
+    "What response is still missing?",
+  ],
+};
 
 // Splits an assistant reply into prose and sendable DRAFT blocks (wrapped by the
 // model in ---DRAFT--- … ---END DRAFT--- markers) so each draft gets its own
@@ -153,6 +201,7 @@ export default function ClientAssistant({
   autoListen,
   initialPrompt,
   draftTaskId,
+  screenContext,
 }: {
   companyId?: string;
   companyName?: string;
@@ -162,13 +211,13 @@ export default function ClientAssistant({
   autoListen?: boolean;
   initialPrompt?: string;
   draftTaskId?: string;
+  screenContext?: ScreenContext;
 }) {
   // No companyId = the GLOBAL assistant: it knows every client + the pipeline.
   const isGlobal = !companyId;
   const threadUrl = companyId
     ? `/api/crm/companies/${companyId}/assistant`
     : `/api/crm/assistant/thread`;
-  const label = companyName || "your clients";
   const [messages, setMessages] = useState<Msg[]>([]);
   // Client list, so names in a reply can be turned into links to their page.
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
@@ -183,6 +232,8 @@ export default function ClientAssistant({
   const [savedDrafts, setSavedDrafts] = useState<Record<string, boolean>>({});
   // Per-proposed-action state: pending | busy | done | cancelled.
   const [actionState, setActionState] = useState<Record<string, string>>({});
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [contextMode, setContextMode] = useState<"memory" | "extended">("memory");
   const recRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null); // ElevenLabs playback
   const ttsAbortRef = useRef<AbortController | null>(null); // in-flight tts fetch
@@ -422,6 +473,13 @@ export default function ClientAssistant({
     }
     const t = (text ?? inputRef.current ?? input).trim();
     if (!t || busy) return;
+    if (
+      DEEP_HISTORY_REQUEST.test(t) &&
+      !window.confirm(
+        "This will load extended scorecard history and use more AI tokens than the normal concise memory. Continue?"
+      )
+    )
+      return;
     // Silence any read-aloud still playing from the PREVIOUS reply the instant a
     // new turn starts. Without this the old answer keeps playing (or re-fires on
     // mobile) until the new reply's audio begins, so you hear the last answer
@@ -461,6 +519,7 @@ export default function ClientAssistant({
         body: JSON.stringify({
           companyId: companyId ?? null,
           focusCompanyId: focusCompanyId ?? null,
+          screenContext: screenContext ?? null,
           message: t,
         }),
       });
@@ -501,6 +560,7 @@ export default function ClientAssistant({
 
       const finalReply = String(done?.reply ?? streamed).trim();
       const n = done?.createdTasks?.length || 0;
+      setContextMode(done?.contextMode === "extended" ? "extended" : "memory");
       const note = n ? `\n\n✓ Added ${n} to your to-do list.` : "";
       setLastAssistant((m) => ({
         ...m,
@@ -748,8 +808,8 @@ export default function ClientAssistant({
   // A proposed write action only runs when the user taps Confirm. It fires the
   // ready-made request the server resolved (set link, set intent, link client,
   // dismiss) and refreshes any open lists.
-  const confirmAction = async (a: any) => {
-    if (!a || !a.endpoint) return;
+  const confirmAction = async (a: any): Promise<boolean> => {
+    if (!a || !a.endpoint) return false;
     setActionState((s) => ({ ...s, [a.key]: "busy" }));
     try {
       await crmFetch(a.endpoint, {
@@ -758,8 +818,11 @@ export default function ClientAssistant({
       });
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+      return true;
     } catch {
       setActionState((s) => ({ ...s, [a.key]: "pending" }));
+      return false;
     }
   };
   const cancelAction = (a: any) =>
@@ -781,6 +844,26 @@ export default function ClientAssistant({
     }
   };
 
+  // A plan can contain several exact internal CRM changes. The user can approve
+  // the visible safe subset once; destructive actions and external sends never
+  // enter this batch and retain their own confirmation.
+  const confirmAllSafe = async (actions: any[]) => {
+    const pending = (actions || []).filter(
+      (a) =>
+        a?.batchSafe === true &&
+        a?.endpoint &&
+        !Array.isArray(a?.choices) &&
+        (actionState[a.key] || "pending") === "pending"
+    );
+    if (pending.length < 2 || batchBusy) return;
+    setBatchBusy(true);
+    try {
+      for (const action of pending) await confirmAction(action);
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
   const clearThread = async () => {
     if (!confirm("Clear this assistant conversation?")) return;
     setMessages([]);
@@ -788,7 +871,7 @@ export default function ClientAssistant({
   };
 
   const chips = isGlobal
-    ? [
+    ? CONTEXTUAL_CHIPS[screenContext?.section || ""] || [
         "What's my to-do list today?",
         "Which deal is closest to closing?",
         "Who have I gone quiet on?",
@@ -806,7 +889,9 @@ export default function ClientAssistant({
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
           {"▤"} The brain{" "}
-          <span className="text-muted">- ask anything about {label}</span>
+          <span className="text-muted">
+            - {screenContext?.label || "universal CRM"} · {contextMode === "extended" ? "extended history" : "concise memory"}
+          </span>
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -956,6 +1041,30 @@ export default function ClientAssistant({
                 Array.isArray(m.actions) &&
                 m.actions.length > 0 && (
                   <div className="mt-2 flex flex-col gap-1.5">
+                    {m.actions.filter(
+                      (a: any) =>
+                        a?.batchSafe === true &&
+                        a?.endpoint &&
+                        !Array.isArray(a?.choices) &&
+                        (actionState[a.key] || "pending") === "pending"
+                    ).length > 1 && (
+                      <button
+                        type="button"
+                        disabled={batchBusy}
+                        onClick={() => confirmAllSafe(m.actions || [])}
+                        className="rounded-lg border border-amber/60 bg-amber/15 px-3 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-50"
+                      >
+                        {batchBusy
+                          ? "applying approved plan…"
+                          : `approve ${m.actions.filter(
+                              (a: any) =>
+                                a?.batchSafe === true &&
+                                a?.endpoint &&
+                                !Array.isArray(a?.choices) &&
+                                (actionState[a.key] || "pending") === "pending"
+                            ).length} safe changes`}
+                      </button>
+                    )}
                     {m.actions.map((a: any) => {
                       const st = actionState[a.key] || "pending";
                       if (st === "cancelled") return null;
@@ -1031,6 +1140,12 @@ export default function ClientAssistant({
             </div>
           )}
       </div>
+
+      {DEEP_HISTORY_REQUEST.test(input) && (
+        <p className="mb-2 rounded-lg border border-amber/40 bg-amber/[0.08] px-3 py-2 font-sans text-[0.72rem] leading-relaxed text-amber/90">
+          Extended history uses more tokens. Normal Brain answers use the concise commercial memory.
+        </p>
+      )}
 
       <div className="flex items-end gap-2">
         <button

@@ -21,7 +21,7 @@ export type Topic = { key: string; title: string; focus: string };
 // the ones that most move the £5M / £650k goal, so the question picker prefers
 // them when coverage is thin.
 export const CURRICULUM: Topic[] = [
-  { key: "money", title: "The money", focus: "how revenue is made now, margins, runway, the path to £650k revenue and a £5M valuation, what 'rich' means to Lee in take-home" },
+  { key: "money", title: "The money", focus: "how revenue is made now, margins, runway, the path to roughly £2m revenue in the next 12 months and a £10m Interviewa valuation, what 'rich' means to Lee in take-home" },
   { key: "company", title: "ai13 / Interviewa", focus: "what the product does, real traction, the genuine edge, what is and is not working" },
   { key: "icp", title: "Ideal customer and market", focus: "exactly who buys, why, where demand is hottest, which segment to dominate first" },
   { key: "sales", title: "Sales motion", focus: "how deals are actually won today, the path from intro to close, where they stall and why" },

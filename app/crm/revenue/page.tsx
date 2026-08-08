@@ -38,7 +38,7 @@ const typeLabels: Record<Opportunity["opportunity_type"], string> = {
 export default function RevenuePage() {
   const [data, setData] = useState<Pipeline | null>(null);
   const [rows, setRows] = useState<Opportunity[]>([]);
-  const [target, setTarget] = useState(5_000_000);
+  const [target, setTarget] = useState(2_000_000);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -58,7 +58,7 @@ export default function RevenuePage() {
           })
         )
       );
-      setTarget(next.goal?.target || 5_000_000);
+      setTarget(next.goal?.target || 2_000_000);
     } catch (e: any) {
       setError(e.message || "Could not load the revenue pipeline");
     }
