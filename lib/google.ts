@@ -82,7 +82,7 @@ export async function googleConnected(): Promise<{ connected: boolean; email: st
 
 // A valid access token, refreshing via the stored refresh token when needed.
 // Returns null if not connected.
-export async function getAccessToken(): Promise<string | null> {
+export async function getAccessToken(forceRefresh = false): Promise<string | null> {
   const { data } = await supabaseAdmin
     .from("google_oauth")
     .select("refresh_token, access_token, expiry")
@@ -91,6 +91,7 @@ export async function getAccessToken(): Promise<string | null> {
   if (!data?.refresh_token) return null;
   // Reuse the cached access token while it has more than a minute left.
   if (
+    !forceRefresh &&
     data.access_token &&
     data.expiry &&
     new Date(data.expiry).getTime() - Date.now() > 60_000
