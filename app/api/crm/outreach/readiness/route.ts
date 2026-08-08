@@ -6,7 +6,7 @@ import {
   googleConnected,
   googleGrantedScopes,
 } from "@/lib/google";
-import { OUTREACH_FROM_EMAIL } from "@/lib/gmail";
+import { gmailAccessStatus, OUTREACH_FROM_EMAIL } from "@/lib/gmail";
 import { londonDate, OUTREACH_DAILY_HARD_LIMIT } from "@/lib/outreach";
 
 export const dynamic = "force-dynamic";
@@ -49,8 +49,10 @@ export async function GET() {
           .eq("from_email", OUTREACH_FROM_EMAIL),
       ]);
 
-    const scopes = google.connected ? await googleGrantedScopes() : new Set<string>();
-    const readScope = scopes.has(GMAIL_READ_SCOPE);
+    const [scopes, gmailApi] = google.connected
+      ? await Promise.all([googleGrantedScopes(), gmailAccessStatus()])
+      : [new Set<string>(), "disconnected" as const];
+    const readAccess = scopes.has(GMAIL_READ_SCOPE) || gmailApi === "ok";
     const sendScope = scopes.has(GMAIL_SEND_SCOPE);
     const databaseError =
       campaignResult.error ||
@@ -89,13 +91,15 @@ export async function GET() {
       {
         id: "gmail",
         label: "Gmail permissions",
-        status: readScope && sendScope ? "pass" : "fail",
+        status: !readAccess ? "fail" : sendScope || aliasPreviouslyVerified ? "pass" : "warn",
         detail:
-          readScope && sendScope
+          readAccess && (sendScope || aliasPreviouslyVerified)
             ? "Reading replies and sending approved messages are permitted."
-            : "Gmail read/send permission is missing. Reconnect Google once in Settings.",
+            : readAccess
+              ? "Gmail reading works. Sending will be verified safely on the first approved email."
+              : "Gmail reading permission is unavailable. Check the Google connection in Settings.",
         href: "/settings",
-        action: readScope && sendScope ? undefined : "Reconnect Google",
+        action: readAccess ? undefined : "Check Google",
       },
       {
         id: "sender",

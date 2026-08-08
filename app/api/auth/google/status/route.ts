@@ -6,6 +6,7 @@ import {
   googleConfigured,
   googleGrantedScopes,
 } from "@/lib/google";
+import { gmailAccessStatus } from "@/lib/gmail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,8 +16,12 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const { connected, email } = await googleConnected();
-    const scopes = connected ? await googleGrantedScopes() : new Set<string>();
-    const gmailRead = scopes.has(GMAIL_READ_SCOPE);
+    const [scopes, gmailApi] = connected
+      ? await Promise.all([googleGrantedScopes(), gmailAccessStatus()])
+      : [new Set<string>(), "disconnected" as const];
+    // A successful Gmail API call is definitive. Tokeninfo is useful, but can
+    // omit or fail to report scopes even when the live API grant works.
+    const gmailRead = scopes.has(GMAIL_READ_SCOPE) || gmailApi === "ok";
     const gmailSend = scopes.has(GMAIL_SEND_SCOPE);
     const gmail = connected ? (gmailRead ? "ok" : "missing") : "disconnected";
     return NextResponse.json(

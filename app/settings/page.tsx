@@ -182,7 +182,7 @@ export default function SettingsPage() {
         className={`mb-5 rounded-xl border p-5 ${
           gcal === null
             ? "border-edge bg-panel/40"
-            : gcal.connected && gcal.gmail === "ok" && gcal.gmailSend
+            : gcal.connected && gcal.gmail === "ok"
               ? "border-sage/45 bg-sage/[0.06]"
               : gcal.connected
                 ? "border-amber/50 bg-amber/[0.07]"
@@ -195,7 +195,7 @@ export default function SettingsPage() {
               className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
                 gcal === null
                   ? "text-muted"
-                  : gcal.connected && gcal.gmail === "ok" && gcal.gmailSend
+                  : gcal.connected && gcal.gmail === "ok"
                     ? "text-sage"
                     : gcal.connected
                       ? "text-amber"
@@ -204,7 +204,7 @@ export default function SettingsPage() {
             >
               {gcal === null
                 ? "◷"
-                : gcal.connected && gcal.gmail === "ok" && gcal.gmailSend
+                : gcal.connected && gcal.gmail === "ok"
                   ? "✓"
                   : "!"} Google & Gmail
             </p>
@@ -218,7 +218,7 @@ export default function SettingsPage() {
                     gcal.gmail !== "ok"
                       ? ", but Gmail access needs reconnecting"
                       : !gcal.gmailSend
-                        ? ", but Gmail sending permission needs reconnecting"
+                        ? " and Gmail context is working; Outreach will safely verify sending on the first approved email"
                         : " and Gmail reading and sending are working"
                   }. The Sync button on the dashboard pulls calendar changes on demand.`
                 : "Not connected. Reconnect Google Calendar so meetings, cancellations and reschedules stay in sync."}
@@ -233,7 +233,7 @@ export default function SettingsPage() {
               </p>
             )}
           </div>
-          {gcal?.connected && gcal.gmail === "ok" && gcal.gmailSend ? (
+          {gcal?.connected && gcal.gmail === "ok" ? (
             <span className="shrink-0 rounded-full border border-sage/55 bg-sage/10 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage">
               ● Connected
             </span>
