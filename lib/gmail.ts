@@ -49,18 +49,62 @@ export async function gmailConnected(): Promise<boolean> {
 
 // Verify Gmail itself, not merely the shared Google token. This distinguishes
 // a healthy calendar-only connection from a missing Gmail scope/API.
-export async function gmailAccessStatus(): Promise<"ok" | "missing" | "disconnected"> {
+export type GmailAccessIssue =
+  | "none"
+  | "disconnected"
+  | "scope_missing"
+  | "workspace_policy"
+  | "api_disabled"
+  | "token_rejected"
+  | "rate_limited"
+  | "google_error";
+
+export async function gmailAccessDiagnostic(): Promise<{
+  status: "ok" | "missing" | "disconnected";
+  issue: GmailAccessIssue;
+}> {
   const token = await getAccessToken();
-  if (!token) return "disconnected";
+  if (!token) return { status: "disconnected", issue: "disconnected" };
   try {
     const res = await fetch(`${GMAIL}/profile`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
-    return res.ok ? "ok" : "missing";
+    if (res.ok) return { status: "ok", issue: "none" };
+
+    const body = await res.text();
+    const error = body.toLowerCase();
+    let issue: GmailAccessIssue = "google_error";
+    if (res.status === 401) issue = "token_rejected";
+    else if (res.status === 429) issue = "rate_limited";
+    else if (
+      error.includes("access_token_scope_insufficient") ||
+      error.includes("insufficientpermission") ||
+      error.includes("insufficient permission")
+    ) {
+      issue = "scope_missing";
+    } else if (
+      error.includes("admin_policy_enforced") ||
+      error.includes("domainpolicy") ||
+      error.includes("domain policy") ||
+      error.includes("org_internal")
+    ) {
+      issue = "workspace_policy";
+    } else if (
+      error.includes("accessnotconfigured") ||
+      error.includes("service_disabled") ||
+      error.includes("api has not been used")
+    ) {
+      issue = "api_disabled";
+    }
+    return { status: "missing", issue };
   } catch {
-    return "missing";
+    return { status: "missing", issue: "google_error" };
   }
+}
+
+export async function gmailAccessStatus(): Promise<"ok" | "missing" | "disconnected"> {
+  return (await gmailAccessDiagnostic()).status;
 }
 
 // Recent messages matching a Gmail query (e.g. "from:x@y.com OR to:x@y.com"),
