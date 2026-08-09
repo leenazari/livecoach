@@ -184,7 +184,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { data, error } = await supabaseAdmin.rpc("merge_crm_companies", {
+    const rpcName = pair.reason.includes("saved alias matches name")
+      ? "merge_crm_companies_by_alias"
+      : "merge_crm_companies";
+    const { data, error } = await supabaseAdmin.rpc(rpcName, {
       p_keep_id: keepId,
       p_merge_id: mergeId,
       p_expected_keep_updated_at: pair.keep.updated_at,

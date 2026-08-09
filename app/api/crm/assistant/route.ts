@@ -15,6 +15,7 @@ import { getCommercialMemoryBlock } from "@/lib/commercial-memory";
 import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
 import { RELATIONSHIP_STAGE_BY_KEY } from "@/lib/relationship-stages";
+import { resolveExistingCompany } from "@/lib/company-resolver";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -60,12 +61,10 @@ function callWhen(iso: string): string {
 async function findCompany(name: string) {
   const term = likeTerm(name);
   if (!term) return null;
-  const { data } = await supabaseAdmin
-    .from("companies")
-    .select("id, name")
-    .ilike("name", `%${term}%`)
-    .limit(1);
-  return data && data[0] ? data[0] : null;
+  return resolveExistingCompany(
+    { name: term },
+    { select: "id,name,domain,website,profile", allowDistinctivePartial: true }
+  );
 }
 async function findCompanyById(id: string) {
   if (!/^[0-9a-f-]{36}$/i.test(String(id || ""))) return null;
@@ -481,7 +480,11 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       const content = typeof it.content === "string" ? it.content.trim() : "";
       if (!content) continue;
       const company = it.client ? await findCompany(String(it.client)) : null;
-      const companyId = company?.id || defaultCompanyId;
+      // A named but unresolved client must never fall back to the profile that
+      // happens to be open. That could silently attach a phone note to the
+      // wrong relationship. The model can instead ask the user to clarify.
+      if (it.client && !company) continue;
+      const companyId = company?.id || (!it.client ? defaultCompanyId : null);
       if (!companyId) continue;
       const channel = ["phone", "text", "voice", "note"].includes(it.channel)
         ? it.channel
@@ -495,13 +498,13 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       out.push({
         key,
         type: it.type,
-        label: `Log ${titleByChannel[channel].toLowerCase()} for ${company?.name || "this client"}: ${content.slice(0, 180)}`,
-        endpoint: `/api/crm/companies/${companyId}/context`,
+        label: `Log and apply ${titleByChannel[channel].toLowerCase()} intelligence for ${company?.name || "this client"}: ${content.slice(0, 180)}`,
+        endpoint: `/api/crm/companies/${companyId}/activity`,
         method: "POST",
         body: {
-          kind: "note",
-          title: titleByChannel[channel],
+          channel,
           content: content.slice(0, 2000),
+          autoApply: true,
         },
       });
       continue;
@@ -982,7 +985,7 @@ For update_opportunity include only fields the user actually supplied or that ar
 Use update_client for the relationship-level client stage and core facts. Use update_opportunity for a real revenue deal stage. When "move this client to qualified" clearly refers to a deal, update the opportunity. When it refers to the overall relationship or there is no deal, update the client stage. Never update both unless the user explicitly asks.
 Use upsert_stakeholder when the user identifies a decision-maker, champion, influencer, user or blocker. It updates an existing contact or clearly proposes creating the named contact when none exists. Do not guess buying roles from a job title alone.
 Use update_task when the user explicitly asks to complete, rename, pin, unpin or reschedule an existing to-do. If several match, the interface will ask which one.
-Use log_client_update when the user reports an off-system phone call, text message, voice note or relationship update. Keep the content factual and concise. It enters that client's timeline and commercial memory, which automatically affects future Brain context and next-call intent.
+Use log_client_update when the user reports an off-system phone call, text message, voice note or relationship update. Keep the content factual and concise. It enters that client's timeline and commercial memory, updates any grounded next action, and refreshes future next-call intent after the user confirms it once. If the user names a client, use the exact known client name or saved alias. Never map a one-word first name to a different full-name client merely because part of the text matches.
 For update_campaign you may also include "voice":{"tone":"...","style":"...","rules":["..."],"signature":"Lee"}, "bannedPhrases":["..."], "bookingUrl":"https://...", "bookingCtaMode":"interested_reply|final_step|always|never", and "sequence":[{"step":1,"delayDays":0,"purpose":"...","contentType":"plain|insight|case_study|video|close_loop","guidance":"...","assetUrl":null}]. Only include settings the user asked for or approved in the conversation.
 
 CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Exact outreach drafts and external sends stay in the dedicated Outreach approval flow.

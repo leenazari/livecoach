@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { emailFromHeader } from "@/lib/gmail";
+import { resolveExistingCompany } from "@/lib/company-resolver";
 
 const asText = (value: any, max = 1000) => String(value || "").trim().slice(0, max);
 
@@ -56,14 +57,11 @@ export async function ensureOutreachCompany(prospectId: string, reason: "interes
     company = data || null;
     if (!company) companyId = null;
   }
-  if (!companyId && prospect.company_domain) {
-    const { data } = await supabaseAdmin.from("companies").select("*").ilike("domain", prospect.company_domain).limit(1);
-    company = data?.[0] || null;
-    companyId = company?.id || null;
-  }
-  if (!companyId && prospect.company_name) {
-    const { data } = await supabaseAdmin.from("companies").select("*").ilike("name", prospect.company_name).limit(1);
-    company = data?.[0] || null;
+  if (!companyId) {
+    company = await resolveExistingCompany(
+      { name: prospect.company_name, domain: prospect.company_domain },
+      { select: "*" }
+    );
     companyId = company?.id || null;
   }
   if (!companyId) {

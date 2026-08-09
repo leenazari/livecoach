@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveExistingCompany } from "@/lib/company-resolver";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -59,13 +60,13 @@ export async function POST(req: NextRequest) {
 
     // Manual creation should be idempotent. Reuse an exact existing client
     // name (case-insensitive) instead of quietly splitting its history.
-    const { data: existing, error: existingError } = await supabaseAdmin
-      .from("companies")
-      .select("*")
-      .ilike("name", name)
-      .limit(1)
-      .maybeSingle();
-    if (existingError) throw existingError;
+    const existing = await resolveExistingCompany(
+      {
+        name,
+        domain: typeof body.domain === "string" ? body.domain : null,
+      },
+      { select: "*" }
+    );
     if (existing) {
       return NextResponse.json({ company: existing, existing: true });
     }

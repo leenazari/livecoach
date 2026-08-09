@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveExistingCompany } from "@/lib/company-resolver";
+import { normaliseCompanyDomain } from "@/lib/company-identity";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { createHash } from "crypto";
@@ -249,30 +251,24 @@ export async function POST(req: NextRequest) {
 
     // Find an existing client: the one we were told, else one on this domain,
     // else create a fresh one. Never duplicate.
+    const explicitTarget = !!companyId;
     let targetId = companyId;
-    if (!targetId && isCompanyDomain) {
-      const { data: byDomain } = await supabaseAdmin
-        .from("companies")
-        .select("id")
-        .eq("domain", domain)
-        .limit(1);
-      if (byDomain && byDomain[0]) targetId = byDomain[0].id as string;
-    }
-    if (!targetId && companyName) {
-      const { data: byName } = await supabaseAdmin
-        .from("companies")
-        .select("id")
-        .ilike("name", companyName)
-        .limit(1);
-      if (byName && byName[0]) targetId = byName[0].id as string;
+    if (!targetId) {
+      const existing = await resolveExistingCompany({
+        name: companyName,
+        domain: isCompanyDomain ? domain : null,
+      });
+      if (existing) targetId = existing.id;
     }
     let created = false;
+    let targetCompany: any = null;
     if (targetId) {
       const { data: existingCompany } = await supabaseAdmin
         .from("companies")
-        .select("profile")
+        .select("id,name,domain,website,profile")
         .eq("id", targetId)
         .maybeSingle();
+      targetCompany = existingCompany || null;
       const patch: Record<string, any> = {
         email_context: emailContext,
         email_context_updated_at: nowIso,
@@ -283,8 +279,11 @@ export async function POST(req: NextRequest) {
           email_last_message_at: msgs[0]?.date || null,
         },
       };
-      if (website) patch.website = website;
-      if (domain) patch.domain = domain;
+      // Pulling an internal or cross-relationship email into a client's
+      // context must never replace that client's own identity. Only an
+      // automatically resolved record may have a missing domain filled here.
+      if (!explicitTarget && website && !existingCompany?.website) patch.website = website;
+      if (!explicitTarget && domain && !existingCompany?.domain) patch.domain = domain;
       await supabaseAdmin.from("companies").update(patch).eq("id", targetId);
     } else {
       const { data: ins } = await supabaseAdmin
@@ -306,17 +305,29 @@ export async function POST(req: NextRequest) {
       created = true;
     }
 
-    // Make sure the person is on file as a contact (once).
-    if (targetId && counterparty) {
+    // Make sure the person is filed under their own organisation (once). Email
+    // context can legitimately be relevant to a different client, but that
+    // must not turn an internal coordinator into the client's employee.
+    let contactCompanyId: string | null = targetId;
+    if (explicitTarget && targetId && isCompanyDomain && domain) {
+      const targetDomain = normaliseCompanyDomain(
+        targetCompany?.domain || targetCompany?.website
+      );
+      if (targetDomain !== normaliseCompanyDomain(domain)) {
+        const naturalCompany = await resolveExistingCompany({ domain });
+        contactCompanyId = naturalCompany?.id || null;
+      }
+    }
+    if (contactCompanyId && counterparty) {
       const { data: existingCt } = await supabaseAdmin
         .from("contacts")
         .select("id")
-        .eq("company_id", targetId)
+        .eq("company_id", contactCompanyId)
         .ilike("email", counterparty)
         .limit(1);
       if (!existingCt || !existingCt.length) {
         await supabaseAdmin.from("contacts").insert({
-          company_id: targetId,
+          company_id: contactCompanyId,
           name: personName || counterparty,
           email: counterparty,
         });

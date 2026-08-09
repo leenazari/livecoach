@@ -19,6 +19,7 @@ import {
   loadOutreachProspectsForAttendees,
   matchOutreachProspectForAttendees,
 } from "@/lib/outreach-crm";
+import { resolveExistingCompany } from "@/lib/company-resolver";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -311,12 +312,8 @@ async function runCalendarSync() {
         const key = name.toLowerCase();
         if (nameToCompanyId.has(key)) return nameToCompanyId.get(key) || null;
         let id: string | null = null;
-        const { data: found } = await supabaseAdmin
-          .from("companies")
-          .select("id")
-          .ilike("name", name)
-          .limit(1);
-        if (found && found[0]) id = (found[0] as any).id as string;
+        const found = await resolveExistingCompany({ name });
+        if (found) id = found.id;
         if (!id) {
           const { data: created } = await supabaseAdmin
             .from("companies")
