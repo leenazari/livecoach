@@ -14,6 +14,7 @@ type LegacyRequest = {
   messages: LegacyMessage[];
   temperature?: number;
   tools?: any[];
+  response_format?: any;
 };
 
 const API_URL = "https://api.openai.com/v1/responses";
@@ -70,6 +71,9 @@ function requestBody(body: LegacyRequest, stream: boolean) {
       : "medium";
 
   const usesWebSearch = Array.isArray(body.tools) && body.tools.length > 0;
+  const maxToolCalls = usesWebSearch
+    ? Math.max(1, Math.min(10, Number(body.tools?.[0]?.max_uses) || 3))
+    : 0;
   const instructions = textOf(body.system);
   // Route repeated, stable prompt prefixes to the same cache shard. OpenAI's
   // implicit prompt cache still validates the exact prefix, so this cannot
@@ -86,9 +90,18 @@ function requestBody(body: LegacyRequest, stream: boolean) {
     })),
     max_output_tokens: maxOutput,
     reasoning: { effort },
-    text: { verbosity: tier === "live" ? "low" : "medium" },
+    text: {
+      verbosity: tier === "live" ? "low" : "medium",
+      ...(body.response_format ? { format: body.response_format } : {}),
+    },
     prompt_cache_key: promptCacheKey,
-    ...(usesWebSearch ? { tools: [{ type: "web_search" }] } : {}),
+    ...(usesWebSearch
+      ? {
+          tools: [{ type: "web_search" }],
+          max_tool_calls: maxToolCalls,
+          include: ["web_search_call.action.sources"],
+        }
+      : {}),
     stream,
     store: false,
   };
@@ -126,7 +139,8 @@ function outputText(response: any): string {
 
 function legacyMessage(response: any) {
   const text = outputText(response);
-  const citations = (Array.isArray(response?.output) ? response.output : [])
+  const output = Array.isArray(response?.output) ? response.output : [];
+  const annotationSources = output
     .filter((item: any) => item?.type === "message")
     .flatMap((item: any) => (Array.isArray(item?.content) ? item.content : []))
     .flatMap((item: any) => (Array.isArray(item?.annotations) ? item.annotations : []))
@@ -136,6 +150,18 @@ function legacyMessage(response: any) {
       title: item.title || item.url,
       url: item.url,
     }));
+  const searchSources = output
+    .filter((item: any) => item?.type === "web_search_call")
+    .flatMap((item: any) => Array.isArray(item?.action?.sources) ? item.action.sources : [])
+    .filter((item: any) => item?.url)
+    .map((item: any) => ({
+      type: "web_search_result",
+      title: item.title || item.url,
+      url: item.url,
+    }));
+  const citations = Array.from(
+    new Map([...annotationSources, ...searchSources].map((item: any) => [item.url, item])).values()
+  );
   return {
     content: [
       { type: "text", text },

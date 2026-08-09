@@ -189,11 +189,17 @@ function compactResearch(research: any) {
     signals: Array.isArray(source.signals)
       ? source.signals.map((item: any) => asText(item, 220)).filter(Boolean).slice(0, 3)
       : [],
+    activeJobs: Array.isArray(source.activeJobs)
+      ? source.activeJobs.map((item: any) => asText(item, 220)).filter(Boolean).slice(0, 4)
+      : [],
+    volumeAssessment: asText(source.volumeAssessment, 20) || "unknown",
+    volumeReason: asText(source.volumeReason, 260),
     likelyNeeds: Array.isArray(source.likelyNeeds)
       ? source.likelyNeeds.map((item: any) => asText(item, 220)).filter(Boolean).slice(0, 2)
       : [],
     bestAngle: asText(source.bestAngle, 400),
     personalisationFact: asText(source.personalisationFact, 300),
+    approvedProof: asText(source.approvedProof, 300),
     commercialPath: asText(source.commercialPath, 220),
     fitDecision: asText(source.fitDecision, 220),
     confidence: asText(source.confidence, 20),

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { removeDashesFromProse } from "@/lib/outreach-voice";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -7,8 +8,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const { data: existing } = await supabaseAdmin.from("outreach_messages").select("*").eq("id", params.id).single();
     if (!existing || existing.status === "sent") return NextResponse.json({ error: "A sent email cannot be changed" }, { status: 400 });
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
-    const nextSubject = typeof body.subject === "string" && body.subject.trim() ? body.subject.trim().slice(0, 120) : existing.subject;
-    const nextBody = typeof body.body_text === "string" && body.body_text.trim() ? body.body_text.trim().slice(0, 4000) : existing.body_text;
+    const nextSubject = typeof body.subject === "string" && body.subject.trim()
+      ? removeDashesFromProse(body.subject.trim()).slice(0, 120)
+      : removeDashesFromProse(existing.subject);
+    const nextBody = typeof body.body_text === "string" && body.body_text.trim()
+      ? removeDashesFromProse(body.body_text.trim()).slice(0, 4000)
+      : removeDashesFromProse(existing.body_text);
     const contentChanged = nextSubject !== existing.subject || nextBody !== existing.body_text;
     patch.subject = nextSubject;
     patch.body_text = nextBody;
