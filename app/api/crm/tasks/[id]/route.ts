@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { fingerprintTask } from "@/lib/tasks";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,7 @@ export async function PATCH(
       patch.status = "dismissed";
     }
     if (typeof body.text === "string" && body.text.trim()) {
-      const text = body.text.trim();
+      const text = capitaliseSentenceStarts(body.text.trim());
       const { data: current, error: currentError } = await supabaseAdmin
         .from("tasks")
         .select("company_id")

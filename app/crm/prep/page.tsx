@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 type Call = {
   id: string;
@@ -151,7 +152,7 @@ function Actions({
             className="flex gap-2 font-sans text-[0.8rem] leading-snug text-bone/85"
           >
             <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted" />
-            {t}
+            {capitaliseSentenceStarts(t)}
           </li>
         ))}
       </ul>
@@ -1970,7 +1971,7 @@ function PrepInner() {
                       <div className="flex items-center gap-2">
                         {s.recommendation && (
                           <span className="rounded-full border border-amber/40 bg-amber/10 px-2.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider text-amber">
-                            {s.recommendation}
+                            {capitaliseSentenceStarts(s.recommendation)}
                           </span>
                         )}
                         <Link
@@ -1984,12 +1985,12 @@ function PrepInner() {
 
                     {s.headline && (
                       <p className="mt-2 font-sans text-[0.9rem] leading-snug text-bone">
-                        {s.headline}
+                        {capitaliseSentenceStarts(s.headline)}
                       </p>
                     )}
                     {s.overview && (
                       <p className="mt-1 font-sans text-[0.82rem] leading-relaxed text-bone/70">
-                        {s.overview}
+                        {capitaliseSentenceStarts(s.overview)}
                       </p>
                     )}
 

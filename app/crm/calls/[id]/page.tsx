@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { crmFetch } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import PostCallDealUpdate from "@/components/crm/PostCallDealUpdate";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 type Call = {
   id: string;
@@ -139,7 +140,7 @@ export default function CallDetailPage() {
               className="flex gap-2 font-sans text-[0.84rem] leading-snug text-bone/85"
             >
               <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-muted" />
-              {t}
+              {capitaliseSentenceStarts(t)}
             </li>
           ))}
         </ul>
@@ -237,12 +238,12 @@ export default function CallDetailPage() {
             )}
             {s.headline && (
               <p className="mt-3 font-sans text-[0.95rem] leading-snug text-bone">
-                {s.headline}
+                {capitaliseSentenceStarts(s.headline)}
               </p>
             )}
             {s.overview && (
               <p className="mt-2 font-sans text-[0.86rem] leading-relaxed text-bone/75">
-                {s.overview}
+                {capitaliseSentenceStarts(s.overview)}
               </p>
             )}
           </div>
@@ -262,7 +263,7 @@ export default function CallDetailPage() {
                     <li key={i}>
                       <div className="flex items-center justify-between gap-3">
                         <span className="font-sans text-[0.84rem] text-bone">
-                          {c?.name}
+                          {capitaliseSentenceStarts(c?.name)}
                         </span>
                         <span className="font-mono text-[0.66rem] text-sage">
                           {score}/5
@@ -276,7 +277,7 @@ export default function CallDetailPage() {
                       </div>
                       {c?.note && (
                         <p className="mt-1 font-sans text-[0.76rem] leading-snug text-bone/65">
-                          {c.note}
+                          {capitaliseSentenceStarts(c.note)}
                         </p>
                       )}
                     </li>
@@ -325,11 +326,11 @@ export default function CallDetailPage() {
                   .map((c: any, i: number) => (
                     <li key={i} className="border-l-2 border-amber/50 pl-3">
                       <p className="font-sans text-[0.86rem] leading-snug text-bone">
-                        {c.text}
+                        {capitaliseSentenceStarts(c.text)}
                       </p>
                       {c.why && typeof c.why === "string" && c.why.trim() && (
                         <p className="font-mono text-[0.56rem] uppercase tracking-wider text-muted">
-                          {c.why}
+                          {capitaliseSentenceStarts(c.why)}
                         </p>
                       )}
                     </li>
@@ -344,7 +345,7 @@ export default function CallDetailPage() {
                 Your style
               </p>
               <p className="font-sans text-[0.84rem] leading-relaxed text-bone/80">
-                {s.styleProfile}
+                {capitaliseSentenceStarts(s.styleProfile)}
               </p>
             </section>
           )}

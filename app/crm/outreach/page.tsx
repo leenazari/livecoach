@@ -238,7 +238,7 @@ export default function OutreachPage() {
       </header>
 
       <section className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {[{ label: "Today's queue", value: queue.length }, { label: "Sent today", value: metrics.sentToday || 0 }, { label: "Awaiting approval", value: queue.filter((r) => r.message?.status === "draft").length }, { label: "Positive replies", value: metrics.positiveReplies || 0 }].map((item) => <div key={item.label} className="rounded-xl border border-edge bg-panel p-3"><strong className="block font-display text-2xl text-bone">{item.value}</strong><span className="font-mono text-[0.55rem] uppercase tracking-wider text-muted">{item.label}</span></div>)}
+        {[{ label: "Today's queue", value: queue.length, tab: "queue" as Tab }, { label: "Sent today", value: metrics.sentToday || 0, tab: "queue" as Tab }, { label: "Awaiting approval", value: queue.filter((r) => r.message?.status === "draft").length, tab: "queue" as Tab }, { label: "Positive replies", value: metrics.positiveReplies || 0, tab: "replies" as Tab }].map((item) => <button type="button" onClick={() => selectTab(item.tab)} key={item.label} className="rounded-xl border border-edge bg-panel p-3 text-left transition hover:border-amber/55"><strong className="block font-display text-2xl text-bone">{item.value}</strong><span className="font-mono text-[0.55rem] uppercase tracking-wider text-muted">{item.label} ↘</span></button>)}
       </section>
 
       <nav className="sticky top-0 z-20 mb-4 -mx-3 flex overflow-x-auto border-y border-edge bg-ink/95 px-3 backdrop-blur sm:static sm:mx-0 sm:rounded-xl sm:border">

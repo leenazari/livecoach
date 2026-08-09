@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 const normaliseMention = (value: string) =>
   String(value || "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     const { data: sum } = await supabaseAdmin
       .from("interview_summaries")
-      .select("company_id, candidate, summary, created_at")
+      .select("id, company_id, candidate, summary, created_at")
       .eq("session_id", sessionId)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -167,7 +168,7 @@ Return the JSON now.`;
             .eq("id", c.id)
             .maybeSingle();
           const profile = { ...((comp as any)?.profile || {}) };
-          const note = `FROM ${fromLabel}${when ? ` (${when})` : ""}: ${intel}`;
+          const note = `CROSS-RELATIONSHIP · FROM ${fromLabel}${when ? ` (${when})` : ""}: ${intel}`;
           profile.brief = `${
             profile.brief ? String(profile.brief).trim() + "\n\n" : ""
           }${note}`;
@@ -190,6 +191,11 @@ Return the JSON now.`;
           linkKind: actionToLinkKind(x.action),
           source: "cross-link",
           sourceRef: sessionId,
+          payload: {
+            crossRelationship: true,
+            sourceCallId: sum.id,
+            sourceLabel: `${fromLabel}${when ? ` (${when})` : ""}`,
+          },
         }));
       if (items.length) {
         try {

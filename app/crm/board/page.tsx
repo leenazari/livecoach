@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
+import { capitaliseSentenceStarts } from "@/lib/text";
 import { crmFetch, type Company } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import type { ClosePlan } from "@/components/crm/OpportunityClosePlan";
@@ -361,11 +362,11 @@ function BoardInner() {
                     className="flex items-center gap-2.5 border-b border-edge/40 py-2 last:border-none"
                   >
                     <span className="flex-1 font-sans text-[0.84rem] text-bone">
-                      {t.text}
+                      {capitaliseSentenceStarts(t.text)}
                       {t.company && (
-                        <span className="ml-1.5 font-mono text-[0.58rem] text-sky">
+                        <Link href={t.company_id ? `/crm/${t.company_id}` : "/crm/board?tab=clients"} className="ml-1.5 font-mono text-[0.58rem] text-sky hover:text-amber hover:underline">
                           · {t.company}
-                        </span>
+                        </Link>
                       )}
                     </span>
                     <button
@@ -441,23 +442,25 @@ function BoardInner() {
           {opps.map((o) => (
             <li key={o.id} className="rounded-xl border border-edge bg-panel/40 px-4 py-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => setOpenOpportunity((id) => (id === o.id ? "" : o.id))}
-                  className="min-w-0 flex-1 text-left"
-                >
-                  <p className="font-sans text-[0.9rem] text-bone">
-                    <span className="mr-1.5 font-mono text-[0.65rem] text-muted">
-                      {openOpportunity === o.id ? "▾" : "▸"}
-                    </span>
-                    {o.title}
-                    {o.value != null && Number(o.value) > 0 && (
-                      <span className="ml-2 font-mono text-[0.62rem] text-sage">£{Number(o.value).toLocaleString()}</span>
-                    )}
-                  </p>
-                  {o.detail && <p className="mt-0.5 font-sans text-[0.8rem] text-bone/70">{o.detail}</p>}
-                  <span className="font-mono text-[0.58rem] text-sky">{o.company}</span>
-                </button>
+                <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    onClick={() => setOpenOpportunity((id) => (id === o.id ? "" : o.id))}
+                    className="block w-full text-left"
+                  >
+                    <p className="font-sans text-[0.9rem] text-bone">
+                      <span className="mr-1.5 font-mono text-[0.65rem] text-muted">
+                        {openOpportunity === o.id ? "▾" : "▸"}
+                      </span>
+                      {capitaliseSentenceStarts(o.title)}
+                      {o.value != null && Number(o.value) > 0 && (
+                        <span className="ml-2 font-mono text-[0.62rem] text-sage">£{Number(o.value).toLocaleString()}</span>
+                      )}
+                    </p>
+                    {o.detail && <p className="mt-0.5 font-sans text-[0.8rem] text-bone/70">{capitaliseSentenceStarts(o.detail)}</p>}
+                  </button>
+                  <Link href={`/crm/${o.company_id}`} className="font-mono text-[0.58rem] text-sky hover:text-amber hover:underline">{o.company} ↗</Link>
+                </div>
                 <select
                   value={o.status}
                   onChange={(e) => setOppStatus(o.id, e.target.value)}

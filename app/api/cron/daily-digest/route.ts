@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { sendMail } from "@/lib/gmail";
 import { GET as getDashboard } from "@/app/api/crm/dashboard/route";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -30,9 +31,10 @@ const firstSentence = (value: unknown, max = 180): string => {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (!text) return "";
   const sentence = text.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() || text;
-  return sentence.length <= max
+  const shortened = sentence.length <= max
     ? sentence
     : `${sentence.slice(0, max).replace(/\s+\S*$/, "").trim()}…`;
+  return capitaliseSentenceStarts(shortened);
 };
 
 const compactSentences = (
@@ -44,9 +46,10 @@ const compactSentences = (
   if (!text) return "";
   const matches = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
   const selected = matches.slice(0, sentenceLimit).join(" ").trim();
-  return selected.length <= max
+  const shortened = selected.length <= max
     ? selected
     : `${selected.slice(0, max).replace(/\s+\S*$/, "").trim()}…`;
+  return capitaliseSentenceStarts(shortened);
 };
 
 const firstListItem = (...values: unknown[]): string => {
@@ -65,7 +68,7 @@ const detailList = (items: { label: string; text: string }[]) =>
     .filter((item) => item.text)
     .map(
       (item) =>
-        `<li style="margin:0 0 5px;font-size:13px;line-height:1.45;color:#514c44;"><strong>${esc(item.label)}:</strong> ${esc(item.text)}</li>`
+        `<li style="margin:0 0 5px;font-size:13px;line-height:1.45;color:#514c44;"><strong>${esc(item.label)}:</strong> ${esc(capitaliseSentenceStarts(item.text))}</li>`
     )
     .join("")}</ul>`;
 
@@ -188,13 +191,13 @@ export async function GET(req: NextRequest) {
 
     const progress: string[] = completed.slice(0, 8).map((task: any) => {
       const company = companyNames.get(task.company_id);
-      return `${esc(task.text)}${company ? ` <span style="color:#858078;">(${esc(company)})</span>` : ""}`;
+      return `${esc(capitaliseSentenceStarts(task.text))}${company ? ` <span style="color:#858078;">(${esc(company)})</span>` : ""}`;
     });
     for (const call of calls.slice(0, Math.max(0, 8 - progress.length))) {
       const summary = call.summary && typeof call.summary === "object" ? call.summary : {};
       const outcome = firstSentence(summary.recommendation || summary.overview || summary.summary);
       const label = companyNames.get(call.company_id) || call.candidate || call.role || "Call";
-      progress.push(`<strong>${esc(label)}</strong>${outcome ? `: ${esc(outcome)}` : ": call completed and captured"}`);
+      progress.push(`<strong>${esc(label)}</strong>${outcome ? `: ${esc(outcome)}` : ": Call completed and captured"}`);
     }
 
     const openTasks = openRes.data || [];
@@ -249,7 +252,7 @@ export async function GET(req: NextRequest) {
         ? "#a34b35"
         : "#9a7b12";
       const href = String(item.href || "/crm");
-      return `<a href="${esc(`${appUrl}${href}`)}" style="color:inherit;text-decoration:none;"><strong style="color:${colour};">${esc(item.reason || "Priority")}</strong><br>${esc(item.text)}${item.company ? ` <span style="color:#858078;">(${esc(item.company)})</span>` : ""}</a>`;
+      return `<a href="${esc(`${appUrl}${href}`)}" style="color:inherit;text-decoration:none;"><strong style="color:${colour};">${esc(capitaliseSentenceStarts(item.reason || "Priority"))}</strong><br>${esc(capitaliseSentenceStarts(item.text))}${item.company ? ` <span style="color:#858078;">(${esc(item.company)})</span>` : ""}</a>`;
     });
 
     const tomorrowItems = tomorrowCalls.map((call: any) => {
@@ -364,7 +367,7 @@ export async function GET(req: NextRequest) {
             const company = companyNames.get(call.company_id);
             const opportunity = bestOpportunity.get(call.company_id);
             const value = Number(opportunity?.value) || 0;
-            return `<strong>${esc(time)} ${esc(call.title || company || "Call")}</strong>${call.prepped ? " · prep ready" : " · <span style=\"color:#a34b35;\">prep needed</span>"}${value ? ` · £${value.toLocaleString("en-GB")} opportunity` : ""}`;
+            return `<strong>${esc(time)} ${esc(call.title || company || "Call")}</strong>${call.prepped ? " · Prep ready" : " · <span style=\"color:#a34b35;\">Prep needed</span>"}${value ? ` · £${value.toLocaleString("en-GB")} opportunity` : ""}`;
           });
           return { weekday, items };
         })

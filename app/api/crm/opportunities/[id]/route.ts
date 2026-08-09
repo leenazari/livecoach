@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 export const runtime = "nodejs";
 
@@ -84,7 +85,7 @@ export async function PATCH(
     if (body.nextAction === null || body.nextAction === "") {
       patch.next_action = null;
     } else if (typeof body.nextAction === "string") {
-      patch.next_action = body.nextAction.trim().slice(0, 500) || null;
+      patch.next_action = capitaliseSentenceStarts(body.nextAction.trim()).slice(0, 500) || null;
     }
     if (body.nextActionDueAt === null || body.nextActionDueAt === "") {
       patch.next_action_due_at = null;

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 type Pipeline = Record<string, any>;
 type Opportunity = Record<string, any> & {
@@ -200,8 +201,8 @@ export default function RevenuePage() {
 
         <section className="mb-4 rounded-xl border border-edge bg-panel p-4">
           <div className="mb-3"><h2 className="font-display text-lg text-bone">Highest-priority revenue moves</h2><p className="mt-1 text-sm text-muted">Risk, deal value and probability determine the order.</p></div>
-          <div className="space-y-2">{data.priorities.map((row: Opportunity, index: number) => <Link href={`/crm/${row.company_id}`} key={row.id} className="block rounded-lg border border-edge bg-ink/30 p-3 transition hover:border-amber/50">
-            <div className="flex items-start gap-3"><span className="font-display text-xl text-amber">{index + 1}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-bone">{row.company}</strong><span className="font-mono text-[0.57rem] uppercase text-muted">{gbp(row.value)} · {row.probability}%</span></div><p className="mt-1 text-sm text-amber">{row.nextAction}</p><div className="mt-2 flex flex-wrap gap-1.5">{row.risks.slice(0, 3).map((risk) => <span key={risk.code} className={`rounded-full border px-2 py-0.5 font-mono text-[0.5rem] uppercase ${risk.severity === "high" ? "border-rust/50 bg-rust/10 text-rust" : "border-amber/40 text-amber"}`}>{risk.label}</span>)}</div></div></div>
+          <div className="space-y-2">{data.priorities.map((row: Opportunity, index: number) => <Link href={`/crm/${row.company_id}`} key={row.id} className="group block rounded-lg border border-edge bg-ink/30 p-3 transition hover:border-amber/50">
+            <div className="flex items-start gap-3"><span className="font-display text-xl text-amber">{index + 1}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-bone transition group-hover:text-amber">{row.company}</strong><span className="font-mono text-[0.57rem] uppercase text-muted">{gbp(row.value)} · {row.probability}%</span></div><p className="mt-1 text-sm text-amber">{capitaliseSentenceStarts(row.nextAction)}</p><div className="mt-2 flex flex-wrap gap-1.5">{row.risks.slice(0, 3).map((risk) => <span key={risk.code} className={`rounded-full border px-2 py-0.5 font-mono text-[0.5rem] uppercase ${risk.severity === "high" ? "border-rust/50 bg-rust/10 text-rust" : "border-amber/40 text-amber"}`}>{risk.label}</span>)}</div></div></div>
           </Link>)}</div>
         </section>
 

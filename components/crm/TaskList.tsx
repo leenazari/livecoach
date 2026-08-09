@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { crmFetch, getCached, setCached } from "@/lib/crm";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 type Task = {
   id: string;
@@ -24,7 +26,14 @@ type Task = {
   // When an intent has more than one way to act it (e.g. call OR email the same
   // person), payload.approaches lists them and clicking asks which to use.
   // payload.pinned keeps the to-do at the top of the list until it's done.
-  payload?: { approaches?: string[]; pinned?: boolean; [k: string]: any } | null;
+  payload?: {
+    approaches?: string[];
+    pinned?: boolean;
+    crossRelationship?: boolean;
+    sourceCallId?: string;
+    sourceLabel?: string;
+    [k: string]: any;
+  } | null;
 };
 
 // "Fri 19", "today", "overdue" for a deadline.
@@ -452,7 +461,7 @@ export default function TaskList({
                     : "cursor-default text-bone"
                 }`}
               >
-                {t.text}
+                {capitaliseSentenceStarts(t.text)}
               </button>
             )}
 
@@ -520,10 +529,22 @@ export default function TaskList({
               </span>
             )}
             {showCompany && t.company && (
-              <span className="flex-none font-mono text-[0.58rem] text-sky">
+              <Link
+                href={t.company_id ? `/crm/${t.company_id}` : "/crm/board?tab=clients"}
+                className="flex-none font-mono text-[0.58rem] text-sky hover:text-amber hover:underline"
+              >
                 {t.company}
-              </span>
+              </Link>
             )}
+            {t.payload?.crossRelationship && t.payload.sourceCallId ? (
+              <Link
+                href={`/crm/calls/${t.payload.sourceCallId}`}
+                title={`Connected through ${t.payload.sourceLabel || "another call"}`}
+                className="flex-none rounded-full border border-violet-400/35 bg-violet-400/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase tracking-wider text-violet-200 hover:border-violet-300/60"
+              >
+                via {t.payload.sourceLabel || "related call"} ↗
+              </Link>
+            ) : null}
 
             {/* Prep to-dos are derived from the call, so there's no row to
                 delete - you complete them by ticking (marks the call prepped)

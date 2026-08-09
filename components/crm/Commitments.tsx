@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { crmFetch, getCached, setCached } from "@/lib/crm";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 type Payload = {
   actionType?: string; // "email" | "task"
@@ -323,7 +325,7 @@ export default function Commitments({
                     onClick={() => expand(t)}
                     className="flex-1 text-left font-sans text-[0.84rem] leading-snug text-bone transition hover:text-amber"
                   >
-                    {t.text}
+                    {capitaliseSentenceStarts(t.text)}
                   </button>
                 )}
                 {dueBadge(t.due_at)}
@@ -350,9 +352,12 @@ export default function Commitments({
                   {isEmail ? "email" : theirs ? "waiting" : "prepare"}
                 </span>
                 {showCompany && t.company && (
-                  <span className="flex-none font-mono text-[0.58rem] text-sky">
+                  <Link
+                    href={t.company_id ? `/crm/${t.company_id}` : "/crm/board?tab=clients"}
+                    className="flex-none font-mono text-[0.58rem] text-sky hover:text-amber hover:underline"
+                  >
                     {t.company}
-                  </span>
+                  </Link>
                 )}
                 <button
                   type="button"

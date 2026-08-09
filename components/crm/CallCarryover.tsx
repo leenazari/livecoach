@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { crmFetch, getCached } from "@/lib/crm";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 type LastCall = {
   date: string | null;
@@ -145,12 +146,12 @@ export default function CallCarryover({
             <div>
               {last.headline && (
                 <p className="font-sans text-[0.86rem] leading-snug text-bone">
-                  {last.headline}
+                  {capitaliseSentenceStarts(last.headline)}
                 </p>
               )}
               {last.overview && (
                 <p className="mt-1 font-sans text-[0.8rem] leading-relaxed text-bone/70">
-                  {last.overview}
+                  {capitaliseSentenceStarts(last.overview)}
                 </p>
               )}
               <div className="mt-2 grid gap-3 sm:grid-cols-2">
@@ -165,7 +166,7 @@ export default function CallCarryover({
                           key={i}
                           className="font-sans text-[0.78rem] leading-snug text-bone/80"
                         >
-                          {t}
+                          {capitaliseSentenceStarts(t)}
                         </li>
                       ))}
                     </ul>
@@ -182,7 +183,7 @@ export default function CallCarryover({
                           key={i}
                           className="font-sans text-[0.78rem] leading-snug text-bone/80"
                         >
-                          {t}
+                          {capitaliseSentenceStarts(t)}
                         </li>
                       ))}
                     </ul>
@@ -229,7 +230,7 @@ export default function CallCarryover({
                             : "text-bone/85"
                         }`}
                       >
-                        {t}
+                        {capitaliseSentenceStarts(t)}
                       </span>
                     </li>
                   );

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
+import { capitaliseSentenceStarts } from "@/lib/text";
 import type {
   HealthAction,
   HealthCheck,
@@ -240,7 +241,7 @@ export default function CrmHealthPage() {
                       ) : null}
                     </div>
 
-                    <p className="mt-3 text-sm leading-6 text-bone/90">{check.detail}</p>
+                    <p className="mt-3 text-sm leading-6 text-bone/90">{capitaliseSentenceStarts(check.detail)}</p>
                     <p className="mt-2 text-xs leading-5 text-muted"><span className="text-bone/75">Why it matters:</span> {check.why}</p>
 
                     {check.examples?.length ? (

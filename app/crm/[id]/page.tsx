@@ -22,6 +22,7 @@ import {
   isRelationshipStageOption,
   RELATIONSHIP_STAGE_OPTIONS,
 } from "@/lib/relationship-stages";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 const inputCls =
   "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
@@ -688,7 +689,7 @@ export default function CompanyDetailPage() {
               <p className="font-mono text-[0.54rem] uppercase tracking-[0.16em] text-sage">◆ Buying signals</p>
               <ul className="mt-1.5 space-y-1">
                 {buyingSignals.map((signal: string, index: number) => (
-                  <li key={`${signal}:${index}`} className="font-sans text-[0.76rem] leading-snug text-bone/80">• {signal}</li>
+                  <li key={`${signal}:${index}`} className="font-sans text-[0.76rem] leading-snug text-bone/80">• {capitaliseSentenceStarts(signal)}</li>
                 ))}
               </ul>
             </div>
@@ -698,7 +699,7 @@ export default function CompanyDetailPage() {
               <p className="font-mono text-[0.54rem] uppercase tracking-[0.16em] text-rust">▲ Blockers to resolve</p>
               <ul className="mt-1.5 space-y-1">
                 {blockers.map((blocker: string, index: number) => (
-                  <li key={`${blocker}:${index}`} className="font-sans text-[0.76rem] leading-snug text-bone/80">• {blocker}</li>
+                  <li key={`${blocker}:${index}`} className="font-sans text-[0.76rem] leading-snug text-bone/80">• {capitaliseSentenceStarts(blocker)}</li>
                 ))}
               </ul>
             </div>
@@ -732,13 +733,13 @@ export default function CompanyDetailPage() {
                     className="flex gap-2.5 font-sans text-sm leading-snug text-bone/85"
                   >
                     <span className="mt-1.5 h-1.5 w-1.5 flex-none rounded-full bg-sky/70" />
-                    <span>{b}</span>
+                    <span>{capitaliseSentenceStarts(b)}</span>
                   </li>
                 ))}
               </ul>
             ) : (
               <p className="font-sans text-sm leading-relaxed text-bone/85">
-                {para}
+                {capitaliseSentenceStarts(para)}
               </p>
             )}
           </div>
@@ -767,7 +768,7 @@ export default function CompanyDetailPage() {
                   <span className="mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full bg-amber/20 font-mono text-[0.6rem] text-amber">
                     {i + 1}
                   </span>
-                  <span>{p}</span>
+                  <span>{capitaliseSentenceStarts(p)}</span>
                 </li>
               ))}
             </ul>
@@ -905,11 +906,11 @@ export default function CompanyDetailPage() {
                         </span>
                       </div>
                       <p className="font-sans text-[0.87rem] leading-snug text-bone">
-                        {item.title}
+                        {capitaliseSentenceStarts(item.title)}
                       </p>
                       {item.detail && (
                         <p className="mt-1 font-sans text-[0.78rem] leading-relaxed text-bone/65">
-                          {item.detail}
+                          {capitaliseSentenceStarts(item.detail)}
                         </p>
                       )}
                       {(item.meta || item.status) && (
@@ -1238,7 +1239,7 @@ export default function CompanyDetailPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="font-sans text-[0.9rem] text-bone">
-                      {o.title}
+                      {capitaliseSentenceStarts(o.title)}
                       {typeof o.value === "number" && (
                         <span className="ml-2 font-mono text-[0.62rem] text-sage">
                           ~£{Number(o.value).toLocaleString()}
@@ -1247,7 +1248,7 @@ export default function CompanyDetailPage() {
                     </p>
                     {o.detail && (
                       <p className="mt-0.5 font-sans text-[0.8rem] leading-snug text-bone/70">
-                        {o.detail}
+                        {capitaliseSentenceStarts(o.detail)}
                       </p>
                     )}
                   </div>
@@ -1391,9 +1392,11 @@ export default function CompanyDetailPage() {
                     </div>
                     {overview && (
                       <p className="font-sans text-[0.82rem] leading-snug text-bone/80">
-                        {overview.length > 240
-                          ? overview.slice(0, 240) + "…"
-                          : overview}
+                        {capitaliseSentenceStarts(
+                          overview.length > 240
+                            ? overview.slice(0, 240) + "…"
+                            : overview
+                        )}
                       </p>
                     )}
                   </Link>
