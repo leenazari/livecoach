@@ -8,6 +8,7 @@ import {
 import {
   gatherClientContext,
   gatherGlobalContext,
+  gatherUpcomingCallPrepContext,
   gatherOutreachContext,
   findCompaniesNamedIn,
 } from "@/lib/crm-context";
@@ -939,9 +940,10 @@ export async function POST(req: NextRequest) {
       }
       const wantsOutreachDetail =
         /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(message);
-      const [digest, outreach, ...details] = await Promise.all([
+      const [digest, outreach, callPrep, ...details] = await Promise.all([
         gatherGlobalContext(),
         gatherOutreachContext(message, { detailed: wantsOutreachDetail }),
+        gatherUpcomingCallPrepContext(message),
         ...detailIds.map((id) =>
           wantsDeepHistory ? gatherClientContext(id) : getCommercialMemoryBlock(id)
         ),
@@ -949,7 +951,7 @@ export async function POST(req: NextRequest) {
       const detailBlocks = (details as (string | null)[]).filter(
         (d): d is string => !!d && d.trim().length > 0
       );
-      const wider = [digest, outreach].filter(Boolean).join("\n\n==========\n\n");
+      const wider = [callPrep, digest, outreach].filter(Boolean).join("\n\n==========\n\n");
       if (!detailBlocks.length) return wider || null;
       const label = focus
         ? "FOCUSED / NAMED CLIENTS - full detail. Lead here when the question is about them:"
@@ -1057,7 +1059,7 @@ TO-DOS: when the user asks you to arrange, remember, chase, follow up, add, draf
 ---END TASKS---
 Use "action" = "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Set "dueAt" to the deadline DATE when the user gives one, working out the real date from today's date in the context (e.g. "by Friday" becomes that Friday's YYYY-MM-DD, "by end of month" the last day of this month). Set "pinned" to true when the user says to keep it at the top, make it top priority, do it first, or that it is urgent. OMIT dueAt and pinned when the user did not give a deadline or priority. Only propose to-dos the user actually wants tracked, and do not repeat ones already outstanding in the context. Keep these markers out of your prose, and still answer naturally.
 
-CALENDAR: the user's upcoming calls, synced from their calendar, are in the context below in the calls list, each with its join link when there is one. Answer "what's on my calendar" / "what's next" from that, and give the join link when asked. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
+CALENDAR AND SAVED PREP: the user's upcoming calls, synced from their calendar, are in the context below in the calls list, each with its join link when there is one. Answer "what's on my calendar" / "what's next" from that, and give the join link when asked. When they ask about a particular call's questions, focus, intent or battle plan, use the ON-DEMAND SAVED CALL PREP block when present. That block is the authoritative saved plan and was fetched specifically for this question, so never say you cannot see it. If the block says the plan is not built, say that plainly. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
 
 ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, client stages, stakeholders and to-dos, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles, update opportunities, pull email context, remember durable rules, correct records, and dismiss stale work. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
