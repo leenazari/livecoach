@@ -512,8 +512,9 @@ export default function WorkInboxPage() {
             </div>
 
             {data.cleanup.suggestions.length ? (
-              <ul className="space-y-2">
-                {data.cleanup.suggestions.map((suggestion) => {
+              <div>
+                <ul className="space-y-2">
+                {data.cleanup.suggestions.slice(0, visible).map((suggestion) => {
                   const copy = cleanupCopy[suggestion.kind];
                   const selected = selectedCleanup.includes(suggestion.id);
                   return (
@@ -594,7 +595,17 @@ export default function WorkInboxPage() {
                     </li>
                   );
                 })}
-              </ul>
+                </ul>
+                {data.cleanup.suggestions.length > visible ? (
+                  <button
+                    type="button"
+                    onClick={() => setVisible((count) => count + 10)}
+                    className="mt-3 min-h-11 w-full rounded-xl border border-edge font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/45 hover:text-amber"
+                  >
+                    Show 10 more · {data.cleanup.suggestions.length - visible} remaining
+                  </button>
+                ) : null}
+              </div>
             ) : (
               <div className="rounded-xl border border-moss/35 bg-moss/[0.06] px-4 py-12 text-center">
                 <p className="font-display text-xl text-bone">The inbox is tidy.</p>
