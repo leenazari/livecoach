@@ -57,8 +57,7 @@ export async function GET(req: Request) {
       draftsRes,
       oppsRes,
       tasksRes,
-      costRes,
-      usageRes,
+      costRollupRes,
       upcomingRes,
       recentTouchRes,
       outreachProspectsRes,
@@ -87,20 +86,10 @@ export async function GET(req: Request) {
           .eq("status", "open")
           .order("created_at", { ascending: true })
           .limit(300),
-        // Spend-so-far rollup: every call's cost, regardless of company link.
-        supabaseAdmin
-          .from("interview_summaries")
-          .select("cost, created_at")
-          .not("cost", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(1000),
-        // All other AI spend (assistant, day reads, profile syntheses, task
-        // extraction, lessons) plus the background automation jobs.
-        supabaseAdmin
-          .from("usage_log")
-          .select("kind, cost_gbp, meta, created_at")
-          .order("created_at", { ascending: false })
-          .limit(5000),
+        // Postgres reduces the complete cost history to a handful of feature
+        // totals. This avoids transferring thousands of raw usage rows on
+        // every dashboard visit and never truncates the all-time figure.
+        supabaseAdmin.rpc("crm_dashboard_cost_rollup"),
         supabaseAdmin
           .from("upcoming_calls")
           .select("id, company_id, title, scheduled_at, intent, prepped")
@@ -203,35 +192,32 @@ export async function GET(req: Request) {
       Date.UTC(todayYear, todayMonth - 1, todayDay - Math.max(0, weekdayNumber))
     ).toISOString().slice(0, 10);
     const monthStartKey = `${todayYear}-${String(todayMonth).padStart(2, "0")}-01`;
-    const inWeek = (createdAt: string) => londonDate.format(new Date(createdAt)) >= weekStartKey;
-    const inMonth = (createdAt: string) => londonDate.format(new Date(createdAt)) >= monthStartKey;
-    // Calls (costed per session), in-app AI, and background automation - all in,
-    // so the dashboard shows true spend, not just calls.
-    let callsW = 0, callsM = 0, callsA = 0;
-    for (const r of costRes.data || []) {
-      // Postgres `numeric` comes back from supabase as a STRING, so coerce.
-      const c = Number(r.cost) || 0;
-      if (!c) continue;
-      callsA += c;
-      if (inWeek(r.created_at as string)) callsW += c;
-      if (inMonth(r.created_at as string)) callsM += c;
-    }
-    let aiW = 0, aiM = 0, aiA = 0;
-    let autoW = 0, autoM = 0, autoA = 0;
-    for (const r of usageRes.data || []) {
-      const c = Number(r.cost_gbp) || 0;
-      if (!c) continue;
-      const isAuto = String(r.kind || "").startsWith("automation");
-      if (isAuto) {
-        autoA += c;
-        if (inWeek(r.created_at as string)) autoW += c;
-        if (inMonth(r.created_at as string)) autoM += c;
-      } else {
-        aiA += c;
-        if (inWeek(r.created_at as string)) aiW += c;
-        if (inMonth(r.created_at as string)) aiM += c;
-      }
-    }
+    // Postgres `numeric` comes back from Supabase as a string, so coerce the
+    // compact rollup once. Missing rows remain honest zeroes.
+    const costRows = (costRollupRes.data || []) as {
+      feature: string;
+      source: "calls" | "ai" | "automation";
+      week: string | number;
+      month: string | number;
+      total: string | number;
+    }[];
+    const sourceCost = (source: "calls" | "ai" | "automation") =>
+      costRows
+        .filter((row) => row.source === source)
+        .reduce(
+          (totals, row) => ({
+            week: totals.week + (Number(row.week) || 0),
+            month: totals.month + (Number(row.month) || 0),
+            all: totals.all + (Number(row.total) || 0),
+          }),
+          { week: 0, month: 0, all: 0 }
+        );
+    const calls = sourceCost("calls");
+    const ai = sourceCost("ai");
+    const automation = sourceCost("automation");
+    const callsW = calls.week, callsM = calls.month, callsA = calls.all;
+    const aiW = ai.week, aiM = ai.month, aiA = ai.all;
+    const autoW = automation.week, autoM = automation.month, autoA = automation.all;
     const weekCost = callsW + aiW + autoW;
     const monthCost = callsM + aiM + autoM;
     const allCost = callsA + aiA + autoA;
@@ -241,47 +227,13 @@ export async function GET(req: Request) {
       automation: { week: autoW, month: autoM, all: autoA },
     };
 
-    type WindowCost = { week: number; month: number; all: number };
-    const featureMap = new Map<string, WindowCost>();
-    const addFeature = (name: string, cost: number, createdAt: string) => {
-      const row = featureMap.get(name) || { week: 0, month: 0, all: 0 };
-      row.all += cost;
-      if (inWeek(createdAt)) row.week += cost;
-      if (inMonth(createdAt)) row.month += cost;
-      featureMap.set(name, row);
-    };
-    for (const r of costRes.data || []) {
-      const c = Number(r.cost) || 0;
-      if (!c) continue;
-      addFeature(
-        "Live calls & cues",
-        c,
-        r.created_at as string
-      );
-    }
-    const featureForKind = (value: any): string => {
-      const kind = String(value || "").toLowerCase();
-      if (kind.startsWith("automation")) return "Automation";
-      if (/intent|research|battlecard|prep/.test(kind))
-        return "Preparation & intent";
-      if (/summary|profile|commitment|extract|digest|cross-link|activity/.test(kind))
-        return "Summaries & CRM sync";
-      if (/coach|brain|lesson|assistant|correct/.test(kind))
-        return "Brain & coaching";
-      if (/opp|day-read|pipeline/.test(kind)) return "CRM organisation";
-      return "Other AI";
-    };
-    for (const r of usageRes.data || []) {
-      const c = Number(r.cost_gbp) || 0;
-      if (!c) continue;
-      addFeature(
-        featureForKind(r.kind),
-        c,
-        r.created_at as string
-      );
-    }
-    const featureCosts = [...featureMap.entries()]
-      .map(([feature, cost]) => ({ feature, ...cost }))
+    const featureCosts = costRows
+      .map((row) => ({
+        feature: row.feature,
+        week: Number(row.week) || 0,
+        month: Number(row.month) || 0,
+        all: Number(row.total) || 0,
+      }))
       .sort((a, b) => b.week - a.week);
 
     // Deterministic Today control centre. This is deliberately model-free: it
