@@ -226,10 +226,12 @@ export default function DashboardPage() {
     setAiMode(mode);
     setModeSaving(true);
     try {
-      await crmFetch("/api/crm/ai-mode", {
+      const saved = await crmFetch<{ mode: AiMode }>("/api/crm/ai-mode", {
         method: "PUT",
         body: JSON.stringify({ mode }),
       });
+      if (saved.mode !== mode) throw new Error("AI mode was not confirmed");
+      setAiMode(saved.mode);
     } catch {
       setAiMode(aiMode);
     } finally {

@@ -15,6 +15,7 @@ import MatrixRain from "@/components/MatrixRain";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
+import { crmFetch } from "@/lib/crm";
 import {
   estimateCost,
   usageCostUSD,
@@ -1069,14 +1070,23 @@ export default function CallPage() {
                     const it2 = d2.intent.trim();
                     setBrief((prev) => (prev.trim() ? prev : it2));
                     if (upcomingIdRef.current) {
-                      fetch(`/api/crm/upcoming/${upcomingIdRef.current}`, {
+                      crmFetch<{ ok: boolean; call: { intent: string | null } }>(
+                        `/api/crm/upcoming/${upcomingIdRef.current}`, {
                         method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                           intent: it2,
                           intentSource: "generated",
                         }),
-                      }).catch(() => {});
+                      })
+                        .then((saved) => {
+                          if (!saved.ok || saved.call?.intent !== it2)
+                            throw new Error("intent not confirmed");
+                        })
+                        .catch(() =>
+                          setStatus(
+                            "intent created, but it did not save to the scheduled call"
+                          )
+                        );
                     }
                   }
                 } catch {
@@ -1127,10 +1137,9 @@ export default function CallPage() {
     const sig = JSON.stringify(snapshot);
     if (sig === lastPrepSigRef.current) return;
     const t = setTimeout(() => {
-      lastPrepSigRef.current = sig;
-      fetch(`/api/crm/upcoming/${upcomingIdRef.current}`, {
+      crmFetch<{ ok: boolean; call: { prep: any; prepped: boolean; intent: string | null } }>(
+        `/api/crm/upcoming/${upcomingIdRef.current}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
         // Saving a plan against the call also marks it prepped, so the Upcoming
         // list shows a solid "prepped" button. It STAYS on the list (prepped is
         // not a hide condition) until the call is completed or its time passes.
@@ -1140,7 +1149,17 @@ export default function CallPage() {
           intent: brief,
           intentSource: intentEditedRef.current ? "manual" : undefined,
         }),
-      }).catch(() => {});
+      })
+        .then((saved) => {
+          if (!saved.ok || !saved.call?.prep)
+            throw new Error("prep not confirmed");
+          lastPrepSigRef.current = sig;
+        })
+        .catch(() =>
+          setStatus(
+            "prep did not save to the scheduled call — make one small edit to retry"
+          )
+        );
     }, 1200);
     return () => clearTimeout(t);
   }, [

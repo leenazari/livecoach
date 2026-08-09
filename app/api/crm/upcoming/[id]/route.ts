@@ -166,12 +166,12 @@ export async function PATCH(
       .from("upcoming_calls")
       .update(patch)
       .eq("id", params.id)
-      .select("id")
+      .select("id, title, scheduled_at, meeting_url, intent, prepped, completed_at, company_id, prep")
       .maybeSingle();
     if (error) throw error;
     if (!data)
       return NextResponse.json({ error: "call not found" }, { status: 404 });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, call: data });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to update" },

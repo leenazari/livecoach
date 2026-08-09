@@ -140,6 +140,13 @@ export async function crmFetch<T = any>(
   }
   if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
   // Cache under the CLEAN url (not the cache-busted one) so getCached() hits.
-  if (method === "GET") _getCache.set(url, data);
+  if (method === "GET") {
+    _getCache.set(url, data);
+  } else {
+    // A successful write can affect several different CRM feeds (dashboard,
+    // client page, tasks, pipeline and outreach). Never let an older in-memory
+    // GET snapshot repaint that confirmed database change on the next screen.
+    _getCache.clear();
+  }
   return data as T;
 }

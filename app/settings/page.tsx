@@ -153,25 +153,51 @@ export default function SettingsPage() {
     }
   };
 
-  const deleteLesson = (id: string) => {
-    setLessons((p) => p.filter((l) => l.id !== id));
-    crmFetch(`/api/crm/lessons/${id}`, { method: "DELETE" }).catch(() => {});
+  const deleteLesson = async (id: string) => {
+    const previous = lessons;
+    setLErr("");
+    setLessons((current) => current.filter((lesson) => lesson.id !== id));
+    try {
+      const result = await crmFetch<{ deletedId: string }>(`/api/crm/lessons/${id}`, {
+        method: "DELETE",
+      });
+      if (result.deletedId !== id) throw new Error("database did not confirm deletion");
+    } catch (error: any) {
+      setLessons(previous);
+      setLErr(error?.message || "That lesson did not delete. Please try again.");
+    }
   };
 
   const save = async () => {
     setSaving(true);
     setSaveErr("");
     try {
-      await crmFetch("/api/crm/workspace", {
+      const saved = await crmFetch<{
+        ok: boolean;
+        knowledge: string;
+        objectionStances: string;
+        updatedAt: string;
+      }>("/api/crm/workspace", {
         method: "PUT",
         body: JSON.stringify({ knowledge, objectionStances }),
       });
+      if (
+        !saved.ok ||
+        saved.knowledge !== knowledge ||
+        saved.objectionStances !== objectionStances
+      ) {
+        throw new Error("database returned different Brain content");
+      }
       // Keep the in-memory cache in step so navigating away and back shows the
       // saved text, not a stale copy.
-      setCached("/api/crm/workspace", { knowledge, objectionStances });
+      setCached("/api/crm/workspace", {
+        knowledge: saved.knowledge,
+        objectionStances: saved.objectionStances,
+        updatedAt: saved.updatedAt,
+      });
       touchedRef.current = false;
       objTouchedRef.current = false;
-      setSavedAt(new Date().toLocaleTimeString());
+      setSavedAt(new Date(saved.updatedAt).toLocaleTimeString());
     } catch (e: any) {
       // Surface failures LOUDLY - a silent fail is what made edits "vanish"
       // (the save 404'd, then the page reloaded the old value over the top).

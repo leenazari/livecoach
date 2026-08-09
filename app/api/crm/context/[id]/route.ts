@@ -9,12 +9,16 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("client_context")
       .delete()
-      .eq("id", params.id);
+      .eq("id", params.id)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
-    return NextResponse.json({ ok: true });
+    if (!data)
+      return NextResponse.json({ error: "context item not found" }, { status: 404 });
+    return NextResponse.json({ ok: true, deletedId: data.id });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to delete context" },

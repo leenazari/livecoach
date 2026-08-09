@@ -58,7 +58,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     // Approval mode is deliberately locked on for this first safe release.
     patch.approval_mode = true;
     if (patch.status === "active") {
-      await supabaseAdmin.from("outreach_campaigns").update({ status: "paused", updated_at: new Date().toISOString() }).neq("id", params.id).eq("status", "active");
+      const { error: pauseError } = await supabaseAdmin
+        .from("outreach_campaigns")
+        .update({ status: "paused", updated_at: new Date().toISOString() })
+        .neq("id", params.id)
+        .eq("status", "active");
+      if (pauseError) throw pauseError;
     }
     const { data, error } = await supabaseAdmin.from("outreach_campaigns").update(patch).eq("id", params.id).select("*").single();
     if (error) throw error;
