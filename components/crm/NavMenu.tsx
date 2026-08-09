@@ -13,6 +13,7 @@ const CORE_ITEMS: Item[] = [
   { href: "/crm", label: "Today", icon: "▣" },
   { href: "/crm/inbox", label: "Work inbox", icon: "✓" },
   { href: "/crm/outreach", label: "Outreach", icon: "↗" },
+  { href: "/crm/costs", label: "Costs", icon: "£" },
   { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
   { href: "/crm/calls", label: "Calls", icon: "☎" },
 ];
@@ -110,6 +111,8 @@ function NavMenuInner() {
     if (it.href === "/crm/inbox") return pathname.startsWith("/crm/inbox");
     if (it.href === "/crm/revenue")
       return pathname.startsWith("/crm/revenue");
+    if (it.href === "/crm/costs")
+      return pathname.startsWith("/crm/costs");
     if (it.href === "/crm/call-coach")
       return pathname.startsWith("/crm/call-coach");
     if (it.href === "/crm/health")
