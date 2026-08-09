@@ -1,4 +1,5 @@
 import { isNearDuplicateTask } from "@/lib/tasks";
+import { companyAliases, normaliseCompanyName } from "@/lib/company-identity";
 
 export type HealthStatus = "healthy" | "attention" | "critical";
 
@@ -40,6 +41,7 @@ type DuplicateCompanyInput = {
   name: string;
   domain?: string | null;
   website?: string | null;
+  profile?: Record<string, unknown> | null;
   updated_at?: string | null;
 };
 
@@ -105,6 +107,21 @@ export function findDuplicateCompanies(
     }),
     "same name"
   );
+  const primaryNames = new Map<string, string[]>();
+  for (const company of companies) {
+    const key = normaliseCompanyName(company.name).replace(/\s+/g, "");
+    if (!key) continue;
+    primaryNames.set(key, [...(primaryNames.get(key) || []), company.id]);
+  }
+  for (const company of companies) {
+    for (const alias of companyAliases(company.profile)) {
+      const key = normaliseCompanyName(alias).replace(/\s+/g, "");
+      if (!key) continue;
+      for (const otherId of primaryNames.get(key) || []) {
+        addPair(company.id, otherId, "saved alias matches name");
+      }
+    }
+  }
   group(
     companies.map((company) => ({
       id: company.id,

@@ -11,6 +11,7 @@ import {
   formatCommercialMemoryBlock,
   getCommercialMemory,
 } from "@/lib/commercial-memory";
+import { POST as approveActivity } from "@/app/api/crm/companies/[id]/activity/approve/route";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -46,6 +47,7 @@ export async function POST(
   let savedItem: any = null;
   try {
     const body = await req.json();
+    const autoApply = body.autoApply === true;
     const channel: ActivityChannel = CHANNELS.has(body.channel)
       ? body.channel
       : "note";
@@ -203,6 +205,32 @@ ${memoryBlock || "No earlier commercial memory."}`;
       })
       .eq("id", params.id);
     if (profileError) throw profileError;
+
+    // A Brain action has already been explicitly approved in its action tray.
+    // Apply the small, server-saved plan in the same request so one spoken
+    // update can refresh the timeline, memory, next move and next-call intent
+    // without asking the user to approve the same update a second time.
+    if (autoApply && activityHasActions(intelligence)) {
+      const approveRequest = new NextRequest(
+        new URL(`/api/crm/companies/${params.id}/activity/approve`, req.url),
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ contextId: item.id }),
+        }
+      );
+      const approvalResponse = await approveActivity(approveRequest, { params });
+      const approval = await approvalResponse.json();
+      if (!approvalResponse.ok) {
+        throw new Error(approval?.error || "The logged update could not be applied");
+      }
+      return NextResponse.json({
+        item,
+        intelligence: approval.intelligence,
+        applied: approval.applied || [],
+        warnings: approval.warnings || [],
+      });
+    }
 
     // Persist a refreshed facts-only memory so every Brain entry point sees the
     // new signal without loading the raw transcript again.

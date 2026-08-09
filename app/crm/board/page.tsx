@@ -32,6 +32,10 @@ const ClientPortfolio = dynamic(
   () => import("@/components/crm/ClientPortfolio"),
   { ssr: false, loading: tabLoading }
 );
+const DuplicateClients = dynamic(
+  () => import("@/components/crm/DuplicateClients"),
+  { ssr: false, loading: tabLoading }
+);
 
 type Tab = "tasks" | "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
@@ -517,16 +521,19 @@ function BoardInner() {
           ))}
         </ul>
       ) : (
-        <ClientPortfolio
-          clients={companies}
-          totals={clientTotals}
-          newName={newName}
-          setNewName={setNewName}
-          onCreate={createCompany}
-          onDelete={deleteCompany}
-          onStageChange={setCompanyStage}
-          savingId={savingClientId}
-        />
+        <>
+          <DuplicateClients />
+          <ClientPortfolio
+            clients={companies}
+            totals={clientTotals}
+            newName={newName}
+            setNewName={setNewName}
+            onCreate={createCompany}
+            onDelete={deleteCompany}
+            onStageChange={setCompanyStage}
+            savingId={savingClientId}
+          />
+        </>
       )}
       <NavMenu />
     </main>

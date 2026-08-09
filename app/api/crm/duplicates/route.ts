@@ -14,7 +14,7 @@ export async function GET() {
       await Promise.all([
         supabaseAdmin
           .from("companies")
-          .select("id, name, domain, website, updated_at")
+          .select("id, name, domain, website, profile, updated_at")
           .limit(1000),
         supabaseAdmin
           .from("contacts")
