@@ -278,10 +278,15 @@ export default function OpportunityBoard() {
     const next = arrayMove(board.opportunities, from, to);
     setBoard({ ...board, opportunities: next, manual: true });
     try {
-      await crmFetch("/api/crm/opportunities/order", {
+      const result = await crmFetch<{ ok: boolean; count: number }>(
+        "/api/crm/opportunities/order", {
         method: "POST",
         body: JSON.stringify({ order: next.map((o) => o.companyId) }),
       });
+      if (!result.ok || result.count !== next.length)
+        throw new Error("database did not confirm the full order");
+      setSavedNote("Order saved");
+      setTimeout(() => setSavedNote(""), 1800);
     } catch {
       setBoard(board);
       setSavedNote("Order did not save. Please try again.");
@@ -289,17 +294,21 @@ export default function OpportunityBoard() {
   };
 
   const resetOrder = () => {
-    crmFetch("/api/crm/opportunities/order", { method: "DELETE" })
-      .then(() => {
+    crmFetch<{ ok: boolean; count: number }>("/api/crm/opportunities/order", {
+      method: "DELETE",
+    })
+      .then((result) => {
+        if (!result.ok || result.count !== 0)
+          throw new Error("database did not confirm the reset");
         setSavedNote("Back to the coach's order");
         setTimeout(() => setSavedNote(""), 2500);
         return crmFetch<Board>("/api/crm/opportunities/board");
       })
       .then((d) => d && setBoard(d))
-      .catch(() => {});
+      .catch(() => setSavedNote("Order reset did not save. Please try again."));
   };
 
-  const setStage = (companyId: string, stage: string) => {
+  const setStage = async (companyId: string, stage: string) => {
     if (!board) return;
     const previous = board;
     setBoard({
@@ -308,10 +317,31 @@ export default function OpportunityBoard() {
         o.companyId === companyId ? { ...o, stage: stage || null } : o
       ),
     });
-    crmFetch(`/api/crm/companies/${companyId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ stage }),
-    }).catch(() => setBoard(previous));
+    try {
+      const { company } = await crmFetch<{
+        company: { id: string; stage: string | null };
+      }>(`/api/crm/companies/${companyId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ stage }),
+      });
+      if ((company?.stage || null) !== (stage || null))
+        throw new Error("database did not confirm the stage");
+      setBoard((current) =>
+        current
+          ? {
+              ...current,
+              opportunities: current.opportunities.map((opportunity) =>
+                opportunity.companyId === companyId
+                  ? { ...opportunity, stage: company.stage }
+                  : opportunity
+              ),
+            }
+          : current
+      );
+    } catch {
+      setBoard(previous);
+      setSavedNote("Stage did not save. Please try again.");
+    }
   };
 
   if (!board || board.opportunities.length === 0) return null;

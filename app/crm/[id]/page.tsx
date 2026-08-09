@@ -247,10 +247,20 @@ export default function CompanyDetailPage() {
       prev.map((o) => (o.id === oppId ? { ...o, status } : o))
     );
     try {
-      await crmFetch(`/api/crm/opportunities/${oppId}`, {
+      const { opportunity } = await crmFetch<{
+        opportunity: { id: string; status: string };
+      }>(`/api/crm/opportunities/${oppId}`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
+      if (opportunity?.status !== status) throw new Error("status not confirmed");
+      setOpps((prev) =>
+        prev.map((opportunityRow) =>
+          opportunityRow.id === oppId
+            ? { ...opportunityRow, ...opportunity }
+            : opportunityRow
+        )
+      );
     } catch (e: any) {
       setOpps(previous);
       setErr(e?.message || "opportunity change did not save");
@@ -263,10 +273,18 @@ export default function CompanyDetailPage() {
       prev.map((f) => (f.id === fuId ? { ...f, status } : f))
     );
     try {
-      await crmFetch(`/api/crm/follow-ups/${fuId}`, {
+      const { followUp } = await crmFetch<{
+        followUp: { id: string; status: string };
+      }>(`/api/crm/follow-ups/${fuId}`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
+      if (followUp?.status !== status) throw new Error("status not confirmed");
+      setFollowUps((prev) =>
+        prev.map((followUpRow) =>
+          followUpRow.id === fuId ? { ...followUpRow, ...followUp } : followUpRow
+        )
+      );
     } catch (e: any) {
       setFollowUps(previous);
       setErr(e?.message || "follow-up change did not save");

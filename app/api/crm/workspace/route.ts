@@ -43,11 +43,18 @@ export async function PUT(req: NextRequest) {
     if (typeof body.knowledge === "string") patch.knowledge = body.knowledge;
     if (typeof body.objectionStances === "string")
       patch.objection_stances = body.objectionStances;
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("workspace_profile")
-      .upsert(patch, { onConflict: "id" });
+      .upsert(patch, { onConflict: "id" })
+      .select("knowledge, objection_stances, updated_at")
+      .single();
     if (error) throw error;
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      knowledge: data.knowledge || "",
+      objectionStances: data.objection_stances || "",
+      updatedAt: data.updated_at,
+    });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to save workspace" },

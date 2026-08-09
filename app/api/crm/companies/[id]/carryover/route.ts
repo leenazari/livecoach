@@ -96,12 +96,17 @@ export async function PUT(
       .maybeSingle();
     const profile = (company?.profile || {}) as any;
 
-    const { error } = await supabaseAdmin
+    const { data: saved, error } = await supabaseAdmin
       .from("companies")
       .update({ profile: { ...profile, checklist } })
-      .eq("id", params.id);
+      .eq("id", params.id)
+      .select("profile")
+      .maybeSingle();
     if (error) throw error;
-    return NextResponse.json({ ok: true, checklist });
+    if (!saved)
+      return NextResponse.json({ error: "company not found" }, { status: 404 });
+    const confirmed = arr((saved.profile as any)?.checklist);
+    return NextResponse.json({ ok: true, checklist: confirmed });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to save the checklist" },

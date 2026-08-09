@@ -139,10 +139,12 @@ function BoardInner() {
         : p.map((x) => (x.id === id ? { ...x, status } : x))
     );
     try {
-      await crmFetch(`/api/crm/follow-ups/${id}`, {
+      const { followUp } = await crmFetch<{ followUp: { id: string; status: string } }>(
+        `/api/crm/follow-ups/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
+      if (followUp?.status !== status) throw new Error("status not confirmed");
     } catch {
       setDrafts(previous);
       setSaveError("That draft change did not save. Please try again.");
@@ -154,10 +156,12 @@ function BoardInner() {
     setSaveError("");
     setEmailTasks((p) => p.filter((x) => x.id !== id));
     try {
-      await crmFetch(`/api/crm/tasks/${id}`, {
+      const { task } = await crmFetch<{ task: { id: string; status: string } }>(
+        `/api/crm/tasks/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ status: "dismissed" }),
       });
+      if (task?.status !== "dismissed") throw new Error("status not confirmed");
     } catch {
       setEmailTasks(previous);
       setSaveError("That task was not removed. Please try again.");
@@ -168,10 +172,13 @@ function BoardInner() {
     setSaveError("");
     setOpps((p) => p.filter((x) => x.id !== id));
     try {
-      await crmFetch(`/api/crm/opportunities/${id}`, {
+      const { opportunity } = await crmFetch<{
+        opportunity: { id: string; status: string };
+      }>(`/api/crm/opportunities/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
+      if (opportunity?.status !== status) throw new Error("status not confirmed");
     } catch {
       setOpps(previous);
       setSaveError("That opportunity change did not save. Please try again.");
@@ -180,14 +187,15 @@ function BoardInner() {
   const createCompany = async () => {
     if (!newName.trim()) return;
     try {
-      await crmFetch<{ company: Company }>("/api/crm/companies", {
+      const { company } = await crmFetch<{ company: Company }>("/api/crm/companies", {
         method: "POST",
         body: JSON.stringify({ name: newName.trim() }),
       });
+      if (!company?.id) throw new Error("database did not confirm the new client");
       setNewName("");
       await load("clients");
-    } catch {
-      /* ignore */
+    } catch (error: any) {
+      setSaveError(error?.message || "That client could not be created. Please try again.");
     }
   };
   const deleteCompany = async (id: string, name: string) => {
@@ -207,7 +215,10 @@ function BoardInner() {
       opportunities: Math.max(0, totals.opportunities - (deleted?.opportunity ? 1 : 0)),
     }));
     try {
-      await crmFetch(`/api/crm/companies/${id}`, { method: "DELETE" });
+      const result = await crmFetch<{ ok: boolean }>(`/api/crm/companies/${id}`, {
+        method: "DELETE",
+      });
+      if (!result.ok) throw new Error("deletion not confirmed");
     } catch {
       setCompanies(previous);
       setClientTotals(previousTotals);

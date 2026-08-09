@@ -79,16 +79,23 @@ export default function ClientContext({ companyId }: { companyId: string }) {
 
   const saveEmail = async () => {
     setEmailSaving(true);
+    setErr("");
     try {
-      await crmFetch(`/api/crm/companies/${companyId}`, {
+      const { company } = await crmFetch<{
+        company: { email_context: string | null; email_context_updated_at: string | null };
+      }>(`/api/crm/companies/${companyId}`, {
         method: "PATCH",
         body: JSON.stringify({ email_context: emailCtx }),
       });
-      setEmailUpdatedAt(new Date().toISOString());
+      const requested = emailCtx.trim() || null;
+      if (company?.email_context !== requested)
+        throw new Error("database returned different email context");
+      setEmailCtx(company.email_context || "");
+      setEmailUpdatedAt(company.email_context_updated_at || new Date().toISOString());
       setEmailSaved(true);
       setTimeout(() => setEmailSaved(false), 2500);
-    } catch {
-      /* ignore */
+    } catch (error: any) {
+      setErr(error?.message || "Email context did not save. Please try again.");
     } finally {
       setEmailSaving(false);
     }
@@ -139,15 +146,17 @@ export default function ClientContext({ companyId }: { companyId: string }) {
     setBusy(true);
     setErr("");
     try {
-      await crmFetch(`/api/crm/companies/${companyId}/context`, {
+      const { item } = await crmFetch<{ item: Item }>(
+        `/api/crm/companies/${companyId}/context`, {
         method: "POST",
         body: JSON.stringify(body),
       });
+      if (!item?.id) throw new Error("database did not confirm the new item");
       setNote("");
       setTitle("");
       setUrl("");
       setProgress("");
-      load();
+      setItems((current) => [item, ...current.filter((row) => row.id !== item.id)]);
     } catch (e: any) {
       setErr(e.message || "could not add that");
     } finally {
@@ -176,7 +185,10 @@ export default function ClientContext({ companyId }: { companyId: string }) {
     setErr("");
     setItems((p) => p.filter((x) => x.id !== id));
     try {
-      await crmFetch(`/api/crm/context/${id}`, { method: "DELETE" });
+      const result = await crmFetch<{ deletedId: string }>(`/api/crm/context/${id}`, {
+        method: "DELETE",
+      });
+      if (result.deletedId !== id) throw new Error("database did not confirm deletion");
     } catch (e: any) {
       setItems(previous);
       setErr(e.message || "That note did not delete. Please try again.");

@@ -183,14 +183,21 @@ export async function PATCH(req: NextRequest) {
     if (!Number.isFinite(target) || target < 1_000 || target > 1_000_000_000) {
       return NextResponse.json({ error: "Enter a revenue target between £1,000 and £1 billion" }, { status: 400 });
     }
-    const { error } = await supabaseAdmin.from("app_config").upsert({
-      key: "revenue_target_gbp",
-      value: String(target),
-      note: "Annual revenue target used by the revenue command centre",
-      updated_at: new Date().toISOString(),
-    });
+    const { data, error } = await supabaseAdmin
+      .from("app_config")
+      .upsert({
+        key: "revenue_target_gbp",
+        value: String(target),
+        note: "Annual revenue target used by the revenue command centre",
+        updated_at: new Date().toISOString(),
+      })
+      .select("value")
+      .single();
     if (error) throw error;
-    return NextResponse.json({ ok: true, target });
+    const confirmedTarget = Math.round(Number(data?.value));
+    if (confirmedTarget !== target)
+      throw new Error("database did not confirm the revenue target");
+    return NextResponse.json({ ok: true, target: confirmedTarget });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to save revenue target" }, { status: 500 });
   }

@@ -33,12 +33,17 @@ export async function PUT(req: NextRequest) {
     const mode = body?.mode as AiMode;
     if (!MODES.has(mode))
       return NextResponse.json({ error: "invalid mode" }, { status: 400 });
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("workspace_profile")
-      .update({ ai_mode: mode, updated_at: new Date().toISOString() })
-      .eq("id", "main");
+      .upsert(
+        { id: "main", ai_mode: mode, updated_at: new Date().toISOString() },
+        { onConflict: "id" }
+      )
+      .select("ai_mode")
+      .single();
     if (error) throw error;
-    return NextResponse.json({ mode });
+    if (data?.ai_mode !== mode) throw new Error("database did not confirm AI mode");
+    return NextResponse.json({ mode: data.ai_mode });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to save mode" },

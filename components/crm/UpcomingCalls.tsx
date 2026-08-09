@@ -138,10 +138,35 @@ export default function UpcomingCalls() {
     const previous = calls;
     setCalls((p) => p.map((c) => (c.id === id ? { ...c, ...body } : c)));
     try {
-      await crmFetch(`/api/crm/upcoming/${id}`, {
+      const { call } = await crmFetch<{ call: any }>(`/api/crm/upcoming/${id}`, {
         method: "PATCH",
         body: JSON.stringify(body),
       });
+      if (!call?.id) throw new Error("database did not confirm the call update");
+      if (typeof body.prepped === "boolean" && call.prepped !== body.prepped)
+        throw new Error("prep status was not confirmed");
+      if (typeof body.intent === "string" && call.intent !== (body.intent.trim() || null))
+        throw new Error("intent was not confirmed");
+      if (
+        typeof body.meetingUrl === "string" &&
+        call.meeting_url !== (body.meetingUrl.trim() || null)
+      )
+        throw new Error("meeting link was not confirmed");
+      setCalls((current) =>
+        current.map((row) =>
+          row.id === id
+            ? {
+                ...row,
+                title: call.title,
+                scheduled_at: call.scheduled_at,
+                meeting_url: call.meeting_url,
+                intent: call.intent,
+                prepped: call.prepped,
+                company_id: call.company_id,
+              }
+            : row
+        )
+      );
     } catch (e: any) {
       setCalls(previous);
       setSyncMsg(e?.message || "Change did not save. Please try again.");
@@ -164,10 +189,12 @@ export default function UpcomingCalls() {
       )
     );
     try {
-      await crmFetch(`/api/crm/upcoming/${id}`, {
+      const { call } = await crmFetch<{ call: any }>(`/api/crm/upcoming/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ companyId: v?.id || null }),
       });
+      if (call?.company_id !== (v?.id || null))
+        throw new Error("database did not confirm the client link");
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch (e: any) {
       setCalls(previous);
@@ -194,10 +221,11 @@ export default function UpcomingCalls() {
     const previous = calls;
     setCalls((p) => p.filter((c) => c.id !== id));
     try {
-      await crmFetch(`/api/crm/upcoming/${id}`, {
+      const { call } = await crmFetch<{ call: any }>(`/api/crm/upcoming/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ completed: true }),
       });
+      if (!call?.completed_at) throw new Error("database did not confirm completion");
     } catch (e: any) {
       setCalls(previous);
       setSyncMsg(e?.message || "Call was not marked done. Please try again.");

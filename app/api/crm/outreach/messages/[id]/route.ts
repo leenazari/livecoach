@@ -25,8 +25,29 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (body.status === "draft") { patch.status = "draft"; patch.approved_at = null; }
     const { data, error } = await supabaseAdmin.from("outreach_messages").update(patch).eq("id", params.id).select("*").single();
     if (error) throw error;
-    await supabaseAdmin.from("outreach_enrolments").update({ status: data.status === "approved" ? "approved" : "drafted", updated_at: new Date().toISOString() }).eq("id", data.enrolment_id);
-    if (data.status === "approved") await supabaseAdmin.from("outreach_events").insert({ campaign_id: data.campaign_id, prospect_id: data.prospect_id, message_id: data.id, kind: "approved" });
+    const { data: enrolment, error: enrolmentError } = await supabaseAdmin
+      .from("outreach_enrolments")
+      .update({
+        status: data.status === "approved" ? "approved" : "drafted",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", data.enrolment_id)
+      .select("id, status")
+      .maybeSingle();
+    if (enrolmentError) throw enrolmentError;
+    if (!enrolment)
+      throw new Error("database did not confirm the campaign enrolment");
+    if (data.status === "approved") {
+      const { error: eventError } = await supabaseAdmin
+        .from("outreach_events")
+        .insert({
+          campaign_id: data.campaign_id,
+          prospect_id: data.prospect_id,
+          message_id: data.id,
+          kind: "approved",
+        });
+      if (eventError) throw eventError;
+    }
     return NextResponse.json({ message: data });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to save draft" }, { status: 500 });
