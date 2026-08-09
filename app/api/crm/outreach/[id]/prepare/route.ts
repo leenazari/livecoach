@@ -165,7 +165,7 @@ ${existingResearch ? `RESEARCH ALREADY SAVED, refresh only what may have changed
 ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDANCE:\n${body.guidance.trim().slice(0, 1000)}` : ""}`;
     const message = await openai.messages.create({
       model: OPENAI_MODEL_PRO,
-      max_tokens: 1600,
+      max_tokens: 2000,
       response_format: OUTREACH_DRAFT_FORMAT,
       system,
       tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] as any,
