@@ -283,7 +283,12 @@ async function runCalendarSync() {
       const outreachContext = outreachProspect
         ? await ensureOutreachCompany(outreachProspect.id, "booked")
         : null;
-      let company_id = outreachContext?.companyId || await resolveCompanyForEvent(r.attendees);
+      // An exact outreach email is authoritative. When its CRM identity needs
+      // review, keep the call unlinked instead of bypassing the review by
+      // auto-creating a second company from the same attendee domain.
+      let company_id = outreachProspect
+        ? outreachContext?.companyId || null
+        : await resolveCompanyForEvent(r.attendees);
       let intent: string | null = null;
       if (outreachContext) intent = firstOutreachCallIntent(outreachContext);
       // Only fall back to inherited curation when the guest list gave us
@@ -302,7 +307,10 @@ async function runCalendarSync() {
     // before the first call. Find-or-reuse a company by name to avoid duplicates.
     const unresolvedTitles = Array.from(
       new Set(
-        resolved.filter((x) => !x.company_id).map((x) => x.r.title).filter(Boolean)
+        resolved
+          .filter((x) => !x.company_id && !x.outreachProspectId)
+          .map((x) => x.r.title)
+          .filter(Boolean)
       )
     );
     if (unresolvedTitles.length) {
@@ -326,7 +334,7 @@ async function runCalendarSync() {
         return id;
       };
       for (const x of resolved) {
-        if (x.company_id) continue;
+        if (x.company_id || x.outreachProspectId) continue;
         const name = titleToClient.get(x.r.title);
         if (name) x.company_id = await ensureCompany(name);
       }

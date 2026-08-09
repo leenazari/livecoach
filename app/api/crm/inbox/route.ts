@@ -49,6 +49,7 @@ export async function GET() {
       followUpsResult,
       outreachMessagesResult,
       outreachProspectsResult,
+      outreachMeetingsResult,
     ] = await Promise.all([
       supabaseAdmin
         .from("tasks")
@@ -58,8 +59,7 @@ export async function GET() {
         .limit(600),
       supabaseAdmin
         .from("upcoming_calls")
-        .select("id,company_id,title,scheduled_at,prepped,created_at")
-        .not("company_id", "is", null)
+        .select("id,company_id,title,scheduled_at,intent,research,prepped,created_at")
         .eq("prepped", false)
         .is("completed_at", null)
         .gte("scheduled_at", new Date(nowMs - 3 * 60 * 60 * 1000).toISOString())
@@ -89,10 +89,15 @@ export async function GET() {
         .limit(300),
       supabaseAdmin
         .from("outreach_prospects")
-        .select("id,first_name,last_name,company_name,reply_category,reply_summary,last_reply_at,status")
+        .select("id,first_name,last_name,company_name,reply_category,reply_summary,last_reply_at,status,crm_company_id")
         .not("last_reply_at", "is", null)
         .order("last_reply_at", { ascending: false })
         .limit(200),
+      supabaseAdmin
+        .from("outreach_events")
+        .select("prospect_id")
+        .eq("kind", "meeting_booked")
+        .limit(300),
     ]);
 
     const firstError = [
@@ -103,6 +108,7 @@ export async function GET() {
       followUpsResult.error,
       outreachMessagesResult.error,
       outreachProspectsResult.error,
+      outreachMeetingsResult.error,
     ].find(Boolean);
     if (firstError) throw firstError;
 
@@ -166,20 +172,30 @@ export async function GET() {
     // Recurring meetings appear once, using only their next instance.
     const seenMeetings = new Set<string>();
     for (const call of upcomingResult.data || []) {
-      const company = companyName.get(call.company_id) || null;
-      const key = `${String(call.title || "").toLowerCase().trim()}:${call.company_id}`;
+      const outreach = call.research?.outreach;
+      if (!call.company_id && !outreach?.prospectId) continue;
+      const company =
+        companyName.get(call.company_id) || text(outreach?.companyName, 160) || null;
+      const key = `${String(call.title || "").toLowerCase().trim()}:${call.company_id || outreach?.prospectId || "unlinked"}`;
       if (key && seenMeetings.has(key)) continue;
       if (key) seenMeetings.add(key);
       const scheduledMs = dateMs(call.scheduled_at);
       const within48Hours = scheduledMs != null && scheduledMs <= nowMs + 48 * 60 * 60 * 1000;
-      const revenue = revenueCompanies.has(call.company_id);
-      const priority = within48Hours ? 94 : revenue ? 76 : 64;
+      const fromOutreach = Boolean(outreach?.prospectId);
+      const revenue = fromOutreach || revenueCompanies.has(call.company_id);
+      const priority = fromOutreach && within48Hours ? 108 : within48Hours ? 94 : revenue ? 76 : 64;
       items.push({
         id: `prep:${call.id}`,
         sourceId: call.id,
         kind: "prep",
         title: `Prepare: ${text(call.title, 240) || "upcoming call"}`,
-        detail: within48Hours ? "Call is within 48 hours" : "Upcoming call",
+        detail: fromOutreach
+          ? call.company_id
+            ? "Booked from outreach · client linked · suggested intent ready"
+            : "Booked from outreach · review the CRM company match"
+          : within48Hours
+            ? "Call is within 48 hours"
+            : "Upcoming call",
         company,
         companyId: call.company_id || null,
         href: `/crm/prep?upcoming=${call.id}`,
@@ -188,7 +204,7 @@ export async function GET() {
         dueAt: call.scheduled_at || null,
         createdAt: call.created_at || null,
         revenue,
-        approval: false,
+        approval: fromOutreach,
         waiting: false,
         done: false,
         editable: false,
@@ -228,6 +244,11 @@ export async function GET() {
       (outreachProspectsResult.data || []).map((prospect: any) => [prospect.id, prospect])
     );
     const replyDraftProspects = new Set<string>();
+    const handledReplyProspects = new Set<string>(
+      (outreachMeetingsResult.data || [])
+        .map((event: any) => event.prospect_id)
+        .filter(Boolean)
+    );
     for (const message of outreachMessagesResult.data || []) {
       const prospect: any = prospects.get(message.prospect_id);
       const done = message.status === "sent";
@@ -235,6 +256,7 @@ export async function GET() {
       if (done && (!sentMs || sentMs < nowMs - 7 * DAY_MS)) continue;
       const isReply = Number(message.step_number) === 10;
       if (isReply && !done) replyDraftProspects.add(message.prospect_id);
+      if (isReply && done) handledReplyProspects.add(message.prospect_id);
       const person = [prospect?.first_name, prospect?.last_name].filter(Boolean).join(" ");
       const priority = done ? 0 : message.status === "approved" ? 106 : isReply ? 103 : 92;
       items.push({
@@ -265,18 +287,24 @@ export async function GET() {
     for (const prospect of outreachProspectsResult.data || []) {
       if (
         prospect.reply_category !== "interested" ||
-        replyDraftProspects.has(prospect.id)
+        replyDraftProspects.has(prospect.id) ||
+        handledReplyProspects.has(prospect.id)
       )
         continue;
       const person = [prospect.first_name, prospect.last_name].filter(Boolean).join(" ");
+      const companyId = prospect.crm_company_id || null;
       items.push({
         id: `reply:${prospect.id}`,
         sourceId: prospect.id,
         kind: "reply",
-        title: `${person || prospect.company_name || "A prospect"} replied positively`,
-        detail: text(prospect.reply_summary, 240) || "Prepare a concise booking reply",
+        title: companyId
+          ? `${person || prospect.company_name || "A prospect"} replied positively`
+          : `Review CRM handover for ${person || prospect.company_name || "a prospect"}`,
+        detail: companyId
+          ? text(prospect.reply_summary, 240) || "Prepare a concise booking reply"
+          : "Identity needs approval before a client profile is linked or created",
         company: text(prospect.company_name, 160) || null,
-        companyId: null,
+        companyId,
         href: "/crm/outreach?tab=replies",
         priority: 110,
         priorityLabel: "urgent",
