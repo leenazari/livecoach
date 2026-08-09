@@ -8,6 +8,25 @@ export const runtime = "nodejs";
 export const maxDuration = 45;
 export const dynamic = "force-dynamic";
 
+const normaliseMention = (value: string) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+function isExplicitlyMentioned(company: any, summary: string) {
+  const haystack = ` ${normaliseMention(summary)} `;
+  const aliases = Array.isArray((company.profile || {}).aliases)
+    ? (company.profile as any).aliases
+    : [];
+
+  return [company.name, ...aliases]
+    .map((value) => normaliseMention(String(value || "")))
+    .filter((value) => value.length >= 3)
+    .some((value) => haystack.includes(` ${value} `));
+}
+
 // CROSS-CALL INTELLIGENCE.
 // One call almost always touches more than its own client: a board call sets the
 // position on a partner, a client call references another live deal. Today the
@@ -41,8 +60,10 @@ export async function POST(req: NextRequest) {
       .from("companies")
       .select("id, name, profile");
     // Never the call's own client - its brief is handled by its own synthesis.
-    const list = (companies || []).filter((c: any) => c.id !== sum.company_id);
-    if (!list.length) return NextResponse.json({ links: [] });
+    const otherCompanies = (companies || []).filter(
+      (c: any) => c.id !== sum.company_id
+    );
+    if (!otherCompanies.length) return NextResponse.json({ links: [] });
 
     // Grounded input: the SUMMARY, not the raw transcript, so it can't drift.
     const briefIn = [
@@ -64,9 +85,18 @@ export async function POST(req: NextRequest) {
       .join("\n");
     if (!briefIn.trim()) return NextResponse.json({ links: [] });
 
+    // Never ask the model to infer a CRM identity from a first-name mention.
+    // A client is eligible only when its exact saved name or an explicit alias
+    // appears in the grounded summary. This prevents a reference to Lee's CTO
+    // "Mark" from contaminating the unrelated "Mark G Smith" prospect.
+    const list = otherCompanies.filter((company: any) =>
+      isExplicitlyMentioned(company, briefIn)
+    );
+    if (!list.length) return NextResponse.json({ links: [] });
+
     const names = list.map((c: any) => c.name).filter(Boolean);
 
-    const system = `You connect a call to the user's OTHER clients and deals. You are given a summary of ONE call plus a list of the user's known clients. Identify ONLY clients from the list that were MATERIALLY discussed in this call - a real decision, position, commitment, risk or development about them - never a passing mention and never the call's own client. For each, return a short intel note (2 to 3 sentences, what this call means for that client or relationship, grounded strictly in the summary, no invention) and any concrete next actions for that client.
+    const system = `You connect a call to the user's OTHER clients and deals. You are given a summary of ONE call plus a list of the user's known clients whose exact saved name or explicit alias appears in that summary. Identify ONLY clients from the list that were MATERIALLY discussed in this call - a real decision, position, commitment, risk or development about them - never a passing mention and never the call's own client. Never map a first name to a different full-name client. For each, return a short intel note (2 to 3 sentences, what this call means for that client or relationship, grounded strictly in the summary, no invention) and any concrete next actions for that client.
 Output ONLY JSON: {"links":[{"client":"<exact name copied from the list>","intel":"...","actions":[{"text":"<short imperative under 12 words>","action":"email|call|task"}]}]}.
 If no other client was materially discussed, return {"links":[]}. Be conservative: when in doubt, leave it out. House style: never use em dashes or semicolons.`;
 
