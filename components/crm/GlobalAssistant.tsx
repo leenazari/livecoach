@@ -25,6 +25,8 @@ function describeScreen(pathname: string | null, hasClient: boolean, tab: string
   if (hasClient) return { section: "client", label: "Client profile", path };
   if (path.startsWith("/crm/outreach"))
     return { section: "outreach", label: "Outreach", path };
+  if (path.startsWith("/crm/inbox"))
+    return { section: "work_inbox", label: "Work Inbox", path };
   if (path.startsWith("/crm/revenue"))
     return { section: "revenue", label: "Revenue", path };
   if (path.startsWith("/crm/board")) {
@@ -103,7 +105,12 @@ export default function GlobalAssistant({
   // Open the brain from anywhere (e.g. the "Talk to brain" item in the side
   // menu) - just show the panel.
   useEffect(() => {
-    const openIt = () => setOpen(true);
+    const openIt = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail || {};
+      setOpen(true);
+      if (typeof detail.prompt === "string" && detail.prompt.trim())
+        setSeed(detail.prompt.trim());
+    };
     window.addEventListener("lc:open-brain", openIt);
     return () => window.removeEventListener("lc:open-brain", openIt);
   }, []);

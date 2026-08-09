@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { fingerprintTask } from "@/lib/tasks";
+import { actionToLinkKind, fingerprintTask } from "@/lib/tasks";
 import { capitaliseSentenceStarts } from "@/lib/text";
 
 export const runtime = "nodejs";
@@ -41,6 +41,8 @@ export async function PATCH(
     // Save an edited commitment draft, or the pinned flag (payload.pinned).
     if (body.payload && typeof body.payload === "object")
       patch.payload = body.payload;
+    if (typeof body.action === "string")
+      patch.link_kind = actionToLinkKind(body.action);
     // Set or clear a deadline (sorts the list; "" / null clears it).
     if (typeof body.dueAt === "string")
       patch.due_at = body.dueAt.trim() || null;
@@ -51,7 +53,7 @@ export async function PATCH(
       .from("tasks")
       .update(patch)
       .eq("id", params.id)
-      .select("id, company_id, text, kind, status, due_at, payload")
+      .select("id, company_id, text, kind, link_kind, status, due_at, payload")
       .maybeSingle();
     if (error) throw error;
     if (!data)
