@@ -29,6 +29,8 @@ function describeScreen(pathname: string | null, hasClient: boolean, tab: string
     return { section: "work_inbox", label: "Work Inbox", path };
   if (path.startsWith("/crm/revenue"))
     return { section: "revenue", label: "Revenue", path };
+  if (path.startsWith("/crm/costs"))
+    return { section: "costs", label: "Costs", path };
   if (path.startsWith("/crm/board")) {
     if (tab === "clients") return { section: "client_portfolio", label: "Clients", path: `${path}?tab=clients` };
     if (tab === "opportunities") return { section: "opportunities", label: "Opportunities", path: `${path}?tab=opportunities` };
