@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
@@ -391,11 +392,13 @@ export default function UpcomingCalls() {
                 </span>
                 <span className="min-w-[11rem] flex-1 font-sans text-[0.9rem] text-bone">
                   {c.title || "Untitled call"}
-                  {c.company && (
-                    <span className="ml-1.5 font-mono text-[0.6rem] text-muted">
+                  {c.company && c.company_id ? (
+                    <Link href={`/crm/${c.company_id}`} className="ml-1.5 font-mono text-[0.6rem] text-sky hover:text-amber hover:underline">
                       · {c.company}
-                    </span>
-                  )}
+                    </Link>
+                  ) : c.company ? (
+                    <span className="ml-1.5 font-mono text-[0.6rem] text-muted">· {c.company}</span>
+                  ) : null}
                 </span>
                 <button
                   type="button"

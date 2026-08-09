@@ -20,6 +20,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { crmFetch, getCached } from "@/lib/crm";
 import TaskList from "@/components/crm/TaskList";
 import Link from "next/link";
+import { capitaliseSentenceStarts } from "@/lib/text";
 import {
   isInHouseRelationship,
   isRelationshipStageOption,
@@ -110,33 +111,37 @@ function OppRow({
         </button>
 
         {/* The row body toggles the to-dos. */}
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        >
-          <span className="flex-none font-mono text-[0.7rem] text-muted">
+        <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label={`${open ? "hide" : "show"} to-dos for ${o.company}`}
+            className="flex-none font-mono text-[0.7rem] text-muted"
+          >
             {open ? "▾" : "▸"}
-          </span>
+          </button>
           <span className="min-w-0 flex-1">
-            <span className="block truncate font-sans text-[0.9rem] text-bone">
+            <Link
+              href={`/crm/${o.companyId}`}
+              className="block truncate font-sans text-[0.9rem] text-bone transition hover:text-amber"
+            >
               {o.company}
-            </span>
+            </Link>
             {o.nextAction && (
-              <span className="block truncate font-sans text-[0.76rem] leading-snug text-amber/90">
+              <button type="button" onClick={onToggle} className="block w-full truncate text-left font-sans text-[0.76rem] leading-snug text-amber/90">
                 <span className="font-mono text-[0.5rem] uppercase tracking-wider text-amber/65">
                   Next move ·{" "}
                 </span>
-                {o.nextAction}
-              </span>
+                {capitaliseSentenceStarts(o.nextAction)}
+              </button>
             )}
             {o.reason && (
-              <span className="block truncate font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-                Why · {o.reason}
-              </span>
+              <button type="button" onClick={onToggle} className="block w-full truncate text-left font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                Why · {capitaliseSentenceStarts(o.reason)}
+              </button>
             )}
           </span>
-        </button>
+        </div>
 
         {/* Signals: value, count, next-call time. */}
         <span className="ml-8 flex w-full flex-wrap items-center gap-1.5 sm:ml-0 sm:w-auto sm:flex-none sm:flex-nowrap">

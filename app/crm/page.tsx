@@ -9,6 +9,7 @@ import UpcomingCalls from "@/components/crm/UpcomingCalls";
 import TaskList from "@/components/crm/TaskList";
 import Commitments from "@/components/crm/Commitments";
 import CrmSearch from "@/components/crm/CrmSearch";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 // These sections sit below the first decision layer or only appear when they
 // contain data. Loading them separately keeps the Today dashboard interactive
@@ -463,7 +464,7 @@ export default function DashboardPage() {
                     />
                   ) : (
                     <Link href={item.href} className="font-sans text-[0.86rem] leading-snug text-bone hover:text-amber">
-                      {item.text}
+                      {capitaliseSentenceStarts(item.text)}
                     </Link>
                   )}
                   <div className="mt-auto flex items-end justify-between gap-2 pt-2">
@@ -499,7 +500,7 @@ export default function DashboardPage() {
               </div>
               {items[0] ? (
                 <Link href={items[0].href} className="block font-sans text-[0.76rem] leading-snug text-bone/70 hover:text-bone">
-                  {items[0].company ? `${items[0].company}: ` : ""}{items[0].text}
+                  {items[0].company ? `${items[0].company}: ` : ""}{capitaliseSentenceStarts(items[0].text)}
                 </Link>
               ) : (
                 <span className="font-mono text-[0.56rem] text-muted">clear</span>
@@ -635,7 +636,7 @@ export default function DashboardPage() {
                             {p.label}:{" "}
                           </span>
                         ) : null}
-                        {p.text}
+                        {capitaliseSentenceStarts(p.text)}
                         <span className="ml-1 font-mono text-[0.62rem] text-muted opacity-0 transition group-hover:opacity-100">
                           ↗
                         </span>
@@ -647,7 +648,7 @@ export default function DashboardPage() {
             </ul>
           ) : (
             <p className="font-sans text-sm leading-relaxed text-bone/85">
-              {dash?.dayRead}
+              {capitaliseSentenceStarts(dash?.dayRead)}
             </p>
           )}
         </div>

@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 // A stable fingerprint per (company, action). Same action for the same client
 // always hashes the same, so a task is never created twice and a completed one
@@ -216,7 +217,7 @@ export async function upsertTasks(
   const keptTexts: string[] = [...existingOpenTexts];
   const rows = candidates
     .filter((i) => {
-      const text = i.text.trim();
+      const text = capitaliseSentenceStarts(i.text.trim());
       // Drop if it near-duplicates anything already open OR an earlier kept
       // candidate from this very batch.
       const dup = keptTexts.some((t) => isNearDuplicateTask(text, t));
@@ -226,7 +227,7 @@ export async function upsertTasks(
     })
     .map((i) => ({
       company_id: companyId,
-      text: i.text.trim(),
+      text: capitaliseSentenceStarts(i.text.trim()),
       kind: i.kind || "next_step",
       link_kind: i.linkKind || "client",
       source: i.source || null,
@@ -238,7 +239,10 @@ export async function upsertTasks(
           }
         : i.payload ?? null,
       due_at: i.dueAt || null,
-      fingerprint: fingerprintTask(companyId, i.text),
+      fingerprint: fingerprintTask(
+        companyId,
+        capitaliseSentenceStarts(i.text)
+      ),
       status: "open",
     }));
   if (!rows.length) return [];

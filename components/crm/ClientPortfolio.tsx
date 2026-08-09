@@ -7,6 +7,7 @@ import {
   isRelationshipStageOption,
   RELATIONSHIP_STAGE_OPTIONS,
 } from "@/lib/relationship-stages";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 export type ClientHealth = "red" | "amber" | "green" | "grey";
 
@@ -198,7 +199,7 @@ function MobileClientCard({
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2 border-y border-edge/45 py-3">
-        <div className="min-w-0">
+        <Link href={`/crm/${row.id}`} className="min-w-0 rounded-md hover:bg-bone/[0.035]">
           <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Contact</p>
           <p className="truncate font-sans text-[0.76rem] text-bone/90">
             {row.primaryContact?.name || "Not recorded"}
@@ -206,38 +207,40 @@ function MobileClientCard({
           <p className="truncate font-sans text-[0.66rem] text-muted">
             {row.primaryContact?.role || row.primaryContact?.email || ""}
           </p>
-        </div>
-        <div className="min-w-0">
+        </Link>
+        <Link href={`/crm/${row.id}`} className="min-w-0 rounded-md hover:bg-bone/[0.035]">
           <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Next meeting</p>
           <p className={`truncate font-sans text-[0.76rem] ${row.nextMeetingAt ? "text-sage" : "text-muted"}`}>
             {meetingDate(row.nextMeetingAt)}
           </p>
-        </div>
-        <div className="min-w-0">
+        </Link>
+        <Link href={`/crm/${row.id}`} className="min-w-0 rounded-md hover:bg-bone/[0.035]">
           <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Last activity</p>
           <p className="truncate font-sans text-[0.76rem] text-bone/80">
             {activityDate(row.lastTouchAt)}
             {row.daysQuiet != null ? ` · ${row.daysQuiet}d` : ""}
           </p>
-        </div>
-        <div className="min-w-0">
+        </Link>
+        <Link href={`/crm/${row.id}`} className="min-w-0 rounded-md hover:bg-bone/[0.035]">
           <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Commercial</p>
           <p className="truncate font-sans text-[0.76rem] text-bone/80">
             {row.opportunity ? `${row.opportunity.probability}% · ${gbp(row.opportunity.value)}` : "No open deal"}
           </p>
-        </div>
+        </Link>
       </div>
 
       <div className="mt-3">
-        <p className="font-mono text-[0.48rem] uppercase tracking-wider text-amber">Next move</p>
-        <p className="mt-0.5 line-clamp-2 font-sans text-[0.78rem] leading-snug text-bone/90">
-          {row.nextAction || row.healthReason}
-        </p>
-        {row.buyingSignal ? (
-          <p className="mt-1.5 line-clamp-2 font-sans text-[0.7rem] leading-snug text-sage">
-            ◆ {row.buyingSignal}
+        <Link href={`/crm/${row.id}`} className="block rounded-md transition hover:bg-bone/[0.035]">
+          <p className="font-mono text-[0.48rem] uppercase tracking-wider text-amber">Next move</p>
+          <p className="mt-0.5 line-clamp-2 font-sans text-[0.78rem] leading-snug text-bone/90">
+            {capitaliseSentenceStarts(row.nextAction || row.healthReason)}
           </p>
-        ) : null}
+          {row.buyingSignal ? (
+            <p className="mt-1.5 line-clamp-2 font-sans text-[0.7rem] leading-snug text-sage">
+              ◆ {capitaliseSentenceStarts(row.buyingSignal)}
+            </p>
+          ) : null}
+        </Link>
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2">
@@ -283,7 +286,7 @@ export default function ClientPortfolio({
   savingId: string;
 }) {
   const [query, setQuery] = useState("");
-  const [health, setHealth] = useState<"all" | ClientHealth>("all");
+  const [health, setHealth] = useState<"all" | ClientHealth | "opportunities">("all");
   const [stage, setStage] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
   const [sort, setSort] = useState<{
@@ -301,7 +304,8 @@ export default function ClientPortfolio({
 
   const shown = useMemo(() => {
       const filtered = clients.filter((row) => {
-        if (health !== "all" && row.health !== health) return false;
+        if (health === "opportunities" && !row.opportunity) return false;
+        if (health !== "all" && health !== "opportunities" && row.health !== health) return false;
         if (stage !== "all" && row.relationshipStage !== stage) return false;
         if (!deferredQuery) return true;
         const haystack = [
@@ -369,27 +373,34 @@ export default function ClientPortfolio({
   const sortMark = (key: typeof sort.key) =>
     sort.key === key ? (sort.direction === "asc" ? " ↑" : " ↓") : " ↕";
 
-  const healthFilters: { key: "all" | ClientHealth; label: string; count: number }[] = [
+  const healthFilters: { key: "all" | ClientHealth | "opportunities"; label: string; count: number }[] = [
     { key: "all", label: "All", count: totals.all },
     { key: "red", label: "Needs action", count: totals.red },
     { key: "amber", label: "Watch", count: totals.amber },
     { key: "green", label: "On track", count: totals.green },
     { key: "grey", label: "Needs details", count: totals.grey },
+    { key: "opportunities", label: "Opportunities", count: totals.opportunities },
   ];
 
   return (
     <section>
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[
-          ["Clients", totals.all, "text-bone"],
-          ["Needs action", totals.red, "text-rust"],
-          ["Watch", totals.amber, "text-amber"],
-          ["Opportunities", totals.opportunities, "text-sage"],
-        ].map(([label, value, color]) => (
-          <div key={String(label)} className="rounded-xl border border-edge bg-panel/35 px-3 py-2.5">
+          ["Clients", totals.all, "text-bone", "all"],
+          ["Needs action", totals.red, "text-rust", "red"],
+          ["Watch", totals.amber, "text-amber", "amber"],
+          ["Opportunities", totals.opportunities, "text-sage", "opportunities"],
+        ].map(([label, value, color, filter]) => (
+          <button
+            key={String(label)}
+            type="button"
+            onClick={() => setHealth(filter as "all" | ClientHealth | "opportunities")}
+            aria-pressed={health === filter}
+            className={`rounded-xl border bg-panel/35 px-3 py-2.5 text-left transition hover:border-amber/55 hover:bg-amber/[0.04] ${health === filter ? "border-amber/55" : "border-edge"}`}
+          >
             <p className={`font-display text-[1.35rem] leading-none ${color}`}>{value}</p>
-            <p className="mt-1 font-mono text-[0.5rem] uppercase tracking-[0.14em] text-muted">{label}</p>
-          </div>
+            <p className="mt-1 font-mono text-[0.5rem] uppercase tracking-[0.14em] text-muted">{label} ↘</p>
+          </button>
         ))}
       </div>
 
@@ -452,7 +463,9 @@ export default function ClientPortfolio({
               health === filter.key
                 ? filter.key === "all"
                   ? "border-sky/55 bg-sky/10 text-sky"
-                  : `${HEALTH[filter.key].border} ${HEALTH[filter.key].surface} ${HEALTH[filter.key].text}`
+                  : filter.key === "opportunities"
+                    ? "border-sage/40 bg-sage/[0.06] text-sage"
+                    : `${HEALTH[filter.key].border} ${HEALTH[filter.key].surface} ${HEALTH[filter.key].text}`
                 : "border-edge text-muted hover:text-bone"
             }`}
           >
@@ -532,47 +545,53 @@ export default function ClientPortfolio({
                     </Link>
                   </td>
                   <td className="max-w-[170px] px-3 py-3">
-                    <p className="truncate font-sans text-[0.76rem] text-bone/90">{row.primaryContact?.name || "Not recorded"}</p>
-                    <p className="truncate font-sans text-[0.64rem] text-muted">{row.primaryContact?.role || row.primaryContact?.email || ""}</p>
+                    <Link href={`/crm/${row.id}`} className="block hover:text-amber">
+                      <p className="truncate font-sans text-[0.76rem] text-bone/90">{row.primaryContact?.name || "Not recorded"}</p>
+                      <p className="truncate font-sans text-[0.64rem] text-muted">{row.primaryContact?.role || row.primaryContact?.email || ""}</p>
+                    </Link>
                   </td>
                   <td className="px-3 py-3">
                     <StageSelect row={row} saving={savingId === row.id} onChange={onStageChange} />
                   </td>
                   <td className="whitespace-nowrap px-3 py-3">
-                    <p className="font-sans text-[0.74rem] text-bone/80">{activityDate(row.lastTouchAt)}</p>
-                    <p className="font-mono text-[0.49rem] uppercase tracking-wider text-muted">
-                      {row.daysQuiet == null
-                        ? "Unknown"
-                        : row.daysQuiet === 0
-                          ? "Today"
-                          : `${row.daysQuiet} ${row.daysQuiet === 1 ? "day" : "days"} ago`}
-                    </p>
+                    <Link href={`/crm/${row.id}`} className="block hover:text-amber">
+                      <p className="font-sans text-[0.74rem] text-bone/80">{activityDate(row.lastTouchAt)}</p>
+                      <p className="font-mono text-[0.49rem] uppercase tracking-wider text-muted">
+                        {row.daysQuiet == null
+                          ? "Unknown"
+                          : row.daysQuiet === 0
+                            ? "Today"
+                            : `${row.daysQuiet} ${row.daysQuiet === 1 ? "day" : "days"} ago`}
+                      </p>
+                    </Link>
                   </td>
                   <td className="max-w-[150px] px-3 py-3">
-                    <p className={`font-sans text-[0.72rem] ${row.nextMeetingAt ? "text-sage" : "text-muted"}`}>
+                    <Link href={`/crm/${row.id}`} className={`block font-sans text-[0.72rem] hover:text-amber ${row.nextMeetingAt ? "text-sage" : "text-muted"}`}>
                       {meetingDate(row.nextMeetingAt)}
-                    </p>
+                    </Link>
                   </td>
                   <td className="max-w-[180px] px-3 py-3">
                     {row.opportunity ? (
-                      <>
+                      <Link href={`/crm/${row.id}`} className="block hover:text-amber">
                         <p className="truncate font-sans text-[0.74rem] text-bone/90">{row.opportunity.title}</p>
                         <p className="font-mono text-[0.5rem] uppercase tracking-wider text-sage">
                           {row.opportunity.probability}% · {gbp(row.opportunity.value)}
                         </p>
-                      </>
+                      </Link>
                     ) : (
                       <p className="font-sans text-[0.72rem] text-muted">No open opportunity</p>
                     )}
                     {row.buyingSignal ? (
-                      <p title={row.buyingSignal} className="mt-1 line-clamp-2 font-sans text-[0.64rem] leading-snug text-sage/90">◆ {row.buyingSignal}</p>
+                      <Link href={`/crm/${row.id}`} title={row.buyingSignal} className="mt-1 block line-clamp-2 font-sans text-[0.64rem] leading-snug text-sage/90 hover:text-sage">◆ {capitaliseSentenceStarts(row.buyingSignal)}</Link>
                     ) : null}
                   </td>
                   <td className="max-w-[220px] px-3 py-3">
-                    <p className="line-clamp-2 font-sans text-[0.72rem] leading-snug text-bone/90">{row.nextAction || row.healthReason}</p>
-                    <p className={`mt-1 font-mono text-[0.49rem] uppercase tracking-wider ${row.nextActionDueAt && new Date(row.nextActionDueAt).getTime() < Date.now() ? "text-rust" : "text-muted"}`}>
-                      {row.openTaskCount ? `${row.openTaskCount} open · ` : ""}{row.nextActionDueAt ? `due ${compactDate(row.nextActionDueAt)}` : "no deadline"}
-                    </p>
+                    <Link href={`/crm/${row.id}`} className="block hover:text-amber">
+                      <p className="line-clamp-2 font-sans text-[0.72rem] leading-snug text-bone/90">{capitaliseSentenceStarts(row.nextAction || row.healthReason)}</p>
+                      <p className={`mt-1 font-mono text-[0.49rem] uppercase tracking-wider ${row.nextActionDueAt && new Date(row.nextActionDueAt).getTime() < Date.now() ? "text-rust" : "text-muted"}`}>
+                        {row.openTaskCount ? `${row.openTaskCount} open · ` : ""}{row.nextActionDueAt ? `due ${compactDate(row.nextActionDueAt)}` : "no deadline"}
+                      </p>
+                    </Link>
                   </td>
                   <td className="px-3 py-3 text-right">
                     <span className="inline-flex items-center gap-1">

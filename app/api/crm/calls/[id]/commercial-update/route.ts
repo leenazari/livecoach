@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { upsertTasks } from "@/lib/tasks";
+import { capitaliseSentenceStarts } from "@/lib/text";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -84,7 +85,9 @@ export async function POST(
 
     const pipelineStage = STAGES.includes(body.pipelineStage) ? body.pipelineStage : "discovery";
     const nextActionOwner = OWNERS.includes(body.nextActionOwner) ? body.nextActionOwner : "us";
-    const nextAction = typeof body.nextAction === "string" ? body.nextAction.trim().slice(0, 500) : "";
+    const nextAction = typeof body.nextAction === "string"
+      ? capitaliseSentenceStarts(body.nextAction.trim()).slice(0, 500)
+      : "";
     const dueDate = typeof body.nextActionDueAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.nextActionDueAt)
       ? body.nextActionDueAt
       : null;

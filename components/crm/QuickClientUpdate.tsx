@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { crmFetch } from "@/lib/crm";
 import { foldDictationEvent } from "@/lib/dictation";
+import { capitaliseSentenceStarts } from "@/lib/text";
 import {
   activityHasActions,
   type ActivityIntelligence,
@@ -283,7 +284,7 @@ export default function QuickClientUpdate({
             </span>
           </div>
           <p className="mt-1.5 font-sans text-[0.82rem] leading-relaxed text-bone/90">
-            {intelligence.overview}
+            {capitaliseSentenceStarts(intelligence.overview)}
           </p>
 
           {intelligence.buyingSignals.length || intelligence.risks.length ? (
@@ -296,7 +297,7 @@ export default function QuickClientUpdate({
                   <ul className="mt-1 space-y-1">
                     {intelligence.buyingSignals.map((signal, index) => (
                       <li key={`${signal}:${index}`} className="font-sans text-[0.72rem] leading-snug text-bone/80">
-                        • {signal}
+                        • {capitaliseSentenceStarts(signal)}
                       </li>
                     ))}
                   </ul>
@@ -310,7 +311,7 @@ export default function QuickClientUpdate({
                   <ul className="mt-1 space-y-1">
                     {intelligence.risks.map((risk, index) => (
                       <li key={`${risk}:${index}`} className="font-sans text-[0.72rem] leading-snug text-bone/80">
-                        • {risk}
+                        • {capitaliseSentenceStarts(risk)}
                       </li>
                     ))}
                   </ul>
@@ -327,7 +328,7 @@ export default function QuickClientUpdate({
               <ul className="mt-1.5 space-y-1.5">
                 {intelligence.nextAction ? (
                   <li className="font-sans text-[0.73rem] leading-snug text-bone/85">
-                    <span className="text-sky">Next action:</span> {intelligence.nextAction.text}
+                    <span className="text-sky">Next action:</span> {capitaliseSentenceStarts(intelligence.nextAction.text)}
                     {intelligence.nextAction.dueAt
                       ? `, due ${intelligence.nextAction.dueAt}`
                       : ""}
@@ -336,7 +337,7 @@ export default function QuickClientUpdate({
                 ) : null}
                 {intelligence.nextCallIntent ? (
                   <li className="font-sans text-[0.73rem] leading-snug text-bone/85">
-                    <span className="text-sky">Next-call intent:</span> {intelligence.nextCallIntent}
+                    <span className="text-sky">Next-call intent:</span> {capitaliseSentenceStarts(intelligence.nextCallIntent)}
                   </li>
                 ) : null}
                 {intelligence.stakeholderUpdates.map((update, index) => (
