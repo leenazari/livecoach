@@ -128,12 +128,19 @@ export async function POST(req: NextRequest) {
       if (error) throw error;
 
       if (archived) {
-        const { error: taskError } = await supabaseAdmin
+        // `tasks` deliberately has no updated_at column. Status is the
+        // authoritative persisted state; selecting it back makes the bulk
+        // triage save fail loudly if Supabase does not confirm the dismissal.
+        const { data: dismissedTasks, error: taskError } = await supabaseAdmin
           .from("tasks")
-          .update({ status: "dismissed", updated_at: reviewedAt })
+          .update({ status: "dismissed" })
           .eq("company_id", item.id)
-          .eq("status", "open");
+          .eq("status", "open")
+          .select("id,status");
         if (taskError) throw taskError;
+        if ((dismissedTasks || []).some((task: any) => task.status !== "dismissed")) {
+          throw new Error("Supabase did not confirm the archived reminders");
+        }
       } else if (item.nextAction) {
         await upsertTasks(item.id, [
           {
