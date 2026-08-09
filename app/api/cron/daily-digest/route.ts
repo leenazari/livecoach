@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { sendMail } from "@/lib/gmail";
+import { GET as getDashboard } from "@/app/api/crm/dashboard/route";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -33,6 +34,40 @@ const firstSentence = (value: unknown, max = 180): string => {
     ? sentence
     : `${sentence.slice(0, max).replace(/\s+\S*$/, "").trim()}…`;
 };
+
+const compactSentences = (
+  value: unknown,
+  sentenceLimit = 2,
+  max = 320
+): string => {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const matches = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  const selected = matches.slice(0, sentenceLimit).join(" ").trim();
+  return selected.length <= max
+    ? selected
+    : `${selected.slice(0, max).replace(/\s+\S*$/, "").trim()}…`;
+};
+
+const firstListItem = (...values: unknown[]): string => {
+  for (const value of values) {
+    if (!Array.isArray(value)) continue;
+    const item = value.find(
+      (entry) => typeof entry === "string" && entry.trim()
+    );
+    if (item) return compactSentences(item, 1, 220);
+  }
+  return "";
+};
+
+const detailList = (items: { label: string; text: string }[]) =>
+  `<ul style="margin:7px 0 0;padding:0 0 0 18px;">${items
+    .filter((item) => item.text)
+    .map(
+      (item) =>
+        `<li style="margin:0 0 5px;font-size:13px;line-height:1.45;color:#514c44;"><strong>${esc(item.label)}:</strong> ${esc(item.text)}</li>`
+    )
+    .join("")}</ul>`;
 
 const list = (items: string[], empty: string) =>
   items.length
@@ -69,6 +104,13 @@ export async function GET(req: NextRequest) {
 
     const since = new Date(now.getTime() - 36 * 60 * 60 * 1000).toISOString();
     const horizon = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000).toISOString();
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://livecoach-alpha.vercel.app";
+    // Use the dashboard's own deterministic ranking for the email too. Calling
+    // the light route keeps it model-free while guaranteeing that the first
+    // five priorities in both places are the same at send time.
+    const dashboardPromise = getDashboard(
+      new Request(`${appUrl}/api/crm/dashboard?light=1`)
+    );
     const [callsRes, completedRes, openRes, upcomingRes, oppsRes] = await Promise.all([
       supabaseAdmin
         .from("interview_summaries")
@@ -98,7 +140,7 @@ export async function GET(req: NextRequest) {
         .limit(100),
       supabaseAdmin
         .from("opportunities")
-        .select("id, company_id, title, value, created_at")
+        .select("id, company_id, title, value, created_at, pipeline_stage, probability, next_action, next_action_due_at, next_action_owner, opportunity_type")
         .eq("status", "open")
         .eq("opportunity_type", "revenue")
         .order("value", { ascending: false })
@@ -107,6 +149,10 @@ export async function GET(req: NextRequest) {
     for (const result of [callsRes, completedRes, openRes, upcomingRes, oppsRes]) {
       if (result.error) throw result.error;
     }
+    const dashboardResponse = await dashboardPromise;
+    const dashboardData = dashboardResponse.ok
+      ? await dashboardResponse.json()
+      : null;
 
     const calls = (callsRes.data || []).filter(
       (row: any) => row.created_at && dayKey(new Date(row.created_at)) === today
@@ -127,13 +173,17 @@ export async function GET(req: NextRequest) {
       )
     );
     const companyNames = new Map<string, string>();
+    const companyDetails = new Map<string, any>();
     if (companyIds.length) {
       const { data, error } = await supabaseAdmin
         .from("companies")
-        .select("id, name")
+        .select("id, name, stage, profile, commercial_memory")
         .in("id", companyIds);
       if (error) throw error;
-      for (const company of data || []) companyNames.set(company.id, company.name || "");
+      for (const company of data || []) {
+        companyNames.set(company.id, company.name || "");
+        companyDetails.set(company.id, company);
+      }
     }
 
     const progress: string[] = completed.slice(0, 8).map((task: any) => {
@@ -184,12 +234,22 @@ export async function GET(req: NextRequest) {
         return { ...task, score, reason, opportunity };
       })
       .sort((a: any, b: any) => b.score - a.score);
-    const attentionRows = scoredTasks
-      .slice(0, 8);
-    const attention = attentionRows.map((task: any) => {
-      const company = companyNames.get(task.company_id);
-      const value = Number(task.opportunity?.value) || 0;
-      return `<strong style="color:${task.reason === "Overdue" ? "#a34b35" : "#9a7b12"};">${esc(task.reason)}</strong>: ${esc(task.text)}${company ? ` (${esc(company)})` : ""}${value ? ` <span style="color:#718a76;">· £${value.toLocaleString("en-GB")} opportunity</span>` : ""}`;
+    const dashboardActions = Array.isArray(dashboardData?.today?.topActions)
+      ? dashboardData.today.topActions
+      : [];
+    const attentionRows = dashboardActions.length
+      ? dashboardActions.slice(0, 5)
+      : scoredTasks.slice(0, 5).map((task: any) => ({
+          ...task,
+          company: companyNames.get(task.company_id),
+          href: task.company_id ? `/crm/${task.company_id}` : "/crm/board?tab=tasks",
+        }));
+    const attention = attentionRows.map((item: any) => {
+      const colour = /overdue/i.test(String(item.reason || ""))
+        ? "#a34b35"
+        : "#9a7b12";
+      const href = String(item.href || "/crm");
+      return `<a href="${esc(`${appUrl}${href}`)}" style="color:inherit;text-decoration:none;"><strong style="color:${colour};">${esc(item.reason || "Priority")}</strong><br>${esc(item.text)}${item.company ? ` <span style="color:#858078;">(${esc(item.company)})</span>` : ""}</a>`;
     });
 
     const tomorrowItems = tomorrowCalls.map((call: any) => {
@@ -199,21 +259,93 @@ export async function GET(req: NextRequest) {
         minute: "2-digit",
       }).format(new Date(call.scheduled_at));
       const company = companyNames.get(call.company_id);
-      const intent = firstSentence(call.intent);
-      const prep = call.prepped ? "Prep ready" : "Prep still needed";
-      return `<strong>${esc(time)} · ${esc(call.title || company || "Call")}</strong><br><span style="color:${call.prepped ? "#55785e" : "#a34b35"};">${prep}</span>${intent ? `, ${esc(intent)}` : ""}`;
+      const details = companyDetails.get(call.company_id) || {};
+      const memory = details.commercial_memory && typeof details.commercial_memory === "object"
+        ? details.commercial_memory
+        : {};
+      const intent = compactSentences(call.intent, 2, 340);
+      const latestCall = memory.lastCall && typeof memory.lastCall === "object"
+        ? memory.lastCall
+        : {};
+      const activity = memory.latestActivity && typeof memory.latestActivity === "object"
+        ? memory.latestActivity
+        : {};
+      const relationship = compactSentences(
+        activity.overview ||
+          [latestCall.headline, latestCall.overview].filter(Boolean).join(": ") ||
+          memory.email?.summary ||
+          memory.relationship,
+        1,
+        260
+      );
+      const openLoop =
+        compactSentences(activity.nextAction || memory.opportunity?.nextAction, 1, 220) ||
+        firstListItem(
+          latestCall.theirActions,
+          latestCall.ourActions,
+          latestCall.gaps
+        );
+      const prep = call.prepped
+        ? "Ready — focus and plan are saved; review them before joining."
+        : "Needs preparation — build the focus and plan before the call.";
+      const prepHref = `${appUrl}/crm/prep?upcoming=${encodeURIComponent(call.id)}`;
+      return `<a href="${esc(prepHref)}" style="color:#1c1b19;text-decoration:none;"><strong>${esc(time)} · ${esc(call.title || company || "Call")}</strong>${company && call.title !== company ? ` <span style="color:#858078;">(${esc(company)})</span>` : ""}</a>${detailList([
+        { label: "Purpose", text: intent || "No call intent is saved yet." },
+        { label: "Relationship context", text: relationship },
+        { label: "Open loop", text: openLoop },
+        { label: "Prep", text: prep },
+      ])}`;
     });
 
-    const buyingPattern = /\b(buy|buyer|budget|proposal|price|pricing|commercial|contract|pilot|demo|decision|procurement|close|deal|opportunity|solution|need|fit|stakeholder)\b/i;
     const buyingOpportunities = tomorrowCalls
-      .filter((call: any) => bestOpportunity.has(call.company_id) || buyingPattern.test(String(call.intent || "")))
+      // A call is commercial only when the CRM has a genuine open revenue
+      // opportunity. Intent wording alone is not evidence that someone is a
+      // buyer, so partners, suppliers and internal meetings are excluded.
+      .filter((call: any) => bestOpportunity.has(call.company_id))
       .slice(0, 6)
       .map((call: any) => {
         const company = companyNames.get(call.company_id) || call.title || "Call";
         const opportunity = bestOpportunity.get(call.company_id);
+        const details = companyDetails.get(call.company_id) || {};
+        const memory = details.commercial_memory && typeof details.commercial_memory === "object"
+          ? details.commercial_memory
+          : {};
+        const latestCall = memory.lastCall && typeof memory.lastCall === "object"
+          ? memory.lastCall
+          : {};
+        const activity = memory.latestActivity && typeof memory.latestActivity === "object"
+          ? memory.latestActivity
+          : {};
         const value = Number(opportunity?.value) || 0;
-        const intent = firstSentence(call.intent, 220);
-        return `<strong>${esc(company)}</strong>${value ? ` · £${value.toLocaleString("en-GB")}` : ""}<br>${intent ? esc(intent) : "Use the call to confirm buyer need, decision process and a concrete next commitment."}`;
+        const probability = Number(opportunity?.probability) || 0;
+        const deal = [
+          opportunity?.title,
+          opportunity?.pipeline_stage
+            ? `stage: ${String(opportunity.pipeline_stage).replace(/_/g, " ")}`
+            : "",
+          probability ? `${probability}% recorded probability` : "",
+          value ? `£${value.toLocaleString("en-GB")} recorded value` : "",
+        ].filter(Boolean).join(" · ");
+        const evidence =
+          firstListItem(
+            activity.buyingSignals,
+            latestCall.buyingSignals,
+            latestCall.commercialOpportunities
+          ) || "No confirmed buying signal is saved yet.";
+        const gap =
+          firstListItem(
+            latestCall.objections,
+            latestCall.gaps,
+            activity.risks
+          ) || "Confirm the real buyer, urgency, decision route and success criteria.";
+        const nextMove = compactSentences(opportunity?.next_action, 1, 240) ||
+          "If the need is real, agree a defined pilot or another dated decision step.";
+        return `<strong>${esc(company)}</strong>${detailList([
+          { label: "Revenue opportunity", text: deal || "Open revenue opportunity" },
+          { label: "Evidence", text: evidence },
+          { label: "Gap to close", text: gap },
+          { label: "Commercial move", text: nextMove },
+        ])}`;
       });
 
     const isSunday = new Intl.DateTimeFormat("en-GB", {
@@ -245,7 +377,7 @@ export async function GET(req: NextRequest) {
       month: "long",
       year: "numeric",
     });
-    const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || "https://livecoach-alpha.vercel.app"}/crm`;
+    const dashboardUrl = `${appUrl}/crm`;
     const html = renderEmail({
       when,
       callCount: calls.length,
@@ -256,8 +388,11 @@ export async function GET(req: NextRequest) {
       buyingOpportunities,
       weekAhead,
       isSunday,
-      openCount: openTasks.length,
-      overdueCount: scoredTasks.filter((task: any) => task.reason === "Overdue").length,
+      openCount: Number(dashboardData?.kpis?.tasks) || openTasks.length,
+      overdueCount: openTasks.filter((task: any) => {
+        const due = task.due_at ? new Date(task.due_at).getTime() : NaN;
+        return Number.isFinite(due) && due < nowMs;
+      }).length,
       dashboardUrl,
     });
 
@@ -325,9 +460,9 @@ function renderEmail(data: {
     <p style="margin:0 0 3px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#718a76;">LiveCoach</p>
     <h1 style="margin:0 0 6px;font-size:22px;">${data.isSunday ? "Your week-ahead brief" : "Your daily executive brief"}</h1>
     <p style="margin:0 0 25px;font-size:14px;color:#777168;">${esc(data.when)} · ${data.openCount} open actions · ${data.overdueCount} overdue · ${data.callCount} calls captured today</p>
-    ${section("Your highest-priority moves", list(data.attention, "No open actions need attention."))}
-    ${section("Tomorrow: prepare at a glance", list(data.tomorrowItems, "No calls are currently scheduled for tomorrow."))}
-    ${section("Buying opportunities in tomorrow’s calls", list(data.buyingOpportunities, "No clear buying opportunity is attached to tomorrow’s calls yet."))}
+    ${section("Your dashboard priorities", list(data.attention, "No open actions need attention."))}
+    ${section("Tomorrow’s call briefs", list(data.tomorrowItems, "No calls are currently scheduled for tomorrow."))}
+    ${section("Tomorrow’s commercial opportunities", list(data.buyingOpportunities, "No genuine open revenue opportunity is attached to tomorrow’s calls."))}
     ${data.isSunday ? section("Monday to Friday", data.weekAhead.map((day) => `<div style="margin:0 0 15px;"><p style="margin:0 0 5px;font-size:14px;font-weight:700;">${esc(day.weekday)}</p>${list(day.items, "No calls scheduled.")}</div>`).join("")) : ""}
     ${section("Today’s progress", list(data.progress, "No completed calls or checked-off tasks were captured today."))}
     <a href="${esc(data.dashboardUrl)}" style="display:inline-block;padding:10px 16px;border-radius:20px;background:#26372b;color:#fff;text-decoration:none;font-size:13px;">Open LiveCoach dashboard</a>
