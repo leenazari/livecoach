@@ -245,6 +245,7 @@ export default function ClientAssistant({
     completed: number;
     notCompleted: number;
   } | null>(null);
+  const [receiptWarning, setReceiptWarning] = useState("");
   const [contextMode, setContextMode] = useState<"memory" | "extended">("memory");
   const recRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null); // ElevenLabs playback
@@ -825,8 +826,43 @@ export default function ClientAssistant({
   // A proposed write action only runs when the user taps Confirm. It fires the
   // ready-made request the server resolved (set link, set intent, link client,
   // dismiss) and refreshes any open lists.
-  const confirmAction = async (a: any): Promise<boolean> => {
-    if (!a || !a.endpoint) return false;
+  type ActionOutcome = { ok: boolean; error?: string };
+  const persistActionReceipt = async (
+    results: {
+      label: string;
+      status: "completed" | "not_completed";
+      reason?: string;
+      action?: any;
+    }[]
+  ) => {
+    try {
+      const saved = await crmFetch<{ receipt: Msg }>(
+        "/api/crm/assistant/receipts",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            companyId: isGlobal ? null : companyId,
+            screenLabel: screenContext?.label || "CRM",
+            results,
+          }),
+        }
+      );
+      if (!saved.receipt?.id) throw new Error("The receipt was not confirmed");
+      setMessages((current) => [...current, saved.receipt]);
+      setReceiptWarning("");
+    } catch {
+      setReceiptWarning(
+        "The CRM change was handled, but its Brain receipt did not save. The result remains flagged above; please do not assume an unconfirmed receipt exists."
+      );
+    }
+  };
+
+  const confirmAction = async (
+    a: any,
+    recordReceipt = true
+  ): Promise<ActionOutcome> => {
+    if (!a || !a.endpoint)
+      return { ok: false, error: "No safe CRM action was available." };
     setActionErrors((errors) => {
       const next = { ...errors };
       delete next[a.key];
@@ -849,14 +885,24 @@ export default function ClientAssistant({
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
-      return true;
+      if (recordReceipt)
+        await persistActionReceipt([
+          { label: a.label, status: "completed", action: a },
+        ]);
+      return { ok: true };
     } catch (error: any) {
+      const reason =
+        error?.message || "That change did not save. Please try again.";
       setActionState((s) => ({ ...s, [a.key]: "pending" }));
       setActionErrors((errors) => ({
         ...errors,
-        [a.key]: error?.message || "That change did not save. Please try again.",
+        [a.key]: reason,
       }));
-      return false;
+      if (recordReceipt)
+        await persistActionReceipt([
+          { label: a.label, status: "not_completed", reason, action: a },
+        ]);
+      return { ok: false, error: reason };
     }
   };
   const cancelAction = (a: any) =>
@@ -887,12 +933,29 @@ export default function ClientAssistant({
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+      await persistActionReceipt([
+        {
+          label: `${a.label}: ${c.label}`,
+          status: "completed",
+          action: { ...a, ...c, label: `${a.label}: ${c.label}` },
+        },
+      ]);
     } catch (error: any) {
+      const reason =
+        error?.message || "That change did not save. Please try again.";
       setActionState((s) => ({ ...s, [a.key]: "pending" }));
       setActionErrors((errors) => ({
         ...errors,
-        [a.key]: error?.message || "That change did not save. Please try again.",
+        [a.key]: reason,
       }));
+      await persistActionReceipt([
+        {
+          label: `${a.label}: ${c.label}`,
+          status: "not_completed",
+          reason,
+          action: { ...a, ...c, label: `${a.label}: ${c.label}` },
+        },
+      ]);
     }
   };
 
@@ -911,13 +974,24 @@ export default function ClientAssistant({
     setBatchBusy(true);
     setBatchOutcome(null);
     try {
-      const outcomes: boolean[] = [];
-      for (const action of pending) outcomes.push(await confirmAction(action));
-      const completed = outcomes.filter(Boolean).length;
+      const outcomes: ActionOutcome[] = [];
+      for (const action of pending)
+        outcomes.push(await confirmAction(action, false));
+      const completed = outcomes.filter((outcome) => outcome.ok).length;
       setBatchOutcome({
         completed,
         notCompleted: outcomes.length - completed,
       });
+      await persistActionReceipt(
+        pending.map((action, index) => ({
+          label: action.label,
+          status: outcomes[index].ok
+            ? ("completed" as const)
+            : ("not_completed" as const),
+          reason: outcomes[index].error,
+          action,
+        }))
+      );
     } finally {
       setBatchBusy(false);
     }
@@ -1044,6 +1118,10 @@ export default function ClientAssistant({
               className={`max-w-[88%] select-text rounded-xl px-3 py-2 font-sans text-[0.84rem] leading-relaxed ${
                 m.role === "user"
                   ? "border border-amber/30 bg-amber/15 text-amber/90"
+                  : m.content.startsWith("BRAIN ACTION RECEIPT")
+                  ? m.content.includes("⚠ Not completed")
+                    ? "border border-rust/45 bg-rust/[0.08] text-bone/90"
+                    : "border border-sage/45 bg-sage/[0.08] text-bone/90"
                   : "border border-edge bg-ink/40 text-bone/90"
               }`}
             >
@@ -1091,7 +1169,9 @@ export default function ClientAssistant({
               ) : (
                 <p className="whitespace-pre-wrap">{m.content}</p>
               )}
-              {m.role === "assistant" && visibleForDisplay(m.content).trim() && (
+              {m.role === "assistant" &&
+                !m.content.startsWith("BRAIN ACTION RECEIPT") &&
+                visibleForDisplay(m.content).trim() && (
                 <div className="mt-1.5 flex gap-3">
                   <button
                     type="button"
@@ -1262,6 +1342,12 @@ export default function ClientAssistant({
             </div>
           </div>
         ))}
+
+        {receiptWarning ? (
+          <p role="alert" className="rounded-lg border border-rust/45 bg-rust/10 px-3 py-2 font-sans text-[0.72rem] leading-snug text-rust">
+            {receiptWarning}
+          </p>
+        ) : null}
 
         {busy &&
           !(messages[messages.length - 1]?.content || "").trim() && (

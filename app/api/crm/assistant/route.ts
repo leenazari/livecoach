@@ -16,6 +16,12 @@ import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib
 import { logModelUsage } from "@/lib/usage";
 import { RELATIONSHIP_STAGE_BY_KEY } from "@/lib/relationship-stages";
 import { resolveExistingCompany } from "@/lib/company-resolver";
+import {
+  actionWasAlreadyProposed,
+  brainActionSignature,
+  sameBrainAction,
+  type BrainActionSignature,
+} from "@/lib/brain-action-signatures";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -224,59 +230,6 @@ function actionVerb(type: string): string {
     : type === "link_call"
     ? "link"
     : "remove";
-}
-
-// --- ACTION MEMORY: stop the brain re-proposing what it already offered ---
-// The model cannot see its own past proposals (they are stripped from the saved
-// reply), so it re-lists the same actions every turn. We store a compact
-// signature of each proposed action on the message row and, next turn, drop any
-// new action that matches one already proposed in this thread. The match is
-// fuzzy (type + target + word overlap) so a reworded repeat is still caught.
-const SIG_STOP = new Set([
-  "the","a","an","and","or","for","to","of","in","on","that","this","with","record",
-  "call","note","correct","remember","add","focus","update","client","profile","set",
-  "link","them","their","from","into","have","has","been","also","just","now","who",
-  "his","her","one","two","day","take","over","around","still","worth","new",
-]);
-const sigNorm = (s: any) =>
-  String(s || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-const sigWords = (s: any): string[] =>
-  Array.from(
-    new Set(sigNorm(s).split(" ").filter((w) => w.length >= 4 && !SIG_STOP.has(w)))
-  );
-const sigTarget = (pa: any): string => {
-  const ep = String(pa?.endpoint || "");
-  let m = ep.match(/\/companies\/([^/]+)/);
-  if (m) return m[1];
-  m = ep.match(/\/upcoming\/([^/]+)/);
-  if (m) return m[1];
-  m = ep.match(/\/(?:contacts|opportunities|tasks|campaigns)\/([^/]+)/);
-  if (m) return m[1];
-  const b = pa?.body || {};
-  return sigNorm(b.name || b.email || b.query || b.client || "");
-};
-function actionSig(pa: any): { type: string; target: string; words: string[] } {
-  return { type: String(pa?.type || ""), target: sigTarget(pa), words: sigWords(pa?.label) };
-}
-function sigOverlap(a: string[], b: string[]): number {
-  if (!a.length || !b.length) return 0;
-  const bs = new Set(b);
-  let n = 0;
-  for (const w of a) if (bs.has(w)) n++;
-  return n / Math.min(a.length, b.length);
-}
-// True if this action was effectively already proposed earlier in the thread.
-function alreadyProposed(pa: any, prior: any[]): boolean {
-  const t = sigTarget(pa);
-  const w = sigWords(pa?.label);
-  const type = String(pa?.type || "");
-  return (prior || []).some((p) => {
-    if (!p || p.type !== type) return false;
-    const ov = sigOverlap(w, Array.isArray(p.words) ? p.words : []);
-    if (p.target && t && p.target === t && ov >= 0.34) return true; // same target, reworded
-    if (!p.target && !t && ov >= 0.5) return true; // targetless (e.g. remember)
-    return ov >= 0.7; // near-identical wording regardless
-  });
 }
 
 async function resolveActions(items: any[], defaultCompanyId: string | null = null): Promise<any[]> {
@@ -1022,10 +975,23 @@ export async function POST(req: NextRequest) {
     const history = (histRes as any)?.data;
     // Signatures of actions already proposed earlier in this thread, so we never
     // re-offer the same one (the model can't see its own past proposals).
-    const priorSigs: any[] = [];
+    const priorSigs: BrainActionSignature[] = [];
+    const receiptOutcomes: BrainActionSignature[] = [];
     for (const m of (history || []) as any[]) {
       if (Array.isArray(m?.action_sigs))
-        for (const s of m.action_sigs) if (s && s.type) priorSigs.push(s);
+        for (const signature of m.action_sigs) {
+          if (!signature?.type) continue;
+          if (signature.outcome) {
+            receiptOutcomes.push(signature);
+            if (signature.outcome === "completed") priorSigs.push(signature);
+          } else if (
+            !receiptOutcomes.some((receipt) =>
+              sameBrainAction(signature, receipt)
+            )
+          ) {
+            priorSigs.push(signature);
+          }
+        }
     }
     const priorTurns: { role: "user" | "assistant"; content: string }[] = (
       history || []
@@ -1290,7 +1256,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           // can never ask the user to confirm the same thing twice.
           if (priorSigs.length)
             proposedActions = proposedActions.filter(
-              (pa) => !alreadyProposed(pa, priorSigs)
+              (pa) => !actionWasAlreadyProposed(pa, priorSigs)
             );
           proposedActions = [...proposedActions, ...unresolvedActions];
 
@@ -1337,7 +1303,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
               // Remember what was proposed so it is never re-offered next turn.
               action_sigs: proposedActions
                 .filter((pa) => !pa.unavailable)
-                .map((pa) => actionSig(pa)),
+                .map((pa) => brainActionSignature(pa)),
             },
           ]);
 
