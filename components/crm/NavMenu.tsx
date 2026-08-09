@@ -11,14 +11,13 @@ import { createSupabaseBrowser } from "@/lib/supabase-browser";
 type Item = { href: string; label: string; icon: string; tab?: string };
 const CORE_ITEMS: Item[] = [
   { href: "/crm", label: "Today", icon: "▣" },
+  { href: "/crm/inbox", label: "Work inbox", icon: "✓" },
   { href: "/crm/outreach", label: "Outreach", icon: "↗" },
   { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
   { href: "/crm/calls", label: "Calls", icon: "☎" },
 ];
 const MORE_ITEMS: Item[] = [
   { href: "/crm/revenue", label: "Revenue", icon: "◆" },
-  { href: "/crm/board?tab=tasks", label: "To do", icon: "→", tab: "tasks" },
-  { href: "/crm/board?tab=drafts", label: "Drafts", icon: "✉", tab: "drafts" },
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
   { href: "/crm/health", label: "Health", icon: "✓" },
   { href: "/settings", label: "Settings", icon: "⚙" },
@@ -108,6 +107,7 @@ function NavMenuInner() {
   const isActive = (it: Item) => {
     if (it.href === "/crm") return pathname === "/crm";
     if (it.href === "/call") return pathname.startsWith("/call");
+    if (it.href === "/crm/inbox") return pathname.startsWith("/crm/inbox");
     if (it.href === "/crm/revenue")
       return pathname.startsWith("/crm/revenue");
     if (it.href === "/crm/call-coach")
@@ -132,7 +132,7 @@ function NavMenuInner() {
       { href: "/crm/outreach", label: "Outreach", icon: "↗" },
       { href: "/crm", label: "Today", icon: "▣" },
       { href: "/call", label: "Start", icon: "▸" },
-      { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
+      { href: "/crm/inbox", label: "Inbox", icon: "✓" },
     ];
     return (
       <>
