@@ -33,7 +33,7 @@ const fmtWhen = (iso: string | null) => {
   }
 };
 
-export default function UpcomingCalls() {
+export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   const router = useRouter();
   const cached = getCached<{ calls: Upcoming[] }>("/api/crm/upcoming");
   const [calls, setCalls] = useState<Upcoming[]>(cached?.calls || []);
@@ -270,8 +270,7 @@ export default function UpcomingCalls() {
   // Default to the soonest 10 calls, with the rest behind an expand button, so
   // the dashboard stays condensed once the calendar fills up. The list arrives
   // already sorted soonest-first.
-  const LIMIT = 10;
-  const shown = showAll ? calls : calls.slice(0, LIMIT);
+  const shown = showAll ? calls : calls.slice(0, limit);
   const hiddenCount = calls.length - shown.length;
 
   return (
@@ -489,7 +488,7 @@ export default function UpcomingCalls() {
             </li>
           ))}
         </ul>
-        {calls.length > LIMIT && (
+        {calls.length > limit && (
           <button
             type="button"
             onClick={() => setShowAll((v) => !v)}
