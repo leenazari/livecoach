@@ -75,17 +75,24 @@ async function findCompanyById(id: string) {
     .maybeSingle();
   return data || null;
 }
-async function findOpenTasks(text: string, companyId?: string | null): Promise<any[]> {
+async function findTasks(
+  text: string,
+  companyId?: string | null,
+  statuses: string[] = ["open"]
+): Promise<any[]> {
   const term = likeTerm(text);
   if (!term) return [];
   let query = supabaseAdmin
     .from("tasks")
-    .select("id, text, due_at, payload, company_id")
-    .eq("status", "open")
+    .select("id, text, due_at, payload, company_id, link_kind")
+    .in("status", statuses)
     .ilike("text", `%${term}%`);
   if (companyId) query = query.eq("company_id", companyId);
   const { data } = await query.limit(4);
   return data || [];
+}
+async function findOpenTasks(text: string, companyId?: string | null): Promise<any[]> {
+  return findTasks(text, companyId, ["open"]);
 }
 async function findOpenTask(text: string) {
   const tasks = await findOpenTasks(text);
@@ -164,11 +171,16 @@ function opportunityPatch(item: any): Record<string, any> {
   if (typeof item.expectedCloseAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.expectedCloseAt))
     patch.expectedCloseAt = item.expectedCloseAt;
   if (typeof item.detail === "string") patch.detail = item.detail.trim().slice(0, 1000);
+  if (typeof item.title === "string" && item.title.trim())
+    patch.title = item.title.trim().slice(0, 240);
+  if (typeof item.outcomeReason === "string")
+    patch.outcomeReason = item.outcomeReason.trim().slice(0, 1000);
   return patch;
 }
 
 function opportunityChangeLabel(patch: Record<string, any>): string {
   const bits: string[] = [];
+  if (patch.title) bits.push(`title "${patch.title}"`);
   if (patch.pipelineStage) bits.push(`stage ${patch.pipelineStage}`);
   if (patch.probability != null) bits.push(`probability ${patch.probability}%`);
   if (patch.forecastCategory) bits.push(`forecast ${patch.forecastCategory.replace("_", " ")}`);
@@ -177,6 +189,8 @@ function opportunityChangeLabel(patch: Record<string, any>): string {
   if (patch.expectedCloseAt) bits.push(`expected close ${patch.expectedCloseAt}`);
   if (patch.value != null) bits.push(`value £${patch.value}`);
   if (patch.status) bits.push(`status ${patch.status}`);
+  if (patch.opportunityType) bits.push(`type ${patch.opportunityType}`);
+  if (patch.outcomeReason) bits.push(`outcome reason "${patch.outcomeReason}"`);
   return bits.slice(0, 4).join(", ");
 }
 // Build the ready-to-fire request for a call-targeting action against ONE call.
@@ -368,7 +382,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
         ? await findCompanyById(defaultCompanyId)
         : null);
       if (!company) continue;
-      const patch: Record<string, string> = {};
+      const patch: Record<string, string | null> = {};
       if (typeof it.stage === "string") {
         const stage = RELATIONSHIP_STAGE_BY_KEY.get(it.stage.trim().toLowerCase());
         if (stage) patch.stage = stage;
@@ -377,6 +391,15 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
         if (typeof it[field] === "string" && it[field].trim())
           patch[field] = it[field].trim().slice(0, 240);
       }
+      if (typeof it.name === "string" && it.name.trim())
+        patch.name = it.name.trim().slice(0, 240);
+      if (typeof it.notes === "string" || it.notes === null)
+        patch.notes = typeof it.notes === "string" ? it.notes.trim().slice(0, 4000) || null : null;
+      if (typeof it.emailContext === "string" || it.emailContext === null)
+        patch.email_context =
+          typeof it.emailContext === "string"
+            ? it.emailContext.trim().slice(0, 6000) || null
+            : null;
       if (!Object.keys(patch).length) continue;
       out.push({
         key,
@@ -476,6 +499,52 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       continue;
     }
 
+    if (it.type === "update_contact") {
+      const person = String(it.person || "").trim();
+      const named = it.client ? await findCompany(String(it.client)) : null;
+      const company = named || (!it.client && defaultCompanyId
+        ? await findCompanyById(defaultCompanyId)
+        : null);
+      if (!person || !company) continue;
+      const contacts = await findContacts(person, company.id);
+      const patch: Record<string, string | null> = {};
+      if (typeof it.newName === "string" && it.newName.trim())
+        patch.name = it.newName.trim().slice(0, 240);
+      for (const field of ["role", "email", "sector", "notes"] as const) {
+        if (typeof it[field] === "string" || it[field] === null)
+          patch[field] =
+            typeof it[field] === "string"
+              ? it[field].trim().slice(0, field === "notes" ? 4000 : 240) || null
+              : null;
+      }
+      if (!contacts.length || !Object.keys(patch).length) continue;
+      const updateFor = (contact: any) => ({
+        label: `${contact.name} at ${company.name}`,
+        endpoint: `/api/crm/contacts/${contact.id}`,
+        method: "PATCH",
+        body: patch,
+      });
+      if (contacts.length === 1) {
+        const exec = updateFor(contacts[0]);
+        out.push({
+          key,
+          type: it.type,
+          label: `Edit contact ${exec.label}: ${Object.keys(patch).join(", ")}`,
+          endpoint: exec.endpoint,
+          method: exec.method,
+          body: exec.body,
+        });
+      } else {
+        out.push({
+          key,
+          type: it.type,
+          label: `Which ${person} at ${company.name} should I edit?`,
+          choices: contacts.map(updateFor),
+        });
+      }
+      continue;
+    }
+
     if (it.type === "log_client_update") {
       const content = typeof it.content === "string" ? it.content.trim() : "";
       if (!content) continue;
@@ -539,7 +608,11 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       const namedCompany = it.client ? await findCompany(String(it.client)) : null;
       if (it.client && !namedCompany) continue;
       const taskCompanyId = namedCompany?.id || (!it.client ? defaultCompanyId : null);
-      const tasks = await findOpenTasks(query, taskCompanyId);
+      const tasks = await findTasks(
+        query,
+        taskCompanyId,
+        it.status === "open" ? ["done", "dismissed", "open"] : ["open"]
+      );
       if (!tasks.length) continue;
       const patchFor = (task: any) => {
         const patch: Record<string, any> = {};
@@ -551,6 +624,8 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
         else if (it.dueAt === null) patch.dueAt = null;
         if (typeof it.pinned === "boolean")
           patch.payload = { ...(task.payload || {}), pinned: it.pinned };
+        if (["email", "call", "task"].includes(it.action))
+          patch.action = it.action;
         return patch;
       };
       const describe = (task: any) => {
@@ -561,6 +636,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
         if (patch.text) changes.push(`rename to "${patch.text}"`);
         if ("dueAt" in patch) changes.push(patch.dueAt ? `due ${patch.dueAt}` : "clear deadline");
         if (patch.payload) changes.push(patch.payload.pinned ? "pin" : "unpin");
+        if (patch.action) changes.push(`change action to ${patch.action}`);
         return changes.join(", ");
       };
       const executable = tasks
@@ -784,6 +860,53 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
   }));
 }
 
+const requestedActionLabel = (item: any) => {
+  const type = String(item?.type || "CRM change").replace(/_/g, " ");
+  const target = [
+    item?.item,
+    item?.task,
+    item?.client,
+    item?.call,
+    item?.person,
+    item?.campaign,
+    item?.opportunity,
+    item?.name,
+    item?.text,
+  ].find((value) => typeof value === "string" && value.trim());
+  return target ? `${type}: ${String(target).trim().slice(0, 180)}` : type;
+};
+
+// The resolver used to silently omit an action when a named task, client, call
+// or draft could not be identified. That looked as though Brain had done the
+// work. Keep every unresolved request in the visible plan as an explicit red
+// "Not completed" result instead.
+function flagUnresolvedActions(requested: any[], resolved: any[]): any[] {
+  const remaining = new Map<string, number>();
+  for (const action of resolved) {
+    const type = String(action?.type || "");
+    remaining.set(type, (remaining.get(type) || 0) + 1);
+  }
+  const unresolved: any[] = [];
+  for (const item of requested) {
+    const type = String(item?.type || "");
+    const count = remaining.get(type) || 0;
+    if (count > 0) {
+      remaining.set(type, count - 1);
+      continue;
+    }
+    unresolved.push({
+      key: `not-done-${Math.random().toString(36).slice(2)}`,
+      type: type || "unknown",
+      label: requestedActionLabel(item),
+      unavailable: true,
+      batchSafe: false,
+      failureReason:
+        "Brain could not safely identify the exact record or a required edit value was missing. No change was made.",
+    });
+  }
+  return unresolved;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { companyId, focusCompanyId, message, screenContext: rawScreen } = await req.json();
@@ -800,6 +923,7 @@ export async function POST(req: NextRequest) {
       "opportunities",
       "drafts",
       "tasks",
+      "work_inbox",
       "call_coach",
       "calls",
       "prep",
@@ -974,15 +1098,17 @@ ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does th
 [{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<call title>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
 ---END ACTIONS---
 Additional supported actions are:
-{"type":"update_client","client":"<client name, omit on their profile>","stage":"New|Discovery|Qualified|Proposal|Negotiation|Partner|Customer|In House|Dormant","sector":"<optional>","website":"<optional>","domain":"<optional>"}
+{"type":"update_client","client":"<client name, omit on their profile>","name":"<optional corrected name>","stage":"New|Discovery|Qualified|Proposal|Negotiation|Partner|Customer|In House|Dormant","sector":"<optional>","website":"<optional>","domain":"<optional>","notes":"<optional, null to clear>","emailContext":"<optional, null to clear>"}
 {"type":"upsert_stakeholder","client":"<client name, omit on their profile>","person":"<contact name>","buyingRole":"decision_maker|champion|user|influencer|blocker|unknown","influence":"high|medium|low","engagement":"warm|neutral|cold","jobTitle":"<optional>","email":"<optional>"}
-{"type":"update_task","client":"<client name, omit on their profile>","item":"<existing to-do text>","status":"done|open","newText":"<optional replacement>","dueAt":"YYYY-MM-DD or null","pinned":true}
+{"type":"update_contact","client":"<client name, omit on their profile>","person":"<existing contact name>","newName":"<optional corrected name>","role":"<optional, null to clear>","email":"<optional, null to clear>","sector":"<optional, null to clear>","notes":"<optional, null to clear>"}
+{"type":"update_task","client":"<client name, omit on their profile>","item":"<existing to-do text>","status":"done|open","newText":"<optional replacement>","dueAt":"YYYY-MM-DD or null","pinned":true,"action":"email|call|task"}
 {"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":20}
 {"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":20,"status":"draft|active|paused|completed"}
 {"type":"build_outreach_queue","limit":20}
-{"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed"}
+{"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>"}
 For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
 Use update_client for the relationship-level client stage and core facts. Use update_opportunity for a real revenue deal stage. When "move this client to qualified" clearly refers to a deal, update the opportunity. When it refers to the overall relationship or there is no deal, update the client stage. Never update both unless the user explicitly asks.
+Use update_contact to correct or clear an existing person's core details. Use upsert_stakeholder when the change is specifically about their buying role or when the named contact may need to be created.
 Use upsert_stakeholder when the user identifies a decision-maker, champion, influencer, user or blocker. It updates an existing contact or clearly proposes creating the named contact when none exists. Do not guess buying roles from a job title alone.
 Use update_task when the user explicitly asks to complete, rename, pin, unpin or reschedule an existing to-do. If several match, the interface will ask which one.
 Use log_client_update when the user reports an off-system phone call, text message, voice note or relationship update. Keep the content factual and concise. It enters that client's timeline and commercial memory, updates any grounded next action, and refreshes future next-call intent after the user confirms it once. If the user names a client, use the exact known client name or saved alias. Never map a one-word first name to a different full-name client merely because part of the text matches.
@@ -991,6 +1117,7 @@ For update_campaign you may also include "voice":{"tone":"...","style":"...","ru
 CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Exact outreach drafts and external sends stay in the dedicated Outreach approval flow.
 
 BATCH APPROVAL: when the user asks for several safe internal changes, emit them together. The interface shows every exact change and offers one approval for the safe subset. Destructive changes, Gmail pulls and any future external send stay separately confirmed.
+NO SILENT FAILURES: if a requested edit cannot be matched or completed, the action panel will mark it Not completed. Never imply that an edit happened merely because you described it in prose.
 When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too. If you are not sure which call, client, draft or to-do the user means, ask them to clarify in your prose reply rather than guessing (the system will also offer a pick-list if more than one record matches the name).
 Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done.
 
@@ -1150,9 +1277,14 @@ ALWAYS end the spoken version with your closing question whenever your reply has
               /* ignore a malformed action block */
             }
           }
-          proposedActions = await resolveActions(
-            [...taskActionItems, ...(Array.isArray(writeActionItems) ? writeActionItems : [])],
-            focus
+          const requestedActions = [
+            ...taskActionItems,
+            ...(Array.isArray(writeActionItems) ? writeActionItems : []),
+          ];
+          proposedActions = await resolveActions(requestedActions, focus);
+          const unresolvedActions = flagUnresolvedActions(
+            requestedActions,
+            proposedActions
           );
           // Drop anything already proposed earlier in this thread, so the brain
           // can never ask the user to confirm the same thing twice.
@@ -1160,6 +1292,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
             proposedActions = proposedActions.filter(
               (pa) => !alreadyProposed(pa, priorSigs)
             );
+          proposedActions = [...proposedActions, ...unresolvedActions];
 
           // --- SPOKEN summary (tolerant of a malformed close) ---
           let spoken = "";
@@ -1202,7 +1335,9 @@ ALWAYS end the spoken version with your closing question whenever your reply has
               role: "assistant",
               content: reply,
               // Remember what was proposed so it is never re-offered next turn.
-              action_sigs: proposedActions.map((pa) => actionSig(pa)),
+              action_sigs: proposedActions
+                .filter((pa) => !pa.unavailable)
+                .map((pa) => actionSig(pa)),
             },
           ]);
 

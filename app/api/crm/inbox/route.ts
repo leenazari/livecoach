@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { londonDayBounds } from "@/lib/outreach";
+import { buildWorkCleanup } from "@/lib/work-cleanup";
 import type { WorkInboxItem, WorkInboxResponse } from "@/lib/work-inbox";
 
 export const runtime = "nodejs";
@@ -345,9 +346,16 @@ export async function GET() {
       done: items.filter((item) => item.done).length,
       all: items.filter((item) => !item.done).length,
     };
+    const cleanup = buildWorkCleanup(
+      (tasksResult.data || []) as any[],
+      companyName,
+      revenueCompanies,
+      nowMs
+    );
     const response: WorkInboxResponse = {
       generatedAt: nowIso,
       items,
+      cleanup,
       counts,
     };
     return NextResponse.json(response, { headers: noStore });

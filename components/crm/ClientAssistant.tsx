@@ -46,6 +46,12 @@ const CONTEXTUAL_CHIPS: Record<string, string[]> = {
     "Which overdue item threatens revenue?",
     "What can I safely dismiss?",
   ],
+  work_inbox: [
+    "Review anything not completed",
+    "Edit my highest-priority task",
+    "Which flagged item needs a decision?",
+    "Help me clean up the waiting list",
+  ],
   drafts: [
     "Which draft should I send first?",
     "Which follow-up has the best commercial reason?",
@@ -235,6 +241,10 @@ export default function ClientAssistant({
   const [actionState, setActionState] = useState<Record<string, string>>({});
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
   const [batchBusy, setBatchBusy] = useState(false);
+  const [batchOutcome, setBatchOutcome] = useState<{
+    completed: number;
+    notCompleted: number;
+  } | null>(null);
   const [contextMode, setContextMode] = useState<"memory" | "extended">("memory");
   const recRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null); // ElevenLabs playback
@@ -824,10 +834,18 @@ export default function ClientAssistant({
     });
     setActionState((s) => ({ ...s, [a.key]: "busy" }));
     try {
-      await crmFetch(a.endpoint, {
+      const result: any = await crmFetch(a.endpoint, {
         method: a.method || "PATCH",
         body: JSON.stringify(a.body || {}),
       });
+      if (result?.ok === false || result?.created === false)
+        throw new Error(
+          result?.reason || result?.error || "The server did not confirm that change."
+        );
+      if (Array.isArray(result?.notCompleted) && result.notCompleted.length)
+        throw new Error(
+          `${result.notCompleted.length} part${result.notCompleted.length === 1 ? " was" : "s were"} not completed.`
+        );
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
@@ -854,10 +872,18 @@ export default function ClientAssistant({
     });
     setActionState((s) => ({ ...s, [a.key]: "busy" }));
     try {
-      await crmFetch(c.endpoint, {
+      const result: any = await crmFetch(c.endpoint, {
         method: c.method || "PATCH",
         body: JSON.stringify(c.body || {}),
       });
+      if (result?.ok === false || result?.created === false)
+        throw new Error(
+          result?.reason || result?.error || "The server did not confirm that change."
+        );
+      if (Array.isArray(result?.notCompleted) && result.notCompleted.length)
+        throw new Error(
+          `${result.notCompleted.length} part${result.notCompleted.length === 1 ? " was" : "s were"} not completed.`
+        );
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
@@ -883,8 +909,15 @@ export default function ClientAssistant({
     );
     if (pending.length < 2 || batchBusy) return;
     setBatchBusy(true);
+    setBatchOutcome(null);
     try {
-      for (const action of pending) await confirmAction(action);
+      const outcomes: boolean[] = [];
+      for (const action of pending) outcomes.push(await confirmAction(action));
+      const completed = outcomes.filter(Boolean).length;
+      setBatchOutcome({
+        completed,
+        notCompleted: outcomes.length - completed,
+      });
     } finally {
       setBatchBusy(false);
     }
@@ -1118,19 +1151,42 @@ export default function ClientAssistant({
                             ).length})`}
                       </button>
                     )}
+                    {batchOutcome &&
+                    m.actions.some(
+                      (action: any) =>
+                        actionState[action.key] === "done" || actionErrors[action.key]
+                    ) ? (
+                      <p
+                        role={batchOutcome.notCompleted ? "alert" : "status"}
+                        className={`rounded-lg border px-3 py-2 font-sans text-[0.7rem] leading-snug ${
+                          batchOutcome.notCompleted
+                            ? "border-rust/45 bg-rust/10 text-rust"
+                            : "border-sage/40 bg-sage/10 text-sage"
+                        }`}
+                      >
+                        {batchOutcome.completed} completed. {batchOutcome.notCompleted} not completed.
+                        {batchOutcome.notCompleted
+                          ? " The failed changes remain flagged below."
+                          : " All approved changes were confirmed."}
+                      </p>
+                    ) : null}
                     {m.actions.map((a: any) => {
                       const st = actionState[a.key] || "pending";
                       if (st === "cancelled") return null;
                       return (
                         <div
                           key={a.key}
-                          className="rounded-lg border border-sky/40 bg-sky/[0.06] p-2"
+                          className={`rounded-lg border p-2 ${
+                            a.unavailable
+                              ? "border-rust/45 bg-rust/[0.08]"
+                              : "border-sky/40 bg-sky/[0.06]"
+                          }`}
                         >
                           <div className="mb-1.5 flex items-center justify-between gap-2">
-                            <span className="font-mono text-[0.5rem] uppercase tracking-wider text-sky/80">
-                              proposed change
+                            <span className={`font-mono text-[0.5rem] uppercase tracking-wider ${a.unavailable ? "text-rust" : "text-sky/80"}`}>
+                              {a.unavailable ? "Not completed" : "proposed change"}
                             </span>
-                            <span
+                            {!a.unavailable ? <span
                               className={`rounded-full border px-2 py-0.5 font-mono text-[0.48rem] uppercase tracking-wider ${
                                 a.batchSafe
                                   ? "border-sage/35 bg-sage/10 text-sage"
@@ -1138,12 +1194,16 @@ export default function ClientAssistant({
                               }`}
                             >
                               {a.batchSafe ? "safe internal" : "separate approval"}
-                            </span>
+                            </span> : null}
                           </div>
                           <p className="mb-1.5 font-sans text-[0.78rem] leading-snug text-bone/90">
                             {"⚙"} {a.label}
                           </p>
-                          {st === "done" ? (
+                          {a.unavailable ? (
+                            <p className="rounded-md border border-rust/30 bg-rust/[0.06] px-2 py-1.5 font-sans text-[0.68rem] leading-snug text-rust">
+                              {a.failureReason || "No change was made."}
+                            </p>
+                          ) : st === "done" ? (
                             <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
                               ✓ done
                             </span>

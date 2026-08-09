@@ -27,9 +27,41 @@ export type WorkInboxItem = {
   dismissible: boolean;
 };
 
+export type WorkCleanupKind =
+  | "duplicate"
+  | "stale"
+  | "needs_date"
+  | "waiting";
+
+export type WorkCleanupSuggestion = {
+  id: string;
+  kind: WorkCleanupKind;
+  title: string;
+  reason: string;
+  company: string | null;
+  companyId: string | null;
+  taskIds: string[];
+  taskTitles: string[];
+  keepTaskId: string | null;
+  safeToApply: boolean;
+  ageDays: number;
+};
+
+export type WorkCleanupSummary = {
+  suggestions: WorkCleanupSuggestion[];
+  counts: {
+    total: number;
+    actionable: number;
+    flagged: number;
+    duplicates: number;
+    stale: number;
+  };
+};
+
 export type WorkInboxResponse = {
   generatedAt: string;
   items: WorkInboxItem[];
+  cleanup: WorkCleanupSummary;
   counts: {
     now: number;
     urgent: number;

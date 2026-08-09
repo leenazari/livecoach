@@ -5,15 +5,27 @@ import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
-import type { WorkInboxItem, WorkInboxResponse } from "@/lib/work-inbox";
+import type {
+  WorkCleanupSuggestion,
+  WorkInboxItem,
+  WorkInboxResponse,
+} from "@/lib/work-inbox";
 
-type Filter = "now" | "revenue" | "approvals" | "waiting" | "all" | "done";
+type Filter =
+  | "now"
+  | "revenue"
+  | "approvals"
+  | "waiting"
+  | "cleanup"
+  | "all"
+  | "done";
 
 const filters: { key: Filter; label: string }[] = [
   { key: "now", label: "Do now" },
   { key: "revenue", label: "Revenue" },
   { key: "approvals", label: "Approvals" },
   { key: "waiting", label: "Waiting" },
+  { key: "cleanup", label: "Clean up" },
   { key: "all", label: "All work" },
   { key: "done", label: "Done" },
 ];
@@ -33,6 +45,32 @@ const priorityStyle: Record<WorkInboxItem["priorityLabel"], string> = {
   normal: "border-sky/40 bg-sky/[0.07] text-sky",
   waiting: "border-edge bg-ink/35 text-muted",
   done: "border-moss/35 bg-moss/[0.06] text-moss",
+};
+
+const cleanupCopy: Record<
+  WorkCleanupSuggestion["kind"],
+  { label: string; icon: string; style: string }
+> = {
+  duplicate: {
+    label: "Duplicate",
+    icon: "≡",
+    style: "border-sky/45 bg-sky/[0.08] text-sky",
+  },
+  stale: {
+    label: "Stale",
+    icon: "○",
+    style: "border-rust/45 bg-rust/[0.08] text-rust",
+  },
+  needs_date: {
+    label: "Needs deadline",
+    icon: "◷",
+    style: "border-amber/45 bg-amber/[0.08] text-amber",
+  },
+  waiting: {
+    label: "Check waiting",
+    icon: "…",
+    style: "border-edge bg-ink/35 text-muted",
+  },
 };
 
 const formatWhen = (value: string | null) => {
@@ -56,6 +94,7 @@ const belongsTo = (item: WorkInboxItem, filter: Filter) => {
   if (filter === "revenue") return !item.done && item.revenue;
   if (filter === "approvals") return !item.done && item.approval;
   if (filter === "waiting") return !item.done && item.waiting;
+  if (filter === "cleanup") return false;
   if (filter === "all") return !item.done;
   return item.done;
 };
@@ -70,12 +109,24 @@ export default function WorkInboxPage() {
   const [editingText, setEditingText] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [selectedCleanup, setSelectedCleanup] = useState<string[]>([]);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupFailures, setCleanupFailures] = useState<
+    { id: string; reason: string }[]
+  >([]);
+  const [undoTaskIds, setUndoTaskIds] = useState<string[]>([]);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const next = await crmFetch<WorkInboxResponse>("/api/crm/inbox");
       setData(next);
+      const currentSuggestionIds = new Set(
+        next.cleanup?.suggestions?.map((suggestion) => suggestion.id) || []
+      );
+      setSelectedCleanup((current) =>
+        current.filter((id) => currentSuggestionIds.has(id))
+      );
       setError("");
     } catch (err: any) {
       setError(err?.message || "The Work Inbox could not be loaded. Please try again.");
@@ -203,12 +254,104 @@ export default function WorkInboxPage() {
     }
   };
 
+  const toggleCleanup = (id: string) => {
+    setSelectedCleanup((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id]
+    );
+  };
+
+  const applyCleanup = async () => {
+    if (!selectedCleanup.length || cleanupBusy) return;
+    setCleanupBusy(true);
+    setError("");
+    setNotice("");
+    setCleanupFailures([]);
+    try {
+      const result = await crmFetch<{
+        completed: { id: string; taskIds: string[] }[];
+        notCompleted: { id: string; reason: string }[];
+        dismissedTaskIds: string[];
+      }>("/api/crm/inbox/cleanup", {
+        method: "POST",
+        body: JSON.stringify({ suggestionIds: selectedCleanup }),
+      });
+      const completed = result.completed?.length || 0;
+      const failed = result.notCompleted || [];
+      setCleanupFailures(failed);
+      setUndoTaskIds(result.dismissedTaskIds || []);
+      setSelectedCleanup([]);
+      setNotice(
+        `${completed} cleanup ${completed === 1 ? "change" : "changes"} saved.${
+          failed.length
+            ? ` ${failed.length} ${failed.length === 1 ? "item was" : "items were"} not completed.`
+            : ""
+        }`
+      );
+      await load(true);
+      window.dispatchEvent(
+        new CustomEvent("lc:tasks-updated", {
+          detail: { source: "work-inbox" },
+        })
+      );
+    } catch (err: any) {
+      setError(err?.message || "The approved cleanup was not completed.");
+    } finally {
+      setCleanupBusy(false);
+    }
+  };
+
+  const undoCleanup = async () => {
+    if (!undoTaskIds.length || cleanupBusy) return;
+    setCleanupBusy(true);
+    setError("");
+    try {
+      const result = await crmFetch<{
+        restored: string[];
+        notCompleted: { id: string; reason: string }[];
+      }>("/api/crm/inbox/cleanup", {
+        method: "POST",
+        body: JSON.stringify({ mode: "undo", taskIds: undoTaskIds }),
+      });
+      setCleanupFailures(result.notCompleted || []);
+      setNotice(
+        `${result.restored?.length || 0} archived ${
+          result.restored?.length === 1 ? "task was" : "tasks were"
+        } restored.${result.notCompleted?.length ? " Some changes could not be undone." : ""}`
+      );
+      setUndoTaskIds([]);
+      await load(true);
+      window.dispatchEvent(
+        new CustomEvent("lc:tasks-updated", {
+          detail: { source: "work-inbox" },
+        })
+      );
+    } catch (err: any) {
+      setError(err?.message || "The cleanup could not be undone.");
+    } finally {
+      setCleanupBusy(false);
+    }
+  };
+
+  const askBrainToEdit = (suggestion: WorkCleanupSuggestion) => {
+    const task = suggestion.taskTitles[0] || suggestion.title;
+    const request =
+      suggestion.kind === "needs_date"
+        ? `Help me decide and set a realistic deadline for this to-do: ${task}`
+        : `Review this waiting to-do and help me either chase it, complete it or dismiss it: ${task}`;
+    window.dispatchEvent(
+      new CustomEvent("lc:open-brain", { detail: { prompt: request } })
+    );
+  };
+
   const countFor = (key: Filter) => {
     if (!data) return 0;
     if (key === "now") return data.counts.now;
     if (key === "revenue") return data.counts.revenue;
     if (key === "approvals") return data.counts.approvals;
     if (key === "waiting") return data.counts.waiting;
+    if (key === "cleanup") return data.cleanup?.counts.total || 0;
     if (key === "all") return data.counts.all;
     return data.counts.done;
   };
@@ -277,13 +420,189 @@ export default function WorkInboxPage() {
         </nav>
 
         {notice ? (
-          <p className="mb-3 rounded-lg border border-sage/35 bg-sage/10 px-3 py-2 text-sm text-sage">✓ {notice}</p>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sage/35 bg-sage/10 px-3 py-2 text-sm text-sage">
+            <p>✓ {notice}</p>
+            {undoTaskIds.length ? (
+              <button
+                type="button"
+                onClick={() => void undoCleanup()}
+                disabled={cleanupBusy}
+                className="min-h-9 rounded-full border border-sage/45 px-3 font-mono text-[0.52rem] uppercase tracking-wider disabled:opacity-40"
+              >
+                Undo cleanup
+              </button>
+            ) : null}
+          </div>
         ) : null}
         {error ? (
           <p role="alert" className="mb-3 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-sm text-rust">{error}</p>
         ) : null}
+        {cleanupFailures.length ? (
+          <section role="alert" className="mb-3 rounded-lg border border-rust/45 bg-rust/10 px-3 py-3">
+            <p className="font-mono text-[0.58rem] uppercase tracking-wider text-rust">
+              Not completed · {cleanupFailures.length}
+            </p>
+            <ul className="mt-2 space-y-1 text-xs leading-5 text-rust/90">
+              {cleanupFailures.map((failure) => (
+                <li key={`${failure.id}:${failure.reason}`}>• {failure.reason}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
-        {loading && !data ? (
+        {filter === "cleanup" && data ? (
+          <section>
+            <div className="mb-3 rounded-xl border border-amber/35 bg-amber/[0.06] p-3 sm:p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="max-w-xl">
+                  <h2 className="font-display text-lg text-bone">Smart cleanup review</h2>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    Safe suggestions use fixed rules, not AI. Nothing is archived until you select it and approve the batch. Important items stay flagged for a Brain edit.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {data.cleanup.counts.actionable ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const actionable = data.cleanup.suggestions
+                          .filter((suggestion) => suggestion.safeToApply)
+                          .map((suggestion) => suggestion.id);
+                        const allSelected = actionable.every((id) =>
+                          selectedCleanup.includes(id)
+                        );
+                        setSelectedCleanup(allSelected ? [] : actionable);
+                      }}
+                      disabled={cleanupBusy}
+                      className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase tracking-wider text-muted hover:text-bone disabled:opacity-40"
+                    >
+                      {data.cleanup.suggestions
+                        .filter((suggestion) => suggestion.safeToApply)
+                        .every((suggestion) => selectedCleanup.includes(suggestion.id))
+                        ? "Clear selection"
+                        : "Select safe suggestions"}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void applyCleanup()}
+                    disabled={!selectedCleanup.length || cleanupBusy}
+                    className="min-h-10 rounded-lg border border-sage/50 bg-sage/10 px-4 font-mono text-[0.52rem] uppercase tracking-wider text-sage disabled:opacity-35"
+                  >
+                    {cleanupBusy
+                      ? "Saving…"
+                      : `Approve selected · ${selectedCleanup.length}`}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2 border-t border-edge/60 pt-3 text-center">
+                <div>
+                  <strong className="block font-display text-xl text-sky">{data.cleanup.counts.duplicates}</strong>
+                  <span className="font-mono text-[0.46rem] uppercase text-muted">Duplicates</span>
+                </div>
+                <div>
+                  <strong className="block font-display text-xl text-rust">{data.cleanup.counts.stale}</strong>
+                  <span className="font-mono text-[0.46rem] uppercase text-muted">Stale</span>
+                </div>
+                <div>
+                  <strong className="block font-display text-xl text-amber">{data.cleanup.counts.flagged}</strong>
+                  <span className="font-mono text-[0.46rem] uppercase text-muted">Need a decision</span>
+                </div>
+              </div>
+            </div>
+
+            {data.cleanup.suggestions.length ? (
+              <ul className="space-y-2">
+                {data.cleanup.suggestions.map((suggestion) => {
+                  const copy = cleanupCopy[suggestion.kind];
+                  const selected = selectedCleanup.includes(suggestion.id);
+                  return (
+                    <li
+                      key={suggestion.id}
+                      className={`rounded-xl border p-3 sm:p-4 ${
+                        selected
+                          ? "border-sage/55 bg-sage/[0.06]"
+                          : "border-edge bg-panel/45"
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        {suggestion.safeToApply ? (
+                          <label className="flex min-h-11 shrink-0 cursor-pointer items-center">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => toggleCleanup(suggestion.id)}
+                              aria-label={`Select cleanup for ${suggestion.title}`}
+                              className="h-5 w-5 accent-sage"
+                            />
+                          </label>
+                        ) : (
+                          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border font-mono ${copy.style}`}>
+                            {copy.icon}
+                          </span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`rounded-full border px-2 py-0.5 font-mono text-[0.48rem] uppercase tracking-wider ${copy.style}`}>
+                              {copy.label}
+                            </span>
+                            {suggestion.safeToApply ? (
+                              <span className="font-mono text-[0.48rem] uppercase tracking-wider text-sage">
+                                Reversible archive
+                              </span>
+                            ) : (
+                              <span className="font-mono text-[0.48rem] uppercase tracking-wider text-amber">
+                                Not changed
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-2 text-sm leading-5 text-bone">
+                            {capitaliseSentenceStarts(suggestion.title)}
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-muted">
+                            {capitaliseSentenceStarts(suggestion.reason)}
+                          </p>
+                          {suggestion.kind === "duplicate" ? (
+                            <ul className="mt-2 space-y-1 border-l border-edge pl-3 text-xs text-muted">
+                              {suggestion.taskTitles.slice(0, 4).map((title) => (
+                                <li key={title}>Archive: {capitaliseSentenceStarts(title)}</li>
+                              ))}
+                            </ul>
+                          ) : null}
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                            {suggestion.companyId ? (
+                              <Link href={`/crm/${suggestion.companyId}`} className="font-mono text-[0.5rem] uppercase tracking-wider text-sky hover:text-bone">
+                                {suggestion.company || "Open client"} ↗
+                              </Link>
+                            ) : (
+                              <span className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">
+                                Unlinked task
+                              </span>
+                            )}
+                            {!suggestion.safeToApply ? (
+                              <button
+                                type="button"
+                                onClick={() => askBrainToEdit(suggestion)}
+                                className="min-h-10 rounded-lg border border-amber/45 bg-amber/10 px-3 font-mono text-[0.5rem] uppercase tracking-wider text-amber"
+                              >
+                                Ask Brain to edit
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <div className="rounded-xl border border-moss/35 bg-moss/[0.06] px-4 py-12 text-center">
+                <p className="font-display text-xl text-bone">The inbox is tidy.</p>
+                <p className="mt-1 text-sm text-muted">No duplicates, stale loose work or undecided old items were found.</p>
+              </div>
+            )}
+          </section>
+        ) : loading && !data ? (
           <div className="space-y-2">
             {[0, 1, 2].map((key) => (
               <div key={key} className="h-28 animate-pulse rounded-xl border border-edge bg-panel/35" />
