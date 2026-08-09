@@ -527,25 +527,27 @@ export default function DashboardPage() {
             Nothing urgent is waiting. You are clear to focus on planned work.
           </p>
         )}
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          {todayGroups.map(([label, items, colour]) => (
-            <div key={label} className="rounded-lg border border-edge/80 bg-panel/35 p-3">
-              <div className="mb-1.5 flex items-center justify-between gap-2">
-                <span className={`font-mono text-[0.53rem] uppercase tracking-wider ${colour}`}>
-                  {label}
-                </span>
-                <span className="font-mono text-sm tabular-nums text-bone">{items.length}</span>
+        {!focusMode ? (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {todayGroups.map(([label, items, colour]) => (
+              <div key={label} className="rounded-lg border border-edge/80 bg-panel/35 p-3">
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <span className={`font-mono text-[0.53rem] uppercase tracking-wider ${colour}`}>
+                    {label}
+                  </span>
+                  <span className="font-mono text-sm tabular-nums text-bone">{items.length}</span>
+                </div>
+                {items[0] ? (
+                  <Link href={items[0].href} className="block font-sans text-[0.76rem] leading-snug text-bone/70 hover:text-bone">
+                    {items[0].company ? `${items[0].company}: ` : ""}{capitaliseSentenceStarts(items[0].text)}
+                  </Link>
+                ) : (
+                  <span className="font-mono text-[0.56rem] text-muted">clear</span>
+                )}
               </div>
-              {items[0] ? (
-                <Link href={items[0].href} className="block font-sans text-[0.76rem] leading-snug text-bone/70 hover:text-bone">
-                  {items[0].company ? `${items[0].company}: ` : ""}{capitaliseSentenceStarts(items[0].text)}
-                </Link>
-              ) : (
-                <span className="font-mono text-[0.56rem] text-muted">clear</span>
-              )}
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       {!focusMode ? <>
@@ -696,7 +698,7 @@ export default function DashboardPage() {
 
       {/* UPCOMING CALLS - what's ahead, schedule + prep + start preloaded. Shows
           the soonest 10 with a "show all" expand to keep the dashboard condensed. */}
-      <UpcomingCalls />
+      <UpcomingCalls limit={focusMode ? 5 : 10} />
 
       {focusMode ? (
         <button
