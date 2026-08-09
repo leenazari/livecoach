@@ -447,6 +447,245 @@ export async function gatherGlobalContext(): Promise<string> {
   return lines.join("\n");
 }
 
+// Saved call preparation is deliberately NOT part of the normal global Brain
+// prompt. A full focus, question set and playbook for every future meeting
+// would be expensive and usually irrelevant. When the user explicitly asks
+// about a call's questions, focus, intent or plan, retrieve only the best
+// matching upcoming call and only the requested parts of its saved prep.
+const CALL_PREP_TOPIC =
+  /\b(question|questions|focus|intent|agenda|prep|preparation|playbook|battle\s*plan|game\s*plan|call\s*plan|talking\s*points?|what\s+(?:should|do)\s+i\s+ask|what\s+(?:should|do)\s+i\s+cover)\b/i;
+
+const CALL_MATCH_STOP = new Set([
+  "about", "after", "again", "agenda", "ask", "battle", "before", "call",
+  "cover", "focus", "game", "have", "intent", "interviewa", "meeting",
+  "plan", "playbook", "prep", "preparation", "question", "questions",
+  "should", "talking", "today", "tomorrow", "what", "when", "with",
+]);
+
+const normalCallText = (value: unknown) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9@.\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const londonDateKey = (date: Date) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+
+const nextDateKey = (dateKey: string) => {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + 1))
+    .toISOString()
+    .slice(0, 10);
+};
+
+const callClock = (value: string) => {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/London",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(new Date(value))
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)])
+  );
+  return { hour: parts.hour, minute: parts.minute };
+};
+
+const requestedClock = (message: string) => {
+  const value = message.toLowerCase();
+  const withMinutes = value.match(/\b(\d{1,2})[:.](\d{2})\s*(am|pm)?\b/);
+  const hourOnly = value.match(/\b(\d{1,2})\s*(am|pm)\b/);
+  const match = withMinutes || hourOnly;
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = withMinutes ? Number(match[2]) : 0;
+  const suffix = withMinutes ? match[3] : match[2];
+  if (suffix === "pm" && hour < 12) hour += 12;
+  if (suffix === "am" && hour === 12) hour = 0;
+  return { hour, minute, twelveHour: !suffix };
+};
+
+export function callPrepRequested(message: string): boolean {
+  return CALL_PREP_TOPIC.test(String(message || ""));
+}
+
+export function scoreUpcomingCallForMessage(
+  call: any,
+  message: string,
+  companyName = "",
+  now = new Date()
+): number {
+  const needle = normalCallText(message);
+  if (!needle) return 0;
+  const prep = call?.prep && typeof call.prep === "object" ? call.prep : {};
+  const attendees = Array.isArray(call?.attendees) ? call.attendees : [];
+  const haystack = normalCallText([
+    call?.title,
+    call?.intent,
+    prep?.candidate,
+    prep?.brief,
+    companyName,
+    ...attendees.map((attendee: any) => `${attendee?.name || ""} ${attendee?.email || ""}`),
+  ].join(" "));
+  const messageTokens = needle
+    .split(" ")
+    .filter((token) => token.length >= 3 && !CALL_MATCH_STOP.has(token));
+  const callTokens = new Set(
+    haystack
+      .split(" ")
+      .filter((token) => token.length >= 3 && !CALL_MATCH_STOP.has(token))
+  );
+
+  let score = 0;
+  for (const token of messageTokens) {
+    if (callTokens.has(token)) score += token.length >= 5 ? 6 : 4;
+  }
+
+  const callDate = call?.scheduled_at
+    ? londonDateKey(new Date(call.scheduled_at))
+    : "";
+  const today = londonDateKey(now);
+  if (/\btomorrow\b/i.test(message))
+    score += callDate === nextDateKey(today) ? 18 : -8;
+  else if (/\btoday\b/i.test(message))
+    score += callDate === today ? 18 : -8;
+
+  const askedTime = requestedClock(message);
+  if (askedTime && call?.scheduled_at) {
+    const actual = callClock(call.scheduled_at);
+    const hourMatches = askedTime.twelveHour
+      ? actual.hour % 12 === askedTime.hour % 12
+      : actual.hour === askedTime.hour;
+    score += hourMatches && actual.minute === askedTime.minute ? 18 : -5;
+  }
+  return score;
+}
+
+const compactPrepText = (value: unknown, max: number) => {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, max).replace(/\s+\S*$/, "")}…` : text;
+};
+
+export async function gatherUpcomingCallPrepContext(
+  message: string
+): Promise<string> {
+  if (!callPrepRequested(message)) return "";
+
+  const now = new Date();
+  const { data: calls, error } = await supabaseAdmin
+    .from("upcoming_calls")
+    .select("id, company_id, title, scheduled_at, intent, prepped, prep, attendees")
+    .gte("scheduled_at", new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString())
+    .lte("scheduled_at", new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000).toISOString())
+    .order("scheduled_at", { ascending: true })
+    .limit(60);
+  if (error || !calls?.length) return "";
+
+  const companyIds = [...new Set(calls.map((call: any) => call.company_id).filter(Boolean))];
+  const companyNames = new Map<string, string>();
+  if (companyIds.length) {
+    const { data: companies } = await supabaseAdmin
+      .from("companies")
+      .select("id, name")
+      .in("id", companyIds);
+    for (const company of companies || [])
+      companyNames.set(company.id, company.name || "");
+  }
+
+  const ranked = (calls as any[])
+    .map((call) => ({
+      call,
+      score: scoreUpcomingCallForMessage(
+        call,
+        message,
+        companyNames.get(call.company_id) || "",
+        now
+      ),
+    }))
+    .sort((a, b) => b.score - a.score || new Date(a.call.scheduled_at).getTime() - new Date(b.call.scheduled_at).getTime());
+  const best = ranked[0]?.score || 0;
+  if (best < 4) return "";
+  const matches = ranked.filter((row) => row.score >= best - 3).slice(0, 2);
+
+  const wantsQuestions = /\b(question|questions|what\s+(?:should|do)\s+i\s+ask)\b/i.test(message);
+  const wantsPlan = /\b(prep|preparation|playbook|battle\s*plan|game\s*plan|call\s*plan|agenda|talking\s*points?)\b/i.test(message);
+  const wantsIntent = /\bintent\b/i.test(message);
+  const lines = [
+    "ON-DEMAND SAVED CALL PREP (loaded only because the user asked about a specific meeting; use this as the authoritative source):",
+  ];
+
+  for (const { call } of matches) {
+    const prep = call.prep && typeof call.prep === "object" ? call.prep : null;
+    const when = new Date(call.scheduled_at).toLocaleString("en-GB", {
+      timeZone: "Europe/London",
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    lines.push("", `CALL: ${when}, ${call.title || "Untitled call"}`);
+    if (call.intent)
+      lines.push(`Intent: ${compactPrepText(call.intent, wantsIntent || wantsPlan ? 1200 : 700)}`);
+    if (!prep) {
+      lines.push("Saved focus and plan: not built yet.");
+      continue;
+    }
+    const focus = Array.isArray(prep.selectedComps)
+      ? prep.selectedComps.filter((item: any) => typeof item === "string" && item.trim()).slice(0, 10)
+      : [];
+    if (focus.length) {
+      lines.push("Ranked focus:");
+      for (const item of focus) lines.push(`- ${compactPrepText(item, 180)}`);
+    }
+    const questions = Array.isArray(prep.openingQuestions)
+      ? prep.openingQuestions.slice(0, 8)
+      : [];
+    if ((wantsQuestions || wantsPlan) && questions.length) {
+      lines.push("Saved opening questions:");
+      for (const item of questions) {
+        const text = typeof item === "string" ? item : item?.text || item?.q || "";
+        const why = typeof item === "object" ? item?.why || "" : "";
+        if (text)
+          lines.push(`- ${compactPrepText(text, 260)}${why ? ` (Why: ${compactPrepText(why, 150)})` : ""}`);
+      }
+    }
+    if (wantsPlan) {
+      if (prep.character) lines.push(`Approach: ${compactPrepText(prep.character, 500)}`);
+      const playbook = Array.isArray(prep.playbook) ? prep.playbook.slice(0, 8) : [];
+      if (playbook.length) {
+        lines.push("Saved battle plan:");
+        for (const item of playbook) {
+          if (item?.label || item?.detail)
+            lines.push(`- ${compactPrepText(item?.label, 100)}: ${compactPrepText(item?.detail, 300)}`);
+        }
+      }
+      const goals = Array.isArray(prep.goals) ? prep.goals.slice(0, 8) : [];
+      if (goals.length) {
+        lines.push("Desired outcomes:");
+        for (const item of goals) {
+          const text = typeof item === "string" ? item : item?.text || "";
+          if (text) lines.push(`- ${compactPrepText(text, 220)}`);
+        }
+      }
+      const privateNotes = Array.isArray(prep.privateNotes) ? prep.privateNotes.slice(0, 5) : [];
+      if (privateNotes.length) {
+        lines.push("Private reminders:");
+        for (const item of privateNotes) lines.push(`- ${compactPrepText(item, 220)}`);
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
 // Find the client(s) the user NAMED in their message, so the assistant can pull
 // their FULL detail on demand instead of dumping every client's full record into
 // every prompt. Matches the whole name, or a distinctive word from it (length
