@@ -111,6 +111,7 @@ export default function RevenuePage() {
   const saveTarget = async () => {
     setBusy("target"); setError(""); setNotice("");
     try {
+      if (!Number.isFinite(target) || target < 1_000) throw new Error("Enter a revenue target of at least £1,000");
       const result = await crmFetch<{ target: number }>("/api/crm/revenue", { method: "PATCH", body: JSON.stringify({ target }) });
       if (result.target !== target) throw new Error("Revenue target was not confirmed");
       setNotice("Revenue target saved.");
@@ -151,8 +152,8 @@ export default function RevenuePage() {
               <p className="mt-1 text-sm text-muted">{gbp(data.goal.wonYtd)} won this year · {gbp(data.goal.gap)} still to close</p>
             </div>
             <div className="flex w-full gap-2 sm:w-auto">
-              <input aria-label="Annual revenue target" type="number" min="1000" step="1000" value={target} onChange={(e) => setTarget(Number(e.target.value))} className={`${input} sm:w-44`} />
-              <button onClick={saveTarget} disabled={!!busy} className={button}>{busy === "target" ? "Saving…" : "Save target"}</button>
+              <input aria-label="Annual revenue target" type="number" min="1000" step="1000" value={Number.isNaN(target) ? "" : target} onChange={(e) => setTarget(e.target.value === "" ? Number.NaN : Number(e.target.value))} className={`${input} sm:w-44`} />
+              <button onClick={saveTarget} disabled={!!busy || !Number.isFinite(target)} className={button}>{busy === "target" ? "Saving…" : "Save target"}</button>
             </div>
           </div>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-ink"><div className="h-full rounded-full bg-moss" style={{ width: `${wonProgress}%` }} /></div>
@@ -212,9 +213,9 @@ export default function RevenuePage() {
             <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-display text-lg text-bone">{row.company}</h3><p className="text-sm text-muted">{row.title}</p></div><div className="text-right"><strong className="block text-bone">{gbp(row.weightedValue)}</strong><span className="font-mono text-[0.52rem] uppercase text-muted">weighted</span></div></div>
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-6">
               <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Counts as</span><select className={input} value={row.opportunity_type} onChange={(e) => changeType(row, e.target.value as Opportunity["opportunity_type"])}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Value</span><input type="number" min="0" className={input} value={row.value || ""} onChange={(e) => updateRow(row.id, { value: Number(e.target.value) })} /></label>
+              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Value</span><input type="number" min="0" className={input} value={Number.isNaN(row.value) ? "" : row.value} onChange={(e) => updateRow(row.id, { value: e.target.value === "" ? Number.NaN : Number(e.target.value) })} /></label>
               <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Stage</span><select className={input} value={row.pipeline_stage} onChange={(e) => updateRow(row.id, { pipeline_stage: e.target.value })}>{data.stageDefinitions.map((stage: any) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}</select></label>
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Probability</span><div className="relative"><input type="number" min="0" max="100" className={input} value={row.probability} onChange={(e) => updateRow(row.id, { probability: Math.min(100, Math.max(0, Number(e.target.value))) })} /><span className="pointer-events-none absolute right-3 top-3 text-sm text-muted">%</span></div></label>
+              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Probability</span><div className="relative"><input type="number" min="0" max="100" className={input} value={Number.isNaN(row.probability) ? "" : row.probability} onChange={(e) => updateRow(row.id, { probability: e.target.value === "" ? Number.NaN : Math.min(100, Math.max(0, Number(e.target.value))) })} /><span className="pointer-events-none absolute right-3 top-3 text-sm text-muted">%</span></div></label>
               <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Forecast</span><select className={input} value={row.forecast_category} onChange={(e) => updateRow(row.id, { forecast_category: e.target.value })}><option value="pipeline">Pipeline</option><option value="best_case">Best case</option><option value="commit">Commit</option><option value="omitted">Omitted</option></select></label>
               <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Expected close</span><input type="date" className={input} value={row.expected_close_at || ""} onChange={(e) => updateRow(row.id, { expected_close_at: e.target.value || null })} /></label>
             </div>
