@@ -62,8 +62,8 @@ export default function PostCallDealUpdate({ callId }: { callId: string }) {
           opportunityId: opportunityId || null,
           title,
           pipelineStage: stage,
-          probability,
-          value,
+          probability: Number.isFinite(probability) ? probability : 0,
+          value: Number.isFinite(value) ? value : 0,
           nextAction,
           nextActionDueAt: dueAt || null,
           nextActionOwner: owner,
@@ -97,8 +97,8 @@ export default function PostCallDealUpdate({ callId }: { callId: string }) {
 
       <div className="grid gap-2 sm:grid-cols-3">
         <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Stage after this call</span><select className={input} value={stage} onChange={(event) => { const next = event.target.value; setStage(next); setProbability(probabilityByStage[next]); }}><option value="new">New</option><option value="discovery">Discovery</option><option value="qualified">Qualified</option><option value="proposal">Proposal</option><option value="negotiation">Negotiation</option><option value="verbal">Verbal yes</option><option value="won">Won</option><option value="lost">Lost</option></select></label>
-        <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Probability %</span><input type="number" min="0" max="100" className={input} value={probability} onChange={(event) => setProbability(Number(event.target.value))} /></label>
-        <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Deal value £</span><input type="number" min="0" step="100" className={input} value={value || ""} onChange={(event) => setValue(Number(event.target.value))} placeholder="0" /></label>
+        <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Probability %</span><input type="number" min="0" max="100" className={input} value={Number.isNaN(probability) ? "" : probability} onChange={(event) => setProbability(event.target.value === "" ? Number.NaN : Number(event.target.value))} /></label>
+        <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Deal value £</span><input type="number" min="0" step="100" className={input} value={Number.isNaN(value) ? "" : value} onChange={(event) => setValue(event.target.value === "" ? Number.NaN : Number(event.target.value))} placeholder="0" /></label>
       </div>
 
       {stage !== "won" && stage !== "lost" ? <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_9rem]">
