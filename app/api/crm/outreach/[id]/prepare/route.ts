@@ -4,22 +4,72 @@ import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { londonDate, modelSources, modelText, parseObject } from "@/lib/outreach";
 import { OUTREACH_FROM_EMAIL } from "@/lib/gmail";
+import { removeDashesFromProse } from "@/lib/outreach-voice";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const clean = (value: any, max: number) => String(value || "").replace(/[—–]/g, ", ").replace(/;/g, ",").trim().slice(0, max);
+const clean = (value: any, max: number) => removeDashesFromProse(
+  String(value || "").replace(/[—–]/g, ", ").replace(/;/g, ",").trim()
+).slice(0, max);
+
+const OUTREACH_DRAFT_FORMAT = {
+  type: "json_schema",
+  name: "outreach_draft",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["research", "strategy", "email"],
+    properties: {
+      research: {
+        type: "object",
+        additionalProperties: false,
+        required: ["summary", "signals", "activeJobs", "volumeAssessment", "volumeReason", "likelyNeeds", "bestAngle", "commercialPath", "fitDecision", "personalisationFact", "approvedProof", "freshness", "confidence"],
+        properties: {
+          summary: { type: "string" }, signals: { type: "array", items: { type: "string" } },
+          activeJobs: { type: "array", items: { type: "string" } },
+          volumeAssessment: { type: "string", enum: ["high", "medium", "low", "unknown"] },
+          volumeReason: { type: "string" },
+          likelyNeeds: { type: "array", items: { type: "string" } }, bestAngle: { type: "string" },
+          commercialPath: { type: "string" }, fitDecision: { type: "string" },
+          personalisationFact: { type: "string" }, approvedProof: { type: "string" }, freshness: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] },
+        },
+      },
+      strategy: {
+        type: "object",
+        additionalProperties: false,
+        required: ["reasoning", "evidenceUsed", "angle", "tone", "cta", "persona", "qualityScore"],
+        properties: {
+          reasoning: { type: "string" }, evidenceUsed: { type: "array", items: { type: "string" } },
+          angle: { type: "string" }, tone: { type: "string" }, cta: { type: "string" },
+          persona: { type: "string" }, qualityScore: { type: "integer", minimum: 0, maximum: 100 },
+        },
+      },
+      email: {
+        type: "object",
+        additionalProperties: false,
+        required: ["subject", "previewText", "bodyText"],
+        properties: { subject: { type: "string" }, previewText: { type: "string" }, bodyText: { type: "string" } },
+      },
+    },
+  },
+} as const;
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const startedAt = Date.now();
+  console.log(JSON.stringify({ level: "info", msg: "outreach prepare started", route: "/api/crm/outreach/[id]/prepare", prospectId: params.id, requestId: req.headers.get("x-vercel-id") }));
   try {
     const prospectId = params.id;
     const body = await req.json().catch(() => ({}));
-    const [{ data: prospect }, { data: enrolments }, { data: brain }, { data: revenueConfig }] = await Promise.all([
+    const [{ data: prospect }, { data: enrolments }, { data: brain }, { data: revenueConfig }, { data: offerConfig }] = await Promise.all([
       supabaseAdmin.from("outreach_prospects").select("*").eq("id", prospectId).single(),
       supabaseAdmin.from("outreach_enrolments").select("*").eq("prospect_id", prospectId).eq("queued_for", londonDate()).in("status", ["queued", "researched", "drafted"]).limit(1),
       supabaseAdmin.from("workspace_profile").select("knowledge,learned").eq("id", "main").maybeSingle(),
       supabaseAdmin.from("app_config").select("value").eq("key", "revenue_target_gbp").maybeSingle(),
+      supabaseAdmin.from("app_config").select("value").eq("key", "interviewa_outreach_offer_truth").maybeSingle(),
     ]);
     const enrolment = enrolments?.[0];
     if (!prospect || !enrolment) return NextResponse.json({ error: "This person is not in today's queue" }, { status: 400 });
@@ -32,7 +82,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // works without tracking opens or adding invasive pixels.
     const variant = parseInt(String(prospect.id).replace(/-/g, "").slice(-2), 16) % 2 === 0 ? "A" : "B";
     const existingResearch = enrolment.research && typeof enrolment.research === "object" ? enrolment.research : null;
-    const productTruth = `${brain?.knowledge || ""}\n${brain?.learned || ""}`.slice(0, 5000);
+    const offerTruth = typeof offerConfig?.value === "string"
+      ? offerConfig.value
+      : JSON.stringify(offerConfig?.value || {});
+    const productTruth = `${brain?.knowledge || ""}\n${brain?.learned || ""}\n${offerTruth}`.slice(0, 6200);
     const revenueTarget = Math.max(1_000, Number(revenueConfig?.value) || 2_000_000);
     const voice = campaign.voice && typeof campaign.voice === "object" ? campaign.voice : {};
     const banned = Array.isArray(campaign.banned_phrases) ? campaign.banned_phrases.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 20) : [];
@@ -50,15 +103,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
 COMMERCIAL NORTH STAR: help Interviewa build toward £${revenueTarget.toLocaleString("en-GB")} revenue over the next 12 months, in support of a roughly £10m valuation. Use this to prioritise credible routes to revenue and strong strategic relationships. Never invent a prospect's budget, deal value, urgency or buying authority to make them look valuable.
 
-Do not invent personal facts, clients, results, product capabilities or problems. A weak or absent signal must be stated as such. Do not use information from people with similar names. Do not mention that AI researched them. Use British English, no jargon, flattery, em dashes or semicolons.
+Do not invent personal facts, clients, results, savings, case studies, product capabilities or problems. Never present an illustrative scenario as a real customer result. Use a verified case study only when it appears in INTERVIEWA PRODUCT TRUTH. Otherwise approvedProof must be empty. A weak or absent signal must be stated as such. Do not use information from people with similar names. Do not mention that AI researched them. Use British English, no jargon, flattery, em dashes or semicolons.
 
-RESEARCH DISCIPLINE: bring back only information that changes the decision or message. Prefer recent primary company sources and current role evidence. Ignore generic biography, old news and facts that do not affect the campaign intent. Tie every retained fact to one of three outcomes: close a customer deal, build a commercially useful relationship, or start a credible partnership. Reuse saved research when still current and refresh only facts likely to have changed. The saved research must be concise enough to reuse in future Brain, intent and call-prep prompts without reopening the web.
+RESEARCH DISCIPLINE: bring back only information that changes the decision or message. Prefer recent primary company sources and current role evidence. Find up to four current or very recent vacancies, including role, location and recency when verifiable. Assess hiring volume only from observed current evidence. Never invent a job count or use a generic industry applicant average as if it belongs to this company. Mark volume unknown when evidence is insufficient. Ignore generic biography, old news and facts that do not affect the campaign intent. Tie every retained fact to one of three outcomes: close a customer deal, build a commercially useful relationship, or start a credible partnership. Reuse saved research when still current and refresh only facts likely to have changed. The saved research must be concise enough to reuse in future Brain, intent and call prep prompts without reopening the web.
 
-VOICE TO FOLLOW: ${clean(voice.tone || "warm, commercially curious and concise", 300)}. ${clean(voice.style || "Founder-to-founder, plain English and respectful", 400)}
+VOICE TO FOLLOW: ${clean(voice.tone || "warm, commercially curious and concise", 300)}. ${clean(voice.style || "Founder to founder, plain English and respectful", 400)}
 COACHING RULES: ${Array.isArray(voice.rules) ? voice.rules.join(" | ").slice(0, 1000) : "Lead with one verified relevance signal | make one useful commercial observation | ask one easy question | never pretend familiarity"}
 BANNED PHRASES: ${banned.join(" | ") || "quick question | hope you are well | reaching out"}.
 
-The email must be plain text, 60 to 105 words, short mobile-friendly paragraphs, one easy question as the CTA, and signed "${clean(voice.signature || "Lee", 80)}". End with a natural one-line opt-out such as "If this is not relevant, tell me and I will not follow up." It must sound individually written, not like a template. Subject under 45 characters. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit-led subject" : "use a short natural question-led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? "This is a follow-up, do not repeat the opening email and make it easy to close the loop." : "This is the first email."} ${includeBooking ? `Include this booking link once, naturally, as the optional next step: ${campaign.booking_url}` : "Do not include a calendar or booking link. Earn interest first."}
+The email must be plain text, 85 to 130 words, short mobile friendly paragraphs, one easy question as the CTA, and signed "${clean(voice.signature || "Lee", 80)}". End with a natural one line opt out such as "If this is not relevant, tell me and I will not follow up." It must sound individually written, not like a template. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Write "better prepared", never "better-prepared". Subject under 45 characters. Use one or two verified current vacancies when available. Say that Interviewa specialises in preparing candidates for those exact types of roles, rather than making a generic recruitment claim. Explain that the prospect can try Interviewa free on a current vacancy, setup takes about 10 minutes, it adds no extra administration for their team, they control and can reuse the interview, and results appear in their dashboard. Where natural, state the approved proof that thousands of candidates already use Interviewa. Position better preparation as a credible way to improve candidate acceptance or client placement rates, but never guarantee a result. Candidate training is the primary campaign angle. Mention screening only as a secondary possibility when verified vacancy volume makes it credible and product truth supports it. Be commercially vivid without hype. If no approved case study exists, use a concrete illustrative workflow such as practising for one live role, but never imply another customer achieved a result. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? "This is a follow up, do not repeat the opening email and make it easy to close the loop." : "This is the first email."} ${includeBooking ? `Include this booking link once, naturally, as the optional next step: ${campaign.booking_url}` : "Do not include a calendar or booking link. Earn interest first."}
 
 APPROVED SEQUENCE BRIEF FOR THIS STEP:
 Purpose: ${clean(sequenceStep.purpose, 240)}
@@ -69,7 +122,7 @@ ${sequenceStep.assetUrl ? `Approved asset link: ${clean(sequenceStep.assetUrl, 6
 Before writing, choose ONE evidence-backed reason this person should care now and ONE Interviewa angle. The first sentence must be grounded in a verified fact or transparently framed hypothesis. Never mix several random use cases. Explain your evidence and choice in strategy so Lee can approve the thinking as well as the words.
 
 Output exactly:
-{"research":{"summary":"max 55 words, only decision-useful facts","signals":["max 3 factual current signals"],"likelyNeeds":["max 2 clearly labelled hypotheses"],"bestAngle":"one grounded Interviewa angle","commercialPath":"customer deal|relationship|partnership plus one short reason","fitDecision":"contact now|hold|skip plus one short reason","personalisationFact":"one verifiable fact or empty string","freshness":"what was checked and how current it is, max 25 words","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 45 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."}}`;
+{"research":{"summary":"max 65 words, only decision useful facts","signals":["max 3 factual current signals"],"activeJobs":["max 4 verified current or recent roles with location and recency when available"],"volumeAssessment":"high|medium|low|unknown","volumeReason":"evidence based reason, max 35 words","likelyNeeds":["max 2 clearly labelled hypotheses"],"bestAngle":"one grounded Interviewa angle led by candidate training","commercialPath":"customer deal|relationship|partnership plus one short reason","fitDecision":"contact now|hold|skip plus one short reason","personalisationFact":"one verifiable fact or empty string","approvedProof":"verified Interviewa case study or result from product truth, otherwise empty string","freshness":"what was checked and how current it is, max 25 words","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 55 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."}}`;
     const user = `PERSON
 Name: ${prospect.first_name || ""} ${prospect.last_name || ""}
 Role: ${prospect.job_title || ""}
@@ -88,7 +141,7 @@ Audience: ${campaign.audience}
 Goal: ${campaign.goal}
 Angle: ${campaign.offer_angle}
 
-INTERVIEWA PRODUCT TRUTH, use only relevant supported claims:
+INTERVIEWA PRODUCT AND OFFER TRUTH, use only the most relevant supported claims and do not list every feature:
 ${productTruth || campaign.offer_angle}
 
 PROMOTED LEARNINGS, only use these when supported by enough evidence and relevant to this person:
@@ -99,45 +152,62 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDA
     const message = await openai.messages.create({
       model: OPENAI_MODEL_PRO,
       max_tokens: 1300,
+      response_format: OUTREACH_DRAFT_FORMAT,
       system,
       tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] as any,
       messages: [{ role: "user", content: user }],
     }, { timeout: 55_000 });
-    await logModelUsage("outreach_prepare", "pro", message?.usage);
+    const sources = modelSources(message);
+    await logModelUsage("outreach_prepare", "pro", message?.usage, {
+      prospectId,
+      inputTokens: Number(message?.usage?.input_tokens) || 0,
+      outputTokens: Number(message?.usage?.output_tokens) || 0,
+      cachedInputTokens: Number(message?.usage?.cache_read_input_tokens) || 0,
+      sourceCount: sources.length,
+    });
     const parsed = parseObject(modelText(message));
-    if (!parsed?.research || !parsed?.strategy || !parsed?.email) return NextResponse.json({ error: "The draft could not be prepared, try again" }, { status: 502 });
+    if (!parsed?.research || !parsed?.strategy || !parsed?.email) {
+      console.error(JSON.stringify({ level: "error", msg: "outreach prepare returned invalid structured output", prospectId, ms: Date.now() - startedAt }));
+      return NextResponse.json({ error: "The research completed but the draft format failed. No draft was saved and you have not contacted this prospect." }, { status: 502 });
+    }
     const research = {
       summary: clean(parsed.research.summary, 800),
       signals: Array.isArray(parsed.research.signals) ? parsed.research.signals.map((x: any) => clean(x, 240)).filter(Boolean).slice(0, 3) : [],
+      activeJobs: Array.isArray(parsed.research.activeJobs) ? parsed.research.activeJobs.map((x: any) => clean(x, 240)).filter(Boolean).slice(0, 4) : [],
+      volumeAssessment: ["high", "medium", "low", "unknown"].includes(parsed.research.volumeAssessment) ? parsed.research.volumeAssessment : "unknown",
+      volumeReason: clean(parsed.research.volumeReason, 300),
       likelyNeeds: Array.isArray(parsed.research.likelyNeeds) ? parsed.research.likelyNeeds.map((x: any) => clean(x, 240)).filter(Boolean).slice(0, 3) : [],
       bestAngle: clean(parsed.research.bestAngle, 400),
       commercialPath: clean(parsed.research.commercialPath, 240),
       fitDecision: clean(parsed.research.fitDecision, 240),
       personalisationFact: clean(parsed.research.personalisationFact, 400),
+      approvedProof: clean(parsed.research.approvedProof, 400),
       freshness: clean(parsed.research.freshness, 180),
       confidence: ["high", "medium", "low"].includes(parsed.research.confidence) ? parsed.research.confidence : "low",
       generatedAt: new Date().toISOString(),
     };
-    const sources = modelSources(message);
     const email = {
-      subject: clean(parsed.email.subject, 120),
-      preview_text: clean(parsed.email.previewText, 180),
-      body_text: clean(parsed.email.bodyText, 4000),
+      subject: removeDashesFromProse(clean(parsed.email.subject, 120)),
+      preview_text: removeDashesFromProse(clean(parsed.email.previewText, 180)),
+      body_text: removeDashesFromProse(clean(parsed.email.bodyText, 4000)),
     };
     if (!email.subject || !email.body_text) return NextResponse.json({ error: "The email draft was incomplete, try again" }, { status: 502 });
+    if (!/(not relevant|will not follow up|won't follow up|do not follow up)/i.test(email.body_text)) {
+      email.body_text = `${email.body_text.trim()}\n\nIf this is not relevant, tell me and I will not follow up.`.slice(0, 4000);
+    }
     const lowerBody = email.body_text.toLowerCase();
     const wordCount = email.body_text.split(/\s+/).filter(Boolean).length;
     const bannedHits = banned.filter((phrase: string) => phrase && lowerBody.includes(phrase.toLowerCase()));
     const questionCount = (email.body_text.match(/\?/g) || []).length;
     let qualityScore = 100;
-    if (wordCount < 55 || wordCount > 115) qualityScore -= 15;
+    if (wordCount < 70 || wordCount > 130) qualityScore -= 15;
     if (questionCount !== 1) qualityScore -= 12;
     if (bannedHits.length) qualityScore -= Math.min(30, bannedHits.length * 15);
     if (!research.personalisationFact && research.confidence === "low") qualityScore -= 10;
     if (email.subject.length > 55) qualityScore -= 8;
     if (!/(not relevant|will not follow up|won't follow up|do not follow up)/i.test(email.body_text)) qualityScore -= 15;
     qualityScore = Math.max(0, Math.min(100, Math.min(qualityScore, Number(parsed.strategy.qualityScore) || 100)));
-    if (qualityScore < 70) return NextResponse.json({ error: "The quality checks rejected this draft. Press Prepare again for a stronger version.", qualityScore, checks: { wordCount, questionCount, bannedHits } }, { status: 422 });
+    const needsExtraReview = qualityScore < 70;
     const strategy = {
       reasoning: clean(parsed.strategy.reasoning, 700),
       evidenceUsed: Array.isArray(parsed.strategy.evidenceUsed) ? parsed.strategy.evidenceUsed.map((item: any) => clean(item, 240)).filter(Boolean).slice(0, 3) : [],
@@ -172,8 +242,10 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDA
         { campaign_id: campaign.id, prospect_id: prospect.id, message_id: draft.id, kind: "drafted", metadata: { step, variant, qualityScore, tags: messageTags } },
       ]),
     ]);
-    return NextResponse.json({ research, sources, strategy, qualityScore, message: draft });
+    console.log(JSON.stringify({ level: "info", msg: "outreach prepare completed", prospectId, qualityScore, needsExtraReview, ms: Date.now() - startedAt }));
+    return NextResponse.json({ research, sources, strategy, qualityScore, needsExtraReview, checks: { wordCount, questionCount, bannedHits }, message: draft });
   } catch (error: any) {
+    console.error(JSON.stringify({ level: "error", msg: "outreach prepare failed", prospectId: params.id, error: error?.message || "unknown error", ms: Date.now() - startedAt }));
     return NextResponse.json({ error: error?.name === "AbortError" ? "Research timed out, try this person again" : error?.message || "failed to prepare outreach" }, { status: 500 });
   }
 }
