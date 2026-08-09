@@ -4,13 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch, getCached } from "@/lib/crm";
 
-type Period = "week" | "month" | "all";
+type Period = "today" | "week" | "month" | "all";
 type AiMode = "economical" | "balanced" | "high";
 type PeriodValues = Record<Period, number>;
 type Costs = {
   generatedAt: string;
   totals: PeriodValues;
   periods: {
+    today: { start: string; end: string };
     week: { start: string; end: string };
     month: { start: string; end: string };
   };
@@ -50,7 +51,7 @@ const modeCopy: Record<AiMode, string> = {
 
 export default function CostsPage() {
   const [data, setData] = useState<Costs | null>(() => getCached<Costs>("/api/crm/costs") || null);
-  const [period, setPeriod] = useState<Period>("week");
+  const [period, setPeriod] = useState<Period>("today");
   const [aiMode, setAiMode] = useState<AiMode>("balanced");
   const [loading, setLoading] = useState(!data);
   const [modeSaving, setModeSaving] = useState(false);
@@ -101,11 +102,13 @@ export default function CostsPage() {
   );
   const total = data?.totals[period] || 0;
   const highest = orderedFeatures[0];
-  const periodLabel = period === "week"
-    ? data ? `${shortDate(data.periods.week.start)} to ${shortDate(data.periods.week.end)}` : ""
-    : period === "month"
-      ? data ? `${shortDate(data.periods.month.start)} to ${shortDate(data.periods.month.end)}` : ""
-      : "Since cost tracking began";
+  const periodLabel = period === "today"
+    ? "00:00 to now, resets at 00:00 · London time"
+    : period === "week"
+      ? data ? `${shortDate(data.periods.week.start)} to ${shortDate(data.periods.week.end)}` : ""
+      : period === "month"
+        ? data ? `${shortDate(data.periods.month.start)} to ${shortDate(data.periods.month.end)}` : ""
+        : "Since cost tracking began";
 
   const sourceCards = data ? [
     ["Live calls", data.sources.calls[period], "Call listening, transcription and live coaching"],
@@ -145,7 +148,7 @@ export default function CostsPage() {
       ) : null}
 
       <div className="mb-4 flex gap-2 overflow-x-auto pb-1" role="group" aria-label="Cost period">
-        {(["week", "month", "all"] as Period[]).map((option) => (
+        {(["today", "week", "month", "all"] as Period[]).map((option) => (
           <button
             key={option}
             type="button"
@@ -172,7 +175,7 @@ export default function CostsPage() {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p className="font-mono text-[0.57rem] uppercase tracking-wider text-sage">
-                  {period === "all" ? "All recorded spend" : `${period} to date`}
+                  {period === "all" ? "All recorded spend" : period === "today" ? "Today's spend" : `${period} to date`}
                 </p>
                 <strong className="mt-1 block font-display text-4xl tabular-nums text-bone">{gbp(total)}</strong>
                 <p className="mt-1 text-xs text-muted">{periodLabel}</p>
