@@ -70,6 +70,7 @@ export default function OutreachPage() {
   const [learnings, setLearnings] = useState<any[]>([]);
   const [suppressions, setSuppressions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tabLoading, setTabLoading] = useState(false);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -79,24 +80,58 @@ export default function OutreachPage() {
   const [blockTarget, setBlockTarget] = useState("");
   const [draftEdits, setDraftEdits] = useState<Record<string, { subject: string; body_text: string }>>({});
 
-  const load = useCallback(async () => {
+  const loadCore = useCallback(async () => {
     try {
-      const [p, qd, c, m, s] = await Promise.all([
-        crmFetch<any>("/api/crm/outreach"), crmFetch<any>("/api/crm/outreach/queue"),
-        crmFetch<any>("/api/crm/outreach/campaigns"), crmFetch<any>("/api/crm/outreach/metrics"),
-        crmFetch<any>("/api/crm/outreach/suppressions"),
+      const [qd, c, m] = await Promise.all([
+        crmFetch<any>("/api/crm/outreach/queue"),
+        crmFetch<any>("/api/crm/outreach/campaigns"),
+        crmFetch<any>("/api/crm/outreach/metrics?summary=1"),
       ]);
-      setProspects(p.prospects || []); setQueue(qd.queue || []); setCampaigns(c.campaigns || []);
-      setMetrics(m.metrics || {}); setReplies(m.replies || []); setVariants(m.variants || []); setPerformance(m.performance || []); setLearnings(m.learnings || []); setSuppressions(s.suppressions || []);
+      setQueue(qd.queue || []);
+      setCampaigns(c.campaigns || []);
+      setMetrics(m.metrics || {});
     } catch (e: any) { setError(e.message || "Could not load outreach"); }
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const loadProspects = useCallback(async () => {
+    const data = await crmFetch<any>("/api/crm/outreach");
+    setProspects(data.prospects || []);
+  }, []);
+
+  const loadMetrics = useCallback(async () => {
+    const data = await crmFetch<any>("/api/crm/outreach/metrics");
+    setMetrics(data.metrics || {});
+    setReplies(data.replies || []);
+    setVariants(data.variants || []);
+    setPerformance(data.performance || []);
+    setLearnings(data.learnings || []);
+  }, []);
+
+  const loadSuppressions = useCallback(async () => {
+    const data = await crmFetch<any>("/api/crm/outreach/suppressions");
+    setSuppressions(data.suppressions || []);
+  }, []);
+
+  useEffect(() => { loadCore(); }, [loadCore]);
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
     if (tabs.some((item) => item.key === requested)) setTab(requested as Tab);
   }, []);
+  useEffect(() => {
+    let alive = true;
+    const requests: Promise<void>[] = [];
+    if (tab === "prospects") requests.push(loadProspects());
+    if (tab === "safety") requests.push(loadSuppressions());
+    if (tab === "campaign" || tab === "intelligence" || tab === "replies")
+      requests.push(loadMetrics());
+    if (!requests.length) return;
+    setTabLoading(true);
+    Promise.all(requests)
+      .catch((e: any) => alive && setError(e.message || "Could not load this section"))
+      .finally(() => alive && setTabLoading(false));
+    return () => { alive = false; };
+  }, [tab, loadMetrics, loadProspects, loadSuppressions]);
   useEffect(() => {
     const next: Record<string, { subject: string; body_text: string }> = {};
     for (const row of queue) if (row.message) next[row.message.id] = { subject: row.message.subject || "", body_text: row.message.body_text || "" };
@@ -116,12 +151,12 @@ export default function OutreachPage() {
 
   const buildQueue = async () => {
     setBusy("queue"); setError(""); setNotice("");
-    try { const data = await crmFetch<any>("/api/crm/outreach/queue", { method: "POST", body: JSON.stringify({ limit: activeCampaign?.daily_limit || 20 }) }); setQueue(data.queue || []); const held = data.selection?.held || 0; const skipped = data.selection?.skipped || 0; setNotice(`${data.added || 0} best-fit people added. ${held} held for stronger evidence${skipped ? ` and ${skipped} skipped` : ""}.`); await load(); }
+    try { const data = await crmFetch<any>("/api/crm/outreach/queue", { method: "POST", body: JSON.stringify({ limit: activeCampaign?.daily_limit || 20 }) }); setQueue(data.queue || []); const held = data.selection?.held || 0; const skipped = data.selection?.skipped || 0; setNotice(`${data.added || 0} best-fit people added. ${held} held for stronger evidence${skipped ? ` and ${skipped} skipped` : ""}.`); await loadCore(); }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const prepare = async (prospectId: string) => {
     setBusy(`prepare:${prospectId}`); setError(""); setNotice("");
-    try { await crmFetch(`/api/crm/outreach/${prospectId}/prepare`, { method: "POST", body: "{}" }); setNotice("Research and draft ready for review."); await load(); }
+    try { await crmFetch(`/api/crm/outreach/${prospectId}/prepare`, { method: "POST", body: "{}" }); setNotice("Research and draft ready for review."); await loadCore(); }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const saveDraft = async (messageId: string, approve = false) => {
@@ -139,7 +174,7 @@ export default function OutreachPage() {
   const send = async (messageId: string) => {
     if (!confirm("Send this approved email now from lee@interviewa.com?")) return;
     setBusy(`send:${messageId}`); setError("");
-    try { const result = await crmFetch<any>(`/api/crm/outreach/messages/${messageId}/send`, { method: "POST", body: "{}" }); setNotice(`Sent from lee@interviewa.com. ${result.remainingToday} sends remain today.`); await load(); }
+    try { const result = await crmFetch<any>(`/api/crm/outreach/messages/${messageId}/send`, { method: "POST", body: "{}" }); setNotice(`Sent from lee@interviewa.com. ${result.remainingToday} sends remain today.`); await loadCore(); }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const updatePriority = async (id: string, value: Priority) => {
@@ -170,18 +205,18 @@ export default function OutreachPage() {
   const removeSequenceStep = (campaignId: string, index: number) => setCampaigns((all) => all.map((campaign) => campaign.id === campaignId ? { ...campaign, sequence: (campaign.sequence || []).filter((_, stepIndex) => stepIndex !== index).map((step, stepIndex) => ({ ...step, step: stepIndex + 1, delayDays: stepIndex === 0 ? 0 : step.delayDays })) } : campaign));
   const checkReplies = async () => {
     setBusy("replies"); setError("");
-    try { const result = await crmFetch<any>("/api/crm/outreach/replies", { method: "POST", body: "{}" }); setNotice(`Checked ${result.checked} recent contacts and found ${result.replies} new replies.`); await load(); }
+    try { const result = await crmFetch<any>("/api/crm/outreach/replies", { method: "POST", body: "{}" }); setNotice(`Checked ${result.checked} recent contacts and found ${result.replies} new replies.`); await loadMetrics(); }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const prepareBookingReply = async (prospectId: string) => {
     setBusy(`booking:${prospectId}`); setError(""); setNotice("");
-    try { await crmFetch(`/api/crm/outreach/replies/${prospectId}/draft`, { method: "POST", body: "{}" }); setNotice("Booking reply ready. Review and approve the exact wording before sending."); await load(); }
+    try { await crmFetch(`/api/crm/outreach/replies/${prospectId}/draft`, { method: "POST", body: "{}" }); setNotice("Booking reply ready. Review and approve the exact wording before sending."); await loadMetrics(); }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const addSuppression = async () => {
     if (!blockTarget.trim()) return;
     setBusy("block"); setError("");
-    try { await crmFetch("/api/crm/outreach/suppressions", { method: "POST", body: JSON.stringify({ target: blockTarget }) }); setBlockTarget(""); setNotice("Added to the do-not-contact list."); await load(); }
+    try { await crmFetch("/api/crm/outreach/suppressions", { method: "POST", body: JSON.stringify({ target: blockTarget }) }); setBlockTarget(""); setNotice("Added to the do-not-contact list."); await loadSuppressions(); }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
 
@@ -213,8 +248,9 @@ export default function OutreachPage() {
       {notice ? <p className="mb-3 rounded-lg border border-moss/40 bg-moss/10 px-3 py-2 text-sm text-moss">{notice}</p> : null}
       {error ? <p className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm text-rust">{error}</p> : null}
       {loading ? <p className="py-10 text-center font-mono text-xs text-muted">Loading outreach…</p> : null}
+      {!loading && tabLoading ? <div className="h-44 animate-pulse rounded-xl border border-edge bg-panel/30" /> : null}
 
-      {!loading && tab === "queue" ? <section>
+      {!loading && !tabLoading && tab === "queue" ? <section>
         <RevenueToday />
         <OutreachReadiness />
         <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s controlled queue</h2><p className="mt-1 text-sm text-muted">Only the strongest safe fits use today’s limited slots. Scoring is free; research happens only when you press Prepare, and every draft waits for approval.</p></div><button onClick={buildQueue} disabled={!!busy || queue.length >= (activeCampaign?.daily_limit || 20)} className={primary}>{busy === "queue" ? "Ranking…" : queue.length ? `Top up to ${activeCampaign?.daily_limit || 20}` : "Rank + build today’s queue"}</button></div>
@@ -226,14 +262,14 @@ export default function OutreachPage() {
         </article>; })}{!queue.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">The morning queue can be selected automatically, or you can build it now. Nobody is researched or contacted until you act.</div> : null}</div>
       </section> : null}
 
-      {!loading && tab === "prospects" ? <section>
+      {!loading && !tabLoading && tab === "prospects" ? <section>
         <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{(["all", "contact_today", "hold", "skip"] as const).map((key) => <button key={key} onClick={() => setRecommendationFilter(key)} className={`rounded-xl border p-3 text-left ${recommendationFilter === key ? "border-amber bg-amber/10" : "border-edge bg-panel"}`}><strong className="block font-display text-xl text-bone">{recommendationCounts[key]}</strong><span className="font-mono text-[0.54rem] uppercase text-muted">{key === "contact_today" ? "contact today" : key}</span></button>)}</div>
         <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_11rem]"><input className={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search person, company, role or email…" /><select aria-label="Manual priority filter" value={priority} onChange={(e) => setPriority(e.target.value as "all" | Priority)} className={input}><option value="all">All manual priorities</option><option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option></select></div>
         <p className="mb-3 rounded-lg border border-edge bg-panel px-3 py-2 text-sm leading-6 text-muted">“Contact today” is limited to the campaign’s top 20 available fits. The score combines your priority, likely buying authority, campaign fit, data quality, saved research and proven conversion patterns. It never spends AI tokens.</p>
         <div className="space-y-2">{shown.map((p) => <article key={p.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0"><h3 className="font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><p className="mt-1 text-xs text-muted">{p.employee_range || "Unknown size"} employees · {p.industry || "Industry not saved"}</p><div className="mt-2 flex flex-wrap gap-3 text-xs"><span className="break-all text-amber">{p.email}</span>{p.person_linkedin_url ? <a href={p.person_linkedin_url} target="_blank" rel="noreferrer" className="text-bone">Person LinkedIn ↗</a> : null}{p.company_linkedin_url ? <a href={p.company_linkedin_url} target="_blank" rel="noreferrer" className="text-bone">Company LinkedIn ↗</a> : null}</div></div><label className="shrink-0"><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Your priority</span><select aria-label={`Priority for ${p.first_name} ${p.last_name}`} value={p.priority} onChange={(e) => updatePriority(p.id, e.target.value as Priority)} className="min-h-11 w-full rounded-lg border border-edge bg-ink px-3 text-sm text-bone sm:w-auto"><option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option></select></label></div><RecommendationCard recommendation={p.recommendation} /></article>)}</div>
       </section> : null}
 
-      {!loading && tab === "campaign" ? <section className="space-y-3">
+      {!loading && !tabLoading && tab === "campaign" ? <section className="space-y-3">
         <div className="grid grid-cols-2 gap-2">{variants.map((row) => <div key={row.variant} className="rounded-xl border border-edge bg-panel p-3"><p className="font-mono text-[0.56rem] uppercase text-muted">Subject variant {row.variant}</p><strong className="mt-1 block font-display text-xl text-bone">{row.replyRate}% replies</strong><span className="text-xs text-muted">{row.replies} replies from {row.sent} sent</span></div>)}</div>
         {campaigns.map((campaign) => <article key={campaign.id} className="rounded-xl border border-edge bg-panel p-4">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-display text-lg text-bone">{campaign.name}</h2><span className={`mt-1 inline-block rounded-full border px-2 py-0.5 font-mono text-[0.55rem] uppercase ${campaign.status === "active" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{campaign.status}</span></div><button onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign"}</button></div>
@@ -253,7 +289,7 @@ export default function OutreachPage() {
         </article>)}
       </section> : null}
 
-      {!loading && tab === "intelligence" && activeCampaign ? <section className="space-y-4">
+      {!loading && !tabLoading && tab === "intelligence" && activeCampaign ? <section className="space-y-4">
         <div className="rounded-xl border border-amber/40 bg-amber/[0.06] p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Message intelligence</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-muted">Set the voice and guardrails once. For every person, Terra must show the evidence, chosen angle and quality score before you approve the exact words.</p></div><button onClick={() => saveCampaign(activeCampaign)} disabled={!!busy} className={primary}>{busy === `campaign:${activeCampaign.id}` ? "Saving…" : "Save intelligence"}</button></div>
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
@@ -276,7 +312,7 @@ export default function OutreachPage() {
         </div>
       </section> : null}
 
-      {!loading && tab === "replies" ? <section>
+      {!loading && !tabLoading && tab === "replies" ? <section>
         <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Every reply stops the sequence. Interested people become CRM opportunities and can receive an approved booking reply.</p></div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking Gmail…" : "Check replies now"}</button></div>
         <div className="space-y-2">{replies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; return <article key={reply.id} className="rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></div><span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${reply.reply_category === "interested" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{reply.reply_category}</span></div>
@@ -287,7 +323,7 @@ export default function OutreachPage() {
         </article>; })}{!replies.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">No replies detected yet.</div> : null}</div>
       </section> : null}
 
-      {!loading && tab === "safety" ? <section className="space-y-4"><div className="rounded-xl border border-moss/40 bg-moss/10 p-4"><h2 className="font-display text-lg text-bone">Safety rules are active</h2><ul className="mt-3 space-y-2 text-sm text-bone/80"><li>• Nothing sends without approval of that exact draft.</li><li>• Every email is forced through Lee Nazari &lt;lee@interviewa.com&gt;.</li><li>• Maximum 20 sends per London calendar day.</li><li>• Existing CRM companies, replies and blocked addresses stop outreach.</li><li>• Only one person per company enters a daily queue.</li><li>• No tracking pixels or hidden open tracking.</li></ul></div><div className="rounded-xl border border-edge bg-panel p-4"><h2 className="font-display text-lg text-bone">Do-not-contact list</h2><p className="mt-1 text-sm text-muted">Block a person’s email or an entire company domain.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input className={input} value={blockTarget} onChange={(e) => setBlockTarget(e.target.value)} placeholder="person@company.com or company.com" /><button onClick={addSuppression} disabled={!!busy || !blockTarget.trim()} className={primary}>Block</button></div><div className="mt-4 space-y-2">{suppressions.map((item) => <div key={item.target} className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink/30 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm text-bone">{item.target}</p><p className="text-xs text-muted">{item.reason}</p></div><span className="font-mono text-[0.54rem] uppercase text-muted">{item.kind}</span></div>)}</div></div></section> : null}
+      {!loading && !tabLoading && tab === "safety" ? <section className="space-y-4"><div className="rounded-xl border border-moss/40 bg-moss/10 p-4"><h2 className="font-display text-lg text-bone">Safety rules are active</h2><ul className="mt-3 space-y-2 text-sm text-bone/80"><li>• Nothing sends without approval of that exact draft.</li><li>• Every email is forced through Lee Nazari &lt;lee@interviewa.com&gt;.</li><li>• Maximum 20 sends per London calendar day.</li><li>• Existing CRM companies, replies and blocked addresses stop outreach.</li><li>• Only one person per company enters a daily queue.</li><li>• No tracking pixels or hidden open tracking.</li></ul></div><div className="rounded-xl border border-edge bg-panel p-4"><h2 className="font-display text-lg text-bone">Do-not-contact list</h2><p className="mt-1 text-sm text-muted">Block a person’s email or an entire company domain.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input className={input} value={blockTarget} onChange={(e) => setBlockTarget(e.target.value)} placeholder="person@company.com or company.com" /><button onClick={addSuppression} disabled={!!busy || !blockTarget.trim()} className={primary}>Block</button></div><div className="mt-4 space-y-2">{suppressions.map((item) => <div key={item.target} className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink/30 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm text-bone">{item.target}</p><p className="text-xs text-muted">{item.reason}</p></div><span className="font-mono text-[0.54rem] uppercase text-muted">{item.kind}</span></div>)}</div></div></section> : null}
     </main>
   );
 }

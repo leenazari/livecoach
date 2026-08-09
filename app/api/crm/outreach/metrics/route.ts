@@ -1,11 +1,12 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { londonDayBounds } from "@/lib/outreach";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const summaryOnly = req.nextUrl.searchParams.get("summary") === "1";
     const { start, end } = londonDayBounds();
     const [sent, approved, replies, positive, prospects] = await Promise.all([
       supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "sent").gte("sent_at", start).lt("sent_at", end),
@@ -14,6 +15,16 @@ export async function GET() {
       supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("kind", "positive_reply"),
       supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }),
     ]);
+    const metrics = {
+      sentToday: sent.count || 0,
+      approved: approved.count || 0,
+      replies: replies.count || 0,
+      positiveReplies: positive.count || 0,
+      prospects: prospects.count || 0,
+    };
+    // The default Today queue needs only five small counts. Avoid loading every
+    // historical message, reply and learning until a reporting tab is opened.
+    if (summaryOnly) return NextResponse.json({ metrics });
     const [{ data: recentReplies }, { data: variantMessages }, { data: variantReplies }, { data: replyDrafts }, { data: learnings }] = await Promise.all([
       supabaseAdmin.from("outreach_prospects").select("id,first_name,last_name,company_name,email,reply_category,reply_summary,last_reply_at,status").not("last_reply_at", "is", null).order("last_reply_at", { ascending: false }).limit(50),
       supabaseAdmin.from("outreach_messages").select("prospect_id,variant,message_tags,campaign_id").eq("status", "sent"),
@@ -45,7 +56,7 @@ export async function GET() {
       }
     }
     const performance = [...performanceMap.values()].map((row) => ({ ...row, positiveRate: row.sent ? Math.round((row.positive / row.sent) * 1000) / 10 : 0 })).sort((a, b) => b.meetings - a.meetings || b.positiveRate - a.positiveRate).slice(0, 30);
-    return NextResponse.json({ metrics: { sentToday: sent.count || 0, approved: approved.count || 0, replies: replies.count || 0, positiveReplies: positive.count || 0, prospects: prospects.count || 0 }, replies: replyRows, variants, performance, learnings: learnings || [] });
+    return NextResponse.json({ metrics, replies: replyRows, variants, performance, learnings: learnings || [] });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to load outreach metrics" }, { status: 500 });
   }

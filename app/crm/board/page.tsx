@@ -2,17 +2,35 @@
 
 import { useCallback, useEffect, useState, Suspense } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { crmFetch, type Company } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
-import TaskList from "@/components/crm/TaskList";
-import OpportunityClosePlan, {
-  type ClosePlan,
-} from "@/components/crm/OpportunityClosePlan";
-import ClientPortfolio, {
-  type ClientPortfolioRow,
-  type ClientPortfolioTotals,
+import type { ClosePlan } from "@/components/crm/OpportunityClosePlan";
+import type {
+  ClientPortfolioRow,
+  ClientPortfolioTotals,
 } from "@/components/crm/ClientPortfolio";
+
+const tabLoading = () => (
+  <div className="h-36 animate-pulse rounded-xl border border-edge bg-panel/30" />
+);
+
+// Each board tab has a substantial, independent editor. Only download the tab
+// the user opens instead of bundling tasks, close plans and the client sheet
+// into every visit.
+const TaskList = dynamic(() => import("@/components/crm/TaskList"), {
+  ssr: false,
+  loading: tabLoading,
+});
+const OpportunityClosePlan = dynamic(
+  () => import("@/components/crm/OpportunityClosePlan"),
+  { ssr: false, loading: tabLoading }
+);
+const ClientPortfolio = dynamic(
+  () => import("@/components/crm/ClientPortfolio"),
+  { ssr: false, loading: tabLoading }
+);
 
 type Tab = "tasks" | "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
