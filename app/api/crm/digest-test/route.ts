@@ -26,3 +26,10 @@ export async function POST(req: NextRequest) {
   });
   return sendDigest(cronRequest);
 }
+
+// GET supports an intentional top-level visit from Lee's authenticated CRM
+// session. This route is not linked or prefetched anywhere, and the fixed
+// recipient means a visit can only send Lee his own test brief.
+export async function GET(req: NextRequest) {
+  return POST(req);
+}
