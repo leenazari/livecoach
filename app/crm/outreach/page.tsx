@@ -175,7 +175,7 @@ export default function OutreachPage() {
     setRowErrors((all) => ({ ...all, [prospectId]: "" }));
     try {
       const result = await crmFetch<any>(`/api/crm/outreach/${prospectId}/prepare`, { method: "POST", body: "{}" });
-      setNotice(result.needsExtraReview ? "Draft saved. Its quality score is lower than usual, so review it carefully before approval." : "Research and draft ready for review.");
+      setNotice(result.formatRepaired ? "Research and draft saved after an automatic format repair. Review the wording carefully before approval." : result.needsExtraReview ? "Draft saved. Its quality score is lower than usual, so review it carefully before approval." : "Research and draft ready for review.");
       await loadCore();
     }
     catch (e: any) {

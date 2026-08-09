@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
+import { openai, OPENAI_MODEL_LIVE, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { londonDate, modelSources, modelText, parseObject } from "@/lib/outreach";
 import { OUTREACH_FROM_EMAIL } from "@/lib/gmail";
@@ -57,6 +57,20 @@ const OUTREACH_DRAFT_FORMAT = {
     },
   },
 } as const;
+
+type CompleteOutreachDraft = {
+  research: Record<string, any>;
+  strategy: Record<string, any>;
+  email: { subject: string; previewText?: string; bodyText: string };
+};
+
+const completeDraft = (value: any): value is CompleteOutreachDraft => !!(
+  value?.research &&
+  value?.strategy &&
+  value?.email &&
+  String(value.email.subject || "").trim() &&
+  String(value.email.bodyText || "").trim()
+);
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const startedAt = Date.now();
@@ -151,12 +165,13 @@ ${existingResearch ? `RESEARCH ALREADY SAVED, refresh only what may have changed
 ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDANCE:\n${body.guidance.trim().slice(0, 1000)}` : ""}`;
     const message = await openai.messages.create({
       model: OPENAI_MODEL_PRO,
-      max_tokens: 1300,
+      max_tokens: 1600,
       response_format: OUTREACH_DRAFT_FORMAT,
       system,
       tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }] as any,
       messages: [{ role: "user", content: user }],
-    }, { timeout: 55_000 });
+    }, { timeout: 38_000 });
+    const originalText = modelText(message);
     const sources = modelSources(message);
     await logModelUsage("outreach_prepare", "pro", message?.usage, {
       prospectId,
@@ -164,11 +179,41 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDA
       outputTokens: Number(message?.usage?.output_tokens) || 0,
       cachedInputTokens: Number(message?.usage?.cache_read_input_tokens) || 0,
       sourceCount: sources.length,
+      stopReason: message?.stop_reason || "unknown",
+      outputChars: originalText.length,
     });
-    const parsed = parseObject(modelText(message));
-    if (!parsed?.research || !parsed?.strategy || !parsed?.email) {
-      console.error(JSON.stringify({ level: "error", msg: "outreach prepare returned invalid structured output", prospectId, ms: Date.now() - startedAt }));
-      return NextResponse.json({ error: "The research completed but the draft format failed. No draft was saved and you have not contacted this prospect." }, { status: 502 });
+    let parsed = parseObject(originalText);
+    let formatRepaired = false;
+    if (!completeDraft(parsed)) {
+      console.warn(JSON.stringify({ level: "warning", msg: "outreach prepare needs format repair", prospectId, stopReason: message?.stop_reason || "unknown", outputChars: originalText.length, ms: Date.now() - startedAt }));
+      const repair = await openai.messages.create({
+        model: OPENAI_MODEL_LIVE,
+        max_tokens: 1800,
+        response_format: OUTREACH_DRAFT_FORMAT,
+        system: `Repair an incomplete structured outreach result and return ONLY the required JSON. Preserve every supplied research fact. Never invent facts about the person, company, vacancies, customers, savings or results. If a research field is missing, use an empty array, empty string, unknown volume, or low confidence as appropriate. You may complete the email using only the supplied facts and approved Interviewa truth. Use British English, short mobile friendly paragraphs, one question, no semicolons, and no hyphens or dashes in prose. The first email must naturally introduce: I’m Lee Nazari, CEO of Interviewa. Include a natural opt out.`,
+        messages: [{ role: "user", content: `PERSON: ${prospect.first_name || ""} ${prospect.last_name || ""}, ${prospect.job_title || ""} at ${prospect.company_name || ""}
+CAMPAIGN GOAL: ${campaign.goal || ""}
+CAMPAIGN ANGLE: ${campaign.offer_angle || ""}
+SEQUENCE STEP: ${step}
+APPROVED INTERVIEWA TRUTH:
+${productTruth.slice(0, 3200)}
+
+INCOMPLETE RESULT TO REPAIR:
+${originalText.slice(0, 9000) || "No usable formatted text was returned. Use only the safe context above and mark all prospect research as low confidence."}` }],
+      }, { timeout: 16_000 });
+      await logModelUsage("outreach_prepare_repair", "live", repair?.usage, {
+        prospectId,
+        inputTokens: Number(repair?.usage?.input_tokens) || 0,
+        outputTokens: Number(repair?.usage?.output_tokens) || 0,
+        cachedInputTokens: Number(repair?.usage?.cache_read_input_tokens) || 0,
+        originalStopReason: message?.stop_reason || "unknown",
+      });
+      parsed = parseObject(modelText(repair));
+      formatRepaired = completeDraft(parsed);
+    }
+    if (!completeDraft(parsed)) {
+      console.error(JSON.stringify({ level: "error", msg: "outreach prepare format repair failed", prospectId, ms: Date.now() - startedAt }));
+      return NextResponse.json({ error: "The research response could not be formatted after an automatic repair. Nothing was saved or sent." }, { status: 502 });
     }
     const research = {
       summary: clean(parsed.research.summary, 800),
@@ -191,7 +236,6 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDA
       preview_text: removeDashesFromProse(clean(parsed.email.previewText, 180)),
       body_text: removeDashesFromProse(clean(parsed.email.bodyText, 4000)),
     };
-    if (!email.subject || !email.body_text) return NextResponse.json({ error: "The email draft was incomplete, try again" }, { status: 502 });
     if (!/(not relevant|will not follow up|won't follow up|do not follow up)/i.test(email.body_text)) {
       email.body_text = `${email.body_text.trim()}\n\nIf this is not relevant, tell me and I will not follow up.`.slice(0, 4000);
     }
@@ -200,14 +244,14 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDA
     const bannedHits = banned.filter((phrase: string) => phrase && lowerBody.includes(phrase.toLowerCase()));
     const questionCount = (email.body_text.match(/\?/g) || []).length;
     let qualityScore = 100;
-    if (wordCount < 70 || wordCount > 130) qualityScore -= 15;
+    if (wordCount < 70 || wordCount > 135) qualityScore -= 15;
     if (questionCount !== 1) qualityScore -= 12;
     if (bannedHits.length) qualityScore -= Math.min(30, bannedHits.length * 15);
     if (!research.personalisationFact && research.confidence === "low") qualityScore -= 10;
     if (email.subject.length > 55) qualityScore -= 8;
     if (!/(not relevant|will not follow up|won't follow up|do not follow up)/i.test(email.body_text)) qualityScore -= 15;
-    qualityScore = Math.max(0, Math.min(100, Math.min(qualityScore, Number(parsed.strategy.qualityScore) || 100)));
-    const needsExtraReview = qualityScore < 70;
+    qualityScore = Math.max(0, Math.min(formatRepaired ? 85 : 100, Math.min(qualityScore, Number(parsed.strategy.qualityScore) || 100)));
+    const needsExtraReview = qualityScore < 70 || formatRepaired;
     const strategy = {
       reasoning: clean(parsed.strategy.reasoning, 700),
       evidenceUsed: Array.isArray(parsed.strategy.evidenceUsed) ? parsed.strategy.evidenceUsed.map((item: any) => clean(item, 240)).filter(Boolean).slice(0, 3) : [],
@@ -242,8 +286,8 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDA
         { campaign_id: campaign.id, prospect_id: prospect.id, message_id: draft.id, kind: "drafted", metadata: { step, variant, qualityScore, tags: messageTags } },
       ]),
     ]);
-    console.log(JSON.stringify({ level: "info", msg: "outreach prepare completed", prospectId, qualityScore, needsExtraReview, ms: Date.now() - startedAt }));
-    return NextResponse.json({ research, sources, strategy, qualityScore, needsExtraReview, checks: { wordCount, questionCount, bannedHits }, message: draft });
+    console.log(JSON.stringify({ level: "info", msg: "outreach prepare completed", prospectId, qualityScore, needsExtraReview, formatRepaired, ms: Date.now() - startedAt }));
+    return NextResponse.json({ research, sources, strategy, qualityScore, needsExtraReview, formatRepaired, checks: { wordCount, questionCount, bannedHits }, message: draft });
   } catch (error: any) {
     console.error(JSON.stringify({ level: "error", msg: "outreach prepare failed", prospectId: params.id, error: error?.message || "unknown error", ms: Date.now() - startedAt }));
     return NextResponse.json({ error: error?.name === "AbortError" ? "Research timed out, try this person again" : error?.message || "failed to prepare outreach" }, { status: 500 });
