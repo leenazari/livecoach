@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
     // historical message, reply and learning until a reporting tab is opened.
     if (summaryOnly) return NextResponse.json({ metrics });
     const [{ data: recentReplies }, { data: variantMessages }, { data: variantReplies }, { data: replyDrafts }, { data: learnings }] = await Promise.all([
-      supabaseAdmin.from("outreach_prospects").select("id,first_name,last_name,company_name,email,reply_category,reply_summary,last_reply_at,status").not("last_reply_at", "is", null).order("last_reply_at", { ascending: false }).limit(50),
+      supabaseAdmin.from("outreach_prospects").select("id,first_name,last_name,company_name,email,reply_category,reply_summary,last_reply_at,status,crm_company_id").not("last_reply_at", "is", null).order("last_reply_at", { ascending: false }).limit(50),
       supabaseAdmin.from("outreach_messages").select("prospect_id,variant,message_tags,campaign_id").eq("status", "sent"),
       supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,campaign_id").in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe", "meeting_booked"]),
       supabaseAdmin.from("outreach_messages").select("*").eq("step_number", 10).in("status", ["draft", "approved", "sent"]).order("updated_at", { ascending: false }),
@@ -37,8 +37,39 @@ export async function GET(req: NextRequest) {
       const replyCount = (variantReplies || []).filter((row: any) => row.kind !== "meeting_booked" && (row.metadata?.variant || "A") === variant).length;
       return { variant, sent: sentCount, replies: replyCount, replyRate: sentCount ? Math.round((replyCount / sentCount) * 1000) / 10 : 0 };
     });
+    const linkedCompanyIds = Array.from(
+      new Set(
+        (recentReplies || [])
+          .map((reply: any) => reply.crm_company_id)
+          .filter(Boolean)
+      )
+    );
+    const { data: linkedCompanies } = linkedCompanyIds.length
+      ? await supabaseAdmin
+          .from("companies")
+          .select("id,name")
+          .in("id", linkedCompanyIds)
+      : { data: [] as any[] };
+    const linkedCompanyNames = new Map(
+      (linkedCompanies || []).map((company: any) => [company.id, company.name])
+    );
+    const bookingByProspect = new Map(
+      (variantReplies || [])
+        .filter((event: any) => event.kind === "meeting_booked")
+        .map((event: any) => [event.prospect_id, event.metadata || {}])
+    );
     const replyDraftByProspect = new Map((replyDrafts || []).map((draft: any) => [draft.prospect_id, draft]));
-    const replyRows = (recentReplies || []).map((reply: any) => ({ ...reply, bookingDraft: replyDraftByProspect.get(reply.id) || null }));
+    const replyRows = (recentReplies || []).map((reply: any) => ({
+      ...reply,
+      bookingDraft: replyDraftByProspect.get(reply.id) || null,
+      crmCompany: reply.crm_company_id
+        ? {
+            id: reply.crm_company_id,
+            name: linkedCompanyNames.get(reply.crm_company_id) || reply.company_name,
+          }
+        : null,
+      bookedMeeting: bookingByProspect.get(reply.id) || null,
+    }));
     const positiveProspects = new Set((variantReplies || []).filter((event: any) => event.kind === "positive_reply").map((event: any) => event.prospect_id));
     const meetingProspects = new Set((variantReplies || []).filter((event: any) => event.kind === "meeting_booked").map((event: any) => event.prospect_id));
     const performanceMap = new Map<string, any>();

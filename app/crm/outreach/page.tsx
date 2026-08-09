@@ -15,6 +15,14 @@ type Prospect = Record<string, any> & { id: string; email: string; company_name:
 type QueueRow = Record<string, any> & { id: string; prospect: Prospect; campaign: Record<string, any>; message: Record<string, any> | null; recommendation: Recommendation };
 type SequenceStep = { step: number; delayDays: number; purpose: string; contentType?: "plain" | "insight" | "case_study" | "video" | "close_loop"; guidance?: string; assetUrl?: string | null };
 type Campaign = Record<string, any> & { id: string; name: string; goal: string; audience: string; offer_angle: string; status: string; daily_limit: number; sequence: SequenceStep[] };
+type HandoverPreview = {
+  companyId: string | null;
+  companyName: string | null;
+  candidates: { id: string; name: string; domain: string | null }[];
+  canCreateSafely: boolean;
+  needsReview: boolean;
+  reason: string;
+};
 
 const tabs: { key: Tab; label: string; icon: string }[] = [
   { key: "queue", label: "Today", icon: "☀" },
@@ -79,6 +87,7 @@ export default function OutreachPage() {
   const [recommendationFilter, setRecommendationFilter] = useState<"all" | RecommendationAction>("all");
   const [blockTarget, setBlockTarget] = useState("");
   const [draftEdits, setDraftEdits] = useState<Record<string, { subject: string; body_text: string }>>({});
+  const [handoverReviews, setHandoverReviews] = useState<Record<string, HandoverPreview>>({});
 
   const loadCore = useCallback(async () => {
     try {
@@ -213,6 +222,26 @@ export default function OutreachPage() {
     try { await crmFetch(`/api/crm/outreach/replies/${prospectId}/draft`, { method: "POST", body: "{}" }); setNotice("Booking reply ready. Review and approve the exact wording before sending."); await loadMetrics(); }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
+  const reviewHandover = async (prospectId: string) => {
+    setBusy(`handover-check:${prospectId}`); setError(""); setNotice("");
+    try {
+      const { handover } = await crmFetch<{ handover: HandoverPreview }>(`/api/crm/outreach/${prospectId}/handover`);
+      setHandoverReviews((all) => ({ ...all, [prospectId]: handover }));
+    } catch (e: any) { setError(e.message); } finally { setBusy(""); }
+  };
+  const completeHandover = async (prospectId: string, companyId?: string) => {
+    setBusy(`handover-save:${prospectId}`); setError(""); setNotice("");
+    try {
+      const result = await crmFetch<{ companyId: string }>(`/api/crm/outreach/${prospectId}/handover`, {
+        method: "POST",
+        body: JSON.stringify(companyId ? { companyId } : { createNew: true }),
+      });
+      setNotice("CRM handover complete. The client profile and call context are now linked.");
+      setHandoverReviews((all) => { const next = { ...all }; delete next[prospectId]; return next; });
+      await loadMetrics();
+      if (result.companyId) window.history.replaceState({}, "", "/crm/outreach?tab=replies");
+    } catch (e: any) { setError(e.message); } finally { setBusy(""); }
+  };
   const addSuppression = async () => {
     if (!blockTarget.trim()) return;
     setBusy("block"); setError("");
@@ -303,7 +332,7 @@ export default function OutreachPage() {
         <div className="rounded-xl border border-edge bg-panel p-4">
           <h2 className="font-display text-lg text-bone">AI13 calendar handoff</h2><p className="mt-1 text-sm leading-6 text-muted">The safest default is to earn interest first. A positive reply gets a draft containing your booking link, which still needs your approval.</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_13rem]"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Booking link</span><input className={input} placeholder="https://calendar.google.com/calendar/appointments/…" value={activeCampaign.booking_url || ""} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, booking_url: e.target.value } : campaign))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">When to include</span><select className={input} value={activeCampaign.booking_cta_mode || "interested_reply"} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, booking_cta_mode: e.target.value } : campaign))}><option value="interested_reply">Only after interest</option><option value="final_step">Final sequence email</option><option value="always">Every email</option><option value="never">Never</option></select></label></div>
-          <p className="mt-3 rounded-lg border border-moss/35 bg-moss/[0.07] px-3 py-2 text-sm text-moss">When a prospect books, Calendar Sync links the meeting, creates the CRM opportunity, and seeds the call intent with the research, sent email and reply.</p>
+          <p className="mt-3 rounded-lg border border-moss/35 bg-moss/[0.07] px-3 py-2 text-sm text-moss">When a prospect books, Calendar Sync links the meeting and seeds the call intent with the research, sent email and reply. Deal value and probability stay blank until a real conversation supports them.</p>
         </div>
 
         <div className="rounded-xl border border-edge bg-panel p-4"><h2 className="font-display text-lg text-bone">Conversion learning</h2><p className="mt-1 text-sm leading-6 text-muted">We measure positive replies and booked meetings, not vanity opens. A pattern is not fed back into new drafts until it has at least 10 sends and meaningful conversion evidence.</p>
@@ -313,10 +342,16 @@ export default function OutreachPage() {
       </section> : null}
 
       {!loading && !tabLoading && tab === "replies" ? <section>
-        <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Every reply stops the sequence. Interested people become CRM opportunities and can receive an approved booking reply.</p></div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking Gmail…" : "Check replies now"}</button></div>
-        <div className="space-y-2">{replies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; return <article key={reply.id} className="rounded-xl border border-edge bg-panel p-4">
+        <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Every reply stops the sequence. Interested people are linked safely to the CRM, while deal value waits until a real conversation.</p></div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking Gmail…" : "Check replies now"}</button></div>
+        <div className="space-y-2">{replies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; const handover = handoverReviews[reply.id]; return <article key={reply.id} className="rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></div><span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${reply.reply_category === "interested" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{reply.reply_category}</span></div>
           <p className="mt-3 text-sm leading-6 text-bone/80">{reply.reply_summary}</p>
+          {reply.reply_category === "interested" ? <div className="mt-3 rounded-lg border border-edge bg-ink/35 p-3">
+            {reply.crmCompany ? <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase text-moss">✓ CRM handover complete</p><p className="mt-1 text-sm text-bone/80">Linked to {reply.crmCompany.name}{reply.bookedMeeting ? " · meeting booked" : " · sequence stopped"}</p></div><Link href={`/crm/${reply.crmCompany.id}`} className={`${button} inline-flex items-center justify-center`}>Open client</Link></div> : <div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase text-amber">CRM match needs approval</p><p className="mt-1 text-sm text-muted">No client record will be guessed or duplicated.</p></div><button onClick={() => reviewHandover(reply.id)} disabled={!!busy} className={button}>{busy === `handover-check:${reply.id}` ? "Checking…" : handover ? "Refresh choices" : "Review match"}</button></div>
+              {handover ? <div className="mt-3 border-t border-edge pt-3"><p className="text-sm text-bone/80">{handover.reason}</p>{handover.candidates.length ? <div className="mt-2 grid gap-2 sm:grid-cols-2">{handover.candidates.map((candidate) => <button key={candidate.id} onClick={() => completeHandover(reply.id, candidate.id)} disabled={!!busy} className={`${button} text-left normal-case tracking-normal`}><strong className="block text-bone">Link to {candidate.name}</strong><span className="text-xs text-muted">{candidate.domain || "No domain saved"}</span></button>)}</div> : null}<button onClick={() => completeHandover(reply.id)} disabled={!!busy} className={`${primary} mt-2 w-full sm:w-auto`}>{busy === `handover-save:${reply.id}` ? "Saving…" : `Create new ${reply.company_name} profile`}</button></div> : null}
+            </div>}
+          </div> : null}
           {reply.reply_category === "interested" && !draft ? <button onClick={() => prepareBookingReply(reply.id)} disabled={!!busy} className={`${primary} mt-3 w-full sm:w-auto`}>{busy === `booking:${reply.id}` ? "Drafting…" : "Prepare booking reply"}</button> : null}
           {draft && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-moss/35 bg-moss/[0.06] px-3 py-2 text-sm text-moss">This is still a draft. Review the exact words and calendar link before approval.</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Reply subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(draft.id, { subject: e.target.value })} disabled={draft.status === "sent"} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Reply</span><textarea className={`${input} min-h-40 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(draft.id, { body_text: e.target.value })} disabled={draft.status === "sent"} /></label><div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => saveDraft(draft.id)} disabled={!!busy || draft.status === "sent"} className={button}>Save changes</button>{draft.status === "draft" || draft.status === "failed" ? <button onClick={() => saveDraft(draft.id, true)} disabled={!!busy} className={primary}>Approve exact reply</button> : null}{draft.status === "approved" ? <button onClick={() => send(draft.id)} disabled={!!busy} className={primary}>Send booking reply</button> : null}{draft.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Booking link sent</span> : null}</div></div> : null}
           <a href={`mailto:${reply.email}`} className="mt-3 inline-block font-mono text-xs text-amber">Open in Gmail ↗</a>
