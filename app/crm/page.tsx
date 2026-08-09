@@ -2,16 +2,37 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import UpcomingCalls from "@/components/crm/UpcomingCalls";
 import TaskList from "@/components/crm/TaskList";
 import Commitments from "@/components/crm/Commitments";
-import MorningCheckin from "@/components/crm/MorningCheckin";
-import RecentCalls from "@/components/crm/RecentCalls";
-import OpportunityBoard from "@/components/crm/OpportunityBoard";
-import DuplicateClients from "@/components/crm/DuplicateClients";
 import CrmSearch from "@/components/crm/CrmSearch";
+
+// These sections sit below the first decision layer or only appear when they
+// contain data. Loading them separately keeps the Today dashboard interactive
+// while drag-and-drop, duplicate review and call-history code arrive.
+const MorningCheckin = dynamic(
+  () => import("@/components/crm/MorningCheckin"),
+  { ssr: false }
+);
+const OpportunityBoard = dynamic(
+  () => import("@/components/crm/OpportunityBoard"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="mb-3 h-24 animate-pulse rounded-xl border border-edge bg-panel/30" />
+    ),
+  }
+);
+const DuplicateClients = dynamic(
+  () => import("@/components/crm/DuplicateClients"),
+  { ssr: false }
+);
+const RecentCalls = dynamic(() => import("@/components/crm/RecentCalls"), {
+  ssr: false,
+});
 
 type Dash = {
   kpis: {
@@ -176,36 +197,46 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let alive = true;
-    // Self-heal: summarise any call the bot captured but that never got a
-    // scorecard (e.g. the meeting just ended without pressing "End & summarise"),
-    // so a captured call can't silently go missing from the lists. Fire and
-    // forget, only does work when an orphan exists.
-    fetch("/api/interview/backfill-scorecards").catch(() => {});
-    // Tidy the to-do list: clear ones that have passed, fold loose ones into
-    // the opportunity they're about, then refresh so both reflect.
-    Promise.allSettled([
-      fetch("/api/crm/tasks/sweep-stale"),
-      fetch("/api/crm/tasks/fold-loose"),
-    ]).then(() => window.dispatchEvent(new CustomEvent("lc:tasks-updated")));
     // Paint immediately from the light (no-AI) response, then fold in the
     // "Your day" blurb when the slower AI call returns - so the dashboard
     // never blocks on an LLM call.
-    refreshDashboard().catch(() => {});
-    crmFetch<Dash>("/api/crm/dashboard")
-      .then(
-        (d) =>
-          alive &&
-          setDash((prev) =>
-            prev
-              ? { ...prev, dayRead: d.dayRead, dayParts: d.dayParts }
-              : d
-          )
-      )
+    refreshDashboard()
+      .then(() => {
+        if (!alive) return;
+        // The AI day read is optional. Start it only after the factual dashboard
+        // is already painted so its repeated context queries and model call can
+        // never delay the controls the user needs first.
+        return crmFetch<Dash>("/api/crm/dashboard").then(
+          (d) =>
+            alive &&
+            setDash((prev) =>
+              prev
+                ? { ...prev, dayRead: d.dayRead, dayParts: d.dayParts }
+                : d
+            )
+        );
+      })
       .catch(() => {});
     return () => {
       alive = false;
     };
   }, [refreshDashboard]);
+
+  useEffect(() => {
+    // Maintenance is important, but it used to compete with the first visible
+    // dashboard request. Give the useful Today view a head start, then run the
+    // same self-healing work together in the background.
+    const timer = window.setTimeout(() => {
+      Promise.allSettled([
+        fetch("/api/interview/backfill-scorecards"),
+        fetch("/api/crm/tasks/sweep-stale"),
+        fetch("/api/crm/tasks/fold-loose"),
+      ]).then(() =>
+        window.dispatchEvent(new CustomEvent("lc:tasks-updated"))
+      );
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // A task can be changed from Do next, an opportunity, commitments, or the
   // Today cards. Keep the entire dashboard snapshot in lockstep with all of

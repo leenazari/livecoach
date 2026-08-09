@@ -93,9 +93,16 @@ export default function CompanyDetailPage() {
     setLoading(true);
     setErr("");
     try {
-      // Make sure the standard fields (owner / priority / value / address) exist
-      // before we read them for the stats. Idempotent, runs once effectively.
-      await crmFetch(`/api/crm/fields/seed`, { method: "POST" }).catch(() => {});
+      // Field seeding is idempotent, but it used to hold every client request
+      // behind an extra round trip. Start independent client data immediately;
+      // only the field-definition read needs to wait for the seed.
+      const fieldsPromise = crmFetch(`/api/crm/fields/seed`, { method: "POST" })
+        .catch(() => {})
+        .then(() =>
+          crmFetch<{ fields: FieldDefinition[] }>(
+            `/api/crm/fields?entity=company`
+          )
+        );
       const [companyResponse, { fields }, { calls }, pipeline, timelineData] =
         await Promise.all([
         crmFetch<
@@ -104,9 +111,7 @@ export default function CompanyDetailPage() {
         >(
           `/api/crm/companies/${id}`
         ),
-        crmFetch<{ fields: FieldDefinition[] }>(
-          `/api/crm/fields?entity=company`
-        ),
+        fieldsPromise,
         crmFetch<{ calls: any[] }>(`/api/crm/companies/${id}/calls`).catch(
           () => ({ calls: [] as any[] })
         ),

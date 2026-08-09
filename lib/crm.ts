@@ -91,6 +91,11 @@ export function formatFieldValue(type: FieldType, value: any): string {
 // on a revisit (no blank/blink) while a fresh fetch updates it in the
 // background. Cleared on a full page reload. Use `getCached` to seed state.
 const _getCache = new Map<string, any>();
+// Several dashboard cards ask for the same feed as they mount. Share the first
+// in-flight request instead of sending duplicate database reads while the
+// cache is still empty.
+const _getInflight = new Map<string, Promise<any>>();
+let _cacheEpoch = 0;
 
 export function getCached<T = any>(url: string): T | undefined {
   return _getCache.get(url) as T | undefined;
@@ -104,11 +109,16 @@ export function setCached(url: string, value: any): void {
 
 // Tiny typed fetch wrapper - throws on non-OK with the server's message.
 // Successful GETs are cached by URL for instant re-render on revisit.
-export async function crmFetch<T = any>(
+export function crmFetch<T = any>(
   url: string,
   init?: RequestInit
 ): Promise<T> {
   const method = (init?.method || "GET").toUpperCase();
+  if (method === "GET") {
+    const existing = _getInflight.get(url);
+    if (existing) return existing as Promise<T>;
+  }
+  const readEpoch = _cacheEpoch;
   // CACHE-BUST EVERY READ.
   //
   // `cache: "no-store"` and server-side force-dynamic were both still losing to
@@ -123,30 +133,45 @@ export async function crmFetch<T = any>(
     method === "GET"
       ? `${url}${url.includes("?") ? "&" : "?"}_t=${Date.now()}`
       : url;
-  const res = await fetch(fetchUrl, {
-    // Never serve a CRM read from the browser's HTTP cache. A just-saved change
-    // (assigning a call to a client, marking a call done) must be reflected on
-    // the very next load, not after some cache TTL expires.
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
-  const text = await res.text();
-  let data: any = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error("unexpected response from the server");
-  }
-  if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
-  // Cache under the CLEAN url (not the cache-busted one) so getCached() hits.
+  const request = (async () => {
+    const res = await fetch(fetchUrl, {
+      // Never serve a CRM read from the browser's HTTP cache. A just-saved change
+      // (assigning a call to a client, marking a call done) must be reflected on
+      // the very next load, not after some cache TTL expires.
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      ...init,
+    });
+    const text = await res.text();
+    let data: any = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error("unexpected response from the server");
+    }
+    if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
+    // Cache under the CLEAN url (not the cache-busted one) so getCached() hits.
+    if (method === "GET") {
+      // A write may have completed while this read was in flight. Return the
+      // response to its original caller, but never let that older snapshot
+      // become the value shown on a later screen.
+      if (readEpoch === _cacheEpoch) _getCache.set(url, data);
+    } else {
+      // A successful write can affect several different CRM feeds (dashboard,
+      // client page, tasks, pipeline and outreach). Never let an older in-memory
+      // GET snapshot repaint that confirmed database change on the next screen.
+      _cacheEpoch += 1;
+      _getCache.clear();
+      _getInflight.clear();
+    }
+    return data as T;
+  })();
+
   if (method === "GET") {
-    _getCache.set(url, data);
-  } else {
-    // A successful write can affect several different CRM feeds (dashboard,
-    // client page, tasks, pipeline and outreach). Never let an older in-memory
-    // GET snapshot repaint that confirmed database change on the next screen.
-    _getCache.clear();
+    _getInflight.set(url, request);
+    void request.finally(() => {
+      if (_getInflight.get(url) === request) _getInflight.delete(url);
+    }).catch(() => {});
   }
-  return data as T;
+  return request;
 }

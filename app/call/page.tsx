@@ -2,14 +2,11 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { foldDictationEvent } from "@/lib/dictation";
-import CallStage from "@/components/CallStage";
-import MeetStage from "@/components/MeetStage";
 import CallCarryover from "@/components/crm/CallCarryover";
 import KnowledgePanel from "@/components/KnowledgePanel";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
-import SortableFocusList from "@/components/SortableFocusList";
-import PostCallSummary from "@/components/PostCallSummary";
 import CostMeter from "@/components/CostMeter";
 import MatrixRain from "@/components/MatrixRain";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
@@ -24,6 +21,32 @@ import {
   HOURLY_CEILING_GBP,
   type CostBreakdown,
 } from "@/lib/costs";
+
+const stageLoading = () => (
+  <div className="rounded-xl border border-edge bg-panel/40 px-4 py-8 text-center font-mono text-xs uppercase tracking-wider text-muted">
+    Loading live call controls…
+  </div>
+);
+
+// Live audio, drag-and-drop focus editing and the post-call report are large,
+// mutually exclusive parts of the workflow. Load each only when its stage is
+// reached instead of making every Prep screen download all three upfront.
+const CallStage = dynamic(() => import("@/components/CallStage"), {
+  ssr: false,
+  loading: stageLoading,
+});
+const MeetStage = dynamic(() => import("@/components/MeetStage"), {
+  ssr: false,
+  loading: stageLoading,
+});
+const SortableFocusList = dynamic(
+  () => import("@/components/SortableFocusList"),
+  { ssr: false }
+);
+const PostCallSummary = dynamic(
+  () => import("@/components/PostCallSummary"),
+  { ssr: false }
+);
 
 type Line = { role: string; text: string; speaker?: string };
 type Suggestion = {

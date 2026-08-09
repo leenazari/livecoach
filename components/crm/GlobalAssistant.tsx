@@ -2,7 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import ClientAssistant from "@/components/crm/ClientAssistant";
+import dynamic from "next/dynamic";
+
+// The assistant contains voice capture, playback and the full action UI. Most
+// visits only need the small floating trigger, so keep that large bundle out
+// of every CRM page until the user actually opens the Brain.
+const ClientAssistant = dynamic(
+  () => import("@/components/crm/ClientAssistant"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex min-h-48 items-center justify-center rounded-xl border border-edge bg-ink/30 font-mono text-xs uppercase tracking-wider text-muted">
+        Opening the Brain…
+      </div>
+    ),
+  }
+);
 
 function describeScreen(pathname: string | null, hasClient: boolean, tab: string) {
   const path = pathname || "/crm";
