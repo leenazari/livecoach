@@ -36,6 +36,10 @@ const DuplicateClients = dynamic(
   () => import("@/components/crm/DuplicateClients"),
   { ssr: false, loading: tabLoading }
 );
+const ClientTriage = dynamic(
+  () => import("@/components/crm/ClientTriage"),
+  { ssr: false, loading: tabLoading }
+);
 
 type Tab = "tasks" | "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
@@ -60,6 +64,7 @@ function BoardInner() {
     green: 0,
     grey: 0,
     opportunities: 0,
+    archived: 0,
   });
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState("");
@@ -120,6 +125,7 @@ function BoardInner() {
           green: 0,
           grey: 0,
           opportunities: 0,
+          archived: 0,
         });
       }
     } catch (error: any) {
@@ -230,12 +236,16 @@ function BoardInner() {
     setCompanies((p) => p.filter((c) => c.id !== id));
     setClientTotals((totals) => ({
       ...totals,
-      all: Math.max(0, totals.all - 1),
-      red: Math.max(0, totals.red - (deleted?.health === "red" ? 1 : 0)),
-      amber: Math.max(0, totals.amber - (deleted?.health === "amber" ? 1 : 0)),
-      green: Math.max(0, totals.green - (deleted?.health === "green" ? 1 : 0)),
-      grey: Math.max(0, totals.grey - (deleted?.health === "grey" ? 1 : 0)),
-      opportunities: Math.max(0, totals.opportunities - (deleted?.opportunity ? 1 : 0)),
+      all: Math.max(0, totals.all - (deleted && !deleted.archived ? 1 : 0)),
+      archived: Math.max(0, totals.archived - (deleted?.archived ? 1 : 0)),
+      red: Math.max(0, totals.red - (!deleted?.archived && deleted?.health === "red" ? 1 : 0)),
+      amber: Math.max(0, totals.amber - (!deleted?.archived && deleted?.health === "amber" ? 1 : 0)),
+      green: Math.max(0, totals.green - (!deleted?.archived && deleted?.health === "green" ? 1 : 0)),
+      grey: Math.max(0, totals.grey - (!deleted?.archived && deleted?.health === "grey" ? 1 : 0)),
+      opportunities: Math.max(
+        0,
+        totals.opportunities - (!deleted?.archived && deleted?.opportunity ? 1 : 0)
+      ),
     }));
     try {
       const result = await crmFetch<{ ok: boolean }>(`/api/crm/companies/${id}`, {
@@ -522,6 +532,7 @@ function BoardInner() {
         </ul>
       ) : (
         <>
+          <ClientTriage clients={companies} onSaved={() => load("clients")} />
           <DuplicateClients />
           <ClientPortfolio
             clients={companies}

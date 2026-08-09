@@ -16,6 +16,9 @@ export type ClientPortfolioRow = {
   name: string;
   sector: string | null;
   relationshipStage: string | null;
+  relationshipType: string | null;
+  triageReviewedAt: string | null;
+  archived: boolean;
   category: string;
   primaryContact: null | { name: string; role: string | null; email: string | null };
   health: ClientHealth;
@@ -41,6 +44,7 @@ export type ClientPortfolioRow = {
 export type ClientPortfolioTotals = Record<ClientHealth, number> & {
   all: number;
   opportunities: number;
+  archived: number;
 };
 
 const HEALTH = {
@@ -286,7 +290,9 @@ export default function ClientPortfolio({
   savingId: string;
 }) {
   const [query, setQuery] = useState("");
-  const [health, setHealth] = useState<"all" | ClientHealth | "opportunities">("all");
+  const [health, setHealth] = useState<
+    "all" | ClientHealth | "opportunities" | "archived"
+  >("all");
   const [stage, setStage] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
   const [sort, setSort] = useState<{
@@ -304,8 +310,16 @@ export default function ClientPortfolio({
 
   const shown = useMemo(() => {
       const filtered = clients.filter((row) => {
+        if (health === "archived" && !row.archived) return false;
+        if (health !== "archived" && row.archived) return false;
         if (health === "opportunities" && !row.opportunity) return false;
-        if (health !== "all" && health !== "opportunities" && row.health !== health) return false;
+        if (
+          health !== "all" &&
+          health !== "opportunities" &&
+          health !== "archived" &&
+          row.health !== health
+        )
+          return false;
         if (stage !== "all" && row.relationshipStage !== stage) return false;
         if (!deferredQuery) return true;
         const haystack = [
@@ -373,13 +387,18 @@ export default function ClientPortfolio({
   const sortMark = (key: typeof sort.key) =>
     sort.key === key ? (sort.direction === "asc" ? " ↑" : " ↓") : " ↕";
 
-  const healthFilters: { key: "all" | ClientHealth | "opportunities"; label: string; count: number }[] = [
+  const healthFilters: {
+    key: "all" | ClientHealth | "opportunities" | "archived";
+    label: string;
+    count: number;
+  }[] = [
     { key: "all", label: "All", count: totals.all },
     { key: "red", label: "Needs action", count: totals.red },
     { key: "amber", label: "Watch", count: totals.amber },
     { key: "green", label: "On track", count: totals.green },
     { key: "grey", label: "Needs details", count: totals.grey },
     { key: "opportunities", label: "Opportunities", count: totals.opportunities },
+    { key: "archived", label: "Archived", count: totals.archived },
   ];
 
   return (
@@ -394,7 +413,7 @@ export default function ClientPortfolio({
           <button
             key={String(label)}
             type="button"
-            onClick={() => setHealth(filter as "all" | ClientHealth | "opportunities")}
+            onClick={() => setHealth(filter as "all" | ClientHealth | "opportunities" | "archived")}
             aria-pressed={health === filter}
             className={`rounded-xl border bg-panel/35 px-3 py-2.5 text-left transition hover:border-amber/55 hover:bg-amber/[0.04] ${health === filter ? "border-amber/55" : "border-edge"}`}
           >
@@ -465,6 +484,8 @@ export default function ClientPortfolio({
                   ? "border-sky/55 bg-sky/10 text-sky"
                   : filter.key === "opportunities"
                     ? "border-sage/40 bg-sage/[0.06] text-sage"
+                    : filter.key === "archived"
+                      ? "border-edge bg-panel/40 text-muted"
                     : `${HEALTH[filter.key].border} ${HEALTH[filter.key].surface} ${HEALTH[filter.key].text}`
                 : "border-edge text-muted hover:text-bone"
             }`}
@@ -475,7 +496,7 @@ export default function ClientPortfolio({
       </div>
 
       <p className="mb-2 font-mono text-[0.54rem] uppercase tracking-wider text-muted">
-        Showing {shown.length} of {clients.length} · red and overdue relationships appear first
+        Showing {shown.length} of {health === "archived" ? totals.archived : totals.all} · red and overdue relationships appear first
       </p>
 
       {shown.length === 0 ? (

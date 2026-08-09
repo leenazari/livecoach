@@ -489,7 +489,7 @@ export async function GET(req: Request) {
       if (seenTopActions.has(key)) return false;
       seenTopActions.add(key);
       return true;
-    }).slice(0, 5);
+    }).slice(0, 3);
     const today = {
       callsToPrep,
       overduePromises,

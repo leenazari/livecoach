@@ -9,24 +9,22 @@ import { createSupabaseBrowser } from "@/lib/supabase-browser";
 // the choice is remembered (localStorage). When open it pushes the page content
 // right by padding the body, so nothing is hidden behind it.
 type Item = { href: string; label: string; icon: string; tab?: string };
-const PRIMARY_ITEMS: Item[] = [
-  { href: "/crm/outreach", label: "Outreach", icon: "↗" },
+const CORE_ITEMS: Item[] = [
   { href: "/crm", label: "Today", icon: "▣" },
-  { href: "/crm/revenue", label: "Revenue", icon: "◆" },
-  { href: "/call", label: "Start new call", icon: "▸" },
-];
-const RELATIONSHIP_ITEMS: Item[] = [
+  { href: "/crm/outreach", label: "Outreach", icon: "↗" },
   { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
-  { href: "/crm/board?tab=tasks", label: "To do", icon: "→", tab: "tasks" },
   { href: "/crm/calls", label: "Calls", icon: "☎" },
 ];
 const MORE_ITEMS: Item[] = [
-  { href: "/crm/health", label: "Health", icon: "✓" },
+  { href: "/crm/revenue", label: "Revenue", icon: "◆" },
+  { href: "/crm/board?tab=tasks", label: "To do", icon: "→", tab: "tasks" },
   { href: "/crm/board?tab=drafts", label: "Drafts", icon: "✉", tab: "drafts" },
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
+  { href: "/crm/health", label: "Health", icon: "✓" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
-const ITEMS = [...PRIMARY_ITEMS, ...RELATIONSHIP_ITEMS, ...MORE_ITEMS];
+const START_ITEM: Item = { href: "/call", label: "Start new call", icon: "▸" };
+const ITEMS = [...CORE_ITEMS, START_ITEM, ...MORE_ITEMS];
 
 const SIDEBAR_W = "15rem";
 
@@ -47,6 +45,7 @@ function NavMenuInner() {
     }
   });
   const [mobileMore, setMobileMore] = useState(false);
+  const [desktopMore, setDesktopMore] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
   // Phone layout: a thumb-reachable bottom tab bar instead of the left sidebar.
@@ -133,7 +132,7 @@ function NavMenuInner() {
       { href: "/crm/outreach", label: "Outreach", icon: "↗" },
       { href: "/crm", label: "Today", icon: "▣" },
       { href: "/call", label: "Start", icon: "▸" },
-      { href: "/crm/revenue", label: "Revenue", icon: "◆" },
+      { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
     ];
     return (
       <>
@@ -231,6 +230,18 @@ function NavMenuInner() {
           <span className="w-4 text-center">▤</span>
           Talk to brain
         </button>
+        <Link
+          href="/call"
+          aria-current={isActive(START_ITEM) ? "page" : undefined}
+          className={`mb-1 flex items-center gap-3 rounded-lg border px-3 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider transition ${
+            isActive(START_ITEM)
+              ? "border-sage/55 bg-sage/10 text-sage"
+              : "border-edge text-bone hover:border-sage/45 hover:bg-sage/[0.06]"
+          }`}
+        >
+          <span className="w-4 text-center">▸</span>
+          Start new call
+        </Link>
         {/* Outreach is the default CRM home, so there is nowhere to go back to
             from there. Dashboard remains available as its own destination. */}
         {pathname !== "/crm/outreach" && (
@@ -243,30 +254,54 @@ function NavMenuInner() {
             Back
           </button>
         )}
-        {[
-          ["Revenue journey", PRIMARY_ITEMS],
-          ["Relationships", RELATIONSHIP_ITEMS],
-          ["More", MORE_ITEMS],
-        ].map(([label, group]) => (
-          <div key={label as string} className="mt-2 first:mt-0">
-            <p className="mb-1 px-3 font-mono text-[0.48rem] uppercase tracking-[0.18em] text-muted/60">{label as string}</p>
-            {(group as Item[]).map((it) => (
-              <Link
-                key={it.href}
-                href={it.href}
-                aria-current={isActive(it) ? "page" : undefined}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 font-mono text-[0.66rem] uppercase tracking-wider transition ${
-                  isActive(it)
-                    ? "bg-amber/15 text-amber"
-                    : "text-muted hover:bg-bone/[0.05] hover:text-bone"
-                }`}
-              >
-                <span className="w-4 text-center">{it.icon}</span>
-                {it.label}
-              </Link>
-            ))}
-          </div>
-        ))}
+        <div className="mt-2">
+          <p className="mb-1 px-3 font-mono text-[0.48rem] uppercase tracking-[0.18em] text-muted/60">Work</p>
+          {CORE_ITEMS.map((it) => (
+            <Link
+              key={it.href}
+              href={it.href}
+              aria-current={isActive(it) ? "page" : undefined}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2 font-mono text-[0.66rem] uppercase tracking-wider transition ${
+                isActive(it)
+                  ? "bg-amber/15 text-amber"
+                  : "text-muted hover:bg-bone/[0.05] hover:text-bone"
+              }`}
+            >
+              <span className="w-4 text-center">{it.icon}</span>
+              {it.label}
+            </Link>
+          ))}
+        </div>
+        <div className="mt-3 border-t border-edge/70 pt-2">
+          <button
+            type="button"
+            onClick={() => setDesktopMore((open) => !open)}
+            aria-expanded={desktopMore || MORE_ITEMS.some(isActive)}
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:bg-bone/[0.05] hover:text-bone"
+          >
+            <span>More tools</span>
+            <span>{desktopMore || MORE_ITEMS.some(isActive) ? "−" : "+"}</span>
+          </button>
+          {(desktopMore || MORE_ITEMS.some(isActive)) ? (
+            <div className="mt-1">
+              {MORE_ITEMS.map((it) => (
+                <Link
+                  key={it.href}
+                  href={it.href}
+                  aria-current={isActive(it) ? "page" : undefined}
+                  className={`flex items-center gap-3 rounded-lg px-3 py-2 font-mono text-[0.66rem] uppercase tracking-wider transition ${
+                    isActive(it)
+                      ? "bg-amber/15 text-amber"
+                      : "text-muted hover:bg-bone/[0.05] hover:text-bone"
+                  }`}
+                >
+                  <span className="w-4 text-center">{it.icon}</span>
+                  {it.label}
+                </Link>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </nav>
 
       <div className="border-t border-edge px-3 py-3">

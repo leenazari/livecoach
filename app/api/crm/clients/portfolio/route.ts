@@ -154,6 +154,12 @@ export async function GET() {
           ? company.commercial_memory
           : {};
       const profile = company.profile && typeof company.profile === "object" ? company.profile : {};
+      const triage =
+        profile.triage && typeof profile.triage === "object" ? profile.triage : {};
+      const relationshipType = String(triage.classification || "").trim() || null;
+      const archived =
+        profile.archived === true ||
+        String(company.stage || "").trim().toLowerCase() === "dormant";
       const emailMs = validDateMs(profile.email_last_message_at);
       const callMs = lastCallByCompany.get(company.id) || null;
       const outreachMs = Math.max(
@@ -227,20 +233,26 @@ export async function GET() {
         firstText(lastCall.buyingSignals) ||
         firstText(lastCall.commercialOpportunities);
       const stage = String(company.stage || opportunity?.pipeline_stage || "").trim();
+      let category = "Relationship";
+      if (archived) category = "Archived";
+      else if (relationshipType === "prospect") category = "Prospect";
+      else if (relationshipType === "partner") category = "Partner";
+      else if (relationshipType === "customer") category = "Customer";
+      else if (relationshipType === "in_house" || isInHouse) category = "In House";
+      else if (opportunity) category = "Opportunity";
+      else if (String(company.stage || "").toLowerCase() === "customer")
+        category = "Customer";
 
       return {
         id: company.id,
         name: company.name,
         sector: company.sector || null,
         relationshipStage: company.stage || null,
-        category:
-          opportunity
-            ? "Opportunity"
-            : isInHouse
-              ? "In House"
-              : String(company.stage || "").toLowerCase() === "customer"
-                ? "Customer"
-                : "Relationship",
+        relationshipType,
+        triageReviewedAt:
+          typeof triage.reviewedAt === "string" ? triage.reviewedAt : null,
+        archived,
+        category,
         primaryContact: primaryContact
           ? {
               name: primaryContact.name,
@@ -289,12 +301,16 @@ export async function GET() {
         clients,
         totals: clients.reduce(
           (acc: Record<string, number>, client: any) => {
-            acc.all += 1;
-            acc[client.health] += 1;
-            if (client.opportunity) acc.opportunities += 1;
+            if (client.archived) {
+              acc.archived += 1;
+            } else {
+              acc.all += 1;
+              acc[client.health] += 1;
+              if (client.opportunity) acc.opportunities += 1;
+            }
             return acc;
           },
-          { all: 0, red: 0, amber: 0, green: 0, grey: 0, opportunities: 0 }
+          { all: 0, red: 0, amber: 0, green: 0, grey: 0, opportunities: 0, archived: 0 }
         ),
         generatedAt: new Date().toISOString(),
       },

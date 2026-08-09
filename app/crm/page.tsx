@@ -140,6 +140,14 @@ export default function DashboardPage() {
   );
   const [costMode, setCostMode] = useState<"week" | "month">("week");
   const [aiMode, setAiMode] = useState<AiMode>("balanced");
+  const [focusMode, setFocusMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return localStorage.getItem("lc_dashboard_view") !== "full";
+    } catch {
+      return true;
+    }
+  });
   const [modeSaving, setModeSaving] = useState(false);
   const [editingTodayId, setEditingTodayId] = useState<string | null>(null);
   const [editingTodayText, setEditingTodayText] = useState("");
@@ -147,6 +155,14 @@ export default function DashboardPage() {
   const [todaySaveError, setTodaySaveError] = useState("");
   const dashboardSeq = useRef(0);
   const closedTodayIds = useRef(new Set<string>());
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("lc_dashboard_view", focusMode ? "focus" : "full");
+    } catch {
+      /* preference is optional */
+    }
+  }, [focusMode]);
 
   const refreshDashboard = useCallback(async () => {
     const seq = ++dashboardSeq.current;
@@ -371,7 +387,29 @@ export default function DashboardPage() {
             / dashboard
           </span>
         </h1>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+          <div className="flex overflow-hidden rounded-full border border-amber/45">
+            <button
+              type="button"
+              onClick={() => setFocusMode(true)}
+              aria-pressed={focusMode}
+              className={`px-3 py-1.5 font-mono text-[0.52rem] uppercase tracking-wider ${
+                focusMode ? "bg-amber/15 text-amber" : "text-muted hover:text-bone"
+              }`}
+            >
+              Focus
+            </button>
+            <button
+              type="button"
+              onClick={() => setFocusMode(false)}
+              aria-pressed={!focusMode}
+              className={`px-3 py-1.5 font-mono text-[0.52rem] uppercase tracking-wider ${
+                !focusMode ? "bg-amber/15 text-amber" : "text-muted hover:text-bone"
+              }`}
+            >
+              Full
+            </button>
+          </div>
           {/* Spend so far - compact, with a weekly / monthly toggle. */}
           <div className="flex items-center gap-2">
             <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
@@ -510,6 +548,7 @@ export default function DashboardPage() {
         </div>
       </section>
 
+      {!focusMode ? <>
       {/* COST CONTROL: true recorded spend, split by feature, plus a persisted
           live-intelligence cadence. Terra quality remains available in all modes. */}
       <section id="costs" className="mb-3 scroll-mt-4 rounded-xl border border-sage/35 bg-sage/[0.045] p-4">
@@ -653,11 +692,31 @@ export default function DashboardPage() {
           )}
         </div>
       )}
+      </> : null}
 
       {/* UPCOMING CALLS - what's ahead, schedule + prep + start preloaded. Shows
           the soonest 10 with a "show all" expand to keep the dashboard condensed. */}
       <UpcomingCalls />
 
+      {focusMode ? (
+        <button
+          type="button"
+          onClick={() => setFocusMode(false)}
+          className="mb-3 flex min-h-12 w-full items-center justify-between rounded-xl border border-edge bg-panel/30 px-4 py-3 text-left transition hover:border-amber/50"
+        >
+          <span>
+            <span className="block font-mono text-[0.56rem] uppercase tracking-[0.18em] text-muted">
+              Full workbench
+            </span>
+            <span className="mt-1 block font-sans text-[0.76rem] text-bone/65">
+              Tasks, commitments, pipeline health, costs and recent calls.
+            </span>
+          </span>
+          <span className="text-amber">＋</span>
+        </button>
+      ) : null}
+
+      {!focusMode ? <>
       <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
         <div className="mb-2.5 flex items-center justify-between">
           <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
@@ -798,6 +857,7 @@ export default function DashboardPage() {
       {/* RECENT (previous) CALLS - so a call is never lost. Unassigned ones get a
           one-click picker to put them under the right client. */}
       <RecentCalls />
+      </> : null}
 
       <NavMenu />
     </main>
