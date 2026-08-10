@@ -8,35 +8,53 @@ export async function GET(req: NextRequest) {
   try {
     const summaryOnly = req.nextUrl.searchParams.get("summary") === "1";
     const { start, end } = londonDayBounds();
-    const [sent, approved, replies, positive, prospects] = await Promise.all([
+    const [sent, sentAll, approved, replies, positive, meetings, prospects] = await Promise.all([
       supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "sent").gte("sent_at", start).lt("sent_at", end),
+      supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "sent"),
       supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "approved"),
       supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe"]),
       supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("kind", "positive_reply"),
+      supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("kind", "meeting_booked"),
       supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }),
     ]);
     const metrics = {
       sentToday: sent.count || 0,
+      sent: sentAll.count || 0,
       approved: approved.count || 0,
       replies: replies.count || 0,
       positiveReplies: positive.count || 0,
+      meetings: meetings.count || 0,
       prospects: prospects.count || 0,
     };
     // The default Today queue needs only five small counts. Avoid loading every
     // historical message, reply and learning until a reporting tab is opened.
     if (summaryOnly) return NextResponse.json({ metrics });
-    const [{ data: recentReplies }, { data: variantMessages }, { data: variantReplies }, { data: replyDrafts }, { data: learnings }] = await Promise.all([
+    const [{ data: recentReplies }, { data: variantMessages }, { data: variantReplies }, { data: replyDrafts }, { data: learnings }, { data: recentMessages }] = await Promise.all([
       supabaseAdmin.from("outreach_prospects").select("id,first_name,last_name,company_name,email,reply_category,reply_summary,last_reply_at,status,crm_company_id").not("last_reply_at", "is", null).order("last_reply_at", { ascending: false }).limit(50),
       supabaseAdmin.from("outreach_messages").select("prospect_id,variant,message_tags,campaign_id").eq("status", "sent"),
       supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,campaign_id").in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe", "meeting_booked"]),
       supabaseAdmin.from("outreach_messages").select("*").eq("step_number", 10).in("status", ["draft", "approved", "sent"]).order("updated_at", { ascending: false }),
       supabaseAdmin.from("outreach_learnings").select("*").order("meeting_count", { ascending: false }).order("positive_reply_count", { ascending: false }).limit(100),
+      supabaseAdmin.from("outreach_messages").select("id,prospect_id,subject,body_text,status,step_number,sent_at,from_email").eq("status", "sent").order("sent_at", { ascending: false }).limit(100),
     ]);
     const variants = ["A", "B"].map((variant) => {
       const sentCount = (variantMessages || []).filter((row: any) => (row.variant || "A") === variant).length;
       const replyCount = (variantReplies || []).filter((row: any) => row.kind !== "meeting_booked" && (row.metadata?.variant || "A") === variant).length;
       return { variant, sent: sentCount, replies: replyCount, replyRate: sentCount ? Math.round((replyCount / sentCount) * 1000) / 10 : 0 };
     });
+    const recentMessageProspectIds = (recentMessages || []).map((message: any) => message.prospect_id);
+    const messageProspectIds = Array.from(new Set(recentMessageProspectIds));
+    const { data: messageProspects } = messageProspectIds.length
+      ? await supabaseAdmin
+          .from("outreach_prospects")
+          .select("id,first_name,last_name,company_name,email,last_reply_at,reply_category")
+          .in("id", messageProspectIds)
+      : { data: [] as any[] };
+    const messageProspectMap = new Map((messageProspects || []).map((prospect: any) => [prospect.id, prospect]));
+    const sentHistory = (recentMessages || []).map((message: any) => ({
+      ...message,
+      prospect: messageProspectMap.get(message.prospect_id) || null,
+    }));
     const linkedCompanyIds = Array.from(
       new Set(
         (recentReplies || [])
@@ -87,7 +105,7 @@ export async function GET(req: NextRequest) {
       }
     }
     const performance = [...performanceMap.values()].map((row) => ({ ...row, positiveRate: row.sent ? Math.round((row.positive / row.sent) * 1000) / 10 : 0 })).sort((a, b) => b.meetings - a.meetings || b.positiveRate - a.positiveRate).slice(0, 30);
-    return NextResponse.json({ metrics, replies: replyRows, variants, performance, learnings: learnings || [] });
+    return NextResponse.json({ metrics, replies: replyRows, sentHistory, variants, performance, learnings: learnings || [] });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to load outreach metrics" }, { status: 500 });
   }
