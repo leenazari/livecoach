@@ -21,13 +21,15 @@ export async function GET(
     if (error) throw error;
 
     let company: string | null = null;
+    let companyInternal = false;
     if (call?.company_id) {
       const { data: c } = await supabaseAdmin
         .from("companies")
-        .select("name")
+        .select("name, profile")
         .eq("id", call.company_id)
         .single();
       company = c?.name || null;
+      companyInternal = (c?.profile as any)?.internal === true;
     }
 
     // Richer call-event data from interview_sessions (the call record linked by
@@ -77,6 +79,7 @@ export async function GET(
       call: {
         ...call,
         company,
+        companyInternal,
         durationSeconds,
         transcriptChars,
         participants,

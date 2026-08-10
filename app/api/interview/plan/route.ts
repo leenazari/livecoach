@@ -296,10 +296,18 @@ export async function POST(req: NextRequest) {
   let role = "";
   try {
     const biz = await workspaceContextBlock();
-    const lessons = await getLessonsBlock(["negotiation", "psychology"]);
     const body = await req.json();
     brief = typeof body.brief === "string" ? body.brief : "";
     role = typeof body.role === "string" ? body.role : "";
+    // Only genuine sales prep reads the manually curated pitching library.
+    // Other call types cannot be contaminated by prospect/demo techniques.
+    const likelySales =
+      body.callType === "sales" || inferCallType(brief) === "sales";
+    const lessons = await getLessonsBlock(
+      likelySales
+        ? ["negotiation", "psychology", "pitching"]
+        : ["negotiation", "psychology"]
+    );
     // Internal (board/strategy) calls flip the whole framing - computed from the
     // linked client's internal flag.
     const internalBlock = await internalFramingBlock(body.companyId);
@@ -658,9 +666,11 @@ Return the JSON plan now.`;
     // so the tactics are sharp, warm and specific, WITHOUT putting the whole
     // slow plan on Terra. If it fails/times out, keep the fast Luna playbook.
     let sonnetPlaybook: { label: string; detail: string }[] = [];
-    // For selling calls, a buyer-tailored pitch kit: which benefits to land,
-    // proof points, differentiators, must-mention points, and objection prep.
+    // For selling calls, a buyer-tailored pitch kit plus an ordered script.
+    // Both are generated in this same Terra pass, so adding the script does not
+    // create another model call or reread historic transcripts.
     let pitchKit: any = null;
+    let salesScript: any = null;
     // Only attempt the Terra upgrade if there's real budget left; otherwise
     // keep the Luna playbook. This is what stops the 60s overrun.
     try {
@@ -668,7 +678,7 @@ Return the JSON plan now.`;
       const pbSystem: any[] = [
         {
           type: "text",
-          text: `${biz}${lessons}You prepare a caller for a live call. Return TWO things as ONE JSON object: a playbook, and (for selling calls only) a pitch kit.
+          text: `${biz}${lessons}You prepare a caller for a live call. Return THREE things as ONE JSON object: a playbook, and (for selling calls only) a pitch kit plus an adaptive sales script.
 
 1) "playbook": exactly 4 concrete, in-the-moment tactics, ordered most important first. Each is { "label": "2-4 words", "detail": "one actionable line, maximum 18 words" }. Cut filler and explanation by roughly 40 percent. Ground EVERY tactic in THIS call - name the real idea, product and people from the intent, the FOCUS AREAS and the document; never generic advice. THE FOCUS AREAS ARE A HARD BOUNDARY: every tactic must serve one of them, ignore prominent facts outside them. If the context includes AREAS THE USER IS WORKING ON, weave ONE gentle personal reminder into the playbook. TONE: warm, collaborative and curious, never a scripted command or ultimatum.
 
@@ -680,9 +690,14 @@ Return the JSON plan now.`;
    - "objections": 0-4 likely objections from this buyer, each {"objection":"...","response":"a warm one-line way to handle it"}.
    Ground everything in the context. Never invent numbers, proofs, names or claims.
 
+3) "salesScript": ONLY for a SALES, PITCH, DEMO or DISCOVERY call. Otherwise set it to null. This is not a speech to recite. It is the ordered route the caller can glance at, and the live coach will adapt it to what the buyer actually says:
+   - "steps": exactly 5 ordered stages: warm discovery, pain and impact, relevant fit, decision process, and agreed next step. Each is {"stage":"2-4 words","line":"one exact warm question or sentence the caller can say, maximum 18 words","listenFor":"the concrete signal to notice, maximum 12 words","nextMove":"what to ask or say if that signal appears, maximum 16 words"}.
+   - "coachingReminders": 2-4 short reminders selected from THE USER'S DEVELOPMENT above. Choose only recurring sales habits that will materially improve THIS call. Do not invent a weakness if none is present.
+   The route must discover before pitching, connect each benefit to a need they actually reveal, and end with a proportionate commitment. Do not force a close when this is primarily a partnership or relationship conversation.
+
 Output ONLY this JSON object, no prose, no markdown:
-{"playbook":[{"label":"...","detail":"..."}],"pitchKit":{"benefits":[{"benefit":"...","need":"..."}],"proofPoints":["..."],"differentiators":["..."],"mustMention":["..."],"objections":[{"objection":"...","response":"..."}]}}
-pitchKit may be null.`,
+{"playbook":[{"label":"...","detail":"..."}],"pitchKit":{"benefits":[{"benefit":"...","need":"..."}],"proofPoints":["..."],"differentiators":["..."],"mustMention":["..."],"objections":[{"objection":"...","response":"..."}]},"salesScript":{"steps":[{"stage":"...","line":"...","listenFor":"...","nextMove":"..."}],"coachingReminders":["..."]}}
+pitchKit and salesScript may be null.`,
         },
         {
           type: "text",
@@ -698,7 +713,7 @@ ROLE / TITLE: ${role || "(not specified)"}
 RANKED FOCUS AREAS: ${focusAreas.join(", ")}
 YOUR READ ON THEM: ${character || "(n/a)"}
 
-Return the JSON object (playbook + pitchKit) now.`;
+Return the JSON object (playbook + pitchKit + salesScript) now.`;
       const pbController = new AbortController();
       const pbMs = Math.min(25000, remaining() - 3000);
       const pbTimer = setTimeout(() => pbController.abort(), pbMs);
@@ -709,7 +724,7 @@ Return the JSON object (playbook + pitchKit) now.`;
             // A tailored sales pitch kit can legitimately exceed 900 tokens.
             // The previous cap cut JSON mid-string, making the whole Terra
             // upgrade unparsable and silently falling back to Luna.
-            max_tokens: 1500,
+            max_tokens: 1900,
             temperature: 0.5,
             system: pbSystem,
             messages: [{ role: "user", content: pbUser }],
@@ -743,7 +758,7 @@ Return the JSON object (playbook + pitchKit) now.`;
             detail: limitWords(pp.detail, 18),
           }));
         // Pitch kit - selling calls only. Validate + trim each part.
-        if (obj.pitchKit && typeof obj.pitchKit === "object") {
+        if (callType === "sales" && obj.pitchKit && typeof obj.pitchKit === "object") {
           const pk = obj.pitchKit;
           const sList = (v: any, n: number): string[] =>
             Array.isArray(v)
@@ -782,6 +797,36 @@ Return the JSON object (playbook + pitchKit) now.`;
               objections,
             };
           }
+        }
+        // The sales script is saved with the prep. Live coaching receives this
+        // compact route instead of querying every old call on every cue.
+        if (callType === "sales" && obj.salesScript && typeof obj.salesScript === "object") {
+          const ss = obj.salesScript;
+          const steps = Array.isArray(ss.steps)
+            ? ss.steps
+                .filter(
+                  (x: any) =>
+                    x &&
+                    typeof x.stage === "string" &&
+                    typeof x.line === "string" &&
+                    x.stage.trim() &&
+                    x.line.trim()
+                )
+                .map((x: any) => ({
+                  stage: limitWords(x.stage, 4),
+                  line: limitWords(x.line, 18),
+                  listenFor: limitWords(x.listenFor, 12),
+                  nextMove: limitWords(x.nextMove, 16),
+                }))
+                .slice(0, 5)
+            : [];
+          const coachingReminders = Array.isArray(ss.coachingReminders)
+            ? ss.coachingReminders
+                .filter((x: any) => typeof x === "string" && x.trim())
+                .map((x: string) => limitWords(x, 14))
+                .slice(0, 4)
+            : [];
+          if (steps.length) salesScript = { steps, coachingReminders };
         }
       } finally {
         clearTimeout(pbTimer);
@@ -860,6 +905,7 @@ Return the JSON object (playbook + pitchKit) now.`;
         openingQuestions,
         playbook,
         pitchKit,
+        salesScript,
         privateNotes,
         goals,
         degraded,

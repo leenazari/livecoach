@@ -51,6 +51,17 @@ export async function POST(req: NextRequest) {
       Array.isArray(privateNotes) && privateNotes.length
         ? privateNotes.filter((p: any) => typeof p === "string" && p.trim())
         : [];
+    const salesMode = callType === "sales";
+    const salesShape = salesMode
+      ? `\n\nSALES SCRIPT MODE:
+- Treat the saved ADAPTIVE SALES SCRIPT as a route, not a checklist. Work out which stages the transcript has already covered and choose the next unanswered commercial question.
+- Do not pitch until they reveal a relevant need. Once they do, bridge to the single prepared benefit or proof that best matches it.
+- Add these concise sections after WHY:
+  ||LISTENFOR|| <the concrete buying, pain, authority, objection or timing signal, under 9 words>
+  ||IFYES|| <the best short follow-on question if positive, under 13 words>
+  ||IFNO|| <the best short redirect if hesitant or negative, under 13 words>
+- IFYES and IFNO are exact words the host can use. Never invent proof, pricing or urgency. Do not force a close on a partnership or relationship conversation.`
+      : "";
 
     const holdRule = allowHold
       ? `\n\nHOLD RULE (be strict - cues now arrive only about every 30 seconds or when the host asks for one, so each must earn its place): respond with exactly HOLD unless you have a genuinely HIGH-VALUE cue for right now - one that opens something important up, catches a dodge or a missing piece, or moves the call materially forward. HOLD if the best you have is obvious, low-stakes, a minor reword, small talk, or just "keep them talking". When in doubt, HOLD - a quiet screen beats a mediocre prompt.`
@@ -124,6 +135,7 @@ ${privateList.length ? `- The host is privately keeping these in mind, and they 
 OUTPUT SHAPE (strict). Output ONLY the cue - never your analysis, never a description of what anyone did. Your entire reply is one of:
   <main question> ||WHY|| <short why>
   <main question> ||WHY|| <short why> ||FOLLOWUP|| <one short follow-up question>
+  ${salesMode ? "<main question> ||WHY|| <short why> ||LISTENFOR|| <signal> ||IFYES|| <positive branch> ||IFNO|| <hesitant branch>" : ""}
   HOLD
 
 Rules for each part:
@@ -136,7 +148,7 @@ CRITICAL - no repetition:
 - NEVER repeat or reword any recent suggestion (listed below).
 
 CONTENT:
-- Favour depth, ownership, concrete examples - but reach them gradually, following the conversation.${holdRule}`;
+- Favour depth, ownership, concrete examples - but reach them gradually, following the conversation.${salesShape}${holdRule}`;
 
     // The live lane is PLAN-DRIVEN, not brain-driven: loading the whole brain on
     // every cue would add latency and cost to the call. The plan already folds in
@@ -232,7 +244,8 @@ Give the natural next beat: a WARM, friendly MAIN question that flows from what 
 
     const openaiStream = await openai.messages.stream({
       model: OPENAI_MODEL_PRO,
-      max_tokens: 80,
+      // Only sales cues pay for the extra compact branching guidance.
+      max_tokens: salesMode ? 170 : 80,
       system,
       messages: [{ role: "user", content: userMsg }],
     });

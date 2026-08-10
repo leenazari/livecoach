@@ -54,11 +54,24 @@ type Suggestion = {
   text: string;
   why: string;
   followup: string;
+  listenFor?: string;
+  ifYes?: string;
+  ifNo?: string;
   at: string;
   pending: boolean;
   kind: "opening" | "live" | "insight";
   pinned: boolean;
   liked?: boolean;
+};
+
+type SalesScript = {
+  steps: {
+    stage: string;
+    line: string;
+    listenFor?: string;
+    nextMove?: string;
+  }[];
+  coachingReminders?: string[];
 };
 
 // The pre-call battlecard built on the Prep tab: objections with the right
@@ -252,34 +265,38 @@ function addUsageToRef(ref: { current: number }, res: Response) {
   }
 }
 
-function splitCue(raw: string): { ask: string; why: string; followup: string } {
-  // Tolerant of spacing/case variants of the markers, and strips any strays
-  // so a literal ||FOLLOWUP|| can never show in the UI.
-  const WHY = /\|\|\s*WHY\s*\|\|/i;
-  const FUP = /\|\|\s*FOLLOWUP\s*\|\|/i;
+function splitCue(raw: string): {
+  ask: string;
+  why: string;
+  followup: string;
+  listenFor: string;
+  ifYes: string;
+  ifNo: string;
+} {
+  // Parse every labelled section in one pass. This remains tolerant while the
+  // response is streaming and guarantees a raw marker never reaches the UI.
+  const marker = /\|\|\s*(WHY|FOLLOWUP|LISTENFOR|IFYES|IFNO)\s*\|\|/gi;
+  const values: Record<string, string> = {};
+  const matches = [...raw.matchAll(marker)];
+  const ask = raw.slice(0, matches[0]?.index ?? raw.length);
+  for (let i = 0; i < matches.length; i += 1) {
+    const start = (matches[i].index || 0) + matches[i][0].length;
+    const end = matches[i + 1]?.index ?? raw.length;
+    values[matches[i][1].toUpperCase()] = raw.slice(start, end);
+  }
   const strip = (t: string) =>
-    t
-      .replace(/\|\|\s*(WHY|FOLLOWUP)\s*\|\|/gi, " ")
+    String(t || "")
+      .replace(/\|\|\s*(WHY|FOLLOWUP|LISTENFOR|IFYES|IFNO)\s*\|\|/gi, " ")
       .replace(/\|\|/g, " ")
       .trim();
-
-  let ask = raw;
-  let why = "";
-  let followup = "";
-
-  const wParts = raw.split(WHY);
-  if (wParts.length > 1) {
-    ask = wParts[0];
-    const rest = wParts.slice(1).join(" ");
-    const fParts = rest.split(FUP);
-    why = fParts[0];
-    followup = fParts.slice(1).join(" ");
-  } else {
-    const fParts = raw.split(FUP);
-    ask = fParts[0];
-    followup = fParts.slice(1).join(" ");
-  }
-  return { ask: strip(ask), why: strip(why), followup: strip(followup) };
+  return {
+    ask: strip(ask),
+    why: strip(values.WHY),
+    followup: strip(values.FOLLOWUP),
+    listenFor: strip(values.LISTENFOR),
+    ifYes: strip(values.IFYES),
+    ifNo: strip(values.IFNO),
+  };
 }
 
 export default function CallPage() {
@@ -432,6 +449,9 @@ export default function CallPage() {
   // Buyer-tailored pitch kit (selling calls): benefits, proof points,
   // differentiators, must-mention points, objections. Built in the plan.
   const [pitchKit, setPitchKit] = useState<any>(null);
+  // Ordered sales path produced from the current intent plus the compact
+  // coaching profile learned from previous calls.
+  const [salesScript, setSalesScript] = useState<SalesScript | null>(null);
   const [privateNotes, setPrivateNotes] = useState<string[]>([]);
   const [goals, setGoals] = useState<{ text: string; liked?: boolean }[]>([]);
   const [publicLink, setPublicLink] = useState("");
@@ -663,6 +683,21 @@ export default function CallPage() {
     // plan the advisor already reads means that when the talk hits one of these
     // objections, the advisor surfaces the rehearsed response as the cue, with
     // no change to the latency-sensitive live route.
+    const script =
+      salesScript && Array.isArray(salesScript.steps) && salesScript.steps.length
+        ? `ADAPTIVE SALES SCRIPT (follow this route, but skip any stage already covered and adapt the exact words to what they say):\n${salesScript.steps
+            .map(
+              (step, i) =>
+                `${i + 1}. ${step.stage}: ${step.line}${
+                  step.listenFor ? ` | listen for: ${step.listenFor}` : ""
+                }${step.nextMove ? ` | next move: ${step.nextMove}` : ""}`
+            )
+            .join("\n")}${
+            salesScript.coachingReminders?.length
+              ? `\nPersonal coaching reminders: ${salesScript.coachingReminders.join("; ")}`
+              : ""
+          }`
+        : "";
     const obj =
       battlecard && Array.isArray(battlecard.objections) && battlecard.objections.length
         ? "PREPARED OBJECTION RESPONSES (if the discussion raises one of these objections, offer the prepared response, adapted to exactly what they said, as the thing to say):\n" +
@@ -674,6 +709,7 @@ export default function CallPage() {
     planBriefRef.current = [
       brief?.trim() ? `INTENT: ${brief.trim()}` : "",
       character?.trim() ? `YOUR READ: ${character.trim()}` : "",
+      script,
       pk,
       obj,
       clientEmailCtx?.trim()
@@ -682,7 +718,7 @@ export default function CallPage() {
     ]
       .filter(Boolean)
       .join("\n\n");
-  }, [brief, character, clientEmailCtx, pitchKit, battlecard]);
+  }, [brief, character, clientEmailCtx, pitchKit, salesScript, battlecard]);
   useEffect(() => {
     linkedCompanyRef.current = linkedCompany;
   }, [linkedCompany]);
@@ -853,6 +889,8 @@ export default function CallPage() {
       }
       if (prep.pitchKit && typeof prep.pitchKit === "object")
         setPitchKit(prep.pitchKit);
+      if (prep.salesScript && typeof prep.salesScript === "object")
+        setSalesScript(prep.salesScript);
       if (Array.isArray(prep.privateNotes)) {
         setPrivateNotes(
           prep.privateNotes.filter((x: any) => typeof x === "string" && x.trim())
@@ -1153,6 +1191,7 @@ export default function CallPage() {
       goals,
       playbook,
       pitchKit,
+      salesScript,
       privateNotes,
       openingQuestions,
       planStage,
@@ -1196,6 +1235,7 @@ export default function CallPage() {
     goals,
     playbook,
     pitchKit,
+    salesScript,
     privateNotes,
     planStage,
     suggestions,
@@ -1361,10 +1401,14 @@ export default function CallPage() {
         const { done, value } = await reader.read();
         if (done) break;
         acc += decoder.decode(value, { stream: true });
-        const { ask, why, followup } = splitCue(stripUsageTail(acc));
+        const { ask, why, followup, listenFor, ifYes, ifNo } = splitCue(
+          stripUsageTail(acc)
+        );
         setSuggestions((prev) =>
           prev.map((s) =>
-            s.id === id ? { ...s, text: ask, why, followup } : s
+            s.id === id
+              ? { ...s, text: ask, why, followup, listenFor, ifYes, ifNo }
+              : s
           )
         );
       }
@@ -1382,7 +1426,9 @@ export default function CallPage() {
           /* ignore */
         }
       }
-      const { ask, why, followup } = splitCue(stripUsageTail(acc));
+      const { ask, why, followup, listenFor, ifYes, ifNo } = splitCue(
+        stripUsageTail(acc)
+      );
       const isHold = ask.toUpperCase() === "HOLD";
       if (isHold || isDuplicate(ask)) {
         setSuggestions((prev) => prev.filter((s) => s.id !== id));
@@ -1392,7 +1438,16 @@ export default function CallPage() {
         setSuggestions((prev) =>
           prev.map((s) =>
             s.id === id
-              ? { ...s, text: ask, why, followup, pending: false }
+              ? {
+                  ...s,
+                  text: ask,
+                  why,
+                  followup,
+                  listenFor,
+                  ifYes,
+                  ifNo,
+                  pending: false,
+                }
               : s
           )
         );
@@ -1836,6 +1891,7 @@ export default function CallPage() {
 
     if (mode === "full") {
       setPitchKit(data.pitchKit || null);
+      setSalesScript(data.salesScript || null);
       setPlaybook(
         Array.isArray(data.playbook)
           ? data.playbook.filter(
@@ -2731,6 +2787,40 @@ export default function CallPage() {
                 </p>
               )}
             </div>
+            {!compact && (s.listenFor || s.ifYes || s.ifNo) && (
+              <div className="grid gap-2 border-t border-edge/70 bg-sky/[0.04] px-4 py-3 sm:grid-cols-3">
+                {s.listenFor ? (
+                  <div>
+                    <p className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-sky/75">
+                      Listen for
+                    </p>
+                    <p className="mt-1 text-[0.82rem] leading-snug text-bone/80">
+                      {s.listenFor}
+                    </p>
+                  </div>
+                ) : null}
+                {s.ifYes ? (
+                  <div>
+                    <p className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-sage/75">
+                      If positive
+                    </p>
+                    <p className="mt-1 text-[0.82rem] leading-snug text-bone/80">
+                      {s.ifYes}
+                    </p>
+                  </div>
+                ) : null}
+                {s.ifNo ? (
+                  <div>
+                    <p className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-rust/75">
+                      If hesitant
+                    </p>
+                    <p className="mt-1 text-[0.82rem] leading-snug text-bone/80">
+                      {s.ifNo}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            )}
             {!compact && s.followup && (
               <div className="border-t border-edge/70 bg-ink/50 px-4 py-3">
                 <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.22em] text-sage/70">
@@ -3647,6 +3737,57 @@ export default function CallPage() {
                         </li>
                       ))}
                     </ul>
+                  </div>
+                )}
+                {salesScript && salesScript.steps.length > 0 && (
+                  <div className="rounded-xl border border-sage/40 bg-sage/[0.06] p-3.5">
+                    <p className="mb-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-sage">
+                      Adaptive sales script
+                    </p>
+                    <p className="mb-3 text-[0.76rem] leading-snug text-muted">
+                      Use the route, not a rigid speech. Live coaching adapts the next question to their answer.
+                    </p>
+                    <ol className="space-y-2.5">
+                      {salesScript.steps.map((step, i) => (
+                        <li key={`${step.stage}-${i}`} className="rounded-lg border border-edge/70 bg-ink/35 p-3">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sage/15 font-mono text-[0.58rem] text-sage">
+                              {i + 1}
+                            </span>
+                            <p className="font-mono text-[0.56rem] uppercase tracking-[0.16em] text-sage/80">
+                              {step.stage}
+                            </p>
+                          </div>
+                          <p className="mt-2 font-display text-[1rem] leading-snug text-bone">
+                            {step.line}
+                          </p>
+                          <div className="mt-2 grid gap-2 text-[0.74rem] leading-snug sm:grid-cols-2">
+                            {step.listenFor ? (
+                              <p className="text-muted">
+                                <span className="text-sky">Listen for:</span> {step.listenFor}
+                              </p>
+                            ) : null}
+                            {step.nextMove ? (
+                              <p className="text-muted">
+                                <span className="text-amber">Then:</span> {step.nextMove}
+                              </p>
+                            ) : null}
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                    {salesScript.coachingReminders?.length ? (
+                      <div className="mt-3 border-t border-edge/70 pt-3">
+                        <p className="font-mono text-[0.54rem] uppercase tracking-[0.16em] text-amber">
+                          Learned from your call coaching
+                        </p>
+                        <ul className="mt-1.5 space-y-1 text-[0.76rem] leading-snug text-bone/75">
+                          {salesScript.coachingReminders.map((item, i) => (
+                            <li key={i}>• {item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                   </div>
                 )}
                 {pitchKit && (

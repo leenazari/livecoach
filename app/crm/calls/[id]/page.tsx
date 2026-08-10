@@ -13,6 +13,7 @@ type Call = {
   candidate: string | null;
   role: string | null;
   company: string | null;
+  companyInternal: boolean;
   company_id: string | null;
   created_at: string;
   cost: number | string | null;
@@ -39,6 +40,25 @@ export default function CallDetailPage() {
   // Speaking-coach debrief: generated on demand, votable, learns over time.
   const [coaching, setCoaching] = useState<CoachPoint[]>([]);
   const [coachBusy, setCoachBusy] = useState(false);
+  const [playbookBusy, setPlaybookBusy] = useState<"prospect_demo" | "commercial_partner" | "">("");
+  const [playbookNote, setPlaybookNote] = useState("");
+
+  const addToPitchPlaybook = async (mode: "prospect_demo" | "commercial_partner") => {
+    if (!id || playbookBusy) return;
+    setPlaybookBusy(mode);
+    setPlaybookNote("");
+    try {
+      await crmFetch("/api/crm/pitch-playbook", {
+        method: "POST",
+        body: JSON.stringify({ callId: id, mode }),
+      });
+      setPlaybookNote("Added. The reusable lesson is now in your pitching playbook.");
+    } catch (error: any) {
+      setPlaybookNote(error?.message || "Could not add this call.");
+    } finally {
+      setPlaybookBusy("");
+    }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -349,6 +369,33 @@ export default function CallDetailPage() {
               </p>
             </section>
           )}
+
+          {!call.companyInternal ? (
+            <section className="mt-4 rounded-xl border border-sage/40 bg-sage/[0.05] p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
+                    Pitching playbook
+                  </p>
+                  <p className="mt-1 max-w-xl text-[0.82rem] leading-snug text-bone/75">
+                    Add only calls worth teaching from. Internal calls are blocked, and partner calls need their own explicit choice.
+                  </p>
+                </div>
+                <Link href="/crm/pitch-playbook" className="shrink-0 font-mono text-[0.56rem] uppercase text-sky hover:text-amber">
+                  Open playbook ↗
+                </Link>
+              </div>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <button type="button" onClick={() => addToPitchPlaybook("prospect_demo")} disabled={!!playbookBusy} className="rounded-full border border-sage/55 bg-sage/10 px-4 py-2 font-mono text-[0.58rem] uppercase text-sage hover:bg-sage/20 disabled:opacity-40">
+                  {playbookBusy === "prospect_demo" ? "Learning…" : "Add prospect or demo lesson"}
+                </button>
+                <button type="button" onClick={() => addToPitchPlaybook("commercial_partner")} disabled={!!playbookBusy} className="rounded-full border border-edge px-4 py-2 font-mono text-[0.58rem] uppercase text-muted hover:border-sky/50 hover:text-sky disabled:opacity-40">
+                  {playbookBusy === "commercial_partner" ? "Learning…" : "Add commercial partner lesson"}
+                </button>
+              </div>
+              {playbookNote ? <p className="mt-2 text-[0.78rem] text-amber">{playbookNote}</p> : null}
+            </section>
+          ) : null}
 
           {/* SPEAKING COACH: a separate debrief on HOW you spoke, line by line,
               with a sharper version of each moment. Vote each one so it learns
