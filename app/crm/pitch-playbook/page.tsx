@@ -268,7 +268,7 @@ export default function PitchPlaybookPage() {
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <List title="Buyer language" items={safeList(chapter.buyerLanguage)} tone="text-sky/90" />
-              <List title="Questions that worked" items={safeList(chapter.questionsThatWorked)} />
+              <List title="Seller questions that worked" items={safeList(chapter.questionsThatWorked)} />
               <List title="Pitch moves" items={safeList(chapter.pitchMoves)} tone="text-sage/90" />
               <List title="Buying signals" items={safeList(chapter.buyingSignals)} tone="text-amber/90" />
             </div>

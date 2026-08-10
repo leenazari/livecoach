@@ -22,6 +22,18 @@ const textList = (value: unknown): string[] =>
     ? value.filter((item): item is string => typeof item === "string" && !!item.trim())
     : [];
 
+// Product mechanics can be useful buyer signals, but they are not reusable
+// discovery questions for a seller. This guard keeps an occasional model
+// classification mistake out of the saved sales script.
+const internalMechanicsQuestion =
+  /\b(tokens?|api\s*keys?|passwords?|log[ -]?ins?|sign[ -]?ins?|model\s+(?:name|version)|browser\s+(?:access|permission)|latency|inference\s+cost)\b/i;
+
+const salesQuestions = (value: unknown): string[] =>
+  textList(value)
+    .map((item) => item.trim())
+    .filter((item) => item.length <= 280 && !internalMechanicsQuestion.test(item))
+    .slice(0, 6);
+
 const validMs = (value: unknown): number | null => {
   if (typeof value !== "string" || !value) return null;
   const ms = new Date(value).getTime();
@@ -297,7 +309,7 @@ Return ONLY valid JSON in this exact shape:
   "scenario":"short description of when this lesson applies",
   "audience":"who this approach is useful with",
   "buyerLanguage":["2-6 concise phrases or needs the other party actually expressed, paraphrased"],
-  "questionsThatWorked":["2-6 questions or question patterns that opened useful information"],
+  "questionsThatWorked":["0-6 commercially useful questions asked by the seller that produced a revealing buyer response"],
   "pitchMoves":["2-6 reusable ways to connect a need to the product"],
   "objections":[{"signal":"the concern actually raised","response":"the strongest grounded way to respond next time"}],
   "buyingSignals":["0-5 concrete signals heard in the call"],
@@ -307,6 +319,9 @@ Return ONLY valid JSON in this exact shape:
 
 Rules:
 - This is training, not a call summary. Keep only transferable mechanics and authentic buyer language.
+- For questionsThatWorked, speaker ownership is mandatory. Include only questions actually asked by Lee or the seller, normally labelled Interviewer or Lee in the transcript. Never include a question asked by the buyer, prospect, partner or another participant.
+- A seller question qualifies only when the buyer's answer revealed pain, process, volume, stakes, urgency, authority, commercial fit, constraints, objections or a concrete next step. Omit rhetorical questions, presentation filler and questions about internal product mechanics such as tokens, API keys, logins, model names or system configuration.
+- If the transcript does not make both the speaker and the useful buyer response clear, omit the question. Do not rewrite a buyer question as though the seller asked it. An empty questionsThatWorked array is valid.
 - Never invent a result, case study, objection, price, promise or product capability.
 - Do not treat politeness as a buying signal.
 - Keep product and scenario specificity where it makes the lesson useful.
@@ -355,6 +370,7 @@ ${transcript.slice(-18000)}`;
         { status: 422 }
       );
     }
+    content.questionsThatWorked = salesQuestions(content.questionsThatWorked);
 
     const title = `${company?.name || call.candidate || "Sales call"}: ${content.scenario || "pitching lesson"}`.slice(0, 180);
     const { data: lesson, error } = await supabaseAdmin
