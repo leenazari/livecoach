@@ -1962,6 +1962,8 @@ export default function CallPage() {
         competencies: suggestedComps.filter((c) => selectedComps.includes(c)),
         candidate,
         source,
+        companyId: linkedCompanyRef.current?.id || null,
+        upcomingId: upcomingIdRef.current || null,
       }),
     }).catch(() => {});
   }, [room, brief, role, callType, suggestedComps, selectedComps, candidate, source]);
@@ -1974,11 +1976,12 @@ export default function CallPage() {
     persistSession();
     setExpandSetup(false);
     setCallLive(true);
-    // Stamp the company link onto the now-created session row. Delayed once so
-    // the update lands after persistSession's insert (fire-and-forget order).
+    // The session create now saves company + scheduled-call identity atomically.
+    // Keep this delayed idempotent stamp as a safety net, and run it even when
+    // there is no company: an unlinked calendar call still has an exact slot.
+    linkSession();
+    setTimeout(linkSession, 1500);
     if (linkedCompanyRef.current) {
-      linkSession();
-      setTimeout(linkSession, 1500);
       // Pin the email-context box to the server at go-live so the saved record
       // matches what this call is actually using - no drift for the brain,
       // assistant, or a later re-open. Fire-and-forget; refs avoid stale state.
@@ -2286,6 +2289,7 @@ export default function CallPage() {
           sessionId: room,
           transcript: labelled,
           totalCost: finalCostGBP,
+          upcomingId: upcomingIdRef.current || null,
         }),
       }).catch(() => {});
       const res = await fetch("/api/interview/summary", {
@@ -2300,6 +2304,7 @@ export default function CallPage() {
           callType,
           sessionId: room,
           companyId: linkedCompanyRef.current?.id || null,
+          upcomingId: upcomingIdRef.current || null,
           // Cues the host kept (favourited) during the call, saved with the
           // scorecard so they can be reviewed later on the call page.
           favouriteCues: favouritesRef.current,

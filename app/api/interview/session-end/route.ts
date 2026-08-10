@@ -21,6 +21,9 @@ export async function POST(req: NextRequest) {
     if (typeof totalCost === "number") {
       patch.total_cost = totalCost;
     }
+    if (typeof upcomingId === "string" && upcomingId) {
+      patch.upcoming_id = upcomingId;
+    }
 
     const { error } = await supabaseAdmin
       .from("interview_sessions")
