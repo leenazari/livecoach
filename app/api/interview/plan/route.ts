@@ -4,7 +4,11 @@ import {
   OPENAI_MODEL_LIVE,
   OPENAI_MODEL_PRO,
 } from "@/lib/openai";
-import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
+import {
+  workspaceContextBlock,
+  getLessonsBlock,
+  getRelevantPitchingLessons,
+} from "@/lib/workspace";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -303,11 +307,17 @@ export async function POST(req: NextRequest) {
     // Other call types cannot be contaminated by prospect/demo techniques.
     const likelySales =
       body.callType === "sales" || inferCallType(brief) === "sales";
-    const lessons = await getLessonsBlock(
+    const [lessons, pitchLessons] = await Promise.all([
+      getLessonsBlock(["negotiation", "psychology"]),
       likelySales
-        ? ["negotiation", "psychology", "pitching"]
-        : ["negotiation", "psychology"]
-    );
+        ? getRelevantPitchingLessons(
+            [brief, role, body.subjectName, body.knowledgeContext]
+              .filter((value) => typeof value === "string" && value.trim())
+              .join(" ")
+              .slice(0, 5000)
+          )
+        : Promise.resolve(""),
+    ]);
     // Internal (board/strategy) calls flip the whole framing - computed from the
     // linked client's internal flag.
     const internalBlock = await internalFramingBlock(body.companyId);
@@ -479,7 +489,7 @@ Return the JSON now.`;
       );
     }
 
-    const system = `${biz}${lessons}${internalBlock}You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
+    const system = `${biz}${lessons}${pitchLessons}${internalBlock}You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
 
 The INTENT BRIEF defines the GOAL of the call and what KIND of call it is (interview, sales, support, discovery, general). Use it to set the goal, the call type, and the caller's angle.
 
@@ -678,7 +688,7 @@ Return the JSON plan now.`;
       const pbSystem: any[] = [
         {
           type: "text",
-          text: `${biz}${lessons}You prepare a caller for a live call. Return THREE things as ONE JSON object: a playbook, and (for selling calls only) a pitch kit plus an adaptive sales script.
+          text: `${biz}${lessons}${pitchLessons}You prepare a caller for a live call. Return THREE things as ONE JSON object: a playbook, and (for selling calls only) a pitch kit plus an adaptive sales script.
 
 1) "playbook": exactly 4 concrete, in-the-moment tactics, ordered most important first. Each is { "label": "2-4 words", "detail": "one actionable line, maximum 18 words" }. Cut filler and explanation by roughly 40 percent. Ground EVERY tactic in THIS call - name the real idea, product and people from the intent, the FOCUS AREAS and the document; never generic advice. THE FOCUS AREAS ARE A HARD BOUNDARY: every tactic must serve one of them, ignore prominent facts outside them. If the context includes AREAS THE USER IS WORKING ON, weave ONE gentle personal reminder into the playbook. TONE: warm, collaborative and curious, never a scripted command or ultimatum.
 

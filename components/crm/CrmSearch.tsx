@@ -19,6 +19,7 @@ const typeTone: Record<string, string> = {
   task: "text-bone/65",
   opportunity: "text-amber",
   draft: "text-sky",
+  playbook: "text-sage",
 };
 
 export default function CrmSearch() {
@@ -60,7 +61,7 @@ export default function CrmSearch() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Escape" && setQ("")}
-          placeholder="Search every client, person, call, task, deal or email…"
+          placeholder="Search every client, person, call, task, deal, email or playbook…"
           aria-label="Search the whole CRM"
           className="min-w-0 flex-1 bg-transparent font-sans text-sm text-bone outline-none placeholder:text-muted"
         />
