@@ -25,7 +25,7 @@ export async function POST(
 
     const { data: company, error: companyError } = await supabaseAdmin
       .from("companies")
-      .select("id, name, profile")
+      .select("id, name, profile, stage")
       .eq("id", params.id)
       .maybeSingle();
     if (companyError) throw companyError;
@@ -85,6 +85,17 @@ export async function POST(
     const warnings: string[] = [];
     const opportunity = opportunityRows?.[0] || null;
     const upcoming = upcomingRows?.[0] || null;
+
+    const classificationByStage: Record<string, string> = {
+      "Product Trial": "product_trial",
+      Partner: "partner",
+      Customer: "customer",
+      "In House": "in_house",
+    };
+    const relationshipStage = intelligence.relationshipStage || null;
+    if (relationshipStage) {
+      applied.push(`Classified ${company.name} as ${relationshipStage}`);
+    }
 
     if (intelligence.nextAction) {
       const next = intelligence.nextAction;
@@ -226,18 +237,32 @@ export async function POST(
       applied,
       warnings,
     };
+    const reviewedAt = new Date().toISOString();
     const { error: profileError } = await supabaseAdmin
       .from("companies")
       .update({
+        ...(relationshipStage ? { stage: relationshipStage } : {}),
         profile: {
           ...profile,
+          ...(relationshipStage
+            ? {
+                archived: false,
+                triage: {
+                  ...((profile as any).triage || {}),
+                  classification: classificationByStage[relationshipStage],
+                  reviewedAt,
+                  source: "client_activity",
+                },
+              }
+            : {}),
           next_call: nextCall,
           activity_intelligence: {
             ...activityStore,
             latest: updatedIntelligence,
           },
-          updated: new Date().toISOString(),
+          updated: reviewedAt,
         },
+        updated_at: reviewedAt,
       })
       .eq("id", params.id);
     if (profileError) throw profileError;

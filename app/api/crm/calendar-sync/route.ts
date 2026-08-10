@@ -20,6 +20,10 @@ import {
   matchOutreachProspectForAttendees,
 } from "@/lib/outreach-crm";
 import { resolveExistingCompany } from "@/lib/company-resolver";
+import {
+  isNonMeetingCalendarBlock,
+  scheduledCalendarSyncDecision,
+} from "@/lib/calendar-events";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -310,6 +314,7 @@ async function runCalendarSync() {
         resolved
           .filter((x) => !x.company_id && !x.outreachProspectId)
           .map((x) => x.r.title)
+          .filter((title) => !isNonMeetingCalendarBlock(title))
           .filter(Boolean)
       )
     );
@@ -472,6 +477,14 @@ async function runCalendarSync() {
       }
     }
 
+    const finishedAt = new Date().toISOString();
+    await supabaseAdmin.from("app_config").upsert({
+      key: "calendar_sync_last_success_at",
+      value: finishedAt,
+      note: "Latest successful complete or partial Google Calendar refresh",
+      updated_at: finishedAt,
+    });
+
     return NextResponse.json({
       ok: true,
       added,
@@ -481,6 +494,7 @@ async function runCalendarSync() {
       reconciled: snapshot.complete,
       outreachLinked,
       total: rows.length,
+      finishedAt,
     });
   } catch (err: any) {
     return NextResponse.json(
@@ -501,6 +515,13 @@ export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization") || "";
   if (!secret || auth !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "not authorised" }, { status: 401 });
+  }
+  const decision = scheduledCalendarSyncDecision();
+  if (!decision.run) {
+    return NextResponse.json({
+      ok: true,
+      skipped: `Waiting for the next London sync slot, currently ${decision.weekday} ${String(decision.hour).padStart(2, "0")}:00`,
+    });
   }
   return runCalendarSync();
 }

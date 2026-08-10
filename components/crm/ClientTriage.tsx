@@ -10,6 +10,7 @@ type Classification =
   | "prospect"
   | "partner"
   | "customer"
+  | "product_trial"
   | "in_house"
   | "irrelevant";
 
@@ -23,6 +24,7 @@ const labels: Record<Classification, string> = {
   prospect: "Prospect",
   partner: "Partner",
   customer: "Customer",
+  product_trial: "Product trial",
   in_house: "In house",
   irrelevant: "Archive as irrelevant",
 };
@@ -32,6 +34,7 @@ const suggestedClassification = (row: ClientPortfolioRow): Classification => {
   if (stage === "in house") return "in_house";
   if (stage === "partner") return "partner";
   if (stage === "customer") return "customer";
+  if (stage === "product trial") return "product_trial";
   return "prospect";
 };
 

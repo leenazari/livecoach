@@ -22,7 +22,7 @@ import TaskList from "@/components/crm/TaskList";
 import Link from "next/link";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import {
-  isInHouseRelationship,
+  isNonCommercialRelationship,
   isRelationshipStageOption,
   RELATIONSHIP_STAGE_OPTIONS,
 } from "@/lib/relationship-stages";
@@ -151,7 +151,7 @@ function OppRow({
             onChange={(e) => onStageChange(e.target.value)}
             onClick={(e) => e.stopPropagation()}
             className={`max-w-[8rem] rounded-full border bg-ink px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider outline-none transition focus:border-amber/70 ${
-              isInHouseRelationship(o.stage)
+              isNonCommercialRelationship(o.stage)
                 ? "border-sky/55 bg-sky/10 text-sky"
                 : o.stage
                   ? "border-edge text-bone/75"

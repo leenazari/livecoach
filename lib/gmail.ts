@@ -18,6 +18,15 @@ export type GmailMsg = {
   cc: string;
   subject: string;
   snippet: string;
+  labelIds?: string[];
+  autoSubmitted?: string;
+  listUnsubscribe?: string;
+};
+
+export type GmailInboxDelta = {
+  cursor: string;
+  messages: GmailMsg[];
+  reset: boolean;
 };
 
 type GmailFetchInit = Omit<RequestInit, "headers"> & {
@@ -182,6 +191,175 @@ export async function recentMessages(
   const out = fetched.filter((m): m is GmailMsg => !!m);
   out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   return out;
+}
+
+async function gmailProfile(token: string): Promise<any | null> {
+  return api("/profile", token);
+}
+
+async function messageMetadata(
+  id: string,
+  token: string
+): Promise<GmailMsg | null> {
+  const fields = [
+    "From",
+    "To",
+    "Cc",
+    "Subject",
+    "Date",
+    "Auto-Submitted",
+    "List-Unsubscribe",
+  ]
+    .map((name) => `metadataHeaders=${encodeURIComponent(name)}`)
+    .join("&");
+  const message = await api(`/messages/${id}?format=metadata&${fields}`, token);
+  if (!message) return null;
+  const headers = message.payload?.headers || [];
+  const dateMs = message.internalDate
+    ? Number(message.internalDate)
+    : Date.parse(header(headers, "Date")) || 0;
+  return {
+    id: String(message.id || id),
+    threadId: String(message.threadId || ""),
+    date: dateMs ? new Date(dateMs).toISOString() : "",
+    from: header(headers, "From"),
+    to: header(headers, "To"),
+    cc: header(headers, "Cc"),
+    subject: header(headers, "Subject"),
+    snippet: typeof message.snippet === "string" ? message.snippet : "",
+    labelIds: Array.isArray(message.labelIds) ? message.labelIds : [],
+    autoSubmitted: header(headers, "Auto-Submitted"),
+    listUnsubscribe: header(headers, "List-Unsubscribe"),
+  };
+}
+
+// Gmail History returns only changes since the last cursor. This is the cheap
+// monitoring path: old threads are never listed or re-read, and each message
+// ID is considered once. An expired cursor is reset to the current profile
+// without treating old inbox mail as new.
+export async function newInboxMessagesSince(
+  startHistoryId: string | null,
+  maxMessages = 50
+): Promise<GmailInboxDelta> {
+  const token = await getAccessToken();
+  if (!token) throw new Error("Google is not connected");
+  const profile = await gmailProfile(token);
+  const currentCursor = String(profile?.historyId || "");
+  if (!currentCursor) throw new Error("Gmail history is unavailable");
+  if (!startHistoryId) {
+    return { cursor: currentCursor, messages: [], reset: true };
+  }
+
+  const ids = new Set<string>();
+  let pageToken = "";
+  let cursor = currentCursor;
+  let pages = 0;
+  do {
+    const params = new URLSearchParams({
+      startHistoryId,
+      historyTypes: "messageAdded",
+      labelId: "INBOX",
+      maxResults: "100",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const response = await gmailFetch(`/history?${params.toString()}`, token, {
+      cache: "no-store",
+    });
+    if (!response) throw new Error("Gmail history check failed");
+    if (response.status === 404) {
+      return { cursor: currentCursor, messages: [], reset: true };
+    }
+    if (!response.ok) throw new Error(`Gmail history check failed (${response.status})`);
+    const data = await response.json();
+    cursor = String(data.historyId || cursor);
+    for (const history of Array.isArray(data.history) ? data.history : []) {
+      for (const added of Array.isArray(history.messagesAdded)
+        ? history.messagesAdded
+        : []) {
+        const message = added?.message;
+        if (!message?.id) continue;
+        const labels = Array.isArray(message.labelIds) ? message.labelIds : [];
+        if (labels.includes("INBOX")) ids.add(String(message.id));
+        if (ids.size >= maxMessages) break;
+      }
+      if (ids.size >= maxMessages) break;
+    }
+    pageToken = String(data.nextPageToken || "");
+    pages += 1;
+  } while (pageToken && ids.size < maxMessages && pages < 5);
+
+  const metadata = await Promise.all(
+    [...ids].slice(0, maxMessages).map((id) => messageMetadata(id, token))
+  );
+  const messages = metadata
+    .filter((message): message is GmailMsg => !!message)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return { cursor, messages, reset: false };
+}
+
+const decodeBase64Url = (value: unknown): string => {
+  const data = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  if (!data) return "";
+  try {
+    return Buffer.from(data, "base64").toString("utf8");
+  } catch {
+    return "";
+  }
+};
+
+const mimeText = (part: any, mimeType: string): string => {
+  if (!part || typeof part !== "object") return "";
+  if (String(part.mimeType || "").toLowerCase() === mimeType) {
+    return decodeBase64Url(part.body?.data);
+  }
+  for (const child of Array.isArray(part.parts) ? part.parts : []) {
+    const text = mimeText(child, mimeType);
+    if (text) return text;
+  }
+  return "";
+};
+
+export function freshReplyOnly(value: unknown, max = 6000): string {
+  let text = String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .trim();
+  const quoteMarkers = [
+    /\n\s*On .{0,240}wrote:\s*\n/i,
+    /\n\s*-{2,}\s*Original Message\s*-{2,}\s*\n/i,
+    /\n\s*From:\s+.{1,240}\n\s*(?:Sent|Date):/i,
+    /\n\s*_{5,}\s*\n/,
+  ];
+  let cutAt = text.length;
+  for (const marker of quoteMarkers) {
+    const match = marker.exec(text);
+    // Short replies such as "Yes, Tuesday works" are common. Do not require a
+    // long preamble before recognising the quoted history marker.
+    if (match) cutAt = Math.min(cutAt, match.index);
+  }
+  text = text
+    .slice(0, cutAt)
+    .split("\n")
+    .filter((line) => !/^\s*>/.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return text.length > max
+    ? `${text.slice(0, max).replace(/\s+\S*$/, "").trim()}…`
+    : text;
+}
+
+// Fetches ONE Gmail message, never its thread. The caller pays for only the
+// fresh message body, with quoted history stripped and a hard character cap.
+export async function freshMessageText(id: string, max = 6000): Promise<string> {
+  const token = await getAccessToken();
+  if (!token || !id) return "";
+  const message = await api(`/messages/${encodeURIComponent(id)}?format=full`, token);
+  if (!message?.payload) return "";
+  const plain = mimeText(message.payload, "text/plain");
+  const html = plain ? "" : mimeText(message.payload, "text/html");
+  const text = plain || (html ? stripHtml(html) : decodeBase64Url(message.payload.body?.data));
+  return freshReplyOnly(text, max);
 }
 
 // A compact, plain-text digest of a thread, for distilling into a context note.

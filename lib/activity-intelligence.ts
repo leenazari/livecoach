@@ -27,6 +27,7 @@ export type ActivityIntelligence = {
   buyingSignals: string[];
   risks: string[];
   stakeholderUpdates: ActivityStakeholderUpdate[];
+  relationshipStage: "Product Trial" | "Partner" | "Customer" | "In House" | null;
   nextAction: ActivityNextAction | null;
   nextCallIntent: string | null;
   followUp: { subject: string; body: string } | null;
@@ -71,6 +72,12 @@ const ROLES = new Set([
 ]);
 const ACTIONS = new Set(["email", "call", "task"]);
 const OWNERS = new Set(["us", "buyer", "joint"]);
+const RELATIONSHIP_STAGES = new Set([
+  "Product Trial",
+  "Partner",
+  "Customer",
+  "In House",
+]);
 
 // Model output is treated as untrusted input. Keep only the small, typed set of
 // fields the approval endpoint knows how to apply.
@@ -117,6 +124,9 @@ export function cleanActivityIntelligence(
     buyingSignals: cleanList(value?.buyingSignals, 3, 220),
     risks: cleanList(value?.risks, 3, 220),
     stakeholderUpdates,
+    relationshipStage: RELATIONSHIP_STAGES.has(value?.relationshipStage)
+      ? value.relationshipStage
+      : null,
     nextAction,
     nextCallIntent: cleanText(value?.nextCallIntent, 600) || null,
     followUp: subject || body ? { subject: subject || "Follow-up", body } : null,
@@ -128,6 +138,7 @@ export function activityHasActions(value: ActivityIntelligence | null): boolean 
     value &&
     (value.nextAction ||
       value.nextCallIntent ||
+      value.relationshipStage ||
       value.followUp?.body ||
       value.stakeholderUpdates.length)
   );

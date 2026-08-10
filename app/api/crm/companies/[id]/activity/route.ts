@@ -92,6 +92,7 @@ Output ONLY JSON with exactly this shape:
   "buyingSignals": ["0-3 explicit signs of need, urgency, authority or willingness to progress"],
   "risks": ["0-3 explicit objections, delays, missing people or threats to progress"],
   "stakeholderUpdates": [{"person":"exact name stated","buyingRole":"decision_maker|champion|influencer|user|blocker","evidence":"short explicit evidence"}],
+  "relationshipStage": "Product Trial|Partner|Customer|In House" or null,
   "nextAction": {"text":"one concrete highest-priority action","action":"email|call|task","owner":"us|buyer|joint","dueAt":"YYYY-MM-DD or null"} or null,
   "nextCallIntent": "one or two concise first-person sentences for the next conversation, or null",
   "followUp": {"subject":"short subject","body":"warm ready-to-review draft under 100 words"} or null
@@ -100,6 +101,7 @@ Output ONLY JSON with exactly this shape:
 Rules:
 - Ground every field only in the new update and saved memory. Never invent names, facts, dates, deal values or commitments.
 - A job title alone does not prove a buying role. Add a stakeholder update only when the note explicitly identifies their role in the decision.
+- When the update explicitly says the company is a tool, supplier or product being trialled, set relationshipStage to Product Trial. Do not turn that classification into a nextAction that merely asks the user to reclassify it.
 - Produce one next action only. Use a due date only when the update states a real date or an unambiguous relative date. Today in London is ${todayInLondon()}.
 - Draft a follow-up only when the update creates a clear reason to reply, confirm or send something. Never claim something was sent.
 - Move an existing relationship forward. Do not reset the intent to generic first-call discovery.

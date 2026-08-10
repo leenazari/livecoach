@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { londonDayBounds } from "@/lib/outreach";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 
 // Gathers EVERYTHING we know about one client into a single grounding string:
 // profile, recent call scorecards (incl. focus scores), open opportunities,
@@ -411,7 +412,9 @@ export async function gatherGlobalContext(): Promise<string> {
     .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
     .limit(40);
-  const up = upAll || [];
+  const up = (upAll || []).filter((call: any) =>
+    isPrepEligibleCalendarEvent(call)
+  );
   if (up.length) {
     const nowMs = Date.now();
     const nameById = new Map<string, string>();
@@ -587,9 +590,12 @@ export async function gatherUpcomingCallPrepContext(
     .lte("scheduled_at", new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
     .limit(60);
-  if (error || !calls?.length) return "";
+  const prepCalls = (calls || []).filter((call: any) =>
+    isPrepEligibleCalendarEvent(call)
+  );
+  if (error || !prepCalls.length) return "";
 
-  const companyIds = [...new Set(calls.map((call: any) => call.company_id).filter(Boolean))];
+  const companyIds = [...new Set(prepCalls.map((call: any) => call.company_id).filter(Boolean))];
   const companyNames = new Map<string, string>();
   if (companyIds.length) {
     const { data: companies } = await supabaseAdmin
@@ -600,7 +606,7 @@ export async function gatherUpcomingCallPrepContext(
       companyNames.set(company.id, company.name || "");
   }
 
-  const ranked = (calls as any[])
+  const ranked = (prepCalls as any[])
     .map((call) => ({
       call,
       score: scoreUpcomingCallForMessage(

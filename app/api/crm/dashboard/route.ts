@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { workspaceContextBlock } from "@/lib/workspace";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 
 export const runtime = "nodejs";
 export const maxDuration = 25;
@@ -242,6 +243,7 @@ export async function GET(req: Request) {
     const callsToPrep = (upcomingRes.data || [])
       .filter(
         (u: any) =>
+          isPrepEligibleCalendarEvent(u) &&
           !u.prepped &&
           u.scheduled_at &&
           new Date(u.scheduled_at).getTime() <= next24h

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { isInHouseRelationship } from "@/lib/relationship-stages";
+import {
+  isInHouseRelationship,
+  isNonCommercialRelationship,
+} from "@/lib/relationship-stages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -176,6 +179,7 @@ export async function GET() {
 
       const stageKey = String(company.stage || "").toLowerCase();
       const isInHouse = isInHouseRelationship(company.stage);
+      const isNonCommercial = isNonCommercialRelationship(company.stage);
       const reasons: string[] = [];
       let health: "red" | "amber" | "green" | "grey" = "grey";
       if (overdue) reasons.push("Overdue next action");
@@ -183,7 +187,7 @@ export async function GET() {
       if (opportunity && !nextMeeting) reasons.push("No next meeting booked");
       if (!primaryContact) reasons.push("No contact recorded");
       if (!company.stage) reasons.push("Relationship stage missing");
-      if (!isInHouse && daysQuiet != null && daysQuiet >= 21) {
+      if (!isNonCommercial && daysQuiet != null && daysQuiet >= 21) {
         reasons.push(`Quiet for ${daysQuiet} days`);
       }
       const activityRisk = firstText(memory.latestActivity?.risks);
@@ -238,7 +242,9 @@ export async function GET() {
       else if (relationshipType === "prospect") category = "Prospect";
       else if (relationshipType === "partner") category = "Partner";
       else if (relationshipType === "customer") category = "Customer";
+      else if (relationshipType === "product_trial") category = "Product Trial";
       else if (relationshipType === "in_house" || isInHouse) category = "In House";
+      else if (isNonCommercial) category = "Product Trial";
       else if (opportunity) category = "Opportunity";
       else if (String(company.stage || "").toLowerCase() === "customer")
         category = "Customer";
