@@ -282,9 +282,16 @@ export async function gatherClientContext(
 // profile, open opportunities, waiting drafts and outstanding tasks. Lets the
 // assistant answer "show Alan's to-do" (it resolves the name) or "my to-do"
 // (across everyone) without the user picking a client first.
-export async function gatherGlobalContext(): Promise<string> {
+export async function gatherGlobalContext(
+  message = "",
+  now = new Date()
+): Promise<string> {
   const cut = (s: any, n: number) =>
     typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : "";
+  const asksForSchedule =
+    /\b(schedule|calendar|what(?:'s| is) on|calls? (?:today|tomorrow)|meetings? (?:today|tomorrow))\b/i.test(
+      message
+    );
 
   const [companiesRes, draftsRes, oppsRes, tasksRes, callsRes] =
     await Promise.all([
@@ -362,10 +369,14 @@ export async function gatherGlobalContext(): Promise<string> {
     }
   };
 
-  const lines: string[] = [
-    "YOUR CLIENTS AND PIPELINE - the most actionable clients, one compact line each. The named-client memory above is authoritative for a specific person. This roll-up is for prioritisation without loading every full record.",
-    "",
-  ];
+  const lines: string[] = asksForSchedule
+    ? [
+        "SCHEDULE LOOKUP - the client pipeline roll-up is deliberately omitted because it is not needed for this answer.",
+      ]
+    : [
+        "YOUR CLIENTS AND PIPELINE - the most actionable clients, one compact line each. The named-client memory above is authoritative for a specific person. This roll-up is for prioritisation without loading every full record.",
+        "",
+      ];
   const activityScore = (c: any) =>
     (oppCount.get(c.id) || 0) * 20 +
     (taskCount.get(c.id) || 0) * 8 +
@@ -374,8 +385,9 @@ export async function gatherGlobalContext(): Promise<string> {
   const digestClients = [...(companies as any[])]
     .sort((a, b) => activityScore(b) - activityScore(a) || String(a.name).localeCompare(String(b.name)))
     .slice(0, 100);
-  lines.push(`Showing ${digestClients.length} of ${companies.length} clients, ranked by open opportunity, action, draft and recent-call activity.`);
-  for (const c of digestClients) {
+  if (!asksForSchedule)
+    lines.push(`Showing ${digestClients.length} of ${companies.length} clients, ranked by open opportunity, action, draft and recent-call activity.`);
+  for (const c of asksForSchedule ? [] : digestClients) {
     const head = `• ${c.name}${
       c.stage || c.sector
         ? ` (${[c.stage, c.sector].filter(Boolean).join(", ")})`
@@ -408,21 +420,55 @@ export async function gatherGlobalContext(): Promise<string> {
   // calendar" / "what's next" works without picking a client first.
   const { data: upAll } = await supabaseAdmin
     .from("upcoming_calls")
-    .select("company_id, title, scheduled_at, prepped, meeting_url")
-    .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
+    .select("id, company_id, title, scheduled_at, prepped, meeting_url")
+    .gte("scheduled_at", new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
     .limit(40);
-  const up = (upAll || []).filter((call: any) =>
+  const allEligible = (upAll || []).filter((call: any) =>
     isPrepEligibleCalendarEvent(call)
   );
-  if (up.length) {
-    const nowMs = Date.now();
+  const todayKey = londonDateKey(now);
+  const localHour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/London",
+      hour: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(now)
+      .find((part) => part.type === "hour")?.value || "0"
+  );
+  const requestedDateKey = /\btomorrow\b/i.test(message)
+    ? localHour < 2
+      ? todayKey
+      : nextDateKey(todayKey)
+    : /\btoday\b/i.test(message)
+    ? todayKey
+    : "";
+  const up = requestedDateKey
+    ? allEligible.filter(
+        (call: any) =>
+          call.scheduled_at &&
+          londonDateKey(new Date(call.scheduled_at)) === requestedDateKey
+      )
+    : allEligible;
+  if (up.length || asksForSchedule) {
+    const nowMs = now.getTime();
     const nameById = new Map<string, string>();
     for (const c of companies as any[]) nameById.set(c.id, c.name);
+    const asksForJoinLink =
+      /\b(join|meeting link|teams link|google meet|meet link|zoom link)\b/i.test(
+        message
+      );
+    const requestedDateNote = requestedDateKey
+      ? /\btomorrow\b/i.test(message) && localHour < 2
+        ? ` The requested day is exactly ${requestedDateKey}. Before 02:00 UK time, this user's \"tomorrow\" means the upcoming morning on the same UK calendar date.`
+        : ` The requested day is exactly ${requestedDateKey}.`
+      : "";
     lines.push(
       "",
-      "YOUR CALLS (synced from your calendar, UK time, soonest first - items marked ALREADY PASSED are over, do not treat them as upcoming):"
+      `YOUR CALLS (synced from the calendar, UK time, soonest first.${requestedDateNote} Always include each time. Use the supplied prep page for clickable schedule titles. Do not expose or link the video meeting URL unless the user explicitly asks for the join link):`
     );
+    if (!up.length) lines.push("• No eligible calls are scheduled for that requested day.");
     for (const u of up as any[]) {
       const ms = u.scheduled_at ? new Date(u.scheduled_at).getTime() : null;
       const past = ms != null && ms < nowMs;
@@ -437,11 +483,16 @@ export async function gatherGlobalContext(): Promise<string> {
           })
         : "no time set";
       const who = u.company_id ? nameById.get(u.company_id) || "" : "";
+      const prepUrl = u.company_id
+        ? `/crm/prep?company=${encodeURIComponent(u.company_id)}&upcoming=${encodeURIComponent(u.id)}`
+        : `/call?upcoming=${encodeURIComponent(u.id)}`;
       lines.push(
         `• ${when}${past ? " [ALREADY PASSED]" : ""}: ${u.title || "call"}${
           who ? ` (${who})` : ""
-        }${u.prepped ? " [prepped]" : ""}${
-          u.meeting_url ? ` - join link: ${u.meeting_url}` : " - no meeting link attached"
+        }${u.prepped ? " [prepped]" : ""} - prep page: ${prepUrl}${
+          asksForJoinLink && u.meeting_url
+            ? ` - requested join link: ${u.meeting_url}`
+            : ""
         }`
       );
     }
