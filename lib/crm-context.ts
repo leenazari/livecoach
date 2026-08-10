@@ -767,7 +767,6 @@ export async function gatherOutreachContext(
   const normal = (value: unknown) =>
     String(value || "").toLowerCase().replace(/[^a-z0-9@.\s-]/g, " ").replace(/\s+/g, " ").trim();
   const { start, end } = londonDayBounds();
-  const wantsSignals = /\b(buying signals?|linkedin|posts?|comment|engagement|market update|company news|commercial signal|outreach opportunit)/i.test(message);
   const learningsQuery = options.detailed
     ? supabaseAdmin
         .from("outreach_learnings")
@@ -777,16 +776,7 @@ export async function gatherOutreachContext(
         .order("positive_reply_count", { ascending: false })
         .limit(5)
     : Promise.resolve({ data: [] as any[] });
-  const signalsQuery = wantsSignals
-    ? supabaseAdmin
-        .from("outreach_signals")
-        .select("author_name,company_name,summary,relevance_reason,opportunity_hypothesis,recommended_action,priority,confidence,status,created_at")
-        .in("status", ["new", "reviewed", "approved"])
-        .order("created_at", { ascending: false })
-        .limit(20)
-    : Promise.resolve({ data: [] as any[] });
-
-  const [campaignRes, prospectsRes, sentRes, approvedRes, learningsRes, signalsRes] =
+  const [campaignRes, prospectsRes, sentRes, approvedRes, learningsRes] =
     await Promise.all([
       supabaseAdmin
         .from("outreach_campaigns")
@@ -810,7 +800,6 @@ export async function gatherOutreachContext(
         .select("id", { count: "exact", head: true })
         .eq("status", "approved"),
       learningsQuery,
-      signalsQuery,
     ]);
 
   const prospects = (prospectsRes.data || []) as any[];
@@ -855,7 +844,7 @@ export async function gatherOutreachContext(
     );
     const recent = [...replies]
       .sort((a, b) => new Date(b.last_reply_at).getTime() - new Date(a.last_reply_at).getTime())
-      .slice(0, 3);
+      .slice(0, 5);
     if (recent.length) {
       lines.push(
         "Recent replies: " +
@@ -871,20 +860,6 @@ export async function gatherOutreachContext(
           learnings.map((l) => `${cut(l.dimension, 24)} ${cut(l.label, 60)}: ${cut(l.insight, 160)}`).join(" | ")
       );
     }
-  }
-
-  const signals = ((signalsRes as any).data || []) as any[];
-  if (wantsSignals && signals.length) {
-    const rank: Record<string, number> = { high: 3, medium: 2, low: 1 };
-    const strongest = [...signals]
-      .sort((a, b) => (rank[b.priority] || 0) - (rank[a.priority] || 0) || new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      .slice(0, 3);
-    lines.push(
-      `BUYING SIGNALS (${signals.length} active; compact saved analysis only, original evidence not loaded): ` +
-        strongest.map((signal) =>
-          `${cut(signal.author_name || signal.company_name || "Unlinked", 45)} at ${cut(signal.company_name, 50) || "company not linked"} [${signal.priority || "low"}, ${signal.confidence || "low"} confidence, ${signal.status}]: ${cut(signal.summary, 110)}. Why: ${cut(signal.relevance_reason, 100) || "no strong relevance"}. Possibility: ${cut(signal.opportunity_hypothesis, 90) || "none"}. Recommended: ${signal.recommended_action || "ignore"}`
-        ).join(" | ")
-    );
   }
 
   if (named.length) {
