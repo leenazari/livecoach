@@ -8,7 +8,7 @@ import OutreachReadiness from "@/components/crm/OutreachReadiness";
 import { crmFetch } from "@/lib/crm";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 
-type Tab = "queue" | "prospects" | "activity" | "replies" | "campaign" | "intelligence" | "safety";
+type Tab = "queue" | "prospects" | "signals" | "activity" | "replies" | "campaign" | "intelligence" | "safety";
 type Priority = "high" | "medium" | "low";
 type ProspectSort = "name" | "company" | "priority" | "status" | "activity";
 type RecommendationAction = "contact_today" | "hold" | "skip";
@@ -17,6 +17,17 @@ type Prospect = Record<string, any> & { id: string; email: string; company_name:
 type QueueRow = Record<string, any> & { id: string; prospect: Prospect; campaign: Record<string, any>; message: Record<string, any> | null; recommendation: Recommendation };
 type SequenceStep = { step: number; delayDays: number; purpose: string; contentType?: "plain" | "insight" | "case_study" | "video" | "close_loop"; guidance?: string; assetUrl?: string | null };
 type Campaign = Record<string, any> & { id: string; name: string; goal: string; audience: string; offer_angle: string; status: string; daily_limit: number; sequence: SequenceStep[] };
+type SignalAction = "comment" | "message" | "prepare_outreach" | "follow_up" | "ignore";
+type SignalStatus = "new" | "reviewed" | "approved" | "acted" | "dismissed";
+type BuyingSignal = Record<string, any> & {
+  id: string;
+  summary: string;
+  evidence: string[];
+  priority: Priority;
+  confidence: Priority;
+  recommended_action: SignalAction;
+  status: SignalStatus;
+};
 type HandoverPreview = {
   companyId: string | null;
   companyName: string | null;
@@ -29,6 +40,7 @@ type HandoverPreview = {
 const tabs: { key: Tab; label: string; icon: string }[] = [
   { key: "queue", label: "Today", icon: "☀" },
   { key: "prospects", label: "Prospects", icon: "◎" },
+  { key: "signals", label: "Signals", icon: "⌁" },
   { key: "activity", label: "Activity", icon: "▥" },
   { key: "replies", label: "Replies", icon: "✉" },
   { key: "campaign", label: "Campaign", icon: "↗" },
@@ -50,12 +62,24 @@ const pill: Record<string, string> = {
   interested: "border-moss/50 bg-moss/10 text-moss",
   suppressed: "border-rust/50 bg-rust/10 text-rust",
   not_started: "border-edge bg-ink/40 text-muted",
+  new: "border-sky/50 bg-sky/10 text-sky",
+  reviewed: "border-amber/50 bg-amber/10 text-amber",
+  acted: "border-moss/50 bg-moss/10 text-moss",
+  dismissed: "border-edge bg-ink/40 text-muted",
 };
 
 const recommendationPill: Record<RecommendationAction, string> = {
   contact_today: "border-moss/50 bg-moss/10 text-moss",
   hold: "border-amber/50 bg-amber/10 text-amber",
   skip: "border-rust/50 bg-rust/10 text-rust",
+};
+
+const signalActionLabel: Record<SignalAction, string> = {
+  comment: "Comment on post",
+  message: "Send a direct message",
+  prepare_outreach: "Prepare outreach",
+  follow_up: "Follow up",
+  ignore: "Ignore",
 };
 
 const button = "min-h-11 rounded-lg border border-edge px-3 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-bone transition hover:border-amber/60 hover:text-amber disabled:cursor-not-allowed disabled:opacity-40";
@@ -120,6 +144,20 @@ export default function OutreachPage() {
   const [performance, setPerformance] = useState<any[]>([]);
   const [learnings, setLearnings] = useState<any[]>([]);
   const [suppressions, setSuppressions] = useState<any[]>([]);
+  const [signals, setSignals] = useState<BuyingSignal[]>([]);
+  const [signalProspects, setSignalProspects] = useState<any[]>([]);
+  const [signalCompanies, setSignalCompanies] = useState<any[]>([]);
+  const [signalFilter, setSignalFilter] = useState<"active" | SignalStatus>("active");
+  const [signalEdits, setSignalEdits] = useState<Record<string, { recommended_action: SignalAction; draft_text: string }>>({});
+  const [signalForm, setSignalForm] = useState({
+    sourceType: "linkedin",
+    sourceUrl: "",
+    sourceText: "",
+    linkValue: "",
+    authorName: "",
+    authorRole: "",
+    companyName: "",
+  });
   const [loading, setLoading] = useState(true);
   const [tabLoading, setTabLoading] = useState(false);
   const [busy, setBusy] = useState("");
@@ -171,6 +209,18 @@ export default function OutreachPage() {
     setSuppressions(data.suppressions || []);
   }, []);
 
+  const loadSignals = useCallback(async () => {
+    const data = await crmFetch<any>("/api/crm/outreach/signals");
+    const nextSignals = data.signals || [];
+    setSignals(nextSignals);
+    setSignalProspects(data.prospects || []);
+    setSignalCompanies(data.companies || []);
+    setSignalEdits(Object.fromEntries(nextSignals.map((signal: BuyingSignal) => [signal.id, {
+      recommended_action: signal.recommended_action,
+      draft_text: signal.draft_text || "",
+    }])));
+  }, []);
+
   useEffect(() => { loadCore(); }, [loadCore]);
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab");
@@ -180,6 +230,7 @@ export default function OutreachPage() {
     let alive = true;
     const requests: Promise<void>[] = [];
     if (tab === "prospects") requests.push(loadProspects());
+    if (tab === "signals") requests.push(loadSignals());
     if (tab === "safety") requests.push(loadSuppressions());
     if (tab === "campaign" || tab === "intelligence" || tab === "activity" || tab === "replies")
       requests.push(loadMetrics());
@@ -189,7 +240,7 @@ export default function OutreachPage() {
       .catch((e: any) => alive && setError(e.message || "Could not load this section"))
       .finally(() => alive && setTabLoading(false));
     return () => { alive = false; };
-  }, [tab, loadMetrics, loadProspects, loadSuppressions]);
+  }, [tab, loadMetrics, loadProspects, loadSignals, loadSuppressions]);
   useEffect(() => {
     const next: Record<string, { subject: string; body_text: string }> = {};
     for (const row of queue) if (row.message) next[row.message.id] = { subject: row.message.subject || "", body_text: row.message.body_text || "" };
@@ -423,6 +474,81 @@ export default function OutreachPage() {
     }
   };
 
+  const createSignal = async () => {
+    setBusy("signal-create"); setError(""); setNotice("");
+    try {
+      const [kind, linkedId] = signalForm.linkValue.split(":");
+      const result = await crmFetch<{ signal: BuyingSignal }>("/api/crm/outreach/signals", {
+        method: "POST",
+        body: JSON.stringify({
+          ...signalForm,
+          prospectId: kind === "prospect" ? linkedId : null,
+          companyId: kind === "company" ? linkedId : null,
+        }),
+      });
+      if (!result.signal?.id) throw new Error("The saved signal was not confirmed");
+      setSignals((all) => [result.signal, ...all]);
+      setSignalEdits((all) => ({ ...all, [result.signal.id]: {
+        recommended_action: result.signal.recommended_action,
+        draft_text: result.signal.draft_text || "",
+      } }));
+      setSignalForm({ sourceType: "linkedin", sourceUrl: "", sourceText: "", linkValue: "", authorName: "", authorRole: "", companyName: "" });
+      setNotice("Signal saved. Review the reasoning and exact wording before approving any action.");
+    } catch (e: any) {
+      setError(e.message || "This signal could not be analysed");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const changeSignalEdit = (id: string, patch: Partial<{ recommended_action: SignalAction; draft_text: string }>) => {
+    setSignalEdits((all) => ({
+      ...all,
+      [id]: {
+        recommended_action: all[id]?.recommended_action || "ignore",
+        draft_text: all[id]?.draft_text || "",
+        ...patch,
+      },
+    }));
+  };
+
+  const saveSignal = async (signal: BuyingSignal, status?: SignalStatus) => {
+    setBusy(`signal:${status || "save"}:${signal.id}`); setError(""); setNotice("");
+    try {
+      const edit = signalEdits[signal.id] || { recommended_action: signal.recommended_action, draft_text: signal.draft_text || "" };
+      const result = await crmFetch<{ signal: BuyingSignal }>(`/api/crm/outreach/signals/${signal.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ...edit, ...(status ? { status } : {}) }),
+      });
+      if (!result.signal?.id) throw new Error("The saved signal was not confirmed");
+      setSignals((all) => all.map((item) => item.id === signal.id ? result.signal : item));
+      setSignalEdits((all) => ({ ...all, [signal.id]: {
+        recommended_action: result.signal.recommended_action,
+        draft_text: result.signal.draft_text || "",
+      } }));
+      setNotice(status === "approved" ? "Exact wording approved. It has not been posted or sent." : status === "acted" ? "Action marked complete and kept for learning." : status === "dismissed" ? "Signal dismissed. It will not distract the Brain." : "Signal changes saved.");
+    } catch (e: any) {
+      setError(e.message || "This signal could not be saved");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const copyApprovedSignal = async (signal: BuyingSignal) => {
+    const edit = signalEdits[signal.id];
+    const unchanged = edit?.recommended_action === signal.recommended_action && edit?.draft_text === (signal.draft_text || "");
+    if (signal.status !== "approved" || !unchanged) {
+      setError("Save and approve the exact wording before copying it.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(signal.draft_text || "");
+      setNotice("Approved wording copied. Paste it into LinkedIn or the relevant channel, then mark it actioned here.");
+    } catch {
+      setError("Your browser blocked copying. Select the approved text and copy it manually.");
+    }
+  };
+
   const changeProspectSort = (next: ProspectSort) => {
     if (prospectSort === next) setSortDirection((direction) => direction === "asc" ? "desc" : "asc");
     else {
@@ -460,6 +586,12 @@ export default function OutreachPage() {
     });
     return rows;
   }, [needle, priority, prospectSort, prospects, recommendationFilter, sortDirection, stageFilter]);
+
+  const shownSignals = useMemo(() => signals.filter((signal) =>
+    signalFilter === "active"
+      ? !["acted", "dismissed"].includes(signal.status)
+      : signal.status === signalFilter
+  ), [signalFilter, signals]);
 
   const funnel = [
     { label: "Prospects", value: metrics.prospects || 0, colour: "bg-sky" },
@@ -540,6 +672,50 @@ export default function OutreachPage() {
             </article>;
           })}{!shown.length ? <div className="p-8 text-center text-sm text-muted">No prospects match these filters.</div> : null}</div>
         </div>
+      </section> : null}
+
+      {!loading && !tabLoading && tab === "signals" ? <section className="space-y-4">
+        <div className="rounded-xl border border-amber/40 bg-amber/[0.06] p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div><h2 className="font-display text-lg text-bone">Buying Signals Inbox</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-muted">Paste one relevant LinkedIn post, fresh email or market update. Terra runs once when you press Analyse, then saves the concise commercial meaning for future Brain use. Reviewing saved signals uses no AI tokens.</p></div>
+            <span className="rounded-full border border-moss/45 bg-moss/10 px-3 py-1 font-mono text-[0.52rem] uppercase text-moss">Approval required</span>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="grid gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Signal source</span><select className={input} value={signalForm.sourceType} onChange={(event) => setSignalForm((form) => ({ ...form, sourceType: event.target.value }))}><option value="linkedin">LinkedIn post</option><option value="email">Email received</option><option value="news">Company or market news</option><option value="manual">Manual observation</option></select></label>
+                <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Link to record</span><select className={input} value={signalForm.linkValue} onChange={(event) => setSignalForm((form) => ({ ...form, linkValue: event.target.value }))}><option value="">Not linked yet</option><optgroup label="Outreach prospects">{signalProspects.map((prospect) => <option key={`prospect:${prospect.id}`} value={`prospect:${prospect.id}`}>{`${prospect.first_name || ""} ${prospect.last_name || ""}`.trim() || prospect.email} · {prospect.company_name}</option>)}</optgroup><optgroup label="CRM clients and partners">{signalCompanies.map((company) => <option key={`company:${company.id}`} value={`company:${company.id}`}>{company.name}</option>)}</optgroup></select></label>
+              </div>
+              <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Source link, optional</span><input type="url" className={input} value={signalForm.sourceUrl} onChange={(event) => setSignalForm((form) => ({ ...form, sourceUrl: event.target.value }))} placeholder="https://www.linkedin.com/posts/…" /></label>
+              <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Fresh evidence</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={signalForm.sourceText} onChange={(event) => setSignalForm((form) => ({ ...form, sourceText: event.target.value }))} placeholder="Paste only the new post, email or update here. Avoid the full email thread." /></label>
+            </div>
+            <div className="grid content-start gap-3">
+              <div className="grid gap-3 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Person, if unlinked</span><input className={input} value={signalForm.authorName} onChange={(event) => setSignalForm((form) => ({ ...form, authorName: event.target.value }))} placeholder="Name" /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Role, if known</span><input className={input} value={signalForm.authorRole} onChange={(event) => setSignalForm((form) => ({ ...form, authorRole: event.target.value }))} placeholder="Job title" /></label></div>
+              <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Company, if unlinked</span><input className={input} value={signalForm.companyName} onChange={(event) => setSignalForm((form) => ({ ...form, companyName: event.target.value }))} placeholder="Company name" /></label>
+              <div className="rounded-lg border border-edge bg-ink/35 p-3 text-xs leading-5 text-bone/75"><strong className="text-bone">Cost control:</strong> one concise Terra analysis runs only when you press the button. The full source is saved as evidence but is not loaded into every Brain conversation.</div>
+              <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3 text-xs leading-5 text-bone/75"><strong className="text-sky">LinkedIn safety:</strong> LiveCoach does not post automatically. Approved wording is copied for you to paste, keeping you in control of your account and public voice.</div>
+              <button type="button" onClick={createSignal} disabled={!!busy || signalForm.sourceText.trim().length < 25} className={`${primary} w-full`}>{busy === "signal-create" ? "Analysing and saving…" : "Analyse + save signal"}</button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2 rounded-xl border border-edge bg-panel p-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Action queue</h2><p className="mt-1 text-sm text-muted">Strongest signals first. Approval confirms the exact wording only, it never sends or posts.</p></div><select className={`${input} sm:w-48`} value={signalFilter} onChange={(event) => setSignalFilter(event.target.value as "active" | SignalStatus)}><option value="active">Needs attention</option><option value="new">New</option><option value="reviewed">Reviewed</option><option value="approved">Approved</option><option value="acted">Actioned</option><option value="dismissed">Dismissed</option></select></div>
+
+        <div className="space-y-3">{shownSignals.map((signal) => {
+          const edit = signalEdits[signal.id] || { recommended_action: signal.recommended_action, draft_text: signal.draft_text || "" };
+          const linkedProspect = signalProspects.find((prospect) => prospect.id === signal.prospect_id);
+          const linkedCompany = signalCompanies.find((company) => company.id === signal.company_id);
+          const unchanged = edit.recommended_action === signal.recommended_action && edit.draft_text === (signal.draft_text || "");
+          const locked = signal.status === "acted" || signal.status === "dismissed";
+          return <article id={`signal-${signal.id}`} key={signal.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap gap-1.5"><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.51rem] uppercase ${pill[signal.priority]}`}>{signal.priority} priority</span><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.51rem] uppercase ${pill[signal.status] || "border-edge text-muted"}`}>{signal.status}</span><span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.51rem] uppercase text-muted">{signal.confidence} confidence</span></div><h3 className="mt-2 font-display text-lg text-bone">{signal.author_name || linkedProspect ? signal.author_name || `${linkedProspect.first_name || ""} ${linkedProspect.last_name || ""}` : signal.company_name || linkedCompany?.name || "Unlinked signal"}</h3><p className="text-sm text-muted">{signal.author_role ? `${signal.author_role} · ` : ""}{signal.company_name || linkedProspect?.company_name || linkedCompany?.name || "Company not linked"} · {signal.source_type}</p></div><span className="shrink-0 font-mono text-[0.52rem] uppercase text-muted">{formatActivityDate(signal.created_at)}</span></div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr]"><div className="rounded-lg border border-edge bg-ink/30 p-3"><p className="font-mono text-[0.52rem] uppercase text-amber">What changed</p><p className="mt-2 text-sm leading-6 text-bone/85">{signal.summary}</p><p className="mt-3 font-mono text-[0.52rem] uppercase text-muted">Why it matters</p><p className="mt-1 text-sm leading-6 text-bone/75">{signal.relevance_reason || "No strong commercial relevance was found."}</p>{signal.opportunity_hypothesis ? <><p className="mt-3 font-mono text-[0.52rem] uppercase text-muted">Commercial possibility</p><p className="mt-1 text-sm leading-6 text-bone/75">{signal.opportunity_hypothesis}</p></> : null}</div><div className="rounded-lg border border-edge bg-ink/30 p-3"><p className="font-mono text-[0.52rem] uppercase text-muted">Grounding evidence</p>{signal.evidence?.length ? <ul className="mt-2 space-y-1.5 text-sm leading-5 text-bone/75">{signal.evidence.map((fact) => <li key={fact}>• {fact}</li>)}</ul> : <p className="mt-2 text-sm text-muted">No reliable evidence extracted.</p>}<details className="mt-3"><summary className="cursor-pointer font-mono text-[0.52rem] uppercase text-amber">Open original evidence</summary><p className="mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-bone/70">{signal.source_text}</p>{signal.source_url ? <a href={signal.source_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-amber hover:underline">Open source ↗</a> : null}</details></div></div>
+            <div className="mt-3 rounded-lg border border-amber/35 bg-ink/35 p-3"><div className="grid gap-3 sm:grid-cols-[14rem_minmax(0,1fr)]"><label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Recommended action</span><select disabled={locked} className={input} value={edit.recommended_action} onChange={(event) => changeSignalEdit(signal.id, { recommended_action: event.target.value as SignalAction })}>{Object.entries(signalActionLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Exact wording to approve</span><textarea disabled={locked || edit.recommended_action === "ignore"} className={`${input} min-h-28 resize-y leading-6`} value={edit.draft_text} onChange={(event) => changeSignalEdit(signal.id, { draft_text: removeDashesFromProse(event.target.value) })} placeholder={edit.recommended_action === "ignore" ? "No response recommended" : "Edit the suggested wording here"} /></label></div>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">{locked ? <button type="button" onClick={() => saveSignal(signal, "reviewed")} disabled={!!busy} className={button}>Return to review</button> : <><button type="button" onClick={() => saveSignal(signal, "reviewed")} disabled={!!busy || unchanged && signal.status === "reviewed"} className={button}>Save changes</button><button type="button" onClick={() => saveSignal(signal, "dismissed")} disabled={!!busy} className={`${button} border-rust/40 text-rust`}>Dismiss</button>{signal.status === "approved" && unchanged ? <><button type="button" onClick={() => copyApprovedSignal(signal)} disabled={!!busy} className={primary}>Copy approved text</button><button type="button" onClick={() => saveSignal(signal, "acted")} disabled={!!busy} className={`${button} border-moss/45 text-moss`}>Mark actioned</button></> : <button type="button" onClick={() => saveSignal(signal, "approved")} disabled={!!busy || edit.recommended_action === "ignore" || !edit.draft_text.trim()} className={primary}>Approve exact wording</button>}</>}</div>
+              {signal.status === "approved" && !unchanged ? <p className="mt-2 text-xs text-amber">You changed approved content. Save it and approve the new exact wording before copying.</p> : null}
+            </div>
+          </article>;
+        })}{!shownSignals.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">No signals match this view. Paste a fresh post, email or update above when you find one.</div> : null}</div>
       </section> : null}
 
       {!loading && !tabLoading && tab === "activity" ? <section className="space-y-4">
