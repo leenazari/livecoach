@@ -545,7 +545,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       out.push({
         key,
         type: it.type,
-        label: `Add to-do: "${text.slice(0, 180)}"${company ? ` for ${company.name}` : ""}`,
+        label: `Add to-do: "${text.slice(0, 500)}"${company ? ` for ${company.name}` : ""}`,
         endpoint: "/api/crm/tasks",
         method: "POST",
         body: {

@@ -7,8 +7,18 @@ import { crmFetch } from "@/lib/crm";
 type Msg = { id?: string; role: string; content: string; actions?: any[] };
 type ScreenContext = { section: string; label: string; path: string };
 
+function fullActionLabel(action: any): string {
+  const taskText =
+    action?.type === "create_task" && typeof action?.body?.text === "string"
+      ? action.body.text.trim()
+      : "";
+  if (taskText) return `Add to-do: "${taskText}"`;
+  return String(action?.label || "CRM change");
+}
+
 const DEEP_HISTORY_REQUEST =
   /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|documents?|detailed notes?|email thread|what did .* say)\b/i;
+const HANDS_FREE_SILENCE_MS = 3000;
 const CONTEXTUAL_CHIPS: Record<string, string[]> = {
   outreach: [
     "Create a campaign for my ideal customer",
@@ -259,6 +269,7 @@ export default function ClientAssistant({
   const lastSeedRef = useRef(""); // last initialPrompt auto-sent
   const convoRef = useRef(false); // mirror of convo for the stable callbacks
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSpeechAtRef = useRef(0);
   const flushCapRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 3s cap
   const flushingRef = useRef(false); // waiting for the transcriber to finish
   const inputElRef = useRef<HTMLTextAreaElement | null>(null);
@@ -606,7 +617,7 @@ export default function ClientAssistant({
     }
   };
 
-  const startListening = () => {
+  const startListening = (preserveTranscript = false) => {
     const SR =
       (window as any).webkitSpeechRecognition ||
       (window as any).SpeechRecognition;
@@ -624,7 +635,8 @@ export default function ClientAssistant({
     rec.interimResults = true;
     rec.continuous = true;
     suppressMicRef.current = false; // fresh dictation session
-    committedRef.current = "";
+    committedRef.current = preserveTranscript ? inputRef.current.trim() : "";
+    if (!preserveTranscript) lastSpeechAtRef.current = 0;
     rec.onresult = (e: any) => {
       if (suppressMicRef.current) return; // a send already consumed this
       // Merge an accumulator with a new chunk. Desktop Chrome returns a fresh
@@ -662,6 +674,7 @@ export default function ClientAssistant({
       const text = merge(committedRef.current, interim).replace(/\s+/g, " ").trim();
       inputRef.current = text;
       setInput(text);
+      if (text) lastSpeechAtRef.current = Date.now();
       if (flushingRef.current) {
         // Post-Ask flush: the tail is still arriving. Keep pushing the settle
         // timer back so we only stop ~1.5s after the LAST word lands (still
@@ -675,7 +688,8 @@ export default function ClientAssistant({
           }
         }, 1500);
       } else if (convoRef.current && text) {
-        // Hands-free: when you pause for a moment, end the turn and send.
+        // Hands-free: only end the turn after a full three seconds without a
+        // result. Short thinking pauses must never cut the sentence in half.
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = setTimeout(() => {
           sendOnStopRef.current = true;
@@ -684,10 +698,11 @@ export default function ClientAssistant({
           } catch {
             /* ignore */
           }
-        }, 1600);
+        }, HANDS_FREE_SILENCE_MS);
       }
     };
     rec.onend = () => {
+      const stoppedForSend = sendOnStopRef.current;
       setListening(false);
       recRef.current = null;
       if (silenceTimerRef.current) {
@@ -704,11 +719,25 @@ export default function ClientAssistant({
       if (suppressMicRef.current) return;
       const t = inputRef.current.trim();
       if (convoRef.current) {
-        // HANDS-FREE: the turn has ended - either you paused (our silence timer
-        // stopped it) OR the browser auto-stopped after a pause (common on
-        // mobile, where continuous mode still ends on its own). Either way, send
-        // what was heard, so hands-free is truly conversational with no Ask tap.
-        // An empty turn just keeps listening.
+        // Some mobile browsers end SpeechRecognition by themselves after a
+        // short pause. Do not treat that as the end of the user's turn. Resume
+        // with the transcript preserved until the same three-second silence
+        // rule has genuinely elapsed.
+        const quietFor = lastSpeechAtRef.current
+          ? Date.now() - lastSpeechAtRef.current
+          : 0;
+        if (
+          t &&
+          !stoppedForSend &&
+          lastSpeechAtRef.current > 0 &&
+          quietFor < HANDS_FREE_SILENCE_MS
+        ) {
+          sendOnStopRef.current = false;
+          setTimeout(() => {
+            if (convoRef.current && !recRef.current) startListening(true);
+          }, 0);
+          return;
+        }
         sendOnStopRef.current = false;
         if (t) send(t);
         else startListening();
@@ -726,6 +755,25 @@ export default function ClientAssistant({
     setListening(true);
     try {
       rec.start();
+      if (
+        preserveTranscript &&
+        convoRef.current &&
+        lastSpeechAtRef.current > 0
+      ) {
+        const remaining = Math.max(
+          100,
+          HANDS_FREE_SILENCE_MS - (Date.now() - lastSpeechAtRef.current)
+        );
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          sendOnStopRef.current = true;
+          try {
+            recRef.current?.stop();
+          } catch {
+            /* ignore */
+          }
+        }, remaining);
+      }
     } catch {
       /* ignore a double-start */
     }
@@ -887,7 +935,7 @@ export default function ClientAssistant({
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
       if (recordReceipt)
         await persistActionReceipt([
-          { label: a.label, status: "completed", action: a },
+          { label: fullActionLabel(a), status: "completed", action: a },
         ]);
       return { ok: true };
     } catch (error: any) {
@@ -900,7 +948,7 @@ export default function ClientAssistant({
       }));
       if (recordReceipt)
         await persistActionReceipt([
-          { label: a.label, status: "not_completed", reason, action: a },
+          { label: fullActionLabel(a), status: "not_completed", reason, action: a },
         ]);
       return { ok: false, error: reason };
     }
@@ -935,9 +983,9 @@ export default function ClientAssistant({
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
       await persistActionReceipt([
         {
-          label: `${a.label}: ${c.label}`,
+          label: `${fullActionLabel(a)}: ${c.label}`,
           status: "completed",
-          action: { ...a, ...c, label: `${a.label}: ${c.label}` },
+          action: { ...a, ...c, label: `${fullActionLabel(a)}: ${c.label}` },
         },
       ]);
     } catch (error: any) {
@@ -950,10 +998,10 @@ export default function ClientAssistant({
       }));
       await persistActionReceipt([
         {
-          label: `${a.label}: ${c.label}`,
+          label: `${fullActionLabel(a)}: ${c.label}`,
           status: "not_completed",
           reason,
-          action: { ...a, ...c, label: `${a.label}: ${c.label}` },
+          action: { ...a, ...c, label: `${fullActionLabel(a)}: ${c.label}` },
         },
       ]);
     }
@@ -984,7 +1032,7 @@ export default function ClientAssistant({
       });
       await persistActionReceipt(
         pending.map((action, index) => ({
-          label: action.label,
+          label: fullActionLabel(action),
           status: outcomes[index].ok
             ? ("completed" as const)
             : ("not_completed" as const),
@@ -1277,7 +1325,7 @@ export default function ClientAssistant({
                             </span> : null}
                           </div>
                           <p className="mb-1.5 font-sans text-[0.78rem] leading-snug text-bone/90">
-                            {"⚙"} {a.label}
+                            {"⚙"} {fullActionLabel(a)}
                           </p>
                           {a.unavailable ? (
                             <p className="rounded-md border border-rust/30 bg-rust/[0.06] px-2 py-1.5 font-sans text-[0.68rem] leading-snug text-rust">
