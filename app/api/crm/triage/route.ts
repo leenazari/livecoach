@@ -12,6 +12,7 @@ const CLASSIFICATIONS = new Set([
   "prospect",
   "partner",
   "customer",
+  "product_trial",
   "in_house",
   "irrelevant",
 ]);
@@ -27,6 +28,7 @@ const ACTIVE_PROSPECT_STAGES = new Set([
 const stageFor = (classification: string, currentStage: string | null) => {
   if (classification === "partner") return "Partner";
   if (classification === "customer") return "Customer";
+  if (classification === "product_trial") return "Product Trial";
   if (classification === "in_house") return "In House";
   if (classification === "irrelevant") return "Dormant";
   return currentStage && ACTIVE_PROSPECT_STAGES.has(currentStage)

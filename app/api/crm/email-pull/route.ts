@@ -9,6 +9,7 @@ import {
   recentMessages,
   digestMessages,
   emailFromHeader,
+  freshMessageText,
   nameFromHeader,
   gmailConnected,
 } from "@/lib/gmail";
@@ -98,7 +99,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const msgs = await recentMessages(query, 15);
+    // For an existing client, load the rolling summary before touching Gmail.
+    // The newest processed message id lets subsequent refreshes use only the
+    // new message bodies instead of paying to resend the old conversation.
+    const { data: cachedCompany } = companyId
+      ? await supabaseAdmin
+          .from("companies")
+          .select("name, profile, email_context, email_context_updated_at")
+          .eq("id", companyId)
+          .maybeSingle()
+      : { data: null };
+
+    const msgs = await recentMessages(query, 25);
     if (!msgs.length) {
       const connected = await gmailConnected();
       return NextResponse.json(
@@ -154,21 +166,19 @@ export async function POST(req: NextRequest) {
     }
     if (!personName) personName = nameFromHeader(counterparty);
 
-    // Distil the thread into a clean context note + a company name.
-    const digest = digestMessages(msgs, 12);
+    // Metadata is cheap and bounded. It is used only to detect whether the
+    // mailbox changed; AI receives fresh message text, not the whole thread.
+    const digest = digestMessages(msgs, 15);
     const sourceHash = createHash("sha256").update(digest).digest("hex");
 
     // Reopening Prep should not re-summarise the same inbox thread. The digest
     // hash changes only when the relevant recent messages change.
-    if (companyId) {
-      const { data: cachedCompany } = await supabaseAdmin
-        .from("companies")
-        .select("name, profile, email_context, email_context_updated_at")
-        .eq("id", companyId)
-        .maybeSingle();
+    if (companyId && cachedCompany) {
+      const profile = cachedCompany.profile as any;
       if (
-        cachedCompany?.profile &&
-        (cachedCompany.profile as any).email_context_source_hash === sourceHash &&
+        profile &&
+        (profile.email_context_source_hash === sourceHash ||
+          profile.email_last_message_id === msgs[0]?.id) &&
         typeof cachedCompany.email_context === "string" &&
         cachedCompany.email_context.trim()
       ) {
@@ -181,6 +191,7 @@ export async function POST(req: NextRequest) {
             .update({
               profile: {
                 ...((cachedCompany.profile as any) || {}),
+                email_last_message_id: msgs[0]?.id || null,
                 email_last_message_at: msgs[0].date,
               },
             })
@@ -200,21 +211,46 @@ export async function POST(req: NextRequest) {
         });
       }
     }
+
+    const existingContext =
+      typeof cachedCompany?.email_context === "string"
+        ? cachedCompany.email_context.trim()
+        : "";
+    const previousMessageId = (cachedCompany?.profile as any)?.email_last_message_id;
+    const previousIndex = previousMessageId
+      ? msgs.findIndex((message) => message.id === previousMessageId)
+      : -1;
+    const newMessages = existingContext
+      ? msgs.slice(0, previousIndex >= 0 ? previousIndex : Math.min(8, msgs.length))
+      : [];
+    let modelDigest = digest;
+    let incremental = false;
+    if (existingContext && newMessages.length) {
+      const freshParts = await Promise.all(
+        newMessages.slice(0, 8).map(async (message) => {
+          const fresh =
+            (await freshMessageText(message.id, 1400)) || message.snippet;
+          return `${message.date} | ${message.from} | ${message.subject}\n${fresh}`;
+        })
+      );
+      modelDigest = freshParts.join("\n\n").slice(0, 6000);
+      incremental = true;
+    }
     let emailContext = "";
     let companyName = "";
     try {
       const msg = await openai.messages.create({
         model: OPENAI_MODEL_LIVE,
         max_tokens: 600,
-        system: `You turn a recent email thread into a short, clean CLIENT CONTEXT note for a CRM. The user is Lee (Interviewa / AI13). Write about the OTHER party (${personName}${
+        system: `You maintain a short, clean CLIENT CONTEXT note for a CRM. The user is Lee (Interviewa / AI13). Write about the OTHER party (${personName}${
           isCompanyDomain ? `, ${domain}` : ""
-        }). Output ONLY JSON: {"companyName": "the org name to file them under (their company if it is a business, else their name)", "emailContext": "3 to 6 plain sentences: who they are, what the relationship is about, where it is up to, and the next step. Ground it only in the thread."}. No markdown, no em-dashes or semicolons.`,
+        }). Output ONLY JSON: {"companyName": "the org name to file them under (their company if it is a business, else their name)", "emailContext": "3 to 6 plain sentences: who they are, what the relationship is about, where it is up to, and the next step."}. Update the saved context with only the fresh messages. Preserve still-relevant facts, replace superseded details, and never invent. No markdown, em dashes or semicolons.`,
         messages: [
           {
             role: "user",
             content: `OTHER PARTY: ${personName} <${counterparty}>${
               isCompanyDomain ? `\nCompany domain: ${domain}` : ""
-            }\n\nRECENT EMAIL THREAD (newest first):\n${digest}\n\nReturn the JSON.`,
+            }${incremental ? `\n\nSAVED ROLLING CONTEXT:\n${existingContext.slice(0, 1200)}\n\nFRESH MESSAGES ONLY (newest first):` : "\n\nRECENT MESSAGE DIGEST (newest first):"}\n${modelDigest}\n\nReturn the JSON.`,
           },
         ],
       });
@@ -276,6 +312,7 @@ export async function POST(req: NextRequest) {
         profile: {
           ...((existingCompany?.profile as any) || {}),
           email_context_source_hash: sourceHash,
+          email_last_message_id: msgs[0]?.id || null,
           email_last_message_at: msgs[0]?.date || null,
         },
       };
@@ -296,6 +333,7 @@ export async function POST(req: NextRequest) {
           email_context_updated_at: nowIso,
           profile: {
             email_context_source_hash: sourceHash,
+            email_last_message_id: msgs[0]?.id || null,
             email_last_message_at: msgs[0]?.date || null,
           },
         })

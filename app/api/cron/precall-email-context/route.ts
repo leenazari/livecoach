@@ -11,6 +11,19 @@ const LOOK_AHEAD_HOURS = 72;
 const MAX_COMPANIES_PER_RUN = 6;
 const CONCURRENCY = 2;
 
+const scheduledRefreshWindow = (now = new Date()) => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    weekday: "long",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const weekday = parts.find((part) => part.type === "weekday")?.value || "";
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const weekend = weekday === "Saturday" || weekday === "Sunday";
+  return weekend ? hour === 10 : [9, 12, 15, 18, 21].includes(hour);
+};
+
 type UpcomingCall = {
   id: string;
   company_id: string;
@@ -70,6 +83,12 @@ async function run(req: NextRequest) {
   const secret = process.env.CRON_SECRET || "";
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "not authorised" }, { status: 401 });
+  }
+  if (!scheduledRefreshWindow()) {
+    return NextResponse.json({
+      ok: true,
+      skipped: "Outside the London pre-call email refresh window",
+    });
   }
 
   try {

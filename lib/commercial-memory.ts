@@ -77,7 +77,7 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
     const [companyRes, callsRes, tasksRes, opportunitiesRes, contextRes, prospectsRes, contactsRes] = await Promise.all([
       supabaseAdmin
         .from("companies")
-        .select("name, profile, notes, email_context, email_context_updated_at, commercial_memory")
+        .select("name, stage, profile, notes, email_context, email_context_updated_at, commercial_memory")
         .eq("id", companyId)
         .single(),
       supabaseAdmin
@@ -138,8 +138,9 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
     const brief = Array.isArray(profile.brief) ? profile.brief.join(" ") : profile.brief;
     const relationship = cut(brief || company.notes, 600);
     const sourceHash = createHash("sha256").update(JSON.stringify({
-      schema: 4,
+      schema: 5,
       name: company.name,
+      stage: company.stage,
       relationship,
       emailAt: company.email_context_updated_at,
       email: cut(company.email_context, 900),

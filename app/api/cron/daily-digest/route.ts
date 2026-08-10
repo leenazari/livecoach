@@ -3,9 +3,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { sendMail } from "@/lib/gmail";
 import { GET as getDashboard } from "@/app/api/crm/dashboard/route";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import { POST as runCalendarSync } from "@/app/api/crm/calendar-sync/route";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 const RECIPIENT = "lee@ai13.com";
@@ -105,6 +107,22 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, skipped: "already sent today" });
     }
 
+    // The email must be built from calendar truth at send time. A separate
+    // scheduled sync can race this cron or be hours old after a late invite
+    // edit, so reconcile first and refuse to send a confidently stale brief.
+    const syncResponse = await runCalendarSync();
+    const syncResult = await syncResponse.json().catch(() => ({}));
+    if (
+      !syncResponse.ok ||
+      syncResult?.ok !== true ||
+      syncResult?.reconciled !== true
+    ) {
+      throw new Error(
+        syncResult?.error ||
+          "Google Calendar could not be completely reconciled before the brief"
+      );
+    }
+
     const since = new Date(now.getTime() - 36 * 60 * 60 * 1000).toISOString();
     const horizon = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000).toISOString();
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://livecoach-alpha.vercel.app";
@@ -163,7 +181,10 @@ export async function GET(req: NextRequest) {
     const completed = (completedRes.data || []).filter(
       (row: any) => row.done_at && dayKey(new Date(row.done_at)) === today
     );
-    const tomorrowCalls = (upcomingRes.data || []).filter(
+    const prepEligibleCalls = (upcomingRes.data || []).filter(
+      (row: any) => isPrepEligibleCalendarEvent(row)
+    );
+    const tomorrowCalls = prepEligibleCalls.filter(
       (row: any) =>
         row.scheduled_at && dayKey(new Date(row.scheduled_at)) === tomorrow
     );
@@ -358,7 +379,7 @@ export async function GET(req: NextRequest) {
     const weekDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
     const weekAhead = isSunday
       ? weekDays.map((weekday) => {
-          const dayCalls = (upcomingRes.data || []).filter(
+          const dayCalls = prepEligibleCalls.filter(
             (call: any) =>
               new Intl.DateTimeFormat("en-GB", { timeZone: TIME_ZONE, weekday: "long" }).format(new Date(call.scheduled_at)) === weekday
           );

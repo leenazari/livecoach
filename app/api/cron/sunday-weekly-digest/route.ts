@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { GET as sendProgressDigest } from "../daily-digest/route";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 const TIME_ZONE = "Europe/London";

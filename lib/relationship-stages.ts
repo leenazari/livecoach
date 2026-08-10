@@ -8,6 +8,7 @@ export const RELATIONSHIP_STAGE_OPTIONS = [
   "Negotiation",
   "Partner",
   "Customer",
+  "Product Trial",
   "In House",
   "Dormant",
 ] as const;
@@ -21,3 +22,10 @@ export const isRelationshipStageOption = (stage: string) =>
 
 export const isInHouseRelationship = (stage: string | null | undefined) =>
   String(stage || "").trim().toLowerCase() === "in house";
+
+export const isNonCommercialRelationship = (
+  stage: string | null | undefined
+) => {
+  const value = String(stage || "").trim().toLowerCase();
+  return value === "in house" || value === "product trial";
+};

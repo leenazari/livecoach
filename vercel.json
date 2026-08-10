@@ -2,7 +2,19 @@
   "crons": [
     {
       "path": "/api/crm/calendar-sync",
-      "schedule": "0 6 * * *"
+      "schedule": "0 8,9,11,12,14,15,17,18,20,21 * * 1-5"
+    },
+    {
+      "path": "/api/crm/calendar-sync",
+      "schedule": "0 8,9 * * 0,6"
+    },
+    {
+      "path": "/api/cron/important-email-monitor",
+      "schedule": "10 8-21 * * 1-5"
+    },
+    {
+      "path": "/api/cron/important-email-monitor",
+      "schedule": "10 9,10 * * 0,6"
     },
     {
       "path": "/api/cron/daily-digest",
@@ -22,7 +34,11 @@
     },
     {
       "path": "/api/cron/precall-email-context",
-      "schedule": "15 */2 * * *"
+      "schedule": "15 8,9,11,12,14,15,17,18,20,21 * * 1-5"
+    },
+    {
+      "path": "/api/cron/precall-email-context",
+      "schedule": "15 9,10 * * 0,6"
     }
   ]
 }

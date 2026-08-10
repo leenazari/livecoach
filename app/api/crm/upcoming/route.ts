@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 
 export const runtime = "nodejs";
 // Keep this a dynamic function: a no-arg GET would otherwise be statically
@@ -29,10 +30,12 @@ export async function GET() {
     ]);
     const nameById = new Map<string, string>();
     for (const c of companies || []) nameById.set(c.id, c.name);
-    const items = (calls || []).map((c: any) => ({
-      ...c,
-      company: c.company_id ? nameById.get(c.company_id) || null : null,
-    }));
+    const items = (calls || [])
+      .filter((c: any) => isPrepEligibleCalendarEvent(c))
+      .map((c: any) => ({
+        ...c,
+        company: c.company_id ? nameById.get(c.company_id) || null : null,
+      }));
     return NextResponse.json(
       { calls: items },
       { headers: { "Cache-Control": "no-store, max-age=0" } }

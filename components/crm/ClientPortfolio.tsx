@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useDeferredValue, useMemo, useState } from "react";
 import {
-  isInHouseRelationship,
+  isNonCommercialRelationship,
   isRelationshipStageOption,
   RELATIONSHIP_STAGE_OPTIONS,
 } from "@/lib/relationship-stages";
@@ -155,7 +155,7 @@ function StageSelect({
       disabled={saving}
       onChange={(event) => onChange(row.id, event.target.value)}
       className={`max-w-full rounded-full border bg-ink/80 px-2 py-1 font-mono text-[0.55rem] uppercase tracking-wider outline-none transition focus:border-amber/70 disabled:opacity-50 ${
-        isInHouseRelationship(current)
+        isNonCommercialRelationship(current)
           ? "border-sky/55 bg-sky/10 text-sky"
           : current
             ? "border-edge text-bone/80"
