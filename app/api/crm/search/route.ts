@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 type SearchResult = {
   id: string;
-  type: "client" | "contact" | "call" | "task" | "opportunity" | "draft";
+  type: "client" | "contact" | "call" | "task" | "opportunity" | "draft" | "playbook";
   label: string;
   detail: string;
   href: string;
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
     const q = raw.replace(/[,()*%]/g, " ").replace(/\s+/g, " ").trim();
     if (q.length < 2) return NextResponse.json({ results: [] });
 
-    const [companiesRes, contactsRes, callsRes, tasksRes, oppsRes, draftsRes] =
+    const [companiesRes, contactsRes, callsRes, tasksRes, oppsRes, draftsRes, playbooksRes] =
       await Promise.all([
         supabaseAdmin
           .from("companies")
@@ -60,9 +60,16 @@ export async function GET(req: NextRequest) {
           .eq("status", "draft")
           .or(`draft_subject.ilike.%${q}%,draft_body.ilike.%${q}%`)
           .limit(8),
+        supabaseAdmin
+          .from("lessons")
+          .select("id, title, content, created_at")
+          .eq("topic", "pitching")
+          .or(`title.ilike.%${q}%,content.ilike.%${q}%`)
+          .order("created_at", { ascending: false })
+          .limit(8),
       ]);
 
-    for (const response of [companiesRes, contactsRes, callsRes, tasksRes, oppsRes, draftsRes])
+    for (const response of [companiesRes, contactsRes, callsRes, tasksRes, oppsRes, draftsRes, playbooksRes])
       if (response.error) throw response.error;
 
     // Summary is JSONB, so PostgREST cannot apply ilike directly. Search the
@@ -143,6 +150,21 @@ export async function GET(req: NextRequest) {
         detail: compact([companyName.get(d.company_id), d.draft_body].filter(Boolean).join(" · ")),
         href: "/crm/board?tab=drafts",
       });
+    for (const lesson of playbooksRes.data || []) {
+      let content: any = {};
+      try {
+        content = JSON.parse(String(lesson.content || "{}"));
+      } catch {
+        content = {};
+      }
+      results.push({
+        id: `playbook:${lesson.id}`,
+        type: "playbook",
+        label: lesson.title || "Pitching lesson",
+        detail: compact([content.scenario, content.audience].filter(Boolean).join(" · ")),
+        href: `/crm/pitch-playbook?lesson=${lesson.id}`,
+      });
+    }
 
     const needle = q.toLowerCase();
     results.sort((a, b) => {

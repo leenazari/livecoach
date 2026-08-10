@@ -132,6 +132,87 @@ export async function getLessonsBlock(topics?: string[]): Promise<string> {
   }
 }
 
+const PITCH_STOP_WORDS = new Set([
+  "about", "after", "again", "against", "could", "from", "have", "into",
+  "just", "more", "should", "that", "their", "there", "these", "they",
+  "this", "what", "when", "where", "which", "with", "would", "your",
+  "pitch", "pitching", "playbook", "sales", "sell", "selling", "question",
+  "questions", "objection", "objections", "script", "help", "best",
+]);
+
+const pitchTerms = (message: string): string[] =>
+  [...new Set(
+    String(message || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9£]+/g, " ")
+      .split(/\s+/)
+      .filter((term) => term.length >= 4 && !PITCH_STOP_WORDS.has(term))
+  )].slice(0, 12);
+
+const list = (value: unknown, limit: number): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && !!item.trim()).slice(0, limit)
+    : [];
+
+// Pitching chapters can be large. The Brain only loads this compact, ranked
+// view when the user explicitly asks about selling, questions, objections or
+// the playbook. The full approved lesson stays searchable and downloadable in
+// the CRM without being paid for on every Brain turn.
+export async function getRelevantPitchingLessons(message: string): Promise<string> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("lessons")
+      .select("title, content, created_at")
+      .eq("topic", "pitching")
+      .order("created_at", { ascending: false })
+      .limit(60);
+    if (error) throw error;
+    const terms = pitchTerms(message);
+    const rows = (data || [])
+      .map((row: any, index: number) => {
+        let content: any = {};
+        try {
+          content = JSON.parse(String(row.content || "{}"));
+        } catch {
+          content = {};
+        }
+        const haystack = `${row.title || ""} ${row.content || ""}`.toLowerCase();
+        const relevance = terms.reduce(
+          (score, term) => score + (haystack.includes(term) ? 4 : 0),
+          0
+        );
+        return { row, content, relevance, recency: Math.max(0, 60 - index) / 100 };
+      })
+      .sort((a, b) => b.relevance + b.recency - (a.relevance + a.recency))
+      .slice(0, 3);
+    if (!rows.length) return "";
+
+    const chapters = rows.map(({ row, content }) => {
+      const parts = [
+        `LESSON: ${String(row.title || "Pitching lesson").slice(0, 220)}`,
+        content.scenario ? `Use when: ${String(content.scenario).slice(0, 300)}` : "",
+        content.audience ? `Audience: ${String(content.audience).slice(0, 220)}` : "",
+        list(content.questionsThatWorked, 3).length
+          ? `Seller questions that worked: ${list(content.questionsThatWorked, 3).join(" | ")}`
+          : "",
+        list(content.pitchMoves, 3).length
+          ? `Pitch moves: ${list(content.pitchMoves, 3).join(" | ")}`
+          : "",
+        Array.isArray(content.objections) && content.objections.length
+          ? `Objections: ${content.objections.slice(0, 2).map((item: any) => `${String(item?.signal || "").slice(0, 150)} -> ${String(item?.response || "").slice(0, 240)}`).join(" | ")}`
+          : "",
+        list(content.script, 4).length
+          ? `Conversation path: ${list(content.script, 4).join(" | ")}`
+          : "",
+      ].filter(Boolean);
+      return parts.join("\n");
+    });
+    return `RELEVANT APPROVED PITCHING LESSONS (retrieved on demand from real calls; adapt them to the current buyer and never invent proof):\n${chapters.join("\n\n")}\n\n`;
+  } catch {
+    return "";
+  }
+}
+
 // The host's CUE TASTE, learned from their own thumbs up/down (and the cues they
 // favourited) on past calls. This closes the learning loop: the live coach leans
 // toward the kind of cue the host keeps liking and away from what they reject.

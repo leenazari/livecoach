@@ -13,7 +13,12 @@ import {
   findCompaniesNamedIn,
 } from "@/lib/crm-context";
 import { getCommercialMemoryBlock } from "@/lib/commercial-memory";
-import { workspaceContextBlock, getLessonsBlock, getBrainQuestions } from "@/lib/workspace";
+import {
+  workspaceContextBlock,
+  getLessonsBlock,
+  getBrainQuestions,
+  getRelevantPitchingLessons,
+} from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
 import { RELATIONSHIP_STAGE_BY_KEY } from "@/lib/relationship-stages";
 import { resolveExistingCompany } from "@/lib/company-resolver";
@@ -963,11 +968,14 @@ export async function POST(req: NextRequest) {
 
     // Everything the model needs, fetched in PARALLEL instead of one-after-
     // another. These were sequential DB round-trips that slowed every reply.
-    const [context, histRes, biz, lessons, brainQuestions] = await Promise.all([
+    const wantsPitchLessons =
+      /\b(pitch|pitching|playbook|sales script|sell|selling|demo|discovery question|objection|closing question|buyer language)\b/i.test(message);
+    const [context, histRes, biz, lessons, pitchLessons, brainQuestions] = await Promise.all([
       gatherContext(),
       histQ,
       workspaceContextBlock(),
       getLessonsBlock(["negotiation", "strategy", "psychology"]),
+      wantsPitchLessons ? getRelevantPitchingLessons(message) : Promise.resolve(""),
       getBrainQuestions(),
     ]);
     const ctxMs = Date.now() - reqStart; // time to gather all grounding context
@@ -1017,7 +1025,7 @@ export async function POST(req: NextRequest) {
     const system: any[] = [
       {
         type: "text",
-        text: `${biz}${lessons}${scope}${qBlock}
+        text: `${biz}${lessons}${pitchLessons}${scope}${qBlock}
 
 GROUND EVERYTHING in the context provided below. This is the hardest rule and it overrides being helpful.
 - Never state a specific number, money amount, budget, deal value, date, deadline, percentage, stage, name or commitment unless it appears literally in the context. Do not estimate, assume, or infer a figure that isn't written there. If you catch yourself about to put a number in a sentence, check it is actually in the context first.
