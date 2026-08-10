@@ -611,7 +611,7 @@ export default function ClientAssistant({
       (window as any).webkitSpeechRecognition ||
       (window as any).SpeechRecognition;
     if (!SR) {
-      alert("Voice input needs a Chromium browser (Chrome, Edge, Arc).");
+      alert("Voice input is not available in this browser window. Open LiveCoach in Chrome, Edge, Arc, or your normal phone browser to speak to the Brain.");
       setConvo(false);
       convoRef.current = false;
       return;
@@ -736,7 +736,7 @@ export default function ClientAssistant({
       (window as any).webkitSpeechRecognition ||
       (window as any).SpeechRecognition;
     if (!SR) {
-      alert("Voice input needs a Chromium browser (Chrome, Edge, Arc).");
+      alert("Voice input is not available in this browser window. Open LiveCoach in Chrome, Edge, Arc, or your normal phone browser to speak to the Brain.");
       return;
     }
     if (listening) {
