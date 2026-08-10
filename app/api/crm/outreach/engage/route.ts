@@ -55,7 +55,8 @@ function normaliseSourceUrl(value: string) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    let sourceText = String(body.sourceText || "").trim().slice(0, 9000);
+    const source = String(body.source || "").trim();
+    let sourceText = String(body.sourceText || source).trim().slice(0, 9000);
     let sourceUrl = String(body.sourceUrl || "").trim().slice(0, 1200);
     if (!sourceUrl && /^https?:\/\/\S+$/i.test(sourceText)) {
       sourceUrl = sourceText;

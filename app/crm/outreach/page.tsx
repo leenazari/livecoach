@@ -129,10 +129,7 @@ export default function OutreachPage() {
   const [performance, setPerformance] = useState<any[]>([]);
   const [learnings, setLearnings] = useState<any[]>([]);
   const [suppressions, setSuppressions] = useState<any[]>([]);
-  const [engagementForm, setEngagementForm] = useState({
-    sourceUrl: "",
-    sourceText: "",
-  });
+  const [engagementInput, setEngagementInput] = useState("");
   const [engagementDraft, setEngagementDraft] = useState<EngagementDraft | null>(null);
   const [engagementComment, setEngagementComment] = useState("");
   const [loading, setLoading] = useState(true);
@@ -443,7 +440,7 @@ export default function OutreachPage() {
     try {
       const result = await crmFetch<{ draft: EngagementDraft; savedToBrain: boolean }>("/api/crm/outreach/engage", {
         method: "POST",
-        body: JSON.stringify(engagementForm),
+        body: JSON.stringify({ source: engagementInput }),
       });
       if (!result.draft?.comment || result.savedToBrain !== false) throw new Error("The private comment draft was not confirmed");
       setEngagementDraft(result.draft);
@@ -465,6 +462,14 @@ export default function OutreachPage() {
     } catch {
       setError("Your browser blocked copying. Select the comment and copy it manually.");
     }
+  };
+
+  const startAnotherEngagement = () => {
+    setEngagementInput("");
+    setEngagementDraft(null);
+    setEngagementComment("");
+    setNotice("");
+    setError("");
   };
 
   const changeProspectSort = (next: ProspectSort) => {
@@ -505,9 +510,8 @@ export default function OutreachPage() {
     return rows;
   }, [needle, priority, prospectSort, prospects, recommendationFilter, sortDirection, stageFilter]);
 
-  const engagementTextIsLink = /^https?:\/\/\S+$/i.test(engagementForm.sourceText.trim());
-  const engagementHasLink = /^https?:\/\/\S+$/i.test(engagementForm.sourceUrl.trim()) || engagementTextIsLink;
-  const engagementReady = engagementForm.sourceText.trim().length >= 25 || engagementHasLink;
+  const engagementSource = engagementInput.trim();
+  const engagementReady = engagementSource.length >= 25 || /^https?:\/\/\S+$/i.test(engagementSource);
 
   const funnel = [
     { label: "Prospects", value: metrics.prospects || 0, colour: "bg-sky" },
@@ -597,10 +601,7 @@ export default function OutreachPage() {
             <span className="rounded-full border border-sky/45 bg-sky/10 px-3 py-1 font-mono text-[0.52rem] uppercase text-sky">Not saved to Brain</span>
           </div>
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <div className="grid gap-3">
-              <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">LinkedIn post link</span><input type="url" className={input} value={engagementForm.sourceUrl} onChange={(event) => setEngagementForm((form) => ({ ...form, sourceUrl: event.target.value }))} placeholder="https://www.linkedin.com/posts/…" /><span className="mt-1 block text-xs text-muted">A public post can usually be read from its link.</span></label>
-              <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Post text, optional for public links</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={engagementForm.sourceText} onChange={(event) => setEngagementForm((form) => ({ ...form, sourceText: event.target.value }))} placeholder="If LinkedIn blocks the link, paste the post words here. You can also paste a LinkedIn link here by itself." /></label>
-            </div>
+            <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Paste link or post</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={engagementInput} onChange={(event) => setEngagementInput(event.target.value)} placeholder="Paste the LinkedIn link here. If LinkedIn cannot read it, paste the post words instead." /><span className="mt-1 block text-xs text-muted">One box is enough. LiveCoach works out whether you pasted a link or the post itself.</span></label>
             <div className="grid content-start gap-3">
               <div className="rounded-lg border border-edge bg-ink/35 p-3 text-xs leading-5 text-bone/75"><strong className="text-bone">How it writes:</strong> it responds to the real point, adds one useful commercial thought and only mentions Interviewa when the connection feels natural.</div>
               <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3 text-xs leading-5 text-bone/75"><strong className="text-sky">You stay in control:</strong> nothing is posted automatically. The post and comment are not stored in Brain or added to the CRM.</div>
@@ -614,7 +615,7 @@ export default function OutreachPage() {
           <div className="mt-4 grid gap-3 lg:grid-cols-2"><div className="rounded-lg border border-edge bg-ink/35 p-3"><p className="font-mono text-[0.52rem] uppercase text-amber">Post understood</p><p className="mt-2 text-sm leading-6 text-bone/80">{engagementDraft.postSummary}</p></div><div className="rounded-lg border border-edge bg-ink/35 p-3"><p className="font-mono text-[0.52rem] uppercase text-amber">Chosen angle</p><p className="mt-2 text-sm leading-6 text-bone/80">{engagementDraft.angle}</p></div></div>
           {engagementDraft.evidence.length ? <details className="mt-3 rounded-lg border border-edge bg-ink/25 p-3"><summary className="cursor-pointer font-mono text-[0.52rem] uppercase text-muted">What the writer grounded it in</summary><ul className="mt-2 space-y-1.5 text-sm leading-5 text-bone/75">{engagementDraft.evidence.map((fact) => <li key={fact}>• {fact}</li>)}</ul></details> : null}
           <label className="mt-4 block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Your comment</span><textarea className={`${input} min-h-36 resize-y leading-6`} value={engagementComment} onChange={(event) => setEngagementComment(removeDashesFromProse(event.target.value))} /></label>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs leading-5 text-muted">Nothing has been posted. Copying leaves the final LinkedIn action with you.</p><div className="flex flex-col gap-2 sm:flex-row">{engagementDraft.sourceUrl ? <a href={engagementDraft.sourceUrl} target="_blank" rel="noreferrer" className={`${button} text-center`}>Open original post</a> : null}<button type="button" onClick={copyEngagementComment} disabled={!!busy || !engagementComment.trim()} className={primary}>{busy === "engage-copy" ? "Copying…" : "Copy comment"}</button></div></div>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs leading-5 text-muted">Nothing has been posted. Copying leaves the final LinkedIn action with you.</p><div className="flex flex-col gap-2 sm:flex-row"><button type="button" onClick={startAnotherEngagement} disabled={!!busy} className={button}>Start another</button>{engagementDraft.sourceUrl ? <a href={engagementDraft.sourceUrl} target="_blank" rel="noreferrer" className={`${button} text-center`}>Open original post</a> : null}<button type="button" onClick={copyEngagementComment} disabled={!!busy || !engagementComment.trim()} className={primary}>Copy comment</button></div></div>
         </article> : <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm leading-6 text-muted">Paste a post above to create a comment. Nothing is retained after you leave this page.</div>}
       </section> : null}
 
