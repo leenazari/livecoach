@@ -178,7 +178,13 @@ export async function listCalendars(accessToken: string): Promise<any[]> {
     "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250",
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
-  if (!res.ok) throw new Error(`calendar list failed (${res.status})`);
+  if (!res.ok) {
+    const error = new Error(`calendar list failed (${res.status})`) as Error & {
+      status?: number;
+    };
+    error.status = res.status;
+    throw error;
+  }
   const d = await res.json();
   return Array.isArray(d.items) ? d.items : [];
 }
@@ -196,9 +202,13 @@ export async function listAllEventsSnapshot(
   let complete = true;
   try {
     cals = await listCalendars(accessToken);
-  } catch {
+  } catch (error: any) {
+    // calendar.events can read the connected account's primary calendar but
+    // does not always grant calendarList.list. In that case the primary
+    // calendar is still a complete authoritative snapshot of the calendar the
+    // app is connected to. Treat only an events read failure as incomplete.
     cals = [];
-    complete = false;
+    if (error?.status !== 403) complete = false;
   }
   const NOISE = /#(holiday|contacts|weather|birthday)/i;
   const eligible = cals.filter((c) => {
