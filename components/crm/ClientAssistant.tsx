@@ -146,9 +146,11 @@ const SECTION_LINKS: { src: string; href: string }[] = [
 function LinkedText({
   text,
   clients,
+  onNavigate,
 }: {
   text: string;
   clients: { id: string; name: string }[];
+  onNavigate?: () => void;
 }): JSX.Element {
   const entries = [
     ...clients
@@ -192,6 +194,7 @@ function LinkedText({
         <Link
           key={key++}
           href={entry.href}
+          onClick={onNavigate}
           className="text-sky underline decoration-sky/40 underline-offset-2 transition hover:decoration-sky"
         >
           {word}
@@ -207,6 +210,72 @@ function LinkedText({
   return <>{out}</>;
 }
 
+// The Brain uses one tightly controlled Markdown shape for schedule items:
+// [time, call title](/crm/prep?...). Render only internal CRM/call targets as
+// links. For any external or malformed target, keep the useful label and drop
+// the raw URL so old meeting-link replies stop cluttering the conversation.
+function BrainLinkedText({
+  text,
+  clients,
+  onNavigate,
+}: {
+  text: string;
+  clients: { id: string; name: string }[];
+  onNavigate?: () => void;
+}): JSX.Element {
+  const out: ReactNode[] = [];
+  const linkPattern = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  while ((match = linkPattern.exec(text)) !== null) {
+    if (match.index > last) {
+      out.push(
+        <LinkedText
+          key={`plain-${key++}`}
+          text={text.slice(last, match.index)}
+          clients={clients}
+          onNavigate={onNavigate}
+        />
+      );
+    }
+    const label = match[1].trim();
+    const href = match[2].trim();
+    const safeInternal = href.startsWith("/crm") || href.startsWith("/call");
+    out.push(
+      safeInternal ? (
+        <Link
+          key={`link-${key++}`}
+          href={href}
+          onClick={onNavigate}
+          className="text-sky underline decoration-sky/40 underline-offset-2 transition hover:decoration-sky"
+        >
+          {label}
+        </Link>
+      ) : (
+        <LinkedText
+          key={`label-${key++}`}
+          text={label}
+          clients={clients}
+          onNavigate={onNavigate}
+        />
+      )
+    );
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) {
+    out.push(
+      <LinkedText
+        key={`tail-${key++}`}
+        text={text.slice(last)}
+        clients={clients}
+        onNavigate={onNavigate}
+      />
+    );
+  }
+  return <>{out}</>;
+}
+
 // Per-client AI assistant: a chat grounded in everything we know about the
 // client. Talk to it (tap the mic to start, tap again to stop - browser speech)
 // or type, and it can read its answers aloud. Always explains its reasoning.
@@ -218,6 +287,7 @@ export default function ClientAssistant({
   initialPrompt,
   draftTaskId,
   screenContext,
+  onNavigate,
 }: {
   companyId?: string;
   companyName?: string;
@@ -228,6 +298,7 @@ export default function ClientAssistant({
   initialPrompt?: string;
   draftTaskId?: string;
   screenContext?: ScreenContext;
+  onNavigate?: () => void;
 }) {
   // No companyId = the GLOBAL assistant: it knows every client + the pipeline.
   const isGlobal = !companyId;
@@ -1210,7 +1281,11 @@ export default function ClientAssistant({
                     </div>
                   ) : part.text.trim() ? (
                     <p key={pi} className="whitespace-pre-wrap">
-                      <LinkedText text={part.text.trim()} clients={clients} />
+                      <BrainLinkedText
+                        text={part.text.trim()}
+                        clients={clients}
+                        onNavigate={onNavigate}
+                      />
                     </p>
                   ) : null
                 )

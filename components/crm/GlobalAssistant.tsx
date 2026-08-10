@@ -117,6 +117,13 @@ export default function GlobalAssistant({
     return () => window.removeEventListener("lc:open-brain", openIt);
   }, []);
 
+  // Any navigation started from the Brain should reveal the destination instead
+  // of leaving the full-height chat panel covering the newly loaded page.
+  useEffect(() => {
+    setOpen(false);
+    setEventClient(null);
+  }, [pathname]);
+
   if (!open) {
     return (
       <button
@@ -162,6 +169,7 @@ export default function GlobalAssistant({
             initialPrompt={seed}
             draftTaskId={draftTaskId}
             screenContext={screenContext}
+            onNavigate={() => setOpen(false)}
           />
         </div>
       </div>
