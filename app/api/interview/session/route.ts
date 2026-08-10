@@ -11,14 +11,41 @@ export const runtime = "nodejs";
 // (interview_sessions already carries a user_id, currently null).
 export async function POST(req: NextRequest) {
   try {
-    const { sessionId, brief, role, callType, competencies, candidate, source } =
-      await req.json();
+    const {
+      sessionId,
+      brief,
+      role,
+      callType,
+      competencies,
+      candidate,
+      source,
+      companyId,
+      upcomingId,
+    } = await req.json();
 
     if (!sessionId || typeof sessionId !== "string") {
       return NextResponse.json(
         { error: "sessionId (room) is required" },
         { status: 400 }
       );
+    }
+
+    // Save the scheduled-call identity in the SAME write that creates the
+    // session. The old client flow created the row and then fired a separate
+    // update, so an unlinked calendar event (or a fast network response) could
+    // miss that second write and later be guessed as the next nearby meeting.
+    const exactUpcomingId =
+      typeof upcomingId === "string" && upcomingId ? upcomingId : null;
+    let exactCompanyId =
+      typeof companyId === "string" && companyId ? companyId : null;
+    if (exactUpcomingId && !exactCompanyId) {
+      const { data: scheduled, error: scheduledError } = await supabaseAdmin
+        .from("upcoming_calls")
+        .select("company_id")
+        .eq("id", exactUpcomingId)
+        .maybeSingle();
+      if (scheduledError) throw scheduledError;
+      if (scheduled?.company_id) exactCompanyId = scheduled.company_id as string;
     }
 
     const { error } = await supabaseAdmin.from("interview_sessions").upsert(
@@ -30,6 +57,8 @@ export async function POST(req: NextRequest) {
         competencies: Array.isArray(competencies) ? competencies : null,
         candidate: typeof candidate === "string" && candidate.trim() ? candidate : null,
         source: typeof source === "string" ? source : null,
+        company_id: exactCompanyId,
+        upcoming_id: exactUpcomingId,
       },
       { onConflict: "session_id" }
     );

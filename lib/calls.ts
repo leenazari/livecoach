@@ -100,7 +100,10 @@ export async function completeUpcomingForCall(opts: {
         bestId = r.id as string;
       }
     }
-    if (!bestId) return null;
+    // A fallback is only safe when the scheduled slot is genuinely close to
+    // the session start. Without this cap, a call with no exact identity could
+    // complete the next meeting more than an hour later.
+    if (!bestId || bestDt > 45 * 60 * 1000) return null;
 
     await supabaseAdmin
       .from("upcoming_calls")

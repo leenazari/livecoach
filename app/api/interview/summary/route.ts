@@ -88,16 +88,16 @@ async function autoResolveCompany(opts: {
           companyId: u.company_id as string,
           dt: Math.abs(new Date(u.scheduled_at).getTime() - callTimeMs),
         }))
-        .filter((x) => Number.isFinite(x.dt) && x.dt <= 3 * 60 * 60 * 1000)
+        .filter((x) => Number.isFinite(x.dt) && x.dt <= 30 * 60 * 1000)
         .sort((a, b) => a.dt - b.dt);
       if (near.length) {
         const best = near[0];
         const conflict = near.some(
-          (x) => x.companyId !== best.companyId && x.dt <= 90 * 60 * 1000
+          (x) => x.companyId !== best.companyId && x.dt <= 30 * 60 * 1000
         );
-        // Confident: nothing else within 90 min points elsewhere, and the best
-        // is itself within 90 min (a real scheduled slot, not a vague nearby).
-        if (!conflict && best.dt <= 90 * 60 * 1000) {
+        // Confident: nothing else in the same tight window points elsewhere.
+        // An hour-away meeting is not evidence for this call's client.
+        if (!conflict && best.dt <= 30 * 60 * 1000) {
           return { companyId: best.companyId, how: "prep" };
         }
       }
@@ -159,8 +159,21 @@ async function condenseTranscript(transcript: string): Promise<string> {
 
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, knowledgeContext, role, candidate, competencies, callType, sessionId, companyId, cost, source, favouriteCues, userNotes } =
-      await req.json();
+    const {
+      transcript,
+      knowledgeContext,
+      role,
+      candidate,
+      competencies,
+      callType,
+      sessionId,
+      companyId,
+      upcomingId,
+      cost,
+      source,
+      favouriteCues,
+      userNotes,
+    } = await req.json();
 
     if (!transcript || transcript.length < 30) {
       return NextResponse.json(
@@ -475,9 +488,26 @@ Return the JSON assessment now.`;
     // The client for this call. Use the one passed from the start (the prep),
     // and if there isn't one, try to auto-resolve it so the call doesn't land
     // unassigned. Conservative - only links on a confident match.
+    const exactUpcomingId =
+      typeof upcomingId === "string" && upcomingId ? upcomingId : null;
+    let scheduledCompanyId: string | null = null;
+    if (exactUpcomingId) {
+      const { data: scheduled, error: scheduledError } = await supabaseAdmin
+        .from("upcoming_calls")
+        .select("company_id")
+        .eq("id", exactUpcomingId)
+        .maybeSingle();
+      if (scheduledError) throw scheduledError;
+      scheduledCompanyId = (scheduled?.company_id as string | null) || null;
+    }
+
     let resolvedCompanyId: string | null =
       typeof companyId === "string" && companyId ? companyId : null;
-    if (!resolvedCompanyId) {
+    if (!resolvedCompanyId) resolvedCompanyId = scheduledCompanyId;
+    // An exact scheduled slot with no client is intentionally left unassigned.
+    // Never borrow the company from the next meeting merely because it is close
+    // in time (the Cam interview was incorrectly attached to Danielle this way).
+    if (!resolvedCompanyId && !exactUpcomingId) {
       const auto = await autoResolveCompany({
         sessionId,
         candidate,
@@ -504,7 +534,15 @@ Return the JSON assessment now.`;
       if (resolvedCompanyId && sessionId) {
         await supabaseAdmin
           .from("interview_sessions")
-          .update({ company_id: resolvedCompanyId })
+          .update({
+            company_id: resolvedCompanyId,
+            ...(exactUpcomingId ? { upcoming_id: exactUpcomingId } : {}),
+          })
+          .eq("session_id", sessionId);
+      } else if (exactUpcomingId && sessionId) {
+        await supabaseAdmin
+          .from("interview_sessions")
+          .update({ upcoming_id: exactUpcomingId })
           .eq("session_id", sessionId);
       }
       // Refresh the compact commercial memory immediately after the scorecard
@@ -519,6 +557,7 @@ Return the JSON assessment now.`;
         await completeUpcomingForCall({
           sessionId,
           companyId: resolvedCompanyId,
+          upcomingId: exactUpcomingId,
         });
       }
       // CROSS-CALL INTELLIGENCE: push what this call said about the user's OTHER
