@@ -9,7 +9,7 @@ export const maxDuration = 40;
 // optimised and the POST would 405 (INVALID_REQUEST_METHOD) at the edge.
 export const dynamic = "force-dynamic";
 
-const TOPICS = ["negotiation", "psychology", "strategy", "general"];
+const TOPICS = ["negotiation", "psychology", "strategy", "pitching", "general"];
 
 // GET /api/crm/lessons -> the whole lessons library, newest first.
 export async function GET() {
