@@ -25,20 +25,101 @@ type Chapter = {
   script?: string[];
 };
 
+type ReviewCandidate = {
+  id: string;
+  candidate: string | null;
+  role: string | null;
+  company: string | null;
+  companyId: string | null;
+  createdAt: string;
+  callType: string;
+  score: number;
+  reasons: string[];
+  suggestedMode: "prospect_demo" | "commercial_partner";
+  durationSeconds: number | null;
+  evidenceCount: number;
+  transcriptChars: number;
+};
+
 const safeList = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && !!item.trim()) : [];
 
 export default function PitchPlaybookPage() {
   const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [reviewQueue, setReviewQueue] = useState<ReviewCandidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [modes, setModes] = useState<Record<string, "prospect_demo" | "commercial_partner">>({});
+  const [queuePage, setQueuePage] = useState(0);
+  const [building, setBuilding] = useState(false);
+  const [buildNote, setBuildNote] = useState("");
 
-  useEffect(() => {
-    crmFetch<{ chapters: Chapter[] }>("/api/crm/pitch-playbook")
-      .then((data) => setChapters(Array.isArray(data.chapters) ? data.chapters : []))
+  const load = () => {
+    setLoading(true);
+    setError("");
+    return crmFetch<{ chapters: Chapter[]; reviewQueue: ReviewCandidate[] }>("/api/crm/pitch-playbook")
+      .then((data) => {
+        const nextChapters = Array.isArray(data.chapters) ? data.chapters : [];
+        const nextQueue = Array.isArray(data.reviewQueue) ? data.reviewQueue : [];
+        setChapters(nextChapters);
+        setReviewQueue(nextQueue);
+        setModes(Object.fromEntries(nextQueue.map((call) => [call.id, call.suggestedMode])));
+        setQueuePage(0);
+      })
       .catch((err) => setError(err?.message || "Could not load the playbook"))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const visibleQueue = reviewQueue.slice(queuePage * 5, queuePage * 5 + 5);
+  const toggleSelected = (id: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < 5) next.add(id);
+      return next;
+    });
+  };
+
+  const buildSelected = async () => {
+    if (!selected.size || building) return;
+    const calls = reviewQueue.filter((call) => selected.has(call.id)).slice(0, 5);
+    setBuilding(true);
+    setBuildNote(`Building 1 of ${calls.length}…`);
+    let built = 0;
+    const failures: string[] = [];
+    for (let index = 0; index < calls.length; index += 1) {
+      const call = calls[index];
+      setBuildNote(`Building ${index + 1} of ${calls.length}: ${call.company || call.candidate || "call"}…`);
+      try {
+        await crmFetch("/api/crm/pitch-playbook", {
+          method: "POST",
+          body: JSON.stringify({ callId: call.id, mode: modes[call.id] || call.suggestedMode }),
+        });
+        built += 1;
+      } catch (error: any) {
+        failures.push(`${call.company || call.candidate || "Call"}: ${error?.message || "failed"}`);
+      }
+    }
+    setSelected(new Set());
+    await load();
+    setBuildNote(
+      failures.length
+        ? `${built} ${built === 1 ? "lesson" : "lessons"} built. ${failures.join(" ")}`
+        : `${built} ${built === 1 ? "lesson" : "lessons"} added to the playbook.`
+    );
+    setBuilding(false);
+  };
+
+  const formatDuration = (seconds: number | null) => {
+    if (!seconds || seconds <= 0) return "Duration unavailable";
+    return `${Math.max(1, Math.round(seconds / 60))} minutes`;
+  };
 
   const List = ({ title, items, tone = "text-bone/80" }: { title: string; items: string[]; tone?: string }) =>
     items.length ? (
@@ -73,6 +154,81 @@ export default function PitchPlaybookPage() {
 
       {loading ? <p className="font-mono text-sm text-muted">Loading the playbook…</p> : null}
       {error ? <p className="rounded-xl border border-rust/40 bg-rust/10 p-4 text-sm text-rust">{error}</p> : null}
+      {!loading && !error && reviewQueue.length > 0 ? (
+        <section className="mb-6 rounded-2xl border border-amber/40 bg-amber/[0.04] p-4 sm:p-5 print:hidden">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="font-mono text-[0.58rem] uppercase tracking-[0.18em] text-amber">Pitch playbook review queue</p>
+              <h2 className="mt-1 font-display text-xl text-bone">Choose the calls worth teaching from</h2>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
+                This shortlist uses saved CRM facts and transcript size, so reviewing it costs no AI tokens. Internal, interview, support and weak calls are excluded.
+              </p>
+            </div>
+            <div className="shrink-0 rounded-lg border border-edge bg-ink/35 px-3 py-2 text-right">
+              <p className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">Eligible calls</p>
+              <p className="font-display text-xl text-amber">{reviewQueue.length}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-2.5">
+            {visibleQueue.map((call) => {
+              const checked = selected.has(call.id);
+              const confidence = call.score >= 75 ? "strong" : call.score >= 58 ? "good" : "possible";
+              return (
+                <div key={call.id} className={`rounded-xl border p-3.5 transition ${checked ? "border-amber bg-amber/[0.07]" : "border-edge bg-panel/45"}`}>
+                  <div className="flex items-start gap-3">
+                    <button type="button" onClick={() => toggleSelected(call.id)} aria-pressed={checked} className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border font-mono text-sm ${checked ? "border-amber bg-amber text-ink" : "border-edge text-muted hover:border-amber/60 hover:text-amber"}`}>
+                      {checked ? "✓" : ""}
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="font-display text-[1.05rem] text-bone">{call.company || call.candidate || "Unnamed call"}</p>
+                          <p className="text-[0.76rem] text-muted">
+                            {[call.candidate && call.candidate !== call.company ? call.candidate : "", call.role].filter(Boolean).join(" · ") || "Recorded sales conversation"}
+                          </p>
+                        </div>
+                        <span className={`w-fit rounded-full border px-2.5 py-1 font-mono text-[0.52rem] uppercase ${call.score >= 75 ? "border-sage/50 bg-sage/10 text-sage" : "border-amber/50 bg-amber/10 text-amber"}`}>
+                          {call.score}/100 · {confidence}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {call.reasons.map((reason) => <span key={reason} className="rounded-full border border-edge bg-ink/40 px-2 py-1 text-[0.66rem] text-bone/70">{reason}</span>)}
+                      </div>
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="font-mono text-[0.55rem] uppercase tracking-wider text-muted">
+                          {new Date(call.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })} · {formatDuration(call.durationSeconds)} · ~{Math.round(call.transcriptChars / 5.5).toLocaleString()} words
+                        </div>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <select aria-label="Playbook lesson type" value={modes[call.id] || call.suggestedMode} onChange={(event) => setModes((current) => ({ ...current, [call.id]: event.target.value as "prospect_demo" | "commercial_partner" }))} className="min-h-10 rounded-lg border border-edge bg-ink/60 px-3 font-mono text-[0.56rem] uppercase text-bone outline-none focus:border-amber/60">
+                            <option value="prospect_demo">Prospect or demo</option>
+                            <option value="commercial_partner">Commercial partner</option>
+                          </select>
+                          <Link href={`/crm/calls/${call.id}`} className="inline-flex min-h-10 items-center justify-center rounded-lg border border-edge px-3 font-mono text-[0.56rem] uppercase text-sky hover:border-sky/50">Review call</Link>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 flex flex-col gap-3 border-t border-edge/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[0.76rem] leading-snug text-muted">Selecting is free. Building uses one Terra extraction per approved call and never contacts the client.</p>
+              {buildNote ? <p className="mt-1 text-[0.76rem] text-amber">{buildNote}</p> : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => { setQueuePage((page) => Math.max(0, page - 1)); setSelected(new Set()); }} disabled={queuePage === 0 || building} className="min-h-10 rounded-full border border-edge px-3 font-mono text-[0.56rem] uppercase text-muted disabled:opacity-30">Previous five</button>
+              <button type="button" onClick={() => { setQueuePage((page) => page + 1); setSelected(new Set()); }} disabled={(queuePage + 1) * 5 >= reviewQueue.length || building} className="min-h-10 rounded-full border border-edge px-3 font-mono text-[0.56rem] uppercase text-muted disabled:opacity-30">Next five</button>
+              <button type="button" onClick={buildSelected} disabled={!selected.size || building} className="min-h-10 rounded-full border border-amber/60 bg-amber/15 px-4 font-mono text-[0.58rem] uppercase text-amber hover:bg-amber/25 disabled:opacity-35">
+                {building ? "Building lessons…" : `Build ${selected.size || "selected"} ${selected.size === 1 ? "lesson" : "lessons"}`}
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
       {!loading && !error && chapters.length === 0 ? (
         <section className="rounded-2xl border border-dashed border-edge bg-panel/30 p-6">
           <h2 className="font-display text-xl text-bone">No approved calls yet</h2>

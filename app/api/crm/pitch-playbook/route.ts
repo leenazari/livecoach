@@ -17,26 +17,196 @@ const parseContent = (value: unknown) => {
   }
 };
 
+const textList = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && !!item.trim())
+    : [];
+
+const validMs = (value: unknown): number | null => {
+  if (typeof value !== "string" || !value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
+
+const relationshipType = (company: any): string =>
+  String(company?.profile?.triage?.classification || "").trim().toLowerCase();
+
+const isInternalCompany = (company: any): boolean =>
+  company?.profile?.internal === true ||
+  String(company?.sector || "").trim().toLowerCase().startsWith("internal") ||
+  ["in_house", "product_trial", "irrelevant", "customer"].includes(relationshipType(company)) ||
+  ["in house", "product trial", "dormant", "customer"].includes(
+    String(company?.stage || "").trim().toLowerCase()
+  );
+
 // The playbook is deliberately opt-in. A call only contributes after the user
 // marks it as a useful prospect/demo or commercial-partner lesson.
 export async function GET() {
   try {
-    const { data, error } = await supabaseAdmin
-      .from("lessons")
-      .select("id, title, content, source_url, created_at")
-      .eq("topic", "pitching")
-      .order("created_at", { ascending: false })
-      .limit(100);
-    if (error) throw error;
+    const since = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
+    const [
+      { data: lessonRows, error: lessonError },
+      { data: callRows, error: callError },
+      { data: companyRows, error: companyError },
+      { data: sessionRows, error: sessionError },
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("lessons")
+        .select("id, title, content, source_url, created_at")
+        .eq("topic", "pitching")
+        .order("created_at", { ascending: false })
+        .limit(100),
+      supabaseAdmin
+        .from("interview_summaries")
+        .select("id, session_id, candidate, role, company_id, summary, created_at")
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(150),
+      supabaseAdmin
+        .from("companies")
+        .select("id, name, sector, stage, profile")
+        .limit(1000),
+      supabaseAdmin
+        .from("interview_sessions")
+        .select("session_id, started_at, ended_at")
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(300),
+    ]);
+    const firstError = [lessonError, callError, companyError, sessionError].find(Boolean);
+    if (firstError) throw firstError;
+
+    const approvedCallIds = new Set(
+      (lessonRows || [])
+        .map((row: any) => String(row.source_url || "").match(/^livecoach:\/\/call\/(.+)$/)?.[1])
+        .filter(Boolean)
+    );
+    const companyById = new Map((companyRows || []).map((company: any) => [company.id, company]));
+    const sessionById = new Map((sessionRows || []).map((session: any) => [session.session_id, session]));
+    const internalTitle = /\b(office|standup|internal|board|sprint|retro|one to one|1:1|all hands)\b/i;
+    const commercialTitle = /\b(demo|pitch|sales|discovery|prospect|buyer|trial|pricing|proposal|customer)\b/i;
+
+    // First pass uses only summaries and small metadata. It deliberately avoids
+    // loading every historic transcript into this dashboard.
+    const scored = (callRows || [])
+      .filter((call: any) => !approvedCallIds.has(call.id))
+      .map((call: any) => {
+        const summary = call.summary && typeof call.summary === "object" ? call.summary : {};
+        const company = call.company_id ? companyById.get(call.company_id) : null;
+        if (isInternalCompany(company)) return null;
+        const haystack = [summary.title, summary.headline, summary.overview, call.candidate, call.role]
+          .filter(Boolean)
+          .join(" ");
+        if (internalTitle.test(haystack)) return null;
+
+        const callType = String(summary.callType || "").trim().toLowerCase();
+        if (["interview", "support"].includes(callType)) return null;
+        const partner = relationshipType(company) === "partner";
+        const painPoints = textList(summary.painPoints);
+        const opportunities = textList(summary.commercialOpportunities);
+        const nextActions = [
+          ...textList(summary.myNextActions),
+          ...textList(summary.suggestedNextActions),
+        ];
+        const concerns = textList(summary.concerns);
+        const favouriteCues = Array.isArray(summary.favouriteCues)
+          ? summary.favouriteCues.filter((item: any) => item && typeof item.text === "string")
+          : [];
+        const session = call.session_id ? sessionById.get(call.session_id) : null;
+        const start = validMs(session?.started_at);
+        const end = validMs(session?.ended_at);
+        const durationSeconds = start != null && end != null && end > start
+          ? Math.round((end - start) / 1000)
+          : null;
+
+        let score = 0;
+        const reasons: string[] = [];
+        if (callType === "sales") {
+          score += 35;
+          reasons.push("Saved as a sales call");
+        }
+        if (commercialTitle.test(haystack)) {
+          score += 15;
+          reasons.push("Demo or commercial language detected");
+        }
+        if (painPoints.length) {
+          score += Math.min(18, 8 + painPoints.length * 3);
+          reasons.push(`${painPoints.length} buyer pain ${painPoints.length === 1 ? "point" : "points"}`);
+        }
+        if (opportunities.length) {
+          score += Math.min(16, 8 + opportunities.length * 3);
+          reasons.push(`${opportunities.length} commercial ${opportunities.length === 1 ? "opportunity" : "opportunities"}`);
+        }
+        if (nextActions.length) score += 6;
+        if (concerns.length) score += 5;
+        if (favouriteCues.length) {
+          score += 7;
+          reasons.push("Contains questions you kept");
+        }
+        if (durationSeconds != null && durationSeconds >= 8 * 60) score += 8;
+        if (partner && (opportunities.length || commercialTitle.test(haystack))) {
+          score += 5;
+          reasons.push("Commercially relevant partner");
+        }
+
+        const eligible =
+          score >= 42 &&
+          (callType === "sales" || commercialTitle.test(haystack) || (partner && opportunities.length > 0));
+        if (!eligible || !call.session_id) return null;
+        return {
+          id: call.id,
+          sessionId: call.session_id,
+          candidate: call.candidate || null,
+          role: call.role || null,
+          company: company?.name || null,
+          companyId: call.company_id || null,
+          createdAt: call.created_at,
+          callType: callType || "general",
+          score: Math.min(100, score),
+          reasons: reasons.slice(0, 3),
+          suggestedMode: partner ? "commercial_partner" : "prospect_demo",
+          durationSeconds,
+          evidenceCount:
+            painPoints.length + opportunities.length + nextActions.length + favouriteCues.length,
+        };
+      })
+      .filter(Boolean)
+      .sort((a: any, b: any) => b.score - a.score || String(b.createdAt).localeCompare(String(a.createdAt)))
+      .slice(0, 20);
+
+    // Only the strongest shortlist gets a transcript-size check. The transcript
+    // itself never leaves the server and is not sent to a model until approval.
+    const shortlistIds = scored.map((call: any) => call.sessionId).filter(Boolean);
+    const { data: transcriptRows, error: transcriptError } = shortlistIds.length
+      ? await supabaseAdmin
+          .from("interview_sessions")
+          .select("session_id, transcript")
+          .in("session_id", shortlistIds)
+      : { data: [], error: null } as any;
+    if (transcriptError) throw transcriptError;
+    const transcriptChars = new Map(
+      (transcriptRows || []).map((row: any) => [row.session_id, String(row.transcript || "").trim().length])
+    );
+    const reviewQueue = scored
+      .map((call: any) => ({ ...call, transcriptChars: transcriptChars.get(call.sessionId) || 0 }))
+      .filter((call: any) => call.transcriptChars >= 1000)
+      .slice(0, 15);
+
     return NextResponse.json(
       {
-        chapters: (data || []).map((row: any) => ({
+        chapters: (lessonRows || []).map((row: any) => ({
           id: row.id,
           title: row.title,
           sourceUrl: row.source_url,
           createdAt: row.created_at,
           ...parseContent(row.content),
         })),
+        reviewQueue,
+        reviewRules: {
+          modelCost: false,
+          minimumTranscriptChars: 1000,
+          approvedCount: approvedCallIds.size,
+        },
       },
       { headers: { "Cache-Control": "no-store, max-age=0" } }
     );
