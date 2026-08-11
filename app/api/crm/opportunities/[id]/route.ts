@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import { getCommercialMemory } from "@/lib/commercial-memory";
 
 export const runtime = "nodejs";
 
@@ -131,6 +132,11 @@ export async function PATCH(
       .select()
       .single();
     if (error) throw error;
+    // Opportunity fields are duplicated into the compact commercial memory
+    // used by Brain and call prep. Refresh it now so a saved probability or
+    // next action cannot remain stale until another call is processed.
+    if (data?.company_id)
+      await getCommercialMemory(data.company_id, data.workstream_id || null);
     return NextResponse.json({ opportunity: data });
   } catch (err: any) {
     return NextResponse.json(
