@@ -31,6 +31,8 @@ export async function GET() {
       { data: sentMessages },
       { data: outreachEvents },
       { data: signalReceipts },
+      { data: recentSignalReceipts },
+      { data: signalUsage },
     ] = await Promise.all([
       supabaseAdmin.from("app_config").select("key,value").in("key", ["revenue_target_gbp"]),
       supabaseAdmin.from("companies").select("id,name,stage,profile"),
@@ -42,6 +44,18 @@ export async function GET() {
       supabaseAdmin.from("outreach_messages").select("prospect_id,message_tags,step_number,variant").eq("status", "sent").limit(5000),
       supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,created_at").in("kind", ["reply", "positive_reply", "objection", "later", "referral", "meeting_booked"]).limit(5000),
       supabaseAdmin.from("opportunity_signal_receipts").select("opportunity_id,status").in("status", ["queued", "processing", "failed"]).not("opportunity_id", "is", null).limit(1000),
+      supabaseAdmin
+        .from("opportunity_signal_receipts")
+        .select("id,opportunity_id,company_id,source_record_type,source_channel,status,result,evidence,occurred_at,attempts,error,created_at,updated_at")
+        .gte("created_at", new Date(Date.now() - 7 * DAY).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(200),
+      supabaseAdmin
+        .from("usage_log")
+        .select("cost_gbp,created_at")
+        .eq("kind", "opportunity_outlook_assessment")
+        .gte("created_at", new Date(Date.now() - 7 * DAY).toISOString())
+        .limit(1000),
     ]);
 
     const target = Math.max(1, Number((config || []).find((row: any) => row.key === "revenue_target_gbp")?.value) || 2_000_000);
@@ -203,6 +217,50 @@ export async function GET() {
     const positive = new Set((outreachEvents || []).filter((event: any) => event.kind === "positive_reply").map((event: any) => event.prospect_id).filter(Boolean));
     const booked = new Set((outreachEvents || []).filter((event: any) => event.kind === "meeting_booked").map((event: any) => event.prospect_id).filter(Boolean));
     const outreachOpps = (opportunities || []).filter((op: any) => op.source === "outreach" && (op.opportunity_type || "revenue") === "revenue");
+    const opportunityById = new Map((opportunities || []).map((op: any) => [op.id, op]));
+    const signalCounts = {
+      queued: 0,
+      processing: 0,
+      complete: 0,
+      ignored: 0,
+      protected: 0,
+      failed: 0,
+    };
+    for (const receipt of recentSignalReceipts || []) {
+      const status = String(receipt.status || "");
+      if (status in signalCounts) signalCounts[status as keyof typeof signalCounts] += 1;
+    }
+    const assessedSignals = (recentSignalReceipts || []).filter((receipt: any) =>
+      ["complete", "ignored"].includes(receipt.status)
+      && typeof receipt.result?.material === "boolean"
+    ).length;
+    const evidenceSummary = (evidence: Record<string, unknown> | null) => {
+      if (!evidence || typeof evidence !== "object") return "No evidence digest was stored.";
+      const preferred = ["summary", "overview", "subject", "snippet", "note", "outcome"];
+      for (const key of preferred) {
+        const value = evidence[key];
+        if (typeof value === "string" && value.trim()) return value.trim().slice(0, 420);
+      }
+      const first = Object.values(evidence).find((value) => typeof value === "string" && value.trim());
+      return typeof first === "string" ? first.trim().slice(0, 420) : "A compact structured signal was stored.";
+    };
+    const recentAssessments = (recentSignalReceipts || []).slice(0, 12).map((receipt: any) => {
+      const opportunity = opportunityById.get(receipt.opportunity_id) as any;
+      return {
+        id: receipt.id,
+        company: nameByCompany.get(receipt.company_id) || "Unlinked company",
+        opportunity: opportunity?.title || "No single open revenue opportunity",
+        sourceRecordType: receipt.source_record_type,
+        sourceChannel: receipt.source_channel,
+        status: receipt.status,
+        occurredAt: receipt.occurred_at,
+        createdAt: receipt.created_at,
+        attempts: Number(receipt.attempts) || 0,
+        error: receipt.error || null,
+        evidenceSummary: evidenceSummary(receipt.evidence),
+        result: receipt.result || {},
+      };
+    });
 
     return NextResponse.json({
       goal: { target, wonYtd: wonValue, gap, monthsRemaining, requiredPerMonth: gap / monthsRemaining },
@@ -227,6 +285,14 @@ export async function GET() {
         { key: "opportunities", label: "Opportunities", value: outreachOpps.length },
         { key: "won", label: "Won", value: outreachOpps.filter((op: any) => op.status === "won").length },
       ],
+      signalHealth: {
+        windowStart: new Date(Date.now() - 7 * DAY).toISOString(),
+        auditTarget: 5,
+        assessedSignals,
+        costGbp: (signalUsage || []).reduce((sum: number, row: any) => sum + (Number(row.cost_gbp) || 0), 0),
+        counts: signalCounts,
+        recentAssessments,
+      },
       stageDefinitions: STAGES,
       generatedAt: new Date().toISOString(),
     });
