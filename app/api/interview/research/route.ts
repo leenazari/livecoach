@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
+import { cleanResearchBackground } from "@/lib/research-format";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -89,24 +90,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "that page didn't expose much readable text (it may need a login) \u2013 carry on without it", site });
     }
 
-    const system = `You turn a PUBLIC web page into a short background brief for someone about to have a call with this person or company.
+    const system = `You turn a PUBLIC web page into an ordered, decision useful briefing for someone about to have a call with this person or company.
 
-Write 3-5 plain sentences covering, where the page supports it: what they do, their size/stage if shown, their focus or positioning, and any notable recent signal (a launch, a stated problem, a priority). Be factual and grounded ONLY in the page text - never invent or speculate. If the page is thin or mostly navigation/marketing boilerplate, say briefly what little is clear. No preamble, no headings, no bullet points - just the brief.`;
+Return 3 to 5 numbered bullet points, strongest and most useful first. Cover only what helps this conversation: what they actually do, a current priority or signal, the most relevant fit or hook, one risk or gap, and the best question or next move. Maximum 90 words total. Be factual and grounded ONLY in the page text. Never invent or speculate. If the page is thin, use fewer bullets. No preamble, headings, source names, citations or URLs.`;
 
     const msg = await openai.messages.create({
       model: OPENAI_MODEL_LIVE,
-      max_tokens: 400,
+      max_tokens: 300,
       system,
       messages: [
         { role: "user", content: `Public page: ${parsed.toString()}\n\nPage text:\n${text}\n\nWrite the background brief now.` },
       ],
     });
 
-    const background = msg.content
+    const background = cleanResearchBackground(msg.content
       .filter((b: any) => b.type === "text")
       .map((b: any) => b.text)
       .join("")
-      .trim();
+      .trim());
 
     if (!background || typeof background !== "string") {
       return NextResponse.json({ error: "couldn't summarise that page \u2013 carry on without it", site });
