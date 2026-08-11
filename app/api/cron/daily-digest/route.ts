@@ -29,16 +29,6 @@ const dayKey = (date: Date) =>
     day: "2-digit",
   }).format(date);
 
-const firstSentence = (value: unknown, max = 180): string => {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-  if (!text) return "";
-  const sentence = text.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() || text;
-  const shortened = sentence.length <= max
-    ? sentence
-    : `${sentence.slice(0, max).replace(/\s+\S*$/, "").trim()}…`;
-  return capitaliseSentenceStarts(shortened);
-};
-
 const compactSentences = (
   value: unknown,
   sentenceLimit = 2,
@@ -63,6 +53,25 @@ const firstListItem = (...values: unknown[]): string => {
     if (item) return compactSentences(item, 1, 220);
   }
   return "";
+};
+
+const listItems = (value: unknown, limit = 2): string[] =>
+  (Array.isArray(value) ? value : [])
+    .filter((entry) => typeof entry === "string" && entry.trim())
+    .slice(0, limit)
+    .map((entry) => compactSentences(entry, 1, 240));
+
+const uniqueDetails = (...groups: string[][]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of groups.flat()) {
+    const clean = String(item || "").trim();
+    const key = clean.toLowerCase();
+    if (!clean || seen.has(key)) continue;
+    seen.add(key);
+    result.push(clean);
+  }
+  return result;
 };
 
 const detailList = (items: { label: string; text: string }[]) =>
@@ -210,15 +219,42 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const progress: string[] = completed.slice(0, 8).map((task: any) => {
-      const company = companyNames.get(task.company_id);
-      return `${esc(capitaliseSentenceStarts(task.text))}${company ? ` <span style="color:#858078;">(${esc(company)})</span>` : ""}`;
-    });
-    for (const call of calls.slice(0, Math.max(0, 8 - progress.length))) {
+    // A one-word model verdict such as "Warm" or "Mixed" is not a progress
+    // update. Lead with the factual outcome, then show what changed, the next
+    // move and the biggest unresolved risk. This is deterministic and adds no
+    // model cost to the daily email.
+    const progress: string[] = [];
+    for (const call of calls.slice(0, 6)) {
       const summary = call.summary && typeof call.summary === "object" ? call.summary : {};
-      const outcome = firstSentence(summary.recommendation || summary.overview || summary.summary);
       const label = companyNames.get(call.company_id) || call.candidate || call.role || "Call";
-      progress.push(`<strong>${esc(label)}</strong>${outcome ? `: ${esc(outcome)}` : ": Call completed and captured"}`);
+      const outcome = compactSentences(
+        summary.headline || summary.overview || summary.summary,
+        2,
+        380
+      );
+      const change = firstListItem(
+        summary.decisions,
+        summary.buyingSignals,
+        summary.strengths
+      );
+      const nextMove = firstListItem(
+        summary.myNextActions,
+        summary.suggestedNextActions
+      );
+      const watch = firstListItem(summary.concerns, summary.notCovered);
+      const callLabel = call.company_id
+        ? `<a href="${esc(`${appUrl}/crm/${call.company_id}`)}" style="color:#1c1b19;text-decoration:none;"><strong>${esc(label)}</strong></a>`
+        : `<strong>${esc(label)}</strong>`;
+      progress.push(`${callLabel}${detailList([
+        { label: "Outcome", text: outcome || "Call completed and captured." },
+        { label: "Progress made", text: change },
+        { label: "Next move", text: nextMove },
+        { label: "Watch", text: watch },
+      ])}`);
+    }
+    for (const task of completed.slice(0, Math.max(0, 8 - progress.length))) {
+      const company = companyNames.get(task.company_id);
+      progress.push(`<strong>Completed:</strong> ${esc(capitaliseSentenceStarts(task.text))}${company ? ` <span style="color:#858078;">(${esc(company)})</span>` : ""}`);
     }
 
     const openTasks = openRes.data || [];
@@ -345,30 +381,45 @@ export async function GET(req: NextRequest) {
         const deal = [
           opportunity?.title,
           opportunity?.pipeline_stage
-            ? `stage: ${String(opportunity.pipeline_stage).replace(/_/g, " ")}`
+            ? `CRM stage: ${String(opportunity.pipeline_stage).replace(/_/g, " ")}`
             : "",
-          probability ? `${probability}% recorded probability` : "",
-          value ? `£${value.toLocaleString("en-GB")} recorded value` : "",
+          probability ? `${probability}% close probability` : "",
+          value ? `£${value.toLocaleString("en-GB")} potential value` : "",
         ].filter(Boolean).join(" · ");
-        const evidence =
-          firstListItem(
-            activity.buyingSignals,
-            latestCall.buyingSignals,
-            latestCall.commercialOpportunities
-          ) || "No confirmed buying signal is saved yet.";
+        const evidenceItems = uniqueDetails(
+          listItems(activity.buyingSignals),
+          listItems(latestCall.buyingSignals),
+          listItems(latestCall.commercialOpportunities),
+          listItems(latestCall.decisions),
+          memory.email?.summary
+            ? [compactSentences(memory.email.summary, 1, 260)]
+            : [],
+          memory.relationship
+            ? [compactSentences(memory.relationship, 2, 340)]
+            : []
+        ).slice(0, 2);
+        const evidence = evidenceItems.length
+          ? evidenceItems.join(" ")
+          : "No specific buying evidence has been saved yet.";
         const gap =
           firstListItem(
             latestCall.objections,
             latestCall.gaps,
             activity.risks
           ) || "Confirm the real buyer, urgency, decision route and success criteria.";
-        const nextMove = compactSentences(opportunity?.next_action, 1, 240) ||
-          "If the need is real, agree a defined pilot or another dated decision step.";
+        const nextMove =
+          compactSentences(opportunity?.next_action, 1, 240) ||
+          compactSentences(activity.nextAction, 1, 240) ||
+          firstListItem(
+            latestCall.ourActions,
+            memory.openActions?.map((item: any) => item?.text)
+          ) ||
+          "Agree one dated decision step with the buyer.";
         return `<strong>${esc(company)}</strong>${detailList([
-          { label: "Revenue opportunity", text: deal || "Open revenue opportunity" },
-          { label: "Evidence", text: evidence },
-          { label: "Gap to close", text: gap },
-          { label: "Commercial move", text: nextMove },
+          { label: "Position", text: deal || "Open revenue opportunity" },
+          { label: "Why it can close", text: evidence },
+          { label: "Remaining risk", text: gap },
+          { label: "Next commercial move", text: nextMove },
         ])}`;
       });
 
@@ -488,7 +539,7 @@ function renderEmail(data: {
     ${section("Tomorrow’s call briefs", list(data.tomorrowItems, "No calls are currently scheduled for tomorrow."))}
     ${section("Tomorrow’s commercial opportunities", list(data.buyingOpportunities, "No genuine open revenue opportunity is attached to tomorrow’s calls."))}
     ${data.isSunday ? section("Monday to Friday", data.weekAhead.map((day) => `<div style="margin:0 0 15px;"><p style="margin:0 0 5px;font-size:14px;font-weight:700;">${esc(day.weekday)}</p>${list(day.items, "No calls scheduled.")}</div>`).join("")) : ""}
-    ${section("Today’s progress", list(data.progress, "No completed calls or checked-off tasks were captured today."))}
+    ${section("Today’s progress, decisions and next moves", list(data.progress, "No completed calls or checked-off tasks were captured today."))}
     <a href="${esc(data.dashboardUrl)}" style="display:inline-block;padding:10px 16px;border-radius:20px;background:#26372b;color:#fff;text-decoration:none;font-size:13px;">Open LiveCoach dashboard</a>
     <p style="margin:24px 0 0;font-size:12px;line-height:1.5;color:#8a857c;">This snapshot is built from saved CRM, task and calendar data. It uses no AI generation, so it adds no model-token cost.</p>
   </td></tr></table></td></tr></table></body></html>`;
