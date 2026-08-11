@@ -17,6 +17,9 @@ type Props = {
   // to internal state if not provided.
   meetingUrl?: string;
   onMeetingUrlChange?: (v: string) => void;
+  // Incremented by the parent when the user presses the single Start call
+  // action. This lets one button start the workspace and send the notetaker.
+  startRequest?: number;
 };
 
 type Speaker = { name: string; lastRole: string };
@@ -46,6 +49,7 @@ export default function MeetStage({
   onCandidateTurnEnd,
   meetingUrl: meetingUrlProp,
   onMeetingUrlChange,
+  startRequest = 0,
 }: Props) {
   const [meetingUrlInternal, setMeetingUrlInternal] = useState("");
   const meetingUrl = meetingUrlProp ?? meetingUrlInternal;
@@ -287,7 +291,7 @@ export default function MeetStage({
     return () => clearInterval(iv);
   }, [botId]);
 
-  async function sendBot() {
+  const sendBot = useCallback(async () => {
     // Guard against a double-tap firing two bots: `disabled` only updates on the
     // next render, so a fast second click can slip through before React catches
     // up. The ref blocks it synchronously, and we never send if a bot is live.
@@ -341,7 +345,14 @@ export default function MeetStage({
     } finally {
       sendingRef.current = false;
     }
-  }
+  }, [meetingUrl, room, wsState, connect]);
+
+  const handledStartRequestRef = useRef(0);
+  useEffect(() => {
+    if (!startRequest || startRequest === handledStartRequestRef.current) return;
+    handledStartRequestRef.current = startRequest;
+    sendBot();
+  }, [startRequest, sendBot]);
 
   // Retry: stop the (non-joined) bot and send a fresh one. Forces the synchronous
   // botId mirror clear so the re-send isn't blocked by the in-flight guard.
