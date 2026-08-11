@@ -6,6 +6,7 @@ import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
 import MatrixRain from "@/components/MatrixRain";
 import PipelineWorkspace from "@/components/crm/PipelineWorkspace";
+import OutlookIntelligencePanel, { type SignalHealth } from "@/components/crm/OutlookIntelligencePanel";
 
 type Pipeline = Record<string, any>;
 type Opportunity = Record<string, any> & {
@@ -197,6 +198,8 @@ export default function RevenuePage() {
             ["Coverage", `${Math.round(data.kpis.coverage * 10) / 10}×`, "Pipeline ÷ target gap"],
           ].map(([label, value, note]) => <div key={String(label)} className="rounded-xl border border-edge bg-panel p-3"><p className="font-mono text-[0.53rem] uppercase tracking-wider text-muted">{label}</p><strong className="mt-1 block font-display text-xl text-bone">{typeof value === "number" ? gbp(value) : value}</strong><span className="text-[0.69rem] text-muted">{note}</span></div>)}
         </section>
+
+        <OutlookIntelligencePanel health={data.signalHealth as SignalHealth} />
 
         <PipelineWorkspace
           rows={revenueRows as any}
