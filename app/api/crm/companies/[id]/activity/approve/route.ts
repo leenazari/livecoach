@@ -106,6 +106,14 @@ export async function POST(
             next_action: next.text,
             next_action_owner: next.owner,
             next_action_due_at: next.dueAt ? `${next.dueAt}T12:00:00Z` : null,
+            last_meaningful_activity_at: intelligence.createdAt || new Date().toISOString(),
+            last_change_context: {
+              nonce: crypto.randomUUID(),
+              sourceType: "human",
+              sourceChannel: "client_activity_approval",
+              rationale: "Approved from a manually logged client activity",
+              evidence: { contextId },
+            },
             updated_at: new Date().toISOString(),
           })
           .eq("id", opportunity.id);

@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import { getCommercialMemory } from "@/lib/commercial-memory";
+import {
+  CONTACT_METHODS,
+  ENGAGEMENT_MOTIONS,
+  PIPELINE_STAGES,
+  WIN_OUTLOOKS,
+  cleanStringList,
+} from "@/lib/opportunity-fields";
 
 export const runtime = "nodejs";
 
@@ -10,7 +17,6 @@ export const runtime = "nodejs";
 // DELETE /api/crm/opportunities/:id
 const STATUSES = ["open", "won", "lost", "dismissed"];
 const OWNER_TYPES = ["us", "buyer", "joint"];
-const PIPELINE_STAGES = ["new", "discovery", "qualified", "proposal", "negotiation", "verbal", "won", "lost"];
 const FORECAST_CATEGORIES = ["pipeline", "best_case", "commit", "omitted"];
 const OPPORTUNITY_TYPES = ["revenue", "investment", "internal", "strategic"];
 const NEXT_ACTION_OWNERS = ["us", "buyer", "joint"];
@@ -48,6 +54,15 @@ export async function PATCH(
 ) {
   try {
     const body = await req.json();
+    const { data: current, error: currentError } = await supabaseAdmin
+      .from("opportunities")
+      .select("*")
+      .eq("id", params.id)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!current)
+      return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
+
     const patch: Record<string, any> = {};
     if (typeof body.status === "string" && STATUSES.includes(body.status)) {
       patch.status = body.status;
@@ -58,7 +73,7 @@ export async function PATCH(
     if (typeof body.detail === "string") patch.detail = body.detail.trim() || null;
     if (typeof body.value === "number") patch.value = body.value;
     if (body.value === null) patch.value = null;
-    if (typeof body.pipelineStage === "string" && PIPELINE_STAGES.includes(body.pipelineStage)) {
+    if (typeof body.pipelineStage === "string" && PIPELINE_STAGES.includes(body.pipelineStage as any)) {
       patch.pipeline_stage = body.pipelineStage;
     }
     if (body.probability != null) {
@@ -83,6 +98,84 @@ export async function PATCH(
       patch.expected_close_at = body.expectedCloseAt;
     }
     if (typeof body.outcomeReason === "string") patch.outcome_reason = body.outcomeReason.trim().slice(0, 1000) || null;
+    if (body.dealIntent === null || body.dealIntent === "") {
+      patch.deal_intent = null;
+    } else if (typeof body.dealIntent === "string") {
+      patch.deal_intent = capitaliseSentenceStarts(body.dealIntent.trim()).slice(0, 1500) || null;
+    }
+    if (body.engagementMotion === null || body.engagementMotion === "") {
+      patch.engagement_motion = null;
+    } else if (
+      typeof body.engagementMotion === "string" &&
+      ENGAGEMENT_MOTIONS.includes(body.engagementMotion as any)
+    ) {
+      patch.engagement_motion = body.engagementMotion;
+    }
+    if (body.activeContactMethod === null || body.activeContactMethod === "") {
+      patch.active_contact_method = null;
+    } else if (
+      typeof body.activeContactMethod === "string" &&
+      CONTACT_METHODS.includes(body.activeContactMethod as any)
+    ) {
+      patch.active_contact_method = body.activeContactMethod;
+    }
+
+    const sourceType = body.sourceType === "system" ? "system" : "human";
+    const outlookRequested =
+      typeof body.winOutlook === "string" ||
+      body.winOutlookConfidence !== undefined ||
+      body.winOutlookReasons !== undefined ||
+      body.winOutlookQuestions !== undefined;
+    if (sourceType === "system" && current.win_outlook_override && outlookRequested) {
+      return NextResponse.json(
+        { error: "A human outlook override is active. Clear it before applying a system outlook." },
+        { status: 409 }
+      );
+    }
+    if (typeof body.winOutlook === "string") {
+      if (!WIN_OUTLOOKS.includes(body.winOutlook as any)) {
+        return NextResponse.json({ error: "win outlook is not valid" }, { status: 400 });
+      }
+      const resultingStage = patch.pipeline_stage || current.pipeline_stage;
+      const resultingStatus = patch.status || current.status;
+      if (body.winOutlook === "won" && resultingStage !== "won" && resultingStatus !== "won") {
+        return NextResponse.json(
+          { error: "Won outlook is only available when the opportunity lifecycle is won" },
+          { status: 400 }
+        );
+      }
+      patch.win_outlook = body.winOutlook;
+    }
+    if (body.winOutlookConfidence === null || body.winOutlookConfidence === "") {
+      patch.win_outlook_confidence = null;
+    } else if (body.winOutlookConfidence !== undefined) {
+      const confidence = Math.round(Number(body.winOutlookConfidence));
+      if (!Number.isFinite(confidence) || confidence < 0 || confidence > 100) {
+        return NextResponse.json({ error: "outlook confidence must be between 0 and 100" }, { status: 400 });
+      }
+      patch.win_outlook_confidence = confidence;
+    }
+    if (body.winOutlookReasons !== undefined)
+      patch.win_outlook_reasons = cleanStringList(body.winOutlookReasons);
+    if (body.winOutlookQuestions !== undefined)
+      patch.win_outlook_questions = cleanStringList(body.winOutlookQuestions, 6, 300);
+    const changingOutlook =
+      (patch.win_outlook !== undefined && patch.win_outlook !== current.win_outlook) ||
+      (patch.win_outlook_confidence !== undefined && patch.win_outlook_confidence !== current.win_outlook_confidence) ||
+      (patch.win_outlook_reasons !== undefined && JSON.stringify(patch.win_outlook_reasons) !== JSON.stringify(current.win_outlook_reasons || [])) ||
+      (patch.win_outlook_questions !== undefined && JSON.stringify(patch.win_outlook_questions) !== JSON.stringify(current.win_outlook_questions || []));
+    if (changingOutlook) {
+      patch.win_outlook_as_of = new Date().toISOString();
+      patch.win_outlook_source = sourceType;
+      if (sourceType === "human") {
+        patch.win_outlook_override = true;
+        patch.win_outlook_override_at = patch.win_outlook_as_of;
+      }
+    }
+    if (body.clearWinOutlookOverride === true) {
+      patch.win_outlook_override = false;
+      patch.win_outlook_override_at = null;
+    }
     if (body.nextAction === null || body.nextAction === "") {
       patch.next_action = null;
     } else if (typeof body.nextAction === "string") {
@@ -115,6 +208,11 @@ export async function PATCH(
       patch.forecast_category = "commit";
       patch.won_at = patch.updated_at;
       patch.lost_at = null;
+      patch.win_outlook = "won";
+      patch.win_outlook_confidence = 100;
+      patch.win_outlook_reasons = ["Opportunity marked won"];
+      patch.win_outlook_as_of = patch.updated_at;
+      patch.win_outlook_source = sourceType;
     } else if (patch.status === "lost") {
       patch.pipeline_stage = "lost";
       patch.probability = 0;
@@ -125,6 +223,24 @@ export async function PATCH(
       patch.won_at = null;
       patch.lost_at = null;
     }
+    patch.last_change_context = {
+      nonce: crypto.randomUUID(),
+      sourceType,
+      sourceChannel:
+        typeof body.sourceChannel === "string" && body.sourceChannel.trim()
+          ? body.sourceChannel.trim().slice(0, 80)
+          : "pipeline_dashboard",
+      rationale:
+        typeof body.rationale === "string" && body.rationale.trim()
+          ? body.rationale.trim().slice(0, 1000)
+          : sourceType === "human"
+            ? "Confirmed by the user"
+            : "Updated from stored CRM evidence",
+      evidence:
+        body.evidence && typeof body.evidence === "object" && !Array.isArray(body.evidence)
+          ? body.evidence
+          : {},
+    };
     const { data, error } = await supabaseAdmin
       .from("opportunities")
       .update(patch)

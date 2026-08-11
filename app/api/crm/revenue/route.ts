@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { defaultOutlookQuestions, WIN_OUTLOOKS } from "@/lib/opportunity-fields";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,7 +84,10 @@ export async function GET() {
       const value = Number(op.value) || 0;
       const probability = Math.max(0, Math.min(100, Number(op.probability) || 0));
       const nextMeetingAt = nextMeetingByCompany.get(companyId) || null;
-      const lastTouch = lastTouchByCompany.get(companyId) || null;
+      const storedActivity = op.last_meaningful_activity_at
+        ? new Date(op.last_meaningful_activity_at).getTime()
+        : 0;
+      const lastTouch = Math.max(lastTouchByCompany.get(companyId) || 0, storedActivity || 0) || null;
       const daysQuiet = lastTouch ? Math.max(0, Math.floor((Date.now() - lastTouch) / DAY)) : null;
       const risks: { code: string; label: string; severity: "high" | "medium" }[] = [];
       if (!value) risks.push({ code: "missing_value", label: "Deal value missing", severity: "high" });
@@ -92,6 +96,10 @@ export async function GET() {
       if (!nextMeetingAt) risks.push({ code: "no_meeting", label: "No next meeting", severity: probability >= 60 ? "high" : "medium" });
       if (daysQuiet != null && daysQuiet >= 14) risks.push({ code: "quiet", label: `Quiet for ${daysQuiet} days`, severity: "high" });
       if (op.forecast_category === "commit" && probability < 70) risks.push({ code: "weak_commit", label: "Commit probability is below 70%", severity: "high" });
+      if (op.win_outlook === "at_risk")
+        risks.push({ code: "outlook_at_risk", label: "Win outlook is at risk", severity: "high" });
+      if (op.win_outlook === "not_assessed")
+        risks.push({ code: "outlook_unassessed", label: "Win outlook needs evidence", severity: "medium" });
       if (!op.next_action) risks.push({ code: "missing_next_action", label: "Primary next action not confirmed", severity: "medium" });
       if (op.next_action_due_at && new Date(op.next_action_due_at).getTime() < Date.now()) risks.push({ code: "next_action_overdue", label: "Primary next action is overdue", severity: "high" });
       const companyTasks = tasksByCompany.get(companyId) || [];
@@ -105,8 +113,27 @@ export async function GET() {
       else if (!nextAction && op.pipeline_stage === "discovery") nextAction = "Confirm buyer need, urgency and decision process";
       else if (!nextAction) nextAction = "Agree the next mutual commitment";
 
+      const nextActionDueMs = op.next_action_due_at ? new Date(op.next_action_due_at).getTime() : null;
+      const nextMeetingMs = nextMeetingAt ? new Date(nextMeetingAt).getTime() : null;
+      const nextActionOverdue = !!nextActionDueMs && nextActionDueMs < Date.now();
+      const meetingSoon = !!nextMeetingMs && nextMeetingMs <= Date.now() + 3 * DAY;
+      const stalled = daysQuiet != null && daysQuiet >= 14;
+      const priorityReasons = [
+        nextActionOverdue ? "Overdue action" : "",
+        meetingSoon ? "Meeting in the next 3 days" : "",
+        op.win_outlook === "at_risk" ? "At-risk outlook" : "",
+        stalled ? `Stalled for ${daysQuiet} days` : "",
+        op.next_action ? "Clear next action" : "",
+      ].filter(Boolean);
       const riskWeight = risks.reduce((sum, risk) => sum + (risk.severity === "high" ? 30 : 12), 0);
-      const actionScore = riskWeight + probability + Math.min(50, value / 20_000);
+      const actionScore =
+        (nextActionOverdue ? 1000 : 0) +
+        (meetingSoon ? 700 : 0) +
+        (op.win_outlook === "at_risk" ? 600 : 0) +
+        (stalled ? 500 : 0) +
+        (op.next_action ? 120 : 0) +
+        riskWeight +
+        Math.min(50, value / 20_000);
       return {
         ...op,
         value,
@@ -115,10 +142,16 @@ export async function GET() {
         company: nameByCompany.get(companyId) || "a client",
         relationshipStage: stageByCompany.get(companyId) || null,
         nextMeetingAt,
+        lastMeaningfulActivityAt: lastTouch ? new Date(lastTouch).toISOString() : null,
         daysQuiet,
         risks,
         nextAction,
         nextActionIsSaved: !!op.next_action,
+        outlookQuestions:
+          Array.isArray(op.win_outlook_questions) && op.win_outlook_questions.length
+            ? op.win_outlook_questions
+            : defaultOutlookQuestions(op),
+        priorityReasons,
         actionScore,
       };
     }).sort((a: any, b: any) => b.actionScore - a.actionScore);
@@ -138,6 +171,14 @@ export async function GET() {
         weighted: members.reduce((sum: number, row: any) => sum + row.weightedValue, 0),
       };
     });
+    const outlooks = WIN_OUTLOOKS.map((key) => {
+      const members = rows.filter((row: any) => (row.win_outlook || "not_assessed") === key);
+      return {
+        key,
+        count: members.length,
+        value: members.reduce((sum: number, row: any) => sum + row.value, 0),
+      };
+    });
 
     const uniqueSent = new Set((sentMessages || []).map((row: any) => row.prospect_id).filter(Boolean));
     const replyKinds = new Set(["reply", "positive_reply", "objection", "later", "referral"]);
@@ -150,6 +191,7 @@ export async function GET() {
       goal: { target, wonYtd: wonValue, gap, monthsRemaining, requiredPerMonth: gap / monthsRemaining },
       kpis: { rawPipeline, weightedPipeline, commit, bestCase, wonYtd: wonValue, coverage: gap ? rawPipeline / gap : 0 },
       stages,
+      outlooks,
       opportunities: rows,
       excludedOpportunities: excludedRows,
       classification: {

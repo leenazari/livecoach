@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { defaultOutlookQuestions } from "@/lib/opportunity-fields";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -65,7 +66,10 @@ export async function GET(req: NextRequest) {
       ...(() => {
         const alerts: { code: string; label: string; priority: number }[] = [];
         const nextMeetingAt = nextMeetingById.get(o.company_id) || null;
-        const touched = lastTouchById.get(o.company_id);
+        const storedActivity = o.last_meaningful_activity_at
+          ? new Date(o.last_meaningful_activity_at).getTime()
+          : 0;
+        const touched = Math.max(lastTouchById.get(o.company_id) || 0, storedActivity || 0) || null;
         const daysQuiet = touched
           ? Math.max(0, Math.floor((nowMs - touched) / (24 * 60 * 60 * 1000)))
           : null;
@@ -97,7 +101,16 @@ export async function GET(req: NextRequest) {
         if (proposalSent && !nextMeetingAt)
           alerts.push({ code: "proposal_no_followup", label: "Proposal sent without a follow-up meeting", priority: 1 });
         alerts.sort((a, b) => a.priority - b.priority);
-        return { alerts, daysQuiet, nextMeetingAt };
+        return {
+          alerts,
+          daysQuiet,
+          nextMeetingAt,
+          lastMeaningfulActivityAt: touched ? new Date(touched).toISOString() : null,
+          outlookQuestions:
+            Array.isArray(o.win_outlook_questions) && o.win_outlook_questions.length
+              ? o.win_outlook_questions
+              : defaultOutlookQuestions(o),
+        };
       })(),
     }));
     return NextResponse.json({ opportunities: items });

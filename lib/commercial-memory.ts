@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getWorkstreamScope } from "@/lib/workstreams";
+import { defaultOutlookQuestions } from "@/lib/opportunity-fields";
 
 export type CommercialMemory = {
   sourceHash: string;
@@ -44,6 +45,14 @@ export type CommercialMemory = {
     stage: string;
     probability: number;
     value: number | null;
+    intent: string;
+    winOutlook: string;
+    winOutlookConfidence: number | null;
+    winOutlookReasons: string[];
+    winOutlookQuestions: string[];
+    winOutlookOverride: boolean;
+    engagementMotion: string;
+    activeContactMethod: string;
     nextAction: string;
     nextActionDueAt: string | null;
     nextActionOwner: string;
@@ -117,7 +126,7 @@ export async function getCommercialMemory(
       .limit(8);
     let opportunitiesQuery = supabaseAdmin
       .from("opportunities")
-      .select("id, title, value, status, pipeline_stage, probability, next_action, next_action_due_at, next_action_owner, updated_at")
+      .select("id, title, value, status, pipeline_stage, probability, deal_intent, win_outlook, win_outlook_confidence, win_outlook_reasons, win_outlook_questions, win_outlook_override, engagement_motion, active_contact_method, next_action, next_action_due_at, next_action_owner, updated_at")
       .eq("company_id", companyId)
       .eq("opportunity_type", "revenue")
       .order("updated_at", { ascending: false })
@@ -296,6 +305,18 @@ export async function getCommercialMemory(
         title: cut(opportunity.title, 180),
         stage: cut(opportunity.pipeline_stage || opportunity.status, 60),
         probability: Number(opportunity.probability) || 0,
+        intent: cut(opportunity.deal_intent, 400),
+        winOutlook: cut(opportunity.win_outlook, 40) || "not_assessed",
+        winOutlookConfidence: opportunity.win_outlook_confidence == null ? null : Number(opportunity.win_outlook_confidence),
+        winOutlookReasons: list(opportunity.win_outlook_reasons),
+        winOutlookQuestions: list(
+          Array.isArray(opportunity.win_outlook_questions) && opportunity.win_outlook_questions.length
+            ? opportunity.win_outlook_questions
+            : defaultOutlookQuestions(opportunity)
+        ),
+        winOutlookOverride: opportunity.win_outlook_override === true,
+        engagementMotion: cut(opportunity.engagement_motion, 50),
+        activeContactMethod: cut(opportunity.active_contact_method, 50),
         value: opportunity.value == null ? null : Number(opportunity.value) || 0,
         nextAction: cut(opportunity.next_action, 300),
         nextActionDueAt: opportunity.next_action_due_at || null,
@@ -384,7 +405,14 @@ export function formatCommercialMemoryBlock(memory: CommercialMemory | null): st
         `Latest activity next move (${memory.latestActivity.status || "pending"}): ${memory.latestActivity.nextAction}`
       );
   }
-  if (memory.opportunity) lines.push(`Revenue opportunity: ${memory.opportunity.title}. Stage ${memory.opportunity.stage}, ${memory.opportunity.probability}%, ${memory.opportunity.value == null ? "value not set" : `£${memory.opportunity.value}`}. Next: ${memory.opportunity.nextAction || "not confirmed"}${memory.opportunity.nextActionDueAt ? `, due ${memory.opportunity.nextActionDueAt.slice(0, 10)}` : ""}, owner ${memory.opportunity.nextActionOwner}.`);
+  if (memory.opportunity) {
+    lines.push(`Revenue opportunity: ${memory.opportunity.title}. Stage ${memory.opportunity.stage}. Win outlook ${memory.opportunity.winOutlook}${memory.opportunity.winOutlookConfidence == null ? "" : ` at ${memory.opportunity.winOutlookConfidence}% confidence`}${memory.opportunity.winOutlookOverride ? " (human override)" : ""}. ${memory.opportunity.value == null ? "Value not set" : `Value £${memory.opportunity.value}`}. Next: ${memory.opportunity.nextAction || "not confirmed"}${memory.opportunity.nextActionDueAt ? `, due ${memory.opportunity.nextActionDueAt.slice(0, 10)}` : ""}, owner ${memory.opportunity.nextActionOwner}.`);
+    if (memory.opportunity.intent) lines.push(`Deal intent: ${memory.opportunity.intent}`);
+    if (memory.opportunity.winOutlookReasons.length)
+      lines.push(`Outlook evidence: ${memory.opportunity.winOutlookReasons.join(" | ")}`);
+    if (memory.opportunity.winOutlookQuestions.length)
+      lines.push(`Questions for the next call: ${memory.opportunity.winOutlookQuestions.join(" | ")}`);
+  }
   if (memory.openActions.length) lines.push(`Open CRM actions: ${memory.openActions.map((row) => `${row.text}${row.dueAt ? ` (due ${row.dueAt.slice(0, 10)})` : ""}`).join(" | ")}`);
   if (memory.addedContext.length) lines.push(`Latest added context: ${memory.addedContext.map((row) => `${row.title}: ${row.content}`).join(" | ")}`);
   return lines.join("\n").slice(0, 5200);
