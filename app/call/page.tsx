@@ -317,6 +317,7 @@ export default function CallPage() {
   const [ended, setEnded] = useState(false);
   const [source, setSource] = useState<"inapp" | "meet">("inapp");
   const [meetingUrl, setMeetingUrl] = useState("");
+  const [botStartRequest, setBotStartRequest] = useState(0);
   const [upcomingId, setUpcomingId] = useState<string | null>(null);
   const [expandSetup, setExpandSetup] = useState(false);
   // When true, the full authoring setup is shown even at the brief stage (the
@@ -2188,6 +2189,9 @@ export default function CallPage() {
   // persists the session (for scoring) and switches to the cue view.
   const goLive = useCallback(() => {
     if (callLiveRef.current) return;
+    if (source === "meet" && meetingUrl.trim()) {
+      setBotStartRequest((request) => request + 1);
+    }
     persistSession();
     setExpandSetup(false);
     setCallLive(true);
@@ -2216,7 +2220,7 @@ export default function CallPage() {
         ).catch(() => {});
       }
     }
-  }, [persistSession, linkSession]);
+  }, [persistSession, linkSession, source, meetingUrl]);
 
   // Keep the ref pointed at the latest goLive so the transcript funnel can call
   // it without taking goLive as a dependency (which would re-create the funnel).
@@ -3038,7 +3042,7 @@ export default function CallPage() {
   };
 
   return (
-    <main className="relative z-10 mx-auto max-w-[1200px] px-5 py-10">
+    <main className="relative z-10 mx-auto max-w-[1200px] px-4 pb-36 pt-8 sm:px-5 sm:pt-10">
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
         <h1 className="font-display text-[1.55rem] leading-none tracking-tight text-bone">
           <span className="italic text-amber">Live</span>Coach
@@ -3412,35 +3416,31 @@ export default function CallPage() {
                 the focus or battle plan until you choose the next step.
               </p>
 
-              {/* The next action belongs directly after the intent. Keeping it
-                  here avoids making the user scan past research, source and bot
-                  controls to continue the two-step prep flow. */}
+              {/* Build focus first. Once it exists, the focus is reviewed before
+                  the next action appears directly underneath it. */}
               {planStage !== "full" && (
                 <div className="mt-3 border-t border-edge/70 pt-3">
-                  <button
-                    onClick={async () => {
-                      if (linkedCompanyRef.current?.id)
-                        await saveClientEmailCtx();
-                      prep(planStage === "none" ? "focus" : "full");
-                    }}
-                    disabled={
-                      prepping || (!brief.trim() && !(cvReady && role.trim()))
-                    }
-                    className="w-full rounded-lg border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {prepping
-                      ? planStage === "none"
-                        ? "Building focus..."
-                        : "Building the plan..."
-                      : planStage === "none"
-                      ? "Build focus"
-                      : "Build the plan from this focus"}
-                  </button>
-                  <p className="mt-1.5 font-mono text-[0.58rem] leading-relaxed text-muted">
-                    {planStage === "none"
-                      ? "Uses the intent, latest call actions, client memory and documents. Nothing else is built yet."
-                      : "Rank, edit or remove the focus below first. The full plan will follow exactly what you keep."}
-                  </p>
+                  {planStage === "none" && (
+                    <>
+                      <button
+                        onClick={async () => {
+                          if (linkedCompanyRef.current?.id)
+                            await saveClientEmailCtx();
+                          prep("focus");
+                        }}
+                        disabled={
+                          prepping || (!brief.trim() && !(cvReady && role.trim()))
+                        }
+                        className="w-full rounded-lg border border-amber/60 bg-amber/15 px-5 py-3 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {prepping ? "Building focus..." : "Build focus"}
+                      </button>
+                      <p className="mt-1.5 font-mono text-[0.58rem] leading-relaxed text-muted">
+                        Uses the intent, latest call actions, client memory and
+                        documents. Nothing else is built yet.
+                      </p>
+                    </>
+                  )}
 
                   {suggestedComps.length > 0 && (
                     <div className="mt-3 rounded-xl border border-amber/40 bg-amber/[0.06] p-3">
@@ -3469,6 +3469,27 @@ export default function CallPage() {
                         onDelete={deleteComp}
                         onAdd={addComp}
                       />
+                    </div>
+                  )}
+
+                  {planStage === "focus" && (
+                    <div className="mt-3 rounded-xl border border-sage/45 bg-sage/[0.07] p-3">
+                      <button
+                        onClick={async () => {
+                          if (linkedCompanyRef.current?.id)
+                            await saveClientEmailCtx();
+                          prep("full");
+                        }}
+                        disabled={
+                          prepping || (!brief.trim() && !(cvReady && role.trim()))
+                        }
+                        className="w-full rounded-lg border border-sage/60 bg-sage/15 px-5 py-3 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {prepping ? "Building the plan..." : "Build plan from this focus"}
+                      </button>
+                      <p className="mt-1.5 text-center font-mono text-[0.58rem] leading-relaxed text-muted">
+                        Uses only the priorities you kept above.
+                      </p>
                     </div>
                   )}
                 </div>
@@ -4162,16 +4183,15 @@ export default function CallPage() {
           </div>
         </div>
 
-        {/* Once the plan exists, this bar becomes the refresh / live controls.
-            The earlier Build focus / Build plan actions now sit under Intent. */}
+        {/* Plan maintenance stays here. Starting, wrapping and ending the call
+            live in the fixed control dock so the next action never disappears. */}
         {planStage === "full" && (
         <div className="flex flex-col items-start gap-3 border-t border-edge bg-ink/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="font-mono text-[0.63rem] leading-relaxed text-muted">
-            Edit the focus anytime, then Refresh from focus rebuilds the read,
-            questions, playbook and goals around it. The call goes live on its
-            own when speech is picked up, or hit Go live first.
+            Edit the focus anytime, then refresh the questions, playbook and
+            goals around it. Start call is always available at the bottom.
           </p>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex shrink-0 flex-wrap gap-2">
             <button
               onClick={async () => {
                 // Persist the latest email context first so the planner reads it.
@@ -4183,24 +4203,6 @@ export default function CallPage() {
             >
               {prepping ? "working..." : "Refresh from focus"}
             </button>
-            {planStage === "full" && (
-              <button
-                onClick={goLive}
-                className="rounded-full border border-sage/60 bg-sage/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
-              >
-                Go live {"\u25B8"}
-              </button>
-            )}
-            {planStage === "full" && (
-              <button
-                type="button"
-                onClick={() => setManualRecap(true)}
-                title="Bot couldn't join? Record your own recap and I'll summarise it."
-                className="rounded-full border border-sky/60 bg-sky/20 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-sky transition hover:bg-sky/30"
-              >
-                {"\u2726"} No transcriber? Recap by voice
-              </button>
-            )}
           </div>
         </div>
         )}
@@ -4488,6 +4490,7 @@ export default function CallPage() {
               onCandidateTurnEnd={handleCandidateTurnEnd}
               meetingUrl={meetingUrl}
               onMeetingUrlChange={setMeetingUrl}
+              startRequest={botStartRequest}
             />
           ) : (
             <CallStage
@@ -4498,26 +4501,6 @@ export default function CallPage() {
               onCandidateTurnEnd={handleCandidateTurnEnd}
             />
           ))}
-      </div>
-
-      <div className="mb-6 flex flex-wrap justify-center gap-3">
-        {callLive && (
-          <button
-            onClick={summarizeNow}
-            disabled={wrapping}
-            title="Quick wrap-up to read out before you end - who's doing what, promises, and questions still open."
-            className="rounded-full border border-sky/50 bg-sky/10 px-6 py-3 font-mono text-sm uppercase tracking-wider text-sky transition hover:bg-sky/20 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {wrapping ? "summarising…" : "✦ Summarise so far"}
-          </button>
-        )}
-        <button
-          onClick={endAndSummarise}
-          disabled={summarising}
-          className="rounded-full border border-amber/50 bg-amber/10 px-7 py-3 font-mono text-sm uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {summarising ? "summarising..." : "End call & summarise"}
-        </button>
       </div>
 
       {/* Quick mid-call wrap-up card: confirm next steps out loud, then end. */}
@@ -4680,15 +4663,6 @@ export default function CallPage() {
                 }`}
               >
                 Transcript
-              </button>
-              <button
-                type="button"
-                onClick={endAndSummarise}
-                disabled={summarising}
-                title="End the call and build the scorecard"
-                className="ml-auto px-4 py-3 font-mono text-[0.62rem] uppercase tracking-[0.15em] text-rust transition hover:text-bone disabled:opacity-40"
-              >
-                {summarising ? "ending\u2026" : "End session"}
               </button>
             </div>
 
@@ -5076,6 +5050,93 @@ export default function CallPage() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* One persistent next action for the whole call. It replaces the old
+          scattered start and end buttons, and stays reachable on mobile. */}
+      {!summary && !ended && !cueFull && (planStage === "full" || callLive) && (
+        <div className="fixed inset-x-3 bottom-3 z-40 mx-auto max-w-[760px] rounded-2xl border border-edge bg-panel/95 p-3 shadow-2xl backdrop-blur-xl sm:bottom-5 sm:p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className={`font-mono text-[0.62rem] uppercase tracking-[0.18em] ${callLive ? "text-sage" : "text-amber"}`}>
+                <span className={`mr-2 inline-block h-2 w-2 rounded-full ${callLive ? "animate-pulse bg-sage" : "bg-amber"}`} />
+                {callLive ? "Call live" : "Plan ready"}
+              </p>
+              <p className="mt-1 truncate font-sans text-sm text-bone/85">
+                {callLive
+                  ? "Questions and coaching are active. Wrap up or end whenever you are ready."
+                  : source === "meet"
+                  ? "Start once to open LiveCoach and send the notetaker."
+                  : "Start once to open the live coaching view."}
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              {callLive ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={summarizeNow}
+                    disabled={wrapping}
+                    title="Check actions, promises and open questions before ending"
+                    className="min-h-11 flex-1 rounded-xl border border-sky/50 bg-sky/10 px-4 py-2.5 font-mono text-[0.64rem] uppercase tracking-wider text-sky transition hover:bg-sky/20 disabled:opacity-40 sm:flex-none"
+                  >
+                    {wrapping ? "Wrapping..." : "Quick wrap"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={endAndSummarise}
+                    disabled={summarising}
+                    className="min-h-11 flex-[1.4] rounded-xl border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.64rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40 sm:flex-none"
+                  >
+                    End &amp; summarise
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setManualRecap(true)}
+                    title="Run the call without a transcriber and record a recap afterwards"
+                    className="min-h-11 rounded-xl border border-edge px-3 py-2.5 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:border-sky/60 hover:text-sky"
+                  >
+                    Recap only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={goLive}
+                    className="min-h-11 flex-1 rounded-xl border border-sage/60 bg-sage/20 px-6 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-sage transition hover:bg-sage/30 sm:flex-none"
+                  >
+                    {source === "meet" ? "Start call + bot" : "Start call"} {"\u25B8"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* The live stage unmounts immediately to stop listening and billing.
+          This stable overlay covers that layout change while the summary is
+          created, so the viewport no longer jumps back up the page. */}
+      {summarising && !summary && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-ink/90 p-5 backdrop-blur-md"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="w-full max-w-[480px] rounded-2xl border border-amber/40 bg-panel p-6 text-center shadow-2xl sm:p-8">
+            <span className="mx-auto mb-4 block h-10 w-10 animate-spin rounded-full border-2 border-edge border-t-amber" />
+            <p className="font-display text-xl text-bone">Call ended safely</p>
+            <p className="mt-2 font-sans text-sm leading-relaxed text-muted">
+              The transcriber has stopped. LiveCoach is building the summary,
+              actions and coaching now.
+            </p>
+            <div className="mt-5 flex items-center justify-center gap-2 font-mono text-[0.6rem] uppercase tracking-wider text-amber">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber" />
+              Building your call record
+            </div>
           </div>
         </div>
       )}
