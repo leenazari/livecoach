@@ -44,7 +44,7 @@ export async function gatherClientContext(
         .limit(6),
       supabaseAdmin
         .from("opportunities")
-        .select("title, detail, value, status, opportunity_type, workstream_id")
+        .select("title, detail, deal_intent, value, status, opportunity_type, pipeline_stage, win_outlook, win_outlook_confidence, win_outlook_reasons, win_outlook_questions, win_outlook_override, engagement_motion, active_contact_method, next_action, next_action_due_at, workstream_id")
         .eq("company_id", companyId)
         .order("created_at", { ascending: false })
         .limit(20),
@@ -247,7 +247,7 @@ export async function gatherClientContext(
         ? opps
             .map(
               (o: any) =>
-                `[${o.workstream_id ? workstreamName.get(o.workstream_id) || "workstream" : "company-wide"}] [${o.opportunity_type || "revenue"}] ${o.title}${o.value ? ` (~£${o.value})` : ""}${o.detail ? ` - ${o.detail}` : ""}`
+                `[${o.workstream_id ? workstreamName.get(o.workstream_id) || "workstream" : "company-wide"}] [${o.opportunity_type || "revenue"}] ${o.title}. Lifecycle ${o.pipeline_stage || o.status || "not set"}. Win outlook ${o.win_outlook || "not assessed"}${o.win_outlook_confidence == null ? "" : ` at ${o.win_outlook_confidence}% confidence`}${o.win_outlook_override ? " (human override)" : ""}.${o.value ? ` Value ~£${o.value}.` : " Value not set."}${o.deal_intent ? ` Intent: ${cut(o.deal_intent, 320)}.` : ""}${Array.isArray(o.win_outlook_reasons) && o.win_outlook_reasons.length ? ` Evidence: ${o.win_outlook_reasons.slice(0, 3).join(" | ")}.` : ""}${Array.isArray(o.win_outlook_questions) && o.win_outlook_questions.length ? ` Ask next: ${o.win_outlook_questions.slice(0, 3).join(" | ")}.` : ""}${o.next_action ? ` Next: ${cut(o.next_action, 220)}${o.next_action_due_at ? ` due ${String(o.next_action_due_at).slice(0, 10)}` : ""}.` : ""}${o.engagement_motion ? ` Motion ${String(o.engagement_motion).replace(/_/g, " ")}.` : ""}${o.active_contact_method ? ` Contact via ${String(o.active_contact_method).replace(/_/g, " ")}.` : ""}${o.detail ? ` Context: ${cut(o.detail, 320)}` : ""}`
             )
             .join("; ")
         : "none recorded - no deal value or budget on file"

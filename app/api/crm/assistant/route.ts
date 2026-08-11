@@ -169,6 +169,9 @@ function opportunityPatch(item: any): Record<string, any> {
   const statuses = ["open", "won", "lost", "dismissed"];
   const owners = ["us", "buyer", "joint"];
   const types = ["revenue", "investment", "internal", "strategic"];
+  const outlooks = ["not_assessed", "at_risk", "possible", "likely", "highly_likely", "won"];
+  const motions = ["cold_outreach_campaign", "personal_relationship_led", "existing_customer_expansion", "inbound_enquiry", "partner_referral"];
+  const contactMethods = ["automated_email", "personal_email", "phone", "video_call", "linkedin", "event", "in_person", "other"];
   if (stages.includes(item.pipelineStage)) patch.pipelineStage = item.pipelineStage;
   if (forecasts.includes(item.forecastCategory)) patch.forecastCategory = item.forecastCategory;
   if (statuses.includes(item.status)) patch.status = item.status;
@@ -188,6 +191,28 @@ function opportunityPatch(item: any): Record<string, any> {
     patch.title = item.title.trim().slice(0, 240);
   if (typeof item.outcomeReason === "string")
     patch.outcomeReason = item.outcomeReason.trim().slice(0, 1000);
+  if (typeof item.dealIntent === "string")
+    patch.dealIntent = item.dealIntent.trim().slice(0, 1500);
+  if (outlooks.includes(item.winOutlook)) patch.winOutlook = item.winOutlook;
+  if (
+    typeof item.winOutlookConfidence === "number" &&
+    item.winOutlookConfidence >= 0 && item.winOutlookConfidence <= 100
+  ) patch.winOutlookConfidence = Math.round(item.winOutlookConfidence);
+  if (Array.isArray(item.winOutlookReasons))
+    patch.winOutlookReasons = item.winOutlookReasons
+      .filter((value: any) => typeof value === "string" && value.trim())
+      .slice(0, 8);
+  if (Array.isArray(item.winOutlookQuestions))
+    patch.winOutlookQuestions = item.winOutlookQuestions
+      .filter((value: any) => typeof value === "string" && value.trim())
+      .slice(0, 6);
+  if (motions.includes(item.engagementMotion)) patch.engagementMotion = item.engagementMotion;
+  if (contactMethods.includes(item.activeContactMethod)) patch.activeContactMethod = item.activeContactMethod;
+  patch.sourceType = "human";
+  patch.sourceChannel = "brain";
+  patch.rationale = typeof item.rationale === "string" && item.rationale.trim()
+    ? item.rationale.trim().slice(0, 1000)
+    : "Confirmed Brain action";
   return patch;
 }
 
@@ -204,6 +229,10 @@ function opportunityChangeLabel(patch: Record<string, any>): string {
   if (patch.status) bits.push(`status ${patch.status}`);
   if (patch.opportunityType) bits.push(`type ${patch.opportunityType}`);
   if (patch.outcomeReason) bits.push(`outcome reason "${patch.outcomeReason}"`);
+  if (patch.dealIntent) bits.push(`intent "${patch.dealIntent}"`);
+  if (patch.winOutlook) bits.push(`win outlook ${patch.winOutlook.replace(/_/g, " ")}`);
+  if (patch.engagementMotion) bits.push(`engagement ${patch.engagementMotion.replace(/_/g, " ")}`);
+  if (patch.activeContactMethod) bits.push(`contact via ${patch.activeContactMethod.replace(/_/g, " ")}`);
   return bits.slice(0, 4).join(", ");
 }
 // Build the ready-to-fire request for a call-targeting action against ONE call.
@@ -1107,8 +1136,8 @@ Additional supported actions are:
 {"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":20}
 {"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":20,"status":"draft|active|paused|completed"}
 {"type":"build_outreach_queue","limit":20}
-{"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>"}
-For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
+{"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","dealIntent":"<the commercial outcome this deal is pursuing>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","winOutlook":"not_assessed|at_risk|possible|likely|highly_likely|won","winOutlookConfidence":0,"winOutlookReasons":["<stored evidence only>"],"winOutlookQuestions":["<targeted next-call question>"],"engagementMotion":"cold_outreach_campaign|personal_relationship_led|existing_customer_expansion|inbound_enquiry|partner_referral","activeContactMethod":"automated_email|personal_email|phone|video_call|linkedin|event|in_person|other","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>","rationale":"<why this change is supported>"}
+For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Lifecycle stage and win outlook are separate. Never raise win outlook without concise stored evidence. If evidence is missing, keep it not_assessed and add targeted winOutlookQuestions for the next call. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
 Use update_client for the relationship-level client stage and core facts. Use update_opportunity for a real revenue deal stage. When "move this client to qualified" clearly refers to a deal, update the opportunity. When it refers to the overall relationship or there is no deal, update the client stage. Never update both unless the user explicitly asks.
 Use update_contact to correct or clear an existing person's core details. Use upsert_stakeholder when the change is specifically about their buying role or when the named contact may need to be created.
 Use upsert_stakeholder when the user identifies a decision-maker, champion, influencer, user or blocker. It updates an existing contact or clearly proposes creating the named contact when none exists. Do not guess buying roles from a job title alone.

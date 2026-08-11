@@ -13,13 +13,13 @@ const CORE_ITEMS: Item[] = [
   { href: "/crm", label: "Today", icon: "▣" },
   { href: "/crm/inbox", label: "Work inbox", icon: "✓" },
   { href: "/crm/outreach", label: "Outreach", icon: "↗" },
+  { href: "/crm/revenue", label: "Pipeline", icon: "◆" },
   { href: "/crm/costs", label: "Costs", icon: "£" },
   { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
   { href: "/crm/calls", label: "Calls", icon: "☎" },
   { href: "/crm/pitch-playbook", label: "Pitch playbook", icon: "◇" },
 ];
 const MORE_ITEMS: Item[] = [
-  { href: "/crm/revenue", label: "Revenue", icon: "◆" },
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
   { href: "/crm/health", label: "Health", icon: "✓" },
   { href: "/settings", label: "Settings", icon: "⚙" },

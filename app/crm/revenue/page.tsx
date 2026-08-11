@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
-import { capitaliseSentenceStarts } from "@/lib/text";
 import MatrixRain from "@/components/MatrixRain";
+import PipelineWorkspace from "@/components/crm/PipelineWorkspace";
 
 type Pipeline = Record<string, any>;
 type Opportunity = Record<string, any> & {
@@ -24,6 +24,13 @@ type Opportunity = Record<string, any> & {
   weightedValue: number;
   risks: { code: string; label: string; severity: "high" | "medium" }[];
   nextAction: string;
+  deal_intent: string | null;
+  win_outlook: "not_assessed" | "at_risk" | "possible" | "likely" | "highly_likely" | "won";
+  win_outlook_confidence: number | null;
+  win_outlook_reasons: string[];
+  win_outlook_questions: string[];
+  engagement_motion: string | null;
+  active_contact_method: string | null;
 };
 
 const input = "min-h-11 w-full rounded-lg border border-edge bg-ink/60 px-3 py-2.5 text-sm text-bone outline-none focus:border-amber/60";
@@ -44,7 +51,6 @@ export default function RevenuePage() {
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [showAll, setShowAll] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -90,6 +96,16 @@ export default function RevenuePage() {
           nextAction: row.next_action || null,
           nextActionDueAt: row.next_action_due_at ? row.next_action_due_at.slice(0, 10) : null,
           nextActionOwner: row.next_action_owner || "us",
+          dealIntent: row.deal_intent || null,
+          winOutlook: row.win_outlook || "not_assessed",
+          winOutlookConfidence: row.win_outlook_confidence,
+          winOutlookReasons: row.win_outlook_reasons || [],
+          winOutlookQuestions: row.win_outlook_questions || [],
+          engagementMotion: row.engagement_motion || null,
+          activeContactMethod: row.active_contact_method || null,
+          sourceType: "human",
+          sourceChannel: "pipeline_dashboard",
+          rationale: "Confirmed from the pipeline dashboard",
         }),
       });
       if (!saved?.id) throw new Error("Forecast was not confirmed");
@@ -124,10 +140,8 @@ export default function RevenuePage() {
   };
 
   const wonProgress = data?.goal?.target ? Math.min(100, (data.goal.wonYtd / data.goal.target) * 100) : 0;
-  const maxStage = useMemo(() => Math.max(1, ...(data?.stages || []).map((stage: any) => stage.value || 0)), [data]);
   const revenueRows = rows.filter((row) => row.opportunity_type === "revenue");
   const excludedRows = rows.filter((row) => row.opportunity_type !== "revenue");
-  const visibleRows = showAll ? revenueRows : revenueRows.slice(0, 8);
 
   return (
     <main className="relative z-10 mx-auto max-w-[1220px] px-3 py-5 sm:px-5 sm:py-9">
@@ -184,51 +198,13 @@ export default function RevenuePage() {
           ].map(([label, value, note]) => <div key={String(label)} className="rounded-xl border border-edge bg-panel p-3"><p className="font-mono text-[0.53rem] uppercase tracking-wider text-muted">{label}</p><strong className="mt-1 block font-display text-xl text-bone">{typeof value === "number" ? gbp(value) : value}</strong><span className="text-[0.69rem] text-muted">{note}</span></div>)}
         </section>
 
-        <div className="mb-4 grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
-          <section className="rounded-xl border border-edge bg-panel p-4">
-            <h2 className="font-display text-lg text-bone">Pipeline by stage</h2>
-            <p className="mt-1 text-sm text-muted">Value and probability become more certain as the buyer progresses.</p>
-            <div className="mt-4 space-y-3">{data.stages.map((stage: any) => <div key={stage.key}>
-              <div className="mb-1 flex items-end justify-between gap-3"><div><span className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</span><span className="ml-2 text-xs text-muted">{stage.count} deal{stage.count === 1 ? "" : "s"}</span></div><span className="text-sm text-bone">{gbp(stage.value)} <small className="text-muted">· {gbp(stage.weighted)} weighted</small></span></div>
-              <div className="h-2 overflow-hidden rounded-full bg-ink"><div className="h-full rounded-full bg-amber/70" style={{ width: `${Math.max(stage.value ? 4 : 0, (stage.value / maxStage) * 100)}%` }} /></div>
-            </div>)}</div>
-          </section>
-
-          <section className="rounded-xl border border-edge bg-panel p-4">
-            <h2 className="font-display text-lg text-bone">Outreach to revenue</h2>
-            <p className="mt-1 text-sm text-muted">Only meaningful responses move into the CRM.</p>
-            <div className="mt-4 space-y-2">{data.funnel.map((step: any, index: number) => { const previous = index ? data.funnel[index - 1].value : 0; const conversion = previous ? Math.round((step.value / previous) * 1000) / 10 : null; return <div key={step.key} className="flex items-center justify-between rounded-lg border border-edge bg-ink/30 px-3 py-2"><div><span className="font-mono text-[0.58rem] uppercase text-muted">{step.label}</span>{conversion != null ? <span className="ml-2 text-[0.68rem] text-amber">{conversion}%</span> : null}</div><strong className="font-display text-xl text-bone">{step.value}</strong></div>; })}</div>
-          </section>
-        </div>
-
-        <section className="mb-4 rounded-xl border border-edge bg-panel p-4">
-          <div className="mb-3"><h2 className="font-display text-lg text-bone">Highest-priority revenue moves</h2><p className="mt-1 text-sm text-muted">Risk, deal value and probability determine the order.</p></div>
-          <div className="space-y-2">{data.priorities.map((row: Opportunity, index: number) => <Link href={`/crm/${row.company_id}`} key={row.id} className="group block rounded-lg border border-edge bg-ink/30 p-3 transition hover:border-amber/50">
-            <div className="flex items-start gap-3"><span className="font-display text-xl text-amber">{index + 1}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-bone transition group-hover:text-amber">{row.company}</strong><span className="font-mono text-[0.57rem] uppercase text-muted">{gbp(row.value)} · {row.probability}%</span></div><p className="mt-1 text-sm text-amber">{capitaliseSentenceStarts(row.nextAction)}</p><div className="mt-2 flex flex-wrap gap-1.5">{row.risks.slice(0, 3).map((risk) => <span key={risk.code} className={`rounded-full border px-2 py-0.5 font-mono text-[0.5rem] uppercase ${risk.severity === "high" ? "border-rust/50 bg-rust/10 text-rust" : "border-amber/40 text-amber"}`}>{risk.label}</span>)}</div></div></div>
-          </Link>)}</div>
-        </section>
-
-        <section className="rounded-xl border border-edge bg-panel p-4">
-          <div className="mb-3"><h2 className="font-display text-lg text-bone">Forecast every customer deal</h2><p className="mt-1 text-sm text-muted">Save value, stage, probability, category and close date so the forecast stays honest.</p></div>
-          <div className="space-y-3">{visibleRows.map((row) => <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-ink/30 p-3">
-            <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-display text-lg text-bone">{row.company}</h3><p className="text-sm text-muted">{row.title}</p></div><div className="text-right"><strong className="block text-bone">{gbp(row.weightedValue)}</strong><span className="font-mono text-[0.52rem] uppercase text-muted">weighted</span></div></div>
-            <div className="grid grid-cols-2 gap-2 lg:grid-cols-6">
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Counts as</span><select className={input} value={row.opportunity_type} onChange={(e) => changeType(row, e.target.value as Opportunity["opportunity_type"])}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Value</span><input type="number" min="0" className={input} value={Number.isNaN(row.value) ? "" : row.value} onChange={(e) => updateRow(row.id, { value: e.target.value === "" ? Number.NaN : Number(e.target.value) })} /></label>
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Stage</span><select className={input} value={row.pipeline_stage} onChange={(e) => updateRow(row.id, { pipeline_stage: e.target.value })}>{data.stageDefinitions.map((stage: any) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}</select></label>
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Probability</span><div className="relative"><input type="number" min="0" max="100" className={input} value={Number.isNaN(row.probability) ? "" : row.probability} onChange={(e) => updateRow(row.id, { probability: e.target.value === "" ? Number.NaN : Math.min(100, Math.max(0, Number(e.target.value))) })} /><span className="pointer-events-none absolute right-3 top-3 text-sm text-muted">%</span></div></label>
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Forecast</span><select className={input} value={row.forecast_category} onChange={(e) => updateRow(row.id, { forecast_category: e.target.value })}><option value="pipeline">Pipeline</option><option value="best_case">Best case</option><option value="commit">Commit</option><option value="omitted">Omitted</option></select></label>
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Expected close</span><input type="date" className={input} value={row.expected_close_at || ""} onChange={(e) => updateRow(row.id, { expected_close_at: e.target.value || null })} /></label>
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_9rem]">
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-amber">Primary next action</span><input className={input} value={row.next_action ?? row.nextAction ?? ""} onChange={(e) => updateRow(row.id, { next_action: e.target.value })} placeholder="The one move that progresses this deal" /></label>
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Due</span><input type="date" className={input} value={row.next_action_due_at?.slice(0, 10) || ""} onChange={(e) => updateRow(row.id, { next_action_due_at: e.target.value || null })} /></label>
-              <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Owner</span><select className={input} value={row.next_action_owner || "us"} onChange={(e) => updateRow(row.id, { next_action_owner: e.target.value as Opportunity["next_action_owner"] })}><option value="us">Us</option><option value="buyer">Buyer</option><option value="joint">Joint</option></select></label>
-            </div>
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap gap-1.5">{row.risks.map((risk) => <span key={risk.code} className={`rounded-full border px-2 py-0.5 font-mono text-[0.49rem] uppercase ${risk.severity === "high" ? "border-rust/50 text-rust" : "border-edge text-muted"}`}>{risk.label}</span>)}</div><button onClick={() => saveOpportunity(row)} disabled={!!busy} className={`${button} shrink-0`}>{busy === `opp:${row.id}` ? "Saving…" : "Save deal"}</button></div>
-          </article>)}</div>
-          {revenueRows.length > 8 ? <button onClick={() => setShowAll((value) => !value)} className="mt-3 min-h-11 w-full rounded-lg border border-edge font-mono text-[0.58rem] uppercase text-muted">{showAll ? "Show less" : `Show all ${revenueRows.length} customer deals`}</button> : null}
-        </section>
+        <PipelineWorkspace
+          rows={revenueRows as any}
+          stageDefinitions={data.stageDefinitions}
+          busy={busy}
+          onChange={updateRow as any}
+          onSave={saveOpportunity as any}
+        />
 
         {excludedRows.length ? <section className="mt-4 rounded-xl border border-edge bg-panel p-4">
           <div className="mb-3"><h2 className="font-display text-lg text-bone">Kept outside the revenue forecast</h2><p className="mt-1 text-sm leading-6 text-muted">These records are still available as useful CRM context. Change the classification if any should become a real customer deal.</p></div>
