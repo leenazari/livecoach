@@ -8,6 +8,10 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
 import {
+  cleanResearchBackground,
+  RESEARCH_FORMAT_VERSION,
+} from "@/lib/research-format";
+import {
   COMPANY_TTL_DAYS,
   PERSON_TTL_DAYS,
   EntityResearch,
@@ -110,7 +114,11 @@ export async function POST(req: NextRequest) {
       // Cache first. A fresh brief is returned without spending anything.
       if (record && !force) {
         const cached = companyState(record);
-        if (cached.have && cached.fresh) {
+        if (
+          cached.have &&
+          cached.fresh &&
+          cached.formatVersion >= RESEARCH_FORMAT_VERSION
+        ) {
           if (upcomingId) {
             await mirrorOntoUpcoming(
               upcomingId,
@@ -139,15 +147,15 @@ GROUND EVERY CLAIM in what the searches support. Never invent headcount, funding
 
 If the searches clearly land on a DIFFERENT organisation with a similar name, say so at the top and stop rather than briefing the wrong company.
 
-Write British-English markdown, short and skimmable, with these sections:
-- What they do: the real business, not their tagline.
-- Size and shape: stage, scale, footprint, ownership, whatever is actually public.
-- What is going on right now: recent moves, launches, funding, pressures, hires.
-- How they buy: who tends to decide in an organisation like this, and what they need to see.
-- Where the user's business fits, and where it does not: be honest about the misfit.
-- What to watch: risks, regulation, or anything that could sink the deal.
+Return 4 to 7 numbered bullets in priority order, with the strongest conversation help first:
+1. The most important current signal for this call.
+2. What they actually do and the relevant part of their business.
+3. The strongest credible fit or opening for the user's goal.
+4. Who may decide and what proof they are likely to need, only when supported.
+5. A risk, mismatch or unknown that Lee should not miss.
+6. The best question or next move for this conversation.
 
-Be specific and practical. No flattery, no padding. House style: never use em dashes or semicolons. Do not write a sources list, the system adds it.`;
+Use fewer bullets when evidence is thin. Maximum 130 words total. Each bullet must be specific and practical. No sections, preamble, flattery, padding, source names, citations or URLs. House style: never use em dashes or semicolons.`;
 
       const userPrompt = `ORGANISATION: ${name || "(name unknown)"}
 ${website ? `Their site: ${website}` : "No site given, find them by name."}
@@ -160,7 +168,7 @@ Research this organisation now and write the briefing.`;
 
       const msg: any = await openai.messages.create({
         model: OPENAI_MODEL_THINK,
-        max_tokens: 2200,
+        max_tokens: 700,
         system,
         tools: [
           { type: "web_search_20250305", name: "web_search", max_uses: 5 },
@@ -170,7 +178,7 @@ Research this organisation now and write the briefing.`;
       await logModelUsage("research-company", "think", msg?.usage);
 
       const blocks: any[] = Array.isArray(msg?.content) ? msg.content : [];
-      const background = houseStyle(textOf(blocks));
+      const background = cleanResearchBackground(houseStyle(textOf(blocks)));
       const sources = collectSources(blocks);
 
       if (!background) {
@@ -185,6 +193,7 @@ Research this organisation now and write the briefing.`;
         background,
         sources,
         generatedAt: new Date().toISOString(),
+        formatVersion: RESEARCH_FORMAT_VERSION,
       };
 
       if (companyId) await saveCompanyResearch(companyId, research);
@@ -246,7 +255,11 @@ Research this organisation now and write the briefing.`;
     if (body.stage !== "brief") {
       if (contact && !force) {
         const cached = personState(contact);
-        if (cached.have && cached.fresh) {
+        if (
+          cached.have &&
+          cached.fresh &&
+          cached.formatVersion >= RESEARCH_FORMAT_VERSION
+        ) {
           if (upcomingId) {
             await mirrorOntoUpcoming(
               upcomingId,
@@ -354,17 +367,16 @@ ONLY use professional, public information, roles, career, public work, stated vi
 
 GROUND EVERY FACTUAL CLAIM in what the searches actually support. Do not invent roles, employers, dates or achievements. If you are unsure of something, hedge or leave it out.
 
-Write the brief tailored to the user's GOAL FOR THIS CALL. British-English markdown, short skimmable sections:
-- Who they really are: the substance beyond a self-description.
-- What they care about and how they operate: values, style, what moves them.
-- The winning frame for this call: how to position the user's goal so it lands with this specific person.
-- Hooks into their world: concrete connections between what the user does and what this person cares about.
-- Smart questions to ask them: a few that make them an ally and surface where the value or the doors are.
-- The hard questions they will ask back: the toughest challenges this person will put to the user, and how to be ready.
-- The right ask: the appropriate next step given who they are, not an oversell.
-- Tone: one or two lines on how to pitch it.
+Return 5 to 8 numbered bullets in priority order, with the strongest conversation help first:
+1. Who this is, so Lee can sanity check the identity.
+2. The most relevant current priority or professional signal.
+3. The strongest credible hook into their world for this call goal.
+4. How Lee should position the conversation so it lands.
+5. The best question to ask.
+6. The hardest likely objection or challenge and how to be ready.
+7. The right next step to ask for.
 
-Be specific and practical. No flattery, no padding. Open with a one line "Who this is" identity statement so the user can sanity-check the match. House style: never use em dashes or semicolons. Do not write a sources list, the system adds it.`;
+Use fewer bullets when evidence is thin. Maximum 160 words total. No sections, preamble, flattery, padding, private information, source names, citations or URLs. House style: never use em dashes or semicolons.`;
 
     const userPrompt = `RESEARCH SUBJECT, already identity-verified:
 ${idBits}
@@ -376,7 +388,7 @@ Research this person now and write the call-prep brief.`;
 
     const msg: any = await openai.messages.create({
       model: OPENAI_MODEL_THINK,
-      max_tokens: 2600,
+      max_tokens: 850,
       system,
       tools: [
         { type: "web_search_20250305", name: "web_search", max_uses: 5 },
@@ -386,7 +398,7 @@ Research this person now and write the call-prep brief.`;
     await logModelUsage("research-person", "think", msg?.usage);
 
     const blocks: any[] = Array.isArray(msg?.content) ? msg.content : [];
-    const background = houseStyle(textOf(blocks));
+    const background = cleanResearchBackground(houseStyle(textOf(blocks)));
     const sources = collectSources(blocks);
 
     if (!background) {
@@ -402,6 +414,7 @@ Research this person now and write the call-prep brief.`;
       sources,
       identity,
       generatedAt: new Date().toISOString(),
+      formatVersion: RESEARCH_FORMAT_VERSION,
     };
 
     if (contact) await savePersonResearch(contact.id, research);

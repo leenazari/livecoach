@@ -8,6 +8,10 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
 import {
+  cleanResearchBackground,
+  RESEARCH_FORMAT_VERSION,
+} from "@/lib/research-format";
+import {
   EntityResearch,
   mirrorOntoUpcoming,
   personState,
@@ -151,7 +155,12 @@ export async function POST(req: NextRequest) {
       create: false,
     });
     const cached = cachedContact ? personState(cachedContact) : null;
-    const haveFresh = !force && !!cached && cached.have && cached.fresh;
+    const haveFresh =
+      !force &&
+      !!cached &&
+      cached.have &&
+      cached.fresh &&
+      cached.formatVersion >= RESEARCH_FORMAT_VERSION;
 
     if (haveFresh && cached) {
       // Identify mode gets the confirmed identity we already paid for, so the
@@ -247,17 +256,16 @@ ONLY use professional, public information (roles, career, public work, stated vi
 
 GROUND EVERY FACTUAL CLAIM in what the searches actually support. Do not invent roles, employers, dates or achievements. If you are unsure of something, hedge or leave it out.
 
-Write the brief tailored to the user's GOAL FOR THIS CALL (given below). Structure it as British-English markdown with short, skimmable sections:
-- Who they really are: the substance beyond a self-description, their real roles and what they are known for.
-- What they care about and how they operate: values, style, what moves them.
-- The winning frame for this call: how to position the user's goal so it lands with this specific person.
-- Hooks into their world: concrete, specific connections between what the user does and what this person cares about.
-- Smart questions to ask them: a few that make them an ally and surface where the value or the doors are.
-- The hard questions they will ask back: the toughest challenges this person is likely to put to the user, and how to be ready.
-- The right ask: the appropriate next step to propose given who they are, not an oversell.
-- Tone: one or two lines on how to pitch it.
+Return 5 to 8 numbered bullets in priority order, strongest conversation help first:
+1. Who this is, so Lee can sanity check the identity.
+2. The most relevant current priority or professional signal.
+3. The strongest credible hook into their world for this call goal.
+4. How Lee should position the conversation so it lands.
+5. The best question to ask.
+6. The hardest likely objection or challenge and how to be ready.
+7. The right next step to ask for.
 
-Be specific and practical. No flattery, no padding. Open with a one line "Who this is" identity statement so the user can sanity-check you found the right person. House style: never use em dashes or semicolons. Do not write a sources list, the system adds it.`;
+Use fewer bullets when evidence is thin. Maximum 160 words total. No sections, preamble, flattery, padding, private information, source names, citations or URLs. House style: never use em dashes or semicolons.`;
 
     const userPrompt = `RESEARCH SUBJECT:
 ${idBits}
@@ -269,7 +277,7 @@ Research this person now and write the call-prep brief.`;
 
     const msg: any = await openai.messages.create({
       model: OPENAI_MODEL_THINK,
-      max_tokens: 2600,
+      max_tokens: 850,
       system,
       // Server-side web search tool. Cast because the installed SDK types may
       // predate the web_search tool, but the API resolves it in one call.
@@ -281,13 +289,13 @@ Research this person now and write the call-prep brief.`;
     await logModelUsage("research-person", "think", msg?.usage);
 
     const blocks: any[] = Array.isArray(msg?.content) ? msg.content : [];
-    const text = houseStyle(
+    const text = cleanResearchBackground(houseStyle(
       blocks
         .filter((b) => b && b.type === "text" && typeof b.text === "string")
         .map((b) => b.text)
         .join("")
         .trim()
-    );
+    ));
 
     // Collect the sources the model actually searched, from the tool results.
     const sources: { title: string; url: string }[] = [];
@@ -322,14 +330,9 @@ Research this person now and write the call-prep brief.`;
       );
     }
 
-    // The "background" string is what the prep screen shows and the planner
-    // folds into the focus. Append the sources so they show with no extra UI.
-    const background =
-      text +
-      (topSources.length
-        ? "\n\nSources:\n" +
-          topSources.map((s) => `- ${s.title}: ${s.url}`).join("\n")
-        : "");
+    // Sources remain structured evidence for audit and refresh decisions. The
+    // visible brief stays concise and never displays web addresses.
+    const background = text;
 
     // Persist through the SHARED research cache, not straight onto the call.
     //
@@ -343,6 +346,7 @@ Research this person now and write the call-prep brief.`;
       background: text,
       sources: topSources,
       generatedAt: new Date().toISOString(),
+      formatVersion: RESEARCH_FORMAT_VERSION,
     };
 
     try {

@@ -13,6 +13,7 @@ import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
+import { cleanResearchBackground } from "@/lib/research-format";
 import {
   estimateCost,
   usageCostUSD,
@@ -1113,8 +1114,11 @@ export default function CallPage() {
             // Reload any saved people-research so the brief and its focus
             // influence survive without spending on the search again.
             if (call?.research?.background) {
-              setBackground(call.research.background);
-              backgroundRef.current = call.research.background;
+              const savedBackground = cleanResearchBackground(
+                call.research.background
+              );
+              setBackground(savedBackground);
+              backgroundRef.current = savedBackground;
             }
             // Fresh intro / first call with no saved prep: seed the screen from
             // the invite itself so it is never blank. The guest on the invite
@@ -3868,7 +3872,7 @@ export default function CallPage() {
                     <p className="mb-1 font-mono text-[0.58rem] uppercase tracking-[0.18em] text-sky">
                       Background
                     </p>
-                    <p className="font-sans text-sm leading-relaxed text-bone/85">
+                    <p className="whitespace-pre-line font-sans text-sm leading-relaxed text-bone/85">
                       {background}
                     </p>
                   </div>

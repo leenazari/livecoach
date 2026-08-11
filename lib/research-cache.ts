@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { cleanResearchBackground } from "@/lib/research-format";
 
 // RESEARCH CACHE.
 //
@@ -12,8 +13,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 //
 // Both are also mirrored onto the scheduled call as upcoming_calls.research,
 // with a single merged `background` string, because that is the exact shape the
-// live call screen already reloads and the planner already folds into the focus.
-// Mirroring keeps the call screen working with no change to it at all.
+// live call screen reloads and the planner folds into the focus. Sources stay in
+// structured fields for verification and never appear in the visible briefing.
 //
 // House style: no em dashes, no semicolons.
 
@@ -39,13 +40,14 @@ export type ResearchSource = { title: string; url: string };
 export type EntityResearch = {
   // Who or what this brief is about, as researched.
   subject: string;
-  // The brief itself. NEVER has a sources list baked into it - sources are held
-  // separately so the merged background can carry one combined list.
+  // The brief itself. NEVER has a sources list baked into it. Sources are held
+  // separately for evidence and refresh decisions.
   background: string;
   sources: ResearchSource[];
   // Only set for people: the confirmed identity from the identify pass.
   identity?: any;
   generatedAt: string;
+  formatVersion?: number;
 };
 
 export type EntityState = {
@@ -55,6 +57,7 @@ export type EntityState = {
   subject: string;
   background: string;
   sources: ResearchSource[];
+  formatVersion: number;
 };
 
 export const EMPTY_STATE: EntityState = {
@@ -64,6 +67,7 @@ export const EMPTY_STATE: EntityState = {
   subject: "",
   background: "",
   sources: [],
+  formatVersion: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -86,8 +90,9 @@ export function toState(
   ttlDays: number
 ): EntityState {
   if (!research || typeof research !== "object") return { ...EMPTY_STATE };
-  const background =
-    typeof research.background === "string" ? research.background : "";
+  const background = cleanResearchBackground(
+    typeof research.background === "string" ? research.background : ""
+  );
   if (!background.trim()) return { ...EMPTY_STATE };
   return {
     have: true,
@@ -101,6 +106,7 @@ export function toState(
           (s: any) => s && typeof s.url === "string" && s.url
         )
       : [],
+    formatVersion: Number(research.formatVersion) || 0,
   };
 }
 
@@ -348,19 +354,11 @@ export function mergeBackground(
   person: EntityResearch | EntityState | null
 ): string {
   const parts: string[] = [];
-  const sources: ResearchSource[] = [];
-  const seen = new Set<string>();
-
   const push = (label: string, r: any) => {
     if (!r || typeof r.background !== "string" || !r.background.trim()) return;
     const who = String(r.subject || "").trim();
-    parts.push(`${label}${who ? `: ${who}` : ""}\n${r.background.trim()}`);
-    for (const s of Array.isArray(r.sources) ? r.sources : []) {
-      if (s && typeof s.url === "string" && s.url && !seen.has(s.url)) {
-        seen.add(s.url);
-        sources.push({ title: String(s.title || s.url), url: s.url });
-      }
-    }
+    const clean = cleanResearchBackground(r.background);
+    if (clean) parts.push(`${label}${who ? `: ${who}` : ""}\n${clean}`);
   };
 
   // Person first: on a call, WHO you are talking to outranks the org they sit in.
@@ -368,16 +366,7 @@ export function mergeBackground(
   push("COMPANY BACKGROUND", company);
 
   if (!parts.length) return "";
-  let out = parts.join("\n\n");
-  if (sources.length) {
-    out +=
-      "\n\nSources:\n" +
-      sources
-        .slice(0, 12)
-        .map((s) => `- ${s.title}: ${s.url}`)
-        .join("\n");
-  }
-  return out;
+  return parts.join("\n\n");
 }
 
 export function mergedSources(
