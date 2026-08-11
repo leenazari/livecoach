@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { extractTextFromPDF } from "@/lib/pdf-extract";
+import { getWorkstreamScope } from "@/lib/workstreams";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -23,7 +24,8 @@ async function listFiles(prefix: string) {
 // scorecards into a compact context block, so the plan starts the call already
 // knowing the relationship instead of from a blank slate.
 async function companyHistoryBlock(
-  companyId: string
+  companyId: string,
+  workstreamId?: string | null
 ): Promise<{ block: string; source: string } | null> {
   try {
     const { data: company } = await supabaseAdmin
@@ -32,42 +34,83 @@ async function companyHistoryBlock(
       .eq("id", companyId)
       .single();
     if (!company) return null;
+    const workstream = workstreamId
+      ? await getWorkstreamScope(workstreamId)
+      : null;
+    if (workstreamId && (!workstream || workstream.companyId !== companyId))
+      return null;
+    let contactIds: string[] = [];
+    if (workstream) {
+      const { data: links } = await supabaseAdmin
+        .from("workstream_contacts")
+        .select("contact_id")
+        .eq("workstream_id", workstream.id);
+      contactIds = (links || []).map((link: any) => link.contact_id);
+    }
 
-    const [{ data: contacts }, { data: summaries }, { data: ctxItems }] =
+    let contactsQuery = supabaseAdmin
+      .from("contacts")
+      .select("name, role")
+      .eq("company_id", companyId)
+      .limit(20);
+    let summariesQuery = supabaseAdmin
+      .from("interview_summaries")
+      .select("candidate, created_at, summary")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(5);
+    let contextQuery = supabaseAdmin
+      .from("client_context")
+      .select("kind, title, url, content")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(15);
+    if (workstream) {
+      contactsQuery = contactIds.length
+        ? contactsQuery.in("id", contactIds)
+        : contactsQuery.eq("id", "00000000-0000-0000-0000-000000000000");
+      summariesQuery = summariesQuery.eq("workstream_id", workstream.id);
+      contextQuery = contextQuery.eq("workstream_id", workstream.id);
+    }
+
+    const [{ data: contacts }, { data: summaries }, { data: ctxItems }, { data: thread }] =
       await Promise.all([
-        supabaseAdmin
-          .from("contacts")
-          .select("name, role")
-          .eq("company_id", companyId)
-          .limit(20),
-        supabaseAdmin
-          .from("interview_summaries")
-          .select("candidate, created_at, summary")
-          .eq("company_id", companyId)
-          .order("created_at", { ascending: false })
-          .limit(5),
-        supabaseAdmin
-          .from("client_context")
-          .select("kind, title, url, content")
-          .eq("company_id", companyId)
-          .order("created_at", { ascending: false })
-          .limit(15),
+        contactsQuery,
+        summariesQuery,
+        contextQuery,
+        workstream
+          ? supabaseAdmin
+              .from("workstreams")
+              .select("email_context")
+              .eq("id", workstream.id)
+              .single()
+          : Promise.resolve({ data: null, error: null }),
       ]);
 
     const lines: string[] = [];
     lines.push(
-      `### CLIENT / RELATIONSHIP HISTORY - ${company.name}`,
+      `### CLIENT / RELATIONSHIP HISTORY - ${company.name}${workstream ? ` / ${workstream.name}` : ""}`,
       `This call is with an EXISTING client. Use this history - do not start from scratch, and build on what's already happened.`,
       `Company: ${company.name}${company.sector ? ` | sector: ${company.sector}` : ""}${
         company.stage ? ` | stage: ${company.stage}` : ""
       }`
     );
+    if (workstream) {
+      lines.push(
+        `Department: ${workstream.departmentName || "not set"}`,
+        `Workstream: ${workstream.name}`,
+        `Purpose: ${workstream.purpose || "not set"}`,
+        "Use only this workstream's calls, contacts, actions and email context. Other departments at this company are separate."
+      );
+    }
 
-    if (company.notes && String(company.notes).trim()) {
+    if (!workstream && company.notes && String(company.notes).trim()) {
       lines.push(`Notes: ${String(company.notes).trim()}`);
     }
 
-    const emailCtx = (company as any).email_context;
+    const emailCtx = workstream
+      ? (thread as any)?.email_context
+      : (company as any).email_context;
     if (emailCtx && String(emailCtx).trim()) {
       lines.push(
         "EMAIL CONTEXT (the email thread so far - where the relationship is actually happening; weigh it heavily for the intent, plan and next steps):",
@@ -76,7 +119,7 @@ async function companyHistoryBlock(
     }
 
     const profile = (company.profile || {}) as any;
-    if (profile && typeof profile === "object" && Object.keys(profile).length) {
+    if (!workstream && profile && typeof profile === "object" && Object.keys(profile).length) {
       // Render the battlecard and the cached research as their own clean
       // sections below - keep them out of the raw dump so they are not giant
       // unusable JSON blobs in the middle of things.
@@ -114,7 +157,7 @@ async function companyHistoryBlock(
     // pre-call strategy the user built, so the plan must be shaped by it, not
     // ignore it: the objections to be ready for, where we fit and do not, the
     // questions to ask, and the outcome to drive toward.
-    const bc = profile.battlecard;
+    const bc = workstream ? null : profile.battlecard;
     if (bc && typeof bc === "object") {
       const list = (v: any): string[] =>
         Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()) : [];
@@ -186,7 +229,12 @@ async function companyHistoryBlock(
         lines.push(line);
       }
     } else {
-      lines.push("", "No past calls recorded with this client yet.");
+      lines.push(
+        "",
+        workstream
+          ? "No past calls recorded in this workstream yet."
+          : "No past calls recorded with this client yet."
+      );
     }
 
     // Extra context the user attached to the client (notes / links / docs).
@@ -202,7 +250,7 @@ async function companyHistoryBlock(
 
     return {
       block: lines.join("\n") + "\n\n",
-      source: `${company.name} history (CRM)`,
+      source: `${company.name}${workstream ? `, ${workstream.name}` : ""} history (CRM)`,
     };
   } catch (e) {
     console.error("Company history load failed:", e);
@@ -229,7 +277,7 @@ async function downloadText(path: string): Promise<string> {
 
 export async function POST(req: NextRequest) {
   try {
-    const { sessionId, companyId } = await req.json();
+    const { sessionId, companyId, workstreamId } = await req.json();
 
     let context = "";
     const sources: string[] = [];
@@ -272,7 +320,10 @@ export async function POST(req: NextRequest) {
     // PHASE 2: prepend the linked client's history so it survives the plan
     // route's head-truncation and the planner reads it first.
     if (typeof companyId === "string" && companyId) {
-      const hist = await companyHistoryBlock(companyId);
+      const hist = await companyHistoryBlock(
+        companyId,
+        typeof workstreamId === "string" ? workstreamId : null
+      );
       if (hist) {
         context = hist.block + context;
         sources.unshift(hist.source);

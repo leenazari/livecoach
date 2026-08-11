@@ -79,13 +79,13 @@ export async function GET(
           .maybeSingle(),
         supabaseAdmin
           .from("interview_summaries")
-          .select("candidate, summary, created_at")
+          .select("candidate, summary, created_at, workstream_id")
           .eq("company_id", companyId)
           .order("created_at", { ascending: false })
           .limit(12),
         supabaseAdmin
           .from("tasks")
-          .select("text, kind, status, created_at")
+          .select("text, kind, status, created_at, workstream_id")
           .eq("company_id", companyId)
           .eq("status", "open")
           .order("created_at", { ascending: false })
@@ -93,7 +93,7 @@ export async function GET(
         validUpcomingId
           ? supabaseAdmin
               .from("upcoming_calls")
-              .select("company_id, attendees")
+              .select("company_id, workstream_id, attendees")
               .eq("id", validUpcomingId)
               .maybeSingle()
           : Promise.resolve({ data: null }),
@@ -107,8 +107,12 @@ export async function GET(
         ? attendeeIdentities(upcoming.attendees)
         : [];
     const personSpecific = identities.length > 0;
+    const exactWorkstreamId =
+      upcoming?.company_id === companyId ? upcoming?.workstream_id || null : null;
     const row = (sumRows || []).find((item: any) =>
-      summaryMatches(item, identities)
+      exactWorkstreamId
+        ? item.workstream_id === exactWorkstreamId
+        : summaryMatches(item, identities)
     ) as any;
     const s = row?.summary || {};
     const lastCall = row
@@ -128,6 +132,7 @@ export async function GET(
     const openItems = (taskRows || [])
       .filter((t: any) => ["next_step", "commitment", "manual"].includes(t.kind))
       .filter((t: any) => {
+        if (exactWorkstreamId) return t.workstream_id === exactWorkstreamId;
         if (!personSpecific) return true;
         if (!row) return false;
         const text = ` ${normal(t.text)} `;
@@ -144,7 +149,7 @@ export async function GET(
       lastCall,
       // A standing checklist is currently company-wide. Do not show it on a
       // named-attendee call where it could belong to a different relationship.
-      checklist: personSpecific ? [] : checklist,
+      checklist: personSpecific || exactWorkstreamId ? [] : checklist,
       openItems,
     });
   } catch (err: any) {

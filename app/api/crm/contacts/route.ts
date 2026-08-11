@@ -51,6 +51,21 @@ export async function POST(req: NextRequest) {
     if (body.attributes && typeof body.attributes === "object") {
       row.attributes = body.attributes;
     }
+    if (typeof body.department_id === "string" && body.department_id) {
+      const { data: department, error: departmentError } = await supabaseAdmin
+        .from("departments")
+        .select("id")
+        .eq("id", body.department_id)
+        .eq("company_id", companyId)
+        .maybeSingle();
+      if (departmentError) throw departmentError;
+      if (!department)
+        return NextResponse.json(
+          { error: "department does not belong to this company" },
+          { status: 409 }
+        );
+      row.department_id = body.department_id;
+    }
 
     const { data, error } = await supabaseAdmin
       .from("contacts")

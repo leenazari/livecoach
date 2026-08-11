@@ -14,7 +14,17 @@ export async function gatherClientContext(
   const cut = (s: any, n: number) =>
     typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : "";
 
-  const [{ data: company }, contactsRes, summariesRes, oppsRes, fuRes, ctxRes] =
+  const [
+    { data: company },
+    contactsRes,
+    summariesRes,
+    oppsRes,
+    fuRes,
+    ctxRes,
+    departmentsRes,
+    workstreamsRes,
+    workstreamContactsRes,
+  ] =
     await Promise.all([
       supabaseAdmin
         .from("companies")
@@ -23,18 +33,18 @@ export async function gatherClientContext(
         .single(),
       supabaseAdmin
         .from("contacts")
-        .select("name, role, email, attributes")
+        .select("id, department_id, name, role, email, attributes")
         .eq("company_id", companyId)
         .limit(20),
       supabaseAdmin
         .from("interview_summaries")
-        .select("candidate, created_at, summary")
+        .select("candidate, created_at, summary, workstream_id")
         .eq("company_id", companyId)
         .order("created_at", { ascending: false })
         .limit(6),
       supabaseAdmin
         .from("opportunities")
-        .select("title, detail, value, status, opportunity_type")
+        .select("title, detail, value, status, opportunity_type, workstream_id")
         .eq("company_id", companyId)
         .order("created_at", { ascending: false })
         .limit(20),
@@ -46,17 +56,32 @@ export async function gatherClientContext(
         .limit(10),
       supabaseAdmin
         .from("client_context")
-        .select("kind, title, url, content, created_at")
+        .select("kind, title, url, content, created_at, workstream_id")
         .eq("company_id", companyId)
         .order("created_at", { ascending: false })
         .limit(30),
+      supabaseAdmin
+        .from("departments")
+        .select("id, name")
+        .eq("company_id", companyId)
+        .order("name", { ascending: true }),
+      supabaseAdmin
+        .from("workstreams")
+        .select("id, department_id, name, kind, status, purpose")
+        .eq("company_id", companyId)
+        .order("status", { ascending: true })
+        .order("name", { ascending: true }),
+      supabaseAdmin
+        .from("workstream_contacts")
+        .select("workstream_id, contact_id")
+        .eq("company_id", companyId),
     ]);
 
   // Upcoming calls for this client, synced from the calendar, so the assistant
   // can answer "when's our next call" / "what's coming up" from the CRM's copy.
   const { data: upcomingRows } = await supabaseAdmin
     .from("upcoming_calls")
-    .select("title, scheduled_at, meeting_url, intent, prepped")
+    .select("title, scheduled_at, meeting_url, intent, prepped, workstream_id")
     .eq("company_id", companyId)
     .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
@@ -78,6 +103,17 @@ export async function gatherClientContext(
   const drafts = (fuRes.data || []).filter((f: any) => f.status === "draft");
   const summaries = summariesRes.data || [];
   const ctx = ctxRes.data || [];
+  const departments = departmentsRes.data || [];
+  const workstreams = workstreamsRes.data || [];
+  const workstreamContacts = workstreamContactsRes.data || [];
+  const hasMultipleActiveWorkstreams =
+    workstreams.filter((thread: any) => thread.status === "active").length > 1;
+  const workstreamName = new Map<string, string>(
+    workstreams.map((thread: any) => [thread.id, thread.name])
+  );
+  const departmentName = new Map<string, string>(
+    departments.map((department: any) => [department.id, department.name])
+  );
 
   const hasNotes = !!(company.notes && String(company.notes).trim());
   const isThin =
@@ -104,11 +140,17 @@ export async function gatherClientContext(
   lines.push(`Stage: ${company.stage?.trim() || "not set"}`);
   lines.push(`Notes: ${hasNotes ? String(company.notes).trim() : "none recorded"}`);
   const emailCtx = (company as any).email_context;
-  if (emailCtx && String(emailCtx).trim()) {
+  if (!hasMultipleActiveWorkstreams && emailCtx && String(emailCtx).trim()) {
     lines.push(
       "",
       "EMAIL CONTEXT (the email thread and relationship so far - this is where the relationship is actually happening right now, so weigh it heavily when judging the intent, the plan and the next steps):",
       String(emailCtx).trim(),
+      ""
+    );
+  } else if (hasMultipleActiveWorkstreams) {
+    lines.push(
+      "",
+      "COMPANY EMAIL CONTEXT: hidden because this company has multiple active workstreams. Use the named contact's workstream memory instead.",
       ""
     );
   }
@@ -130,7 +172,7 @@ export async function gatherClientContext(
   // assistant reason from the pre-call strategy (the objections, the fit, the
   // questions, the outcome), instead of it being a separate unused artifact.
   const bc = (profile as any).battlecard;
-  if (bc && typeof bc === "object") {
+  if (!hasMultipleActiveWorkstreams && bc && typeof bc === "object") {
     const arr = (v: any): string[] =>
       Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()) : [];
     const bl: string[] = [
@@ -160,6 +202,21 @@ export async function gatherClientContext(
       attrStr || "none set - no budget or deal value has been entered for this client"
     }`
   );
+  if (workstreams.length) {
+    lines.push(
+      "",
+      "RELATIONSHIP STRUCTURE. Treat every workstream as a separate memory boundary. Never move facts, actions or call history between them unless the record explicitly links them:"
+    );
+    for (const thread of workstreams as any[]) {
+      const people = workstreamContacts
+        .filter((link: any) => link.workstream_id === thread.id)
+        .map((link: any) => contacts.find((contact: any) => contact.id === link.contact_id)?.name)
+        .filter(Boolean);
+      lines.push(
+        `- ${departmentName.get(thread.department_id) || "No department"} > ${thread.name} [${thread.kind}, ${thread.status}]${thread.purpose ? `: ${thread.purpose}` : ""}${people.length ? ` | people: ${people.join(", ")}` : ""}`
+      );
+    }
+  }
   lines.push(
     `Contacts: ${
       contacts.length
@@ -190,7 +247,7 @@ export async function gatherClientContext(
         ? opps
             .map(
               (o: any) =>
-                `[${o.opportunity_type || "revenue"}] ${o.title}${o.value ? ` (~£${o.value})` : ""}${o.detail ? ` - ${o.detail}` : ""}`
+                `[${o.workstream_id ? workstreamName.get(o.workstream_id) || "workstream" : "company-wide"}] [${o.opportunity_type || "revenue"}] ${o.title}${o.value ? ` (~£${o.value})` : ""}${o.detail ? ` - ${o.detail}` : ""}`
             )
             .join("; ")
         : "none recorded - no deal value or budget on file"
@@ -224,7 +281,7 @@ export async function gatherClientContext(
       lines.push(
         `- ${when}${past ? " [ALREADY PASSED]" : ""}: ${u.title || "call"}${
           u.prepped ? " [prepped]" : ""
-        }${
+        }${u.workstream_id ? ` [workstream: ${workstreamName.get(u.workstream_id) || "unknown"}]` : " [company-wide]"}${
           options.includeUpcomingIntents !== false && u.intent
             ? ` - ${cut(u.intent, 160)}`
             : ""
@@ -256,7 +313,7 @@ export async function gatherClientContext(
       ]
         .slice(0, 4)
         .join("; ");
-      let line = `- ${date}: ${cut(s.headline, 140)} ${cut(s.overview, 260)}`;
+      let line = `- ${date} [${row.workstream_id ? `workstream: ${workstreamName.get(row.workstream_id) || "unknown"}` : "company-wide"}]: ${cut(s.headline, 140)} ${cut(s.overview, 260)}`;
       if (comps) line += ` [focus scores: ${comps}]`;
       if (outstanding) line += ` [outstanding for us: ${cut(outstanding, 220)}]`;
       lines.push(line);
@@ -269,7 +326,7 @@ export async function gatherClientContext(
     lines.push("", "EXTRA CONTEXT YOU ADDED (notes / links / documents):");
     for (const c of ctx as any[]) {
       const head = c.title || (c.kind === "link" ? c.url : c.kind);
-      lines.push(`- [${c.kind}] ${head}: ${cut(c.content || c.url || "", 600)}`);
+      lines.push(`- [${c.workstream_id ? `workstream: ${workstreamName.get(c.workstream_id) || "unknown"}` : "company-wide"}] [${c.kind}] ${head}: ${cut(c.content || c.url || "", 600)}`);
     }
   } else {
     lines.push("Extra context (notes / links / documents): none added");
@@ -797,6 +854,143 @@ export async function findCompaniesNamedIn(
       }
     }
     if (matched) out.push({ id: c.id, name: c.name });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+// Resolve a named PERSON to one active relationship thread. This is deliberately
+// conservative: if the same person belongs to two active workstreams, Brain is
+// given neither and must ask which relationship the user means.
+export async function findWorkstreamsNamedIn(message: string): Promise<
+  {
+    companyId: string;
+    companyName: string;
+    workstreamId: string;
+    workstreamName: string;
+    departmentName: string | null;
+    contactName: string;
+  }[]
+> {
+  const normal = (value: unknown) =>
+    String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const words = new Set(normal(message).split(" ").filter(Boolean));
+  const contactStop = new Set([
+    "the",
+    "and",
+    "for",
+    "from",
+    "with",
+    "that",
+    "this",
+    "what",
+    "when",
+    "where",
+    "who",
+    "why",
+    "how",
+    "call",
+    "email",
+    "client",
+  ]);
+  const contactAliases: Record<string, string> = {
+    tim: "timothy",
+    dan: "daniel",
+    dani: "daniela",
+    matt: "matthew",
+    mike: "michael",
+    steve: "steven",
+    chris: "christopher",
+    liz: "elizabeth",
+  };
+  if (!words.size) return [];
+  const { data: contacts } = await supabaseAdmin
+    .from("contacts")
+    .select("id, company_id, name")
+    .limit(500);
+  const matched = (contacts || []).filter((contact: any) => {
+    const full = normal(contact.name);
+    if (!full) return false;
+    if (` ${normal(message)} `.includes(` ${full} `)) return true;
+    const first = full.split(" ")[0] || "";
+    return [...words].some(
+      (word) =>
+        word.length >= 3 &&
+        !contactStop.has(word) &&
+        (word === first || contactAliases[word] === first)
+    );
+  });
+  if (!matched.length) return [];
+
+  const contactIds = matched.map((contact: any) => contact.id);
+  const { data: links } = await supabaseAdmin
+    .from("workstream_contacts")
+    .select("contact_id, workstream_id")
+    .in("contact_id", contactIds);
+  const workstreamIds = Array.from(
+    new Set((links || []).map((link: any) => String(link.workstream_id)))
+  );
+  if (!workstreamIds.length) return [];
+  const { data: threads } = await supabaseAdmin
+    .from("workstreams")
+    .select("id, company_id, department_id, name, status")
+    .eq("status", "active")
+    .in("id", workstreamIds);
+  const companyIds = Array.from(
+    new Set((threads || []).map((thread: any) => String(thread.company_id)))
+  );
+  const departmentIds = Array.from(
+    new Set(
+      (threads || [])
+        .map((thread: any) => thread.department_id)
+        .filter(Boolean)
+        .map(String)
+    )
+  );
+  const [{ data: companies }, { data: departments }] = await Promise.all([
+    supabaseAdmin.from("companies").select("id, name").in("id", companyIds),
+    departmentIds.length
+      ? supabaseAdmin.from("departments").select("id, name").in("id", departmentIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+  const companyName = new Map(
+    (companies || []).map((company: any) => [company.id, company.name])
+  );
+  const departmentName = new Map(
+    (departments || []).map((department: any) => [department.id, department.name])
+  );
+  const out: {
+    companyId: string;
+    companyName: string;
+    workstreamId: string;
+    workstreamName: string;
+    departmentName: string | null;
+    contactName: string;
+  }[] = [];
+  for (const contact of matched as any[]) {
+    const contactThreadIds = (links || [])
+      .filter((link: any) => link.contact_id === contact.id)
+      .map((link: any) => link.workstream_id);
+    const contactThreads = (threads || []).filter((thread: any) =>
+      contactThreadIds.includes(thread.id)
+    );
+    if (contactThreads.length !== 1) continue;
+    const thread: any = contactThreads[0];
+    if (out.some((item) => item.workstreamId === thread.id)) continue;
+    out.push({
+      companyId: thread.company_id,
+      companyName: companyName.get(thread.company_id) || "Unknown company",
+      workstreamId: thread.id,
+      workstreamName: thread.name,
+      departmentName: thread.department_id
+        ? departmentName.get(thread.department_id) || null
+        : null,
+      contactName: contact.name,
+    });
     if (out.length >= 3) break;
   }
   return out;

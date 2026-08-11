@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { inferLink, loadAttendeeConfig } from "@/lib/attendees";
+import { getWorkstreamScope, resolveCallScope } from "@/lib/workstreams";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -19,7 +20,7 @@ export async function GET(
     const { data, error } = await supabaseAdmin
       .from("upcoming_calls")
       .select(
-        "id, company_id, title, scheduled_at, meeting_url, intent, prepped, prep, research, attendees"
+        "id, company_id, workstream_id, title, scheduled_at, meeting_url, intent, prepped, prep, research, attendees"
       )
       .eq("id", params.id)
       .maybeSingle();
@@ -83,7 +84,56 @@ export async function GET(
         .maybeSingle();
       company = co?.name || null;
     }
-    return NextResponse.json({ call: { ...data, company } });
+    const scope = await resolveCallScope({
+      companyId: data.company_id,
+      upcomingId: data.id,
+      workstreamId: data.workstream_id,
+      attendees: data.attendees,
+    });
+    if (scope.workstream && !data.workstream_id)
+      data.workstream_id = scope.workstream.id;
+    let workstreamChoices: {
+      id: string;
+      name: string;
+      purpose: string;
+      departmentName: string | null;
+    }[] = [];
+    if (data.company_id) {
+      const [{ data: threads }, { data: departments }] = await Promise.all([
+        supabaseAdmin
+          .from("workstreams")
+          .select("id, department_id, name, purpose")
+          .eq("company_id", data.company_id)
+          .eq("status", "active")
+          .order("name", { ascending: true }),
+        supabaseAdmin
+          .from("departments")
+          .select("id, name")
+          .eq("company_id", data.company_id),
+      ]);
+      const departmentNames = new Map(
+        (departments || []).map((department: any) => [
+          department.id,
+          department.name,
+        ])
+      );
+      workstreamChoices = (threads || []).map((thread: any) => ({
+        id: thread.id,
+        name: thread.name,
+        purpose: thread.purpose || "",
+        departmentName: thread.department_id
+          ? departmentNames.get(thread.department_id) || null
+          : null,
+      }));
+    }
+    return NextResponse.json({
+      call: {
+        ...data,
+        company,
+        workstream: scope.workstream,
+        workstreamChoices,
+      },
+    });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to load the call" },
@@ -159,6 +209,25 @@ export async function PATCH(
         typeof body.companyId === "string" && body.companyId
           ? body.companyId
           : null;
+    if ("workstreamId" in body) {
+      const workstream = await getWorkstreamScope(body.workstreamId);
+      if (workstream) {
+        if (patch.company_id && patch.company_id !== workstream.companyId)
+          return NextResponse.json(
+            { error: "workstream does not belong to this company" },
+            { status: 409 }
+          );
+        patch.company_id = workstream.companyId;
+        patch.workstream_id = workstream.id;
+      } else if (body.workstreamId == null || body.workstreamId === "") {
+        patch.workstream_id = null;
+      } else {
+        return NextResponse.json(
+          { error: "workstream not found" },
+          { status: 404 }
+        );
+      }
+    }
     if (Object.keys(patch).length === 0) {
       return NextResponse.json({ ok: true });
     }
@@ -166,7 +235,7 @@ export async function PATCH(
       .from("upcoming_calls")
       .update(patch)
       .eq("id", params.id)
-      .select("id, title, scheduled_at, meeting_url, intent, prepped, completed_at, company_id, prep")
+      .select("id, title, scheduled_at, meeting_url, intent, prepped, completed_at, company_id, workstream_id, prep")
       .maybeSingle();
     if (error) throw error;
     if (!data)

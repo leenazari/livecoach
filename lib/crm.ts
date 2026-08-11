@@ -42,6 +42,7 @@ export type Company = {
 export type Contact = {
   id: string;
   company_id: string | null;
+  department_id?: string | null;
   name: string;
   role: string | null;
   email: string | null;
@@ -50,6 +51,35 @@ export type Contact = {
   notes: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type Department = {
+  id: string;
+  company_id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Workstream = {
+  id: string;
+  company_id: string;
+  department_id: string | null;
+  name: string;
+  kind: "relationship" | "opportunity" | "partnership" | "project" | "support" | "internal";
+  status: "active" | "paused" | "completed" | "archived";
+  purpose: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkstreamContact = {
+  workstream_id: string;
+  contact_id: string;
+  company_id: string;
+  relationship_role: string | null;
+  is_primary: boolean;
 };
 
 // A stable, lowercase key from a human label, for a new custom field.

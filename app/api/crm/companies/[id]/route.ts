@@ -62,14 +62,49 @@ export async function GET(
       return NextResponse.json({ error: "company not found" }, { status: 404 });
     }
 
-    const { data: contacts, error: cErr } = await supabaseAdmin
-      .from("contacts")
-      .select("*")
-      .eq("company_id", params.id)
-      .order("created_at", { ascending: true });
-    if (cErr) throw cErr;
+    const [contactsResult, departmentsResult, workstreamsResult, linksResult] =
+      await Promise.all([
+        supabaseAdmin
+          .from("contacts")
+          .select("*")
+          .eq("company_id", params.id)
+          .order("created_at", { ascending: true }),
+        supabaseAdmin
+          .from("departments")
+          .select("id, company_id, name, description, created_at, updated_at")
+          .eq("company_id", params.id)
+          .order("name", { ascending: true }),
+        supabaseAdmin
+          .from("workstreams")
+          .select(
+            "id, company_id, department_id, name, kind, status, purpose, created_at, updated_at"
+          )
+          .eq("company_id", params.id)
+          .order("status", { ascending: true })
+          .order("name", { ascending: true }),
+        supabaseAdmin
+          .from("workstream_contacts")
+          .select(
+            "workstream_id, contact_id, company_id, relationship_role, is_primary"
+          )
+          .eq("company_id", params.id),
+      ]);
+    for (const result of [
+      contactsResult,
+      departmentsResult,
+      workstreamsResult,
+      linksResult,
+    ]) {
+      if (result.error) throw result.error;
+    }
 
-    return NextResponse.json({ company, contacts: contacts || [] });
+    return NextResponse.json({
+      company,
+      contacts: contactsResult.data || [],
+      departments: departmentsResult.data || [],
+      workstreams: workstreamsResult.data || [],
+      workstreamContacts: linksResult.data || [],
+    });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "company not found" },

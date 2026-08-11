@@ -7,7 +7,10 @@ import {
   crmFetch,
   type Company,
   type Contact,
+  type Department,
   type FieldDefinition,
+  type Workstream,
+  type WorkstreamContact,
 } from "@/lib/crm";
 import CustomFieldEditor from "@/components/crm/CustomFieldEditor";
 import AddFieldForm from "@/components/crm/AddFieldForm";
@@ -18,6 +21,7 @@ import QuickClientUpdate, {
   type QuickUpdateItem,
 } from "@/components/crm/QuickClientUpdate";
 import StakeholderMap from "@/components/crm/StakeholderMap";
+import RelationshipStructure from "@/components/crm/RelationshipStructure";
 import {
   isRelationshipStageOption,
   RELATIONSHIP_STAGE_OPTIONS,
@@ -56,6 +60,11 @@ export default function CompanyDetailPage() {
 
   const [company, setCompany] = useState<Company | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [workstreams, setWorkstreams] = useState<Workstream[]>([]);
+  const [workstreamContacts, setWorkstreamContacts] = useState<
+    WorkstreamContact[]
+  >([]);
   const [fields, setFields] = useState<FieldDefinition[]>([]);
   const [calls, setCalls] = useState<any[]>([]);
   const [opps, setOpps] = useState<any[]>([]);
@@ -107,7 +116,13 @@ export default function CompanyDetailPage() {
       const [companyResponse, { fields }, { calls }, pipeline, timelineData] =
         await Promise.all([
         crmFetch<
-          | { company: Company; contacts: Contact[] }
+          | {
+              company: Company;
+              contacts: Contact[];
+              departments: Department[];
+              workstreams: Workstream[];
+              workstreamContacts: WorkstreamContact[];
+            }
           | { redirectTo: string }
         >(
           `/api/crm/companies/${id}`
@@ -127,9 +142,18 @@ export default function CompanyDetailPage() {
         router.replace(`/crm/${companyResponse.redirectTo}`);
         return;
       }
-      const { company, contacts } = companyResponse;
+      const {
+        company,
+        contacts,
+        departments,
+        workstreams,
+        workstreamContacts,
+      } = companyResponse;
       setCompany(company);
       setContacts(contacts);
+      setDepartments(departments || []);
+      setWorkstreams(workstreams || []);
+      setWorkstreamContacts(workstreamContacts || []);
       setFields(fields);
       setCalls(calls || []);
       setOpps(pipeline.opportunities || []);
@@ -706,6 +730,17 @@ export default function CompanyDetailPage() {
           ) : null}
         </section>
       ) : null}
+
+      <RelationshipStructure
+        companyId={id}
+        contacts={contacts}
+        departments={departments}
+        workstreams={workstreams}
+        links={workstreamContacts}
+        onContactSaved={updateContact}
+        onLinksSaved={setWorkstreamContacts}
+        onStructureSaved={load}
+      />
 
       <StakeholderMap contacts={contacts} onSaved={updateContact} />
 

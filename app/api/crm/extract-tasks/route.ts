@@ -13,7 +13,7 @@ export const maxDuration = 30;
 // or dates. Best-effort - always returns 200 so the UI never blocks on it.
 export async function POST(req: NextRequest) {
   try {
-    const { companyId, text, clientName, source } = await req.json();
+    const { companyId, workstreamId, text, clientName, source } = await req.json();
     const notes = typeof text === "string" ? text.trim() : "";
     if (notes.length < 4) return NextResponse.json({ created: [] });
 
@@ -77,7 +77,8 @@ Rules:
 
     const created = await upsertTasks(
       typeof companyId === "string" && companyId ? companyId : null,
-      clean
+      clean,
+      typeof workstreamId === "string" && workstreamId ? workstreamId : null
     );
     return NextResponse.json({ created });
   } catch (err: any) {
