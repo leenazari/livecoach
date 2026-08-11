@@ -5,6 +5,7 @@ import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import MatrixRain from "@/components/MatrixRain";
 import type {
   WorkCleanupSuggestion,
   WorkInboxItem,
@@ -614,11 +615,7 @@ export default function WorkInboxPage() {
             )}
           </section>
         ) : loading && !data ? (
-          <div className="space-y-2">
-            {[0, 1, 2].map((key) => (
-              <div key={key} className="h-28 animate-pulse rounded-xl border border-edge bg-panel/35" />
-            ))}
-          </div>
+          <MatrixRain size="panel" messages={["loading work inbox", "ranking what needs attention"]} />
         ) : shown.length ? (
           <ol className="space-y-2">
             {shown.map((item) => {

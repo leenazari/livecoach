@@ -5,6 +5,7 @@ import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
+import MatrixRain from "@/components/MatrixRain";
 
 type CallState = "scored" | "summarising" | "failed" | "unrecorded";
 
@@ -173,7 +174,7 @@ export default function CallsPage() {
       />
 
       {loading ? (
-        <p className="font-mono text-[0.66rem] text-muted">Loading calls…</p>
+        <MatrixRain size="panel" messages={["loading call history", "checking recent summaries"]} />
       ) : shown.length === 0 ? (
         <div className="rounded-xl border border-dashed border-edge p-8 text-center">
           <p className="font-mono text-[0.66rem] uppercase tracking-wider text-bone">

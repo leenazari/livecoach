@@ -16,6 +16,7 @@ import CustomFieldEditor from "@/components/crm/CustomFieldEditor";
 import AddFieldForm from "@/components/crm/AddFieldForm";
 import ClientContext from "@/components/crm/ClientContext";
 import NavMenu from "@/components/crm/NavMenu";
+import MatrixRain from "@/components/MatrixRain";
 import TaskList from "@/components/crm/TaskList";
 import QuickClientUpdate, {
   type QuickUpdateItem,
@@ -335,7 +336,7 @@ export default function CompanyDetailPage() {
   if (loading) {
     return (
       <main className="mx-auto max-w-[1000px] px-5 py-10">
-        <p className="font-mono text-sm text-muted">loading…</p>
+        <MatrixRain size="panel" messages={["loading client profile", "linking the latest activity"]} />
       </main>
     );
   }

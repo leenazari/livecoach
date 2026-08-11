@@ -7,6 +7,7 @@ import { crmFetch } from "@/lib/crm";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
 import NavMenu from "@/components/crm/NavMenu";
+import MatrixRain from "@/components/MatrixRain";
 
 // LOG A CALL THAT ALREADY HAPPENED. For a call you had but did not run through
 // LiveCoach live. No prep, no focus, no battle plan, no fake live call - just
@@ -173,7 +174,7 @@ export default function LogCallPage() {
     <Suspense
       fallback={
         <main className="relative z-10 mx-auto max-w-[720px] px-5 py-10">
-          <p className="font-mono text-[0.66rem] text-muted">Loading…</p>
+          <MatrixRain size="panel" messages={["loading call capture"]} />
         </main>
       }
     >

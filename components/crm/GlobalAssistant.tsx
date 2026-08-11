@@ -10,6 +10,7 @@ import {
 } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
+import MatrixRain from "@/components/MatrixRain";
 
 // The assistant contains voice capture, playback and the full action UI. Most
 // visits only need the small floating trigger, so keep that large bundle out
@@ -19,9 +20,7 @@ const ClientAssistant = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex min-h-48 items-center justify-center rounded-xl border border-edge bg-ink/30 font-mono text-xs uppercase tracking-wider text-muted">
-        Opening the Brain…
-      </div>
+      <MatrixRain size="compact" messages={["opening the Brain", "loading screen context"]} />
     ),
   }
 );

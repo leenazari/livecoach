@@ -5,6 +5,7 @@ import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import MatrixRain from "@/components/MatrixRain";
 
 type Pipeline = Record<string, any>;
 type Opportunity = Record<string, any> & {
@@ -141,7 +142,7 @@ export default function RevenuePage() {
 
       {notice ? <p className="mb-3 rounded-lg border border-moss/40 bg-moss/10 px-3 py-2 text-sm text-moss">{notice}</p> : null}
       {error ? <p className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm text-rust">{error}</p> : null}
-      {!data ? <p className="py-12 text-center font-mono text-xs uppercase text-muted">Loading the live pipeline…</p> : null}
+      {!data ? <MatrixRain size="panel" messages={["loading the live pipeline", "checking revenue priorities"]} /> : null}
 
       {data ? <>
         <section className="mb-4 rounded-xl border border-edge bg-panel p-4">

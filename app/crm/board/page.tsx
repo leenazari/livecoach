@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import { crmFetch, type Company } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
+import MatrixRain from "@/components/MatrixRain";
 import type { ClosePlan } from "@/components/crm/OpportunityClosePlan";
 import type {
   ClientPortfolioRow,
@@ -14,7 +15,7 @@ import type {
 } from "@/components/crm/ClientPortfolio";
 
 const tabLoading = () => (
-  <div className="h-36 animate-pulse rounded-xl border border-edge bg-panel/30" />
+  <MatrixRain size="compact" messages={["loading this CRM view"]} />
 );
 
 // Each board tab has a substantial, independent editor. Only download the tab
@@ -354,7 +355,7 @@ function BoardInner() {
       </nav>
 
       {loading && tab !== "tasks" ? (
-        <p className="font-mono text-sm text-muted">loading…</p>
+        <MatrixRain size="panel" messages={["loading your CRM records"]} />
       ) : tab === "tasks" ? (
         <div className="rounded-xl border border-edge bg-panel/40 p-4">
           {/* Tick to complete, click ticked to remove, click text to start. */}

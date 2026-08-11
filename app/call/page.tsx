@@ -23,9 +23,7 @@ import {
 } from "@/lib/costs";
 
 const stageLoading = () => (
-  <div className="rounded-xl border border-edge bg-panel/40 px-4 py-8 text-center font-mono text-xs uppercase tracking-wider text-muted">
-    Loading live call controls…
-  </div>
+  <MatrixRain size="compact" messages={["loading live call controls"]} />
 );
 
 // Live audio, drag-and-drop focus editing and the post-call report are large,
@@ -309,6 +307,11 @@ export default function CallPage() {
   const [candidate, setCandidate] = useState("");
   const [role, setRole] = useState("");
   const [brief, setBrief] = useState("");
+  // Covers the whole scheduled-call hydration path, including cached history,
+  // the latest email digest and any first-meeting intent generation. Keeping the
+  // intent box blocked during this window prevents dictation from racing an
+  // incoming saved/generated intent.
+  const [intentLoading, setIntentLoading] = useState(true);
   const [character, setCharacter] = useState("");
   const [callType, setCallType] = useState("general");
   const [callLive, setCallLive] = useState(false);
@@ -1065,6 +1068,7 @@ export default function CallPage() {
       setSource("meet");
     }
     if (upcoming) {
+      setIntentLoading(true);
       upcomingIdRef.current = upcoming;
       setUpcomingId(upcoming);
       (async () => {
@@ -1255,7 +1259,7 @@ export default function CallPage() {
               (autoCompany || autoPerson)
             ) {
               autoHelpedRef.current = true;
-              (async () => {
+              await (async () => {
                 let bg = "";
                 try {
                   const r = await fetch("/api/interview/research", {
@@ -1316,11 +1320,13 @@ export default function CallPage() {
         } catch {
           /* best-effort reload */
         } finally {
+          setIntentLoading(false);
           // Only allow auto-save once any existing plan has been reloaded.
           prepHydratedRef.current = true;
         }
       })();
     } else {
+      setIntentLoading(false);
       prepHydratedRef.current = true;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3397,20 +3403,42 @@ export default function CallPage() {
                   Intent
                 </span>
                 <span className="ml-auto">
-                  <VoiceNoteButton onText={appendBrief} />
+                  {intentLoading ? (
+                    <span className="font-mono text-[0.55rem] uppercase tracking-wider text-amber">
+                      loading context
+                    </span>
+                  ) : (
+                    <VoiceNoteButton onText={appendBrief} />
+                  )}
                 </span>
               </div>
-              <textarea
-                ref={briefRef}
-                value={brief}
-                onChange={(e) => {
-                  intentEditedRef.current = true;
-                  setBrief(e.target.value);
-                }}
-                rows={7}
-                placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
-                className="max-h-[40vh] min-h-[9rem] w-full resize-y overflow-y-auto rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
-              />
+              <div className="relative min-h-[9rem]" aria-busy={intentLoading}>
+                <textarea
+                  ref={briefRef}
+                  value={brief}
+                  onChange={(e) => {
+                    intentEditedRef.current = true;
+                    setBrief(e.target.value);
+                  }}
+                  rows={7}
+                  disabled={intentLoading}
+                  placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
+                  className="max-h-[40vh] min-h-[9rem] w-full resize-y overflow-y-auto rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60 disabled:cursor-wait"
+                />
+                {intentLoading ? (
+                  <div className="absolute inset-0 z-10">
+                    <MatrixRain
+                      size="compact"
+                      messages={[
+                        "loading call context",
+                        "checking the last conversation",
+                        "refreshing the latest email",
+                        "preparing your intent",
+                      ]}
+                    />
+                  </div>
+                ) : null}
+              </div>
               <p className="mt-1.5 font-mono text-[0.62rem] leading-relaxed text-muted">
                 Step 1: review or change this first. LiveCoach will not build
                 the focus or battle plan until you choose the next step.

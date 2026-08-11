@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     const historyPromise = Promise.all([
       supabaseAdmin
         .from("outreach_messages")
-        .select("id,prospect_id,status,subject,step_number,sent_at,updated_at")
+        .select("id,prospect_id,status,subject,step_number,scheduled_at,sent_at,updated_at")
         .order("updated_at", { ascending: false })
         .limit(5000),
       supabaseAdmin
