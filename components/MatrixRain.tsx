@@ -2,15 +2,30 @@
 
 import { useEffect, useRef, useState } from "react";
 
+const DEFAULT_MESSAGES = ["loading livecoach"];
+
+type MatrixRainSize = "inline" | "compact" | "panel" | "page";
+
+const sizeClasses: Record<MatrixRainSize, string> = {
+  inline: "min-h-20",
+  compact: "min-h-[9rem]",
+  panel: "min-h-72",
+  page: "min-h-[460px]",
+};
+
 // Matrix-style "digital rain" shown while a plan is building. Self-contained:
 // a canvas animation tinted to the brand (amber, not green) plus a cycling
 // status caption. Cleans up its animation frame + interval on unmount.
 export default function MatrixRain({
-  messages = ["building plan"],
+  messages = DEFAULT_MESSAGES,
   color = "#E8A33D", // amber
+  size = "page",
+  className = "",
 }: {
   messages?: string[];
   color?: string;
+  size?: MatrixRainSize;
+  className?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -34,6 +49,9 @@ export default function MatrixRain({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    const reduce = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)"
+    )?.matches;
     const GLYPHS =
       "アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789<>/\\{}[]=+*ABCDEFGHJKLMNPQRSTUVWXYZ";
     let dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -56,7 +74,10 @@ export default function MatrixRain({
     }
     resize();
 
-    const ro = new ResizeObserver(resize);
+    const ro = new ResizeObserver(() => {
+      resize();
+      if (reduce) drawFrame();
+    });
     ro.observe(wrap);
 
     let raf = 0;
@@ -64,29 +85,31 @@ export default function MatrixRain({
     // Throttle to ~70% of the 60fps fall speed (advance every ~24ms instead of
     // every frame) so the rain falls more slowly.
     const STEP_MS = 1000 / 60 / 0.7;
+    function drawFrame() {
+      const w = wrap!.clientWidth;
+      const h = wrap!.clientHeight;
+      ctx!.fillStyle = "rgba(10, 10, 12, 0.12)";
+      ctx!.fillRect(0, 0, w, h);
+      ctx!.font = `${fontSize}px "IBM Plex Mono", monospace`;
+      for (let i = 0; i < cols; i++) {
+        const ch = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+        const x = i * fontSize;
+        const y = drops[i] * fontSize;
+        ctx!.fillStyle = Math.random() > 0.975 ? "#FBE4BE" : color;
+        ctx!.fillText(ch, x, y);
+        if (y > h && Math.random() > 0.975) drops[i] = 0;
+        drops[i]++;
+      }
+    }
     function frame(now: number) {
       if (now - last >= STEP_MS) {
         last = now;
-        const w = wrap!.clientWidth;
-        const h = wrap!.clientHeight;
-        // Trailing fade.
-        ctx!.fillStyle = "rgba(10, 10, 12, 0.12)";
-        ctx!.fillRect(0, 0, w, h);
-        ctx!.font = `${fontSize}px "IBM Plex Mono", monospace`;
-        for (let i = 0; i < cols; i++) {
-          const ch = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
-          const x = i * fontSize;
-          const y = drops[i] * fontSize;
-          // Bright leading glyph, dimmer trail.
-          ctx!.fillStyle = Math.random() > 0.975 ? "#FBE4BE" : color;
-          ctx!.fillText(ch, x, y);
-          if (y > h && Math.random() > 0.975) drops[i] = 0;
-          drops[i]++;
-        }
+        drawFrame();
       }
       raf = requestAnimationFrame(frame);
     }
-    raf = requestAnimationFrame(frame);
+    if (reduce) drawFrame();
+    else raf = requestAnimationFrame(frame);
 
     return () => {
       cancelAnimationFrame(raf);
@@ -97,14 +120,17 @@ export default function MatrixRain({
   return (
     <div
       ref={wrapRef}
-      className="relative h-full min-h-[460px] w-full overflow-hidden rounded-xl border border-amber/30 bg-ink"
+      role="status"
+      aria-live="polite"
+      aria-label={messages[msgIdx] || "Loading"}
+      className={`relative h-full w-full overflow-hidden rounded-xl border border-amber/30 bg-ink ${sizeClasses[size]} ${className}`}
     >
-      <canvas ref={canvasRef} className="absolute inset-0" />
+      <canvas ref={canvasRef} aria-hidden="true" className="absolute inset-0" />
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2">
         <div className="rounded-full border border-amber/40 bg-ink/70 px-5 py-2 backdrop-blur-sm">
           <span className="font-mono text-[0.7rem] uppercase tracking-[0.3em] text-amber">
             {messages[msgIdx]}
-            <span className="ml-1 animate-pulse">_</span>
+            <span className="ml-1 motion-safe:animate-pulse">_</span>
           </span>
         </div>
         <span className="font-mono text-[0.55rem] uppercase tracking-[0.25em] text-amber/50">

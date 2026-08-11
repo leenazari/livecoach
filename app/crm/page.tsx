@@ -10,6 +10,7 @@ import TaskList from "@/components/crm/TaskList";
 import Commitments from "@/components/crm/Commitments";
 import CrmSearch from "@/components/crm/CrmSearch";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import MatrixRain from "@/components/MatrixRain";
 
 // These sections sit below the first decision layer or only appear when they
 // contain data. Loading them separately keeps the Today dashboard interactive
@@ -23,7 +24,7 @@ const OpportunityBoard = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="mb-3 h-24 animate-pulse rounded-xl border border-edge bg-panel/30" />
+      <MatrixRain size="inline" className="mb-3" messages={["loading opportunity priorities"]} />
     ),
   }
 );

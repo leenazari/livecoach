@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
+import MatrixRain from "@/components/MatrixRain";
 
 type Chapter = {
   id: string;
@@ -322,7 +323,7 @@ export default function PitchPlaybookPage() {
         </div>
       </header>
 
-      {loading ? <p className="font-mono text-sm text-muted">Loading the playbook…</p> : null}
+      {loading ? <MatrixRain size="panel" messages={["loading the pitch playbook", "organising proven conversations"]} /> : null}
       {error ? <p className="rounded-xl border border-rust/40 bg-rust/10 p-4 text-sm text-rust">{error}</p> : null}
       {!loading && !error && reviewQueue.length > 0 ? (
         <section className="mb-6 rounded-2xl border border-amber/40 bg-amber/[0.04] p-4 sm:p-5 print:hidden">

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch, getCached } from "@/lib/crm";
+import MatrixRain from "@/components/MatrixRain";
 
 type Period = "today" | "week" | "month" | "all";
 type AiMode = "economical" | "balanced" | "high";
@@ -166,9 +167,7 @@ export default function CostsPage() {
       </div>
 
       {!data ? (
-        <section className="rounded-xl border border-edge bg-panel px-4 py-16 text-center">
-          <p className="font-mono text-xs uppercase tracking-wider text-muted">Loading recorded costs…</p>
-        </section>
+        <MatrixRain size="panel" messages={["loading recorded costs", "calculating today's usage"]} />
       ) : (
         <>
           <section className="mb-4 rounded-xl border border-sage/40 bg-sage/[0.06] p-4 sm:p-5">

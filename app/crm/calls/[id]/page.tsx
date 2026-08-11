@@ -7,6 +7,7 @@ import { crmFetch } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import PostCallDealUpdate from "@/components/crm/PostCallDealUpdate";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import MatrixRain from "@/components/MatrixRain";
 
 type Call = {
   id: string;
@@ -187,7 +188,7 @@ export default function CallDetailPage() {
       {error ? (
         <p className="font-mono text-[0.66rem] text-rust">{error}</p>
       ) : !call ? (
-        <p className="font-mono text-[0.66rem] text-muted">Loading…</p>
+        <MatrixRain size="panel" messages={["loading call record", "assembling transcript and coaching"]} />
       ) : (
         <>
           {/* Title + meta */}

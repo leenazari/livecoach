@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { crmFetch } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
+import MatrixRain from "@/components/MatrixRain";
 
 type Point = {
   id: string;
@@ -145,7 +146,7 @@ export default function CallCoachPage() {
       </p>
 
       {!loaded ? (
-        <p className="font-mono text-[0.66rem] text-muted">Loading…</p>
+        <MatrixRain size="panel" messages={["loading your call coaching"]} />
       ) : visible.length === 0 ? (
         <p className="font-mono text-[0.66rem] text-muted">
           {calls.length === 0

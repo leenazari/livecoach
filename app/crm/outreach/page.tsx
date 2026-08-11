@@ -5,6 +5,7 @@ import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import RevenueToday from "@/components/crm/RevenueToday";
 import OutreachReadiness from "@/components/crm/OutreachReadiness";
+import MatrixRain from "@/components/MatrixRain";
 import { crmFetch } from "@/lib/crm";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 
@@ -51,6 +52,7 @@ const pill: Record<string, string> = {
   medium: "border-amber/50 bg-amber/10 text-amber",
   low: "border-edge bg-ink/40 text-muted",
   approved: "border-moss/50 bg-moss/10 text-moss",
+  scheduled: "border-sky/50 bg-sky/10 text-sky",
   sent: "border-moss/50 bg-moss/10 text-moss",
   drafted: "border-amber/50 bg-amber/10 text-amber",
   draft: "border-amber/50 bg-amber/10 text-amber",
@@ -83,6 +85,8 @@ function outreachStage(prospect: Prospect): { key: string; label: string } {
     };
   const latest = prospect.outreach?.latestMessage;
   const sentCount = Number(prospect.outreach?.sentCount || 0);
+  if (latest?.status === "approved" && latest?.scheduled_at)
+    return { key: "scheduled", label: "Scheduled" };
   if (latest?.status === "approved")
     return { key: "approved", label: sentCount ? "Follow up approved" : "Approved" };
   if (["draft", "failed"].includes(latest?.status))
@@ -338,7 +342,11 @@ export default function OutreachPage() {
   };
   const send = async (messageId: string) => {
     setBusy(`send:${messageId}`); setError("");
-    try { const result = await crmFetch<any>(`/api/crm/outreach/messages/${messageId}/send`, { method: "POST", body: "{}" }); setNotice(`Sent from lee@interviewa.com. ${result.remainingToday} sends remain today.`); await loadCore(); }
+    try {
+      const result = await crmFetch<any>(`/api/crm/outreach/messages/${messageId}/send`, { method: "POST", body: "{}" });
+      setNotice(`Queued safely for ${formatActivityDate(result.scheduledAt)}. Approved emails send five minutes apart.`);
+      await loadCore();
+    }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const approveAndSend = async (messageId: string) => {
@@ -361,11 +369,62 @@ export default function OutreachPage() {
         { method: "POST", body: "{}" }
       );
       setNotice(
-        `Approved and sent from lee@interviewa.com. ${result.remainingToday} sends remain today.`
+        `Exact draft approved and queued for ${formatActivityDate(result.scheduledAt)}. It will send automatically from lee@interviewa.com.`
       );
       await Promise.all([loadCore(), tab === "replies" ? loadMetrics() : Promise.resolve()]);
     } catch (e: any) {
-      setError(e.message || "The email was not sent");
+      setError(e.message || "The email was not queued");
+    } finally {
+      setBusy("");
+    }
+  };
+  const prepareAllRemaining = () => {
+    const ids = queue
+      .filter((row) => !row.message && row.status === "queued" && row.prospect?.id)
+      .map((row) => row.prospect.id)
+      .filter((id) => !["queued", "researching", "done"].includes(prepareJobsRef.current[id] || ""));
+    if (!ids.length) {
+      setNotice("Every eligible person in today's queue is already prepared or in progress.");
+      return;
+    }
+    for (const id of ids) enqueuePrepare(id);
+    setNotice(`${ids.length} prospects added to the research queue. Two will prepare at a time while you keep reviewing.`);
+  };
+  const approveAllPrepared = async () => {
+    const drafts = queue.filter(
+      (row) => row.message && ["draft", "failed"].includes(row.message.status)
+    );
+    if (!drafts.length) {
+      setNotice("There are no prepared drafts waiting for approval.");
+      return;
+    }
+    setBusy("approve-all"); setError(""); setNotice("");
+    try {
+      let lastScheduledAt = "";
+      for (const row of drafts) {
+        const currentMessage = row.message;
+        if (!currentMessage) continue;
+        const messageId = currentMessage.id;
+        const visible = draftEdits[messageId];
+        if (!visible?.subject?.trim() || !visible?.body_text?.trim())
+          throw new Error(`The draft for ${row.prospect?.first_name || "this prospect"} is incomplete`);
+        const { message } = await crmFetch<{ message: Record<string, any> }>(
+          `/api/crm/outreach/messages/${messageId}`,
+          { method: "PATCH", body: JSON.stringify({ ...visible, status: "approved" }) }
+        );
+        if (!message?.id || message.status !== "approved")
+          throw new Error("One of the exact visible drafts was not confirmed as approved");
+        const queued = await crmFetch<any>(
+          `/api/crm/outreach/messages/${messageId}/send`,
+          { method: "POST", body: "{}" }
+        );
+        lastScheduledAt = queued.scheduledAt || lastScheduledAt;
+      }
+      setNotice(`${drafts.length} reviewed drafts approved and queued five minutes apart${lastScheduledAt ? `. The last is scheduled for ${formatActivityDate(lastScheduledAt)}` : ""}.`);
+      await loadCore();
+    } catch (e: any) {
+      setError(e.message || "The prepared drafts could not all be queued");
+      await loadCore();
     } finally {
       setBusy("");
     }
@@ -627,6 +686,32 @@ export default function OutreachPage() {
   const queuedResearchCount = Object.values(prepareJobs).filter(
     (status) => status === "queued" || status === "adding"
   ).length;
+  // Keep today's untouched work at the top. Sent prospects remain visible as
+  // the audit trail, but rotate beneath every person who still needs action.
+  // The API's priority order is preserved inside both groups.
+  const orderedQueue = useMemo(
+    () =>
+      queue
+        .map((row, originalIndex) => ({ row, originalIndex }))
+        .sort((a, b) => {
+          const aSent =
+            a.row.message?.status === "sent" || Boolean(a.row.lastSentMessage);
+          const bSent =
+            b.row.message?.status === "sent" || Boolean(b.row.lastSentMessage);
+          return Number(aSent) - Number(bSent) || a.originalIndex - b.originalIndex;
+        })
+        .map(({ row }) => row),
+    [queue]
+  );
+  const remainingToPrepare = queue.filter(
+    (row) => !row.message && row.status === "queued"
+  ).length;
+  const preparedToApprove = queue.filter(
+    (row) => row.message && ["draft", "failed"].includes(row.message.status)
+  ).length;
+  const scheduledToSend = queue.filter(
+    (row) => row.message?.status === "approved" && row.message?.scheduled_at
+  ).length;
 
   return (
     <main className="relative z-10 mx-auto max-w-[1180px] px-3 py-5 sm:px-5 sm:py-9">
@@ -647,18 +732,18 @@ export default function OutreachPage() {
       {notice ? <p className="mb-3 rounded-lg border border-moss/40 bg-moss/10 px-3 py-2 text-sm text-moss">{notice}</p> : null}
       {error ? <p className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm text-rust">{error}</p> : null}
       {researchingCount || queuedResearchCount ? <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-sky/45 bg-sky/[0.08] px-3 py-2 text-sm text-sky" role="status" aria-live="polite"><span className="h-2 w-2 animate-pulse rounded-full bg-sky" /><strong>{researchingCount} researching</strong>{queuedResearchCount ? <span>· {queuedResearchCount} waiting</span> : null}<span className="text-bone/65">You can keep working or add more prospects.</span></div> : null}
-      {loading ? <p className="py-10 text-center font-mono text-xs text-muted">Loading outreach…</p> : null}
-      {!loading && tabLoading ? <div className="h-44 animate-pulse rounded-xl border border-edge bg-panel/30" /> : null}
+      {loading ? <MatrixRain size="panel" messages={["loading outreach", "checking today's queue", "refreshing campaign activity"]} /> : null}
+      {!loading && tabLoading ? <MatrixRain size="compact" messages={["loading this outreach view"]} /> : null}
 
       {!loading && !tabLoading && tab === "queue" ? <section>
         <RevenueToday />
-        <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s controlled queue</h2><p className="mt-1 text-sm text-muted">Only the strongest safe fits use today’s limited slots. Scoring is free; research happens only when you press Prepare, and every draft waits for approval.</p></div><button onClick={buildQueue} disabled={!!busy || queue.length >= (activeCampaign?.daily_limit || 20)} className={primary}>{busy === "queue" ? "Ranking…" : queue.length ? `Top up to ${activeCampaign?.daily_limit || 20}` : "Rank + build today’s queue"}</button></div>
-        <div className="space-y-3">{queue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const canPrepare = !m && row.status === "queued"; const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = m?.status || (lastSent ? "sent" : row.status || "queued"); const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="font-mono text-[0.55rem] uppercase text-muted">#{index + 1} · step {row.current_step}</p><h3 className="mt-1 font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>{p.priority}</span><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[displayStatus] || "border-edge text-muted"}`}>{displayStatus === "sent" ? "✓ sent" : displayStatus}</span></div>{!m && lastSent && row.next_action_at ? <p className="mt-2 text-xs text-muted">Next follow up becomes ready {formatActivityDate(row.next_action_at)}.</p> : null}</div>{canPrepare ? <button onClick={() => prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>{prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : Number(row.current_step) > 1 ? "Queue follow up draft" : "Queue research + draft"}</button> : !m && lastSent ? <button onClick={() => selectTab("activity")} className={`${button} w-full border-moss/45 text-moss sm:w-auto`}>View sent email</button> : null}</div>
+        <div className="mb-4 rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s controlled queue</h2><p className="mt-1 text-sm text-muted">Prepare in the background, approve the exact drafts you have reviewed, then LiveCoach sends one every five minutes. Sent people rotate to the bottom automatically.</p><p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{remainingToPrepare} to prepare · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p></div><button onClick={buildQueue} disabled={!!busy || queue.length >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : queue.length ? `Top up to ${activeCampaign?.daily_limit || 20}` : "Rank + build today’s queue"}</button></div><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare all remaining (${remainingToPrepare})` : "All research prepared"}</button><button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve all prepared & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button></div><p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact drafts already shown below. New research never sends without a separate approval.</p></div>
+        <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const canPrepare = !m && row.status === "queued"; const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
+          <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="font-mono text-[0.55rem] uppercase text-muted">#{index + 1} · step {row.current_step}</p><h3 className="mt-1 font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>{p.priority}</span><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[displayStatus] || "border-edge text-muted"}`}>{displayStatus === "sent" ? "✓ sent" : displayStatus}</span></div>{!m && lastSent && row.next_action_at ? <p className="mt-2 text-xs text-muted">Next follow up becomes ready {formatActivityDate(row.next_action_at)}.</p> : null}</div>{canPrepare ? <button onClick={() => prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>{prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : Number(row.current_step) > 1 ? "Queue follow up draft" : "Queue research + draft"}</button> : !m && lastSent ? <button onClick={() => selectTab("activity")} className="min-h-11 w-full rounded-lg border border-moss bg-moss px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-ink transition hover:bg-moss/85 sm:w-auto">✓ Sent · view email</button> : null}</div>
           {rowErrors[p.id] ? <p className="mt-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm leading-5 text-rust">{rowErrors[p.id]}</p> : null}
           <RecommendationCard recommendation={row.recommendation || p.recommendation} compact />
           {row.research ? <details className="mt-4 rounded-lg border border-edge bg-ink/30 p-3"><summary className="cursor-pointer font-mono text-[0.6rem] uppercase tracking-wider text-amber">Why this message {m?.quality_score ? `· quality ${m.quality_score}/100` : ""}</summary><p className="mt-2 text-sm leading-6 text-bone/80">{m?.strategy?.reasoning || row.research.summary}</p><div className="mt-2 flex flex-wrap gap-1.5">{row.research.fitDecision ? <span className="rounded-full border border-moss/40 bg-moss/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-moss">{row.research.fitDecision}</span> : null}{row.research.commercialPath ? <span className="rounded-full border border-sky/40 bg-sky/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-sky">{row.research.commercialPath}</span> : null}{row.research.volumeAssessment ? <span className="rounded-full border border-amber/40 bg-amber/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-amber">{row.research.volumeAssessment} vacancy volume</span> : null}{row.research.freshness ? <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.5rem] uppercase text-muted">{row.research.freshness}</span> : null}</div><p className="mt-2 text-xs text-muted"><strong className="text-bone">Chosen angle:</strong> {m?.strategy?.angle || row.research.bestAngle}</p>{row.research.volumeReason ? <p className="mt-2 text-xs text-muted"><strong className="text-bone">Volume evidence:</strong> {row.research.volumeReason}</p> : null}{row.research.activeJobs?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Current jobs found</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{row.research.activeJobs.map((job: string) => <li key={job}>• {job}</li>)}</ul></div> : null}{m?.strategy?.evidenceUsed?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Evidence actually used</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{m.strategy.evidenceUsed.map((fact: string) => <li key={fact}>• {fact}</li>)}</ul></div> : null}{(row.research_sources || []).length ? <div className="mt-2 flex flex-wrap gap-2">{row.research_sources.slice(0, 4).map((source: any) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="text-xs text-amber hover:underline">{source.title || "Source"} ↗</a>)}</div> : null}</details> : null}
-          {m && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-edge bg-ink/40 px-3 py-2 font-mono text-[0.58rem] text-muted">From: <span className="text-bone">Lee Nazari &lt;lee@interviewa.com&gt;</span> · To: {p.email}</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(m.id, { subject: e.target.value })} disabled={m.status === "sent"} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Email</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(m.id, { body_text: e.target.value })} disabled={m.status === "sent"} /></label>{m.status !== "sent" ? <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3"><p className="text-xs leading-5 text-bone/75">Test the real email appearance safely. The exact saved body goes only to <strong className="text-bone">lee@ai13.com</strong>; the prospect, sequence, daily allowance and results stay untouched.</p><button onClick={() => rehearse(m.id)} disabled={!!busy} className={`${button} mt-2 w-full border-sky/45 text-sky sm:w-auto`}>{busy === `rehearse:${m.id}` ? "Sending rehearsal…" : "Send rehearsal to me"}</button></div> : null}<div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => saveDraft(m.id)} disabled={!!busy || m.status === "sent"} className={button}>Save changes</button>{m.status === "draft" || m.status === "failed" ? <button onClick={() => approveAndSend(m.id)} disabled={!!busy} className={primary}>{busy === `approve-send:${m.id}` ? "Approving and sending…" : "Approve & send"}</button> : null}{m.status === "approved" ? <button onClick={() => send(m.id)} disabled={!!busy} className={primary}>{busy === `send:${m.id}` ? "Sending…" : "Send now"}</button> : null}{m.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Sent safely</span> : null}</div><p className="text-right text-xs text-muted">Approve &amp; send is the final action. There is no second confirmation pop-up.</p></div> : null}
+          {m && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-edge bg-ink/40 px-3 py-2 font-mono text-[0.58rem] text-muted">From: <span className="text-bone">Lee Nazari &lt;lee@interviewa.com&gt;</span> · To: {p.email}</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(m.id, { subject: e.target.value })} disabled={m.status === "sent" || Boolean(m.scheduled_at)} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Email</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(m.id, { body_text: e.target.value })} disabled={m.status === "sent" || Boolean(m.scheduled_at)} /></label>{m.status !== "sent" && !m.scheduled_at ? <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3"><p className="text-xs leading-5 text-bone/75">Test the real email appearance safely. The exact saved body goes only to <strong className="text-bone">lee@ai13.com</strong>; the prospect, sequence, daily allowance and results stay untouched.</p><button onClick={() => rehearse(m.id)} disabled={!!busy} className={`${button} mt-2 w-full border-sky/45 text-sky sm:w-auto`}>{busy === `rehearse:${m.id}` ? "Sending rehearsal…" : "Send rehearsal to me"}</button></div> : null}<div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => saveDraft(m.id)} disabled={!!busy || m.status === "sent" || Boolean(m.scheduled_at)} className={button}>Save changes</button>{m.status === "draft" || m.status === "failed" ? <button onClick={() => approveAndSend(m.id)} disabled={!!busy} className={primary}>{busy === `approve-send:${m.id}` ? "Approving and queueing…" : "Approve & queue"}</button> : null}{m.status === "approved" && !m.scheduled_at ? <button onClick={() => send(m.id)} disabled={!!busy} className={primary}>{busy === `send:${m.id}` ? "Queueing…" : "Queue approved email"}</button> : null}{m.status === "approved" && m.scheduled_at ? <span className="self-center rounded-lg border border-sky bg-sky px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-ink">✓ Queued for {formatActivityDate(m.scheduled_at)}</span> : null}{m.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Sent safely</span> : null}</div><p className="text-right text-xs text-muted">Approved emails send automatically five minutes apart. There is no second confirmation pop-up.</p></div> : null}
         </article>; })}{!queue.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">The morning queue can be selected automatically, or you can build it now. Nobody is researched or contacted until you act.</div> : null}</div>
       </section> : null}
 
@@ -667,7 +752,7 @@ export default function OutreachPage() {
           <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_10rem_10rem]">
             <input className={input} value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search person, company, role or email…" />
             <select aria-label="Outreach status filter" value={stageFilter} onChange={(event) => setStageFilter(event.target.value)} className={input}>
-              <option value="active">Active prospects</option><option value="all">All including removed</option><option value="not_started">Not started</option><option value="queued">Queued</option><option value="draft">Draft ready</option><option value="approved">Approved</option><option value="sent">Sent</option><option value="replied">Replied</option><option value="interested">Interested</option><option value="suppressed">Removed</option>
+              <option value="active">Active prospects</option><option value="all">All including removed</option><option value="not_started">Not started</option><option value="queued">Queued</option><option value="draft">Draft ready</option><option value="approved">Approved</option><option value="scheduled">Scheduled</option><option value="sent">Sent</option><option value="replied">Replied</option><option value="interested">Interested</option><option value="suppressed">Removed</option>
             </select>
             <select aria-label="Manual priority filter" value={priority} onChange={(event) => setPriority(event.target.value as "all" | Priority)} className={input}><option value="all">All priorities</option><option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option></select>
             <select aria-label="Fit recommendation filter" value={recommendationFilter} onChange={(event) => setRecommendationFilter(event.target.value as "all" | RecommendationAction)} className={input}><option value="all">All fit scores</option><option value="contact_today">Contact today</option><option value="hold">Hold</option><option value="skip">Skip</option></select>
@@ -800,7 +885,7 @@ export default function OutreachPage() {
             </div>}
           </div> : null}
           {reply.reply_category === "interested" && !draft ? <button onClick={() => prepareBookingReply(reply.id)} disabled={!!busy} className={`${primary} mt-3 w-full sm:w-auto`}>{busy === `booking:${reply.id}` ? "Drafting…" : "Prepare booking reply"}</button> : null}
-          {draft && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-moss/35 bg-moss/[0.06] px-3 py-2 text-sm text-moss">This is still a draft. Review the exact words and calendar link before sending.</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Reply subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(draft.id, { subject: e.target.value })} disabled={draft.status === "sent"} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Reply</span><textarea className={`${input} min-h-40 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(draft.id, { body_text: e.target.value })} disabled={draft.status === "sent"} /></label><div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => saveDraft(draft.id)} disabled={!!busy || draft.status === "sent"} className={button}>Save changes</button>{draft.status === "draft" || draft.status === "failed" ? <button onClick={() => approveAndSend(draft.id)} disabled={!!busy} className={primary}>{busy === `approve-send:${draft.id}` ? "Approving and sending…" : "Approve & send reply"}</button> : null}{draft.status === "approved" ? <button onClick={() => send(draft.id)} disabled={!!busy} className={primary}>{busy === `send:${draft.id}` ? "Sending…" : "Send booking reply"}</button> : null}{draft.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Booking link sent</span> : null}</div></div> : null}
+          {draft && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-moss/35 bg-moss/[0.06] px-3 py-2 text-sm text-moss">Review the exact words and calendar link. Once approved, the reply joins the same paced send queue.</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Reply subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(draft.id, { subject: e.target.value })} disabled={draft.status === "sent" || Boolean(draft.scheduled_at)} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Reply</span><textarea className={`${input} min-h-40 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(draft.id, { body_text: e.target.value })} disabled={draft.status === "sent" || Boolean(draft.scheduled_at)} /></label><div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => saveDraft(draft.id)} disabled={!!busy || draft.status === "sent" || Boolean(draft.scheduled_at)} className={button}>Save changes</button>{draft.status === "draft" || draft.status === "failed" ? <button onClick={() => approveAndSend(draft.id)} disabled={!!busy} className={primary}>{busy === `approve-send:${draft.id}` ? "Approving and queueing…" : "Approve & queue reply"}</button> : null}{draft.status === "approved" && !draft.scheduled_at ? <button onClick={() => send(draft.id)} disabled={!!busy} className={primary}>{busy === `send:${draft.id}` ? "Queueing…" : "Queue booking reply"}</button> : null}{draft.status === "approved" && draft.scheduled_at ? <span className="self-center rounded-lg border border-sky bg-sky px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-ink">✓ Queued for {formatActivityDate(draft.scheduled_at)}</span> : null}{draft.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Booking link sent</span> : null}</div></div> : null}
           <a href={`mailto:${reply.email}`} className="mt-3 inline-block font-mono text-xs text-amber">Open in Gmail ↗</a>
         </article>; })}{!replies.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">No replies detected yet.</div> : null}</div>
       </section> : null}

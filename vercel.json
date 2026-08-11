@@ -29,6 +29,10 @@
       "schedule": "20 6 * * *"
     },
     {
+      "path": "/api/cron/outreach-send",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/outreach-replies",
       "schedule": "15 7 * * *"
     },

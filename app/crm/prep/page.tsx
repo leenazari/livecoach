@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import MatrixRain from "@/components/MatrixRain";
 
 type Call = {
   id: string;
@@ -2041,7 +2042,7 @@ export default function PrepPage() {
     <Suspense
       fallback={
         <main className="relative z-10 mx-auto max-w-[860px] px-5 py-10">
-          <p className="font-mono text-[0.66rem] text-muted">Loading…</p>
+          <MatrixRain size="panel" messages={["loading call preparation", "checking the latest calendar"]} />
         </main>
       }
     >
