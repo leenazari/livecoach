@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 
@@ -18,6 +25,24 @@ const ClientAssistant = dynamic(
     ),
   }
 );
+
+type PanelPosition = { x: number; y: number };
+
+const BRAIN_POSITION_KEY = "livecoach:brain-position:v1";
+const DESKTOP_EDGE_GAP = 12;
+
+function clampPanelPosition(
+  position: PanelPosition,
+  panelWidth: number,
+  panelHeight: number
+): PanelPosition {
+  const maxX = Math.max(DESKTOP_EDGE_GAP, window.innerWidth - panelWidth - DESKTOP_EDGE_GAP);
+  const maxY = Math.max(DESKTOP_EDGE_GAP, window.innerHeight - panelHeight - DESKTOP_EDGE_GAP);
+  return {
+    x: Math.min(Math.max(position.x, DESKTOP_EDGE_GAP), maxX),
+    y: Math.min(Math.max(position.y, DESKTOP_EDGE_GAP), maxY),
+  };
+}
 
 function describeScreen(pathname: string | null, hasClient: boolean, tab: string) {
   const path = pathname || "/crm";
@@ -59,6 +84,15 @@ export default function GlobalAssistant({
 }) {
   const [open, setOpen] = useState(false);
   const [seed, setSeed] = useState("");
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [panelPosition, setPanelPosition] = useState<PanelPosition | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
   // When a draft is started from a task, remember which client + task so the
   // assistant scopes to that client (its drafts save there) and the task can
   // auto-complete once the draft is saved.
@@ -83,6 +117,137 @@ export default function GlobalAssistant({
     Boolean(pathFocusId),
     searchParams.get("tab") || ""
   );
+
+  // Desktop remembers where the user placed the Brain. Mobile deliberately
+  // ignores this and stays full-screen, so dragging can never break the phone UI.
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 640px)");
+    const syncViewport = () => setIsDesktop(media.matches);
+    syncViewport();
+    media.addEventListener("change", syncViewport);
+    try {
+      const saved = JSON.parse(
+        window.localStorage.getItem(BRAIN_POSITION_KEY) || "null"
+      );
+      if (Number.isFinite(saved?.x) && Number.isFinite(saved?.y)) {
+        setPanelPosition({ x: saved.x, y: saved.y });
+      }
+    } catch {
+      window.localStorage.removeItem(BRAIN_POSITION_KEY);
+    }
+    return () => media.removeEventListener("change", syncViewport);
+  }, []);
+
+  const persistPosition = useCallback((position: PanelPosition | null) => {
+    if (position) {
+      window.localStorage.setItem(BRAIN_POSITION_KEY, JSON.stringify(position));
+    } else {
+      window.localStorage.removeItem(BRAIN_POSITION_KEY);
+    }
+  }, []);
+
+  const movePanel = useCallback((x: number, y: number) => {
+    const panel = panelRef.current;
+    if (!panel) return null;
+    const rect = panel.getBoundingClientRect();
+    const next = clampPanelPosition({ x, y }, rect.width, rect.height);
+    setPanelPosition(next);
+    return next;
+  }, []);
+
+  const startDrag = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      if (!isDesktop || !panelRef.current) return;
+      event.preventDefault();
+      const rect = panelRef.current.getBoundingClientRect();
+      dragRef.current = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setDragging(true);
+      // Convert the centred CSS position into explicit coordinates on the first
+      // movement, avoiding any visual jump when the drag begins.
+      setPanelPosition({ x: rect.left, y: rect.top });
+    },
+    [isDesktop]
+  );
+
+  const continueDrag = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      const drag = dragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      movePanel(event.clientX - drag.offsetX, event.clientY - drag.offsetY);
+    },
+    [movePanel]
+  );
+
+  const finishDrag = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      const drag = dragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      dragRef.current = null;
+      setDragging(false);
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        /* The pointer may already have been released by the browser. */
+      }
+      const panel = panelRef.current;
+      if (panel) {
+        const rect = panel.getBoundingClientRect();
+        const next = clampPanelPosition(
+          { x: rect.left, y: rect.top },
+          rect.width,
+          rect.height
+        );
+        setPanelPosition(next);
+        persistPosition(next);
+      }
+    },
+    [persistPosition]
+  );
+
+  const nudgePanel = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      if (!isDesktop || !panelRef.current) return;
+      const movement: Record<string, [number, number]> = {
+        ArrowLeft: [-24, 0],
+        ArrowRight: [24, 0],
+        ArrowUp: [0, -24],
+        ArrowDown: [0, 24],
+      };
+      const delta = movement[event.key];
+      if (!delta) return;
+      event.preventDefault();
+      const rect = panelRef.current.getBoundingClientRect();
+      const next = movePanel(rect.left + delta[0], rect.top + delta[1]);
+      if (next) persistPosition(next);
+    },
+    [isDesktop, movePanel, persistPosition]
+  );
+
+  // A saved position may no longer fit after a resize or after the panel grows.
+  useEffect(() => {
+    if (!open || !isDesktop) return;
+    const keepInView = () => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const rect = panel.getBoundingClientRect();
+      setPanelPosition((current) => {
+        if (!current) return current;
+        const next = clampPanelPosition(current, rect.width, rect.height);
+        return next.x === current.x && next.y === current.y ? current : next;
+      });
+    };
+    const frame = window.requestAnimationFrame(keepInView);
+    window.addEventListener("resize", keepInView);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", keepInView);
+    };
+  }, [open, isDesktop]);
 
   // A "draft email" next step (anywhere) opens the assistant, scopes it to that
   // client, and asks it to draft the email - so the task actually starts the
@@ -117,13 +282,6 @@ export default function GlobalAssistant({
     return () => window.removeEventListener("lc:open-brain", openIt);
   }, []);
 
-  // Any navigation started from the Brain should reveal the destination instead
-  // of leaving the full-height chat panel covering the newly loaded page.
-  useEffect(() => {
-    setOpen(false);
-    setEventClient(null);
-  }, [pathname]);
-
   if (!open) {
     return (
       <button
@@ -142,21 +300,52 @@ export default function GlobalAssistant({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex justify-center px-0 sm:items-start sm:px-3">
-      <div className="flex h-[100dvh] w-full flex-col overflow-hidden border border-amber/40 bg-panel shadow-2xl sm:mt-3 sm:h-auto sm:max-h-[86vh] sm:w-[min(624px,96vw)] sm:rounded-2xl">
+    <div className="pointer-events-none fixed inset-0 z-[60]">
+      <div
+        ref={panelRef}
+        style={
+          isDesktop && panelPosition
+            ? { left: panelPosition.x, top: panelPosition.y }
+            : undefined
+        }
+        className={`pointer-events-auto absolute left-0 top-0 flex h-[100dvh] w-full flex-col overflow-hidden border border-amber/40 bg-panel shadow-2xl sm:top-3 sm:h-auto sm:max-h-[86vh] sm:w-[min(624px,96vw)] sm:rounded-2xl ${
+          isDesktop && panelPosition ? "" : "sm:left-1/2 sm:-translate-x-1/2"
+        }`}
+      >
         <div className="flex items-center justify-between gap-2 border-b border-edge bg-ink/50 px-4 py-2.5">
-          <span className="font-mono text-[0.62rem] uppercase tracking-[0.16em] text-amber">
+          <span className="min-w-0 truncate font-mono text-[0.62rem] uppercase tracking-[0.16em] text-amber">
             {"▤"} The brain{active ? ` · ${active.name}` : ""}
             <span className="text-muted"> · {screenContext.label}</span>
           </span>
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            aria-label="Close the brain"
-            className="font-mono text-sm text-muted transition hover:text-bone"
-          >
-            ✕
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              aria-label="Move the Brain window. Use arrow keys for precise movement."
+              title="Drag to move. Double click to centre."
+              onPointerDown={startDrag}
+              onPointerMove={continueDrag}
+              onPointerUp={finishDrag}
+              onPointerCancel={finishDrag}
+              onKeyDown={nudgePanel}
+              onDoubleClick={() => {
+                setPanelPosition(null);
+                persistPosition(null);
+              }}
+              className={`hidden min-h-8 cursor-grab touch-none items-center gap-1.5 rounded-lg border border-edge px-2.5 font-mono text-[0.55rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber sm:flex ${
+                dragging ? "cursor-grabbing border-amber/60 text-amber" : ""
+              }`}
+            >
+              <span aria-hidden="true">⠿</span> move
+            </button>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              aria-label="Close the brain"
+              className="flex min-h-8 min-w-8 items-center justify-center rounded-lg font-mono text-sm text-muted transition hover:bg-bone/5 hover:text-bone"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col p-3">
