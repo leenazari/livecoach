@@ -72,7 +72,11 @@ function DealDetails({ row, stageDefinitions, busy, onChange, onSave }: Props & 
     <details className="mt-2 rounded-lg border border-edge bg-ink/35 p-2">
       <summary className="cursor-pointer font-mono text-[0.56rem] uppercase tracking-wider text-amber">
         Evidence and edit
+        {row.pendingSignalCount ? ` · ${row.pendingSignalCount} new signal${row.pendingSignalCount === 1 ? "" : "s"} queued` : ""}
+        {row.failedSignalCount ? ` · ${row.failedSignalCount} retry needed` : ""}
       </summary>
+      {row.pendingSignalCount ? <p className="mt-2 rounded-lg border border-amber/30 bg-amber/[0.06] px-3 py-2 text-xs text-amber">New evidence is queued for one low cost assessment. This does not reread the transcript or email thread.</p> : null}
+      {row.failedSignalCount ? <p className="mt-2 rounded-lg border border-rust/40 bg-rust/[0.07] px-3 py-2 text-xs text-rust">A saved evidence assessment failed and will retry automatically, up to three attempts.</p> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <label className="lg:col-span-2">
           <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Deal intent</span>

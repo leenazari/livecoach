@@ -9,6 +9,7 @@ import {
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { estimateCost } from "@/lib/costs";
 import { getCommercialMemory } from "@/lib/commercial-memory";
+import { enqueueOpportunitySignal } from "@/lib/opportunity-signals";
 import { completeUpcomingForCall } from "@/lib/calls";
 import { extractAttendees, matchByRoster } from "@/lib/roster";
 import { resolveCallScope } from "@/lib/workstreams";
@@ -520,7 +521,7 @@ Return the JSON assessment now.`;
         : null;
 
     try {
-      await supabaseAdmin.from("interview_summaries").insert({
+      const { data: savedCall, error: savedCallError } = await supabaseAdmin.from("interview_summaries").insert({
         cache_key: cacheKey,
         session_id: sessionId || null,
         candidate: candidate || null,
@@ -531,7 +532,8 @@ Return the JSON assessment now.`;
         company_id: resolvedCompanyId,
         workstream_id: resolvedWorkstreamId,
         cost: finalCost,
-      });
+      }).select("id, created_at").single();
+      if (savedCallError) throw savedCallError;
       // Keep the call-event row in step when we auto-linked one that started
       // without a client (matched by session_id), so both sides agree.
       if (resolvedCompanyId && sessionId) {
@@ -557,6 +559,26 @@ Return the JSON assessment now.`;
       // digest instead of paying to reread the transcript or full scorecard.
       if (resolvedCompanyId) {
         getCommercialMemory(resolvedCompanyId, resolvedWorkstreamId).catch(() => {});
+        await enqueueOpportunitySignal({
+          companyId: resolvedCompanyId,
+          workstreamId: resolvedWorkstreamId,
+          sourceRecordType: "call_summary",
+          sourceRecordId: savedCall.id,
+          sourceChannel: "video_call",
+          occurredAt: savedCall.created_at,
+          evidence: {
+            overview: summary?.overview || summary?.headline || summary?.title,
+            buyingSignals: summary?.buyingSignals,
+            objections: summary?.objections,
+            painPoints: summary?.painPoints,
+            decisions: summary?.decisions,
+            ourNextActions: summary?.myNextActions,
+            theirNextActions: summary?.theirNextActions,
+            commercialOpportunities: summary?.commercialOpportunities,
+            missedOpportunities: summary?.missedOpportunities,
+            gaps: summary?.notCovered,
+          },
+        }).catch((error) => console.error("Call outlook signal queue failed:", error));
       }
       // The call is over once a summary exists, so clear the scheduled call it
       // came from (backstop for when session-end didn't fire, e.g. a Meet bot).
