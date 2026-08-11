@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveCallScope } from "@/lib/workstreams";
 
 export const runtime = "nodejs";
 
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest) {
       source,
       companyId,
       upcomingId,
+      workstreamId,
     } = await req.json();
 
     if (!sessionId || typeof sessionId !== "string") {
@@ -36,17 +38,12 @@ export async function POST(req: NextRequest) {
     // miss that second write and later be guessed as the next nearby meeting.
     const exactUpcomingId =
       typeof upcomingId === "string" && upcomingId ? upcomingId : null;
-    let exactCompanyId =
-      typeof companyId === "string" && companyId ? companyId : null;
-    if (exactUpcomingId && !exactCompanyId) {
-      const { data: scheduled, error: scheduledError } = await supabaseAdmin
-        .from("upcoming_calls")
-        .select("company_id")
-        .eq("id", exactUpcomingId)
-        .maybeSingle();
-      if (scheduledError) throw scheduledError;
-      if (scheduled?.company_id) exactCompanyId = scheduled.company_id as string;
-    }
+    const scope = await resolveCallScope({
+      companyId,
+      upcomingId: exactUpcomingId,
+      workstreamId,
+    });
+    const exactCompanyId = scope.companyId;
 
     const { error } = await supabaseAdmin.from("interview_sessions").upsert(
       {
@@ -58,6 +55,7 @@ export async function POST(req: NextRequest) {
         candidate: typeof candidate === "string" && candidate.trim() ? candidate : null,
         source: typeof source === "string" ? source : null,
         company_id: exactCompanyId,
+        workstream_id: scope.workstream?.id || null,
         upcoming_id: exactUpcomingId,
       },
       { onConflict: "session_id" }

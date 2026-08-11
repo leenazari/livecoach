@@ -12,6 +12,7 @@ import {
   resolveContact,
   websiteFromEmail,
 } from "@/lib/research-cache";
+import { resolveCallScope } from "@/lib/workstreams";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
       const { data } = await supabaseAdmin
         .from("upcoming_calls")
         .select(
-          "id, company_id, title, scheduled_at, meeting_url, intent, prepped, prep, research, attendees"
+          "id, company_id, workstream_id, title, scheduled_at, meeting_url, intent, prepped, prep, research, attendees"
         )
         .eq("id", upcomingId)
         .maybeSingle();
@@ -49,6 +50,15 @@ export async function GET(req: NextRequest) {
     }
 
     const company = await loadCompany(companyId || null);
+    const scope = await resolveCallScope({
+      companyId,
+      upcomingId,
+      workstreamId: call?.workstream_id,
+      attendees: call?.attendees,
+    });
+    const workstream = scope.workstream;
+    if (call && workstream && !call.workstream_id)
+      call.workstream_id = workstream.id;
 
     // ---- Who is on the call -------------------------------------------------
     // The invite's guest list is the most reliable signal, then the title, then
@@ -112,11 +122,13 @@ export async function GET(req: NextRequest) {
     // ---- Is there history to build an intent from? -------------------------
     let hasHistory = false;
     if (companyId) {
-      const { data: rows } = await supabaseAdmin
+      let historyQuery = supabaseAdmin
         .from("interview_summaries")
         .select("id")
         .eq("company_id", companyId)
         .limit(1);
+      if (workstream) historyQuery = historyQuery.eq("workstream_id", workstream.id);
+      const { data: rows } = await historyQuery;
       hasHistory = !!(rows && rows.length);
     }
 
@@ -131,10 +143,23 @@ export async function GET(req: NextRequest) {
       company.profile &&
       (company.profile as any).internal === true
     );
-    const emailContext =
-      !internal && company && typeof company.email_context === "string"
-        ? company.email_context
-        : "";
+    let workstreamEmailContext = "";
+    if (workstream) {
+      const { data: thread } = await supabaseAdmin
+        .from("workstreams")
+        .select("email_context")
+        .eq("id", workstream.id)
+        .maybeSingle();
+      workstreamEmailContext =
+        typeof thread?.email_context === "string" ? thread.email_context : "";
+    }
+    const emailContext = !internal
+      ? workstream
+        ? workstreamEmailContext
+        : company && typeof company.email_context === "string"
+          ? company.email_context
+          : ""
+      : "";
 
     return NextResponse.json({
       subject: {
@@ -146,6 +171,10 @@ export async function GET(req: NextRequest) {
         companyName,
         website,
         internal,
+        departmentId: workstream?.departmentId || null,
+        departmentName: workstream?.departmentName || null,
+        workstreamId: workstream?.id || null,
+        workstreamName: workstream?.name || null,
       },
       call: call
         ? {

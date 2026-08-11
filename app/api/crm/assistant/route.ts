@@ -11,6 +11,7 @@ import {
   gatherUpcomingCallPrepContext,
   gatherOutreachContext,
   findCompaniesNamedIn,
+  findWorkstreamsNamedIn,
 } from "@/lib/crm-context";
 import { getCommercialMemoryBlock } from "@/lib/commercial-memory";
 import {
@@ -936,11 +937,21 @@ export async function POST(req: NextRequest) {
       // (focus) and for any client they NAME in the message, but only a one-line
       // digest for everyone else. Keeps the prompt small as the book of clients
       // grows, without losing depth on whoever the question is actually about.
-      const named = await findCompaniesNamedIn(message);
+      const [named, namedWorkstreams] = await Promise.all([
+        findCompaniesNamedIn(message),
+        findWorkstreamsNamedIn(message),
+      ]);
+      const scopedCompanyIds = new Set(
+        namedWorkstreams.map((thread) => thread.companyId)
+      );
       const detailIds: string[] = [];
-      if (focus) detailIds.push(focus);
+      if (focus && !scopedCompanyIds.has(focus)) detailIds.push(focus);
       for (const n of named) {
-        if (!detailIds.includes(n.id) && detailIds.length < 3)
+        if (
+          !scopedCompanyIds.has(n.id) &&
+          !detailIds.includes(n.id) &&
+          detailIds.length < 3
+        )
           detailIds.push(n.id);
       }
       const wantsOutreachDetail =
@@ -949,6 +960,21 @@ export async function POST(req: NextRequest) {
         gatherGlobalContext(message),
         gatherOutreachContext(message, { detailed: wantsOutreachDetail }),
         gatherUpcomingCallPrepContext(message),
+        ...namedWorkstreams.map(async (thread) => {
+          const memory = await getCommercialMemoryBlock(
+            thread.companyId,
+            thread.workstreamId
+          );
+          return [
+            `NAMED RELATIONSHIP: ${thread.companyName} > ${
+              thread.departmentName || "No department"
+            } > ${thread.workstreamName} > ${thread.contactName}`,
+            "This is an isolated workstream. Do not borrow calls, actions or email context from another workstream at the same company.",
+            memory,
+          ]
+            .filter(Boolean)
+            .join("\n");
+        }),
         ...detailIds.map((id) =>
           wantsDeepHistory ? gatherClientContext(id) : getCommercialMemoryBlock(id)
         ),

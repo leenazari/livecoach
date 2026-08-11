@@ -11,6 +11,7 @@ import { estimateCost } from "@/lib/costs";
 import { getCommercialMemory } from "@/lib/commercial-memory";
 import { completeUpcomingForCall } from "@/lib/calls";
 import { extractAttendees, matchByRoster } from "@/lib/roster";
+import { resolveCallScope } from "@/lib/workstreams";
 import { createHash } from "crypto";
 
 export const runtime = "nodejs";
@@ -169,6 +170,7 @@ export async function POST(req: NextRequest) {
       sessionId,
       companyId,
       upcomingId,
+      workstreamId,
       cost,
       source,
       favouriteCues,
@@ -490,16 +492,12 @@ Return the JSON assessment now.`;
     // unassigned. Conservative - only links on a confident match.
     const exactUpcomingId =
       typeof upcomingId === "string" && upcomingId ? upcomingId : null;
-    let scheduledCompanyId: string | null = null;
-    if (exactUpcomingId) {
-      const { data: scheduled, error: scheduledError } = await supabaseAdmin
-        .from("upcoming_calls")
-        .select("company_id")
-        .eq("id", exactUpcomingId)
-        .maybeSingle();
-      if (scheduledError) throw scheduledError;
-      scheduledCompanyId = (scheduled?.company_id as string | null) || null;
-    }
+    const scheduledScope = await resolveCallScope({
+      companyId,
+      upcomingId: exactUpcomingId,
+      workstreamId,
+    });
+    const scheduledCompanyId = scheduledScope.companyId;
 
     let resolvedCompanyId: string | null =
       typeof companyId === "string" && companyId ? companyId : null;
@@ -516,6 +514,10 @@ Return the JSON assessment now.`;
       });
       if (auto) resolvedCompanyId = auto.companyId;
     }
+    const resolvedWorkstreamId =
+      scheduledScope.workstream?.companyId === resolvedCompanyId
+        ? scheduledScope.workstream.id
+        : null;
 
     try {
       await supabaseAdmin.from("interview_summaries").insert({
@@ -527,6 +529,7 @@ Return the JSON assessment now.`;
         // Stamp the linked company so the scorecard rolls up into that
         // company's call history (and feeds Phase 2 auto-attach).
         company_id: resolvedCompanyId,
+        workstream_id: resolvedWorkstreamId,
         cost: finalCost,
       });
       // Keep the call-event row in step when we auto-linked one that started
@@ -536,20 +539,24 @@ Return the JSON assessment now.`;
           .from("interview_sessions")
           .update({
             company_id: resolvedCompanyId,
+            workstream_id: resolvedWorkstreamId,
             ...(exactUpcomingId ? { upcoming_id: exactUpcomingId } : {}),
           })
           .eq("session_id", sessionId);
       } else if (exactUpcomingId && sessionId) {
         await supabaseAdmin
           .from("interview_sessions")
-          .update({ upcoming_id: exactUpcomingId })
+          .update({
+            upcoming_id: exactUpcomingId,
+            workstream_id: resolvedWorkstreamId,
+          })
           .eq("session_id", sessionId);
       }
       // Refresh the compact commercial memory immediately after the scorecard
       // lands. Future Brain, intent and prep requests reuse this facts-only
       // digest instead of paying to reread the transcript or full scorecard.
       if (resolvedCompanyId) {
-        getCommercialMemory(resolvedCompanyId).catch(() => {});
+        getCommercialMemory(resolvedCompanyId, resolvedWorkstreamId).catch(() => {});
       }
       // The call is over once a summary exists, so clear the scheduled call it
       // came from (backstop for when session-end didn't fire, e.g. a Meet bot).

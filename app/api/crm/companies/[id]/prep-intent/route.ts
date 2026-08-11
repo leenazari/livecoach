@@ -4,6 +4,7 @@ import { openai, OPENAI_MODEL_PRO, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { formatCommercialMemoryBlock, getCommercialMemory } from "@/lib/commercial-memory";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
+import { resolveCallScope } from "@/lib/workstreams";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,28 +31,43 @@ export async function POST(
       typeof (body as any)?.upcomingId === "string"
         ? (body as any).upcomingId
         : "";
+    const scope = await resolveCallScope({ companyId, upcomingId });
+    const workstream = scope.workstream;
+    let summariesQuery = supabaseAdmin
+      .from("interview_summaries")
+      .select("created_at, session_id, summary")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(3);
+    let tasksQuery = supabaseAdmin
+      .from("tasks")
+      .select("text, kind, status, created_at")
+      .eq("company_id", companyId)
+      .eq("status", "open")
+      .order("created_at", { ascending: false })
+      .limit(12);
+    if (workstream) {
+      summariesQuery = summariesQuery.eq("workstream_id", workstream.id);
+      tasksQuery = tasksQuery.eq("workstream_id", workstream.id);
+    }
 
-    const [{ data: company }, { data: summaryRows }, { data: taskRows }, commercialMemory] =
+    const [{ data: company }, { data: thread }, { data: summaryRows }, { data: taskRows }, commercialMemory] =
       await Promise.all([
         supabaseAdmin
           .from("companies")
           .select("name, profile, email_context_updated_at")
           .eq("id", companyId)
           .single(),
-        supabaseAdmin
-          .from("interview_summaries")
-          .select("created_at, session_id, summary")
-          .eq("company_id", companyId)
-          .order("created_at", { ascending: false })
-          .limit(3),
-        supabaseAdmin
-          .from("tasks")
-          .select("text, kind, status, created_at")
-          .eq("company_id", companyId)
-          .eq("status", "open")
-          .order("created_at", { ascending: false })
-          .limit(12),
-        getCommercialMemory(companyId),
+        workstream
+          ? supabaseAdmin
+              .from("workstreams")
+              .select("email_context_updated_at, next_call")
+              .eq("id", workstream.id)
+              .single()
+          : Promise.resolve({ data: null, error: null }),
+        summariesQuery,
+        tasksQuery,
+        getCommercialMemory(companyId, workstream?.id || null),
       ]);
 
     if (!company) {
@@ -59,7 +75,7 @@ export async function POST(
     }
 
     const profile = (company.profile || {}) as any;
-    const playbook: string[] = Array.isArray(profile.playbook)
+    const playbook: string[] = !workstream && Array.isArray(profile.playbook)
       ? profile.playbook.filter((p: any) => typeof p === "string" && p.trim())
       : [];
     const summaries = summaryRows || [];
@@ -68,8 +84,10 @@ export async function POST(
       .filter(Boolean);
 
     const newestSummaryAt = summaries[0]?.created_at || null;
-    const newestEmailAt = (company as any).email_context_updated_at || null;
-    const cached = profile.next_call;
+    const newestEmailAt = workstream
+      ? (thread as any)?.email_context_updated_at || null
+      : (company as any).email_context_updated_at || null;
+    const cached = workstream ? (thread as any)?.next_call : profile.next_call;
     const cacheIsCurrent = !!(
       cached &&
       typeof cached.intent === "string" &&
@@ -223,6 +241,7 @@ Rules:
 - Write the intent as the host would say it ("I want to ...", "I need to ..."), not as instructions to them.`;
 
     const userMsg = `CLIENT: ${company.name}
+${workstream ? `DEPARTMENT: ${workstream.departmentName || "not set"}\nWORKSTREAM: ${workstream.name}\nPURPOSE: ${workstream.purpose || "not set"}` : ""}
 
 OPEN LOOPS FROM RECENT CALLS:
 ${openLoopsBlock}
@@ -254,7 +273,7 @@ Return the JSON now.`;
       if (!bits.length && openTasks.length)
         bits.push(openTasks.slice(0, 3).join(", "));
       const intent = bits.length
-        ? `For this next call with ${company.name} I want to ${bits.join(
+        ? `For this next call with ${company.name}${workstream ? ` about ${workstream.name}` : ""} I want to ${bits.join(
             ", and "
           )}.`
         : `Reconnect with ${company.name}, take stock of where things stand and agree the next concrete step.`;
@@ -330,22 +349,25 @@ Return the JSON now.`;
 
     const cleanIntent = tidy(intent);
     const cleanRationale = rationale ? tidy(rationale) : "";
-    await supabaseAdmin
-      .from("companies")
-      .update({
-        profile: {
-          ...profile,
-          next_call: {
-            intent: cleanIntent,
-            rationale: cleanRationale,
-            basedOnSummaryAt: newestSummaryAt,
-            basedOnEmailAt: newestEmailAt,
-            basedOnMemoryHash: commercialMemory?.sourceHash || null,
-            generatedAt: new Date().toISOString(),
-          },
-        },
-      })
-      .eq("id", companyId);
+    const nextCall = {
+      intent: cleanIntent,
+      rationale: cleanRationale,
+      basedOnSummaryAt: newestSummaryAt,
+      basedOnEmailAt: newestEmailAt,
+      basedOnMemoryHash: commercialMemory?.sourceHash || null,
+      generatedAt: new Date().toISOString(),
+    };
+    if (workstream) {
+      await supabaseAdmin
+        .from("workstreams")
+        .update({ next_call: nextCall, updated_at: new Date().toISOString() })
+        .eq("id", workstream.id);
+    } else {
+      await supabaseAdmin
+        .from("companies")
+        .update({ profile: { ...profile, next_call: nextCall } })
+        .eq("id", companyId);
+    }
     const appliedIntent = await applyToUpcoming(
       cleanIntent,
       cleanRationale,

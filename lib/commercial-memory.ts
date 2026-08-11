@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
+import { getWorkstreamScope } from "@/lib/workstreams";
 
 export type CommercialMemory = {
   sourceHash: string;
@@ -72,52 +73,110 @@ const list = (value: any, max = 3): string[] =>
 // Refreshes a small facts-only memory. Database reads are cheap; model input
 // is not. The source hash avoids rewriting the row when nothing material has
 // changed and also invalidates the cached next-call intent when something has.
-export async function getCommercialMemory(companyId: string): Promise<CommercialMemory | null> {
+export async function getCommercialMemory(
+  companyId: string,
+  workstreamId?: string | null
+): Promise<CommercialMemory | null> {
   try {
-    const [companyRes, callsRes, tasksRes, opportunitiesRes, contextRes, prospectsRes, contactsRes] = await Promise.all([
+    const workstream = workstreamId
+      ? await getWorkstreamScope(workstreamId)
+      : null;
+    if (workstreamId && (!workstream || workstream.companyId !== companyId))
+      return null;
+    const { count: activeWorkstreamCount } = !workstream
+      ? await supabaseAdmin
+          .from("workstreams")
+          .select("id", { count: "exact", head: true })
+          .eq("company_id", companyId)
+          .eq("status", "active")
+      : { count: 0 };
+    const hasMultipleWorkstreams = (activeWorkstreamCount || 0) > 1;
+
+    let contactIds: string[] = [];
+    if (workstream) {
+      const { data: links, error: linksError } = await supabaseAdmin
+        .from("workstream_contacts")
+        .select("contact_id")
+        .eq("workstream_id", workstream.id);
+      if (linksError) throw linksError;
+      contactIds = (links || []).map((link: any) => link.contact_id);
+    }
+
+    let callsQuery = supabaseAdmin
+      .from("interview_summaries")
+      .select("id, created_at, summary")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    let tasksQuery = supabaseAdmin
+      .from("tasks")
+      .select("id, text, kind, due_at, created_at")
+      .eq("company_id", companyId)
+      .eq("status", "open")
+      .order("created_at", { ascending: false })
+      .limit(8);
+    let opportunitiesQuery = supabaseAdmin
+      .from("opportunities")
+      .select("id, title, value, status, pipeline_stage, probability, next_action, next_action_due_at, next_action_owner, updated_at")
+      .eq("company_id", companyId)
+      .eq("opportunity_type", "revenue")
+      .order("updated_at", { ascending: false })
+      .limit(5);
+    let contextQuery = supabaseAdmin
+      .from("client_context")
+      .select("id, kind, title, content, url, created_at")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(3);
+    if (workstream) {
+      callsQuery = callsQuery.eq("workstream_id", workstream.id);
+      tasksQuery = tasksQuery.eq("workstream_id", workstream.id);
+      opportunitiesQuery = opportunitiesQuery.eq("workstream_id", workstream.id);
+      contextQuery = contextQuery.eq("workstream_id", workstream.id);
+    } else if (hasMultipleWorkstreams) {
+      callsQuery = callsQuery.is("workstream_id", null);
+      tasksQuery = tasksQuery.is("workstream_id", null);
+      opportunitiesQuery = opportunitiesQuery.is("workstream_id", null);
+      contextQuery = contextQuery.is("workstream_id", null);
+    }
+
+    let contactsQuery = supabaseAdmin
+      .from("contacts")
+      .select("id, name, role, attributes, updated_at")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: true })
+      .limit(20);
+    if (workstream)
+      contactsQuery = contactIds.length
+        ? contactsQuery.in("id", contactIds)
+        : contactsQuery.eq("id", "00000000-0000-0000-0000-000000000000");
+
+    const [companyRes, threadRes, callsRes, tasksRes, opportunitiesRes, contextRes, prospectsRes, contactsRes] = await Promise.all([
       supabaseAdmin
         .from("companies")
         .select("name, stage, profile, notes, email_context, email_context_updated_at, commercial_memory")
         .eq("id", companyId)
         .single(),
-      supabaseAdmin
-        .from("interview_summaries")
-        .select("id, created_at, summary")
-        .eq("company_id", companyId)
-        .order("created_at", { ascending: false })
-        .limit(1),
-      supabaseAdmin
-        .from("tasks")
-        .select("id, text, kind, due_at, created_at")
-        .eq("company_id", companyId)
-        .eq("status", "open")
-        .order("created_at", { ascending: false })
-        .limit(8),
-      supabaseAdmin
-        .from("opportunities")
-        .select("id, title, value, status, pipeline_stage, probability, next_action, next_action_due_at, next_action_owner, updated_at")
-        .eq("company_id", companyId)
-        .eq("opportunity_type", "revenue")
-        .order("updated_at", { ascending: false })
-        .limit(5),
-      supabaseAdmin
-        .from("client_context")
-        .select("id, kind, title, content, url, created_at")
-        .eq("company_id", companyId)
-        .order("created_at", { ascending: false })
-        .limit(3),
-      supabaseAdmin
-        .from("outreach_prospects")
-        .select("id, first_name, last_name, email, reply_category, reply_summary, last_reply_at, last_contacted_at, updated_at")
-        .eq("crm_company_id", companyId)
-        .order("updated_at", { ascending: false })
-        .limit(3),
-      supabaseAdmin
-        .from("contacts")
-        .select("id, name, role, attributes, updated_at")
-        .eq("company_id", companyId)
-        .order("created_at", { ascending: true })
-        .limit(20),
+      workstream
+        ? supabaseAdmin
+            .from("workstreams")
+            .select("purpose, email_context, email_context_updated_at, commercial_memory")
+            .eq("id", workstream.id)
+            .single()
+        : Promise.resolve({ data: null, error: null }),
+      callsQuery,
+      tasksQuery,
+      opportunitiesQuery,
+      contextQuery,
+      workstream || hasMultipleWorkstreams
+        ? Promise.resolve({ data: [], error: null })
+        : supabaseAdmin
+            .from("outreach_prospects")
+            .select("id, first_name, last_name, email, reply_category, reply_summary, last_reply_at, last_contacted_at, updated_at")
+            .eq("crm_company_id", companyId)
+            .order("updated_at", { ascending: false })
+            .limit(3),
+      contactsQuery,
     ]);
     const company: any = companyRes.data;
     if (!company) return null;
@@ -127,23 +186,36 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
     const contexts: any[] = contextRes.data || [];
     const prospect: any = prospectsRes.data?.[0] || null;
     const contacts: any[] = contactsRes.data || [];
+    const thread: any = threadRes.data || null;
     const profile = company.profile && typeof company.profile === "object" ? company.profile : {};
     const rawActivity =
-      profile.activity_intelligence &&
+      !workstream && !hasMultipleWorkstreams && profile.activity_intelligence &&
       typeof profile.activity_intelligence === "object" &&
       profile.activity_intelligence.latest &&
       typeof profile.activity_intelligence.latest === "object"
         ? profile.activity_intelligence.latest
         : null;
     const brief = Array.isArray(profile.brief) ? profile.brief.join(" ") : profile.brief;
-    const relationship = cut(brief || company.notes, 600);
+    const relationship = cut(workstream?.purpose || brief || company.notes, 600);
+    const emailContext = workstream
+      ? thread?.email_context
+      : hasMultipleWorkstreams
+      ? null
+      : company.email_context;
+    const emailUpdatedAt = workstream
+      ? thread?.email_context_updated_at
+      : hasMultipleWorkstreams
+      ? null
+      : company.email_context_updated_at;
     const sourceHash = createHash("sha256").update(JSON.stringify({
       schema: 5,
       name: company.name,
       stage: company.stage,
       relationship,
-      emailAt: company.email_context_updated_at,
-      email: cut(company.email_context, 900),
+      workstream: workstream ? [workstream.id, workstream.name] : null,
+      companyWideOnly: hasMultipleWorkstreams,
+      emailAt: emailUpdatedAt,
+      email: cut(emailContext, 900),
       call: call ? [call.id, call.created_at] : null,
       tasks: tasks.map((row) => [row.id, row.text, row.kind, row.due_at]),
       opportunity: opportunity ? [opportunity.id, opportunity.updated_at, opportunity.status, opportunity.next_action] : null,
@@ -169,7 +241,7 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
       ]),
     })).digest("hex");
 
-    const existing = company.commercial_memory as CommercialMemory | null;
+    const existing = (workstream ? thread?.commercial_memory : company.commercial_memory) as CommercialMemory | null;
     if (existing?.sourceHash === sourceHash) return existing;
     const summary: any = call?.summary && typeof call.summary === "object" ? call.summary : {};
     const person = prospect
@@ -177,7 +249,10 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
       : "";
     const memory: CommercialMemory = {
       sourceHash,
-      company: cut(company.name, 140),
+      company: cut(
+        workstream ? `${company.name}, ${workstream.name}` : company.name,
+        140
+      ),
       relationship,
       lastCall: call ? {
         at: call.created_at,
@@ -193,9 +268,9 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
         commercialOpportunities: list(summary.commercialOpportunities),
         missedOpportunities: list(summary.missedOpportunities),
       } : null,
-      email: company.email_context ? {
-        at: company.email_context_updated_at || null,
-        summary: cut(company.email_context, 800),
+      email: emailContext ? {
+        at: emailUpdatedAt || null,
+        summary: cut(emailContext, 800),
       } : null,
       outreach: prospect ? {
         person: cut(person, 120),
@@ -259,9 +334,9 @@ export async function getCommercialMemory(companyId: string): Promise<Commercial
         })),
     };
     await supabaseAdmin
-      .from("companies")
+      .from(workstream ? "workstreams" : "companies")
       .update({ commercial_memory: memory, commercial_memory_updated_at: new Date().toISOString() })
-      .eq("id", companyId);
+      .eq("id", workstream?.id || companyId);
     return memory;
   } catch {
     return null;
@@ -315,6 +390,11 @@ export function formatCommercialMemoryBlock(memory: CommercialMemory | null): st
   return lines.join("\n").slice(0, 5200);
 }
 
-export async function getCommercialMemoryBlock(companyId: string): Promise<string> {
-  return formatCommercialMemoryBlock(await getCommercialMemory(companyId));
+export async function getCommercialMemoryBlock(
+  companyId: string,
+  workstreamId?: string | null
+): Promise<string> {
+  return formatCommercialMemoryBlock(
+    await getCommercialMemory(companyId, workstreamId)
+  );
 }

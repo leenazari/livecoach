@@ -5,14 +5,18 @@ import { capitaliseSentenceStarts } from "@/lib/text";
 // A stable fingerprint per (company, action). Same action for the same client
 // always hashes the same, so a task is never created twice and a completed one
 // is never resurrected when an AI pass regenerates it.
-export function fingerprintTask(companyId: string | null, text: string): string {
+export function fingerprintTask(
+  companyId: string | null,
+  text: string,
+  workstreamId?: string | null
+): string {
   const norm = (text || "")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .replace(/[^a-z0-9 ]/g, "")
     .trim();
   return createHash("sha256")
-    .update(`${companyId || "global"}::${norm}`)
+    .update(`${companyId || "global"}::${workstreamId || "all"}::${norm}`)
     .digest("hex");
 }
 
@@ -189,7 +193,8 @@ export function isNearDuplicateTask(aText: string, bText: string): boolean {
 // actually inserted (new ones only), so callers can confirm what was added.
 export async function upsertTasks(
   companyId: string | null,
-  items: NewTask[]
+  items: NewTask[],
+  workstreamId?: string | null
 ): Promise<any[]> {
   const candidates = (items || []).filter(
     (i) => i && typeof i.text === "string" && i.text.trim()
@@ -204,6 +209,7 @@ export async function upsertTasks(
   try {
     let q = supabaseAdmin.from("tasks").select("text").eq("status", "open");
     q = companyId ? q.eq("company_id", companyId) : q.is("company_id", null);
+    if (workstreamId) q = q.eq("workstream_id", workstreamId);
     const { data } = await q;
     existingOpenTexts = Array.isArray(data)
       ? data.map((r: any) => String(r.text || "")).filter(Boolean)
@@ -227,6 +233,7 @@ export async function upsertTasks(
     })
     .map((i) => ({
       company_id: companyId,
+      workstream_id: workstreamId || null,
       text: capitaliseSentenceStarts(i.text.trim()),
       kind: i.kind || "next_step",
       link_kind: i.linkKind || "client",
@@ -241,7 +248,8 @@ export async function upsertTasks(
       due_at: i.dueAt || null,
       fingerprint: fingerprintTask(
         companyId,
-        capitaliseSentenceStarts(i.text)
+        capitaliseSentenceStarts(i.text),
+        workstreamId
       ),
       status: "open",
     }));
@@ -251,7 +259,7 @@ export async function upsertTasks(
       .from("tasks")
       .upsert(rows, { onConflict: "fingerprint", ignoreDuplicates: true })
       .select(
-        "id, company_id, text, kind, link_kind, status, done_at, created_at, payload, due_at"
+        "id, company_id, workstream_id, text, kind, link_kind, status, done_at, created_at, payload, due_at"
       );
     return data || [];
   } catch (e) {

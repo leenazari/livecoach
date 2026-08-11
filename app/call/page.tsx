@@ -422,6 +422,20 @@ export default function CallPage() {
     id: string;
     name: string;
   } | null>(null);
+  const [linkedWorkstream, setLinkedWorkstream] = useState<{
+    id: string;
+    name: string;
+    departmentName: string | null;
+    purpose: string;
+  } | null>(null);
+  const [workstreamChoices, setWorkstreamChoices] = useState<
+    {
+      id: string;
+      name: string;
+      departmentName: string | null;
+      purpose: string;
+    }[]
+  >([]);
   // The linked client's email summary, shown on the prep screen so intent and
   // focus are built from the latest of the thread. Saved back to the client.
   const [clientEmailCtx, setClientEmailCtx] = useState("");
@@ -536,6 +550,12 @@ export default function CallPage() {
   // Latest email-context box value, so go-live can save it without stale state.
   const clientEmailCtxRef = useRef<string>("");
   const linkedCompanyRef = useRef<{ id: string; name: string } | null>(null);
+  const linkedWorkstreamRef = useRef<{
+    id: string;
+    name: string;
+    departmentName: string | null;
+    purpose: string;
+  } | null>(null);
   // Scheduled-call link. When the call screen is opened from an Upcoming call
   // (?upcoming=<id>), the prep plan built here is auto-saved against that row and
   // reloaded next time, so prepping in advance survives leaving the page.
@@ -724,6 +744,9 @@ export default function CallPage() {
     linkedCompanyRef.current = linkedCompany;
   }, [linkedCompany]);
   useEffect(() => {
+    linkedWorkstreamRef.current = linkedWorkstream;
+  }, [linkedWorkstream]);
+  useEffect(() => {
     battlecardRef.current = battlecard;
   }, [battlecard]);
 
@@ -731,6 +754,7 @@ export default function CallPage() {
   useEffect(() => {
     const id = linkedCompany?.id;
     if (!id) {
+      setWorkstreamChoices([]);
       setClientEmailCtx("");
       setContactEmail("");
       setBattlecard(null);
@@ -738,7 +762,43 @@ export default function CallPage() {
     }
     fetch(`/api/crm/companies/${id}`)
       .then((r) => r.json())
-      .then((d) => {
+      .then(async (d) => {
+        const departmentNames = new Map(
+          (Array.isArray(d?.departments) ? d.departments : []).map(
+            (department: any) => [department.id, department.name]
+          )
+        );
+        const choices = (Array.isArray(d?.workstreams) ? d.workstreams : [])
+          .filter((thread: any) => thread.status === "active")
+          .map((thread: any) => ({
+            id: String(thread.id),
+            name: String(thread.name || "Workstream"),
+            departmentName: thread.department_id
+              ? String(departmentNames.get(thread.department_id) || "") || null
+              : null,
+            purpose: String(thread.purpose || ""),
+          }));
+        setWorkstreamChoices(choices);
+        // One active relationship is unambiguous. Select it automatically.
+        // With two or more, stop and ask rather than loading company-wide history.
+        if (!linkedWorkstreamRef.current && choices.length === 1) {
+          linkedWorkstreamRef.current = choices[0];
+          setLinkedWorkstream(choices[0]);
+          if (upcomingIdRef.current) {
+            fetch(`/api/crm/upcoming/${upcomingIdRef.current}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ workstreamId: choices[0].id }),
+            }).catch(() => {});
+          }
+        }
+        if (!linkedWorkstreamRef.current && choices.length > 1) {
+          setClientEmailCtx("");
+          setEmailCtxUpdatedAt(null);
+          setContactEmail("");
+          setBattlecard(null);
+          return;
+        }
         // The internal team entity hosts MANY different meetings (standups,
         // board, reviews, go-live). A single per-company email thread would
         // bleed into EVERY one of their plans, so never load or feed email
@@ -750,21 +810,43 @@ export default function CallPage() {
           setBattlecard(null);
           return;
         }
-        const savedEmailContext = d?.company?.email_context || "";
+        let thread: any = null;
+        if (linkedWorkstream?.id) {
+          try {
+            const threadResponse = await fetch(
+              `/api/crm/workstreams/${linkedWorkstream.id}`,
+              { cache: "no-store" }
+            );
+            if (threadResponse.ok) thread = await threadResponse.json();
+          } catch {
+            /* thread context is best-effort */
+          }
+        }
+        const savedEmailContext = linkedWorkstream?.id
+          ? thread?.workstream?.email_context || ""
+          : d?.company?.email_context || "";
         setClientEmailCtx(savedEmailContext);
         setEmailCtxUpdatedAt(
           savedEmailContext.trim()
-            ? d?.company?.email_context_updated_at || null
+            ? linkedWorkstream?.id
+              ? thread?.workstream?.email_context_updated_at || null
+              : d?.company?.email_context_updated_at || null
             : null
         );
-        const bc = d?.company?.profile?.battlecard;
+        const bc = linkedWorkstream?.id ? null : d?.company?.profile?.battlecard;
         setBattlecard(bc && typeof bc === "object" ? (bc as Battlecard) : null);
 
         // Surface the contact's email, and use the company it implies to seed
         // the Public link so the person or their page can be researched in one
         // tap. Prefer a contact on a real work domain (its domain IS the
         // website); a personal inbox tells us who, but not a site to research.
-        const contacts: any[] = Array.isArray(d?.contacts) ? d.contacts : [];
+        const contacts: any[] = linkedWorkstream?.id
+          ? Array.isArray(thread?.contacts)
+            ? thread.contacts
+            : []
+          : Array.isArray(d?.contacts)
+            ? d.contacts
+            : [];
         const emails = contacts
           .map((c) => String(c?.email || "").trim())
           .filter(Boolean);
@@ -790,21 +872,27 @@ export default function CallPage() {
         if (derived) setPublicLink((prev) => (prev.trim() ? prev : derived));
       })
       .catch(() => {});
-  }, [linkedCompany?.id]);
+  }, [linkedCompany?.id, linkedWorkstream?.id]);
 
   // Save the email summary back to the client so the planner reads the latest.
   const saveClientEmailCtx = async () => {
     const id = linkedCompanyRef.current?.id;
+    const workstreamId = linkedWorkstreamRef.current?.id;
     // Blurring an untouched empty box must not pretend that email context was
     // refreshed. It also avoids an unnecessary database write.
     if (!id || !clientEmailCtx.trim()) return;
     setEmailCtxSaving(true);
     try {
-      await fetch(`/api/crm/companies/${id}`, {
+      await fetch(
+        workstreamId
+          ? `/api/crm/workstreams/${workstreamId}`
+          : `/api/crm/companies/${id}`,
+        {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_context: clientEmailCtx }),
-      });
+        }
+      );
       setEmailCtxUpdatedAt(new Date().toISOString());
       setEmailCtxSaved(true);
       setTimeout(() => setEmailCtxSaved(false), 2500);
@@ -825,6 +913,7 @@ export default function CallPage() {
       body: JSON.stringify({
         sessionId: room,
         companyId: linkedCompanyRef.current?.id || null,
+        workstreamId: linkedWorkstreamRef.current?.id || null,
         contactId: null,
         // Tie the session to the scheduled call it was opened from, so ANY
         // later summarise (manual, bot, or the safety-net sweep) can clear the
@@ -836,11 +925,45 @@ export default function CallPage() {
 
   const handleLinkCompany = useCallback(
     (v: { id: string; name: string } | null) => {
+      if (v?.id !== linkedCompanyRef.current?.id) {
+        setLinkedWorkstream(null);
+        linkedWorkstreamRef.current = null;
+        setWorkstreamChoices([]);
+      }
       setLinkedCompany(v);
       linkedCompanyRef.current = v;
       linkSession();
     },
     [linkSession]
+  );
+
+  const chooseWorkstream = useCallback(
+    async (workstreamId: string) => {
+      const chosen = workstreamChoices.find(
+        (thread) => thread.id === workstreamId
+      );
+      if (!chosen) return;
+      linkedWorkstreamRef.current = chosen;
+      setLinkedWorkstream(chosen);
+      if (upcomingIdRef.current) {
+        const response = await fetch(
+          `/api/crm/upcoming/${upcomingIdRef.current}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workstreamId: chosen.id }),
+          }
+        );
+        if (!response.ok) {
+          linkedWorkstreamRef.current = null;
+          setLinkedWorkstream(null);
+          setStatus("That relationship did not save. Please choose it again.");
+          return;
+        }
+      }
+      linkSession();
+    },
+    [linkSession, workstreamChoices]
   );
 
   // Restore a prep plan that was built in advance for a scheduled call (the prep
@@ -951,6 +1074,36 @@ export default function CallPage() {
             if (call?.company_id && call?.company && !linkedCompanyRef.current) {
               handleLinkCompany({ id: call.company_id, name: call.company });
             }
+            if (call?.workstream?.id) {
+              const thread = {
+                id: String(call.workstream.id),
+                name: String(call.workstream.name || "Workstream"),
+                departmentName:
+                  typeof call.workstream.departmentName === "string"
+                    ? call.workstream.departmentName
+                    : null,
+                purpose:
+                  typeof call.workstream.purpose === "string"
+                    ? call.workstream.purpose
+                    : "",
+              };
+              linkedWorkstreamRef.current = thread;
+              setLinkedWorkstream(thread);
+            }
+            if (Array.isArray(call?.workstreamChoices)) {
+              setWorkstreamChoices(
+                call.workstreamChoices.map((thread: any) => ({
+                  id: String(thread.id),
+                  name: String(thread.name || "Workstream"),
+                  departmentName:
+                    typeof thread.departmentName === "string"
+                      ? thread.departmentName
+                      : null,
+                  purpose:
+                    typeof thread.purpose === "string" ? thread.purpose : "",
+                }))
+              );
+            }
             hydrateFromPrep(call?.prep);
             // Reload any saved people-research so the brief and its focus
             // influence survive without spending on the search again.
@@ -1006,6 +1159,7 @@ export default function CallPage() {
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
                         companyId: call.company_id,
+                        workstreamId: call.workstream_id || undefined,
                         name: emailGuest.name || undefined,
                         email: emailGuest.email,
                       }),
@@ -1701,6 +1855,7 @@ export default function CallPage() {
         // Phase 2: if this call is linked to a client, pull their profile + past
         // call history into the plan's context automatically.
         companyId: linkedCompanyRef.current?.id || null,
+        workstreamId: linkedWorkstreamRef.current?.id || null,
       }),
     });
     const ctx = await res.json();
@@ -1732,6 +1887,7 @@ export default function CallPage() {
         // The linked client, so the planner can tell an INTERNAL board/strategy
         // call (people named in the brief are the topic) from a client call.
         companyId: linkedCompanyRef.current?.id || null,
+        workstreamId: linkedWorkstreamRef.current?.id || null,
         // Only the full build is built AROUND the locked focus. focus/refocus
         // derive a fresh list, so don't pin the existing one.
         focusAreas: mode === "full" ? suggestedCompsRef.current : [],
@@ -2021,6 +2177,7 @@ export default function CallPage() {
         candidate,
         source,
         companyId: linkedCompanyRef.current?.id || null,
+        workstreamId: linkedWorkstreamRef.current?.id || null,
         upcomingId: upcomingIdRef.current || null,
       }),
     }).catch(() => {});
@@ -2045,12 +2202,18 @@ export default function CallPage() {
       // assistant, or a later re-open. Fire-and-forget; refs avoid stale state.
       const emailCtx = clientEmailCtxRef.current;
       const companyId = linkedCompanyRef.current.id;
+      const workstreamId = linkedWorkstreamRef.current?.id;
       if (companyId && emailCtx.trim()) {
-        fetch(`/api/crm/companies/${companyId}`, {
+        fetch(
+          workstreamId
+            ? `/api/crm/workstreams/${workstreamId}`
+            : `/api/crm/companies/${companyId}`,
+          {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email_context: emailCtx }),
-        }).catch(() => {});
+          }
+        ).catch(() => {});
       }
     }
   }, [persistSession, linkSession]);
@@ -2362,6 +2525,7 @@ export default function CallPage() {
           callType,
           sessionId: room,
           companyId: linkedCompanyRef.current?.id || null,
+          workstreamId: linkedWorkstreamRef.current?.id || null,
           upcomingId: upcomingIdRef.current || null,
           // Cues the host kept (favourited) during the call, saved with the
           // scorecard so they can be reviewed later on the call page.
@@ -2409,6 +2573,7 @@ export default function CallPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             companyId: linkedCompanyRef.current.id,
+            workstreamId: linkedWorkstreamRef.current?.id || null,
             text: recapText,
             clientName: candidateRef.current || null,
             source: "recap",
@@ -2429,6 +2594,7 @@ export default function CallPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             companyId: linkedCompanyRef.current.id,
+            workstreamId: linkedWorkstreamRef.current?.id || null,
             text: labelled,
             clientName: candidateRef.current || null,
             source: manualRecap ? "recap" : "call",
@@ -2965,6 +3131,45 @@ export default function CallPage() {
           Client
         </span>
         <CompanyLinkPicker value={linkedCompany} onChange={handleLinkCompany} />
+        {linkedWorkstream ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {linkedWorkstream.departmentName ? (
+              <span className="rounded-full border border-sky/35 bg-sky/[0.08] px-2 py-1 font-mono text-[0.52rem] uppercase tracking-wider text-sky">
+                {linkedWorkstream.departmentName}
+              </span>
+            ) : null}
+            <span className="rounded-full border border-sage/35 bg-sage/[0.08] px-2 py-1 font-mono text-[0.52rem] uppercase tracking-wider text-sage">
+              {linkedWorkstream.name}
+            </span>
+          </div>
+        ) : linkedCompany ? (
+          workstreamChoices.length ? (
+            <label className="flex flex-wrap items-center gap-2 rounded-lg border border-amber/40 bg-amber/[0.07] px-2.5 py-1.5">
+              <span className="font-mono text-[0.5rem] uppercase tracking-wider text-amber">
+                Choose relationship
+              </span>
+              <select
+                aria-label="Choose the relationship for this call"
+                value=""
+                onChange={(event) => chooseWorkstream(event.target.value)}
+                className="max-w-[18rem] rounded-md border border-edge bg-ink px-2 py-1 text-xs text-bone outline-none focus:border-amber"
+              >
+                <option value="">Select department and workstream</option>
+                {workstreamChoices.map((thread) => (
+                  <option key={thread.id} value={thread.id}>
+                    {thread.departmentName
+                      ? `${thread.departmentName} · ${thread.name}`
+                      : thread.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <span className="rounded-full border border-amber/35 bg-amber/[0.07] px-2 py-1 font-mono text-[0.52rem] uppercase tracking-wider text-amber">
+              Company-wide thread
+            </span>
+          )
+        ) : null}
         <div className="ml-auto flex items-center gap-3">
           {linkedCompany && (
             <a

@@ -5,6 +5,7 @@ import { normaliseCompanyDomain } from "@/lib/company-identity";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { createHash } from "crypto";
+import { getWorkstreamScope } from "@/lib/workstreams";
 import {
   recentMessages,
   digestMessages,
@@ -65,6 +66,20 @@ export async function POST(req: NextRequest) {
     let email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const companyId =
       typeof body.companyId === "string" ? body.companyId.trim() : "";
+    const requestedWorkstreamId =
+      typeof body.workstreamId === "string" ? body.workstreamId.trim() : "";
+    const workstream = requestedWorkstreamId
+      ? await getWorkstreamScope(requestedWorkstreamId)
+      : null;
+    if (
+      requestedWorkstreamId &&
+      (!workstream || !companyId || workstream.companyId !== companyId)
+    ) {
+      return NextResponse.json(
+        { error: "workstream does not belong to this company" },
+        { status: 409 }
+      );
+    }
     let query = typeof body.query === "string" ? body.query.trim() : "";
 
     // If we were handed a company, search its recorded contact / domain.
@@ -107,6 +122,13 @@ export async function POST(req: NextRequest) {
           .from("companies")
           .select("name, profile, email_context, email_context_updated_at")
           .eq("id", companyId)
+          .maybeSingle()
+      : { data: null };
+    const { data: cachedThread } = workstream
+      ? await supabaseAdmin
+          .from("workstreams")
+          .select("email_context, email_context_updated_at, email_context_meta")
+          .eq("id", workstream.id)
           .maybeSingle()
       : { data: null };
 
@@ -174,28 +196,45 @@ export async function POST(req: NextRequest) {
     // Reopening Prep should not re-summarise the same inbox thread. The digest
     // hash changes only when the relevant recent messages change.
     if (companyId && cachedCompany) {
-      const profile = cachedCompany.profile as any;
+      const profile = workstream
+        ? ((cachedThread as any)?.email_context_meta || {})
+        : (cachedCompany.profile as any);
+      const cachedEmailContext = workstream
+        ? (cachedThread as any)?.email_context
+        : cachedCompany.email_context;
+      const cachedEmailUpdatedAt = workstream
+        ? (cachedThread as any)?.email_context_updated_at
+        : cachedCompany.email_context_updated_at;
       if (
         profile &&
         (profile.email_context_source_hash === sourceHash ||
           profile.email_last_message_id === msgs[0]?.id) &&
-        typeof cachedCompany.email_context === "string" &&
-        cachedCompany.email_context.trim()
+        typeof cachedEmailContext === "string" &&
+        cachedEmailContext.trim()
       ) {
         // Keep the actual newest message time separately from the time we
         // refreshed its AI summary. The opportunity board uses this to spot a
         // quiet relationship without mistaking a refresh for a new email.
         if (msgs[0]?.date) {
-          await supabaseAdmin
-            .from("companies")
-            .update({
-              profile: {
-                ...((cachedCompany.profile as any) || {}),
-                email_last_message_id: msgs[0]?.id || null,
-                email_last_message_at: msgs[0].date,
-              },
-            })
-            .eq("id", companyId);
+          const emailMeta = {
+            ...(profile || {}),
+            email_last_message_id: msgs[0]?.id || null,
+            email_last_message_at: msgs[0].date,
+          };
+          if (workstream) {
+            await supabaseAdmin
+              .from("workstreams")
+              .update({
+                email_context_meta: emailMeta,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", workstream.id);
+          } else {
+            await supabaseAdmin
+              .from("companies")
+              .update({ profile: emailMeta })
+              .eq("id", companyId);
+          }
         }
         return NextResponse.json({
           ok: true,
@@ -204,8 +243,9 @@ export async function POST(req: NextRequest) {
           name: cachedCompany.name,
           person: personName,
           email: counterparty,
-          emailContext: cachedCompany.email_context,
-          emailContextUpdatedAt: cachedCompany.email_context_updated_at,
+          workstreamId: workstream?.id || null,
+          emailContext: cachedEmailContext,
+          emailContextUpdatedAt: cachedEmailUpdatedAt,
           created: false,
           messages: msgs.length,
         });
@@ -213,10 +253,18 @@ export async function POST(req: NextRequest) {
     }
 
     const existingContext =
-      typeof cachedCompany?.email_context === "string"
-        ? cachedCompany.email_context.trim()
+      typeof (workstream
+        ? (cachedThread as any)?.email_context
+        : cachedCompany?.email_context) === "string"
+        ? String(
+            workstream
+              ? (cachedThread as any)?.email_context
+              : cachedCompany?.email_context
+          ).trim()
         : "";
-    const previousMessageId = (cachedCompany?.profile as any)?.email_last_message_id;
+    const previousMessageId = workstream
+      ? (cachedThread as any)?.email_context_meta?.email_last_message_id
+      : (cachedCompany?.profile as any)?.email_last_message_id;
     const previousIndex = previousMessageId
       ? msgs.findIndex((message) => message.id === previousMessageId)
       : -1;
@@ -305,23 +353,40 @@ export async function POST(req: NextRequest) {
         .eq("id", targetId)
         .maybeSingle();
       targetCompany = existingCompany || null;
-      const patch: Record<string, any> = {
-        email_context: emailContext,
-        email_context_updated_at: nowIso,
-        updated_at: nowIso,
-        profile: {
-          ...((existingCompany?.profile as any) || {}),
-          email_context_source_hash: sourceHash,
-          email_last_message_id: msgs[0]?.id || null,
-          email_last_message_at: msgs[0]?.date || null,
-        },
+      const emailMeta = {
+        ...((workstream
+          ? (cachedThread as any)?.email_context_meta
+          : existingCompany?.profile) || {}),
+        email_context_source_hash: sourceHash,
+        email_last_message_id: msgs[0]?.id || null,
+        email_last_message_at: msgs[0]?.date || null,
       };
+      const patch: Record<string, any> = workstream
+        ? { updated_at: nowIso }
+        : {
+            email_context: emailContext,
+            email_context_updated_at: nowIso,
+            updated_at: nowIso,
+            profile: emailMeta,
+          };
       // Pulling an internal or cross-relationship email into a client's
       // context must never replace that client's own identity. Only an
       // automatically resolved record may have a missing domain filled here.
       if (!explicitTarget && website && !existingCompany?.website) patch.website = website;
       if (!explicitTarget && domain && !existingCompany?.domain) patch.domain = domain;
       await supabaseAdmin.from("companies").update(patch).eq("id", targetId);
+      if (workstream) {
+        await supabaseAdmin
+          .from("workstreams")
+          .update({
+            email_context: emailContext,
+            email_context_updated_at: nowIso,
+            email_context_meta: emailMeta,
+            updated_at: nowIso,
+          })
+          .eq("id", workstream.id)
+          .eq("company_id", targetId);
+      }
     } else {
       const { data: ins } = await supabaseAdmin
         .from("companies")
@@ -375,6 +440,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       companyId: targetId,
+      workstreamId: workstream?.id || null,
       name: companyName,
       person: personName,
       email: counterparty,

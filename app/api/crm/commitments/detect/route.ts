@@ -13,7 +13,7 @@ export const maxDuration = 30;
 // Grounded: real promises only; never invents names, numbers or dates.
 export async function POST(req: NextRequest) {
   try {
-    const { companyId, clientName, text, source } = await req.json();
+    const { companyId, workstreamId, clientName, text, source } = await req.json();
     const notes = typeof text === "string" ? text.trim() : "";
     if (notes.length < 12) return NextResponse.json({ created: [] });
 
@@ -125,7 +125,8 @@ Return the JSON array of both sides' genuine commitments now.`;
 
     const created = await upsertTasks(
       typeof companyId === "string" && companyId ? companyId : null,
-      clean
+      clean,
+      typeof workstreamId === "string" && workstreamId ? workstreamId : null
     );
     return NextResponse.json({ created });
   } catch (err: any) {

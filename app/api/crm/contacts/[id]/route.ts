@@ -27,6 +27,33 @@ export async function PATCH(
     if (body.attributes && typeof body.attributes === "object") {
       patch.attributes = body.attributes;
     }
+    if ("departmentId" in body) {
+      const departmentId =
+        typeof body.departmentId === "string" && body.departmentId
+          ? body.departmentId
+          : null;
+      if (departmentId) {
+        const { data: contact, error: contactError } = await supabaseAdmin
+          .from("contacts")
+          .select("company_id")
+          .eq("id", params.id)
+          .maybeSingle();
+        if (contactError) throw contactError;
+        const { data: department, error: departmentError } = await supabaseAdmin
+          .from("departments")
+          .select("id")
+          .eq("id", departmentId)
+          .eq("company_id", contact?.company_id || "")
+          .maybeSingle();
+        if (departmentError) throw departmentError;
+        if (!department)
+          return NextResponse.json(
+            { error: "department does not belong to this contact's company" },
+            { status: 409 }
+          );
+      }
+      patch.department_id = departmentId;
+    }
     if (Object.keys(patch).length === 0) {
       return NextResponse.json({ error: "nothing to update" }, { status: 400 });
     }

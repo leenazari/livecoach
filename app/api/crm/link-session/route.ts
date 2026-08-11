@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveCallScope } from "@/lib/workstreams";
 
 export const runtime = "nodejs";
 
@@ -22,10 +23,16 @@ export async function POST(req: NextRequest) {
       typeof body.companyId === "string" && body.companyId ? body.companyId : null;
     const contactId =
       typeof body.contactId === "string" && body.contactId ? body.contactId : null;
+    const scope = await resolveCallScope({
+      companyId,
+      upcomingId: body.upcomingId,
+      workstreamId: body.workstreamId,
+    });
 
     const patch: Record<string, any> = {
-      company_id: companyId,
+      company_id: scope.companyId,
       contact_id: contactId,
+      workstream_id: scope.workstream?.id || null,
     };
     // The scheduled call this session was opened from. Stored so any later
     // summarise can complete the exact upcoming_calls slot. Only touched when
