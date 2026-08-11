@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { modelText, parseObject } from "@/lib/outreach";
 import { ensureOutreachCompany } from "@/lib/outreach-crm";
 import { refreshOutreachLearnings } from "@/lib/outreach-learning";
+import { enqueueOpportunitySignal } from "@/lib/opportunity-signals";
 
 type Category = "interested" | "objection" | "later" | "referral" | "unsubscribe" | "irrelevant";
 
@@ -57,7 +58,26 @@ export async function sweepOutreachReplies(limit = 20) {
     // relationship and revenue opportunity. This is best-effort so a profile
     // sync problem can never stop reply detection or sequence suppression.
     if (classified.category === "interested") {
-      try { await ensureOutreachCompany(prospect.id, "interested"); } catch (error) { console.error("outreach CRM promotion failed", error); }
+      try {
+        const handover = await ensureOutreachCompany(prospect.id, "interested");
+        if (handover?.companyId) {
+          await enqueueOpportunitySignal({
+            companyId: handover.companyId,
+            sourceRecordType: "outreach_reply",
+            sourceRecordId: reply.id,
+            sourceChannel: "personal_email",
+            occurredAt: now,
+            evidence: {
+              category: classified.category,
+              summary: classified.summary,
+              subject: reply.subject,
+              prospect: [prospect.first_name, prospect.last_name].filter(Boolean).join(" "),
+            },
+          });
+        }
+      } catch (error) {
+        console.error("outreach CRM promotion failed", error);
+      }
     }
     found += 1;
   }

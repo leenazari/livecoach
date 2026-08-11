@@ -12,6 +12,7 @@ import {
   getCommercialMemory,
 } from "@/lib/commercial-memory";
 import { POST as approveActivity } from "@/app/api/crm/companies/[id]/activity/approve/route";
+import { enqueueOpportunitySignal } from "@/lib/opportunity-signals";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -207,6 +208,23 @@ ${memoryBlock || "No earlier commercial memory."}`;
       })
       .eq("id", params.id);
     if (profileError) throw profileError;
+
+    const signalChannel = channel === "phone" ? "phone" : "other";
+    await enqueueOpportunitySignal({
+      companyId: params.id,
+      sourceRecordType: "manual_activity",
+      sourceRecordId: item.id,
+      sourceChannel: signalChannel,
+      occurredAt: item.created_at,
+      evidence: {
+        overview: intelligence.overview,
+        buyingSignals: intelligence.buyingSignals,
+        risks: intelligence.risks,
+        nextAction: intelligence.nextAction?.text,
+        nextCallIntent: intelligence.nextCallIntent,
+        relationshipStage: intelligence.relationshipStage,
+      },
+    }).catch((error) => console.error("Activity outlook signal queue failed:", error));
 
     // A Brain action has already been explicitly approved in its action tray.
     // Apply the small, server-saved plan in the same request so one spoken

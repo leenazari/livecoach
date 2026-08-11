@@ -30,6 +30,7 @@ export async function GET() {
       { count: prospectCount },
       { data: sentMessages },
       { data: outreachEvents },
+      { data: signalReceipts },
     ] = await Promise.all([
       supabaseAdmin.from("app_config").select("key,value").in("key", ["revenue_target_gbp"]),
       supabaseAdmin.from("companies").select("id,name,stage,profile"),
@@ -40,6 +41,7 @@ export async function GET() {
       supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }),
       supabaseAdmin.from("outreach_messages").select("prospect_id,message_tags,step_number,variant").eq("status", "sent").limit(5000),
       supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,created_at").in("kind", ["reply", "positive_reply", "objection", "later", "referral", "meeting_booked"]).limit(5000),
+      supabaseAdmin.from("opportunity_signal_receipts").select("opportunity_id,status").in("status", ["queued", "processing", "failed"]).not("opportunity_id", "is", null).limit(1000),
     ]);
 
     const target = Math.max(1, Number((config || []).find((row: any) => row.key === "revenue_target_gbp")?.value) || 2_000_000);
@@ -48,6 +50,7 @@ export async function GET() {
     const lastTouchByCompany = new Map<string, number>();
     const nextMeetingByCompany = new Map<string, string>();
     const tasksByCompany = new Map<string, any[]>();
+    const signalsByOpportunity = new Map<string, { pending: number; failed: number }>();
 
     for (const company of companies || []) {
       nameByCompany.set(company.id, company.name);
@@ -65,6 +68,13 @@ export async function GET() {
     for (const task of tasks || []) {
       if (!task.company_id) continue;
       tasksByCompany.set(task.company_id, [...(tasksByCompany.get(task.company_id) || []), task]);
+    }
+    for (const receipt of signalReceipts || []) {
+      if (!receipt.opportunity_id) continue;
+      const current = signalsByOpportunity.get(receipt.opportunity_id) || { pending: 0, failed: 0 };
+      if (receipt.status === "failed") current.failed += 1;
+      else current.pending += 1;
+      signalsByOpportunity.set(receipt.opportunity_id, current);
     }
 
     const openAll = (opportunities || []).filter((op: any) => op.status === "open");
@@ -103,6 +113,7 @@ export async function GET() {
       if (!op.next_action) risks.push({ code: "missing_next_action", label: "Primary next action not confirmed", severity: "medium" });
       if (op.next_action_due_at && new Date(op.next_action_due_at).getTime() < Date.now()) risks.push({ code: "next_action_overdue", label: "Primary next action is overdue", severity: "high" });
       const companyTasks = tasksByCompany.get(companyId) || [];
+      const signalState = signalsByOpportunity.get(op.id) || { pending: 0, failed: 0 };
       const overdue = companyTasks.filter((task: any) => task.due_at && new Date(task.due_at).getTime() < Date.now());
       if (overdue.length) risks.push({ code: "overdue_actions", label: `${overdue.length} overdue action${overdue.length === 1 ? "" : "s"}`, severity: "high" });
 
@@ -124,6 +135,8 @@ export async function GET() {
         op.win_outlook === "at_risk" ? "At-risk outlook" : "",
         stalled ? `Stalled for ${daysQuiet} days` : "",
         op.next_action ? "Clear next action" : "",
+        signalState.failed ? "New evidence needs retry" : "",
+        signalState.pending ? "New evidence is being assessed" : "",
       ].filter(Boolean);
       const riskWeight = risks.reduce((sum, risk) => sum + (risk.severity === "high" ? 30 : 12), 0);
       const actionScore =
@@ -132,6 +145,8 @@ export async function GET() {
         (op.win_outlook === "at_risk" ? 600 : 0) +
         (stalled ? 500 : 0) +
         (op.next_action ? 120 : 0) +
+        (signalState.failed ? 450 : 0) +
+        (signalState.pending ? 180 : 0) +
         riskWeight +
         Math.min(50, value / 20_000);
       return {
@@ -152,6 +167,8 @@ export async function GET() {
             ? op.win_outlook_questions
             : defaultOutlookQuestions(op),
         priorityReasons,
+        pendingSignalCount: signalState.pending,
+        failedSignalCount: signalState.failed,
         actionScore,
       };
     }).sort((a: any, b: any) => b.actionScore - a.actionScore);

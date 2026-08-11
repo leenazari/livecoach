@@ -11,6 +11,7 @@ import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { upsertTasks } from "@/lib/tasks";
 import { POST as runCalendarSync } from "@/app/api/crm/calendar-sync/route";
+import { enqueueOpportunitySignal } from "@/lib/opportunity-signals";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -212,6 +213,22 @@ export async function GET(req: NextRequest) {
           },
         ]);
         alerts += created.length;
+        if (companyId) {
+          await enqueueOpportunitySignal({
+            companyId,
+            sourceRecordType: "important_email",
+            sourceRecordId: message.id,
+            sourceChannel: "personal_email",
+            occurredAt: message.date,
+            evidence: {
+              summary: result.summary,
+              action: result.action,
+              dueAt: result.dueAt,
+              subject: clean(message.subject, 240),
+              calendarRelated: result.calendarRelated || calendarSignal,
+            },
+          }).catch((error) => console.error("Email outlook signal queue failed:", error));
+        }
       } catch (error) {
         failed += 1;
         console.error("important email classification failed", error);
