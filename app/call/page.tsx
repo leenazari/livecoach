@@ -317,6 +317,7 @@ export default function CallPage() {
   const [ended, setEnded] = useState(false);
   const [source, setSource] = useState<"inapp" | "meet">("inapp");
   const [meetingUrl, setMeetingUrl] = useState("");
+  const [upcomingId, setUpcomingId] = useState<string | null>(null);
   const [expandSetup, setExpandSetup] = useState(false);
   // When true, the full authoring setup is shown even at the brief stage (the
   // user clicked "edit setup" from the condensed strip).
@@ -941,6 +942,7 @@ export default function CallPage() {
     }
     if (upcoming) {
       upcomingIdRef.current = upcoming;
+      setUpcomingId(upcoming);
       (async () => {
         try {
           const res = await fetch(`/api/crm/upcoming/${upcoming}`);
@@ -2988,7 +2990,12 @@ export default function CallPage() {
 
       {/* CONTINUING FROM LAST TIME - recap + carried open items + a standing
           checklist, so a recurring call never starts from a blank slate. */}
-      {linkedCompany && <CallCarryover companyId={linkedCompany.id} />}
+      {linkedCompany && (
+        <CallCarryover
+          companyId={linkedCompany.id}
+          upcomingId={upcomingId}
+        />
+      )}
 
       {/* BATTLE PLAN - a glanceable, collapsible panel of the prepared objections
           and reminders, available all the way through the call. The prepared

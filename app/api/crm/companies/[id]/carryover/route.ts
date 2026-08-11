@@ -14,13 +14,63 @@ export const dynamic = "force-dynamic";
 const arr = (v: any): string[] =>
   Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()) : [];
 
+const normal = (value: unknown) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+// A company can contain several unrelated relationships. For a scheduled call,
+// use the external attendee identity to keep another contact's recap out of the
+// room. Short initials are ignored, while an email local part such as j.singh
+// contributes both "j singh" and the distinctive surname "singh".
+const attendeeIdentities = (attendees: any): string[] => {
+  const values = new Set<string>();
+  for (const attendee of Array.isArray(attendees) ? attendees : []) {
+    if (!attendee || attendee.self) continue;
+    const email = normal(String(attendee.email || "").split("@")[0]);
+    const display = normal(attendee.displayName || attendee.name || "");
+    for (const value of [display, email]) {
+      if (value.length >= 4) values.add(value);
+      const words = value.split(" ").filter(Boolean);
+      const last = words[words.length - 1] || "";
+      if (last.length >= 4) values.add(last);
+    }
+  }
+  return [...values];
+};
+
+const summaryMatches = (row: any, identities: string[]) => {
+  if (!identities.length) return true;
+  const summary = row?.summary && typeof row.summary === "object" ? row.summary : {};
+  const haystack = ` ${normal([
+    row?.candidate,
+    summary?.title,
+    summary?.headline,
+    summary?.overview,
+    JSON.stringify(summary?.myNextActions || []),
+    JSON.stringify(summary?.theirNextActions || []),
+  ].join(" "))} `;
+  return identities.some((identity) => haystack.includes(` ${identity} `));
+};
+
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const companyId = params.id;
-    const [{ data: company }, { data: sumRows }, { data: taskRows }] =
+    const upcomingId = req.nextUrl.searchParams.get("upcoming") || "";
+    const validUpcomingId = /^[0-9a-f-]{36}$/i.test(upcomingId)
+      ? upcomingId
+      : "";
+    const [
+      { data: company },
+      { data: sumRows },
+      { data: taskRows },
+      { data: upcoming },
+    ] =
       await Promise.all([
         supabaseAdmin
           .from("companies")
@@ -29,10 +79,10 @@ export async function GET(
           .maybeSingle(),
         supabaseAdmin
           .from("interview_summaries")
-          .select("summary, created_at")
+          .select("candidate, summary, created_at")
           .eq("company_id", companyId)
           .order("created_at", { ascending: false })
-          .limit(1),
+          .limit(12),
         supabaseAdmin
           .from("tasks")
           .select("text, kind, status, created_at")
@@ -40,12 +90,26 @@ export async function GET(
           .eq("status", "open")
           .order("created_at", { ascending: false })
           .limit(30),
+        validUpcomingId
+          ? supabaseAdmin
+              .from("upcoming_calls")
+              .select("company_id, attendees")
+              .eq("id", validUpcomingId)
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
       ]);
 
     const profile = (company?.profile || {}) as any;
     const checklist = arr(profile.checklist);
 
-    const row = (sumRows || [])[0] as any;
+    const identities =
+      upcoming?.company_id === companyId
+        ? attendeeIdentities(upcoming.attendees)
+        : [];
+    const personSpecific = identities.length > 0;
+    const row = (sumRows || []).find((item: any) =>
+      summaryMatches(item, identities)
+    ) as any;
     const s = row?.summary || {};
     const lastCall = row
       ? {
@@ -60,13 +124,29 @@ export async function GET(
     // The carried, evolving checklist: open next-step / commitment / manual
     // tasks (skip the derived "prep" items and draft emails - those aren't the
     // conversation's own open threads).
+    const rowTime = row?.created_at ? new Date(row.created_at).getTime() : 0;
     const openItems = (taskRows || [])
       .filter((t: any) => ["next_step", "commitment", "manual"].includes(t.kind))
+      .filter((t: any) => {
+        if (!personSpecific) return true;
+        if (!row) return false;
+        const text = ` ${normal(t.text)} `;
+        if (identities.some((identity) => text.includes(` ${identity} `)))
+          return true;
+        const created = t.created_at ? new Date(t.created_at).getTime() : 0;
+        return created >= rowTime - 60_000 && created <= rowTime + 15 * 60_000;
+      })
       .map((t: any) => (typeof t.text === "string" ? t.text.trim() : ""))
       .filter(Boolean)
       .slice(0, 12);
 
-    return NextResponse.json({ lastCall, checklist, openItems });
+    return NextResponse.json({
+      lastCall,
+      // A standing checklist is currently company-wide. Do not show it on a
+      // named-attendee call where it could belong to a different relationship.
+      checklist: personSpecific ? [] : checklist,
+      openItems,
+    });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to load carry-over" },

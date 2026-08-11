@@ -37,10 +37,14 @@ const fmtDate = (iso: string | null) => {
 // the call screen when a client is linked.
 export default function CallCarryover({
   companyId,
+  upcomingId,
 }: {
   companyId: string;
+  upcomingId?: string | null;
 }) {
-  const url = `/api/crm/companies/${companyId}/carryover`;
+  const url = `/api/crm/companies/${companyId}/carryover${
+    upcomingId ? `?upcoming=${encodeURIComponent(upcomingId)}` : ""
+  }`;
   const seed = getCached<Carryover>(url);
   const [data, setData] = useState<Carryover | null>(seed || null);
   const [loaded, setLoaded] = useState(!!seed);
@@ -56,6 +60,10 @@ export default function CallCarryover({
 
   useEffect(() => {
     if (!companyId) return;
+    const cached = getCached<Carryover>(url);
+    setData(cached || null);
+    setChecklist(Array.isArray(cached?.checklist) ? cached.checklist : []);
+    setLoaded(!!cached);
     crmFetch<Carryover>(url)
       .then((d) => {
         setData(d);
@@ -64,8 +72,7 @@ export default function CallCarryover({
       })
       .catch(() => {})
       .finally(() => setLoaded(true));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId]);
+  }, [companyId, url]);
 
   const persist = async (next: string[]) => {
     const seq = ++saveSeq.current;
@@ -115,8 +122,7 @@ export default function CallCarryover({
   const last = data?.lastCall || null;
   const openItems = data?.openItems || [];
 
-  const hasAnything =
-    !!last || openItems.length > 0 || checklist.length > 0 || loaded;
+  const hasAnything = !!last || openItems.length > 0 || checklist.length > 0;
   if (!hasAnything) return null;
 
   return (
