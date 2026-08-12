@@ -5026,8 +5026,73 @@ export default function CallPage() {
             </button>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-6">
-            {pinned.length + ideas.length + feed.length === 0 ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+            <aside className="max-h-[34vh] shrink-0 overflow-y-auto border-b border-edge bg-panel/55 p-4 lg:max-h-none lg:w-[270px] lg:border-b-0 lg:border-r lg:p-5">
+              <div className="flex items-start justify-between gap-3 lg:block">
+                <div>
+                  <p className="font-mono text-[0.56rem] uppercase tracking-[0.22em] text-amber">
+                    Core focus
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    Bring the conversation back to these outcomes if it drifts.
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full border border-edge px-2 py-1 font-mono text-[0.5rem] uppercase text-muted lg:mt-3 lg:inline-flex">
+                  {intentPct}% covered
+                </span>
+              </div>
+              {suggestedComps.length ? (
+                <ol className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                  {suggestedComps.map((focus, index) => {
+                    const active = selectedComps.includes(focus);
+                    const current = focus === servingFocus;
+                    const focusCoverage = Math.max(0, Math.min(100, coverage[focus] ?? 0));
+                    return (
+                      <li
+                        key={`full-focus-${focus}`}
+                        className={`rounded-lg border p-2.5 ${
+                          current
+                            ? "border-amber/55 bg-amber/[0.08]"
+                            : active
+                            ? "border-edge bg-ink/40"
+                            : "border-edge/50 bg-ink/20 opacity-55"
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className={`font-mono text-[0.54rem] ${current ? "text-amber" : "text-muted"}`}>
+                            {index + 1}
+                          </span>
+                          <span className="min-w-0 flex-1 text-sm leading-5 text-bone">
+                            {focus}
+                          </span>
+                          <span className="font-mono text-[0.5rem] tabular-nums text-muted">
+                            {focusCoverage}%
+                          </span>
+                        </div>
+                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-ink">
+                          <div
+                            className={`h-full rounded-full ${current ? "bg-amber" : "bg-amber/45"}`}
+                            style={{ width: `${focusCoverage}%` }}
+                          />
+                        </div>
+                        {current ? (
+                          <p className="mt-1.5 font-mono text-[0.48rem] uppercase tracking-wider text-amber">
+                            Current focus
+                          </p>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ol>
+              ) : (
+                <p className="mt-3 rounded-lg border border-dashed border-edge p-3 text-xs text-muted">
+                  Build the call focus first to keep the key outcomes visible here.
+                </p>
+              )}
+            </aside>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+              {pinned.length + ideas.length + feed.length === 0 ? (
               <p className="font-mono text-sm text-muted">
                 Live cues appear here as the conversation flows.
               </p>
@@ -5038,10 +5103,7 @@ export default function CallPage() {
                     <p className="mb-2 font-mono text-[0.6rem] uppercase tracking-[0.25em] text-amber/70">
                       Bulletin
                     </p>
-                    <div
-                      className="grid gap-3"
-                      style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}
-                    >
+                    <div className="grid gap-3 lg:grid-cols-3">
                       {pinned.map((s) => renderCard(s, true))}
                     </div>
                   </div>
@@ -5081,8 +5143,44 @@ export default function CallPage() {
                   </div>
                 </div>
               </div>
-            )}
+              )}
+            </div>
           </div>
+          <footer className="shrink-0 border-t border-edge bg-panel/95 px-4 py-3 backdrop-blur-xl sm:px-6">
+            <div className="mx-auto flex max-w-[860px] flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="font-mono text-[0.55rem] uppercase tracking-wider text-sage">
+                  <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-sage" />
+                  Call live
+                </p>
+                <p className="mt-1 text-xs text-muted">Finish here without leaving the expanded queue.</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCueFull(false);
+                    summarizeNow();
+                  }}
+                  disabled={wrapping || summarising}
+                  className="min-h-11 flex-1 rounded-xl border border-sky/50 bg-sky/10 px-4 py-2.5 font-mono text-[0.6rem] uppercase tracking-wider text-sky transition hover:bg-sky/20 disabled:opacity-40 sm:flex-none"
+                >
+                  {wrapping ? "Wrapping..." : "Quick wrap"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCueFull(false);
+                    endAndSummarise();
+                  }}
+                  disabled={summarising}
+                  className="min-h-11 flex-[1.4] rounded-xl border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40 sm:flex-none"
+                >
+                  {summarising ? "Summarising..." : "End call and summarise"}
+                </button>
+              </div>
+            </div>
+          </footer>
         </div>
       )}
 
