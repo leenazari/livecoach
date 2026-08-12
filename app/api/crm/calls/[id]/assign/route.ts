@@ -9,8 +9,9 @@ export const dynamic = "force-dynamic";
 // Assign (or reassign) a recorded call to a client. [id] is EITHER the scorecard
 // (interview_summaries) id, OR "session:<session_id>" for a captured call that
 // has no scorecard yet. We stamp company_id on BOTH the scorecard AND its
-// interview_sessions row (matched by session_id) so the call event and its
-// scorecard can never drift apart. Pass companyId null to unassign.
+// interview_sessions row (matched by session_id) and the source calendar row
+// so the call event, scorecard and calendar record can never drift apart. Pass
+// companyId null to unassign.
 //
 // This is the safety net: a call that ended up with no client (the Alain case)
 // can always be put right here, without ever changing the call's own id. The
@@ -32,18 +33,20 @@ export async function POST(
     const isSession = id.startsWith("session:");
     let sessionId: string | null = null;
     let candidate: string | null = null;
+    let upcomingId: string | null = null;
 
     if (isSession) {
       sessionId = id.slice("session:".length);
       const { data: sess } = await supabaseAdmin
         .from("interview_sessions")
-        .select("session_id, candidate")
+        .select("session_id, candidate, upcoming_id")
         .eq("session_id", sessionId)
         .maybeSingle();
       if (!sess) {
         return NextResponse.json({ error: "call not found" }, { status: 404 });
       }
       candidate = (sess as any).candidate ?? null;
+      upcomingId = (sess as any).upcoming_id ?? null;
     } else {
       const { data: row } = await supabaseAdmin
         .from("interview_summaries")
@@ -67,16 +70,28 @@ export async function POST(
     // form this IS the write. Any scorecard that lands later inherits the client
     // from the session, so attaching early is never undone.
     if (sessionId) {
-      await supabaseAdmin
+      const { data: linkedSession, error: sessionError } = await supabaseAdmin
         .from("interview_sessions")
         .update({ company_id: companyId })
-        .eq("session_id", sessionId);
+        .eq("session_id", sessionId)
+        .select("upcoming_id")
+        .maybeSingle();
+      if (sessionError) throw sessionError;
+      upcomingId = upcomingId || (linkedSession as any)?.upcoming_id || null;
       if (isSession) {
-        await supabaseAdmin
+        const { error: summaryError } = await supabaseAdmin
           .from("interview_summaries")
           .update({ company_id: companyId })
           .eq("session_id", sessionId);
+        if (summaryError) throw summaryError;
       }
+    }
+    if (upcomingId) {
+      const { error: upcomingError } = await supabaseAdmin
+        .from("upcoming_calls")
+        .update({ company_id: companyId })
+        .eq("id", upcomingId);
+      if (upcomingError) throw upcomingError;
     }
     const row = { session_id: sessionId, candidate };
 
@@ -159,7 +174,13 @@ export async function POST(
       console.error("Roster learn failed:", e);
     }
 
-    return NextResponse.json({ ok: true, companyId, learnedAlias, learnedRoster });
+    return NextResponse.json({
+      ok: true,
+      companyId,
+      upcomingId,
+      learnedAlias,
+      learnedRoster,
+    });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to assign call" },

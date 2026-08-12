@@ -955,6 +955,7 @@ export async function POST(req: NextRequest) {
     let histQ = supabaseAdmin
       .from("assistant_messages")
       .select("role, content, action_sigs")
+      .lt("created_at", new Date(reqStart).toISOString())
       .order("created_at", { ascending: false })
       .limit(10);
     histQ = isGlobal
@@ -1025,14 +1026,41 @@ export async function POST(req: NextRequest) {
     // another. These were sequential DB round-trips that slowed every reply.
     const wantsPitchLessons =
       /\b(pitch|pitching|playbook|sales script|sell|selling|demo|discovery question|objection|closing question|buyer language)\b/i.test(message);
-    const [context, histRes, biz, lessons, pitchLessons, brainQuestions] = await Promise.all([
+    // Save the turn before model generation starts. Previously both messages
+    // were inserted only after the full streamed reply completed, so closing
+    // or navigating away from the Brain could lose the user's request and the
+    // whole draft. The placeholder is replaced as the answer streams.
+    const persistedTurn = supabaseAdmin
+      .from("assistant_messages")
+      .insert([
+        {
+          company_id: isGlobal ? null : companyId,
+          role: "user",
+          content: message.trim(),
+        },
+        {
+          company_id: isGlobal ? null : companyId,
+          role: "assistant",
+          content: "Reply in progress. If this remains after reopening, ask the Brain to continue.",
+          action_sigs: [],
+        },
+      ])
+      .select("id, role");
+    const [context, histRes, biz, lessons, pitchLessons, brainQuestions, persistedRes] = await Promise.all([
       gatherContext(),
       histQ,
       workspaceContextBlock(),
       getLessonsBlock(["negotiation", "strategy", "psychology"]),
       wantsPitchLessons ? getRelevantPitchingLessons(message) : Promise.resolve(""),
       getBrainQuestions(),
+      persistedTurn,
     ]);
+    if ((persistedRes as any)?.error) throw (persistedRes as any).error;
+    const persistedAssistantId = ((persistedRes as any)?.data || []).find(
+      (row: any) => row.role === "assistant"
+    )?.id as string | undefined;
+    if (!persistedAssistantId)
+      throw new Error("the Brain could not safely save this conversation");
     const ctxMs = Date.now() - reqStart; // time to gather all grounding context
     if (!context) {
       return NextResponse.json({ error: "client not found" }, { status: 404 });
@@ -1220,6 +1248,19 @@ ALWAYS end the spoken version with your closing question whenever your reply has
       async start(controller) {
         let full = "";
         let firstTokenAt = 0; // when the first word arrived (for TTFT)
+        let lastPartialSaveAt = 0;
+        let partialSave = Promise.resolve();
+        const queuePartialSave = (content: string) => {
+          partialSave = partialSave.then(async () => {
+            const { error } = await supabaseAdmin
+              .from("assistant_messages")
+              .update({ content })
+              .eq("id", persistedAssistantId);
+            // A transient checkpoint failure should not kill an otherwise good
+            // Brain reply. The final durable save below is still mandatory.
+            if (error) console.error("Assistant checkpoint save failed:", error);
+          });
+        };
         try {
           const oaiStream: any = (openai as any).messages.stream({
             model,
@@ -1238,6 +1279,10 @@ ALWAYS end the spoken version with your closing question whenever your reply has
                 if (!firstTokenAt) firstTokenAt = Date.now();
                 full += t;
                 frame(controller, { type: "delta", text: t });
+                if (Date.now() - lastPartialSaveAt >= 2500) {
+                  lastPartialSaveAt = Date.now();
+                  queuePartialSave(full);
+                }
               }
             }
           }
@@ -1355,22 +1400,18 @@ ALWAYS end the spoken version with your closing question whenever your reply has
               ? `I have prepared the exact changes for your approval.`
               : "Sorry, I couldn't form a reply just then. Try again?";
 
-          await supabaseAdmin.from("assistant_messages").insert([
-            {
-              company_id: isGlobal ? null : companyId,
-              role: "user",
-              content: message.trim(),
-            },
-            {
-              company_id: isGlobal ? null : companyId,
-              role: "assistant",
+          await partialSave;
+          const { error: saveError } = await supabaseAdmin
+            .from("assistant_messages")
+            .update({
               content: reply,
               // Remember what was proposed so it is never re-offered next turn.
               action_sigs: proposedActions
                 .filter((pa) => !pa.unavailable)
                 .map((pa) => brainActionSignature(pa)),
-            },
-          ]);
+            })
+            .eq("id", persistedAssistantId);
+          if (saveError) throw saveError;
 
           // One timing line per reply (visible in Vercel runtime logs). ctxMs =
           // DB/context gather, ttftMs = time to first word, totalMs = end to end.
@@ -1401,6 +1442,20 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           });
         } catch (e: any) {
           console.error("Assistant stream failed:", e);
+          try {
+            await partialSave;
+            const recovered = full.trim();
+            await supabaseAdmin
+              .from("assistant_messages")
+              .update({
+                content: recovered
+                  ? `${recovered}\n\n(Reply interrupted. Ask the Brain to continue from here.)`
+                  : "The reply was interrupted before it began. Ask the Brain to try again.",
+              })
+              .eq("id", persistedAssistantId);
+          } catch (saveErr) {
+            console.error("Assistant recovery save failed:", saveErr);
+          }
           frame(controller, {
             type: "error",
             error: "the assistant failed just then - try again",

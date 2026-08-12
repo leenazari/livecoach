@@ -357,7 +357,6 @@ export default function GlobalAssistant({
             initialPrompt={seed}
             draftTaskId={draftTaskId}
             screenContext={screenContext}
-            onNavigate={() => setOpen(false)}
           />
         </div>
       </div>
