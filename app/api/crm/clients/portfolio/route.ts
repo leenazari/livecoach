@@ -4,6 +4,7 @@ import {
   isInHouseRelationship,
   isNonCommercialRelationship,
 } from "@/lib/relationship-stages";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -127,6 +128,7 @@ export async function GET() {
 
     const nextMeetingByCompany = new Map<string, any>();
     for (const meeting of upcoming || []) {
+      if (!isPrepEligibleCalendarEvent(meeting)) continue;
       if (meeting.company_id && !nextMeetingByCompany.has(meeting.company_id)) {
         nextMeetingByCompany.set(meeting.company_id, meeting);
       }

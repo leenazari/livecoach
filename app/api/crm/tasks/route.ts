@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { actionToLinkKind, upsertTasks } from "@/lib/tasks";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -138,13 +139,15 @@ export async function GET(req: NextRequest) {
     // a wall of identical items stretching weeks out. ucals is already ordered
     // soonest-first, so the first time we see a title is the next occurrence.
     const seenPrepTitles = new Set<string>();
-    const uniqueUcals = (ucals || []).filter((u: any) => {
-      const key = String(u.title || "").toLowerCase().trim();
-      if (!key) return true;
-      if (seenPrepTitles.has(key)) return false;
-      seenPrepTitles.add(key);
-      return true;
-    });
+    const uniqueUcals = (ucals || [])
+      .filter((u: any) => isPrepEligibleCalendarEvent(u))
+      .filter((u: any) => {
+        const key = String(u.title || "").toLowerCase().trim();
+        if (!key) return true;
+        if (seenPrepTitles.has(key)) return false;
+        seenPrepTitles.add(key);
+        return true;
+      });
 
     // Build the prep to-dos from the upcoming client calls.
     const prep = uniqueUcals.map((u: any) => {

@@ -167,6 +167,9 @@ export async function GET(req: Request) {
       }));
 
     const openOpps = oppsRes.data || [];
+    const eligibleUpcoming = (upcomingRes.data || []).filter((event: any) =>
+      isPrepEligibleCalendarEvent(event)
+    );
     const openOppValue = openOpps.reduce(
       (sum: number, o: any) => sum + (Number(o.value) || 0),
       0
@@ -240,7 +243,7 @@ export async function GET(req: Request) {
     // Deterministic Today control centre. This is deliberately model-free: it
     // should be instant, cheap and grounded in deadlines/calendar state.
     const next24h = now + 24 * 60 * 60 * 1000;
-    const callsToPrep = (upcomingRes.data || [])
+    const callsToPrep = eligibleUpcoming
       .filter(
         (u: any) =>
           isPrepEligibleCalendarEvent(u) &&
@@ -352,7 +355,7 @@ export async function GET(req: Request) {
       latestTouch.set(cid, new Date(s.created_at as string).getTime());
     }
     const companiesWithNextCall = new Set(
-      (upcomingRes.data || [])
+      eligibleUpcoming
         .map((u: any) => u.company_id as string)
         .filter(Boolean)
     );
@@ -514,7 +517,7 @@ export async function GET(req: Request) {
       tasks.map((t: any) => t.companyId as string).filter(Boolean)
     );
     const activeWithCall = new Set(
-      (upcomingRes.data || [])
+      eligibleUpcoming
         .map((u: any) => u.company_id as string)
         .filter(Boolean)
     );
@@ -738,7 +741,7 @@ export async function GET(req: Request) {
     try {
       // upcomingRes was already fetched for the Today panel, so reuse it for
       // both full and light reads instead of making another database request.
-      callParts = (upcomingRes.data || [])
+      callParts = eligibleUpcoming
         .slice(0, 4)
         .filter((u: any) => u.scheduled_at)
         .map((u: any) => {

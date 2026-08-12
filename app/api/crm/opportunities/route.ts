@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { defaultOutlookQuestions } from "@/lib/opportunity-fields";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
         .limit(1000),
       supabaseAdmin
         .from("upcoming_calls")
-        .select("company_id, scheduled_at")
+        .select("company_id, title, scheduled_at")
         .not("company_id", "is", null)
         .is("completed_at", null)
         .gte("scheduled_at", new Date(nowMs).toISOString())
@@ -56,6 +57,7 @@ export async function GET(req: NextRequest) {
         lastTouchById.set(companyId, ms);
     }
     for (const meeting of upcoming || []) {
+      if (!isPrepEligibleCalendarEvent(meeting)) continue;
       const companyId = meeting.company_id as string;
       if (companyId && !nextMeetingById.has(companyId))
         nextMeetingById.set(companyId, meeting.scheduled_at as string);

@@ -5,6 +5,7 @@ import { openai, OPENAI_MODEL_THINK } from "@/lib/openai";
 import { coachSystemBlock } from "@/lib/brain-coach";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -192,6 +193,7 @@ export async function GET(req: Request) {
     }
 
     for (const u of ucals || []) {
+      if (!isPrepEligibleCalendarEvent(u)) continue;
       const cid = u.company_id as string | null;
       if (!cid || !u.scheduled_at) continue;
       const o = ensure(cid);

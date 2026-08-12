@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadAttendeeConfig, type Attendee } from "@/lib/attendees";
 import { supabaseAdmin } from "@/lib/supabase";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -106,7 +107,9 @@ async function run(req: NextRequest) {
       .limit(40);
     if (callsError) throw callsError;
 
-    const calls = (rows || []) as UpcomingCall[];
+    const calls = ((rows || []) as UpcomingCall[]).filter((call) =>
+      isPrepEligibleCalendarEvent(call)
+    );
     const companyIds = Array.from(new Set(calls.map((call) => call.company_id)));
     const { data: companies, error: companiesError } = companyIds.length
       ? await supabaseAdmin.from("companies").select("id,stage").in("id", companyIds)
