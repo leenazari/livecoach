@@ -6,9 +6,10 @@ const normalTitle = (value: unknown) =>
     .replace(/\s+/g, " ")
     .trim();
 
-// These are location or availability blocks, not conversations. Keep the
-// match deliberately narrow so a real title such as "Meeting with Andrew in
-// the office" is not hidden merely because it contains the word office.
+// These are personal reminders, location or availability blocks, not
+// conversations. Keep the match deliberately narrow so a real title such as
+// "Meeting with Andrew in the office" is not hidden merely because it contains
+// one of these words.
 const NON_MEETING_BLOCKS = new Set([
   "office",
   "in office",
@@ -24,6 +25,8 @@ const NON_MEETING_BLOCKS = new Set([
   "travel",
   "commute",
   "focus time",
+  "football",
+  "bandages football",
 ]);
 
 export function isNonMeetingCalendarBlock(title: unknown): boolean {

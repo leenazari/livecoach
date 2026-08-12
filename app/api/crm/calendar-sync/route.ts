@@ -112,9 +112,14 @@ async function runCalendarSync() {
         ev.start?.dateTime ||
         (ev.start?.date ? new Date(`${ev.start.date}T00:00:00Z`).toISOString() : null);
       if (!startIso || !ev.id) continue;
+      const title = titleOf(ev);
+      // Personal reminder blocks remain in Google Calendar but never enter the
+      // CRM. A complete sync also removes any older matching CRM rows because
+      // their event ids are deliberately absent from `liveId` below.
+      if (isNonMeetingCalendarBlock(title)) continue;
       rows.push({
         external_id: ev.id,
-        title: titleOf(ev),
+        title,
         scheduled_at: startIso,
         meeting_url: meetingUrlOf(ev),
         attendees: atts,

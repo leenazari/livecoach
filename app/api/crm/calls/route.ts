@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 
 export const runtime = "nodejs";
 // Without this, a no-arg GET() is statically optimised and Next caches the
@@ -157,6 +158,7 @@ export async function GET() {
       );
 
     const unrecorded: Item[] = (ups || [])
+      .filter((u: any) => isPrepEligibleCalendarEvent(u))
       .filter((u: any) => {
         if (coveredUpcoming.has(u.id)) return false;
         const schedMs = u.scheduled_at ? new Date(u.scheduled_at).getTime() : 0;

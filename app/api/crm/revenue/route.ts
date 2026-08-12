@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { defaultOutlookQuestions, WIN_OUTLOOKS } from "@/lib/opportunity-fields";
+import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +38,7 @@ export async function GET() {
       supabaseAdmin.from("app_config").select("key,value").in("key", ["revenue_target_gbp"]),
       supabaseAdmin.from("companies").select("id,name,stage,profile"),
       supabaseAdmin.from("opportunities").select("*").order("updated_at", { ascending: false }).limit(500),
-      supabaseAdmin.from("upcoming_calls").select("company_id,scheduled_at").is("completed_at", null).gte("scheduled_at", now.toISOString()).order("scheduled_at", { ascending: true }).limit(500),
+      supabaseAdmin.from("upcoming_calls").select("company_id,title,scheduled_at").is("completed_at", null).gte("scheduled_at", now.toISOString()).order("scheduled_at", { ascending: true }).limit(500),
       supabaseAdmin.from("interview_summaries").select("company_id,created_at").not("company_id", "is", null).order("created_at", { ascending: false }).limit(2000),
       supabaseAdmin.from("tasks").select("company_id,text,due_at,kind").eq("status", "open").not("company_id", "is", null).limit(2000),
       supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }),
@@ -77,6 +78,7 @@ export async function GET() {
       if (call.company_id && at > (lastTouchByCompany.get(call.company_id) || 0)) lastTouchByCompany.set(call.company_id, at);
     }
     for (const meeting of upcoming || []) {
+      if (!isPrepEligibleCalendarEvent(meeting)) continue;
       if (meeting.company_id && !nextMeetingByCompany.has(meeting.company_id)) nextMeetingByCompany.set(meeting.company_id, meeting.scheduled_at);
     }
     for (const task of tasks || []) {
