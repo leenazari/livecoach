@@ -8,14 +8,19 @@ import { crmFetch, type Company } from "@/lib/crm";
 export default function CompanyLinkPicker({
   value,
   onChange,
+  suggestedName,
 }: {
   value: { id: string; name: string } | null;
   onChange: (v: { id: string; name: string } | null) => void;
+  suggestedName?: string | null;
 }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Company[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [error, setError] = useState("");
   const boxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -53,17 +58,20 @@ export default function CompanyLinkPicker({
   };
 
   const createAndPick = async () => {
-    const name = q.trim();
+    const name = (creating ? newName : q).trim();
     if (!name) return;
     setBusy(true);
+    setError("");
     try {
       const { company } = await crmFetch<{ company: Company }>(
         "/api/crm/companies",
-        { method: "POST", body: JSON.stringify({ name }) }
+        { method: "POST", body: JSON.stringify({ name, stage: "New" }) }
       );
       pick(company);
-    } catch {
-      /* ignore - keep the picker open */
+      setCreating(false);
+      setNewName("");
+    } catch (e: any) {
+      setError(e?.message || "That client could not be created. Try again.");
     } finally {
       setBusy(false);
     }
@@ -97,16 +105,72 @@ export default function CompanyLinkPicker({
 
   return (
     <div ref={boxRef} className="relative w-full max-w-sm">
-      <input
-        value={q}
-        onChange={(e) => {
-          setQ(e.target.value);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-        placeholder="Link to a client…"
-        className="w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-sky/60"
-      />
+      {creating ? (
+        <div className="rounded-lg border border-sage/40 bg-sage/[0.06] p-2.5">
+          <p className="mb-2 font-mono text-[0.55rem] uppercase tracking-wider text-sage">
+            Add new client and attach this call
+          </p>
+          <input
+            autoFocus
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") createAndPick();
+              if (e.key === "Escape") setCreating(false);
+            }}
+            placeholder="Client or contact name"
+            className="w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-sage/60"
+          />
+          {error && (
+            <p className="mt-1.5 font-mono text-[0.55rem] text-rust">{error}</p>
+          )}
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={createAndPick}
+              disabled={busy || !newName.trim()}
+              className="rounded-full border border-sage/50 bg-sage/10 px-3 py-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-sage transition hover:bg-sage/20 disabled:opacity-40"
+            >
+              {busy ? "creating…" : "create and attach"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreating(false);
+                setError("");
+              }}
+              className="rounded-full border border-edge px-3 py-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-bone"
+            >
+              cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <input
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            placeholder="Find an existing client…"
+            className="min-w-0 flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-sky/60"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              setNewName((suggestedName || q).trim());
+              setCreating(true);
+              setOpen(false);
+              setError("");
+            }}
+            className="shrink-0 rounded-lg border border-sage/50 bg-sage/10 px-2.5 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/20"
+          >
+            + new client
+          </button>
+        </div>
+      )}
       {open && q.trim() && (
         <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-edge bg-panel shadow-lg">
           {results.map((c) => (
@@ -126,11 +190,15 @@ export default function CompanyLinkPicker({
           ))}
           <button
             type="button"
-            onClick={createAndPick}
-            disabled={busy}
+            onClick={() => {
+              setNewName(q.trim());
+              setCreating(true);
+              setOpen(false);
+              setError("");
+            }}
             className="flex w-full items-center gap-2 border-t border-edge px-3 py-2 text-left font-mono text-[0.62rem] uppercase tracking-wider text-sage transition hover:bg-ink/60 disabled:opacity-40"
           >
-            {busy ? "creating…" : `+ create "${q.trim()}"`}
+            {`+ add "${q.trim()}" as a new client`}
           </button>
         </div>
       )}

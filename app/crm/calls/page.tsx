@@ -217,6 +217,7 @@ export default function CallsPage() {
                   ) : assigningId === c.id ? (
                     <CompanyLinkPicker
                       value={null}
+                      suggestedName={c.candidate}
                       onChange={(v) => assign(c.id, v)}
                     />
                   ) : (
