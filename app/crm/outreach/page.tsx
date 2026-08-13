@@ -155,6 +155,7 @@ export default function OutreachPage() {
   const [prospectSort, setProspectSort] = useState<ProspectSort>("activity");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [recommendationFilter, setRecommendationFilter] = useState<"all" | RecommendationAction>("all");
+  const [prospectCampaignId, setProspectCampaignId] = useState("all");
   const [blockTarget, setBlockTarget] = useState("");
   const [removalProspectId, setRemovalProspectId] = useState("");
   const [draftEdits, setDraftEdits] = useState<Record<string, { subject: string; body_text: string }>>({});
@@ -654,6 +655,7 @@ export default function OutreachPage() {
       const stage = outreachStage(prospect).key;
       const stageMatches = stageFilter === "all" || (stageFilter === "active" ? stage !== "suppressed" : stage === stageFilter);
       return stageMatches &&
+        (prospectCampaignId === "all" || prospect.outreach?.campaignIds?.includes(prospectCampaignId)) &&
         (priority === "all" || prospect.priority === priority) &&
         (recommendationFilter === "all" || prospect.recommendation?.action === recommendationFilter) &&
         (!needle || `${prospect.first_name || ""} ${prospect.last_name || ""} ${prospect.company_name} ${prospect.job_title || ""} ${prospect.email}`.toLowerCase().includes(needle));
@@ -668,7 +670,7 @@ export default function OutreachPage() {
       return sortDirection === "asc" ? compared : -compared;
     });
     return rows;
-  }, [needle, priority, prospectSort, prospects, recommendationFilter, sortDirection, stageFilter]);
+  }, [needle, priority, prospectCampaignId, prospectSort, prospects, recommendationFilter, sortDirection, stageFilter]);
 
   const engagementSource = engagementInput.trim();
   const engagementReady = engagementSource.length >= 25 || /^https?:\/\/\S+$/i.test(engagementSource);
@@ -749,8 +751,9 @@ export default function OutreachPage() {
 
       {!loading && !tabLoading && tab === "prospects" ? <section>
         <div className="mb-3 rounded-xl border border-edge bg-panel p-3">
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_10rem_10rem]">
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_10rem_10rem_10rem]">
             <input className={input} value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search person, company, role or email…" />
+            <select aria-label="Campaign filter" value={prospectCampaignId} onChange={(event) => setProspectCampaignId(event.target.value)} className={input}><option value="all">All campaigns</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select>
             <select aria-label="Outreach status filter" value={stageFilter} onChange={(event) => setStageFilter(event.target.value)} className={input}>
               <option value="active">Active prospects</option><option value="all">All including removed</option><option value="not_started">Not started</option><option value="queued">Queued</option><option value="draft">Draft ready</option><option value="approved">Approved</option><option value="scheduled">Scheduled</option><option value="sent">Sent</option><option value="replied">Replied</option><option value="interested">Interested</option><option value="suppressed">Removed</option>
             </select>
@@ -774,14 +777,17 @@ export default function OutreachPage() {
             const prepareStatus = prepareJobs[prospect.id];
             const preparePending = prepareStatus === "adding" || prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done";
             const openTab: Tab = prospect.last_reply_at ? "replies" : prospect.outreach?.sentCount ? "activity" : "queue";
-            const canPrepare = stage.key === "not_started" || stage.key === "queued";
+            const membershipIds = prospect.outreach?.campaignIds || [];
+            const membershipCampaigns = campaigns.filter((campaign) => membershipIds.includes(campaign.id));
+            const campaignReady = !membershipIds.length || Boolean(activeCampaign && membershipIds.includes(activeCampaign.id));
+            const canPrepare = campaignReady && (stage.key === "not_started" || stage.key === "queued");
             return <article key={prospect.id} style={{ contentVisibility: "auto" }} className="grid gap-3 p-3 sm:grid-cols-[1.2fr_1.35fr_.75fr_1fr_1fr_auto] sm:items-center">
               <div className="min-w-0"><h3 className="truncate font-display text-base text-bone">{prospect.first_name} {prospect.last_name}</h3><p className="truncate text-xs text-amber">{prospect.email}</p></div>
-              <div className="min-w-0"><p className="truncate text-sm text-bone/85">{prospect.company_name}</p><p className="truncate text-xs text-muted">{prospect.job_title || "Role not saved"}</p></div>
+              <div className="min-w-0"><p className="truncate text-sm text-bone/85">{prospect.company_name}</p><p className="truncate text-xs text-muted">{prospect.job_title || "Role not saved"}</p><div className="mt-1 flex flex-wrap gap-1">{membershipCampaigns.map((campaign) => <span key={campaign.id} className="rounded-full border border-sky/45 bg-sky/10 px-2 py-0.5 font-mono text-[0.46rem] uppercase text-sky">{campaign.name}</span>)}</div></div>
               <label><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Priority</span><select aria-label={`Priority for ${prospect.first_name} ${prospect.last_name}`} value={prospect.priority} onChange={(event) => updatePriority(prospect.id, event.target.value as Priority)} className="min-h-10 w-full rounded-lg border border-edge bg-ink px-2 text-xs text-bone"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
               <div><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Outreach</span><div className="flex flex-wrap gap-1"><span className={`inline-flex rounded-full border px-2 py-1 font-mono text-[0.5rem] uppercase ${pill[stage.key] || "border-edge text-muted"}`}>{stage.key === "sent" || stage.key === "interested" ? "✓ " : ""}{stage.label}</span>{prospect.outreach?.sentCount && stage.key !== "sent" ? <span className="inline-flex rounded-full border border-moss/50 bg-moss/10 px-2 py-1 font-mono text-[0.5rem] uppercase text-moss">✓ {prospect.outreach.sentCount} sent</span> : null}</div>{prospect.outreach?.latestSentMessage?.subject ? <p className="mt-1 line-clamp-1 text-[0.68rem] text-muted">{prospect.outreach.latestSentMessage.subject}</p> : null}</div>
               <div><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Last activity</span><p className="text-xs text-bone/80">{formatActivityDate(lastActivity)}</p>{prospect.outreach?.enrolment?.next_action_at ? <p className="mt-1 text-[0.65rem] text-amber">Next {formatActivityDate(prospect.outreach.enrolment.next_action_at)}</p> : null}</div>
-              <div className="flex flex-wrap gap-2 sm:justify-end">{canPrepare ? <button type="button" onClick={() => prepareFromProspects(prospect)} disabled={preparePending} className={`${primary} min-h-10 px-3`}>{prepareStatus === "adding" ? "Adding…" : prepareStatus === "researching" ? "Researching…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : "Queue research"}</button> : ["draft", "approved"].includes(stage.key) ? <button type="button" onClick={() => openProspectWork(prospect)} disabled={!!busy} className={`${primary} min-h-10 px-3`}>{busy === `prospect-open:${prospect.id}` ? "Opening…" : pendingStatus === "approved" ? "Review to send" : "Review draft"}</button> : stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab(openTab)} className={`${button} min-h-10 px-3`}>{openTab === "replies" ? "View reply" : "View history"}</button> : null}<button type="button" onClick={() => setRemovalProspectId((current) => current === prospect.id ? "" : prospect.id)} disabled={!!busy || stage.key === "suppressed"} className="min-h-10 rounded-lg px-2 font-mono text-[0.52rem] uppercase text-rust disabled:opacity-35">Remove</button></div>
+              <div className="flex flex-wrap gap-2 sm:justify-end">{!campaignReady && stage.key !== "suppressed" ? <span className="inline-flex min-h-10 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 font-mono text-[0.5rem] uppercase text-amber">{membershipCampaigns[0]?.name || "Other campaign"} is not active</span> : canPrepare ? <button type="button" onClick={() => prepareFromProspects(prospect)} disabled={preparePending} className={`${primary} min-h-10 px-3`}>{prepareStatus === "adding" ? "Adding…" : prepareStatus === "researching" ? "Researching…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : "Queue research"}</button> : ["draft", "approved"].includes(stage.key) ? <button type="button" onClick={() => openProspectWork(prospect)} disabled={!!busy} className={`${primary} min-h-10 px-3`}>{busy === `prospect-open:${prospect.id}` ? "Opening…" : pendingStatus === "approved" ? "Review to send" : "Review draft"}</button> : stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab(openTab)} className={`${button} min-h-10 px-3`}>{openTab === "replies" ? "View reply" : "View history"}</button> : null}<button type="button" onClick={() => setRemovalProspectId((current) => current === prospect.id ? "" : prospect.id)} disabled={!!busy || stage.key === "suppressed"} className="min-h-10 rounded-lg px-2 font-mono text-[0.52rem] uppercase text-rust disabled:opacity-35">Remove</button></div>
               {removalProspectId === prospect.id ? <div className="rounded-lg border border-rust/40 bg-rust/[0.07] p-3 sm:col-span-6"><p className="text-sm text-bone/80">Keep the history, but stop future outreach to:</p><div className="mt-2 flex flex-col gap-2 sm:flex-row"><button type="button" onClick={() => removeFromOutreach(prospect, "person")} disabled={!!busy} className={`${button} border-rust/50 text-rust`}>This person only</button>{prospect.company_domain ? <button type="button" onClick={() => removeFromOutreach(prospect, "company")} disabled={!!busy} className={`${button} border-rust/50 text-rust`}>Everyone at {prospect.company_name}</button> : null}<button type="button" onClick={() => setRemovalProspectId("")} className={button}>Cancel</button></div></div> : null}
               <details className="sm:col-span-6"><summary className="cursor-pointer font-mono text-[0.5rem] uppercase tracking-wider text-muted">Why this fit score · {prospect.recommendation?.score || 0}/100</summary><RecommendationCard recommendation={prospect.recommendation} compact /></details>
             </article>;

@@ -6,14 +6,16 @@ import { scoreOutreachProspect } from "@/lib/outreach-scoring";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-async function loadQueue() {
+async function loadQueue(campaignId?: string) {
   const today = londonDate();
-  const { data: enrolments, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("outreach_enrolments")
     .select("*")
     .eq("queued_for", today)
     .in("status", ["queued", "researched", "drafted", "approved", "contacted", "completed", "replied", "booked"])
     .order("created_at", { ascending: true });
+  if (campaignId) query = query.eq("campaign_id", campaignId);
+  const { data: enrolments, error } = await query;
   if (error) throw error;
   if (!enrolments?.length) return [];
   const prospectIds = [...new Set((enrolments || []).map((row: any) => row.prospect_id))];
@@ -72,7 +74,10 @@ async function loadQueue() {
 
 export async function GET() {
   try {
-    return NextResponse.json({ date: londonDate(), queue: await loadQueue() });
+    const { data: campaigns, error } = await supabaseAdmin
+      .from("outreach_campaigns").select("id").eq("status", "active").order("created_at").limit(1);
+    if (error) throw error;
+    return NextResponse.json({ date: londonDate(), queue: campaigns?.[0] ? await loadQueue(campaigns[0].id) : [] });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to load queue" }, { status: 500 });
   }
@@ -88,7 +93,7 @@ export async function POST(req: NextRequest) {
     if (!campaign) return NextResponse.json({ error: "Activate a campaign first" }, { status: 400 });
     const limit = Math.min(OUTREACH_DAILY_HARD_LIMIT, Math.max(1, Number(body.limit) || campaign.daily_limit || 20));
     const today = londonDate();
-    const existing = await loadQueue();
+    const existing = await loadQueue(campaign.id);
     let selection = { contactToday: 0, held: 0, skipped: 0 };
     let remaining = Math.max(0, limit - existing.length);
 
@@ -127,6 +132,15 @@ export async function POST(req: NextRequest) {
         .eq("campaign_id", campaign.id)
         .eq("prospect_id", requestedProspectId)
         .maybeSingle();
+      const { data: otherCampaign } = await supabaseAdmin
+        .from("outreach_enrolments")
+        .select("campaign_id")
+        .eq("prospect_id", requestedProspectId)
+        .neq("campaign_id", campaign.id)
+        .limit(1)
+        .maybeSingle();
+      if (otherCampaign)
+        return NextResponse.json({ error: "This person belongs to a different campaign. Activate that campaign before preparing them." }, { status: 400 });
       if (previous && ["contacted", "replied", "booked", "completed"].includes(previous.status))
         return NextResponse.json({ error: "This person already has outreach history. Open their history instead." }, { status: 400 });
       const now = new Date().toISOString();
@@ -153,7 +167,7 @@ export async function POST(req: NextRequest) {
         supabaseAdmin.from("outreach_prospects").update({ status: "queued", updated_at: now }).eq("id", requestedProspectId),
         supabaseAdmin.from("outreach_events").insert({ campaign_id: campaign.id, prospect_id: requestedProspectId, kind: "queued", metadata: { date: today, enrolment_id: enrolmentId, source: "prospects_tracker" } }),
       ]);
-      const queue = await loadQueue();
+      const queue = await loadQueue(campaign.id);
       return NextResponse.json({ date: today, queue, added: previous ? 0 : 1, selection: { contactToday: 1, held: 0, skipped: 0 } });
     }
     if (!remaining) return NextResponse.json({ date: today, queue: existing, added: 0, selection: { contactToday: 0, held: 0, skipped: 0 } });
@@ -169,14 +183,19 @@ export async function POST(req: NextRequest) {
     }
 
     if (remaining > 0) {
-      const [{ data: enrolled }, { data: suppressions }, { data: prospects }, { data: learnings }, activeDomains] = await Promise.all([
-        supabaseAdmin.from("outreach_enrolments").select("prospect_id").eq("campaign_id", campaign.id),
+      const [{ data: enrolments }, { data: suppressions }, { data: prospects }, { data: learnings }, activeDomains] = await Promise.all([
+        supabaseAdmin.from("outreach_enrolments").select("id,campaign_id,prospect_id,status,queued_for").limit(5000),
         supabaseAdmin.from("outreach_suppressions").select("target"),
         supabaseAdmin.from("outreach_prospects").select("*").in("status", ["imported", "queued"]).order("priority_score", { ascending: false }).limit(1000),
         supabaseAdmin.from("outreach_learnings").select("*").eq("campaign_id", campaign.id).eq("status", "promoted").limit(100),
         activeClientDomains(),
       ]);
-      const used = new Set((enrolled || []).map((row: any) => row.prospect_id));
+      const enrolmentByProspect = new Map<string, any>();
+      const reservedForAnotherCampaign = new Set<string>();
+      for (const enrolment of enrolments || []) {
+        if (enrolment.campaign_id === campaign.id) enrolmentByProspect.set(enrolment.prospect_id, enrolment);
+        else reservedForAnotherCampaign.add(enrolment.prospect_id);
+      }
       const blocked = new Set((suppressions || []).map((row: any) => String(row.target).toLowerCase()));
       const chosenCompanies = new Set(existing.map((row: any) =>
         String(row.prospect?.company_domain || row.prospect?.company_name || "").toLowerCase()
@@ -200,7 +219,9 @@ export async function POST(req: NextRequest) {
         const email = String(prospect.email || "").toLowerCase();
         const domain = String(prospect.company_domain || "").toLowerCase();
         const companyKey = domain || String(prospect.company_name || "").toLowerCase();
-        if (!email || used.has(prospect.id) || blocked.has(email) || blocked.has(domain) || activeDomains.has(domain)) continue;
+        const existingEnrolment = enrolmentByProspect.get(prospect.id);
+        const canResume = existingEnrolment && ["paused", "queued"].includes(existingEnrolment.status) && !existingEnrolment.queued_for;
+        if (!email || reservedForAnotherCampaign.has(prospect.id) || (existingEnrolment && !canResume) || blocked.has(email) || blocked.has(domain) || activeDomains.has(domain)) continue;
         if (recommendation.action !== "contact_today") {
           if (recommendation.action === "hold") held += 1;
           else skipped += 1;
@@ -212,15 +233,23 @@ export async function POST(req: NextRequest) {
       }
       selection = { contactToday: selected.length, held, skipped };
       for (const prospect of selected) {
-        const { data: enrolment, error } = await supabaseAdmin.from("outreach_enrolments").insert({ campaign_id: campaign.id, prospect_id: prospect.id, queued_for: today, status: "queued", current_step: 1 }).select("id").single();
-        if (error) throw error;
+        const existingEnrolment = enrolmentByProspect.get(prospect.id);
+        let enrolmentId = existingEnrolment?.id;
+        if (existingEnrolment) {
+          const { error } = await supabaseAdmin.from("outreach_enrolments").update({ queued_for: today, status: "queued", updated_at: new Date().toISOString() }).eq("id", existingEnrolment.id);
+          if (error) throw error;
+        } else {
+          const { data: enrolment, error } = await supabaseAdmin.from("outreach_enrolments").insert({ campaign_id: campaign.id, prospect_id: prospect.id, queued_for: today, status: "queued", current_step: 1 }).select("id").single();
+          if (error) throw error;
+          enrolmentId = enrolment.id;
+        }
         await Promise.all([
           supabaseAdmin.from("outreach_prospects").update({ status: "queued", updated_at: new Date().toISOString() }).eq("id", prospect.id),
-          supabaseAdmin.from("outreach_events").insert({ campaign_id: campaign.id, prospect_id: prospect.id, kind: "queued", metadata: { date: today, enrolment_id: enrolment.id } }),
+          supabaseAdmin.from("outreach_events").insert({ campaign_id: campaign.id, prospect_id: prospect.id, kind: "queued", metadata: { date: today, enrolment_id: enrolmentId, source: existingEnrolment ? "campaign_membership" : "ranked_pool" } }),
         ]);
       }
     }
-    const queue = await loadQueue();
+    const queue = await loadQueue(campaign.id);
     return NextResponse.json({
       date: today,
       queue,
