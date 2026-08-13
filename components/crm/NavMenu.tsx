@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase-browser";
+import ThemeToggle from "@/components/ThemeToggle";
 
 // Persistent left sidebar, OPEN by default. Minimise collapses it to a ☰ button;
 // the choice is remembered (localStorage). When open it pushes the page content
@@ -158,6 +159,7 @@ function NavMenuInner() {
                 <button type="button" onClick={() => { setMobileMore(false); openBrain(); }} className="flex min-h-12 items-center gap-3 rounded-xl border border-amber/40 bg-amber/10 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-amber">
                   <span>▤</span>Talk to brain
                 </button>
+                <ThemeToggle className="min-h-12 justify-start" />
                 <button type="button" onClick={logout} disabled={loggingOut} className="flex min-h-12 items-center gap-3 rounded-xl border border-edge bg-ink/40 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-muted disabled:opacity-50">
                   <span>⎋</span>{loggingOut ? "Signing out…" : "Logout"}
                 </button>
@@ -311,6 +313,7 @@ function NavMenuInner() {
       </nav>
 
       <div className="border-t border-edge px-3 py-3">
+        <ThemeToggle className="mb-1 w-full justify-start" />
         <button
           type="button"
           onClick={logout}

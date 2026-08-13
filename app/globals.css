@@ -4,14 +4,56 @@
 
 :root {
   color-scheme: dark;
+  --lc-ink: 15 18 23;
+  --lc-panel: 23 27 34;
+  --lc-panel2: 28 33 42;
+  --lc-edge: 42 47 58;
+  --lc-bone: 233 229 219;
+  --lc-muted: 138 144 157;
+  --lc-amber: 224 164 88;
+  --lc-amberglow: 245 201 122;
+  --lc-sage: 139 184 154;
+  --lc-moss: 111 173 130;
+  --lc-rust: 201 122 92;
+  --lc-sky: 127 168 208;
+  --lc-body: 14 13 11;
+  --lc-scrollbar: 42 38 29;
+  --lc-scrollbar-hover: 58 52 42;
+  --color-background-info: rgb(127 168 208 / 0.14);
+  --color-text-info: rgb(127 168 208);
+  --color-background-warning: rgb(224 164 88 / 0.14);
+  --color-text-warning: rgb(224 164 88);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --lc-ink: 247 244 237;
+  --lc-panel: 255 255 255;
+  --lc-panel2: 239 235 226;
+  --lc-edge: 211 204 190;
+  --lc-bone: 34 31 26;
+  --lc-muted: 101 96 87;
+  --lc-amber: 151 87 8;
+  --lc-amberglow: 122 68 3;
+  --lc-sage: 48 105 75;
+  --lc-moss: 42 111 68;
+  --lc-rust: 156 63 43;
+  --lc-sky: 48 98 146;
+  --lc-body: 247 244 237;
+  --lc-scrollbar: 198 188 171;
+  --lc-scrollbar-hover: 168 156 137;
+  --color-background-info: rgb(48 98 146 / 0.12);
+  --color-text-info: rgb(36 80 122);
+  --color-background-warning: rgb(151 87 8 / 0.12);
+  --color-text-warning: rgb(122 68 3);
 }
 
 html,
 body {
   padding: 0;
   margin: 0;
-  background-color: #0e0d0b;
-  color: #ece6d8;
+  background-color: rgb(var(--lc-body));
+  color: rgb(var(--lc-bone));
   font-family: "IBM Plex Sans", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -28,6 +70,18 @@ body::before {
     radial-gradient(700px 500px at -5% 110%, rgba(126, 155, 120, 0.07), transparent 55%);
 }
 
+:root[data-theme="light"] body::before {
+  background:
+    radial-gradient(900px 600px at 78% -10%, rgba(194, 121, 24, 0.10), transparent 60%),
+    radial-gradient(700px 500px at -5% 110%, rgba(76, 128, 91, 0.08), transparent 55%);
+}
+
+html,
+body,
+body::before {
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
 /* Subtle scrollbars */
 ::-webkit-scrollbar {
   width: 9px;
@@ -37,11 +91,11 @@ body::before {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a261d;
+  background: rgb(var(--lc-scrollbar));
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a342a;
+  background: rgb(var(--lc-scrollbar-hover));
 }
 
 @keyframes pulse-rec {
