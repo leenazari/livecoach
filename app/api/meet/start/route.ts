@@ -37,6 +37,57 @@ export async function POST(req: NextRequest) {
     const body = {
       meeting_url: meetingUrl,
       bot_name: "Lee's Transcriber",
+      // Provider-side protection against abandoned bots. This runs inside
+      // Recall, so it still works if the LiveCoach tab is closed, asleep or
+      // offline. `everyone_left_timeout` handles the normal case. The two bot
+      // heuristics cover calls where another notetaker remains behind, and the
+      // conservative silence timer is the final fallback. A three-hour hard
+      // ceiling prevents an exceptional provider/platform state running on
+      // indefinitely without cutting off ordinary calls or workshops.
+      automatic_leave: {
+        everyone_left_timeout: {
+          timeout: 30,
+          activate_after: 60,
+        },
+        bot_detection: {
+          using_participant_names: {
+            matches: [
+              "notetaker",
+              "note taker",
+              "transcriber",
+              "meeting recorder",
+              "meeting assistant",
+              "ai assistant",
+              "copilot",
+              "grain",
+              "fellow",
+              "tl;dv",
+              "read.ai",
+              "fathom",
+              "otter",
+              "fireflies",
+              "avoma",
+            ],
+            activate_after: 300,
+            timeout: 30,
+          },
+          // Recall notes that Google Meet participant events can be noisy, so
+          // this fallback deliberately waits longer than name matching.
+          using_participant_events: {
+            activate_after: 600,
+            timeout: 180,
+          },
+        },
+        silence_detection: {
+          activate_after: 1200,
+          timeout: 600,
+        },
+        waiting_room_timeout: 300,
+        noone_joined_timeout: 300,
+        in_call_not_recording_timeout: 300,
+        in_call_recording_timeout: 10800,
+        recording_permission_denied_timeout: 30,
+      },
       // session_id flows through here and comes back on every webhook,
       // so the worker knows which call each utterance belongs to.
       metadata: { session_id: String(sessionId) },
@@ -103,7 +154,15 @@ export async function POST(req: NextRequest) {
       console.error("meet_bots insert failed:", e);
     }
 
-    return NextResponse.json({ botId: data.id, status: "joining" });
+    return NextResponse.json({
+      botId: data.id,
+      status: "joining",
+      autoStop: {
+        everyoneLeftSeconds: 30,
+        silentFallbackMinutes: 10,
+        hardLimitHours: 3,
+      },
+    });
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || "unknown error" },

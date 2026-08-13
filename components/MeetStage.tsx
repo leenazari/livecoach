@@ -482,6 +482,12 @@ export default function MeetStage({
       </div>
 
       <p className="font-mono text-[0.6rem] text-muted">{status}</p>
+      {botId && (
+        <p className="font-mono text-[0.58rem] leading-relaxed text-sage">
+          Auto stop protected: leaves 30 seconds after everyone leaves, detects
+          other notetakers, and uses a careful silence backup.
+        </p>
+      )}
 
       {/* Loud, impossible-to-miss warning when a bot is live but the transcript
           socket is down - this is the moment capture silently stopped before.
