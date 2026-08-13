@@ -18,7 +18,7 @@ const sizeClasses: Record<MatrixRainSize, string> = {
 // status caption. Cleans up its animation frame + interval on unmount.
 export default function MatrixRain({
   messages = DEFAULT_MESSAGES,
-  color = "#E8A33D", // amber
+  color,
   size = "page",
   className = "",
 }: {
@@ -30,6 +30,13 @@ export default function MatrixRain({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [msgIdx, setMsgIdx] = useState(0);
+  const [themeRevision, setThemeRevision] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => setThemeRevision((value) => value + 1);
+    window.addEventListener("lc:theme-change", refresh);
+    return () => window.removeEventListener("lc:theme-change", refresh);
+  }, []);
 
   // Cycle the caption.
   useEffect(() => {
@@ -52,6 +59,15 @@ export default function MatrixRain({
     const reduce = window.matchMedia?.(
       "(prefers-reduced-motion: reduce)"
     )?.matches;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const cssRgb = (name: string, fallback: string) => {
+      const channels = rootStyle.getPropertyValue(name).trim();
+      return channels ? `rgb(${channels.split(/\s+/).join(", ")})` : fallback;
+    };
+    const light = document.documentElement.dataset.theme === "light";
+    const rainColor = color || cssRgb("--lc-amber", "#E8A33D");
+    const highlightColor = cssRgb("--lc-amberglow", "#FBE4BE");
+    const trailColor = light ? "rgba(247, 244, 237, 0.16)" : "rgba(10, 10, 12, 0.12)";
     const GLYPHS =
       "アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789<>/\\{}[]=+*ABCDEFGHJKLMNPQRSTUVWXYZ";
     let dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -88,14 +104,14 @@ export default function MatrixRain({
     function drawFrame() {
       const w = wrap!.clientWidth;
       const h = wrap!.clientHeight;
-      ctx!.fillStyle = "rgba(10, 10, 12, 0.12)";
+      ctx!.fillStyle = trailColor;
       ctx!.fillRect(0, 0, w, h);
       ctx!.font = `${fontSize}px "IBM Plex Mono", monospace`;
       for (let i = 0; i < cols; i++) {
         const ch = GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
         const x = i * fontSize;
         const y = drops[i] * fontSize;
-        ctx!.fillStyle = Math.random() > 0.975 ? "#FBE4BE" : color;
+        ctx!.fillStyle = Math.random() > 0.975 ? highlightColor : rainColor;
         ctx!.fillText(ch, x, y);
         if (y > h && Math.random() > 0.975) drops[i] = 0;
         drops[i]++;
@@ -115,7 +131,7 @@ export default function MatrixRain({
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [color]);
+  }, [color, themeRevision]);
 
   return (
     <div

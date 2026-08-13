@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import ClientAssistant from "@/components/crm/ClientAssistant";
+import ThemeToggle from "@/components/ThemeToggle";
 
 // Dedicated mobile page: open it on your phone, talk to the brain on the go, and
 // ask it to do things (add a to-do, attach a link, dismiss something). It mounts
@@ -19,12 +20,15 @@ export default function TalkPage() {
             talk to the brain
           </p>
         </div>
-        <Link
-          href="/crm"
-          className="rounded-full border border-edge px-3 py-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
-        >
-          dashboard
-        </Link>
+        <div className="flex items-center gap-2">
+          <ThemeToggle showLabel={false} className="h-11 w-11 rounded-full px-0" />
+          <Link
+            href="/crm"
+            className="flex min-h-11 items-center rounded-full border border-edge px-3 py-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+          >
+            dashboard
+          </Link>
+        </div>
       </div>
 
       {/* The brain fills the screen. autoListen starts the mic on open so you can

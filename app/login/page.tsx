@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase-browser";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -68,6 +69,7 @@ export default function LoginPage() {
 
   return (
     <main className="relative z-10 mx-auto flex min-h-screen max-w-[440px] flex-col justify-center px-5 py-10">
+      <ThemeToggle className="absolute right-5 top-5" />
       <h1 className="font-display text-[2.4rem] leading-none tracking-tight text-bone">
         <span className="italic text-amber">Live</span>Coach
       </h1>
