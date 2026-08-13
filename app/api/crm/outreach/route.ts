@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     if (["high", "medium", "low"].includes(priority)) query = query.eq("priority", priority);
     if (status !== "all") query = query.eq("status", status);
     const contextPromise = Promise.all([
-      supabaseAdmin.from("outreach_campaigns").select("*").eq("status", "active").order("created_at").limit(1),
+      supabaseAdmin.from("outreach_campaigns").select("*").order("created_at"),
       supabaseAdmin.from("outreach_learnings").select("*").eq("status", "promoted").limit(100),
       supabaseAdmin.from("outreach_suppressions").select("target"),
       activeClientDomains(),
@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
         .limit(5000),
       supabaseAdmin
         .from("outreach_enrolments")
-        .select("prospect_id,status,current_step,last_sent_at,next_action_at,updated_at")
+        .select("campaign_id,prospect_id,status,current_step,last_sent_at,next_action_at,updated_at")
         .order("updated_at", { ascending: false })
         .limit(2000),
     ]);
@@ -44,10 +44,8 @@ export async function GET(req: NextRequest) {
     if (error) throw error;
     const [{ data: campaigns }, { data: learnings }, { data: suppressions }, activeDomains] = context;
     const [{ data: messages }, { data: enrolments }] = history;
-    const campaign = campaigns?.[0] || null;
-    const campaignLearnings = (learnings || []).filter((learning: any) =>
-      !campaign || learning.campaign_id === campaign.id
-    );
+    const campaign = (campaigns || []).find((row: any) => row.status === "active") || campaigns?.[0] || null;
+    const campaignMap = new Map((campaigns || []).map((row: any) => [row.id, row]));
     const blockedTargets = new Set(
       (suppressions || []).map((row: any) => String(row.target || "").toLowerCase())
     );
@@ -68,34 +66,45 @@ export async function GET(req: NextRequest) {
       messageSummary.set(message.prospect_id, existing);
     }
     const latestEnrolment = new Map<string, any>();
+    const campaignIdsByProspect = new Map<string, string[]>();
     for (const enrolment of enrolments || []) {
       if (!latestEnrolment.has(enrolment.prospect_id))
         latestEnrolment.set(enrolment.prospect_id, enrolment);
+      const campaignIds = campaignIdsByProspect.get(enrolment.prospect_id) || [];
+      if (!campaignIds.includes(enrolment.campaign_id)) campaignIds.push(enrolment.campaign_id);
+      campaignIdsByProspect.set(enrolment.prospect_id, campaignIds);
     }
     const prospects = (data || [])
-      .map((prospect: any) => ({
-        ...prospect,
-        outreach: {
-          ...(messageSummary.get(prospect.id) || {
-            latestMessage: null,
-            latestSentMessage: null,
-            sentCount: 0,
+      .map((prospect: any) => {
+        const campaignIds = campaignIdsByProspect.get(prospect.id) || [];
+        const scoringCampaign = campaignMap.get(campaignIds[0]) || campaign;
+        return {
+          ...prospect,
+          outreach: {
+            ...(messageSummary.get(prospect.id) || {
+              latestMessage: null,
+              latestSentMessage: null,
+              sentCount: 0,
+            }),
+            enrolment: latestEnrolment.get(prospect.id) || null,
+            campaignIds,
+          },
+          recommendation: scoreOutreachProspect(prospect, {
+            campaign: scoringCampaign,
+            learnings: (learnings || []).filter((learning: any) => !scoringCampaign || learning.campaign_id === scoringCampaign.id),
+            blockedTargets,
+            activeClientDomains: activeDomains,
           }),
-          enrolment: latestEnrolment.get(prospect.id) || null,
-        },
-        recommendation: scoreOutreachProspect(prospect, {
-          campaign,
-          learnings: campaignLearnings,
-          blockedTargets,
-          activeClientDomains: activeDomains,
-        }),
-      }))
+        };
+      })
       .sort((a: any, b: any) =>
         b.recommendation.score - a.recommendation.score ||
         String(a.company_name || "").localeCompare(String(b.company_name || ""))
       )
       .map((prospect: any) => {
         if (prospect.recommendation.action !== "contact_today") return prospect;
+        const belongsToActiveCampaign = !prospect.outreach.campaignIds.length || prospect.outreach.campaignIds.includes(campaign?.id);
+        if (!belongsToActiveCampaign) return prospect;
         if (contactSlots > 0) {
           contactSlots -= 1;
           return prospect;
