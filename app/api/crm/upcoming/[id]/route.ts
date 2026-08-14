@@ -152,23 +152,47 @@ export async function PATCH(
   try {
     const body = await req.json();
     const patch: Record<string, any> = {};
+    let current: any = null;
+    if ("intent" in body || "prep" in body) {
+      const { data, error } = await supabaseAdmin
+        .from("upcoming_calls")
+        .select("intent, prep")
+        .eq("id", params.id)
+        .maybeSingle();
+      if (error) throw error;
+      current = data;
+    }
+    const currentPrep =
+      current?.prep && typeof current.prep === "object" ? current.prep : {};
+    const currentIntentMeta = (currentPrep as any).intentMeta;
+    // An open browser tab may still autosave an older generated snapshot. Once
+    // the user has manually corrected the intent, that stale snapshot must not
+    // overwrite either the canonical intent or the prep brief.
+    const protectManualIntent =
+      currentIntentMeta?.source === "manual" && body.intentSource !== "manual";
+    const canonicalIntent = String(current?.intent || "").trim();
+    const incomingFocusBasis =
+      body.prep && typeof body.prep === "object" &&
+      typeof body.prep.focusBasisBrief === "string"
+        ? body.prep.focusBasisBrief.trim()
+        : "";
+    const staleFocusSnapshot =
+      protectManualIntent &&
+      Boolean(canonicalIntent) &&
+      incomingFocusBasis !== canonicalIntent;
     if (typeof body.title === "string") patch.title = body.title.trim() || null;
     if ("scheduledAt" in body) patch.scheduled_at = body.scheduledAt || null;
     if (typeof body.meetingUrl === "string")
       patch.meeting_url = body.meetingUrl.trim() || null;
     if (typeof body.intent === "string")
-      patch.intent = body.intent.trim() || null;
+      patch.intent = protectManualIntent
+        ? current?.intent || null
+        : body.intent.trim() || null;
     if (
       typeof body.intent === "string" &&
       (body.intentSource === "manual" || body.intentSource === "generated")
     ) {
-      const { data: current } = await supabaseAdmin
-        .from("upcoming_calls")
-        .select("prep")
-        .eq("id", params.id)
-        .maybeSingle();
-      const prep =
-        current?.prep && typeof current.prep === "object" ? current.prep : {};
+      const prep = currentPrep;
       patch.prep = {
         ...prep,
         intentMeta: {
@@ -178,7 +202,8 @@ export async function PATCH(
         },
       };
     }
-    if (typeof body.prepped === "boolean") patch.prepped = body.prepped;
+    if (typeof body.prepped === "boolean")
+      patch.prepped = staleFocusSnapshot ? false : body.prepped;
     // Mark a call done (it happened) or re-open it. Clears it from the upcoming
     // list and the derived prep to-dos without deleting the row.
     if (typeof body.completed === "boolean")
@@ -187,19 +212,31 @@ export async function PATCH(
     // advance on the call screen, so it survives leaving the page.
     if ("prep" in body) {
       if (body.prep && typeof body.prep === "object") {
-        const { data: current } = await supabaseAdmin
-          .from("upcoming_calls")
-          .select("prep")
-          .eq("id", params.id)
-          .maybeSingle();
         const intentMeta =
           patch.prep?.intentMeta ||
-          (current?.prep && typeof current.prep === "object"
-            ? (current.prep as any).intentMeta
-            : null);
-        patch.prep = intentMeta
-          ? { ...body.prep, intentMeta }
-          : body.prep;
+          currentIntentMeta || null;
+        patch.prep = {
+          ...body.prep,
+          ...(protectManualIntent && current?.intent
+            ? { brief: current.intent }
+            : {}),
+          ...(staleFocusSnapshot
+            ? {
+                callType: "general",
+                suggestedComps: [],
+                selectedComps: [],
+                goals: [],
+                playbook: [],
+                pitchKit: null,
+                salesScript: null,
+                privateNotes: [],
+                openingQuestions: [],
+                planStage: "none",
+                focusBasisBrief: "",
+              }
+            : {}),
+          ...(intentMeta ? { intentMeta } : {}),
+        };
       } else {
         patch.prep = body.prep ?? null;
       }
