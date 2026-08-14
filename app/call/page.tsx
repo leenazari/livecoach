@@ -540,6 +540,9 @@ export default function CallPage() {
   const candidateRef = useRef("");
   const selectedCompsRef = useRef<string[]>([]);
   const suggestedCompsRef = useRef<string[]>([]);
+  // The intent that produced the current focus. If the intent changes, the
+  // old focus belongs to a different conversation and must be replaced.
+  const focusBasisBriefRef = useRef("");
   // Document-count bookkeeping for the "new document" prompt: how many docs
   // were loaded when the focus was last built vs how many are loaded now.
   const docsAtFocusRef = useRef(0);
@@ -992,6 +995,8 @@ export default function CallPage() {
         setSuggestedComps(list);
         suggestedCompsRef.current = list;
       }
+      focusBasisBriefRef.current =
+        typeof prep.focusBasisBrief === "string" ? prep.focusBasisBrief : "";
       if (Array.isArray(prep.selectedComps)) {
         const list = prep.selectedComps.filter(
           (x: any) => typeof x === "string"
@@ -1362,6 +1367,7 @@ export default function CallPage() {
       privateNotes,
       openingQuestions,
       planStage,
+      focusBasisBrief: focusBasisBriefRef.current,
     };
     const sig = JSON.stringify(snapshot);
     if (sig === lastPrepSigRef.current) return;
@@ -1888,6 +1894,9 @@ export default function CallPage() {
   // Intent-driven plan: brief (top priority) + CV/JD context -> ranked focus
   // areas + character profile + opening questions, in one call.
   const generatePlan = useCallback(async (mode: "focus" | "full" | "refocus") => {
+    const resetStaleFocus =
+      mode === "refocus" &&
+      focusBasisBriefRef.current.trim() !== brief.trim();
     aiCallsRef.current += 1;
     const res = await fetch("/api/interview/plan", {
       method: "POST",
@@ -1906,7 +1915,9 @@ export default function CallPage() {
         // refocus passes the current list so the model reconciles against it
         // (dedupes by meaning + upgrades in place) instead of deriving blind.
         existingFocus:
-          mode === "refocus" ? suggestedCompsRef.current : undefined,
+          mode === "refocus" && !resetStaleFocus
+            ? suggestedCompsRef.current
+            : undefined,
         // The name you've corrected is AUTHORITATIVE - send it so the model uses
         // that exact spelling in the focus labels/read instead of the document's.
         subjectName: candidateRef.current || null,
@@ -1942,7 +1953,13 @@ export default function CallPage() {
       : [];
     let refocusAdded = 0;
     let refocusUpgraded = 0;
-    if (mode === "refocus") {
+    if (mode === "refocus" && resetStaleFocus) {
+      // Re-deriving from a changed intent is a replacement, not a merge. This
+      // prevents one person's focus surviving into another person's call.
+      setSuggestedComps(focus.slice(0, 12));
+      setSelectedComps(focus.slice(0, 12));
+      refocusAdded = focus.length;
+    } else if (mode === "refocus") {
       // Rebuild focus reconciles against the existing list (the route deduped by
       // meaning): apply in-place UPGRADES (a clearly better wording of an
       // existing focus) and APPEND only genuinely new ADDITIONS. Hand-edits and
@@ -2047,6 +2064,8 @@ export default function CallPage() {
     }
     setCharacter(typeof data.character === "string" ? data.character : "");
     if (typeof data.callType === "string") setCallType(data.callType);
+    if ((mode === "focus" || mode === "refocus") && focus.length > 0)
+      focusBasisBriefRef.current = brief;
     // Whatever is in the name field is AUTHORITATIVE: only seed it from the
     // model when it's still empty. Use the live ref (not the stale closure
     // value) so a name you corrected is never overwritten on a rebuild.
