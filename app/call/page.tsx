@@ -2572,7 +2572,13 @@ export default function CallPage() {
           // Whatever you typed in the notes pane during the call. Sent WITH the
           // scorecard because the scorecard row does not exist until this
           // request creates it, so a mid-call save has nothing to attach to.
-          userNotes: notesRef.current || "",
+          // A no-bot recap is the user's own account of the call. Preserve it
+          // verbatim with the structured scorecard so it remains available on
+          // the call record, instead of keeping only the AI-written digest.
+          userNotes:
+            manualRecap && recapText.trim()
+              ? recapText.trim()
+              : notesRef.current || "",
         }),
       });
       const data = await res.json();
@@ -4263,7 +4269,7 @@ export default function CallPage() {
               <div className="w-full max-w-[640px] rounded-2xl border border-sky/40 bg-panel p-6 shadow-2xl">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <p className="font-mono text-[0.68rem] uppercase tracking-[0.2em] text-sky">
-                    {"\u2726"} Recap this call
+                    {"\u2726"} Complete without bot
                   </p>
                   <button
                     type="button"
@@ -4274,9 +4280,9 @@ export default function CallPage() {
                   </button>
                 </div>
                 <p className="mb-4 font-mono text-[0.62rem] leading-relaxed text-muted">
-                  The mic is on - just say what happened: who was on, what was
-                  discussed, the outcome, and what needs doing next. I'll write
-                  the summary and turn the next steps into to-dos.
+                  Type or dictate what happened, who was involved, the outcome
+                  and what needs doing next. LiveCoach will save the summary,
+                  create any clear to-dos and mark this scheduled call complete.
                 </p>
                 <div className="mb-3 flex items-center gap-3">
                   <button
@@ -4299,7 +4305,7 @@ export default function CallPage() {
                   value={recapText}
                   onChange={(e) => setRecapText(e.target.value)}
                   rows={12}
-                  placeholder="What happened on the call?\u2026"
+                  placeholder="Add your summary of what happened on the call\u2026"
                   className="w-full resize-y rounded-lg border border-edge bg-ink/60 px-4 py-3 font-sans text-[0.95rem] leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-sky/60"
                 />
                 <div className="mt-4 flex items-center justify-end gap-2">
@@ -4319,7 +4325,7 @@ export default function CallPage() {
                     disabled={summarising || recapText.trim().length < 20}
                     className="rounded-full border border-sky/60 bg-sky/20 px-5 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-sky transition hover:bg-sky/30 disabled:opacity-40"
                   >
-                    {summarising ? "summarising\u2026" : `summarise from my recap ${"\u25B8"}`}
+                    {summarising ? "saving\u2026" : `save summary and complete ${"\u25B8"}`}
                   </button>
                 </div>
               </div>
@@ -5205,7 +5211,10 @@ export default function CallPage() {
 
       {/* One persistent next action for the whole call. It replaces the old
           scattered start and end buttons, and stays reachable on mobile. */}
-      {!summary && !ended && !cueFull && (planStage === "full" || callLive) && (
+      {!summary &&
+        !ended &&
+        !cueFull &&
+        (planStage === "focus" || planStage === "full" || callLive) && (
         <div className="fixed inset-x-3 bottom-3 z-40 mx-auto max-w-[760px] rounded-2xl border border-edge bg-panel/95 p-3 shadow-2xl backdrop-blur-xl sm:bottom-5 sm:p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
@@ -5216,6 +5225,8 @@ export default function CallPage() {
               <p className="mt-1 truncate font-sans text-sm text-bone/85">
                 {callLive
                   ? "Questions and coaching are active. Wrap up or end whenever you are ready."
+                  : planStage === "focus"
+                  ? "Focus ready. Build the full plan, start the call, or complete it here if no bot was used."
                   : source === "meet"
                   ? "Start once to open LiveCoach and send the notetaker."
                   : "Start once to open the live coaching view."}
@@ -5247,10 +5258,10 @@ export default function CallPage() {
                   <button
                     type="button"
                     onClick={() => setManualRecap(true)}
-                    title="Run the call without a transcriber and record a recap afterwards"
+                    title="Add your own summary and mark this scheduled call complete"
                     className="min-h-11 rounded-xl border border-edge px-3 py-2.5 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:border-sky/60 hover:text-sky"
                   >
-                    Recap only
+                    Complete without bot
                   </button>
                   <button
                     type="button"
