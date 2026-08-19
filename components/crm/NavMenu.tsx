@@ -13,6 +13,7 @@ type Item = { href: string; label: string; icon: string; tab?: string };
 const CORE_ITEMS: Item[] = [
   { href: "/crm", label: "Today", icon: "▣" },
   { href: "/crm/inbox", label: "Work inbox", icon: "✓" },
+  { href: "/crm/documents", label: "Documents", icon: "▤" },
   { href: "/crm/outreach", label: "Outreach", icon: "↗" },
   { href: "/crm/revenue", label: "Pipeline", icon: "◆" },
   { href: "/crm/costs", label: "Costs", icon: "£" },
@@ -111,6 +112,8 @@ function NavMenuInner() {
     if (it.href === "/crm") return pathname === "/crm";
     if (it.href === "/call") return pathname.startsWith("/call");
     if (it.href === "/crm/inbox") return pathname.startsWith("/crm/inbox");
+    if (it.href === "/crm/documents")
+      return pathname.startsWith("/crm/documents");
     if (it.href === "/crm/revenue")
       return pathname.startsWith("/crm/revenue");
     if (it.href === "/crm/costs")

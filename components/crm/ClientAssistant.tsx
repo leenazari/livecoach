@@ -17,7 +17,7 @@ function fullActionLabel(action: any): string {
 }
 
 const DEEP_HISTORY_REQUEST =
-  /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|documents?|detailed notes?|email thread|what did .* say)\b/i;
+  /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|source documents?|uploaded documents?|detailed notes?|email thread|what did .* say)\b/i;
 const HANDS_FREE_SILENCE_MS = 3000;
 const CONTEXTUAL_CHIPS: Record<string, string[]> = {
   outreach: [
@@ -67,6 +67,12 @@ const CONTEXTUAL_CHIPS: Record<string, string[]> = {
     "Which follow-up has the best commercial reason?",
     "What stale draft can I dismiss?",
     "What response is still missing?",
+  ],
+  documents: [
+    "Create a Word document from my highest priority document to do",
+    "Which requested document should I create next?",
+    "Create a sales plan from the relevant client facts",
+    "Which documents are still being created?",
   ],
 };
 
@@ -1004,6 +1010,8 @@ export default function ClientAssistant({
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+      if (a.type === "create_document")
+        window.dispatchEvent(new CustomEvent("lc:document-jobs-updated"));
       if (recordReceipt)
         await persistActionReceipt([
           { label: fullActionLabel(a), status: "completed", action: a },
@@ -1052,6 +1060,8 @@ export default function ClientAssistant({
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+      if (a.type === "create_document")
+        window.dispatchEvent(new CustomEvent("lc:document-jobs-updated"));
       await persistActionReceipt([
         {
           label: `${fullActionLabel(a)}: ${c.label}`,

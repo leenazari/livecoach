@@ -51,6 +51,8 @@ function describeScreen(pathname: string | null, hasClient: boolean, tab: string
     return { section: "outreach", label: "Outreach", path };
   if (path.startsWith("/crm/inbox"))
     return { section: "work_inbox", label: "Work Inbox", path };
+  if (path.startsWith("/crm/documents"))
+    return { section: "documents", label: "Documents", path };
   if (path.startsWith("/crm/revenue"))
     return { section: "revenue", label: "Revenue", path };
   if (path.startsWith("/crm/costs"))

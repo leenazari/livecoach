@@ -33,6 +33,7 @@ import {
   sameBrainAction,
   type BrainActionSignature,
 } from "@/lib/brain-action-signatures";
+import { documentBrainContext } from "@/lib/document-context";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -572,6 +573,67 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       continue;
     }
 
+    if (it.type === "create_document") {
+      const title = typeof it.title === "string" ? it.title.trim().slice(0, 220) : "";
+      const instructions =
+        typeof it.instructions === "string"
+          ? it.instructions.trim().slice(0, 6000)
+          : "";
+      if (!title || !instructions) continue;
+
+      const namedCompany = it.client ? await findCompany(String(it.client)) : null;
+      if (it.client && !namedCompany) continue;
+      let companyId = namedCompany?.id || (!it.client ? defaultCompanyId : null);
+      let taskId: string | null = null;
+      const sourceTask =
+        typeof it.sourceTask === "string" ? it.sourceTask.trim().slice(0, 500) : "";
+      if (sourceTask) {
+        let tasks = await findOpenTasks(sourceTask, companyId);
+        const exact = tasks.filter(
+          (task) =>
+            String(task.text || "").trim().toLowerCase() === sourceTask.toLowerCase()
+        );
+        if (exact.length === 1) tasks = exact;
+        if (tasks.length !== 1) continue;
+        taskId = tasks[0].id;
+        if (!companyId && tasks[0].company_id) companyId = tasks[0].company_id;
+        if (
+          companyId &&
+          tasks[0].company_id &&
+          tasks[0].company_id !== companyId
+        )
+          continue;
+      }
+      const allowedDocumentTypes = new Set([
+        "plan",
+        "agreement",
+        "handbook",
+        "proposal",
+        "report",
+        "brief",
+        "other",
+      ]);
+      const documentType = allowedDocumentTypes.has(it.documentType)
+        ? it.documentType
+        : "other";
+      out.push({
+        key,
+        type: it.type,
+        label: `Create Word document "${title}" in the background`,
+        endpoint: "/api/crm/documents",
+        method: "POST",
+        body: {
+          title,
+          instructions,
+          documentType,
+          companyId,
+          taskId,
+          idempotencyKey: `brain-${key}`,
+        },
+      });
+      continue;
+    }
+
     if (it.type === "create_task") {
       const text = typeof it.text === "string" ? it.text.trim() : "";
       if (!text) continue;
@@ -864,6 +926,8 @@ const requestedActionLabel = (item: any) => {
     item?.campaign,
     item?.opportunity,
     item?.name,
+    item?.title,
+    item?.sourceTask,
     item?.text,
   ].find((value) => typeof value === "string" && value.trim());
   return target ? `${type}: ${String(target).trim().slice(0, 180)}` : type;
@@ -917,6 +981,7 @@ export async function POST(req: NextRequest) {
       "drafts",
       "tasks",
       "work_inbox",
+      "documents",
       "call_coach",
       "calls",
       "prep",
@@ -936,7 +1001,7 @@ export async function POST(req: NextRequest) {
     const wantsTranscript = callTranscriptRequested(message);
     const wantsDeepHistory =
       !wantsTranscript &&
-      /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|documents?|detailed notes?|email thread|what did .* say)\b/i.test(
+      /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|source documents?|uploaded documents?|detailed notes?|email thread|what did .* say)\b/i.test(
         message
       );
     // Lightweight timing so we can SEE where a reply spends its time (context
@@ -992,7 +1057,7 @@ export async function POST(req: NextRequest) {
       }
       const wantsOutreachDetail =
         /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(message);
-      const [digest, outreach, callPrep, callTranscript, ...details] = await Promise.all([
+      const [digest, outreach, callPrep, callTranscript, documentContext, ...details] = await Promise.all([
         gatherGlobalContext(message),
         gatherOutreachContext(message, { detailed: wantsOutreachDetail }),
         gatherUpcomingCallPrepContext(message),
@@ -1000,6 +1065,7 @@ export async function POST(req: NextRequest) {
           screenPath: screenContext.path,
           focusCompanyId: focus,
         }),
+        documentBrainContext(message),
         ...namedWorkstreams.map(async (thread) => {
           const memory = await getCommercialMemoryBlock(
             thread.companyId,
@@ -1022,7 +1088,7 @@ export async function POST(req: NextRequest) {
       const detailBlocks = (details as (string | null)[]).filter(
         (d): d is string => !!d && d.trim().length > 0
       );
-      const wider = [callTranscript, callPrep, digest, outreach]
+      const wider = [callTranscript, callPrep, documentContext, digest, outreach]
         .filter(Boolean)
         .join("\n\n==========\n\n");
       if (!detailBlocks.length) return wider || null;
@@ -1150,11 +1216,13 @@ HOW TO WRITE (this matters a lot - the user finds over-formatted answers robotic
 
 VOICE INPUT AND NAMES: the user usually talks to you by voice, so the transcript can mishear words, especially names. When a word is close to a person, client or company name that appears in the context (for example "Elaine", "Elon" or "a lane" for "Alain", "Joy deep" for "Joydeep", "Manny" vs "Danny"), treat it as that known name and use the correct spelling in your reply and in anything you draft. When the context makes the intended name obvious, just use it - do not stop to ask which name they meant.
 
-DRAFTS - ONLY WHEN ASKED (this keeps replies fast): do NOT write a full email, message or document unless the user EXPLICITLY asks you to draft, write, or send one. For a normal question, answer concisely and, if a draft would help, OFFER it in a single line ("want me to draft that email?") rather than writing it. Writing a long draft nobody asked for is slow and wasteful. When they DO ask you to draft something, put ONLY that sendable text between these exact marker lines:
+DRAFTS - ONLY WHEN ASKED (this keeps replies fast): do NOT write a full email or message unless the user EXPLICITLY asks you to draft, write, or send one. For a normal question, answer concisely and, if a draft would help, OFFER it in a single line ("want me to draft that email?") rather than writing it. Writing a long draft nobody asked for is slow and wasteful. When they DO ask for a SHORT SENDABLE EMAIL OR MESSAGE, put ONLY that sendable text between these exact marker lines:
 ---DRAFT---
 <the sendable text only - for an email include a "Subject:" line then the body>
 ---END DRAFT---
 Keep your commentary and reasoning OUTSIDE the markers. The text inside the markers can be plain and clean since it is what gets sent.
+
+FINISHED BUSINESS DOCUMENTS: when the user explicitly asks you to produce, create or write a finished plan, agreement, handbook, proposal, report, brief or Word document, do not write the long document inside the chat and do not turn the request into a new to-do. Propose create_document immediately. The request is saved first, then the document is created in the background while the user continues using the CRM. Use the exact matching open document-related to-do as sourceTask when DOCUMENT STUDIO ON DEMAND supplies it. Link a client only when the exact client is clear. Give the job a useful finished title and put all grounded scope, outcome and format requirements in instructions. Missing facts are flagged in the document rather than invented. Agreements and handbooks remain working drafts when material terms are missing.
 
 TO-DOS: when the user asks you to arrange, remember, chase, follow up, add, draft, prep, or otherwise CREATE actions to do later, propose each as a to-do. It is shown in the visible action plan and is only created after approval. In ADDITION to your normal prose reply, put ONLY a JSON array between these exact markers:
 ---TASKS---
@@ -1171,6 +1239,7 @@ ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does th
 [{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<call title>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
 ---END ACTIONS---
 Additional supported actions are:
+{"type":"create_document","title":"<finished document title>","documentType":"plan|agreement|handbook|proposal|report|brief|other","instructions":"<grounded scope, intended reader, required outcome and useful structure>","client":"<optional exact client name>","sourceTask":"<optional exact open to-do text from DOCUMENT STUDIO ON DEMAND>"}
 {"type":"update_client","client":"<client name, omit on their profile>","name":"<optional corrected name>","stage":"New|Discovery|Qualified|Proposal|Negotiation|Partner|Customer|Product Trial|In House|Dormant","sector":"<optional>","website":"<optional>","domain":"<optional>","notes":"<optional, null to clear>","emailContext":"<optional, null to clear>"}
 {"type":"upsert_stakeholder","client":"<client name, omit on their profile>","person":"<contact name>","buyingRole":"decision_maker|champion|user|influencer|blocker|unknown","influence":"high|medium|low","engagement":"warm|neutral|cold","jobTitle":"<optional>","email":"<optional>"}
 {"type":"update_contact","client":"<client name, omit on their profile>","person":"<existing contact name>","newName":"<optional corrected name>","role":"<optional, null to clear>","email":"<optional, null to clear>","sector":"<optional, null to clear>","notes":"<optional, null to clear>"}
@@ -1184,6 +1253,7 @@ Use update_client for the relationship-level client stage and core facts. Use up
 Use update_contact to correct or clear an existing person's core details. Use upsert_stakeholder when the change is specifically about their buying role or when the named contact may need to be created.
 Use upsert_stakeholder when the user identifies a decision-maker, champion, influencer, user or blocker. It updates an existing contact or clearly proposes creating the named contact when none exists. Do not guess buying roles from a job title alone.
 Use update_task when the user explicitly asks to complete, rename, pin, unpin or reschedule an existing to-do. If several match, the interface will ask which one.
+Use create_document only for an explicit finished-document request. Do not emit create_task for the same request. If a matching sourceTask is used, it is completed only after the private Word file is successfully created. A queued request is not the same as a completed file, so tell the user it will continue in the background and appear in Documents.
 Use log_client_update when the user reports an off-system phone call, text message, voice note or relationship update. Keep the content factual and concise. It enters that client's timeline and commercial memory, updates any grounded next action, and refreshes future next-call intent after the user confirms it once. If the user names a client, use the exact known client name or saved alias. Never map a one-word first name to a different full-name client merely because part of the text matches.
 For update_campaign you may also include "voice":{"tone":"...","style":"...","rules":["..."],"signature":"Lee"}, "bannedPhrases":["..."], "bookingUrl":"https://...", "bookingCtaMode":"interested_reply|final_step|always|never", and "sequence":[{"step":1,"delayDays":0,"purpose":"...","contentType":"plain|insight|case_study|video|close_loop","guidance":"...","assetUrl":null}]. Only include settings the user asked for or approved in the conversation.
 

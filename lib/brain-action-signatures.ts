@@ -33,7 +33,9 @@ const target = (action: any): string => {
   match = endpoint.match(/\/(?:contacts|opportunities|tasks|campaigns)\/([^/]+)/);
   if (match) return match[1];
   const body = action?.body || {};
-  return normalise(body.name || body.email || body.query || body.client || "");
+  return normalise(
+    body.title || body.name || body.email || body.query || body.client || ""
+  );
 };
 
 export type BrainActionSignature = {
