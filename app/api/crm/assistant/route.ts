@@ -24,6 +24,10 @@ import { logModelUsage } from "@/lib/usage";
 import { RELATIONSHIP_STAGE_BY_KEY } from "@/lib/relationship-stages";
 import { resolveExistingCompany } from "@/lib/company-resolver";
 import {
+  callTranscriptRequested,
+  gatherCallTranscriptContext,
+} from "@/lib/call-transcript-context";
+import {
   actionWasAlreadyProposed,
   brainActionSignature,
   sameBrainAction,
@@ -929,7 +933,9 @@ export async function POST(req: NextRequest) {
           ? rawScreen.path.slice(0, 100)
           : "/crm",
     };
+    const wantsTranscript = callTranscriptRequested(message);
     const wantsDeepHistory =
+      !wantsTranscript &&
       /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|documents?|detailed notes?|email thread|what did .* say)\b/i.test(
         message
       );
@@ -986,10 +992,14 @@ export async function POST(req: NextRequest) {
       }
       const wantsOutreachDetail =
         /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(message);
-      const [digest, outreach, callPrep, ...details] = await Promise.all([
+      const [digest, outreach, callPrep, callTranscript, ...details] = await Promise.all([
         gatherGlobalContext(message),
         gatherOutreachContext(message, { detailed: wantsOutreachDetail }),
         gatherUpcomingCallPrepContext(message),
+        gatherCallTranscriptContext(message, {
+          screenPath: screenContext.path,
+          focusCompanyId: focus,
+        }),
         ...namedWorkstreams.map(async (thread) => {
           const memory = await getCommercialMemoryBlock(
             thread.companyId,
@@ -1012,7 +1022,9 @@ export async function POST(req: NextRequest) {
       const detailBlocks = (details as (string | null)[]).filter(
         (d): d is string => !!d && d.trim().length > 0
       );
-      const wider = [callPrep, digest, outreach].filter(Boolean).join("\n\n==========\n\n");
+      const wider = [callTranscript, callPrep, digest, outreach]
+        .filter(Boolean)
+        .join("\n\n==========\n\n");
       if (!detailBlocks.length) return wider || null;
       const label = focus
         ? "FOCUSED / NAMED CLIENTS - full detail. Lead here when the question is about them:"
@@ -1151,6 +1163,8 @@ TO-DOS: when the user asks you to arrange, remember, chase, follow up, add, draf
 Use "action" = "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Set "dueAt" to the deadline DATE when the user gives one, working out the real date from today's date in the context (e.g. "by Friday" becomes that Friday's YYYY-MM-DD, "by end of month" the last day of this month). Set "pinned" to true when the user says to keep it at the top, make it top priority, do it first, or that it is urgent. OMIT dueAt and pinned when the user did not give a deadline or priority. Only propose to-dos the user actually wants tracked, and do not repeat ones already outstanding in the context. Keep these markers out of your prose, and still answer naturally.
 
 CALENDAR AND SAVED PREP: the user's upcoming calls, synced from their calendar, are in the context below. For a schedule or call list, always include the time and make the full time plus call title clickable to its supplied prep page using exactly [time, call title](/supplied/prep/path). This is the one permitted Markdown pattern. Never link the client name separately inside a schedule item. Never show raw URLs, never say a prep page is unavailable when a prep page is supplied, and never link straight to Google Meet, Teams or Zoom unless the user explicitly asks for the join link. If the context specifies the exact requested date, obey it, including the user's before 02:00 definition of "tomorrow". Flag overlapping meetings prominently. When they ask about a particular call's questions, focus, intent or battle plan, use the ON-DEMAND SAVED CALL PREP block when present. That block is the authoritative saved plan and was fetched specifically for this question, so never say you cannot see it. If the block says the plan is not built, say that plainly. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
+
+CALL TRANSCRIPTS ON DEMAND: when an ON-DEMAND CALL TRANSCRIPT block is present, it was fetched only because the user explicitly asked about a specific recorded conversation. Treat the matched transcript source as authoritative for that question. Never combine it with another call, never substitute a generic scorecard for missing words, and never imply that you checked a raw transcript when the block says it is unavailable. If the block reports several close matches, ask the user which exact call they mean. If it contains bounded excerpts and the answer is not present, say that plainly and ask for the topic or phrase to search rather than guessing.
 
 ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, client stages, stakeholders and to-dos, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles, update opportunities, pull email context, remember durable rules, correct records, and dismiss stale work. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
