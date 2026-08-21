@@ -22,7 +22,12 @@ export default function LoginPage() {
       setSessionEmail(data.user?.email ?? null);
       setChecked(true);
     });
-    if (new URLSearchParams(window.location.search).get("access") === "denied") {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("invite") === "error") {
+      setError(
+        "That invitation link has expired or was already used. Ask Lee to resend it, then open the newest email. Do not use this login form until account setup is complete."
+      );
+    } else if (params.get("access") === "denied") {
       setError("This account has not been invited to an active workspace.");
     }
   }, [supabase]);
