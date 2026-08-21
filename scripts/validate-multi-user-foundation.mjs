@@ -125,6 +125,14 @@ const joinTeam = readFileSync(
   path.join(root, "app/join-team/page.tsx"),
   "utf8"
 );
+const bulkOutreachAssignment = readFileSync(
+  path.join(root, "app/api/crm/outreach/assign/route.ts"),
+  "utf8"
+);
+const outreachPage = readFileSync(
+  path.join(root, "app/crm/outreach/page.tsx"),
+  "utf8"
+);
 
 const currentTables = [
   "ai_cache",
@@ -363,6 +371,20 @@ assert.match(invitationAcceptance, /accept_livecoach_invitation/);
 assert.match(joinTeam, /at least 12 characters/i);
 assert.match(joinTeam, /Connect Google/);
 assert.match(joinTeam, /CRM access stays locked/i);
+assert.match(bulkOutreachAssignment, /account\.role !== "owner"/);
+assert.match(bulkOutreachAssignment, /account\.role !== "manager"/);
+assert.match(bulkOutreachAssignment, /workspace_members/);
+assert.match(bulkOutreachAssignment, /\.eq\("workspace_id", account\.workspaceId\)/);
+assert.match(bulkOutreachAssignment, /row\.status === "imported"/);
+assert.match(bulkOutreachAssignment, /!row\.last_researched_at/);
+assert.match(bulkOutreachAssignment, /!row\.last_contacted_at/);
+assert.match(bulkOutreachAssignment, /!row\.last_reply_at/);
+assert.match(bulkOutreachAssignment, /messageProspectIds/);
+assert.match(bulkOutreachAssignment, /enrolmentProspectIds/);
+assert.match(bulkOutreachAssignment, /assigned_to_user_id: assignedToUserId/);
+assert.match(outreachPage, /Share untouched prospects/);
+assert.match(outreachPage, /Assignment only · no research · no emails/);
+assert.match(outreachPage, /Owner filter/);
 
 assert.doesNotMatch(login, /auth\.signUp/);
 assert.doesNotMatch(login, /Create account/);
