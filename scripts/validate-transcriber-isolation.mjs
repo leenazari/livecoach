@@ -51,6 +51,12 @@ assert.match(backfill, /\.eq\("owner_id", accountScope\.userId\)/);
 assert.match(sessionEnd, /\.from\("meet_stream_tokens"\)/);
 assert.match(stage, /livecoach-token\.\$\{access\.token\}/);
 assert.match(stage, /coachHintsRef/);
+assert.match(stage, /WS_RECONNECT_WARNING_GRACE_MS = 8000/);
+assert.match(stage, /wsRef\.current === ws/);
+assert.match(stage, /Receiving speech is definitive proof/);
+assert.match(stage, /showReconnectWarning/);
+assert.match(stage, /This does not mean the\s+notetaker has stopped recording/);
+assert.doesNotMatch(stage, /New speech is not being captured this second/);
 assert.doesNotMatch(stage, /COACH_HINTS = \["lee nazari"/i);
 assert.match(identity, /deriveTranscriberName/);
 
