@@ -55,7 +55,13 @@ export async function middleware(request: NextRequest) {
     !!cronSecret && request.headers.get("authorization") === `Bearer ${cronSecret}`;
 
   if (!user && !serviceAuthorized && isPrivateApi) {
-    return NextResponse.json({ error: "authentication required" }, { status: 401 });
+    return NextResponse.json(
+      { error: "authentication required" },
+      {
+        status: 401,
+        headers: { "Cache-Control": "private, no-store" },
+      }
+    );
   }
 
   // Candidate join pages and the bot harness stay public; the private operator
@@ -63,7 +69,9 @@ export async function middleware(request: NextRequest) {
   if (!user && isPrivatePage) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    return NextResponse.redirect(url);
+    const login = NextResponse.redirect(url);
+    login.headers.set("Cache-Control", "private, no-store");
+    return login;
   }
 
   // Authentication alone is not authorization. LiveCoach is invite-only and
