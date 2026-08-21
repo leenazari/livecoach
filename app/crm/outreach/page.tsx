@@ -105,6 +105,25 @@ function outreachStage(prospect: Prospect): { key: string; label: string } {
   return { key: "not_started", label: "Not started" };
 }
 
+function isUntouchedProspect(prospect: Prospect): boolean {
+  const research = prospect.research;
+  const hasResearch = research != null && (
+    Array.isArray(research)
+      ? research.length > 0
+      : typeof research === "object"
+        ? Object.keys(research).length > 0
+        : String(research).trim().length > 0
+  );
+  return prospect.status === "imported" &&
+    outreachStage(prospect).key === "not_started" &&
+    !prospect.last_researched_at &&
+    !prospect.last_contacted_at &&
+    !prospect.last_reply_at &&
+    !hasResearch &&
+    !prospect.outreach?.latestMessage &&
+    !prospect.outreach?.enrolment;
+}
+
 function formatActivityDate(value?: string | null) {
   if (!value) return "No activity";
   return new Intl.DateTimeFormat("en-GB", {
@@ -167,6 +186,8 @@ export default function OutreachPage() {
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [recommendationFilter, setRecommendationFilter] = useState<"all" | RecommendationAction>("all");
   const [prospectCampaignId, setProspectCampaignId] = useState("all");
+  const [ownerFilter, setOwnerFilter] = useState("all");
+  const [bulkAssignee, setBulkAssignee] = useState("");
   const [blockTarget, setBlockTarget] = useState("");
   const [removalProspectId, setRemovalProspectId] = useState("");
   const [draftEdits, setDraftEdits] = useState<Record<string, { subject: string; body_text: string }>>({});
@@ -495,6 +516,37 @@ export default function OutreachPage() {
       setError(e.message || "The assignment was not saved");
     }
   };
+  const bulkAssignVisible = async (prospectIds: string[]) => {
+    if (!bulkAssignee || !prospectIds.length) return;
+    const member = team.find((item) => item.userId === bulkAssignee);
+    const memberName = member?.name || "the selected team member";
+    if (!window.confirm(`Assign ${prospectIds.length} untouched prospects to ${memberName}? This changes ownership only. It will not research or email anyone.`)) return;
+    setBusy("bulk-assign"); setError(""); setNotice("");
+    try {
+      const result = await crmFetch<{
+        requested: number;
+        assigned: number;
+        skipped: number;
+      }>("/api/crm/outreach/assign", {
+        method: "POST",
+        body: JSON.stringify({
+          assignedToUserId: bulkAssignee,
+          prospectIds,
+        }),
+      });
+      await loadProspects();
+      setNotice(
+        result.skipped
+          ? `${result.assigned} untouched prospects assigned to ${memberName}. ${result.skipped} were safely skipped because they had activity, research, or were no longer eligible.`
+          : `${result.assigned} untouched prospects assigned to ${memberName}. Nothing was researched or emailed.`
+      );
+    } catch (e: any) {
+      setError(e.message || "The filtered prospects could not be assigned");
+      await loadProspects();
+    } finally {
+      setBusy("");
+    }
+  };
   const saveCampaign = async (campaign: Campaign) => {
     setBusy(`campaign:${campaign.id}`); setError("");
     try {
@@ -690,6 +742,10 @@ export default function OutreachPage() {
       const stageMatches = stageFilter === "all" || (stageFilter === "active" ? stage !== "suppressed" : stage === stageFilter);
       return stageMatches &&
         (prospectCampaignId === "all" || prospect.outreach?.campaignIds?.includes(prospectCampaignId)) &&
+        (ownerFilter === "all" ||
+          (ownerFilter === "mine" && prospect.assigned_to_user_id === currentUser) ||
+          (ownerFilter === "unassigned" && !prospect.assigned_to_user_id) ||
+          prospect.assigned_to_user_id === ownerFilter) &&
         (priority === "all" || prospect.priority === priority) &&
         (recommendationFilter === "all" || prospect.recommendation?.action === recommendationFilter) &&
         (!needle || `${prospect.first_name || ""} ${prospect.last_name || ""} ${prospect.company_name} ${prospect.job_title || ""} ${prospect.email}`.toLowerCase().includes(needle));
@@ -704,7 +760,16 @@ export default function OutreachPage() {
       return sortDirection === "asc" ? compared : -compared;
     });
     return rows;
-  }, [needle, priority, prospectCampaignId, prospectSort, prospects, recommendationFilter, sortDirection, stageFilter]);
+  }, [currentUser, needle, ownerFilter, priority, prospectCampaignId, prospectSort, prospects, recommendationFilter, sortDirection, stageFilter]);
+
+  const bulkEligible = useMemo(
+    () => shown.filter(
+      (prospect) =>
+        isUntouchedProspect(prospect) &&
+        prospect.assigned_to_user_id !== bulkAssignee
+    ),
+    [bulkAssignee, shown]
+  );
 
   const engagementSource = engagementInput.trim();
   const engagementReady = engagementSource.length >= 25 || /^https?:\/\/\S+$/i.test(engagementSource);
@@ -785,7 +850,7 @@ export default function OutreachPage() {
 
       {!loading && !tabLoading && tab === "prospects" ? <section>
         <div className="mb-3 rounded-xl border border-edge bg-panel p-3">
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_10rem_10rem_10rem]">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_repeat(5,10rem)]">
             <input className={input} value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search person, company, role or email…" />
             <select aria-label="Campaign filter" value={prospectCampaignId} onChange={(event) => setProspectCampaignId(event.target.value)} className={input}><option value="all">All campaigns</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select>
             <select aria-label="Outreach status filter" value={stageFilter} onChange={(event) => setStageFilter(event.target.value)} className={input}>
@@ -793,9 +858,21 @@ export default function OutreachPage() {
             </select>
             <select aria-label="Manual priority filter" value={priority} onChange={(event) => setPriority(event.target.value as "all" | Priority)} className={input}><option value="all">All priorities</option><option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option></select>
             <select aria-label="Fit recommendation filter" value={recommendationFilter} onChange={(event) => setRecommendationFilter(event.target.value as "all" | RecommendationAction)} className={input}><option value="all">All fit scores</option><option value="contact_today">Contact today</option><option value="hold">Hold</option><option value="skip">Skip</option></select>
+            <select aria-label="Owner filter" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} className={input}><option value="all">All owners</option><option value="mine">My prospects</option><option value="unassigned">Unassigned</option>{team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}</select>
           </div>
           <p className="mt-2 text-xs text-muted">Showing {shown.length} of {prospects.length}. Fit scoring uses no AI tokens. Research only starts when you press Prepare draft.</p>
         </div>
+
+        {canManageAssignments ? <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.06] p-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div><h2 className="font-display text-base text-bone">Share untouched prospects</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-muted">Uses the filters above. Anyone already researched, queued, drafted, contacted, replied, removed, or previously enrolled is automatically protected and skipped.</p></div>
+            <div className="grid gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto]">
+              <select aria-label="Team member for bulk assignment" value={bulkAssignee} onChange={(event) => setBulkAssignee(event.target.value)} className={input}><option value="">Choose team member</option>{team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}</select>
+              <button type="button" onClick={() => bulkAssignVisible(bulkEligible.map((prospect) => prospect.id))} disabled={!!busy || !bulkAssignee || !bulkEligible.length} className={`${primary} whitespace-nowrap`}>{busy === "bulk-assign" ? "Assigning safely…" : `Assign filtered (${bulkEligible.length})`}</button>
+            </div>
+          </div>
+          <p className="mt-2 font-mono text-[0.52rem] uppercase tracking-wider text-sky">Assignment only · no research · no emails · every change is audited</p>
+        </div> : null}
 
         <div className="overflow-hidden rounded-xl border border-edge bg-panel">
           <div className="hidden grid-cols-[1.1fr_1.2fr_.65fr_.8fr_.85fr_.9fr_auto] gap-3 border-b border-edge bg-ink/45 px-3 py-2 sm:grid">
