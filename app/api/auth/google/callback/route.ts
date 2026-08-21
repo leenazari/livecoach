@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exchangeCode, saveGoogleConnection } from "@/lib/google";
+import { getRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 
@@ -12,12 +13,14 @@ export async function GET(req: NextRequest) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const cookieState = req.cookies.get("g_oauth_state")?.value;
+  const onboarding = getRequestScope()?.status === "onboarding";
+  const destination = onboarding ? "/join-team" : "/settings";
 
   if (url.searchParams.get("error")) {
-    return NextResponse.redirect(`${base}/settings?google=denied`);
+    return NextResponse.redirect(`${base}${destination}?google=denied`);
   }
   if (!code || !state || !cookieState || state !== cookieState) {
-    return NextResponse.redirect(`${base}/settings?google=error`);
+    return NextResponse.redirect(`${base}${destination}?google=error`);
   }
 
   try {
@@ -49,10 +52,10 @@ export async function GET(req: NextRequest) {
       email,
     });
 
-    const res = NextResponse.redirect(`${base}/settings?google=connected`);
+    const res = NextResponse.redirect(`${base}${destination}?google=connected`);
     res.cookies.set("g_oauth_state", "", { maxAge: 0, path: "/" });
     return res;
   } catch {
-    return NextResponse.redirect(`${base}/settings?google=error`);
+    return NextResponse.redirect(`${base}${destination}?google=error`);
   }
 }
