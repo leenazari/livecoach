@@ -10,6 +10,15 @@ type AccountStatus = {
   role: string;
   status: string;
   google: { connected: boolean; email: string | null };
+  microsoft: {
+    connected: boolean;
+    email: string | null;
+    configured: boolean;
+  };
+  connector: {
+    provider: "google" | "microsoft" | null;
+    email: string | null;
+  };
   crmAccess: boolean;
 };
 
@@ -37,12 +46,21 @@ export default function JoinTeamPage() {
     const params = new URLSearchParams(window.location.search);
     const invitationToken = params.get("invite") || "";
     const googleResult = params.get("google") || "";
+    const microsoftResult = params.get("microsoft") || "";
     if (googleResult === "account_in_use") {
       setError(
         "That Google account already belongs to another LiveCoach user. Choose your own separate work account."
       );
     } else if (googleResult === "identity_missing") {
       setError("Google did not return an account identity. Try connecting again.");
+    } else if (microsoftResult === "account_in_use") {
+      setError(
+        "That Microsoft account already belongs to another LiveCoach user. Choose your own separate work account."
+      );
+    } else if (microsoftResult === "identity_missing") {
+      setError("Microsoft did not return an account identity. Try connecting again.");
+    } else if (microsoftResult === "error") {
+      setError("Microsoft could not be connected. Try again or continue without email and calendar.");
     }
     setToken(invitationToken);
     if (invitationToken) {
@@ -112,7 +130,7 @@ export default function JoinTeamPage() {
       <p className="font-mono text-[0.62rem] uppercase tracking-[0.22em] text-amber">Interviewa workspace</p>
       <h1 className="mt-2 font-display text-[2.35rem] leading-none text-bone">Set up LiveCoach</h1>
       <p className="mt-3 text-sm leading-relaxed text-muted">
-        Your account is separate from Lee's private calls, Gmail, calendar, investors, documents and Brain memory.
+        Your account is separate from Lee's private calls, email, calendar, investors, documents and Brain memory.
       </p>
 
       <section className="mt-6 rounded-2xl border border-edge bg-panel/55 p-6">
@@ -149,20 +167,27 @@ export default function JoinTeamPage() {
               <span className="rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-amber">Private onboarding</span>
             </div>
             <div className="mt-5 rounded-xl border border-edge bg-ink/35 p-4">
-              <p className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">Your Google account</p>
+              <p className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">Your email and calendar</p>
               <p className="mt-2 text-sm text-bone">
-                {status.google.connected
-                  ? `Connected as ${status.google.email || email}`
-                  : "Connect your own Gmail and Calendar. Lee's Google account is never used for your private data."}
+                {status.connector.provider
+                  ? `${status.connector.provider === "google" ? "Google" : "Microsoft"} connected as ${status.connector.email || email}`
+                  : "Optional. Connect your own Google or Microsoft account for calendar sync, email context and outreach. Lee's connection is never used."}
               </p>
-              {!status.google.connected ? (
-                <button type="button" onClick={() => { window.location.href = "/api/auth/google/start"; }} className="mt-4 rounded-full bg-amber px-5 py-2.5 font-mono text-xs font-semibold uppercase tracking-wider text-ink">Connect Google</button>
+              {!status.connector.provider ? (
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                  <button type="button" onClick={() => { window.location.href = "/api/auth/google/start"; }} className="rounded-full bg-amber px-5 py-2.5 font-mono text-xs font-semibold uppercase tracking-wider text-ink">Connect Google</button>
+                  {status.microsoft.configured ? (
+                    <button type="button" onClick={() => { window.location.href = "/api/auth/microsoft/start"; }} className="rounded-full border border-sky/50 bg-sky/10 px-5 py-2.5 font-mono text-xs font-semibold uppercase tracking-wider text-sky">Connect Microsoft</button>
+                  ) : (
+                    <span className="self-center text-xs text-muted">Microsoft setup is being configured</span>
+                  )}
+                </div>
               ) : null}
             </div>
             {status.crmAccess ? (
               <button type="button" onClick={() => router.push("/crm/outreach")} className="mt-5 w-full rounded-full bg-sage px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-ink">Open LiveCoach</button>
             ) : (
-              <p className="mt-5 rounded-xl border border-sage/40 bg-sage/[0.06] px-4 py-3 text-sm leading-relaxed text-sage">Your login and Google connection are ready. CRM access stays locked until Lee presses Activate in Team access.</p>
+              <p className="mt-5 rounded-xl border border-sage/40 bg-sage/[0.06] px-4 py-3 text-sm leading-relaxed text-sage">Your separate login is ready. Email and calendar are optional. CRM access stays locked until Lee presses Activate in Team access.</p>
             )}
           </div>
         ) : null}

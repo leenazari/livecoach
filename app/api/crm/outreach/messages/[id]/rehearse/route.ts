@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { sendOutreachMail } from "@/lib/gmail";
+import { sendConnectedOutreachMail } from "@/lib/mail";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
 export const runtime = "nodejs";
@@ -50,8 +50,8 @@ export async function POST(
       .filter(Boolean)
       .join(" at ");
     const rehearsalSubject = `[REHEARSAL${intendedFor ? ` · ${intendedFor}` : ""}] ${message.subject}`;
-    const sent = await sendOutreachMail({
-      to: sender.googleEmail,
+    const sent = await sendConnectedOutreachMail({
+      to: sender.mailboxEmail,
       subject: rehearsalSubject,
       // Keep the body byte-for-byte equivalent to the saved draft so Lee sees
       // the actual prospect experience. Only the subject carries the warning.
@@ -62,13 +62,13 @@ export async function POST(
     });
     if (!sent.ok)
       return NextResponse.json(
-        { error: sent.error || "Gmail refused the rehearsal" },
+        { error: sent.error || "The connected mailbox refused the rehearsal" },
         { status: 502 }
       );
 
     return NextResponse.json({
       ok: true,
-      sentTo: sender.googleEmail,
+      sentTo: sender.mailboxEmail,
       from: sender.senderEmail,
       intendedFor: intendedFor || null,
       campaignChanged: false,

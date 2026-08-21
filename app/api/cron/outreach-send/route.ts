@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`)
     return NextResponse.json({ error: "not authorised" }, { status: 401 });
   try {
-    const accounts = await listActiveAccountScopes({ googleConnectedOnly: true });
+    const accounts = await listActiveAccountScopes({ connectedOnly: true });
     const results = await Promise.all(accounts.map(async (account) => {
       const result = await runWithServiceRecordScope(account, async () => {
         const now = new Date().toISOString();

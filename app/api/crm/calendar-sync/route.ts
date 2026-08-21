@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getAccessToken,
-  listAllEventsSnapshot,
-  meetingUrlOf,
-  titleOf,
-} from "@/lib/google";
+import { meetingUrlOf, titleOf } from "@/lib/google";
+import { listConnectedCalendarSnapshot } from "@/lib/calendar-provider";
 import { supabaseAdmin } from "@/lib/supabase";
 import { setAppConfigValue } from "@/lib/app-config";
 import { resolveRecordScope } from "@/lib/record-scope";
@@ -77,27 +73,26 @@ async function deriveClientsFromTitles(
   return out;
 }
 
-// POST /api/crm/calendar-sync -> pull the user's Google Calendar (now to +30d)
+// POST /api/crm/calendar-sync -> pull the user's connected calendar (now to +30d)
 // into upcoming_calls. Adds new events, applies reschedules (time/title/link),
 // skips cancelled and self-declined events, and never touches the client link,
-// intent or prep on an existing row. Requires a connected Google account.
+// intent or prep on an existing row. Supports Google and Microsoft accounts.
 async function runCalendarSync() {
   try {
     await resolveRecordScope();
-    const access = await getAccessToken();
-    if (!access) {
-      return NextResponse.json(
-        { error: "Google Calendar isn't connected. Connect it in Settings first." },
-        { status: 400 }
-      );
-    }
-
     const now = Date.now();
     const timeMin = new Date(now - 3 * 60 * 60 * 1000).toISOString();
     const timeMax = new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString();
-    // Read EVERY calendar the account can see, not just the primary, so a
-    // personal calendar shared into the connected account is picked up too.
-    const snapshot = await listAllEventsSnapshot(access, timeMin, timeMax);
+    // Read every calendar the account can see, not just the primary, so a
+    // shared calendar is picked up too without crossing account boundaries.
+    const snapshot = await listConnectedCalendarSnapshot(timeMin, timeMax);
+    if (!snapshot) {
+      return NextResponse.json(
+        { error: "Connect Google or Microsoft Calendar in Settings first." },
+        { status: 400 }
+      );
+    }
+    const source = snapshot.source;
     const events = snapshot.events;
 
     type Row = {
@@ -118,23 +113,25 @@ async function runCalendarSync() {
         (ev.start?.date ? new Date(`${ev.start.date}T00:00:00Z`).toISOString() : null);
       if (!startIso || !ev.id) continue;
       const title = titleOf(ev);
-      // Personal reminder blocks remain in Google Calendar but never enter the
+      // Personal reminder blocks remain in the source calendar but never enter the
       // CRM. A complete sync also removes any older matching CRM rows because
       // their event ids are deliberately absent from `liveId` below.
       if (isNonMeetingCalendarBlock(title)) continue;
       rows.push({
-        external_id: ev.id,
+        // Preserve existing Google ids. Prefix Microsoft ids so two providers
+        // can never collide inside the shared upcoming_calls table.
+        external_id: source === "microsoft" ? `microsoft:${ev.id}` : ev.id,
         title,
         scheduled_at: startIso,
-        meeting_url: meetingUrlOf(ev),
+        meeting_url: ev.meeting_url || meetingUrlOf(ev),
         attendees: atts,
       });
     }
 
-    // Full reconciliation, not just add/update. Google omits deleted events
+    // Full reconciliation, not just add/update. Providers omit deleted events
     // from a normal bounded list, so any future calendar-owned row absent from
     // that list is stale and must leave Upcoming Calls. Manual rows are never
-    // touched. When only Google's event id changed, relink the matching title +
+    // touched. When only the provider event id changed, relink the matching title +
     // time row so saved client, intent and prep survive.
     const liveId = new Set(rows.map((r) => r.external_id));
     const keyOf = (title: string | null, at: string | null) =>
@@ -142,14 +139,14 @@ async function runCalendarSync() {
     const liveByKey = new Map(rows.map((r) => [keyOf(r.title, r.scheduled_at), r]));
     let removed = 0;
     let relinked = 0;
-    // An incomplete Google snapshot can still safely add/update events, but it
+    // An incomplete provider snapshot can still safely add/update events, but it
     // cannot prove an absent event was cancelled. Reconcile only after every
     // eligible calendar returned successfully.
     if (snapshot.complete) {
       const { data: storedCalendarRows, error: storedError } = await supabaseAdmin
         .from("upcoming_calls")
         .select("id, external_id, title, scheduled_at")
-        .eq("source", "google")
+        .eq("source", source)
         .is("completed_at", null)
         .gte("scheduled_at", timeMin)
         .lte("scheduled_at", timeMax)
@@ -182,7 +179,7 @@ async function runCalendarSync() {
           .from("upcoming_calls")
           .delete()
           .in("id", staleIds)
-          .eq("source", "google")
+          .eq("source", source)
           .select("id");
         if (error) throw error;
         removed = deleted?.length || 0;
@@ -373,7 +370,7 @@ async function runCalendarSync() {
       }
     }
 
-    // De-dupe id-change duplicates: Google sometimes issues a NEW event id for
+    // De-dupe id-change duplicates: a provider can issue a new event id for
     // the SAME meeting, so it arrives as a "new" event and we would insert a
     // second row identical in title + time to one already on the list. Skip a
     // new event whose (title, scheduled_at) already exists (or repeats within
@@ -404,7 +401,7 @@ async function runCalendarSync() {
         company_id: x.company_id,
         intent:
           (x.company_id && nextIntentByCompany.get(x.company_id)) || x.intent,
-        source: "google",
+        source,
         prepped: false,
       });
     }
@@ -491,11 +488,12 @@ async function runCalendarSync() {
     await setAppConfigValue({
       key: "calendar_sync_last_success_at",
       value: finishedAt,
-      note: "Latest successful complete or partial Google Calendar refresh",
+      note: `Latest successful complete or partial ${source} Calendar refresh`,
     });
 
     return NextResponse.json({
       ok: true,
+      provider: snapshot.provider,
       added,
       updated: toUpdate.length,
       removed,
@@ -532,7 +530,7 @@ export async function GET(req: NextRequest) {
       skipped: `Waiting for the next London sync slot, currently ${decision.weekday} ${String(decision.hour).padStart(2, "0")}:00`,
     });
   }
-  const accounts = await listActiveAccountScopes({ googleConnectedOnly: true });
+  const accounts = await listActiveAccountScopes({ connectedOnly: true });
   const results = await Promise.all(accounts.map(async (account) => {
     const response = await runWithServiceRecordScope(account, () => runCalendarSync());
     return { userId: account.userId, status: response.status, result: await response.json() };

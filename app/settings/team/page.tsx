@@ -14,6 +14,10 @@ type Member = {
   email: string | null;
   googleConnected: boolean;
   googleEmail: string | null;
+  microsoftConnected: boolean;
+  microsoftEmail: string | null;
+  mailboxProvider: "google" | "microsoft" | null;
+  mailboxConnected: boolean;
   transcriberName: string;
   outreachSenderName: string | null;
   outreachSenderEmail: string | null;
@@ -252,7 +256,7 @@ export default function TeamAccessPage() {
           <section className="rounded-2xl border border-sage/40 bg-sage/[0.06] p-5">
             <h2 className="font-display text-lg text-bone">What a colleague can see</h2>
             <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">
-              Only records deliberately marked for the sales team. Private calls, transcripts, calendar events, Gmail, documents, investors, personal clients and Brain memory remain owner only.
+              Only records deliberately marked for the sales team. Private calls, transcripts, calendar events, email, documents, investors, personal clients and Brain memory remain owner only.
             </p>
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
               {[
@@ -271,7 +275,7 @@ export default function TeamAccessPage() {
           <section className="rounded-2xl border border-amber/40 bg-amber/[0.06] p-5">
             <h2 className="font-display text-lg text-bone">Invite account setup</h2>
             <p className="mt-2 text-sm leading-relaxed text-muted">
-              The invite lets your salesperson create their login and connect their own Google account. CRM access remains locked during onboarding, so sending an invite cannot expose Lee's data.
+              The invite works with any real email address. Google or Microsoft can be connected later for that person's email and calendar. CRM access remains locked until you activate it.
             </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_150px_auto]">
               <input
@@ -303,7 +307,7 @@ export default function TeamAccessPage() {
             </div>
             {ownerIdentityConflict ? (
               <p role="alert" className="mt-3 rounded-xl border border-rust/50 bg-rust/10 px-4 py-3 text-sm leading-relaxed text-rust">
-                This is your owner identity, so it cannot test privacy separation. Create a genuinely separate Google Workspace user such as sales-test@interviewa.com.
+                This is your owner identity, so it cannot test privacy separation. Use a genuinely separate address belonging to the test user or salesperson.
               </p>
             ) : null}
             <p className="mt-3 text-xs leading-relaxed text-amber/85">{data.activation.reason}</p>
@@ -335,21 +339,19 @@ export default function TeamAccessPage() {
                         complete: true,
                       },
                       {
-                        id: "google",
-                        label: "Separate Google account connected",
-                        detail: member.setup.separateIdentity
-                          ? member.googleEmail || "Connected"
-                          : member.googleConnected
-                            ? "Owner identity detected. Connect a different account"
-                            : "Waiting for their Google connection",
-                        complete: member.setup.separateIdentity,
+                        id: "mailbox",
+                        label: "Own email and calendar connected",
+                        detail: member.mailboxConnected
+                          ? `${member.mailboxProvider === "microsoft" ? "Microsoft" : "Google"} connected as ${member.microsoftEmail || member.googleEmail || "this user"}`
+                          : "Optional for CRM access. Required before outreach sending and automatic calendar sync",
+                        complete: member.mailboxConnected && member.setup.separateIdentity,
                       },
                       {
                         id: "sender",
                         label: "Outreach sender ready",
                         detail: member.setup.outreachSenderReady
                           ? member.outreachSenderEmail || "Sender verified"
-                          : "Created automatically when the isolated account is activated",
+                          : "Created when this user connects their own mailbox",
                         complete: member.setup.outreachSenderReady,
                       },
                       {
@@ -401,7 +403,11 @@ export default function TeamAccessPage() {
                             </p>
                           </div>
                           <span className={`rounded-full border px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider ${ready ? "border-sage/50 bg-sage/10 text-sage" : "border-amber/50 bg-amber/10 text-amber"}`}>
-                            {ready ? "Ready for live work" : "Test only"}
+                            {ready
+                              ? "Ready for live outreach"
+                              : member.status === "active"
+                                ? "CRM active, setup pending"
+                                : "Test only"}
                           </span>
                         </div>
                         <div className="mt-3 h-2 overflow-hidden rounded-full bg-panel">
@@ -457,7 +463,7 @@ export default function TeamAccessPage() {
               <div className="mt-5 rounded-2xl border border-dashed border-edge bg-ink/25 p-5">
                 <p className="text-sm font-semibold text-bone">No separate test account yet</p>
                 <p className="mt-2 text-sm leading-relaxed text-muted">
-                  Create a real Google Workspace user such as sales-test@interviewa.com, then send the invitation above. An alias or your existing lee@ai13.com owner identity will not test isolation.
+                  Use any genuinely separate email address, then send the invitation above. Google and Microsoft connections are optional for CRM access and can be tested afterwards.
                 </p>
               </div>
             )}
@@ -472,15 +478,17 @@ export default function TeamAccessPage() {
                     <p className="font-sans text-sm font-semibold text-bone">{member.displayName || member.email || "Invited account"}</p>
                     <p className="mt-1 text-xs text-muted">{member.email || "Email pending"}</p>
                     <p className="mt-1 text-xs text-muted">
-                      {member.googleConnected
-                        ? `Google connected as ${member.googleEmail || member.email || "this account"}`
-                        : "Google not connected"}
+                      {member.mailboxConnected
+                        ? `${member.mailboxProvider === "microsoft" ? "Microsoft" : "Google"} connected as ${member.microsoftEmail || member.googleEmail || member.email || "this account"}`
+                        : "No email or calendar connected. Core CRM access still works"}
                     </p>
                     <p className="mt-1 text-xs text-muted">
                       Notetaker ready as {member.transcriberName}
                     </p>
                     <p className="mt-1 text-xs text-muted">
-                      Outreach sends as {member.outreachSenderName || member.displayName || "this user"} &lt;{member.outreachSenderEmail || member.googleEmail || "Google connection required"}&gt;
+                      {member.outreachSenderEmail
+                        ? <>Outreach sends as {member.outreachSenderName || member.displayName || "this user"} &lt;{member.outreachSenderEmail}&gt;</>
+                        : "Outreach sending waits for Google or Microsoft"}
                     </p>
                     {member.activationIssues?.length && member.status !== "active" ? (
                       <p className="mt-2 text-xs text-amber">{member.activationIssues.join(". ")}</p>

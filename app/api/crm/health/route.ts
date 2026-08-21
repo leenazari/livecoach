@@ -16,6 +16,8 @@ import {
   googleGrantedScopes,
 } from "@/lib/google";
 import { gmailAccessDiagnostic } from "@/lib/gmail";
+import { connectedMailProvider } from "@/lib/mail";
+import { microsoftAccessStatus } from "@/lib/microsoft";
 import { getAppConfigValue } from "@/lib/app-config";
 
 export const runtime = "nodejs";
@@ -87,6 +89,51 @@ async function googleHealth() {
   }
 }
 
+async function connectedAccountHealth() {
+  const connection = await connectedMailProvider();
+  if (connection.provider === "google") {
+    const google = await googleHealth();
+    return {
+      ...google,
+      provider: "Google",
+      calendar: google.connected,
+    };
+  }
+  if (connection.provider === "microsoft") {
+    try {
+      const microsoft = await microsoftAccessStatus();
+      return {
+        connected: microsoft.status === "ok",
+        email: microsoft.email,
+        read: microsoft.mailRead,
+        send: microsoft.mailSend,
+        calendar: microsoft.calendar,
+        issue: microsoft.status,
+        provider: "Microsoft",
+      };
+    } catch {
+      return {
+        connected: false,
+        email: connection.email,
+        read: false,
+        send: false,
+        calendar: false,
+        issue: "microsoft_error",
+        provider: "Microsoft",
+      };
+    }
+  }
+  return {
+    connected: false,
+    email: null as string | null,
+    read: false,
+    send: false,
+    calendar: false,
+    issue: "disconnected",
+    provider: "Email",
+  };
+}
+
 // A model-free, read-only CRM sweep. Every database read is bounded and runs in
 // parallel. No transcript, email body, profile or research payload is loaded.
 export async function GET() {
@@ -107,7 +154,7 @@ export async function GET() {
       draftsRes,
       usageRes,
       precallEmailRes,
-      google,
+      mailbox,
     ] = await Promise.all([
       supabaseAdmin
         .from("companies")
@@ -158,7 +205,7 @@ export async function GET() {
         data,
         error: null,
       })),
-      googleHealth(),
+      connectedAccountHealth(),
     ]);
 
     for (const result of [
@@ -191,15 +238,15 @@ export async function GET() {
 
     checks.push({
       id: "calendar",
-      title: "Google Calendar",
-      status: google.connected ? "healthy" : "critical",
-      count: google.connected ? 0 : 1,
-      detail: google.connected
-        ? `Connected${google.email ? ` as ${google.email}` : ""}. Refreshing checks the next 30 days.`
+      title: "Calendar connection",
+      status: mailbox.connected && mailbox.calendar ? "healthy" : "critical",
+      count: mailbox.connected && mailbox.calendar ? 0 : 1,
+      detail: mailbox.connected && mailbox.calendar
+        ? `${mailbox.provider} connected${mailbox.email ? ` as ${mailbox.email}` : ""}. Refreshing checks the next 30 days.`
         : "Calendar is disconnected, so calls and cancellations cannot stay current.",
       why: "Upcoming calls, prep and booked demos all depend on this connection.",
       href: "/settings",
-      action: google.connected
+      action: mailbox.connected && mailbox.calendar
         ? {
             label: "Refresh calendar now",
             endpoint: "/api/crm/calendar-sync",
@@ -209,27 +256,27 @@ export async function GET() {
     });
 
     checks.push({
-      id: "gmail-read",
-      title: "Gmail context",
-      status: google.read ? "healthy" : "critical",
-      count: google.read ? 0 : 1,
-      detail: google.read
+      id: "mail-read",
+      title: "Email context",
+      status: mailbox.read ? "healthy" : "critical",
+      count: mailbox.read ? 0 : 1,
+      detail: mailbox.read
         ? "Read access is working, so recent email context can inform client intent."
-        : `Gmail read access is unavailable (${titleCase(google.issue)}).`,
+        : `${mailbox.provider} read access is unavailable (${titleCase(mailbox.issue)}).`,
       why: "Without read access, prep can miss the latest promises, objections and replies.",
       href: "/settings",
     });
 
     checks.push({
-      id: "gmail-send",
-      title: "Gmail sending",
-      status: google.send ? "healthy" : "attention",
-      count: google.send ? 0 : 1,
-      detail: google.send
+      id: "mail-send",
+      title: "Email sending",
+      status: mailbox.send ? "healthy" : "attention",
+      count: mailbox.send ? 0 : 1,
+      detail: mailbox.send
         ? "Send access is granted for approved outreach and daily brief emails."
-        : "Gmail send permission is missing or could not be confirmed.",
+        : `${mailbox.provider} send permission is missing or could not be confirmed.`,
       why: "Sending is separate from reading and is required for approved messages.",
-      href: google.send ? "/crm/outreach?tab=safety" : "/settings",
+      href: mailbox.send ? "/crm/outreach?tab=safety" : "/settings",
     });
 
     let precallReport: any = null;

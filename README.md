@@ -70,6 +70,18 @@ meter turns red if the pace crosses £3/hr. These are estimates from
 - **Deepgram**: console.deepgram.com → `DEEPGRAM_API_KEY`
 - *(Voyage is NOT needed for the POC — only if you re-enable vector search.)*
 
+### Optional Microsoft accounts
+
+Core CRM access uses the invitation login and does not require Google. To let a
+user connect Outlook or Hotmail for their own email and calendar, register a
+Microsoft Entra web application that accepts personal and organisational
+accounts. Add the production callback URL
+`https://livecoach-alpha.vercel.app/api/auth/microsoft/callback`, grant delegated
+`User.Read`, `Mail.Read`, `Mail.Send` and `Calendars.ReadWrite` permissions, then
+set `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` and
+`MICROSOFT_REDIRECT_URI` in Vercel. Each OAuth connection remains scoped to the
+exact LiveCoach user who connected it.
+
 ### 3. Push & deploy
 1. Push to GitHub, import into Vercel.
 2. Vercel → **Settings → Environment Variables** → add everything from

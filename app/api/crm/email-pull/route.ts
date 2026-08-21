@@ -12,9 +12,9 @@ import {
   emailFromHeader,
   freshMessageText,
   nameFromHeader,
-  gmailConnected,
-} from "@/lib/gmail";
-import { googleConnected } from "@/lib/google";
+  mailboxConnected,
+  connectedMailProvider,
+} from "@/lib/mail";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
 export const runtime = "nodejs";
@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 40;
 
 // PULL A CONTACT'S EMAIL AND BUILD A CLIENT FROM IT. Given a person (name or
-// email) or a company, this reads the recent Gmail thread with them, distils it
+// email) or a company, this reads the recent connected-mail thread with them, distils it
 // into a clean context note, and creates or updates the client + contact. This
 // is what gives the brain the power to "pull X's email and create the client",
 // and it is also what the sent-mail sweep uses to auto-create clients.
@@ -47,10 +47,10 @@ async function myAddresses(): Promise<Set<string>> {
   try {
     const identity = await resolveOutreachIdentity();
     set.add(identity.senderEmail);
-    set.add(identity.googleEmail);
+    set.add(identity.mailboxEmail);
   } catch {
     try {
-      const connection = await googleConnected();
+      const connection = await connectedMailProvider();
       if (connection.email) set.add(connection.email.toLowerCase());
     } catch {
       /* best-effort */
@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // For an existing client, load the rolling summary before touching Gmail.
+    // For an existing client, load the rolling summary before touching the mailbox.
     // The newest processed message id lets subsequent refreshes use only the
     // new message bodies instead of paying to resend the old conversation.
     const { data: cachedCompany } = companyId
@@ -134,12 +134,12 @@ export async function POST(req: NextRequest) {
 
     const msgs = await recentMessages(query, 25);
     if (!msgs.length) {
-      const connected = await gmailConnected();
+      const connected = await mailboxConnected();
       return NextResponse.json(
         {
           error: connected
-            ? "no emails found for that, or Gmail read is not granted yet. Re-connect Google in Settings so it can read mail."
-            : "Google is not connected. Connect it in Settings (with Gmail) first.",
+            ? "No matching emails were found, or the connected mailbox is not readable yet."
+            : "Email is not connected. Connect Google or Microsoft in Settings first.",
         },
         { status: connected ? 404 : 409 }
       );

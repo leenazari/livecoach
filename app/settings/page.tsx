@@ -78,6 +78,15 @@ export default function SettingsPage() {
     gmailIssue?: GmailIssue;
   } | null>(null);
   const [gcalNote, setGcalNote] = useState("");
+  const [microsoft, setMicrosoft] = useState<{
+    status: "ok" | "missing" | "disconnected";
+    email: string | null;
+    mailRead: boolean;
+    mailSend: boolean;
+    calendar: boolean;
+    configured: boolean;
+  } | null>(null);
+  const [microsoftNote, setMicrosoftNote] = useState("");
 
   useEffect(() => {
     crmFetch<{ knowledge: string; objectionStances?: string }>(
@@ -98,6 +107,16 @@ export default function SettingsPage() {
     )
       .then((d) => setGcal(d))
       .catch(() => {});
+    crmFetch<{
+      status: "ok" | "missing" | "disconnected";
+      email: string | null;
+      mailRead: boolean;
+      mailSend: boolean;
+      calendar: boolean;
+      configured: boolean;
+    }>("/api/auth/microsoft/status")
+      .then((d) => setMicrosoft(d))
+      .catch(() => {});
     if (typeof window !== "undefined") {
       const g = new URLSearchParams(window.location.search).get("google");
       if (g === "connected") setGcalNote("Google Calendar connected.");
@@ -109,6 +128,16 @@ export default function SettingsPage() {
         );
       else if (g === "identity_missing")
         setGcalNote("Google did not return an account identity. Try connecting again.");
+      const m = new URLSearchParams(window.location.search).get("microsoft");
+      if (m === "connected") setMicrosoftNote("Microsoft connected.");
+      else if (m === "denied") setMicrosoftNote("Microsoft connection cancelled.");
+      else if (m === "error") setMicrosoftNote("Microsoft could not be connected. Try again.");
+      else if (m === "account_in_use")
+        setMicrosoftNote(
+          "That Microsoft account is already connected to another LiveCoach user."
+        );
+      else if (m === "identity_missing")
+        setMicrosoftNote("Microsoft did not return an account identity.");
     }
   }, []);
 
@@ -307,6 +336,52 @@ export default function SettingsPage() {
           ) : (
             <span className="shrink-0 rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted">
               checking…
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div
+        className={`mb-5 rounded-xl border p-5 ${
+          microsoft === null
+            ? "border-edge bg-panel/40"
+            : microsoft.status === "ok"
+              ? "border-sky/45 bg-sky/[0.06]"
+              : "border-edge bg-panel/40"
+        }`}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${microsoft?.status === "ok" ? "text-sky" : "text-muted"}`}>
+              {microsoft === null ? "◷" : microsoft.status === "ok" ? "✓" : "○"} Microsoft connection
+            </p>
+            <p className="mt-1 text-sm leading-relaxed text-muted">
+              {microsoft === null
+                ? "Checking the live connection…"
+                : microsoft.status === "ok"
+                  ? `Connected${microsoft.email ? ` as ${microsoft.email}` : ""}. Outlook email and Microsoft Calendar belong only to this LiveCoach account.`
+                  : microsoft.configured
+                    ? "Optional. Connect Outlook, Hotmail or Microsoft 365 for this user's email and calendar."
+                    : "Microsoft support is installed but needs the Microsoft app credentials before accounts can connect."}
+            </p>
+            {microsoftNote ? (
+              <p className="mt-1 font-mono text-[0.58rem] text-sky">{microsoftNote}</p>
+            ) : null}
+          </div>
+          {microsoft?.status === "ok" ? (
+            <span className="shrink-0 rounded-full border border-sky/55 bg-sky/10 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sky">
+              ● Microsoft connected
+            </span>
+          ) : microsoft?.configured ? (
+            <a
+              href="/api/auth/microsoft/start"
+              className="shrink-0 rounded-full border border-sky/60 bg-sky/10 px-4 py-2 text-center font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/20"
+            >
+              connect microsoft
+            </a>
+          ) : (
+            <span className="shrink-0 rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted">
+              administrator setup needed
             </span>
           )}
         </div>

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { recentMessages, emailFromHeader } from "@/lib/gmail";
+import { recentMessages, emailFromHeader } from "@/lib/mail";
 import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 
 export const runtime = "nodejs";
@@ -49,7 +49,7 @@ async function run(req: Request) {
       return NextResponse.json({
         scanned: 0,
         created: 0,
-        note: "no sent mail found, or Gmail read not granted (reconnect Google)",
+        note: "no sent mail found, or the connected mailbox is not readable",
       });
     }
 

@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import { sendOutreachMail } from "@/lib/gmail";
+import { sendConnectedOutreachMail } from "@/lib/mail";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import {
   emailDomain,
@@ -209,7 +209,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     return { sent: false, deferred: true, scheduledAt: retryAt };
   }
 
-  const sent = await sendOutreachMail({
+  const sent = await sendConnectedOutreachMail({
     to: email,
     subject: message.subject,
     text: message.body_text,
@@ -237,7 +237,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         metadata: { error: sent.error },
       }),
     ]);
-    throw new Error(sent.error || "Gmail refused the send");
+    throw new Error(sent.error || "The connected mailbox refused the send");
   }
 
   const sentAt = new Date();

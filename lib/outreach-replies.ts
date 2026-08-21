@@ -1,4 +1,4 @@
-import { recentMessages, emailFromHeader } from "@/lib/gmail";
+import { recentMessages, emailFromHeader } from "@/lib/mail";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { supabaseAdmin } from "@/lib/supabase";

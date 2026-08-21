@@ -68,6 +68,10 @@ const senderProtectionMigration = readFileSync(
   path.join(root, "supabase/migrations/20260821170000_protect_outreach_sender_identity.sql"),
   "utf8"
 );
+const microsoftMigration = readFileSync(
+  path.join(root, "supabase/migrations/20260821204718_microsoft_connector_foundation.sql"),
+  "utf8"
+);
 const serviceScope = readFileSync(path.join(root, "lib/service-scope.ts"), "utf8");
 const outreachIdentity = readFileSync(path.join(root, "lib/outreach-identity.ts"), "utf8");
 const outreachSendQueue = readFileSync(path.join(root, "lib/outreach-send-queue.ts"), "utf8");
@@ -101,6 +105,8 @@ const middleware = readFileSync(path.join(root, "middleware.ts"), "utf8");
 const login = readFileSync(path.join(root, "app/login/page.tsx"), "utf8");
 const supabase = readFileSync(path.join(root, "lib/supabase.ts"), "utf8");
 const google = readFileSync(path.join(root, "lib/google.ts"), "utf8");
+const microsoft = readFileSync(path.join(root, "lib/microsoft.ts"), "utf8");
+const providerMail = readFileSync(path.join(root, "lib/mail.ts"), "utf8");
 const appConfig = readFileSync(path.join(root, "lib/app-config.ts"), "utf8");
 const workspace = readFileSync(path.join(root, "lib/workspace.ts"), "utf8");
 const contextRoute = readFileSync(
@@ -131,6 +137,14 @@ const joinTeam = readFileSync(
 );
 const googleCallback = readFileSync(
   path.join(root, "app/api/auth/google/callback/route.ts"),
+  "utf8"
+);
+const microsoftCallback = readFileSync(
+  path.join(root, "app/api/auth/microsoft/callback/route.ts"),
+  "utf8"
+);
+const calendarSync = readFileSync(
+  path.join(root, "app/api/crm/calendar-sync/route.ts"),
   "utf8"
 );
 const bulkOutreachAssignment = readFileSync(
@@ -231,6 +245,7 @@ assert.doesNotMatch(
 assert.match(middleware, /from\("workspace_members"\)/);
 assert.match(middleware, /workspace access required/);
 assert.match(middleware, /path\.startsWith\("\/api\/auth\/google"\)/);
+assert.match(middleware, /path\.startsWith\("\/api\/auth\/microsoft"\)/);
 assert.match(middleware, /path\.startsWith\("\/api\/interview"\)/);
 assert.match(middleware, /LIVECOACH_ACCESS_TOKEN_HEADER/);
 assert.match(middleware, /Cache-Control.*private, no-store/s);
@@ -253,6 +268,15 @@ assert.match(google, /\.eq\("owner_id", exactOwner\)/);
 assert.match(google, /A Google connector owner must be selected/);
 assert.doesNotMatch(google, /\.eq\("id", "main"\)/);
 assert.doesNotMatch(workspace, /\.eq\("id", "main"\)/);
+assert.match(microsoftMigration, /create table if not exists public\.microsoft_oauth/);
+assert.match(microsoftMigration, /alter table public\.microsoft_oauth enable row level security/);
+assert.match(microsoftMigration, /revoke all on public\.microsoft_oauth from public, anon, authenticated/);
+assert.match(microsoftMigration, /microsoft_oauth_owner_uidx/);
+assert.match(microsoft, /Cross-account Microsoft access is not permitted/);
+assert.match(microsoft, /A Microsoft connector owner must be selected/);
+assert.match(microsoft, /freshReplyOnly\(raw, max\)/);
+assert.match(providerMail, /sendGmailOutreach\(opts\)/);
+assert.match(providerMail, /Microsoft outreach must use the connected mailbox address/);
 
 assert.match(appConfig, /TEAM_CONFIG_KEYS\.has\(input\.key\)/);
 assert.match(appConfig, /requestScope\.role !== "owner"/);
@@ -356,18 +380,32 @@ assert.match(teamRoute, /workspace_member_privacy_test_confirmed/);
 assert.match(teamRoute, /assignedProspects/);
 assert.match(teamRoute, /sentMessages/);
 assert.match(teamRoute, /transcribedCalls/);
-assert.match(teamRoute, /A privacy test requires a genuinely separate Google Workspace user/);
+assert.match(teamRoute, /A privacy test requires a genuinely separate email address/);
 assert.match(teamRoute, /This Google account is already connected to another workspace member/);
+assert.match(teamRoute, /This Microsoft account is already connected to another workspace member/);
+assert.match(teamRoute, /CRM access is provider-neutral/);
+assert.doesNotMatch(
+  teamRoute,
+  /This person must connect their own Google account before activation/
+);
 assert.match(teamPage, /Salesperson setup checklist/);
 assert.match(teamPage, /I tested isolation and confirm/);
-assert.match(teamPage, /Ready for live work/);
-assert.match(teamPage, /sales-test@interviewa\.com/);
+assert.match(teamPage, /Ready for live outreach/);
+assert.match(teamPage, /salesperson@company\.com/);
 assert.match(teamPage, /ownerIdentityConflict/);
 assert.match(googleCallback, /scope\?\.role !== "owner" && !email/);
 assert.match(googleCallback, /account_in_use/);
 assert.match(googleCallback, /workspace_members/);
 assert.match(googleCallback, /google_oauth/);
+assert.match(microsoftCallback, /microsoft_oauth/);
+assert.match(microsoftCallback, /account_in_use/);
+assert.match(microsoftCallback, /saveMicrosoftConnection/);
 assert.match(joinTeam, /Google account already belongs to another LiveCoach user/);
+assert.match(joinTeam, /Connect Microsoft/);
+assert.match(joinTeam, /Email and calendar are optional/);
+assert.match(calendarSync, /listConnectedCalendarSnapshot/);
+assert.match(calendarSync, /source === "microsoft" \? `microsoft:\$\{ev\.id\}`/);
+assert.match(calendarSync, /connectedOnly: true/);
 assert.match(joinTeam, /Lee presses Activate/i);
 assert.match(assignmentMigration, /assigned_to_user_id/);
 assert.match(assignmentMigration, /sender_user_id/);

@@ -67,6 +67,7 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/api/crm") ||
     path === "/api/candidate/respond" ||
     path.startsWith("/api/auth/google") ||
+    path.startsWith("/api/auth/microsoft") ||
     path === "/api/auth/team/status" ||
     path.startsWith("/api/meet") ||
     path.startsWith("/api/knowledge") ||
@@ -75,7 +76,9 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/api/interview");
   const isPreMembershipApi = path === "/api/auth/team/accept";
   const isOnboardingApi =
-    path === "/api/auth/team/status" || path.startsWith("/api/auth/google");
+    path === "/api/auth/team/status" ||
+    path.startsWith("/api/auth/google") ||
+    path.startsWith("/api/auth/microsoft");
   // Vercel cron and authenticated server-to-server follow-ups use CRON_SECRET.
   const cronSecret = process.env.CRON_SECRET || "";
   const serviceAuthorized =

@@ -7,6 +7,7 @@ import {
   googleGrantedScopes,
 } from "@/lib/google";
 import { gmailAccessStatus } from "@/lib/gmail";
+import { microsoftAccessStatus } from "@/lib/microsoft";
 import { londonDate, OUTREACH_DAILY_HARD_LIMIT } from "@/lib/outreach";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
@@ -26,9 +27,10 @@ export async function GET() {
   try {
     const sender = await resolveOutreachIdentity();
     const today = londonDate();
-    const [google, campaignResult, eligibleResult, queuedResult, sentAliasResult] =
+    const [google, microsoft, campaignResult, eligibleResult, queuedResult, sentAliasResult] =
       await Promise.all([
         googleConnected(),
+        microsoftAccessStatus(),
         supabaseAdmin
           .from("outreach_campaigns")
           .select("*")
@@ -53,11 +55,15 @@ export async function GET() {
           .eq("from_email", sender.senderEmail),
       ]);
 
-    const [scopes, gmailApi] = google.connected
+    const [scopes, gmailApi] = sender.provider === "google" && google.connected
       ? await Promise.all([googleGrantedScopes(), gmailAccessStatus()])
       : [new Set<string>(), "disconnected" as const];
-    const readAccess = scopes.has(GMAIL_READ_SCOPE) || gmailApi === "ok";
-    const sendScope = scopes.has(GMAIL_SEND_SCOPE);
+    const readAccess = sender.provider === "google"
+      ? scopes.has(GMAIL_READ_SCOPE) || gmailApi === "ok"
+      : microsoft.status === "ok" && microsoft.mailRead;
+    const sendAccess = sender.provider === "google"
+      ? scopes.has(GMAIL_SEND_SCOPE)
+      : microsoft.status === "ok" && microsoft.mailSend;
     const databaseError =
       campaignResult.error ||
       eligibleResult.error ||
@@ -80,38 +86,55 @@ export async function GET() {
     const eligible = eligibleResult.count || 0;
     const queued = queuedResult.count || 0;
     const aliasPreviouslyVerified = (sentAliasResult.count || 0) > 0;
+    const providerName = sender.provider === "google" ? "Google" : "Microsoft";
+    const senderVerified = sender.provider === "google"
+      ? sendAccess || aliasPreviouslyVerified
+      : sendAccess && sender.senderEmail === sender.mailboxEmail;
 
     const checks: ReadinessCheck[] = [
       {
-        id: "google",
-        label: "Google account",
-        status: google.connected ? "pass" : "fail",
-        detail: google.connected
-          ? `${google.email || "Google"} is connected.`
-          : "Connect Google before outreach can monitor replies or send approved mail.",
+        id: "mailbox",
+        label: "Email and calendar account",
+        status: sender.provider === "google"
+          ? google.connected ? "pass" : "fail"
+          : microsoft.status === "ok" ? "pass" : "fail",
+        detail:
+          sender.provider === "google" && google.connected
+            ? `${google.email || "Google"} is connected through Google.`
+            : sender.provider === "microsoft" && microsoft.status === "ok"
+              ? `${microsoft.email || sender.mailboxEmail} is connected through Microsoft.`
+              : `Reconnect ${providerName} before outreach can monitor replies or send approved mail.`,
         href: "/settings",
-        action: google.connected ? undefined : "Connect Google",
+        action:
+          (sender.provider === "google" && google.connected) ||
+          (sender.provider === "microsoft" && microsoft.status === "ok")
+            ? undefined
+            : `Reconnect ${providerName}`,
       },
       {
-        id: "gmail",
-        label: "Gmail permissions",
-        status: !readAccess ? "fail" : sendScope || aliasPreviouslyVerified ? "pass" : "warn",
+        id: "mail-permissions",
+        label: `${providerName} permissions`,
+        status: !readAccess ? "fail" : senderVerified ? "pass" : "warn",
         detail:
-          readAccess && (sendScope || aliasPreviouslyVerified)
+          readAccess && senderVerified
             ? "Reading replies and sending approved messages are permitted."
             : readAccess
-              ? "Gmail reading works. Sending will be verified safely on the first approved email."
-              : "Google has not made Gmail reading available to LiveCoach. Reply monitoring stays paused; reconnecting again is not required.",
+              ? `${providerName} reading works. Sending will be verified safely on the first approved email.`
+              : `${providerName} has not made mail reading available to LiveCoach. Reply monitoring stays paused.`,
         href: "/settings",
         action: undefined,
       },
       {
         id: "sender",
         label: "Interviewa sender",
-        status: aliasPreviouslyVerified ? "pass" : "warn",
+        status: senderVerified ? "pass" : "warn",
         detail: aliasPreviouslyVerified
           ? `${sender.senderEmail} has already sent successfully.`
-          : `${sender.senderEmail} is locked in. Gmail will verify the address on the first approved send.`,
+          : senderVerified
+            ? `${sender.senderEmail} is authorised for approved sends.`
+          : sender.provider === "google"
+            ? `${sender.senderEmail} is locked in. Gmail will verify the address on the first approved send.`
+            : `Microsoft outreach currently sends only from ${sender.mailboxEmail}.`,
       },
       {
         id: "campaign",

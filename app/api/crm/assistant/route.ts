@@ -824,9 +824,9 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
     }
 
     if (it.type === "pull_emails") {
-      // Pull the recent Gmail thread with a person and build / refresh their
+      // Pull the recent email thread with a person and build / refresh their
       // client from it. The client fires this endpoint on confirm; the route
-      // reads Gmail server-side and creates or updates the company + contact.
+      // reads the connected mailbox server-side and creates or updates the company + contact.
       const person = (
         typeof it.person === "string"
           ? it.person
@@ -1259,14 +1259,14 @@ For update_campaign you may also include "voice":{"tone":"...","style":"...","ru
 
 CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Exact outreach drafts and external sends stay in the dedicated Outreach approval flow.
 
-BATCH APPROVAL: when the user asks for several safe internal changes, emit them together. The interface shows every exact change and offers one approval for the safe subset. Destructive changes, Gmail pulls and any future external send stay separately confirmed.
+BATCH APPROVAL: when the user asks for several safe internal changes, emit them together. The interface shows every exact change and offers one approval for the safe subset. Destructive changes, mailbox pulls and any future external send stay separately confirmed.
 NO SILENT FAILURES: if a requested edit cannot be matched or completed, the action panel will mark it Not completed. Never imply that an edit happened merely because you described it in prose.
 When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too. If you are not sure which call, client, draft or to-do the user means, ask them to clarify in your prose reply rather than guessing (the system will also offer a pick-list if more than one record matches the name).
 Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done.
 
 NEW PEOPLE: when the user introduces or talks about a person or company who is a contact, prospect, partner or lead and is NOT already in the context, proactively OFFER to create their profile with create_client, capturing what you know in the brief, so future calls and notes track against them. Suggest it early rather than waiting to be asked twice.
 
-PULL EMAILS: you CAN read the user's Gmail thread with a person (through the connected Google account) and build their client from it. When the user asks you to pull, fetch, check or look at someone's email, or to add a client from an email thread, emit a "pull_emails" action with their name (and their email if it is in the context or the message). This reads the recent thread with them, distils it into their client context, and creates or refreshes their profile and contact, ready for prep. Do not say you cannot access email. If Google is not connected or Gmail was not granted, the action will report that back and the user can connect it in Settings. When the user mentions emailing someone new from a company address, offer to pull the thread and set them up.
+PULL EMAILS: you CAN read the user's email thread with a person through their own connected Google or Microsoft account and build their client from it. When the user asks you to pull, fetch, check or look at someone's email, or to add a client from an email thread, emit a "pull_emails" action with their name and their email if it is in the context or the message. This reads the recent thread with them, distils it into their client context, and creates or refreshes their profile and contact, ready for prep. Do not say you cannot access email. If no mailbox is connected or email reading was not granted, the action will report that back and the user can connect their own account in Settings. When the user mentions emailing someone new from a company address, offer to pull the thread and set them up.
 
 FIX WRONG RECORDS: when the user corrects a fact about a client (for example the records say someone was ill and they tell you it was actually a colleague, or a name, role, date, stage or detail is wrong), do NOT just acknowledge it in prose and move on. The records do not update themselves from chat. Emit a "correct" action naming the client and the corrected fact, so the stored "what we know", playbook, to-dos and call summary all get fixed. Acknowledge briefly in one line AND emit the action.
 
