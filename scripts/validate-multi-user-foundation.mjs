@@ -53,6 +53,13 @@ const signalScopeMigration = readFileSync(
   ),
   "utf8"
 );
+const onboardingMigration = readFileSync(
+  path.join(
+    root,
+    "supabase/migrations/20260821142000_team_member_onboarding.sql"
+  ),
+  "utf8"
+);
 const opportunitySignals = readFileSync(
   path.join(root, "lib/opportunity-signals.ts"),
   "utf8"
@@ -81,6 +88,19 @@ const documentDownload = readFileSync(
   "utf8"
 );
 const storageScope = readFileSync(path.join(root, "lib/storage-scope.ts"), "utf8");
+const requestScope = readFileSync(path.join(root, "lib/request-scope.ts"), "utf8");
+const teamRoute = readFileSync(
+  path.join(root, "app/api/crm/team/route.ts"),
+  "utf8"
+);
+const invitationAcceptance = readFileSync(
+  path.join(root, "app/api/auth/team/accept/route.ts"),
+  "utf8"
+);
+const joinTeam = readFileSync(
+  path.join(root, "app/join-team/page.tsx"),
+  "utf8"
+);
 
 const currentTables = [
   "ai_cache",
@@ -174,6 +194,11 @@ assert.match(middleware, /path\.startsWith\("\/api\/auth\/google"\)/);
 assert.match(middleware, /path\.startsWith\("\/api\/interview"\)/);
 assert.match(middleware, /LIVECOACH_ACCESS_TOKEN_HEADER/);
 assert.match(middleware, /Cache-Control.*private, no-store/s);
+assert.match(middleware, /membership\.status === "onboarding" && isOnboardingApi/);
+assert.match(middleware, /isPreMembershipApi/);
+assert.match(middleware, /LIVECOACH_WORKSPACE_STATUS_HEADER/);
+assert.match(requestScope, /requireWorkspaceOwner/);
+assert.match(requestScope, /getVerifiedUser/);
 
 assert.match(supabase, /Authorization: `Bearer \$\{scope\.accessToken\}`/);
 assert.match(supabase, /isVerifiedServiceRequest\(\)/);
@@ -267,6 +292,26 @@ assert.match(opportunitySignals, /\.eq\("workspace_id", claimed\.workspace_id\)/
 assert.match(companyRoute, /name, visibility: "private"/);
 assert.match(contactRoute, /let visibility: "private" \| "team" = "private"/);
 assert.match(outreachCrm, /visibility: "team"/);
+
+assert.match(onboardingMigration, /status in \('active', 'onboarding', 'suspended', 'removed'\)/);
+assert.match(onboardingMigration, /accept_livecoach_invitation/);
+assert.match(onboardingMigration, /invitation belongs to a different email address/);
+assert.match(onboardingMigration, /status = 'accepted'/);
+assert.match(onboardingMigration, /'onboarding'/);
+assert.match(
+  onboardingMigration,
+  /revoke all on function public\.accept_livecoach_invitation[\s\S]*?authenticated/
+);
+assert.match(teamRoute, /requireWorkspaceOwner\(\)/);
+assert.match(teamRoute, /randomBytes\(32\)/);
+assert.match(teamRoute, /createHash\("sha256"\)/);
+assert.match(teamRoute, /generateLink/);
+assert.match(teamRoute, /ready: false/);
+assert.match(invitationAcceptance, /getVerifiedUser\(\)/);
+assert.match(invitationAcceptance, /accept_livecoach_invitation/);
+assert.match(joinTeam, /at least 12 characters/i);
+assert.match(joinTeam, /Connect Google/);
+assert.match(joinTeam, /CRM access stays locked/i);
 
 assert.doesNotMatch(login, /auth\.signUp/);
 assert.doesNotMatch(login, /Create account/);

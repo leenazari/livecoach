@@ -7,6 +7,7 @@ import {
   LIVECOACH_USER_ID_HEADER,
   LIVECOACH_WORKSPACE_ID_HEADER,
   LIVECOACH_WORKSPACE_ROLE_HEADER,
+  LIVECOACH_WORKSPACE_STATUS_HEADER,
 } from "@/lib/internal-auth-headers";
 
 type PendingCookie = {
@@ -66,11 +67,15 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/api/crm") ||
     path === "/api/candidate/respond" ||
     path.startsWith("/api/auth/google") ||
+    path === "/api/auth/team/status" ||
     path.startsWith("/api/meet") ||
     path.startsWith("/api/knowledge") ||
     path === "/api/feedback" ||
     path === "/api/tts" ||
     path.startsWith("/api/interview");
+  const isPreMembershipApi = path === "/api/auth/team/accept";
+  const isOnboardingApi =
+    path === "/api/auth/team/status" || path.startsWith("/api/auth/google");
   // Vercel cron and authenticated server-to-server follow-ups use CRON_SECRET.
   const cronSecret = process.env.CRON_SECRET || "";
   const serviceAuthorized =
@@ -81,7 +86,7 @@ export async function middleware(request: NextRequest) {
     forwardedHeaders.set(LIVECOACH_SERVICE_REQUEST_HEADER, "cron");
   }
 
-  if (!user && !serviceAuthorized && isPrivateApi) {
+  if (!user && !serviceAuthorized && (isPrivateApi || isPreMembershipApi)) {
     return finish(
       NextResponse.json(
         { error: "authentication required" },
@@ -106,12 +111,31 @@ export async function middleware(request: NextRequest) {
   // Authentication alone is not authorization. Every private page and API
   // requires an active workspace membership.
   const requiresWorkspaceMembership = isPrivatePage || isPrivateApi;
+
+  // The invitation acceptance endpoint needs a verified Supabase user before
+  // that user has a workspace membership. Forward only the verified user and
+  // access token. The endpoint still validates the one-time invitation token.
+  if (user && !serviceAuthorized && isPreMembershipApi) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      return finish(
+        NextResponse.json(
+          { error: "authenticated session is required" },
+          { status: 401, headers: { "Cache-Control": "private, no-store" } }
+        )
+      );
+    }
+    forwardedHeaders.set(LIVECOACH_ACCESS_TOKEN_HEADER, session.access_token);
+    forwardedHeaders.set(LIVECOACH_USER_ID_HEADER, user.id);
+  }
+
   if (user && !serviceAuthorized && requiresWorkspaceMembership) {
     const { data: membership, error: membershipError } = await supabase
       .from("workspace_members")
-      .select("workspace_id, role")
+      .select("workspace_id, role, status")
       .eq("user_id", user.id)
-      .eq("status", "active")
       .limit(1)
       .maybeSingle();
 
@@ -131,6 +155,25 @@ export async function middleware(request: NextRequest) {
       const url = request.nextUrl.clone();
       url.pathname = "/login";
       url.searchParams.set("access", "denied");
+      const denied = NextResponse.redirect(url);
+      denied.headers.set("Cache-Control", "private, no-store");
+      return finish(denied);
+    }
+
+    if (membership.status !== "active" && !(
+      membership.status === "onboarding" && isOnboardingApi
+    )) {
+      if (isPrivateApi) {
+        return finish(
+          NextResponse.json(
+            { error: "workspace access is not active" },
+            { status: 403, headers: { "Cache-Control": "private, no-store" } }
+          )
+        );
+      }
+      const url = request.nextUrl.clone();
+      url.pathname = membership.status === "onboarding" ? "/join-team" : "/login";
+      url.searchParams.set("access", membership.status);
       const denied = NextResponse.redirect(url);
       denied.headers.set("Cache-Control", "private, no-store");
       return finish(denied);
@@ -168,6 +211,10 @@ export async function middleware(request: NextRequest) {
       membership.workspace_id
     );
     forwardedHeaders.set(LIVECOACH_WORKSPACE_ROLE_HEADER, membership.role);
+    forwardedHeaders.set(
+      LIVECOACH_WORKSPACE_STATUS_HEADER,
+      membership.status
+    );
   }
 
   const response = NextResponse.next({

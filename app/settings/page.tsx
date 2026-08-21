@@ -220,12 +220,20 @@ export default function SettingsPage() {
             / settings
           </span>
         </h1>
-        <Link
-          href="/crm"
-          className="rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
-        >
-          ◂ dashboard
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/settings/team"
+            className="rounded-full border border-amber/45 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/10"
+          >
+            Team access
+          </Link>
+          <Link
+            href="/crm"
+            className="rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+          >
+            ◂ dashboard
+          </Link>
+        </div>
       </header>
 
       <div
