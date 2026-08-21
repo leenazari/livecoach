@@ -107,6 +107,7 @@ const supabase = readFileSync(path.join(root, "lib/supabase.ts"), "utf8");
 const google = readFileSync(path.join(root, "lib/google.ts"), "utf8");
 const microsoft = readFileSync(path.join(root, "lib/microsoft.ts"), "utf8");
 const providerMail = readFileSync(path.join(root, "lib/mail.ts"), "utf8");
+const publicAppUrl = readFileSync(path.join(root, "lib/public-app-url.ts"), "utf8");
 const appConfig = readFileSync(path.join(root, "lib/app-config.ts"), "utf8");
 const workspace = readFileSync(path.join(root, "lib/workspace.ts"), "utf8");
 const contextRoute = readFileSync(
@@ -384,6 +385,10 @@ assert.match(teamRoute, /A privacy test requires a genuinely separate email addr
 assert.match(teamRoute, /This Google account is already connected to another workspace member/);
 assert.match(teamRoute, /This Microsoft account is already connected to another workspace member/);
 assert.match(teamRoute, /CRM access is provider-neutral/);
+assert.match(teamRoute, /publicAppOrigin\(req\.nextUrl\.origin\)/);
+assert.match(teamRoute, /workspace_invitation_replaced/);
+assert.match(publicAppUrl, /stale local development value/i);
+assert.match(publicAppUrl, /VERCEL_PROJECT_PRODUCTION_URL/);
 assert.doesNotMatch(
   teamRoute,
   /This person must connect their own Google account before activation/
@@ -393,6 +398,7 @@ assert.match(teamPage, /I tested isolation and confirm/);
 assert.match(teamPage, /Ready for live outreach/);
 assert.match(teamPage, /salesperson@company\.com/);
 assert.match(teamPage, /ownerIdentityConflict/);
+assert.match(teamPage, />Resend<\/button>/);
 assert.match(googleCallback, /scope\?\.role !== "owner" && !email/);
 assert.match(googleCallback, /account_in_use/);
 assert.match(googleCallback, /workspace_members/);
