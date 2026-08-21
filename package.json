@@ -11,6 +11,7 @@
     "lint": "next lint",
     "validate:outreach-eligibility": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-crm-eligibility.mjs",
     "validate:outreach-team-safety": "node scripts/validate-team-outreach-safety.mjs",
+    "validate:team-client-sharing": "node scripts/validate-team-client-sharing.mjs",
     "validate:multi-user": "node scripts/validate-multi-user-foundation.mjs",
     "validate:public-url": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-public-app-url.mjs",
     "validate:team-invite": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-team-invitation-link.mjs",

@@ -13,6 +13,8 @@ import {
 } from "@/lib/commercial-memory";
 import { POST as approveActivity } from "@/app/api/crm/companies/[id]/activity/approve/route";
 import { enqueueOpportunitySignal } from "@/lib/opportunity-signals";
+import { requireRequestScope } from "@/lib/request-scope";
+import { loadSafeSharedCompany } from "@/lib/team-client-sharing";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -47,6 +49,7 @@ export async function POST(
 ) {
   let savedItem: any = null;
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
     const autoApply = body.autoApply === true;
     const channel: ActivityChannel = CHANNELS.has(body.channel)
@@ -60,11 +63,30 @@ export async function POST(
 
     const { data: company, error: companyError } = await supabaseAdmin
       .from("companies")
-      .select("id, name, profile, commercial_memory")
+      .select("id, name, profile, commercial_memory, owner_id")
       .eq("id", params.id)
       .maybeSingle();
     if (companyError) throw companyError;
-    if (!company) {
+
+    // A deliberately shared sales record exposes only its fixed safe company
+    // projection. The salesperson may still log their own off-system update,
+    // but the route must never load or rewrite the original owner's private
+    // commercial memory in order to do so.
+    let sharedCompany: Awaited<ReturnType<typeof loadSafeSharedCompany>> = null;
+    if (!company || company.owner_id !== scope.userId) {
+      const { data: share, error: shareError } = await supabaseAdmin
+        .from("team_client_shares")
+        .select("id")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("company_id", params.id)
+        .eq("status", "active")
+        .maybeSingle();
+      if (shareError) throw shareError;
+      if (share) {
+        sharedCompany = await loadSafeSharedCompany(params.id, scope.workspaceId);
+      }
+    }
+    if ((!company || company.owner_id !== scope.userId) && !sharedCompany) {
       return NextResponse.json({ error: "client not found" }, { status: 404 });
     }
 
@@ -82,6 +104,18 @@ export async function POST(
       .single();
     if (itemError) throw itemError;
     savedItem = item;
+
+    if (sharedCompany) {
+      return NextResponse.json({
+        item,
+        intelligence: null,
+        warning:
+          "Your update is saved to your private Brain context. The original owner's private history was not opened or changed.",
+      });
+    }
+    if (!company || company.owner_id !== scope.userId) {
+      throw new Error("client ownership could not be verified");
+    }
 
     const memory =
       company.commercial_memory || (await getCommercialMemory(params.id));

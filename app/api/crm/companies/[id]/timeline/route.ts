@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +40,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = requireRequestScope();
     const now = Date.now();
     const [
       { data: company },
@@ -53,23 +55,27 @@ export async function GET(
       supabaseAdmin
         .from("companies")
         .select("notes, updated_at, email_context, email_context_updated_at")
+        .eq("owner_id", scope.userId)
         .eq("id", params.id)
         .maybeSingle(),
       supabaseAdmin
         .from("interview_summaries")
         .select("id, session_id, candidate, summary, created_at")
+        .eq("owner_id", scope.userId)
         .eq("company_id", params.id)
         .order("created_at", { ascending: false })
         .limit(100),
       supabaseAdmin
         .from("tasks")
         .select("id, text, kind, status, created_at, done_at, due_at, payload")
+        .eq("owner_id", scope.userId)
         .eq("company_id", params.id)
         .order("created_at", { ascending: false })
         .limit(150),
       supabaseAdmin
         .from("follow_ups")
         .select("id, draft_subject, status, created_at")
+        .eq("owner_id", scope.userId)
         .eq("company_id", params.id)
         .order("created_at", { ascending: false })
         .limit(50),
@@ -82,12 +88,14 @@ export async function GET(
       supabaseAdmin
         .from("client_context")
         .select("id, kind, title, url, content, created_at")
+        .eq("owner_id", scope.userId)
         .eq("company_id", params.id)
         .order("created_at", { ascending: false })
         .limit(80),
       supabaseAdmin
         .from("upcoming_calls")
         .select("id, title, scheduled_at, intent, prepped, completed_at")
+        .eq("owner_id", scope.userId)
         .eq("company_id", params.id)
         .is("completed_at", null)
         .gte("scheduled_at", new Date().toISOString())

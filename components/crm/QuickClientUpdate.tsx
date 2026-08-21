@@ -31,12 +31,14 @@ export default function QuickClientUpdate({
   onSaved,
   onApplied,
   initialIntelligence,
+  sharedSalesAccess = false,
 }: {
   companyId: string;
   companyName: string;
   onSaved: (item: QuickUpdateItem) => void;
   onApplied?: () => void | Promise<void>;
   initialIntelligence?: ActivityIntelligence | null;
+  sharedSalesAccess?: boolean;
 }) {
   const [type, setType] = useState<(typeof UPDATE_TYPES)[number]["key"]>("phone");
   const [note, setNote] = useState("");
@@ -186,7 +188,9 @@ export default function QuickClientUpdate({
             ＋ Log an update
           </p>
           <p className="mt-1 font-sans text-[0.74rem] text-bone/65">
-            Phone calls, texts and voice notes feed the timeline and Brain. One small Luna pass finds the commercial next move.
+            {sharedSalesAccess
+              ? "Phone calls, texts and voice notes feed your private timeline and Brain context. The original owner's private history stays closed."
+              : "Phone calls, texts and voice notes feed the timeline and Brain. One small Luna pass finds the commercial next move."}
           </p>
         </div>
         {notice ? (

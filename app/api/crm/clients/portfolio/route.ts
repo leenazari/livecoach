@@ -5,6 +5,8 @@ import {
   isNonCommercialRelationship,
 } from "@/lib/relationship-stages";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import { requireRequestScope } from "@/lib/request-scope";
+import { loadSafeSharedCompanies } from "@/lib/team-client-sharing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,24 +37,28 @@ const firstText = (value: unknown): string =>
 // fast, current and costs no AI tokens.
 export async function GET() {
   try {
+    const scope = requireRequestScope();
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
     const [
-      { data: companies, error: companiesError },
+      { data: ownedCompanies, error: companiesError },
       { data: contacts, error: contactsError },
       { data: opportunities, error: opportunitiesError },
       { data: tasks, error: tasksError },
       { data: calls, error: callsError },
       { data: upcoming, error: upcomingError },
+      { data: clientShares, error: clientSharesError },
     ] = await Promise.all([
       supabaseAdmin
         .from("companies")
         .select("id,name,domain,website,sector,stage,profile,attributes,commercial_memory,created_at,updated_at")
+        .eq("owner_id", scope.userId)
         .order("updated_at", { ascending: false })
         .limit(1000),
       supabaseAdmin
         .from("contacts")
         .select("id,company_id,name,role,email,attributes,created_at")
+        .eq("owner_id", scope.userId)
         .not("company_id", "is", null)
         .order("created_at", { ascending: true })
         .limit(3000),
@@ -66,6 +72,7 @@ export async function GET() {
       supabaseAdmin
         .from("tasks")
         .select("id,company_id,text,kind,due_at,created_at")
+        .eq("owner_id", scope.userId)
         .eq("status", "open")
         .not("company_id", "is", null)
         .order("due_at", { ascending: true, nullsFirst: false })
@@ -73,17 +80,24 @@ export async function GET() {
       supabaseAdmin
         .from("interview_summaries")
         .select("company_id,created_at")
+        .eq("owner_id", scope.userId)
         .not("company_id", "is", null)
         .order("created_at", { ascending: false })
         .limit(3000),
       supabaseAdmin
         .from("upcoming_calls")
         .select("company_id,title,scheduled_at")
+        .eq("owner_id", scope.userId)
         .not("company_id", "is", null)
         .is("completed_at", null)
         .gte("scheduled_at", nowIso)
         .order("scheduled_at", { ascending: true })
         .limit(1000),
+      supabaseAdmin
+        .from("team_client_shares")
+        .select("company_id,status")
+        .eq("status", "active")
+        .limit(1500),
     ]);
 
     const firstError = [
@@ -93,8 +107,18 @@ export async function GET() {
       tasksError,
       callsError,
       upcomingError,
+      clientSharesError,
     ].find(Boolean);
     if (firstError) throw firstError;
+
+    const sharedIds = (clientShares || []).map((share: any) => share.company_id);
+    const ownedIds = new Set((ownedCompanies || []).map((company: any) => company.id));
+    const safeSharedCompanies = await loadSafeSharedCompanies(
+      sharedIds.filter((id: string) => !ownedIds.has(id)),
+      scope.workspaceId
+    );
+    const companies = [...(ownedCompanies || []), ...safeSharedCompanies];
+    const activeShareIds = new Set(sharedIds);
 
     const contactsByCompany = new Map<string, any[]>();
     for (const contact of contacts || []) {
@@ -254,6 +278,8 @@ export async function GET() {
       return {
         id: company.id,
         name: company.name,
+        shared: activeShareIds.has(company.id),
+        accessMode: ownedIds.has(company.id) ? "owner" : "shared_sales",
         sector: company.sector || null,
         relationshipStage: company.stage || null,
         relationshipType,

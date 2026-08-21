@@ -55,11 +55,19 @@ type TimelineItem = {
   future?: boolean;
 };
 
+type ClientAccess = {
+  mode: "owner" | "shared_sales";
+  shared: boolean;
+  canManageSharing: boolean;
+  privateSourcesHidden: boolean;
+};
+
 export default function CompanyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
 
   const [company, setCompany] = useState<Company | null>(null);
+  const [access, setAccess] = useState<ClientAccess | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [workstreams, setWorkstreams] = useState<Workstream[]>([]);
@@ -123,6 +131,7 @@ export default function CompanyDetailPage() {
               departments: Department[];
               workstreams: Workstream[];
               workstreamContacts: WorkstreamContact[];
+              access: ClientAccess;
             }
           | { redirectTo: string }
         >(
@@ -149,8 +158,10 @@ export default function CompanyDetailPage() {
         departments,
         workstreams,
         workstreamContacts,
+        access,
       } = companyResponse;
       setCompany(company);
+      setAccess(access);
       setContacts(contacts);
       setDepartments(departments || []);
       setWorkstreams(workstreams || []);
@@ -528,15 +539,17 @@ export default function CompanyDetailPage() {
           >
             ✶ prep next call
           </Link>
-          <button
-            type="button"
-            onClick={synth}
-            disabled={synthing}
-            title="Build this client's summary, playbook, next steps and opportunities from everything we know (calls, notes, emails)"
-            className="min-h-10 flex-1 rounded-full border border-sky/60 bg-sky/15 px-3 py-2 font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40 sm:flex-none sm:px-4 sm:text-[0.62rem]"
-          >
-            {synthing ? "building…" : "↻ build from context"}
-          </button>
+          {access?.mode !== "shared_sales" ? (
+            <button
+              type="button"
+              onClick={synth}
+              disabled={synthing}
+              title="Build this client's summary, playbook, next steps and opportunities from everything we know (calls, notes, emails)"
+              className="min-h-10 flex-1 rounded-full border border-sky/60 bg-sky/15 px-3 py-2 font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40 sm:flex-none sm:px-4 sm:text-[0.62rem]"
+            >
+              {synthing ? "building…" : "↻ build from context"}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={save}
@@ -549,6 +562,15 @@ export default function CompanyDetailPage() {
       </header>
 
       {err && <p className="mb-3 font-mono text-[0.66rem] text-rust">{err}</p>}
+
+      {access?.mode === "shared_sales" ? (
+        <section className="mb-3 rounded-xl border border-sage/45 bg-sage/[0.07] p-4">
+          <p className="font-mono text-[0.58rem] uppercase tracking-wider text-sage">Shared sales record</p>
+          <p className="mt-1 text-sm leading-relaxed text-muted">
+            You can work with the client basics and team opportunity. The original owner's calls, transcripts, mailbox context, notes, documents and Brain memory are not available to this account.
+          </p>
+        </section>
+      ) : null}
 
       <section
         className={`mb-3 rounded-xl border p-4 ${
@@ -692,6 +714,7 @@ export default function CompanyDetailPage() {
           initialIntelligence={
             (company.profile as any)?.activity_intelligence?.latest || null
           }
+          sharedSalesAccess={access?.mode === "shared_sales"}
         />
       </div>
 
@@ -732,18 +755,22 @@ export default function CompanyDetailPage() {
         </section>
       ) : null}
 
-      <RelationshipStructure
-        companyId={id}
-        contacts={contacts}
-        departments={departments}
-        workstreams={workstreams}
-        links={workstreamContacts}
-        onContactSaved={updateContact}
-        onLinksSaved={setWorkstreamContacts}
-        onStructureSaved={load}
-      />
+      {access?.mode !== "shared_sales" ? (
+        <>
+          <RelationshipStructure
+            companyId={id}
+            contacts={contacts}
+            departments={departments}
+            workstreams={workstreams}
+            links={workstreamContacts}
+            onContactSaved={updateContact}
+            onLinksSaved={setWorkstreamContacts}
+            onStructureSaved={load}
+          />
 
-      <StakeholderMap contacts={contacts} onSaved={updateContact} />
+          <StakeholderMap contacts={contacts} onSaved={updateContact} />
+        </>
+      ) : null}
 
       {(() => {
         const raw = (company.profile as any)?.brief;
@@ -825,6 +852,10 @@ export default function CompanyDetailPage() {
             ["pipeline", "Pipeline"],
             ["details", "Details"],
           ] as const
+        ).filter(
+          ([key]) =>
+            access?.mode !== "shared_sales" ||
+            (key !== "calls" && key !== "notes")
         ).map(([k, label]) => (
           <button
             key={k}
@@ -1050,19 +1081,21 @@ export default function CompanyDetailPage() {
                   />
                 </label>
               </div>
-              <label className="block">
-                <span className={labelCls}>Notes</span>
-                <textarea
-                  value={core.notes}
-                  onChange={(e) => setCore({ ...core, notes: e.target.value })}
-                  rows={4}
-                  className={`${inputCls} resize-y`}
-                />
-              </label>
+              {access?.mode !== "shared_sales" ? (
+                <label className="block">
+                  <span className={labelCls}>Notes</span>
+                  <textarea
+                    value={core.notes}
+                    onChange={(e) => setCore({ ...core, notes: e.target.value })}
+                    rows={4}
+                    className={`${inputCls} resize-y`}
+                  />
+                </label>
+              ) : null}
             </div>
           </div>
 
-          <div className="rounded-xl border border-edge bg-panel/40 p-4">
+          {access?.mode !== "shared_sales" ? <div className="rounded-xl border border-edge bg-panel/40 p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
                 Custom fields
@@ -1089,12 +1122,16 @@ export default function CompanyDetailPage() {
                 ))}
               </div>
             )}
-          </div>
+          </div> : null}
         </section>
 
         {/* CONTACTS */}
         <section className="flex flex-col gap-4">
-          <div className="rounded-xl border border-edge bg-panel/40 p-4">
+          {access?.mode === "shared_sales" ? (
+            <div className="rounded-xl border border-sage/35 bg-sage/[0.05] p-4 text-sm leading-relaxed text-muted">
+              Private contacts and relationship threads are hidden. Use the assigned outreach prospect or add your own activity after you begin working this account.
+            </div>
+          ) : <div className="rounded-xl border border-edge bg-panel/40 p-4">
             <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
               Contacts{" "}
               <span className="text-muted">({contacts.length})</span>
@@ -1172,15 +1209,17 @@ export default function CompanyDetailPage() {
                 + add contact
               </button>
             </div>
-          </div>
+          </div>}
 
-          <button
-            type="button"
-            onClick={deleteCompany}
-            className="self-start rounded-full border border-rust/50 px-4 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-rust/80 transition hover:bg-rust/10 hover:text-rust"
-          >
-            delete company
-          </button>
+          {access?.mode !== "shared_sales" ? (
+            <button
+              type="button"
+              onClick={deleteCompany}
+              className="self-start rounded-full border border-rust/50 px-4 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-rust/80 transition hover:bg-rust/10 hover:text-rust"
+            >
+              delete company
+            </button>
+          ) : null}
         </section>
       </div>
       )}

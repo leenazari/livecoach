@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { requireRequestScope } from "@/lib/request-scope";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
+import { loadSafeSharedCompany } from "@/lib/team-client-sharing";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -30,12 +32,45 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const { data: company, error } = await supabaseAdmin
+    const scope = requireRequestScope();
+    const { data: privateCompany, error } = await supabaseAdmin
       .from("companies")
       .select("*")
       .eq("id", params.id)
       .maybeSingle();
     if (error) throw error;
+
+    // A historical team-visible company row must not bypass the newer safe
+    // projection. Full rows are available only to their privacy owner.
+    let company: any =
+      privateCompany?.owner_id === scope.userId ? privateCompany : null;
+    let sharedSalesAccess = false;
+    let activeShare: any = null;
+    if (!company) {
+      const { data: share, error: shareError } = await supabaseAdmin
+        .from("team_client_shares")
+        .select("id,company_id,status,shared_by_user_id,updated_at")
+        .eq("company_id", params.id)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (shareError) throw shareError;
+      if (share) {
+        activeShare = share;
+        company = await loadSafeSharedCompany(params.id, scope.workspaceId);
+        sharedSalesAccess = !!company;
+      }
+    } else {
+      const { data: share, error: shareError } = await supabaseAdmin
+        .from("team_client_shares")
+        .select("id,company_id,status,shared_by_user_id,updated_at")
+        .eq("company_id", params.id)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (shareError) throw shareError;
+      activeShare = share;
+    }
 
     // A safely merged client gets a permanent pointer to the surviving
     // record. Old bookmarks, timeline links and browser history continue to
@@ -63,7 +98,14 @@ export async function GET(
     }
 
     const [contactsResult, departmentsResult, workstreamsResult, linksResult] =
-      await Promise.all([
+      sharedSalesAccess
+        ? [
+            { data: [], error: null },
+            { data: [], error: null },
+            { data: [], error: null },
+            { data: [], error: null },
+          ]
+        : await Promise.all([
         supabaseAdmin
           .from("contacts")
           .select("*")
@@ -88,7 +130,7 @@ export async function GET(
             "workstream_id, contact_id, company_id, relationship_role, is_primary"
           )
           .eq("company_id", params.id),
-      ]);
+          ]);
     for (const result of [
       contactsResult,
       departmentsResult,
@@ -104,6 +146,15 @@ export async function GET(
       departments: departmentsResult.data || [],
       workstreams: workstreamsResult.data || [],
       workstreamContacts: linksResult.data || [],
+      access: {
+        mode: sharedSalesAccess ? "shared_sales" : "owner",
+        shared: !!activeShare,
+        canManageSharing:
+          !sharedSalesAccess &&
+          scope.role === "owner" &&
+          company.owner_id === scope.userId,
+        privateSourcesHidden: sharedSalesAccess,
+      },
     });
   } catch (err: any) {
     return NextResponse.json(
@@ -118,9 +169,38 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
+    const { data: current, error: currentError } = await supabaseAdmin
+      .from("companies")
+      .select("id,owner_id,workspace_id")
+      .eq("id", params.id)
+      .maybeSingle();
+    if (currentError) throw currentError;
+
+    let sharedSalesAccess = false;
+    if (!current || current.owner_id !== scope.userId) {
+      const { data: share, error: shareError } = await supabaseAdmin
+        .from("team_client_shares")
+        .select("id")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("company_id", params.id)
+        .eq("status", "active")
+        .maybeSingle();
+      if (shareError) throw shareError;
+      sharedSalesAccess = !!share;
+      if (!sharedSalesAccess) {
+        return NextResponse.json({ error: "company not found" }, { status: 404 });
+      }
+    }
+
     const patch: Record<string, any> = {};
     for (const f of PATCHABLE) {
+      if (
+        sharedSalesAccess &&
+        (f === "notes" || f === "email_context")
+      )
+        continue;
       if (typeof body[f] === "string") patch[f] = body[f].trim() || null;
     }
     if (typeof body.name === "string" && !body.name.trim()) {
@@ -129,7 +209,7 @@ export async function PATCH(
         { status: 400 }
       );
     }
-    if (body.attributes && typeof body.attributes === "object") {
+    if (!sharedSalesAccess && body.attributes && typeof body.attributes === "object") {
       patch.attributes = body.attributes;
     }
     // Stamp when the email context last changed, so the UI can show "updated X".
@@ -142,13 +222,46 @@ export async function PATCH(
       return NextResponse.json({ error: "nothing to update" }, { status: 400 });
     }
 
-    const { data, error } = await supabaseAdmin
-      .from("companies")
-      .update(patch)
-      .eq("id", params.id)
-      .select()
-      .single();
-    if (error) throw error;
+    let data: any;
+    if (sharedSalesAccess) {
+      const { data: updated, error: updateError } = await supabaseService
+        .from("companies")
+        .update(patch)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("id", params.id)
+        .select("id,name,domain,website,sector,stage,created_at,updated_at")
+        .single();
+      if (updateError) throw updateError;
+      data = {
+        ...updated,
+        profile: {},
+        attributes: {},
+        notes: null,
+        email_context: null,
+        commercial_memory: null,
+      };
+      const { error: auditError } = await supabaseService
+        .from("access_audit_events")
+        .insert({
+          workspace_id: scope.workspaceId,
+          actor_user_id: scope.userId,
+          source: "human",
+          action: "shared_client_core_updated",
+          target_table: "companies",
+          target_id: params.id,
+          metadata: { fields: Object.keys(patch) },
+        });
+      if (auditError) throw auditError;
+    } else {
+      const { data: updated, error: updateError } = await supabaseAdmin
+        .from("companies")
+        .update(patch)
+        .eq("id", params.id)
+        .select()
+        .single();
+      if (updateError) throw updateError;
+      data = updated;
+    }
     return NextResponse.json(
       { company: data },
       {
