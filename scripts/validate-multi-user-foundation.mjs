@@ -60,6 +60,13 @@ const onboardingMigration = readFileSync(
   ),
   "utf8"
 );
+const invitationConflictFixMigration = readFileSync(
+  path.join(
+    root,
+    "supabase/migrations/20260821214202_fix_team_invitation_workspace_id_ambiguity.sql"
+  ),
+  "utf8"
+);
 const assignmentMigration = readFileSync(
   path.join(root, "supabase/migrations/20260821160000_team_work_assignment.sql"),
   "utf8"
@@ -366,6 +373,14 @@ assert.match(onboardingMigration, /'onboarding'/);
 assert.match(
   onboardingMigration,
   /revoke all on function public\.accept_livecoach_invitation[\s\S]*?authenticated/
+);
+assert.match(
+  invitationConflictFixMigration,
+  /on conflict on constraint workspace_members_pkey do update/i
+);
+assert.doesNotMatch(
+  invitationConflictFixMigration,
+  /on conflict \(workspace_id, user_id\) do update/i
 );
 assert.match(teamRoute, /requireWorkspaceOwner\(\)/);
 assert.match(teamRoute, /randomBytes\(32\)/);
