@@ -18,6 +18,9 @@ const relationshipScope = read(
 const frozenDeliveryIdentity = read(
   "supabase/migrations/20260821224937_freeze_inflight_outreach_identity.sql"
 );
+const emailOnlyDedup = read(
+  "supabase/migrations/20260821225550_email_only_outreach_dedup.sql"
+);
 const helper = read("lib/outreach-team-safety.ts");
 const queue = read("app/api/crm/outreach/queue/route.ts");
 const dataRoute = read("app/api/crm/outreach/route.ts");
@@ -38,7 +41,7 @@ for (const column of [
   assert.match(migration, new RegExp(`\\b${column}\\b`));
 }
 
-for (const guard of [
+for (const originalGuard of [
   "outreach_one_active_campaign_per_contact",
   "outreach_one_company_per_queue_day",
   "outreach_one_approved_message_per_contact",
@@ -46,8 +49,10 @@ for (const guard of [
   "outreach_one_company_per_delivery_day",
   "outreach_one_sender_per_send_slot",
 ]) {
-  assert.match(migration, new RegExp(`create unique index if not exists ${guard}`));
-  assert.match(helper, new RegExp(guard));
+  assert.match(
+    migration,
+    new RegExp(`create unique index if not exists ${originalGuard}`)
+  );
 }
 
 assert.match(migration, /interval '30 days'/);
@@ -79,19 +84,33 @@ assert.doesNotMatch(
   /when tg_table_name = 'outreach_messages' then new\.sender_user_id/
 );
 
-assert.match(helper, /PERSONAL_EMAIL_DOMAINS/);
-assert.match(helper, /return `domain:\$\{emailDomain\}`/);
-assert.match(helper, /return email \? `contact:\$\{email\}`/);
 assert.match(helper, /OUTREACH_CROSS_CAMPAIGN_COOLDOWN_DAYS = 30/);
+assert.match(helper, /outreach_one_active_campaign_per_recipient_email/);
+assert.match(helper, /outreach_one_approved_message_per_recipient_email/);
+assert.doesNotMatch(helper, /outreach_one_company_per_(queue|delivery)_day/);
 
-assert.match(queue, /loadWorkspaceCompanyReservations\([\s\S]*\.eq\("workspace_id", workspaceId\)/);
+assert.match(emailOnlyDedup, /drop index if exists public\.outreach_one_company_per_queue_day/);
+assert.match(emailOnlyDedup, /drop index if exists public\.outreach_one_company_per_delivery_day/);
+assert.match(emailOnlyDedup, /create unique index outreach_one_active_campaign_per_recipient_email[\s\S]*workspace_id, recipient_email/);
+assert.match(emailOnlyDedup, /create unique index outreach_one_approved_message_per_recipient_email[\s\S]*workspace_id, recipient_email/);
+assert.match(emailOnlyDedup, /e\.recipient_email = new\.recipient_email/);
+assert.match(emailOnlyDedup, /interval '30 days'/);
+assert.doesNotMatch(
+  emailOnlyDedup,
+  /create unique index outreach_one_company_per_(queue|delivery)_day/
+);
+
 assert.match(queue, /isActiveOutreachEnrolmentStatus/);
 assert.match(queue, /isInsideCrossCampaignCooldown/);
 assert.match(queue, /\["owner", "manager"\]\.includes\(requestScope\.role\)/);
 assert.match(queue, /cooldownOverrideReason/);
 assert.match(queue, /Another teammate claimed this prospect first/);
-assert.match(queue, /companyReservations\.get\(companyKey\)/);
+assert.match(queue, /\.eq\("recipient_email", email\)/);
+assert.match(queue, /reservedEmailsForAnotherCampaign/);
+assert.match(queue, /chosenEmails\.has\(email\)/);
+assert.doesNotMatch(queue, /CompanyReservations|companyReservations|chosenCompanies/);
 assert.match(dataRoute, /activeCampaignIdsByProspect/);
+assert.match(dataRoute, /activeCampaignIdsByEmail/);
 
 assert.match(sendQueue, /isDeliveryDayConflict/);
 assert.match(sendQueue, /isSenderSlotConflict/);
@@ -99,7 +118,7 @@ assert.match(sendQueue, /claim_expires_at/);
 assert.match(sendQueue, /Recipient safety identity changed before send/);
 assert.match(sendQueue, /status: "sending"/);
 assert.match(sendQueue, /\.eq\("recipient_email", email\)/);
-assert.match(sendQueue, /\.eq\("company_key", companyKey\)/);
+assert.doesNotMatch(sendQueue, /\.eq\("company_key", companyKey\)/);
 assert.ok(
   sendQueue.indexOf('status: "sending"') <
     sendQueue.indexOf("sendConnectedOutreachMail({"),
@@ -108,8 +127,8 @@ assert.ok(
 assert.match(sendCron, /claim_expires_at\.is\.null/);
 assert.match(messageRoute, /\["sending", "sent"\]\.includes\(existing\.status\)/);
 
-assert.match(outreachPage, /One active campaign is allowed per person across the whole team/);
-assert.match(outreachPage, /Only one person per company can be queued or emailed on the same day across the whole team/);
+assert.match(outreachPage, /Exact email addresses are checked across the whole team/);
+assert.match(outreachPage, /Different people at the same company remain available for outreach/);
 assert.match(outreachPage, /Manager overrides require a saved reason/);
 assert.match(outreachPage, /Sending now/);
 

@@ -13,30 +13,11 @@ import { getRequestScope } from "@/lib/request-scope";
 import {
   isActiveOutreachEnrolmentStatus,
   isInsideCrossCampaignCooldown,
-  normalizeOutreachCompanySafetyKey,
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-async function loadWorkspaceCompanyReservations(
-  workspaceId: string,
-  today: string
-) {
-  const { data, error } = await supabaseAdmin
-    .from("outreach_enrolments")
-    .select("prospect_id,campaign_id,company_key,status")
-    .eq("workspace_id", workspaceId)
-    .eq("queued_for", today)
-    .neq("status", "suppressed");
-  if (error) throw error;
-  return new Map(
-    (data || [])
-      .filter((row: any) => row.company_key)
-      .map((row: any) => [String(row.company_key), row])
-  );
-}
 
 function safetyResponse(error: any) {
   const message = outreachSafetyError(error);
@@ -143,16 +124,17 @@ export async function POST(req: NextRequest) {
     if (!campaign) return NextResponse.json({ error: "Activate a campaign first" }, { status: 400 });
     const limit = Math.min(OUTREACH_DAILY_HARD_LIMIT, Math.max(1, Number(body.limit) || campaign.daily_limit || 20));
     const today = londonDate();
-    const [existing, companyReservations] = await Promise.all([
-      loadQueue(account.userId, account.workspaceId, campaign.id),
-      loadWorkspaceCompanyReservations(account.workspaceId, today),
-    ]);
+    const existing = await loadQueue(
+      account.userId,
+      account.workspaceId,
+      campaign.id
+    );
     let selection = { contactToday: 0, held: 0, skipped: 0 };
     let remaining = Math.max(0, limit - existing.length);
 
     // A deliberate choice from the Prospects tracker may be added directly,
     // but it still goes through the same campaign, suppression, CRM-stage,
-    // one-company-per-day and daily-limit protections as the ranked queue.
+    // exact-email and daily-limit protections as the ranked queue.
     const requestedProspectId = String(body.prospectId || "").trim();
     if (requestedProspectId) {
       if (!remaining)
@@ -182,9 +164,8 @@ export async function POST(req: NextRequest) {
         }
         prospect.assigned_to_user_id = account.userId;
       }
-      const email = String(prospect.email || "").toLowerCase();
-      const domain = String(prospect.company_domain || email.split("@").pop() || "").toLowerCase();
-      const companyKey = normalizeOutreachCompanySafetyKey(prospect);
+      const email = String(prospect.email || "").trim().toLowerCase();
+      const domain = String(prospect.company_domain || email.split("@").pop() || "").trim().toLowerCase();
       const blocked = new Set((suppressions || []).map((row: any) => String(row.target || "").toLowerCase()));
       if (["suppressed", "not_interested", "replied", "qualified"].includes(prospect.status))
         return NextResponse.json({ error: "This person is not eligible for prospect outreach" }, { status: 400 });
@@ -192,19 +173,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "This person or company is on the do-not-contact list" }, { status: 400 });
       if (prospectHasBlockedCrmRelationship(prospect, crmGuard))
         return NextResponse.json({ error: "This CRM relationship is engaged, dormant or not confirmed as a new lead" }, { status: 400 });
-      const companyReservation = companyKey
-        ? companyReservations.get(companyKey)
-        : null;
-      if (
-        companyReservation &&
-        companyReservation.prospect_id !== requestedProspectId
-      ) {
-        return NextResponse.json(
-          { error: "Another teammate already has someone from this company in the team queue today" },
-          { status: 409 }
-        );
-      }
-
       const { data: previous } = await supabaseAdmin
         .from("outreach_enrolments")
         .select("*")
@@ -215,14 +183,14 @@ export async function POST(req: NextRequest) {
         .from("outreach_enrolments")
         .select("id,campaign_id,status,last_sent_at")
         .eq("workspace_id", account.workspaceId)
-        .eq("prospect_id", requestedProspectId)
+        .eq("recipient_email", email)
         .neq("campaign_id", campaign.id);
       const activeOtherCampaign = (otherCampaigns || []).find((row: any) =>
         isActiveOutreachEnrolmentStatus(row.status)
       );
       if (activeOtherCampaign) {
         return NextResponse.json(
-          { error: "This person is already active in another campaign. Open their existing outreach history instead." },
+          { error: "This email address is already active in another campaign. Open its existing outreach history instead." },
           { status: 409 }
         );
       }
@@ -315,13 +283,6 @@ export async function POST(req: NextRequest) {
       ? await dueQuery.in("prospect_id", assignedProspectIds)
       : { data: [] as any[] };
     for (const row of due || []) {
-      const reserved = row.company_key
-        ? companyReservations.get(String(row.company_key))
-        : null;
-      if (reserved && reserved.prospect_id !== row.prospect_id) {
-        selection.held += 1;
-        continue;
-      }
       const { error } = await supabaseAdmin
         .from("outreach_enrolments")
         .update({ queued_for: today, status: "queued", updated_at: new Date().toISOString() })
@@ -333,29 +294,37 @@ export async function POST(req: NextRequest) {
         }
         throw error;
       }
-      if (row.company_key) companyReservations.set(String(row.company_key), row);
       remaining -= 1;
     }
 
     if (remaining > 0) {
       const [{ data: enrolments }, { data: suppressions }, { data: prospects }, { data: learnings }, crmGuard] = await Promise.all([
-        supabaseAdmin.from("outreach_enrolments").select("id,campaign_id,prospect_id,status,queued_for,last_sent_at,company_key").eq("workspace_id", account.workspaceId).limit(5000),
+        supabaseAdmin.from("outreach_enrolments").select("id,campaign_id,prospect_id,status,queued_for,last_sent_at,recipient_email").eq("workspace_id", account.workspaceId).limit(5000),
         supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", account.workspaceId),
         supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", account.workspaceId).eq("assigned_to_user_id", account.userId).in("status", ["imported", "queued"]).order("priority_score", { ascending: false }).limit(1000),
         supabaseAdmin.from("outreach_learnings").select("*").eq("workspace_id", account.workspaceId).eq("campaign_id", campaign.id).eq("status", "promoted").limit(100),
         outreachCrmGuard(),
       ]);
       const enrolmentByProspect = new Map<string, any>();
-      const reservedForAnotherCampaign = new Set<string>();
+      const reservedEmailsForAnotherCampaign = new Set<string>();
       for (const enrolment of enrolments || []) {
         if (enrolment.campaign_id === campaign.id) enrolmentByProspect.set(enrolment.prospect_id, enrolment);
         else if (
           isActiveOutreachEnrolmentStatus(enrolment.status) ||
           isInsideCrossCampaignCooldown(enrolment.last_sent_at)
-        ) reservedForAnotherCampaign.add(enrolment.prospect_id);
+        ) {
+          const reservedEmail = String(enrolment.recipient_email || "")
+            .trim()
+            .toLowerCase();
+          if (reservedEmail) reservedEmailsForAnotherCampaign.add(reservedEmail);
+        }
       }
       const blocked = new Set((suppressions || []).map((row: any) => String(row.target).toLowerCase()));
-      const chosenCompanies = new Set(companyReservations.keys());
+      const chosenEmails = new Set(
+        existing
+          .map((row: any) => String(row.recipient_email || "").trim().toLowerCase())
+          .filter(Boolean)
+      );
       const selected: any[] = [];
       let held = 0;
       let skipped = 0;
@@ -372,20 +341,19 @@ export async function POST(req: NextRequest) {
         String(a.prospect.company_name || "").localeCompare(String(b.prospect.company_name || ""))
       );
       for (const { prospect, recommendation } of ranked) {
-        const email = String(prospect.email || "").toLowerCase();
-        const domain = String(prospect.company_domain || "").toLowerCase();
-        const companyKey = normalizeOutreachCompanySafetyKey(prospect);
+        const email = String(prospect.email || "").trim().toLowerCase();
+        const domain = String(prospect.company_domain || "").trim().toLowerCase();
         const existingEnrolment = enrolmentByProspect.get(prospect.id);
         const canResume = existingEnrolment && ["paused", "queued"].includes(existingEnrolment.status) && !existingEnrolment.queued_for;
-        if (!email || reservedForAnotherCampaign.has(prospect.id) || (existingEnrolment && !canResume) || blocked.has(email) || blocked.has(domain) || prospectHasBlockedCrmRelationship(prospect, crmGuard)) continue;
+        if (!email || reservedEmailsForAnotherCampaign.has(email) || (existingEnrolment && !canResume) || blocked.has(email) || blocked.has(domain) || prospectHasBlockedCrmRelationship(prospect, crmGuard)) continue;
         if (recommendation.action !== "contact_today") {
           if (recommendation.action === "hold") held += 1;
           else skipped += 1;
           continue;
         }
-        if (selected.length >= remaining || (companyKey && chosenCompanies.has(companyKey))) continue;
+        if (selected.length >= remaining || chosenEmails.has(email)) continue;
         selected.push(prospect);
-        if (companyKey) chosenCompanies.add(companyKey);
+        chosenEmails.add(email);
       }
       let addedSelected = 0;
       for (const prospect of selected) {

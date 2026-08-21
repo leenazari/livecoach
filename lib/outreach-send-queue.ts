@@ -13,7 +13,6 @@ import {
 import {
   isDeliveryDayConflict,
   isSenderSlotConflict,
-  normalizeOutreachCompanySafetyKey,
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
 
@@ -233,11 +232,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
   const domain = String(
     prospect.company_domain || emailDomain(email)
   ).toLowerCase();
-  const companyKey = normalizeOutreachCompanySafetyKey(prospect);
-  if (
-    message.recipient_email !== email ||
-    message.company_key !== companyKey
-  ) {
+  if (message.recipient_email !== email) {
     await stopClaim("Recipient safety identity changed before send", "failed");
   }
   const { data: blocked } = await supabaseAdmin
@@ -306,15 +301,11 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     .eq("status", "approved")
     .eq("claim_expires_at", claimExpiresAt)
     .eq("recipient_email", email)
-    .eq("company_key", companyKey)
-    .select("id,recipient_email,company_key")
+    .select("id,recipient_email")
     .maybeSingle();
   if (sendingError) throw sendingError;
   if (!sending) return { sent: false, skipped: true };
-  if (
-    sending.recipient_email !== email ||
-    sending.company_key !== companyKey
-  ) {
+  if (sending.recipient_email !== email) {
     await stopClaim("Recipient safety identity changed before delivery", "failed");
   }
 
