@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 import { inferLink, loadAttendeeConfig } from "@/lib/attendees";
 import { getWorkstreamScope, resolveCallScope } from "@/lib/workstreams";
 
@@ -296,6 +297,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const profileId = await ensureWorkspaceProfileId();
     const body = await req.json().catch(() => ({}));
     const reason =
       body && typeof body.reason === "string" ? body.reason.trim() : "";
@@ -309,7 +311,7 @@ export async function POST(
       const { data: prof } = await supabaseAdmin
         .from("workspace_profile")
         .select("learned")
-        .eq("id", "main")
+        .eq("id", profileId)
         .maybeSingle();
       const prev =
         prof && typeof prof.learned === "string" ? prof.learned.trim() : "";
@@ -327,7 +329,7 @@ export async function POST(
       await supabaseAdmin
         .from("workspace_profile")
         .update({ learned: next })
-        .eq("id", "main");
+        .eq("id", profileId);
     } catch {
       /* noting the reason is best-effort */
     }

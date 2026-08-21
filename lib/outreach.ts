@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { getRequestScope, isVerifiedServiceRequest } from "@/lib/request-scope";
 
 export const OUTREACH_DAILY_HARD_LIMIT = 20;
 export const OUTREACH_TIME_ZONE = "Europe/London";
@@ -64,7 +65,14 @@ export function modelSources(message: any): { title: string; url: string }[] {
 }
 
 export async function activeClientDomains(): Promise<Set<string>> {
-  const { data } = await supabaseAdmin.from("companies").select("domain,website").limit(1000);
+  let query = supabaseAdmin.from("companies").select("domain,website");
+  // A shared outreach cron must never use a private account's client list as
+  // hidden scoring input. Interactive users still see their own private plus
+  // shared records through RLS.
+  if (!getRequestScope() && isVerifiedServiceRequest()) {
+    query = query.eq("visibility", "team");
+  }
+  const { data } = await query.limit(1000);
   const domains = new Set<string>();
   for (const company of data || []) {
     const raw = String(company.domain || company.website || "").trim();

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
+import { getAppConfigValue } from "@/lib/app-config";
 import { openai, OPENAI_MODEL_LIVE, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { londonDate, modelSources, modelText, parseObject } from "@/lib/outreach";
@@ -76,14 +78,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const startedAt = Date.now();
   console.log(JSON.stringify({ level: "info", msg: "outreach prepare started", route: "/api/crm/outreach/[id]/prepare", prospectId: params.id, requestId: req.headers.get("x-vercel-id") }));
   try {
+    const profileId = await ensureWorkspaceProfileId();
     const prospectId = params.id;
     const body = await req.json().catch(() => ({}));
     const [{ data: prospect }, { data: enrolments }, { data: brain }, { data: revenueConfig }, { data: offerConfig }] = await Promise.all([
       supabaseAdmin.from("outreach_prospects").select("*").eq("id", prospectId).single(),
       supabaseAdmin.from("outreach_enrolments").select("*").eq("prospect_id", prospectId).eq("queued_for", londonDate()).in("status", ["queued", "researched", "drafted"]).limit(1),
-      supabaseAdmin.from("workspace_profile").select("knowledge,learned").eq("id", "main").maybeSingle(),
-      supabaseAdmin.from("app_config").select("value").eq("key", "revenue_target_gbp").maybeSingle(),
-      supabaseAdmin.from("app_config").select("value").eq("key", "interviewa_outreach_offer_truth").maybeSingle(),
+      supabaseAdmin.from("workspace_profile").select("knowledge,learned").eq("id", profileId).maybeSingle(),
+      getAppConfigValue("revenue_target_gbp").then((data) => ({ data })),
+      getAppConfigValue("interviewa_outreach_offer_truth").then((data) => ({ data })),
     ]);
     const enrolment = enrolments?.[0];
     if (!prospect || !enrolment) return NextResponse.json({ error: "This person is not in today's queue" }, { status: 400 });

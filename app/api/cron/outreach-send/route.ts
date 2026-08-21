@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { dispatchDueOutreachMessage } from "@/lib/outreach-send-queue";
+import { resolveRecordScope } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export async function GET(req: NextRequest) {
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`)
     return NextResponse.json({ error: "not authorised" }, { status: 401 });
   try {
+    await resolveRecordScope();
     const now = new Date().toISOString();
     const { data: due, error } = await supabaseAdmin
       .from("outreach_messages")

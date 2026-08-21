@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase-browser";
+import { clearCrmCache } from "@/lib/crm";
 import ThemeToggle from "@/components/ThemeToggle";
 
 // Persistent left sidebar, OPEN by default. Minimise collapses it to a ☰ button;
@@ -100,6 +101,7 @@ function NavMenuInner() {
     if (loggingOut) return;
     setLoggingOut(true);
     try {
+      clearCrmCache();
       await createSupabaseBrowser().auth.signOut();
       router.replace("/login");
       router.refresh();

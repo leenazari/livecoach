@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { recentMessages, emailFromHeader } from "@/lib/gmail";
+import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,7 @@ const PERSONAL = new Set([
 
 async function run(req: Request) {
   try {
+    const profileId = await ensureWorkspaceProfileId();
     const origin = new URL(req.url).origin;
 
     // Skip the user's own orgs + any internal domains they have configured.
@@ -30,7 +32,7 @@ async function run(req: Request) {
       const { data } = await supabaseAdmin
         .from("workspace_profile")
         .select("internal_domains")
-        .eq("id", "main")
+        .eq("id", profileId)
         .maybeSingle();
       const arr = Array.isArray((data as any)?.internal_domains)
         ? (data as any).internal_domains

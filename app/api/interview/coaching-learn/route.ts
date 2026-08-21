@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logModelUsage } from "@/lib/usage";
+import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -15,6 +16,7 @@ export const maxDuration = 30;
 // assistant via the brain (workspaceContextBlock).
 export async function POST(req: NextRequest) {
   try {
+    const profileId = await ensureWorkspaceProfileId();
     const { transcript, candidate, callType } = await req.json();
     const t = typeof transcript === "string" ? transcript.trim() : "";
     if (t.length < 200) return NextResponse.json({ ok: false }); // too little to judge
@@ -22,7 +24,7 @@ export async function POST(req: NextRequest) {
     const { data: prof } = await supabaseAdmin
       .from("workspace_profile")
       .select("coaching")
-      .eq("id", "main")
+      .eq("id", profileId)
       .maybeSingle();
     const existing =
       typeof prof?.coaching === "string" ? prof.coaching.trim() : "";
@@ -81,7 +83,7 @@ Return the updated profile now.`;
       await supabaseAdmin
         .from("workspace_profile")
         .update({ coaching: updated.slice(0, 4000) })
-        .eq("id", "main");
+        .eq("id", profileId);
       return NextResponse.json({ ok: true });
     }
     return NextResponse.json({ ok: false });

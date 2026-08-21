@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { defaultOutlookQuestions, WIN_OUTLOOKS } from "@/lib/opportunity-fields";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import { getAppConfigRows, setAppConfigValue } from "@/lib/app-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,7 +36,7 @@ export async function GET() {
       { data: recentSignalReceipts },
       { data: signalUsage },
     ] = await Promise.all([
-      supabaseAdmin.from("app_config").select("key,value").in("key", ["revenue_target_gbp"]),
+      getAppConfigRows(["revenue_target_gbp"]).then((data) => ({ data })),
       supabaseAdmin.from("companies").select("id,name,stage,profile"),
       supabaseAdmin.from("opportunities").select("*").order("updated_at", { ascending: false }).limit(500),
       supabaseAdmin.from("upcoming_calls").select("company_id,title,scheduled_at").is("completed_at", null).gte("scheduled_at", now.toISOString()).order("scheduled_at", { ascending: true }).limit(500),
@@ -310,18 +311,13 @@ export async function PATCH(req: NextRequest) {
     if (!Number.isFinite(target) || target < 1_000 || target > 1_000_000_000) {
       return NextResponse.json({ error: "Enter a revenue target between £1,000 and £1 billion" }, { status: 400 });
     }
-    const { data, error } = await supabaseAdmin
-      .from("app_config")
-      .upsert({
+    const data = await setAppConfigValue({
         key: "revenue_target_gbp",
         value: String(target),
         note: "Annual revenue target used by the revenue command centre",
-        updated_at: new Date().toISOString(),
-      })
-      .select("value")
-      .single();
-    if (error) throw error;
-    const confirmedTarget = Math.round(Number(data?.value));
+        visibility: "team",
+      });
+    const confirmedTarget = Math.round(Number(data.value));
     if (confirmedTarget !== target)
       throw new Error("database did not confirm the revenue target");
     return NextResponse.json({ ok: true, target: confirmedTarget });

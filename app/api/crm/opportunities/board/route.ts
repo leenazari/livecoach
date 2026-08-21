@@ -6,6 +6,7 @@ import { coachSystemBlock } from "@/lib/brain-coach";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -85,6 +86,7 @@ function heuristicNextAction(o: Opp): string {
 export async function GET(req: Request) {
   const light = new URL(req.url).searchParams.get("light") === "1";
   try {
+    const accountScope = await resolveRecordScope();
     const nowMs = Date.now();
     const graceIso = new Date(nowMs - 3 * 60 * 60 * 1000).toISOString();
 
@@ -410,11 +412,15 @@ Include every index exactly once. Be honest and specific, never flattering.`,
               }
               if (order.length) {
                 try {
-                  await supabaseAdmin.from("ai_cache").upsert({
-                    key: cacheKey,
-                    value: JSON.stringify(order),
-                    created_at: new Date().toISOString(),
-                  });
+                  await supabaseAdmin.from("ai_cache").upsert(
+                    {
+                      key: cacheKey,
+                      value: JSON.stringify(order),
+                      created_at: new Date().toISOString(),
+                      ...privateRecordFields(accountScope),
+                    },
+                    { onConflict: "owner_id,key" }
+                  );
                 } catch {
                   /* caching is best-effort */
                 }

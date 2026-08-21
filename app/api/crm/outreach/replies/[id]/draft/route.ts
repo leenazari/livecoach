@@ -5,6 +5,7 @@ import { logModelUsage } from "@/lib/usage";
 import { modelText, parseObject } from "@/lib/outreach";
 import { OUTREACH_FROM_EMAIL } from "@/lib/gmail";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
+import { getAppConfigValue } from "@/lib/app-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     const [{ data: campaign }, { data: lastSent }, { data: globalBooking }] = await Promise.all([
       supabaseAdmin.from("outreach_campaigns").select("*").eq("id", enrolment.campaign_id).single(),
       supabaseAdmin.from("outreach_messages").select("*").eq("prospect_id", prospect.id).eq("status", "sent").order("sent_at", { ascending: false }).limit(1).maybeSingle(),
-      supabaseAdmin.from("app_config").select("value").eq("key", "outreach_default_booking_url").maybeSingle(),
+      getAppConfigValue("outreach_default_booking_url").then((data) => ({ data })),
     ]);
     const bookingUrl = String(campaign?.booking_url || globalBooking?.value || "").trim();
     if (!bookingUrl) return NextResponse.json({ error: "Add your AI13 booking link in the Intelligence tab first" }, { status: 400 });

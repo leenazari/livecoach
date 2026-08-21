@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 
 export const runtime = "nodejs";
 // Force a dynamic serverless function. The GET handler takes no request arg, so
@@ -12,10 +13,11 @@ export const dynamic = "force-dynamic";
 // GET /api/crm/workspace -> the global knowledge base ("brain").
 export async function GET() {
   try {
+    const profileId = await ensureWorkspaceProfileId();
     const { data } = await supabaseAdmin
       .from("workspace_profile")
       .select("knowledge, objection_stances, updated_at")
-      .eq("id", "main")
+      .eq("id", profileId)
       .maybeSingle();
     return NextResponse.json({
       knowledge: data?.knowledge || "",
@@ -33,11 +35,12 @@ export async function GET() {
 // PUT /api/crm/workspace -> save the knowledge base (upsert the single row).
 export async function PUT(req: NextRequest) {
   try {
+    const profileId = await ensureWorkspaceProfileId();
     const body = await req.json();
     // Only touch the fields actually provided, so saving one does not wipe the
     // other (upsert sets only the columns present in the object).
     const patch: Record<string, any> = {
-      id: "main",
+      id: profileId,
       updated_at: new Date().toISOString(),
     };
     if (typeof body.knowledge === "string") patch.knowledge = body.knowledge;

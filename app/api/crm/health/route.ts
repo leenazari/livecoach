@@ -16,6 +16,7 @@ import {
   googleGrantedScopes,
 } from "@/lib/google";
 import { gmailAccessDiagnostic } from "@/lib/gmail";
+import { getAppConfigValue } from "@/lib/app-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -153,11 +154,10 @@ export async function GET() {
         .gte("created_at", eightDaysAgo)
         .order("created_at", { ascending: false })
         .limit(5000),
-      supabaseAdmin
-        .from("app_config")
-        .select("value,updated_at")
-        .eq("key", "precall_email_context_last_run")
-        .maybeSingle(),
+      getAppConfigValue("precall_email_context_last_run").then((data) => ({
+        data,
+        error: null,
+      })),
       googleHealth(),
     ]);
 

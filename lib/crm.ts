@@ -1,5 +1,6 @@
-// Shared CRM types + helpers used by the /crm pages and components.
-// Single-user today (owner_id stays null); the shapes already allow multi-tenant.
+// Shared CRM types and helpers used by the CRM pages and components. Account
+// ownership and workspace visibility are enforced by the server and database,
+// so browser-side shapes deliberately expose only the product fields they use.
 
 export type FieldType =
   | "text"
@@ -126,6 +127,15 @@ const _getCache = new Map<string, any>();
 // cache is still empty.
 const _getInflight = new Map<string, Promise<any>>();
 let _cacheEpoch = 0;
+
+export function clearCrmCache(): void {
+  _cacheEpoch += 1;
+  _getCache.clear();
+  _getInflight.clear();
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem("livecoach:outreach-prepare-queue:v1");
+  }
+}
 
 export function getCached<T = any>(url: string): T | undefined {
   return _getCache.get(url) as T | undefined;

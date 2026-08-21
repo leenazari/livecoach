@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase";
+import { googleConnected } from "@/lib/google";
 
 // SPEAKER IDENTITY.
 //
@@ -67,12 +67,8 @@ export async function loadHostIdentity(): Promise<{
   name: string;
   email: string;
 }> {
-  const { data } = await supabaseAdmin
-    .from("google_oauth")
-    .select("email")
-    .eq("id", "main")
-    .maybeSingle();
-  const email = typeof data?.email === "string" ? data.email : "";
+  const connection = await googleConnected();
+  const email = connection.email || "";
 
   // A name from the email local part is a decent fallback when nothing better
   // exists: lee.nazari@ becomes "Lee Nazari".

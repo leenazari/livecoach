@@ -71,7 +71,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ company: existing, existing: true });
     }
 
-    const row: Record<string, any> = { name };
+    // Generic client creation fails closed to private. Dedicated outreach and
+    // approved sharing flows set team visibility explicitly, so a manually
+    // entered investor or confidential relationship cannot leak by default.
+    const row: Record<string, any> = { name, visibility: "private" };
     for (const f of CORE_FIELDS) {
       if (f === "name") continue;
       if (typeof body[f] === "string" && body[f].trim()) row[f] = body[f].trim();

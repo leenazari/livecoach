@@ -6,6 +6,8 @@ import {
   titleOf,
 } from "@/lib/google";
 import { supabaseAdmin } from "@/lib/supabase";
+import { setAppConfigValue } from "@/lib/app-config";
+import { resolveRecordScope } from "@/lib/record-scope";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import {
   loadAttendeeConfig,
@@ -79,6 +81,7 @@ async function deriveClientsFromTitles(
 // intent or prep on an existing row. Requires a connected Google account.
 async function runCalendarSync() {
   try {
+    await resolveRecordScope();
     const access = await getAccessToken();
     if (!access) {
       return NextResponse.json(
@@ -483,11 +486,10 @@ async function runCalendarSync() {
     }
 
     const finishedAt = new Date().toISOString();
-    await supabaseAdmin.from("app_config").upsert({
+    await setAppConfigValue({
       key: "calendar_sync_last_success_at",
       value: finishedAt,
       note: "Latest successful complete or partial Google Calendar refresh",
-      updated_at: finishedAt,
     });
 
     return NextResponse.json({

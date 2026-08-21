@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase-browser";
 import ThemeToggle from "@/components/ThemeToggle";
+import { clearCrmCache } from "@/lib/crm";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -39,6 +40,7 @@ export default function LoginPage() {
         password,
       });
       if (error) throw error;
+      clearCrmCache();
       router.push("/call");
       router.refresh();
     } catch (e: any) {
@@ -49,6 +51,7 @@ export default function LoginPage() {
   };
 
   const logout = async () => {
+    clearCrmCache();
     await supabase.auth.signOut();
     setSessionEmail(null);
     router.refresh();

@@ -1,4 +1,4 @@
-import { getAccessToken } from "@/lib/google";
+import { getAccessToken, googleConnected } from "@/lib/google";
 
 // Read-only Gmail access for the app, using the SAME Google OAuth token as the
 // calendar (lib/google.ts). Lets the brain pull the mail thread with a contact
@@ -543,11 +543,6 @@ function stripHtml(html: string): string {
 
 // The address the digest goes to: whoever connected Google.
 export async function connectedEmail(): Promise<string> {
-  const { supabaseAdmin } = await import("@/lib/supabase");
-  const { data } = await supabaseAdmin
-    .from("google_oauth")
-    .select("email")
-    .eq("id", "main")
-    .maybeSingle();
-  return typeof data?.email === "string" ? data.email : "";
+  const connection = await googleConnected();
+  return connection.email || "";
 }

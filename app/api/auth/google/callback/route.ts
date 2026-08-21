@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeCode } from "@/lib/google";
-import { supabaseAdmin } from "@/lib/supabase";
+import { exchangeCode, saveGoogleConnection } from "@/lib/google";
 
 export const runtime = "nodejs";
 
@@ -40,21 +39,15 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Only overwrite the refresh token when Google sends a new one (it does on a
-    // fresh consent). Keep the existing one otherwise.
-    const row: Record<string, any> = {
-      id: "main",
-      access_token: access || null,
+    // Credentials are stored only against the signed-in LiveCoach account.
+    // A refresh token omitted by Google leaves that person's existing token in
+    // place and can never overwrite another member's connection.
+    await saveGoogleConnection({
+      accessToken: access || null,
+      refreshToken: refresh || null,
       expiry,
-      updated_at: new Date().toISOString(),
-    };
-    if (refresh) row.refresh_token = refresh;
-    if (email) row.email = email;
-
-    const { error: saveError } = await supabaseAdmin
-      .from("google_oauth")
-      .upsert(row, { onConflict: "id" });
-    if (saveError) throw saveError;
+      email,
+    });
 
     const res = NextResponse.redirect(`${base}/settings?google=connected`);
     res.cookies.set("g_oauth_state", "", { maxAge: 0, path: "/" });

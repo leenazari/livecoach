@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,10 +10,11 @@ const MODES = new Set<AiMode>(["economical", "balanced", "high"]);
 
 export async function GET() {
   try {
+    const profileId = await ensureWorkspaceProfileId();
     const { data, error } = await supabaseAdmin
       .from("workspace_profile")
       .select("ai_mode")
-      .eq("id", "main")
+      .eq("id", profileId)
       .maybeSingle();
     if (error) throw error;
     const mode = MODES.has(data?.ai_mode as AiMode)
@@ -29,6 +31,7 @@ export async function GET() {
 
 export async function PUT(req: NextRequest) {
   try {
+    const profileId = await ensureWorkspaceProfileId();
     const body = await req.json();
     const mode = body?.mode as AiMode;
     if (!MODES.has(mode))
@@ -36,7 +39,7 @@ export async function PUT(req: NextRequest) {
     const { data, error } = await supabaseAdmin
       .from("workspace_profile")
       .upsert(
-        { id: "main", ai_mode: mode, updated_at: new Date().toISOString() },
+        { id: profileId, ai_mode: mode, updated_at: new Date().toISOString() },
         { onConflict: "id" }
       )
       .select("ai_mode")

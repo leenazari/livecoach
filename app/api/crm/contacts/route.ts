@@ -44,7 +44,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
 
-    const row: Record<string, any> = { name, company_id: companyId };
+    let visibility: "private" | "team" = "private";
+    if (companyId) {
+      const { data: company, error: companyError } = await supabaseAdmin
+        .from("companies")
+        .select("id,visibility")
+        .eq("id", companyId)
+        .maybeSingle();
+      if (companyError) throw companyError;
+      if (!company)
+        return NextResponse.json({ error: "company not found" }, { status: 404 });
+      visibility = company.visibility === "team" ? "team" : "private";
+    }
+    const row: Record<string, any> = {
+      name,
+      company_id: companyId,
+      visibility,
+    };
     for (const f of ["role", "email", "sector", "notes"]) {
       if (typeof body[f] === "string" && body[f].trim()) row[f] = body[f].trim();
     }

@@ -1,8 +1,35 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  LIVECOACH_ACCESS_TOKEN_HEADER,
+  LIVECOACH_INTERNAL_AUTH_HEADERS,
+  LIVECOACH_SERVICE_REQUEST_HEADER,
+  LIVECOACH_USER_ID_HEADER,
+  LIVECOACH_WORKSPACE_ID_HEADER,
+  LIVECOACH_WORKSPACE_ROLE_HEADER,
+} from "@/lib/internal-auth-headers";
+
+type PendingCookie = {
+  name: string;
+  value: string;
+  options: CookieOptions;
+};
 
 export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request });
+  // Browser-supplied internal headers are never trusted. Remove them before
+  // authentication, then add verified values only after membership succeeds.
+  const forwardedHeaders = new Headers(request.headers);
+  for (const name of LIVECOACH_INTERNAL_AUTH_HEADERS) {
+    forwardedHeaders.delete(name);
+  }
+
+  const pendingCookies: PendingCookie[] = [];
+  const finish = <T extends NextResponse>(response: T): T => {
+    for (const cookie of pendingCookies) {
+      response.cookies.set(cookie.name, cookie.value, cookie.options);
+    }
+    return response;
+  };
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,16 +39,11 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll();
         },
-        setAll(
-          cookiesToSet: { name: string; value: string; options: CookieOptions }[]
-        ) {
+        setAll(cookiesToSet: PendingCookie[]) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           );
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
+          pendingCookies.push(...cookiesToSet);
         },
       },
     }
@@ -48,36 +70,41 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/api/knowledge") ||
     path === "/api/feedback" ||
     path === "/api/tts" ||
-    (path.startsWith("/api/interview") && path !== "/api/interview/context");
+    path.startsWith("/api/interview");
   // Vercel cron and authenticated server-to-server follow-ups use CRON_SECRET.
   const cronSecret = process.env.CRON_SECRET || "";
   const serviceAuthorized =
-    !!cronSecret && request.headers.get("authorization") === `Bearer ${cronSecret}`;
+    !!cronSecret &&
+    request.headers.get("authorization") === `Bearer ${cronSecret}`;
+
+  if (serviceAuthorized) {
+    forwardedHeaders.set(LIVECOACH_SERVICE_REQUEST_HEADER, "cron");
+  }
 
   if (!user && !serviceAuthorized && isPrivateApi) {
-    return NextResponse.json(
-      { error: "authentication required" },
-      {
-        status: 401,
-        headers: { "Cache-Control": "private, no-store" },
-      }
+    return finish(
+      NextResponse.json(
+        { error: "authentication required" },
+        {
+          status: 401,
+          headers: { "Cache-Control": "private, no-store" },
+        }
+      )
     );
   }
 
-  // Candidate join pages and the bot harness stay public; the private operator
+  // Candidate join pages and the bot harness stay public. The private operator
   // console always requires the signed-in Supabase session.
   if (!user && isPrivatePage) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     const login = NextResponse.redirect(url);
     login.headers.set("Cache-Control", "private, no-store");
-    return login;
+    return finish(login);
   }
 
-  // Authentication alone is not authorization. LiveCoach is invite-only and
-  // every private page/API requires an active workspace membership. This gate
-  // is deliberately in place before a second account is invited because the
-  // legacy server routes still use a service-role database client.
+  // Authentication alone is not authorization. Every private page and API
+  // requires an active workspace membership.
   const requiresWorkspaceMembership = isPrivatePage || isPrivateApi;
   if (user && !serviceAuthorized && requiresWorkspaceMembership) {
     const { data: membership, error: membershipError } = await supabase
@@ -90,12 +117,14 @@ export async function middleware(request: NextRequest) {
 
     if (membershipError || !membership) {
       if (isPrivateApi) {
-        return NextResponse.json(
-          { error: "workspace access required" },
-          {
-            status: 403,
-            headers: { "Cache-Control": "private, no-store" },
-          }
+        return finish(
+          NextResponse.json(
+            { error: "workspace access required" },
+            {
+              status: 403,
+              headers: { "Cache-Control": "private, no-store" },
+            }
+          )
         );
       }
 
@@ -104,15 +133,51 @@ export async function middleware(request: NextRequest) {
       url.searchParams.set("access", "denied");
       const denied = NextResponse.redirect(url);
       denied.headers.set("Cache-Control", "private, no-store");
-      return denied;
+      return finish(denied);
     }
+
+    // getUser above validates the account with Supabase Auth. getSession is
+    // used only to forward that already-verified request's access token so the
+    // route's database queries execute under RLS as this person.
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      if (isPrivateApi) {
+        return finish(
+          NextResponse.json(
+            { error: "authenticated session is required" },
+            {
+              status: 401,
+              headers: { "Cache-Control": "private, no-store" },
+            }
+          )
+        );
+      }
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      const expired = NextResponse.redirect(url);
+      expired.headers.set("Cache-Control", "private, no-store");
+      return finish(expired);
+    }
+
+    forwardedHeaders.set(LIVECOACH_ACCESS_TOKEN_HEADER, session.access_token);
+    forwardedHeaders.set(LIVECOACH_USER_ID_HEADER, user.id);
+    forwardedHeaders.set(
+      LIVECOACH_WORKSPACE_ID_HEADER,
+      membership.workspace_id
+    );
+    forwardedHeaders.set(LIVECOACH_WORKSPACE_ROLE_HEADER, membership.role);
   }
 
+  const response = NextResponse.next({
+    request: { headers: forwardedHeaders },
+  });
   // Authenticated responses must never be reused for a different account by a
   // browser, CDN or warm Vercel instance.
   if (user) response.headers.set("Cache-Control", "private, no-store");
 
-  return response;
+  return finish(response);
 }
 
 export const config = {
