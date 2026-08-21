@@ -36,6 +36,14 @@ export default function JoinTeamPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const invitationToken = params.get("invite") || "";
+    const googleResult = params.get("google") || "";
+    if (googleResult === "account_in_use") {
+      setError(
+        "That Google account already belongs to another LiveCoach user. Choose your own separate work account."
+      );
+    } else if (googleResult === "identity_missing") {
+      setError("Google did not return an account identity. Try connecting again.");
+    }
     setToken(invitationToken);
     if (invitationToken) {
       const clean = new URL(window.location.href);

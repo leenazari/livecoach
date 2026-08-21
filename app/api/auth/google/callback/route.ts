@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exchangeCode, saveGoogleConnection } from "@/lib/google";
 import { getRequestScope } from "@/lib/request-scope";
+import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -13,7 +14,8 @@ export async function GET(req: NextRequest) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const cookieState = req.cookies.get("g_oauth_state")?.value;
-  const onboarding = getRequestScope()?.status === "onboarding";
+  const scope = getRequestScope();
+  const onboarding = scope?.status === "onboarding";
   const destination = onboarding ? "/join-team" : "/settings";
 
   if (url.searchParams.get("error")) {
@@ -39,6 +41,41 @@ export async function GET(req: NextRequest) {
         if (r.ok) email = (await r.json())?.email || null;
       } catch {
         /* ignore */
+      }
+    }
+
+    if (scope?.role !== "owner" && !email) {
+      const res = NextResponse.redirect(
+        `${base}${destination}?google=identity_missing`
+      );
+      res.cookies.set("g_oauth_state", "", { maxAge: 0, path: "/" });
+      return res;
+    }
+    if (scope && email) {
+      const { data: otherMembers, error: membersError } = await supabaseService
+        .from("workspace_members")
+        .select("user_id")
+        .eq("workspace_id", scope.workspaceId)
+        .neq("user_id", scope.userId)
+        .neq("status", "removed");
+      if (membersError) throw membersError;
+      const otherMemberIds = (otherMembers || []).map((member) => member.user_id);
+      if (otherMemberIds.length) {
+        const { data: duplicate, error: duplicateError } = await supabaseService
+          .from("google_oauth")
+          .select("owner_id")
+          .in("owner_id", otherMemberIds)
+          .ilike("email", email.trim().toLowerCase())
+          .limit(1)
+          .maybeSingle();
+        if (duplicateError) throw duplicateError;
+        if (duplicate?.owner_id) {
+          const res = NextResponse.redirect(
+            `${base}${destination}?google=account_in_use`
+          );
+          res.cookies.set("g_oauth_state", "", { maxAge: 0, path: "/" });
+          return res;
+        }
       }
     }
 

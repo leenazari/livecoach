@@ -27,6 +27,16 @@ type Member = {
     activeBot: boolean;
     botCount: number;
   };
+  setup: {
+    separateIdentity: boolean;
+    outreachSenderReady: boolean;
+    assignedProspects: number;
+    sentMessages: number;
+    transcribedCalls: number;
+    privacyTestConfirmed: boolean;
+    privacyTestConfirmedAt: string | null;
+    canConfirmPrivacy: boolean;
+  };
   created_at: string;
 };
 
@@ -49,6 +59,7 @@ type TeamData = {
     opportunities: number;
   };
   activation: { ready: boolean; reason: string };
+  ownerIdentities: string[];
 };
 
 const badge = (status: string) => {
@@ -66,6 +77,12 @@ export default function TeamAccessPage() {
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [limitDrafts, setLimitDrafts] = useState<Record<string, string>>({});
+  const normalizedInviteEmail = email.trim().toLowerCase();
+  const ownerIdentityConflict =
+    !!normalizedInviteEmail &&
+    !!data?.ownerIdentities?.some(
+      (identity) => identity.toLowerCase() === normalizedInviteEmail
+    );
 
   const load = useCallback(async () => {
     setError("");
@@ -138,6 +155,31 @@ export default function TeamAccessPage() {
       await load();
     } catch (err: any) {
       setError(err?.message || "The account was not updated");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setPrivacyTest = async (
+    userId: string,
+    action: "confirm_privacy_test" | "reset_privacy_test"
+  ) => {
+    setBusy(true);
+    setError("");
+    setNote("");
+    try {
+      await crmFetch("/api/crm/team", {
+        method: "PATCH",
+        body: JSON.stringify({ userId, action }),
+      });
+      setNote(
+        action === "confirm_privacy_test"
+          ? "Privacy rehearsal confirmed. This account is ready for controlled live work."
+          : "Privacy rehearsal sign off reset."
+      );
+      await load();
+    } catch (err: any) {
+      setError(err?.message || "The privacy rehearsal was not updated");
     } finally {
       setBusy(false);
     }
@@ -253,13 +295,172 @@ export default function TeamAccessPage() {
               <button
                 type="button"
                 onClick={invite}
-                disabled={busy || !email.trim()}
+                disabled={busy || !email.trim() || ownerIdentityConflict}
                 className="min-h-12 rounded-full bg-amber px-5 font-mono text-xs font-semibold uppercase tracking-wider text-ink disabled:opacity-50"
               >
                 {busy ? "Working…" : "Send invite"}
               </button>
             </div>
+            {ownerIdentityConflict ? (
+              <p role="alert" className="mt-3 rounded-xl border border-rust/50 bg-rust/10 px-4 py-3 text-sm leading-relaxed text-rust">
+                This is your owner identity, so it cannot test privacy separation. Create a genuinely separate Google Workspace user such as sales-test@interviewa.com.
+              </p>
+            ) : null}
             <p className="mt-3 text-xs leading-relaxed text-amber/85">{data.activation.reason}</p>
+          </section>
+
+          <section className="rounded-2xl border border-edge bg-panel/45 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-mono text-[0.58rem] uppercase tracking-[0.16em] text-sage">
+                  Safe onboarding
+                </p>
+                <h2 className="mt-1 font-display text-lg text-bone">Salesperson setup checklist</h2>
+                <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">
+                  Automatic checks turn green from real account activity. The final privacy sign off stays manual because you must personally challenge the Brain and confirm that private information is unavailable.
+                </p>
+              </div>
+            </div>
+
+            {data.members.some((member) => member.role !== "owner") ? (
+              <div className="mt-5 space-y-4">
+                {data.members
+                  .filter((member) => member.role !== "owner")
+                  .map((member) => {
+                    const steps = [
+                      {
+                        id: "login",
+                        label: "Separate login accepted",
+                        detail: member.email || "Account email recorded",
+                        complete: true,
+                      },
+                      {
+                        id: "google",
+                        label: "Separate Google account connected",
+                        detail: member.setup.separateIdentity
+                          ? member.googleEmail || "Connected"
+                          : member.googleConnected
+                            ? "Owner identity detected. Connect a different account"
+                            : "Waiting for their Google connection",
+                        complete: member.setup.separateIdentity,
+                      },
+                      {
+                        id: "sender",
+                        label: "Outreach sender ready",
+                        detail: member.setup.outreachSenderReady
+                          ? member.outreachSenderEmail || "Sender verified"
+                          : "Created automatically when the isolated account is activated",
+                        complete: member.setup.outreachSenderReady,
+                      },
+                      {
+                        id: "active",
+                        label: "Isolated CRM access activated",
+                        detail: member.status === "active"
+                          ? "Account can enter its own CRM workspace"
+                          : "Activate after the separate identity checks pass",
+                        complete: member.status === "active",
+                      },
+                      {
+                        id: "prospect",
+                        label: "Test prospect assigned",
+                        detail: `${member.setup.assignedProspects} shared prospect${member.setup.assignedProspects === 1 ? "" : "s"} assigned`,
+                        complete: member.setup.assignedProspects > 0,
+                      },
+                      {
+                        id: "email",
+                        label: "Test outreach email sent",
+                        detail: `${member.setup.sentMessages} sent from this account`,
+                        complete: member.setup.sentMessages > 0,
+                      },
+                      {
+                        id: "call",
+                        label: "Test call transcribed",
+                        detail: `${member.setup.transcribedCalls} call transcript${member.setup.transcribedCalls === 1 ? "" : "s"} saved to this account`,
+                        complete: member.setup.transcribedCalls > 0,
+                      },
+                      {
+                        id: "privacy",
+                        label: "Privacy rehearsal signed off",
+                        detail: member.setup.privacyTestConfirmed
+                          ? `Confirmed ${new Date(member.setup.privacyTestConfirmedAt || Date.now()).toLocaleString("en-GB")}`
+                          : "Ask the Brain about Lee's private investors, calls, emails and transcripts. Every answer must report no access",
+                        complete: member.setup.privacyTestConfirmed,
+                      },
+                    ];
+                    const completed = steps.filter((step) => step.complete).length;
+                    const ready = completed === steps.length;
+                    return (
+                      <article key={member.user_id} className={`rounded-2xl border p-4 ${ready ? "border-sage/50 bg-sage/[0.06]" : "border-edge bg-ink/35"}`}>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold text-bone">
+                              {member.displayName || member.email || "Team account"}
+                            </h3>
+                            <p className="mt-1 text-xs text-muted">
+                              {completed} of {steps.length} checks complete
+                            </p>
+                          </div>
+                          <span className={`rounded-full border px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider ${ready ? "border-sage/50 bg-sage/10 text-sage" : "border-amber/50 bg-amber/10 text-amber"}`}>
+                            {ready ? "Ready for live work" : "Test only"}
+                          </span>
+                        </div>
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-panel">
+                          <div
+                            className={`h-full rounded-full ${ready ? "bg-sage" : "bg-amber"}`}
+                            style={{ width: `${Math.round((completed / steps.length) * 100)}%` }}
+                          />
+                        </div>
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                          {steps.map((step, index) => (
+                            <div key={step.id} className={`rounded-xl border p-3 ${step.complete ? "border-sage/35 bg-sage/[0.05]" : "border-edge bg-panel/45"}`}>
+                              <div className="flex items-start gap-3">
+                                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border font-mono text-[0.6rem] ${step.complete ? "border-sage/60 bg-sage/10 text-sage" : "border-edge text-muted"}`}>
+                                  {step.complete ? "✓" : index + 1}
+                                </span>
+                                <div className="min-w-0">
+                                  <p className={`text-xs font-semibold ${step.complete ? "text-sage" : "text-bone"}`}>{step.label}</p>
+                                  <p className="mt-1 break-words text-[0.68rem] leading-relaxed text-muted">{step.detail}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-4 flex flex-wrap items-center gap-3">
+                          {!member.setup.privacyTestConfirmed ? (
+                            <button
+                              type="button"
+                              onClick={() => setPrivacyTest(member.user_id, "confirm_privacy_test")}
+                              disabled={busy || !member.setup.canConfirmPrivacy}
+                              className="min-h-10 rounded-full border border-sage/50 bg-sage/10 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-sage disabled:cursor-not-allowed disabled:opacity-35"
+                            >
+                              I tested isolation and confirm
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setPrivacyTest(member.user_id, "reset_privacy_test")}
+                              disabled={busy}
+                              className="min-h-10 rounded-full border border-edge px-4 font-mono text-[0.58rem] uppercase tracking-wider text-muted disabled:opacity-40"
+                            >
+                              Reset sign off
+                            </button>
+                          )}
+                          {!member.setup.canConfirmPrivacy && !member.setup.privacyTestConfirmed ? (
+                            <p className="text-xs text-muted">Finish the automatic checks before signing off privacy.</p>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+              </div>
+            ) : (
+              <div className="mt-5 rounded-2xl border border-dashed border-edge bg-ink/25 p-5">
+                <p className="text-sm font-semibold text-bone">No separate test account yet</p>
+                <p className="mt-2 text-sm leading-relaxed text-muted">
+                  Create a real Google Workspace user such as sales-test@interviewa.com, then send the invitation above. An alias or your existing lee@ai13.com owner identity will not test isolation.
+                </p>
+              </div>
+            )}
           </section>
 
           <section className="rounded-2xl border border-edge bg-panel/45 p-5">

@@ -18,6 +18,73 @@ export const dynamic = "force-dynamic";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ROLES = new Set(["manager", "sales"]);
 
+const normalizeEmail = (value: unknown) =>
+  typeof value === "string" ? value.trim().toLowerCase() : "";
+
+async function workspaceOwnerIdentities(workspaceId: string) {
+  const { data: ownerMember, error: ownerError } = await supabaseService
+    .from("workspace_members")
+    .select("user_id")
+    .eq("workspace_id", workspaceId)
+    .eq("role", "owner")
+    .neq("status", "removed")
+    .limit(1)
+    .maybeSingle();
+  if (ownerError) throw ownerError;
+  if (!ownerMember?.user_id) return new Set<string>();
+
+  const [{ data: profile, error: profileError }, { data: google, error: googleError }] =
+    await Promise.all([
+      supabaseService
+        .from("profiles")
+        .select("email")
+        .eq("user_id", ownerMember.user_id)
+        .maybeSingle(),
+      supabaseService
+        .from("google_oauth")
+        .select("email")
+        .eq("owner_id", ownerMember.user_id)
+        .maybeSingle(),
+    ]);
+  if (profileError) throw profileError;
+  if (googleError) throw googleError;
+
+  return new Set(
+    [normalizeEmail(profile?.email), normalizeEmail(google?.email)].filter(Boolean)
+  );
+}
+
+async function memberSetupEvidence(workspaceId: string, userId: string) {
+  const [assignedResult, sentResult, transcriptResult] = await Promise.all([
+    supabaseService
+      .from("outreach_prospects")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId)
+      .eq("visibility", "team")
+      .eq("assigned_to_user_id", userId),
+    supabaseService
+      .from("outreach_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId)
+      .eq("sender_user_id", userId)
+      .eq("status", "sent"),
+    supabaseService
+      .from("interview_sessions")
+      .select("session_id", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId)
+      .eq("owner_id", userId)
+      .not("transcript", "is", null),
+  ]);
+  for (const result of [assignedResult, sentResult, transcriptResult]) {
+    if (result.error) throw result.error;
+  }
+  return {
+    assignedProspects: assignedResult.count || 0,
+    sentMessages: sentResult.count || 0,
+    transcribedCalls: transcriptResult.count || 0,
+  };
+}
+
 const htmlEscape = (value: string) =>
   value
     .replace(/&/g, "&amp;")
@@ -99,15 +166,69 @@ export async function GET() {
     if (googleError) throw googleError;
     if (botRowsError) throw botRowsError;
 
+    const nonOwnerIds = (membersResult.data || [])
+      .filter((member) => member.role !== "owner")
+      .map((member) => member.user_id);
+    const [ownerIdentities, setupEntries, privacyEventsResult] = await Promise.all([
+      workspaceOwnerIdentities(scope.workspaceId),
+      Promise.all(
+        nonOwnerIds.map(async (userId) => [
+          userId,
+          await memberSetupEvidence(scope.workspaceId, userId),
+        ] as const)
+      ),
+      nonOwnerIds.length
+        ? supabaseService
+            .from("access_audit_events")
+            .select("target_id,action,created_at")
+            .eq("workspace_id", scope.workspaceId)
+            .eq("target_table", "workspace_members")
+            .in("target_id", nonOwnerIds)
+            .in("action", [
+              "workspace_member_privacy_test_confirmed",
+              "workspace_member_privacy_test_reset",
+            ])
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (privacyEventsResult.error) throw privacyEventsResult.error;
+
     const profileByUser = new Map(
       (profiles || []).map((profile: any) => [profile.user_id, profile])
     );
     const googleByUser = new Map(
       (googleRows || []).map((row: any) => [row.owner_id, row])
     );
+    const setupByUser = new Map(setupEntries);
+    const latestPrivacyEventByUser = new Map<string, any>();
+    for (const event of privacyEventsResult.data || []) {
+      if (event.target_id && !latestPrivacyEventByUser.has(event.target_id)) {
+        latestPrivacyEventByUser.set(event.target_id, event);
+      }
+    }
     const members = (membersResult.data || []).map((member: any) => {
       const profile = profileByUser.get(member.user_id) as any;
       const google = googleByUser.get(member.user_id) as any;
+      const memberEmail = normalizeEmail(profile?.email);
+      const googleEmail = normalizeEmail(google?.email);
+      const separateIdentity =
+        member.role === "owner"
+          ? false
+          : !!googleEmail &&
+            !ownerIdentities.has(googleEmail) &&
+            (!memberEmail || !ownerIdentities.has(memberEmail));
+      const setupEvidence = setupByUser.get(member.user_id) || {
+        assignedProspects: 0,
+        sentMessages: 0,
+        transcribedCalls: 0,
+      };
+      const privacyEvent = latestPrivacyEventByUser.get(member.user_id);
+      const privacyTestConfirmed =
+        privacyEvent?.action === "workspace_member_privacy_test_confirmed";
+      const outreachSenderReady =
+        separateIdentity &&
+        !!normalizeEmail(profile?.outreach_sender_email) &&
+        !!String(profile?.outreach_sender_name || "").trim();
       const transcriberUsage = calculateTranscriberUsage(
         botRows || [],
         member.user_id,
@@ -127,15 +248,34 @@ export async function GET() {
           member.status !== "removed" &&
           !!profile?.display_name &&
           !!google?.refresh_token &&
-          !!google?.email,
+          separateIdentity,
         activationIssues: [
           ...(!profile?.display_name ? ["Finish account setup"] : []),
           ...(!google?.refresh_token || !google?.email ? ["Connect this user's Google account"] : []),
+          ...(google?.refresh_token && google?.email && !separateIdentity
+            ? ["Use a Google account that is different from Lee's owner account"]
+            : []),
         ],
         transcriberName:
           profile?.transcriber_name ||
           deriveTranscriberName(profile?.display_name || null),
         transcriberUsage,
+        setup: {
+          separateIdentity,
+          outreachSenderReady,
+          assignedProspects: setupEvidence.assignedProspects,
+          sentMessages: setupEvidence.sentMessages,
+          transcribedCalls: setupEvidence.transcribedCalls,
+          privacyTestConfirmed,
+          privacyTestConfirmedAt: privacyTestConfirmed ? privacyEvent?.created_at || null : null,
+          canConfirmPrivacy:
+            member.status === "active" &&
+            separateIdentity &&
+            outreachSenderReady &&
+            setupEvidence.assignedProspects > 0 &&
+            setupEvidence.sentMessages > 0 &&
+            setupEvidence.transcribedCalls > 0,
+        },
       };
     });
 
@@ -153,6 +293,7 @@ export async function GET() {
           reason:
             "After account and Google setup, the owner activates access. Each user keeps a separate Calendar, Gmail, transcriber and private Brain memory.",
         },
+        ownerIdentities: [...ownerIdentities],
       },
       { headers: { "Cache-Control": "private, no-store" } }
     );
@@ -169,9 +310,13 @@ export async function PATCH(req: NextRequest) {
     const scope = requireWorkspaceOwner();
     const body = await req.json();
     const userId = typeof body.userId === "string" ? body.userId.trim() : "";
-    const action = ["activate", "suspend", "update_transcriber_limit"].includes(
-      body.action
-    )
+    const action = [
+      "activate",
+      "suspend",
+      "update_transcriber_limit",
+      "confirm_privacy_test",
+      "reset_privacy_test",
+    ].includes(body.action)
       ? body.action
       : "";
     if (!userId || !action)
@@ -188,6 +333,90 @@ export async function PATCH(req: NextRequest) {
     if (memberError) throw memberError;
     if (!member || member.status === "removed")
       return NextResponse.json({ error: "Team account not found" }, { status: 404 });
+
+    if (action === "confirm_privacy_test" || action === "reset_privacy_test") {
+      if (member.role === "owner") {
+        return NextResponse.json(
+          { error: "The privacy rehearsal is only for a separate team account" },
+          { status: 400 }
+        );
+      }
+      if (action === "confirm_privacy_test") {
+        const [ownerIdentities, setupEvidence, profileResult, googleResult] =
+          await Promise.all([
+            workspaceOwnerIdentities(scope.workspaceId),
+            memberSetupEvidence(scope.workspaceId, userId),
+            supabaseService
+              .from("profiles")
+              .select("email,outreach_sender_name,outreach_sender_email")
+              .eq("user_id", userId)
+              .maybeSingle(),
+            supabaseService
+              .from("google_oauth")
+              .select("email,refresh_token")
+              .eq("owner_id", userId)
+              .maybeSingle(),
+          ]);
+        if (profileResult.error) throw profileResult.error;
+        if (googleResult.error) throw googleResult.error;
+
+        const memberEmail = normalizeEmail(profileResult.data?.email);
+        const googleEmail = normalizeEmail(googleResult.data?.email);
+        const separateIdentity =
+          !!googleResult.data?.refresh_token &&
+          !!googleEmail &&
+          !ownerIdentities.has(googleEmail) &&
+          (!memberEmail || !ownerIdentities.has(memberEmail));
+        const senderReady =
+          !!normalizeEmail(profileResult.data?.outreach_sender_email) &&
+          !!String(profileResult.data?.outreach_sender_name || "").trim();
+        const missing = [
+          ...(member.status !== "active" ? ["activate the isolated account"] : []),
+          ...(!separateIdentity ? ["connect a separate Google account"] : []),
+          ...(!senderReady ? ["finish the outreach sender setup"] : []),
+          ...(setupEvidence.assignedProspects < 1 ? ["assign a test prospect"] : []),
+          ...(setupEvidence.sentMessages < 1 ? ["send a test outreach email"] : []),
+          ...(setupEvidence.transcribedCalls < 1 ? ["complete a transcribed test call"] : []),
+        ];
+        if (missing.length) {
+          return NextResponse.json(
+            { error: `Finish these checks first. ${missing.join(". ")}.` },
+            { status: 409 }
+          );
+        }
+        const { error: privacyAuditError } = await supabaseService
+          .from("access_audit_events")
+          .insert({
+            workspace_id: scope.workspaceId,
+            actor_user_id: scope.userId,
+            source: "human",
+            action: "workspace_member_privacy_test_confirmed",
+            target_table: "workspace_members",
+            target_id: userId,
+            next_scope: { privacy_test_confirmed: true },
+            metadata: {
+              assignedProspects: setupEvidence.assignedProspects,
+              sentMessages: setupEvidence.sentMessages,
+              transcribedCalls: setupEvidence.transcribedCalls,
+            },
+          });
+        if (privacyAuditError) throw privacyAuditError;
+      } else {
+        const { error: privacyResetError } = await supabaseService
+          .from("access_audit_events")
+          .insert({
+            workspace_id: scope.workspaceId,
+            actor_user_id: scope.userId,
+            source: "human",
+            action: "workspace_member_privacy_test_reset",
+            target_table: "workspace_members",
+            target_id: userId,
+            next_scope: { privacy_test_confirmed: false },
+          });
+        if (privacyResetError) throw privacyResetError;
+      }
+      return NextResponse.json({ ok: true });
+    }
 
     if (action === "update_transcriber_limit") {
       const dailyMinutes = Number(body.dailyMinutes);
@@ -250,6 +479,33 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: "This person must finish account setup first" }, { status: 409 });
       if (!google?.refresh_token || !google.email)
         return NextResponse.json({ error: "This person must connect their own Google account first" }, { status: 409 });
+      const { data: otherMembers, error: otherMembersError } = await supabaseService
+        .from("workspace_members")
+        .select("user_id")
+        .eq("workspace_id", scope.workspaceId)
+        .neq("user_id", userId)
+        .neq("status", "removed");
+      if (otherMembersError) throw otherMembersError;
+      const otherMemberIds = (otherMembers || []).map((row) => row.user_id);
+      if (otherMemberIds.length) {
+        const { data: duplicateGoogle, error: duplicateGoogleError } = await supabaseService
+          .from("google_oauth")
+          .select("owner_id")
+          .in("owner_id", otherMemberIds)
+          .ilike("email", normalizeEmail(google.email))
+          .limit(1)
+          .maybeSingle();
+        if (duplicateGoogleError) throw duplicateGoogleError;
+        if (duplicateGoogle?.owner_id) {
+          return NextResponse.json(
+            {
+              error:
+                "This Google account is already connected to another workspace member. Use a genuinely separate work account.",
+            },
+            { status: 409 }
+          );
+        }
+      }
       const senderName = String(profile.display_name).trim();
       // A newly activated account must begin with its own verified Google
       // mailbox. A different Gmail alias can be enabled later through an
@@ -321,6 +577,17 @@ export async function POST(req: NextRequest) {
     }
     if (!ROLES.has(role)) {
       return NextResponse.json({ error: "Choose sales or manager access" }, { status: 400 });
+    }
+
+    const ownerIdentities = await workspaceOwnerIdentities(scope.workspaceId);
+    if (ownerIdentities.has(email)) {
+      return NextResponse.json(
+        {
+          error:
+            "That is Lee's owner account. A privacy test requires a genuinely separate Google Workspace user.",
+        },
+        { status: 409 }
+      );
     }
 
     const { data: existingProfile } = await supabaseService
