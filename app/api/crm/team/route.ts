@@ -4,6 +4,13 @@ import { sendMail } from "@/lib/gmail";
 import { requireWorkspaceOwner } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
 import { deriveTranscriberName } from "@/lib/transcriber";
+import {
+  calculateTranscriberUsage,
+  londonDayBounds,
+  TRANSCRIBER_DAILY_LIMIT_MAX,
+  TRANSCRIBER_DAILY_LIMIT_MIN,
+  TRANSCRIBER_HARD_LIMIT_SECONDS,
+} from "@/lib/transcriber-usage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +32,7 @@ export async function GET() {
       await Promise.all([
         supabaseService
           .from("workspace_members")
-          .select("user_id,role,status,created_at,updated_at")
+          .select("user_id,role,status,transcriber_daily_minutes_limit,created_at,updated_at")
           .eq("workspace_id", scope.workspaceId)
           .order("created_at", { ascending: true }),
         supabaseService
@@ -55,7 +62,16 @@ export async function GET() {
     }
 
     const memberIds = (membersResult.data || []).map((row) => row.user_id);
-    const [{ data: profiles, error: profilesError }, { data: googleRows, error: googleError }] =
+    const now = new Date();
+    const { start: todayStart, end: todayEnd } = londonDayBounds(now);
+    const usageWindowStart = new Date(
+      todayStart.getTime() - TRANSCRIBER_HARD_LIMIT_SECONDS * 1000
+    );
+    const [
+      { data: profiles, error: profilesError },
+      { data: googleRows, error: googleError },
+      { data: botRows, error: botRowsError },
+    ] =
       memberIds.length
         ? await Promise.all([
             supabaseService
@@ -66,13 +82,22 @@ export async function GET() {
               .from("google_oauth")
               .select("owner_id,email,refresh_token")
               .in("owner_id", memberIds),
+            supabaseService
+              .from("meet_bots")
+              .select("owner_id,created_at,ended_at,status")
+              .eq("workspace_id", scope.workspaceId)
+              .in("owner_id", memberIds)
+              .gte("created_at", usageWindowStart.toISOString())
+              .lt("created_at", todayEnd.toISOString()),
           ])
         : [
+            { data: [], error: null },
             { data: [], error: null },
             { data: [], error: null },
           ];
     if (profilesError) throw profilesError;
     if (googleError) throw googleError;
+    if (botRowsError) throw botRowsError;
 
     const profileByUser = new Map(
       (profiles || []).map((profile: any) => [profile.user_id, profile])
@@ -83,6 +108,12 @@ export async function GET() {
     const members = (membersResult.data || []).map((member: any) => {
       const profile = profileByUser.get(member.user_id) as any;
       const google = googleByUser.get(member.user_id) as any;
+      const transcriberUsage = calculateTranscriberUsage(
+        botRows || [],
+        member.user_id,
+        member.transcriber_daily_minutes_limit,
+        now
+      );
       return {
         ...member,
         displayName: profile?.display_name || null,
@@ -104,6 +135,7 @@ export async function GET() {
         transcriberName:
           profile?.transcriber_name ||
           deriveTranscriberName(profile?.display_name || null),
+        transcriberUsage,
       };
     });
 
@@ -137,23 +169,66 @@ export async function PATCH(req: NextRequest) {
     const scope = requireWorkspaceOwner();
     const body = await req.json();
     const userId = typeof body.userId === "string" ? body.userId.trim() : "";
-    const action = body.action === "activate" || body.action === "suspend"
+    const action = ["activate", "suspend", "update_transcriber_limit"].includes(
+      body.action
+    )
       ? body.action
       : "";
     if (!userId || !action)
       return NextResponse.json({ error: "Choose an account action" }, { status: 400 });
-    if (userId === scope.userId)
+    if (userId === scope.userId && action !== "update_transcriber_limit")
       return NextResponse.json({ error: "The workspace owner cannot suspend their own account here" }, { status: 400 });
 
     const { data: member, error: memberError } = await supabaseService
       .from("workspace_members")
-      .select("user_id,role,status")
+      .select("user_id,role,status,transcriber_daily_minutes_limit")
       .eq("workspace_id", scope.workspaceId)
       .eq("user_id", userId)
       .maybeSingle();
     if (memberError) throw memberError;
     if (!member || member.status === "removed")
       return NextResponse.json({ error: "Team account not found" }, { status: 404 });
+
+    if (action === "update_transcriber_limit") {
+      const dailyMinutes = Number(body.dailyMinutes);
+      if (
+        !Number.isInteger(dailyMinutes) ||
+        dailyMinutes < TRANSCRIBER_DAILY_LIMIT_MIN ||
+        dailyMinutes > TRANSCRIBER_DAILY_LIMIT_MAX
+      ) {
+        return NextResponse.json(
+          {
+            error: `Choose a daily allowance from ${TRANSCRIBER_DAILY_LIMIT_MIN} to ${TRANSCRIBER_DAILY_LIMIT_MAX} minutes`,
+          },
+          { status: 400 }
+        );
+      }
+      const { data: updated, error: updateError } = await supabaseService
+        .from("workspace_members")
+        .update({
+          transcriber_daily_minutes_limit: dailyMinutes,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("workspace_id", scope.workspaceId)
+        .eq("user_id", userId)
+        .select("user_id,role,status,transcriber_daily_minutes_limit")
+        .single();
+      if (updateError) throw updateError;
+      await supabaseService.from("access_audit_events").insert({
+        workspace_id: scope.workspaceId,
+        actor_user_id: scope.userId,
+        source: "human",
+        action: "workspace_member_transcriber_limit_updated",
+        target_table: "workspace_members",
+        target_id: userId,
+        previous_scope: {
+          transcriber_daily_minutes_limit:
+            member.transcriber_daily_minutes_limit,
+        },
+        next_scope: { transcriber_daily_minutes_limit: dailyMinutes },
+      });
+      return NextResponse.json({ member: updated });
+    }
 
     if (action === "activate") {
       const [{ data: profile, error: profileError }, { data: google, error: googleError }] =

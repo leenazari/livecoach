@@ -8,6 +8,13 @@ import {
   validMeetingUrl,
   validMeetSessionId,
 } from "@/lib/transcriber";
+import {
+  calculateTranscriberUsage,
+  londonDayBounds,
+  normaliseDailyTranscriberLimit,
+  TRANSCRIBER_DAILY_LIMIT_DEFAULT,
+  TRANSCRIBER_HARD_LIMIT_SECONDS,
+} from "@/lib/transcriber-usage";
 
 // Public Railway worker that receives Recall's transcript webhooks.
 // Override in Vercel env with MEET_WORKER_URL if the domain ever changes.
@@ -69,15 +76,34 @@ export async function POST(req: NextRequest) {
     }
 
     const identity = await getTranscriberIdentity(accountScope.userId);
-    const { data: existing, error: existingError } = await supabaseAdmin
+    const now = new Date();
+    const staleBefore = new Date(
+      now.getTime() - TRANSCRIBER_HARD_LIMIT_SECONDS * 1000
+    );
+    // Provider-side automatic leave already enforces this ceiling. Reconcile
+    // any old row left active by a lost browser or historic webhook so it
+    // cannot block a later call forever.
+    const { error: staleBotError } = await supabaseAdmin
       .from("meet_bots")
-      .select("bot_id,bot_name")
+      .update({ status: "left", ended_at: now.toISOString() })
       .eq("workspace_id", accountScope.workspaceId)
       .eq("owner_id", accountScope.userId)
-      .eq("session_id", sessionId)
       .eq("status", "active")
-      .maybeSingle();
+      .lt("created_at", staleBefore.toISOString());
+    if (staleBotError) throw staleBotError;
+
+    const { data: activeBots, error: existingError } = await supabaseAdmin
+      .from("meet_bots")
+      .select("bot_id,bot_name,session_id")
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
+      .eq("status", "active")
+      .gte("created_at", staleBefore.toISOString())
+      .limit(2);
     if (existingError) throw existingError;
+    const existing = (activeBots || []).find(
+      (bot: any) => bot.session_id === sessionId
+    );
     if (existing?.bot_id) {
       return NextResponse.json(
         {
@@ -88,6 +114,61 @@ export async function POST(req: NextRequest) {
         { headers: { "Cache-Control": "private, no-store" } }
       );
     }
+    if (activeBots?.length) {
+      return NextResponse.json(
+        {
+          error:
+            "Your notetaker is already active on another call. End that call before starting a new one.",
+          code: "transcriber_already_active",
+        },
+        { status: 409, headers: { "Cache-Control": "private, no-store" } }
+      );
+    }
+
+    const { data: membership, error: membershipError } = await supabaseAdmin
+      .from("workspace_members")
+      .select("transcriber_daily_minutes_limit")
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("user_id", accountScope.userId)
+      .eq("status", "active")
+      .single();
+    if (membershipError) throw membershipError;
+    const dailyLimitMinutes = normaliseDailyTranscriberLimit(
+      membership?.transcriber_daily_minutes_limit ??
+        TRANSCRIBER_DAILY_LIMIT_DEFAULT
+    );
+    const { start: dayStart, end: dayEnd } = londonDayBounds(now);
+    const usageWindowStart = new Date(
+      dayStart.getTime() - TRANSCRIBER_HARD_LIMIT_SECONDS * 1000
+    );
+    const { data: usageRows, error: usageError } = await supabaseAdmin
+      .from("meet_bots")
+      .select("owner_id,created_at,ended_at,status")
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
+      .gte("created_at", usageWindowStart.toISOString())
+      .lt("created_at", dayEnd.toISOString());
+    if (usageError) throw usageError;
+    const usage = calculateTranscriberUsage(
+      usageRows || [],
+      accountScope.userId,
+      dailyLimitMinutes,
+      now
+    );
+    if (usage.remainingSeconds < 60) {
+      return NextResponse.json(
+        {
+          error: `Today's ${dailyLimitMinutes} minute notetaker allowance has been used. The workspace owner can raise it in Team access.`,
+          code: "transcriber_daily_limit_reached",
+          usage,
+        },
+        { status: 429, headers: { "Cache-Control": "private, no-store" } }
+      );
+    }
+    const botHardLimitSeconds = Math.min(
+      TRANSCRIBER_HARD_LIMIT_SECONDS,
+      usage.remainingSeconds
+    );
 
     const key = process.env.RECALL_API_KEY;
     const region = process.env.RECALL_REGION; // e.g. us-west-2, eu-central-1
@@ -162,10 +243,10 @@ export async function POST(req: NextRequest) {
           activate_after: 1200,
           timeout: 600,
         },
-        waiting_room_timeout: 300,
-        noone_joined_timeout: 300,
-        in_call_not_recording_timeout: 300,
-        in_call_recording_timeout: 10800,
+        waiting_room_timeout: Math.min(300, botHardLimitSeconds),
+        noone_joined_timeout: Math.min(300, botHardLimitSeconds),
+        in_call_not_recording_timeout: Math.min(300, botHardLimitSeconds),
+        in_call_recording_timeout: botHardLimitSeconds,
         recording_permission_denied_timeout: 30,
       },
       // Recall returns this signed metadata on every webhook. The worker still
@@ -232,6 +313,16 @@ export async function POST(req: NextRequest) {
       });
     if (botInsertError) {
       await leaveUntrackedBot(region, key, data.id);
+      if (botInsertError.code === "23505") {
+        return NextResponse.json(
+          {
+            error:
+              "Your notetaker is already active on another call. End that call before starting a new one.",
+            code: "transcriber_already_active",
+          },
+          { status: 409, headers: { "Cache-Control": "private, no-store" } }
+        );
+      }
       throw botInsertError;
     }
 
@@ -243,7 +334,8 @@ export async function POST(req: NextRequest) {
         autoStop: {
           everyoneLeftSeconds: 30,
           silentFallbackMinutes: 10,
-          hardLimitHours: 3,
+          hardLimitMinutes: Math.floor(botHardLimitSeconds / 60),
+          dailyRemainingMinutes: usage.remainingMinutes,
         },
       },
       { headers: { "Cache-Control": "private, no-store" } }
