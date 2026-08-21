@@ -1,10 +1,11 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { sendOutreachMail, OUTREACH_FROM_EMAIL } from "@/lib/gmail";
 import {
-  activeClientDomains,
   emailDomain,
   londonDayBounds,
   OUTREACH_DAILY_HARD_LIMIT,
+  outreachCrmGuard,
+  prospectHasBlockedCrmRelationship,
   stepDelay,
 } from "@/lib/outreach";
 
@@ -175,8 +176,13 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     .in("target", [email, domain]);
   if (blocked?.length)
     await stopClaim("This person or company is on the do not contact list");
-  if (!isReply && (await activeClientDomains()).has(domain))
-    await stopClaim("This company already exists in the active CRM, outreach was blocked");
+  if (
+    !isReply &&
+    prospectHasBlockedCrmRelationship(prospect, await outreachCrmGuard())
+  )
+    await stopClaim(
+      "This CRM relationship is engaged, dormant or not confirmed as a new lead"
+    );
 
   const { start, end } = londonDayBounds(now);
   const { count } = await supabaseAdmin

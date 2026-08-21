@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "validate:outreach-eligibility": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-crm-eligibility.mjs",
     "validate:multi-user": "node scripts/validate-multi-user-foundation.mjs"
   },
   "dependencies": {
