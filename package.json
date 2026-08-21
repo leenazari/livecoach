@@ -8,7 +8,8 @@
   "scripts": {
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "validate:multi-user": "node scripts/validate-multi-user-foundation.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
