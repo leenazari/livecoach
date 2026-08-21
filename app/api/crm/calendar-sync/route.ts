@@ -26,6 +26,8 @@ import {
   isNonMeetingCalendarBlock,
   scheduledCalendarSyncDecision,
 } from "@/lib/calendar-events";
+import { listActiveAccountScopes } from "@/lib/automation-accounts";
+import { runWithServiceRecordScope } from "@/lib/service-scope";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -530,5 +532,13 @@ export async function GET(req: NextRequest) {
       skipped: `Waiting for the next London sync slot, currently ${decision.weekday} ${String(decision.hour).padStart(2, "0")}:00`,
     });
   }
-  return runCalendarSync();
+  const accounts = await listActiveAccountScopes({ googleConnectedOnly: true });
+  const results = await Promise.all(accounts.map(async (account) => {
+    const response = await runWithServiceRecordScope(account, () => runCalendarSync());
+    return { userId: account.userId, status: response.status, result: await response.json() };
+  }));
+  return NextResponse.json({
+    ok: results.every((row) => row.status < 400),
+    accounts: results,
+  });
 }

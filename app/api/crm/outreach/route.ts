@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { outreachCrmGuard } from "@/lib/outreach";
 import { scoreOutreachProspect } from "@/lib/outreach-scoring";
+import { requireRequestScope } from "@/lib/request-scope";
+import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
+    const account = requireRequestScope();
     const priority = req.nextUrl.searchParams.get("priority") || "all";
     const status = req.nextUrl.searchParams.get("status") || "all";
     let query = supabaseAdmin
@@ -122,7 +125,36 @@ export async function GET(req: NextRequest) {
           },
         };
       });
-    return NextResponse.json({ prospects });
+    const { data: members } = await supabaseService
+      .from("workspace_members")
+      .select("user_id,role,status")
+      .eq("workspace_id", account.workspaceId)
+      .eq("status", "active")
+      .order("created_at");
+    const memberIds = (members || []).map((row: any) => row.user_id);
+    const { data: profiles } = memberIds.length
+      ? await supabaseService
+          .from("profiles")
+          .select("user_id,display_name,outreach_sender_name,outreach_sender_email")
+          .in("user_id", memberIds)
+      : { data: [] as any[] };
+    const profileById = new Map((profiles || []).map((row: any) => [row.user_id, row]));
+    const team = (members || []).map((member: any) => {
+      const profile: any = profileById.get(member.user_id);
+      return {
+        userId: member.user_id,
+        role: member.role,
+        name: profile?.display_name || "Team member",
+        senderName: profile?.outreach_sender_name || profile?.display_name || null,
+        senderEmail: profile?.outreach_sender_email || null,
+      };
+    });
+    return NextResponse.json({
+      prospects,
+      team,
+      currentUser: account.userId,
+      canManageAssignments: account.role === "owner" || account.role === "manager",
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "failed to load outreach prospects" }, { status: 500 });
   }

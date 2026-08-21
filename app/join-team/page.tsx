@@ -154,7 +154,7 @@ export default function JoinTeamPage() {
             {status.crmAccess ? (
               <button type="button" onClick={() => router.push("/crm/outreach")} className="mt-5 w-full rounded-full bg-sage px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-ink">Open LiveCoach</button>
             ) : (
-              <p className="mt-5 rounded-xl border border-sage/40 bg-sage/[0.06] px-4 py-3 text-sm leading-relaxed text-sage">Your login is safe and ready. CRM access stays locked until Lee completes the final owner-specific automation check.</p>
+              <p className="mt-5 rounded-xl border border-sage/40 bg-sage/[0.06] px-4 py-3 text-sm leading-relaxed text-sage">Your login and Google connection are ready. CRM access stays locked until Lee presses Activate in Team access.</p>
             )}
           </div>
         ) : null}

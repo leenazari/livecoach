@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import { sendOutreachMail, OUTREACH_FROM_EMAIL } from "@/lib/gmail";
+import { sendOutreachMail } from "@/lib/gmail";
+import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import {
   emailDomain,
   londonDayBounds,
@@ -14,6 +15,7 @@ const SEND_SPACING_MS = OUTREACH_SEND_SPACING_MINUTES * 60 * 1000;
 const CLAIM_WINDOW_MS = 10 * 60 * 1000;
 
 export async function queueApprovedOutreachMessage(messageId: string) {
+  const sender = await resolveOutreachIdentity();
   const { data: message, error: messageError } = await supabaseAdmin
     .from("outreach_messages")
     .select("*")
@@ -22,7 +24,7 @@ export async function queueApprovedOutreachMessage(messageId: string) {
   if (messageError || !message) throw new Error("Draft not found");
   if (message.status !== "approved")
     throw new Error("Approve this exact draft before queueing it");
-  if (message.from_email !== OUTREACH_FROM_EMAIL)
+  if (message.sender_user_id !== sender.userId || message.from_email !== sender.senderEmail)
     throw new Error("Sender safety check failed");
   if (message.scheduled_at) {
     return { queued: true, scheduledAt: message.scheduled_at };
@@ -33,6 +35,7 @@ export async function queueApprovedOutreachMessage(messageId: string) {
     .from("outreach_messages")
     .select("scheduled_at")
     .eq("status", "approved")
+    .eq("sender_user_id", sender.userId)
     .not("scheduled_at", "is", null)
     .gte("scheduled_at", now.toISOString())
     .order("scheduled_at", { ascending: false })
@@ -99,6 +102,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     .maybeSingle();
   if (claimError) throw claimError;
   if (!message) return { sent: false, skipped: true };
+  const sender = await resolveOutreachIdentity(message.sender_user_id);
 
   const stopClaim = async (
     reason: string,
@@ -125,7 +129,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     throw new Error(reason);
   };
 
-  if (message.from_email !== OUTREACH_FROM_EMAIL)
+  if (message.from_email !== sender.senderEmail)
     await stopClaim("Sender safety check failed", "failed");
   const [{ data: prospect }, { data: enrolment }, { data: campaign }] =
     await Promise.all([
@@ -189,6 +193,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     .from("outreach_messages")
     .select("id", { count: "exact", head: true })
     .eq("status", "sent")
+    .eq("sender_user_id", sender.userId)
     .gte("sent_at", start)
     .lt("sent_at", end);
   const dailyLimit = Math.min(
@@ -209,6 +214,9 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     subject: message.subject,
     text: message.body_text,
     threadId: message.gmail_thread_id || undefined,
+    ownerId: sender.userId,
+    senderName: sender.senderName,
+    fromEmail: sender.senderEmail,
   });
   if (!sent.ok) {
     await Promise.all([
@@ -285,7 +293,8 @@ export async function dispatchDueOutreachMessage(messageId: string) {
       kind: "sent",
       metadata: {
         step: message.step_number,
-        from: OUTREACH_FROM_EMAIL,
+        from: sender.senderEmail,
+        senderUserId: sender.userId,
         messageType: isReply ? "reply" : "sequence",
         tags: message.message_tags || {},
       },

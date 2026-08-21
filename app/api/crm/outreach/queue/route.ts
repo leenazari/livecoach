@@ -7,11 +7,13 @@ import {
   prospectHasBlockedCrmRelationship,
 } from "@/lib/outreach";
 import { scoreOutreachProspect } from "@/lib/outreach-scoring";
+import { resolveRecordScope } from "@/lib/record-scope";
+import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-async function loadQueue(campaignId?: string) {
+async function loadQueue(userId: string, campaignId?: string) {
   const today = londonDate();
   let query = supabaseAdmin
     .from("outreach_enrolments")
@@ -43,7 +45,9 @@ async function loadQueue(campaignId?: string) {
     messagesByEnrolment.set(message.enrolment_id, rows);
   }
   const blockedTargets = new Set((suppressions || []).map((row: any) => String(row.target || "").toLowerCase()));
-  return (enrolments || []).map((row: any) => {
+  return (enrolments || []).filter((row: any) =>
+    prospectMap.get(row.prospect_id)?.assigned_to_user_id === userId
+  ).map((row: any) => {
     const rows = (messagesByEnrolment.get(row.id) || []).sort(
       (a: any, b: any) => Number(b.step_number) - Number(a.step_number)
     );
@@ -79,10 +83,12 @@ async function loadQueue(campaignId?: string) {
 
 export async function GET() {
   try {
+    const account = await resolveRecordScope();
     const { data: campaigns, error } = await supabaseAdmin
       .from("outreach_campaigns").select("id").eq("status", "active").order("created_at").limit(1);
     if (error) throw error;
-    return NextResponse.json({ date: londonDate(), queue: campaigns?.[0] ? await loadQueue(campaigns[0].id) : [] });
+    const sender = await resolveOutreachIdentity(account.userId).catch(() => null);
+    return NextResponse.json({ date: londonDate(), queue: campaigns?.[0] ? await loadQueue(account.userId, campaigns[0].id) : [], sender });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to load queue" }, { status: 500 });
   }
@@ -90,6 +96,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    const account = await resolveRecordScope();
     const body = await req.json().catch(() => ({}));
     const { data: campaigns, error: campaignError } = await supabaseAdmin
       .from("outreach_campaigns").select("*").eq("status", "active").order("created_at").limit(1);
@@ -98,7 +105,7 @@ export async function POST(req: NextRequest) {
     if (!campaign) return NextResponse.json({ error: "Activate a campaign first" }, { status: 400 });
     const limit = Math.min(OUTREACH_DAILY_HARD_LIMIT, Math.max(1, Number(body.limit) || campaign.daily_limit || 20));
     const today = londonDate();
-    const existing = await loadQueue(campaign.id);
+    const existing = await loadQueue(account.userId, campaign.id);
     let selection = { contactToday: 0, held: 0, skipped: 0 };
     let remaining = Math.max(0, limit - existing.length);
 
@@ -115,6 +122,17 @@ export async function POST(req: NextRequest) {
         outreachCrmGuard(),
       ]);
       if (!prospect) return NextResponse.json({ error: "Prospect not found" }, { status: 404 });
+      if (prospect.assigned_to_user_id && prospect.assigned_to_user_id !== account.userId)
+        return NextResponse.json({ error: "This prospect is assigned to another team member" }, { status: 403 });
+      if (!prospect.assigned_to_user_id) {
+        const { error: claimError } = await supabaseAdmin
+          .from("outreach_prospects")
+          .update({ assigned_to_user_id: account.userId, updated_at: new Date().toISOString() })
+          .eq("id", requestedProspectId)
+          .is("assigned_to_user_id", null);
+        if (claimError) throw claimError;
+        prospect.assigned_to_user_id = account.userId;
+      }
       const email = String(prospect.email || "").toLowerCase();
       const domain = String(prospect.company_domain || email.split("@").pop() || "").toLowerCase();
       const blocked = new Set((suppressions || []).map((row: any) => String(row.target || "").toLowerCase()));
@@ -172,16 +190,24 @@ export async function POST(req: NextRequest) {
         supabaseAdmin.from("outreach_prospects").update({ status: "queued", updated_at: now }).eq("id", requestedProspectId),
         supabaseAdmin.from("outreach_events").insert({ campaign_id: campaign.id, prospect_id: requestedProspectId, kind: "queued", metadata: { date: today, enrolment_id: enrolmentId, source: "prospects_tracker" } }),
       ]);
-      const queue = await loadQueue(campaign.id);
+      const queue = await loadQueue(account.userId, campaign.id);
       return NextResponse.json({ date: today, queue, added: previous ? 0 : 1, selection: { contactToday: 1, held: 0, skipped: 0 } });
     }
     if (!remaining) return NextResponse.json({ date: today, queue: existing, added: 0, selection: { contactToday: 0, held: 0, skipped: 0 } });
 
     // Due follow-ups come first. A response or suppression changes enrolment
     // status, so those people can never re-enter this selection.
-    const { data: due } = await supabaseAdmin.from("outreach_enrolments").select("*")
+    const { data: assignedRows } = await supabaseAdmin
+      .from("outreach_prospects")
+      .select("id")
+      .eq("assigned_to_user_id", account.userId);
+    const assignedProspectIds = (assignedRows || []).map((row: any) => row.id);
+    const dueQuery = supabaseAdmin.from("outreach_enrolments").select("*")
       .eq("campaign_id", campaign.id).eq("status", "contacted").lte("next_action_at", new Date().toISOString())
       .order("next_action_at").limit(remaining);
+    const { data: due } = assignedProspectIds.length
+      ? await dueQuery.in("prospect_id", assignedProspectIds)
+      : { data: [] as any[] };
     for (const row of due || []) {
       await supabaseAdmin.from("outreach_enrolments").update({ queued_for: today, status: "queued", updated_at: new Date().toISOString() }).eq("id", row.id);
       remaining -= 1;
@@ -191,7 +217,7 @@ export async function POST(req: NextRequest) {
       const [{ data: enrolments }, { data: suppressions }, { data: prospects }, { data: learnings }, crmGuard] = await Promise.all([
         supabaseAdmin.from("outreach_enrolments").select("id,campaign_id,prospect_id,status,queued_for").limit(5000),
         supabaseAdmin.from("outreach_suppressions").select("target"),
-        supabaseAdmin.from("outreach_prospects").select("*").in("status", ["imported", "queued"]).order("priority_score", { ascending: false }).limit(1000),
+        supabaseAdmin.from("outreach_prospects").select("*").eq("assigned_to_user_id", account.userId).in("status", ["imported", "queued"]).order("priority_score", { ascending: false }).limit(1000),
         supabaseAdmin.from("outreach_learnings").select("*").eq("campaign_id", campaign.id).eq("status", "promoted").limit(100),
         outreachCrmGuard(),
       ]);
@@ -254,7 +280,7 @@ export async function POST(req: NextRequest) {
         ]);
       }
     }
-    const queue = await loadQueue(campaign.id);
+    const queue = await loadQueue(account.userId, campaign.id);
     return NextResponse.json({
       date: today,
       queue,

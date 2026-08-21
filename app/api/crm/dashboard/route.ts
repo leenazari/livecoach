@@ -92,7 +92,9 @@ export async function GET(req: Request) {
         // Postgres reduces the complete cost history to a handful of feature
         // totals. This avoids transferring thousands of raw usage rows on
         // every dashboard visit and never truncates the all-time figure.
-        supabaseAdmin.rpc("crm_dashboard_cost_rollup"),
+        light
+          ? Promise.resolve({ data: [], error: null })
+          : supabaseAdmin.rpc("crm_dashboard_cost_rollup"),
         supabaseAdmin
           .from("upcoming_calls")
           .select("id, company_id, title, scheduled_at, intent, prepped")

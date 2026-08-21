@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getRequestScope, isVerifiedServiceRequest } from "@/lib/request-scope";
+import { getServiceRecordScope } from "@/lib/service-scope";
 import { supabaseService } from "@/lib/supabase";
 
 export type RecordScope = {
@@ -20,6 +21,14 @@ export async function resolveRecordScope(
       userId: requestScope.userId,
       workspaceId: requestScope.workspaceId,
     };
+  }
+
+  const serviceScope = getServiceRecordScope();
+  if (serviceScope) {
+    if (explicitOwnerId && explicitOwnerId !== serviceScope.userId) {
+      throw new Error("Cross-account service access is not permitted");
+    }
+    return serviceScope;
   }
 
   if (!isVerifiedServiceRequest()) {

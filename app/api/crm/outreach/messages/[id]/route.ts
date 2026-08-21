@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
+import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    const sender = await resolveOutreachIdentity();
     const body = await req.json();
     const { data: existing } = await supabaseAdmin.from("outreach_messages").select("*").eq("id", params.id).single();
     if (!existing || existing.status === "sent") return NextResponse.json({ error: "A sent email cannot be changed" }, { status: 400 });
+    if (existing.sender_user_id !== sender.userId || existing.from_email !== sender.senderEmail)
+      return NextResponse.json({ error: "This draft belongs to another sender" }, { status: 403 });
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     const nextSubject = typeof body.subject === "string" && body.subject.trim()
       ? removeDashesFromProse(body.subject.trim()).slice(0, 120)

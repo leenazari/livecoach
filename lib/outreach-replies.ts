@@ -6,6 +6,7 @@ import { modelText, parseObject } from "@/lib/outreach";
 import { ensureOutreachCompany } from "@/lib/outreach-crm";
 import { refreshOutreachLearnings } from "@/lib/outreach-learning";
 import { enqueueOpportunitySignal } from "@/lib/opportunity-signals";
+import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
 type Category = "interested" | "objection" | "later" | "referral" | "unsubscribe" | "irrelevant";
 
@@ -26,9 +27,10 @@ async function classify(text: string): Promise<{ category: Category; summary: st
   return { category, summary: String(parsed?.summary || "Reply received.").slice(0, 300) };
 }
 
-export async function sweepOutreachReplies(limit = 20) {
+export async function sweepOutreachReplies(limit = 20, senderUserId?: string) {
+  const sender = await resolveOutreachIdentity(senderUserId);
   const since = new Date(Date.now() - 45 * 86400000).toISOString();
-  const { data: sent } = await supabaseAdmin.from("outreach_messages").select("*").eq("status", "sent").gte("sent_at", since).order("sent_at", { ascending: false }).limit(200);
+  const { data: sent } = await supabaseAdmin.from("outreach_messages").select("*").eq("sender_user_id", sender.userId).eq("status", "sent").gte("sent_at", since).order("sent_at", { ascending: false }).limit(200);
   const latestByProspect = new Map<string, any>();
   for (const message of sent || []) if (!latestByProspect.has(message.prospect_id)) latestByProspect.set(message.prospect_id, message);
   const ids = [...latestByProspect.keys()];
@@ -37,7 +39,7 @@ export async function sweepOutreachReplies(limit = 20) {
   for (const prospect of prospects || []) {
     const lastSent = latestByProspect.get(prospect.id);
     if (!lastSent?.sent_at || !prospect.email) continue;
-    const messages = await recentMessages(`from:${prospect.email} newer_than:45d`, 5);
+    const messages = await recentMessages(`from:${prospect.email} newer_than:45d`, 5, sender.userId);
     const reply = messages.find((message) => emailFromHeader(message.from) === String(prospect.email).toLowerCase() && message.date > lastSent.sent_at);
     if (!reply) continue;
     const classified = await classify(`${reply.subject}\n${reply.snippet}`);
