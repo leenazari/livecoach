@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
+import { outreachSafetyError } from "@/lib/outreach-team-safety";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const sender = await resolveOutreachIdentity();
     const body = await req.json();
     const { data: existing } = await supabaseAdmin.from("outreach_messages").select("*").eq("id", params.id).single();
-    if (!existing || existing.status === "sent") return NextResponse.json({ error: "A sent email cannot be changed" }, { status: 400 });
+    if (!existing || ["sending", "sent"].includes(existing.status)) return NextResponse.json({ error: "An email being delivered or already sent cannot be changed" }, { status: 400 });
     if (existing.sender_user_id !== sender.userId || existing.from_email !== sender.senderEmail)
       return NextResponse.json({ error: "This draft belongs to another sender" }, { status: 403 });
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
@@ -63,6 +64,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
     return NextResponse.json({ message: data });
   } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "failed to save draft" }, { status: 500 });
+    const safetyMessage = outreachSafetyError(error);
+    return NextResponse.json(
+      { error: safetyMessage || error?.message || "failed to save draft" },
+      { status: safetyMessage ? 409 : 500 }
+    );
   }
 }

@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
           .eq("status", "approved")
           .not("scheduled_at", "is", null)
           .lte("scheduled_at", now)
+          .or(`claim_expires_at.is.null,claim_expires_at.lte.${now}`)
           .order("scheduled_at", { ascending: true })
           .limit(1)
           .maybeSingle();
