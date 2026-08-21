@@ -89,8 +89,8 @@ export default function JoinTeamPage() {
       setError("Enter your name.");
       return;
     }
-    if (password.length < 12) {
-      setError("Use a password with at least 12 characters.");
+    if (password.length < 8) {
+      setError("Choose your own password with at least 8 characters.");
       return;
     }
     setBusy(true);
@@ -151,7 +151,7 @@ export default function JoinTeamPage() {
             </label>
             <label className="block">
               <span className="mb-1.5 block font-mono text-[0.6rem] uppercase tracking-wider text-muted">Create password</span>
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="w-full rounded-xl border border-edge bg-ink/60 px-4 py-3 text-sm text-bone outline-none focus:border-amber/60" placeholder="At least 12 characters" />
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="w-full rounded-xl border border-edge bg-ink/60 px-4 py-3 text-sm text-bone outline-none focus:border-amber/60" placeholder="Choose any password with 8 or more characters" />
             </label>
             <button type="button" onClick={finishSetup} disabled={busy} className="w-full rounded-full bg-amber px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-ink disabled:opacity-50">{busy ? "Securing account…" : "Create my account"}</button>
           </div>

@@ -438,7 +438,7 @@ assert.match(opportunitySignalCron, /listActiveAccountScopes/);
 assert.match(opportunitySignalCron, /runWithServiceRecordScope/);
 assert.match(invitationAcceptance, /getVerifiedUser\(\)/);
 assert.match(invitationAcceptance, /accept_livecoach_invitation/);
-assert.match(joinTeam, /at least 12 characters/i);
+assert.match(joinTeam, /at least 8 characters/i);
 assert.match(joinTeam, /Connect Google/);
 assert.match(joinTeam, /CRM access stays locked/i);
 assert.match(bulkOutreachAssignment, /account\.role !== "owner"/);
