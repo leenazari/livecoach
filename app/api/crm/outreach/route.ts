@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
         .limit(5000),
       supabaseAdmin
         .from("outreach_enrolments")
-        .select("campaign_id,prospect_id,status,current_step,last_sent_at,next_action_at,updated_at")
+        .select("campaign_id,prospect_id,recipient_email,status,current_step,last_sent_at,next_action_at,updated_at")
         .order("updated_at", { ascending: false })
         .limit(2000),
     ]);
@@ -72,6 +72,7 @@ export async function GET(req: NextRequest) {
     const latestEnrolment = new Map<string, any>();
     const campaignIdsByProspect = new Map<string, string[]>();
     const activeCampaignIdsByProspect = new Map<string, string[]>();
+    const activeCampaignIdsByEmail = new Map<string, string[]>();
     for (const enrolment of enrolments || []) {
       if (!latestEnrolment.has(enrolment.prospect_id))
         latestEnrolment.set(enrolment.prospect_id, enrolment);
@@ -82,12 +83,25 @@ export async function GET(req: NextRequest) {
         const activeCampaignIds = activeCampaignIdsByProspect.get(enrolment.prospect_id) || [];
         if (!activeCampaignIds.includes(enrolment.campaign_id)) activeCampaignIds.push(enrolment.campaign_id);
         activeCampaignIdsByProspect.set(enrolment.prospect_id, activeCampaignIds);
+        const recipientEmail = String(enrolment.recipient_email || "")
+          .trim()
+          .toLowerCase();
+        if (recipientEmail) {
+          const emailCampaignIds = activeCampaignIdsByEmail.get(recipientEmail) || [];
+          if (!emailCampaignIds.includes(enrolment.campaign_id))
+            emailCampaignIds.push(enrolment.campaign_id);
+          activeCampaignIdsByEmail.set(recipientEmail, emailCampaignIds);
+        }
       }
     }
     const prospects = (data || [])
       .map((prospect: any) => {
         const campaignIds = campaignIdsByProspect.get(prospect.id) || [];
-        const activeCampaignIds = activeCampaignIdsByProspect.get(prospect.id) || [];
+        const recipientEmail = String(prospect.email || "").trim().toLowerCase();
+        const activeCampaignIds = [
+          ...(activeCampaignIdsByProspect.get(prospect.id) || []),
+          ...(activeCampaignIdsByEmail.get(recipientEmail) || []),
+        ].filter((id, index, all) => all.indexOf(id) === index);
         const scoringCampaign = campaignMap.get(activeCampaignIds[0]) || campaign;
         return {
           ...prospect,
