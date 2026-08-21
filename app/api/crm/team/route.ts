@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { sendMail } from "@/lib/gmail";
+import { sendConnectedMail } from "@/lib/mail";
 import { requireWorkspaceOwner } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
 import { deriveTranscriberName } from "@/lib/transcriber";
@@ -33,7 +33,11 @@ async function workspaceOwnerIdentities(workspaceId: string) {
   if (ownerError) throw ownerError;
   if (!ownerMember?.user_id) return new Set<string>();
 
-  const [{ data: profile, error: profileError }, { data: google, error: googleError }] =
+  const [
+    { data: profile, error: profileError },
+    { data: google, error: googleError },
+    { data: microsoft, error: microsoftError },
+  ] =
     await Promise.all([
       supabaseService
         .from("profiles")
@@ -45,12 +49,22 @@ async function workspaceOwnerIdentities(workspaceId: string) {
         .select("email")
         .eq("owner_id", ownerMember.user_id)
         .maybeSingle(),
+      supabaseService
+        .from("microsoft_oauth")
+        .select("email")
+        .eq("owner_id", ownerMember.user_id)
+        .maybeSingle(),
     ]);
   if (profileError) throw profileError;
   if (googleError) throw googleError;
+  if (microsoftError) throw microsoftError;
 
   return new Set(
-    [normalizeEmail(profile?.email), normalizeEmail(google?.email)].filter(Boolean)
+    [
+      normalizeEmail(profile?.email),
+      normalizeEmail(google?.email),
+      normalizeEmail(microsoft?.email),
+    ].filter(Boolean)
   );
 }
 
@@ -137,6 +151,7 @@ export async function GET() {
     const [
       { data: profiles, error: profilesError },
       { data: googleRows, error: googleError },
+      { data: microsoftRows, error: microsoftError },
       { data: botRows, error: botRowsError },
     ] =
       memberIds.length
@@ -147,6 +162,10 @@ export async function GET() {
               .in("user_id", memberIds),
             supabaseService
               .from("google_oauth")
+              .select("owner_id,email,refresh_token")
+              .in("owner_id", memberIds),
+            supabaseService
+              .from("microsoft_oauth")
               .select("owner_id,email,refresh_token")
               .in("owner_id", memberIds),
             supabaseService
@@ -161,9 +180,11 @@ export async function GET() {
             { data: [], error: null },
             { data: [], error: null },
             { data: [], error: null },
+            { data: [], error: null },
           ];
     if (profilesError) throw profilesError;
     if (googleError) throw googleError;
+    if (microsoftError) throw microsoftError;
     if (botRowsError) throw botRowsError;
 
     const nonOwnerIds = (membersResult.data || [])
@@ -199,6 +220,9 @@ export async function GET() {
     const googleByUser = new Map(
       (googleRows || []).map((row: any) => [row.owner_id, row])
     );
+    const microsoftByUser = new Map(
+      (microsoftRows || []).map((row: any) => [row.owner_id, row])
+    );
     const setupByUser = new Map(setupEntries);
     const latestPrivacyEventByUser = new Map<string, any>();
     for (const event of privacyEventsResult.data || []) {
@@ -209,14 +233,20 @@ export async function GET() {
     const members = (membersResult.data || []).map((member: any) => {
       const profile = profileByUser.get(member.user_id) as any;
       const google = googleByUser.get(member.user_id) as any;
+      const microsoft = microsoftByUser.get(member.user_id) as any;
       const memberEmail = normalizeEmail(profile?.email);
       const googleEmail = normalizeEmail(google?.email);
+      const microsoftEmail = normalizeEmail(microsoft?.email);
+      const mailboxEmail = googleEmail || microsoftEmail;
+      const connectorIdentitySafe =
+        (!googleEmail || !ownerIdentities.has(googleEmail)) &&
+        (!microsoftEmail || !ownerIdentities.has(microsoftEmail));
       const separateIdentity =
         member.role === "owner"
           ? false
-          : !!googleEmail &&
-            !ownerIdentities.has(googleEmail) &&
-            (!memberEmail || !ownerIdentities.has(memberEmail));
+          : !!memberEmail &&
+            !ownerIdentities.has(memberEmail) &&
+            connectorIdentitySafe;
       const setupEvidence = setupByUser.get(member.user_id) || {
         assignedProspects: 0,
         sentMessages: 0,
@@ -241,19 +271,28 @@ export async function GET() {
         email: profile?.email || null,
         googleConnected: !!google?.refresh_token,
         googleEmail: google?.email || null,
+        microsoftConnected: !!microsoft?.refresh_token,
+        microsoftEmail: microsoft?.email || null,
+        mailboxProvider: google?.refresh_token
+          ? "google"
+          : microsoft?.refresh_token
+            ? "microsoft"
+            : null,
+        mailboxConnected: !!google?.refresh_token || !!microsoft?.refresh_token,
         outreachSenderName: profile?.outreach_sender_name || profile?.display_name || null,
-        outreachSenderEmail: profile?.outreach_sender_email || google?.email || null,
+        outreachSenderEmail: profile?.outreach_sender_email || mailboxEmail || null,
         canActivate:
           member.status !== "active" &&
           member.status !== "removed" &&
           !!profile?.display_name &&
-          !!google?.refresh_token &&
           separateIdentity,
         activationIssues: [
           ...(!profile?.display_name ? ["Finish account setup"] : []),
-          ...(!google?.refresh_token || !google?.email ? ["Connect this user's Google account"] : []),
-          ...(google?.refresh_token && google?.email && !separateIdentity
-            ? ["Use a Google account that is different from Lee's owner account"]
+          ...(!memberEmail || ownerIdentities.has(memberEmail)
+            ? ["Use a login address that is different from Lee's owner account"]
+            : []),
+          ...(!connectorIdentitySafe
+            ? ["Use a mailbox that is different from Lee's owner connections"]
             : []),
         ],
         transcriberName:
@@ -291,7 +330,7 @@ export async function GET() {
         activation: {
           ready: true,
           reason:
-            "After account and Google setup, the owner activates access. Each user keeps a separate Calendar, Gmail, transcriber and private Brain memory.",
+            "After separate account setup, the owner can activate CRM access. Google or Microsoft is optional and unlocks only that user's email and calendar features.",
         },
         ownerIdentities: [...ownerIdentities],
       },
@@ -342,7 +381,13 @@ export async function PATCH(req: NextRequest) {
         );
       }
       if (action === "confirm_privacy_test") {
-        const [ownerIdentities, setupEvidence, profileResult, googleResult] =
+        const [
+          ownerIdentities,
+          setupEvidence,
+          profileResult,
+          googleResult,
+          microsoftResult,
+        ] =
           await Promise.all([
             workspaceOwnerIdentities(scope.workspaceId),
             memberSetupEvidence(scope.workspaceId, userId),
@@ -356,23 +401,34 @@ export async function PATCH(req: NextRequest) {
               .select("email,refresh_token")
               .eq("owner_id", userId)
               .maybeSingle(),
+            supabaseService
+              .from("microsoft_oauth")
+              .select("email,refresh_token")
+              .eq("owner_id", userId)
+              .maybeSingle(),
           ]);
         if (profileResult.error) throw profileResult.error;
         if (googleResult.error) throw googleResult.error;
+        if (microsoftResult.error) throw microsoftResult.error;
 
         const memberEmail = normalizeEmail(profileResult.data?.email);
         const googleEmail = normalizeEmail(googleResult.data?.email);
+        const microsoftEmail = normalizeEmail(microsoftResult.data?.email);
+        const mailboxConnected =
+          (!!googleResult.data?.refresh_token && !!googleEmail) ||
+          (!!microsoftResult.data?.refresh_token && !!microsoftEmail);
         const separateIdentity =
-          !!googleResult.data?.refresh_token &&
-          !!googleEmail &&
-          !ownerIdentities.has(googleEmail) &&
-          (!memberEmail || !ownerIdentities.has(memberEmail));
+          !!memberEmail &&
+          !ownerIdentities.has(memberEmail) &&
+          (!googleEmail || !ownerIdentities.has(googleEmail)) &&
+          (!microsoftEmail || !ownerIdentities.has(microsoftEmail));
         const senderReady =
           !!normalizeEmail(profileResult.data?.outreach_sender_email) &&
           !!String(profileResult.data?.outreach_sender_name || "").trim();
         const missing = [
           ...(member.status !== "active" ? ["activate the isolated account"] : []),
-          ...(!separateIdentity ? ["connect a separate Google account"] : []),
+          ...(!separateIdentity ? ["use a separate login and mailbox identity"] : []),
+          ...(!mailboxConnected ? ["connect Google or Microsoft for the outreach test"] : []),
           ...(!senderReady ? ["finish the outreach sender setup"] : []),
           ...(setupEvidence.assignedProspects < 1 ? ["assign a test prospect"] : []),
           ...(setupEvidence.sentMessages < 1 ? ["send a test outreach email"] : []),
@@ -460,7 +516,12 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === "activate") {
-      const [{ data: profile, error: profileError }, { data: google, error: googleError }] =
+      const [
+        { data: profile, error: profileError },
+        { data: google, error: googleError },
+        { data: microsoft, error: microsoftError },
+        ownerIdentities,
+      ] =
         await Promise.all([
           supabaseService
             .from("profiles")
@@ -472,13 +533,25 @@ export async function PATCH(req: NextRequest) {
             .select("email,refresh_token")
             .eq("owner_id", userId)
             .maybeSingle(),
+          supabaseService
+            .from("microsoft_oauth")
+            .select("email,refresh_token")
+            .eq("owner_id", userId)
+            .maybeSingle(),
+          workspaceOwnerIdentities(scope.workspaceId),
         ]);
       if (profileError) throw profileError;
       if (googleError) throw googleError;
+      if (microsoftError) throw microsoftError;
       if (!profile?.display_name)
         return NextResponse.json({ error: "This person must finish account setup first" }, { status: 409 });
-      if (!google?.refresh_token || !google.email)
-        return NextResponse.json({ error: "This person must connect their own Google account first" }, { status: 409 });
+      const memberEmail = normalizeEmail(profile.email);
+      if (!memberEmail || ownerIdentities.has(memberEmail)) {
+        return NextResponse.json(
+          { error: "This person must use a login address separate from Lee's owner account" },
+          { status: 409 }
+        );
+      }
       const { data: otherMembers, error: otherMembersError } = await supabaseService
         .from("workspace_members")
         .select("user_id")
@@ -487,7 +560,7 @@ export async function PATCH(req: NextRequest) {
         .neq("status", "removed");
       if (otherMembersError) throw otherMembersError;
       const otherMemberIds = (otherMembers || []).map((row) => row.user_id);
-      if (otherMemberIds.length) {
+      if (otherMemberIds.length && google?.refresh_token && google.email) {
         const { data: duplicateGoogle, error: duplicateGoogleError } = await supabaseService
           .from("google_oauth")
           .select("owner_id")
@@ -506,16 +579,35 @@ export async function PATCH(req: NextRequest) {
           );
         }
       }
+      if (otherMemberIds.length && microsoft?.refresh_token && microsoft.email) {
+        const { data: duplicateMicrosoft, error: duplicateMicrosoftError } =
+          await supabaseService
+            .from("microsoft_oauth")
+            .select("owner_id")
+            .in("owner_id", otherMemberIds)
+            .ilike("email", normalizeEmail(microsoft.email))
+            .limit(1)
+            .maybeSingle();
+        if (duplicateMicrosoftError) throw duplicateMicrosoftError;
+        if (duplicateMicrosoft?.owner_id) {
+          return NextResponse.json(
+            {
+              error:
+                "This Microsoft account is already connected to another workspace member. Use a genuinely separate work account.",
+            },
+            { status: 409 }
+          );
+        }
+      }
       const senderName = String(profile.display_name).trim();
-      // A newly activated account must begin with its own verified Google
-      // mailbox. A different Gmail alias can be enabled later through an
-      // owner-controlled verification flow, never from a self-edited profile.
-      const senderEmail = String(google.email).trim().toLowerCase();
+      // CRM access is provider-neutral. A verified mailbox unlocks outreach,
+      // but its absence never grants access to another member's connection.
+      const senderEmail = normalizeEmail(google?.email || microsoft?.email);
       const { error: profileUpdateError } = await supabaseService
         .from("profiles")
         .update({
-          outreach_sender_name: senderName,
-          outreach_sender_email: senderEmail,
+          outreach_sender_name: senderEmail ? senderName : null,
+          outreach_sender_email: senderEmail || null,
           updated_at: new Date().toISOString(),
         })
         .eq("user_id", userId);
@@ -584,7 +676,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "That is Lee's owner account. A privacy test requires a genuinely separate Google Workspace user.",
+            "That is Lee's owner account. A privacy test requires a genuinely separate email address.",
         },
         { status: 409 }
       );
@@ -660,11 +752,11 @@ export async function POST(req: NextRequest) {
     if (!actionLink) throw new Error("Supabase did not create an invitation link");
 
     const safeLink = htmlEscape(actionLink);
-    const sent = await sendMail({
+    const sent = await sendConnectedMail({
       to: email,
       subject: "Your LiveCoach sales workspace invitation",
-      text: `Lee has invited you to the Interviewa LiveCoach sales workspace. Open this secure link within seven days to set up your account. ${actionLink}`,
-      html: `<p>Lee has invited you to the Interviewa LiveCoach sales workspace.</p><p>You will set up your own login, then connect your own Google Calendar and Gmail. Lee's private calls, emails, investors and Brain history are not shared with your account.</p><p><a href="${safeLink}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#d9a35f;color:#171614;text-decoration:none;font-weight:700;">Set up LiveCoach</a></p><p>This secure invitation expires in seven days.</p>`,
+      text: `Lee has invited you to the Interviewa LiveCoach sales workspace. Open this secure link within seven days to set up your account. Google or Microsoft is optional for core CRM access. ${actionLink}`,
+      html: `<p>Lee has invited you to the Interviewa LiveCoach sales workspace.</p><p>You will set up your own login. Google or Microsoft can then be connected for your own email and calendar, but neither is required for core CRM access. Lee's private calls, emails, investors and Brain history are not shared with your account.</p><p><a href="${safeLink}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#d9a35f;color:#171614;text-decoration:none;font-weight:700;">Set up LiveCoach</a></p><p>This secure invitation expires in seven days.</p>`,
     });
     if (!sent.ok) throw new Error(sent.error || "The invitation email could not be sent");
 

@@ -5,8 +5,8 @@ import {
   freshMessageText,
   nameFromHeader,
   newInboxMessagesSince,
-  type GmailMsg,
-} from "@/lib/gmail";
+  type MailMessage,
+} from "@/lib/mail";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { upsertTasks } from "@/lib/tasks";
@@ -67,7 +67,7 @@ async function companyForSender(email: string): Promise<string | null> {
   return contacts?.[0]?.company_id || prospects?.[0]?.crm_company_id || null;
 }
 
-const automatedMessage = (message: GmailMsg) => {
+const automatedMessage = (message: MailMessage) => {
   const sender = emailFromHeader(message.from);
   return (
     /(?:^|[._-])(no-?reply|notifications?|mailer-daemon)(?:@|[._-])/i.test(sender) ||
@@ -77,7 +77,7 @@ const automatedMessage = (message: GmailMsg) => {
 };
 
 async function classifyFreshMessage(input: {
-  message: GmailMsg;
+  message: MailMessage;
   freshText: string;
   knownContact: boolean;
 }) {
@@ -133,7 +133,7 @@ High means a direct request, commitment, material client or partner development,
 async function runAccount() {
   try {
     const identity = await resolveOutreachIdentity();
-    const ownAddresses = new Set([identity.googleEmail, identity.senderEmail]);
+    const ownAddresses = new Set([identity.mailboxEmail, identity.senderEmail]);
     const config = await getAppConfigValue(CURSOR_KEY);
     // A full quiet weekend can contain more than 30 automated messages. The
     // metadata pass is inexpensive, so keep enough headroom to avoid skipping
@@ -187,11 +187,12 @@ async function runAccount() {
             kind: "email_alert",
             linkKind: "email",
             source: "important_email_monitor",
-            sourceRef: `gmail:${message.id}`,
+            sourceRef: `${identity.provider}:${message.id}`,
             dueAt: result.dueAt,
             payload: {
-              gmailMessageId: message.id,
-              gmailThreadId: message.threadId,
+              mailProvider: identity.provider,
+              mailMessageId: message.id,
+              mailThreadId: message.threadId,
               sender: senderEmail,
               subject: clean(message.subject, 240),
               receivedAt: message.date,
@@ -250,7 +251,7 @@ async function runAccount() {
         // Reusing the old cursor retries that delta next run; task fingerprints
         // keep any already successful alerts from duplicating.
         value: failed > 0 ? config?.value || delta.cursor : delta.cursor,
-        note: "Gmail History cursor for new-message-only monitoring",
+        note: "Mailbox delta cursor for new-message-only monitoring",
       }),
       setAppConfigValue({
         key: REPORT_KEY,
@@ -275,7 +276,7 @@ export async function GET(req: NextRequest) {
   if (!scheduledMonitorWindow()) {
     return NextResponse.json({ ok: true, skipped: "Outside the London monitoring window" });
   }
-  const accounts = await listActiveAccountScopes({ googleConnectedOnly: true });
+  const accounts = await listActiveAccountScopes({ connectedOnly: true });
   const results = await Promise.all(accounts.map(async (account) => {
     const response = await runWithServiceRecordScope(account, () => runAccount());
     return { userId: account.userId, status: response.status, result: await response.json() };

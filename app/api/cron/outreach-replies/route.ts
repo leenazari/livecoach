@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET || "";
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ error: "not authorised" }, { status: 401 });
   try {
-    const accounts = await listActiveAccountScopes({ googleConnectedOnly: true });
+    const accounts = await listActiveAccountScopes({ connectedOnly: true });
     const results = await Promise.all(accounts.map(async (account) => {
       const result = await runWithServiceRecordScope(account, () =>
         sweepOutreachReplies(20, account.userId)

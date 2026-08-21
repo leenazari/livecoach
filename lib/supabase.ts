@@ -25,7 +25,7 @@ const SCOPED_RECORD_TABLES = new Set([
   "client_context", "coaching_points", "companies", "company_priority",
   "contact_company_overrides", "contacts", "crm_company_redirects",
   "daily_briefs", "departments", "document_jobs", "external_refs",
-  "field_definitions", "follow_ups", "google_oauth", "interview_sessions",
+  "field_definitions", "follow_ups", "google_oauth", "microsoft_oauth", "interview_sessions",
   "interview_summaries", "knowledge_base", "knowledge_docs", "lessons",
   "meet_bots", "meet_utterances", "opportunities", "opportunity_events",
   "opportunity_signal_receipts", "outreach_campaigns", "outreach_enrolments",

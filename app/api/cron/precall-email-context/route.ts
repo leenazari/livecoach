@@ -262,7 +262,7 @@ async function runAccount(req: NextRequest) {
     await setAppConfigValue({
       key: "precall_email_context_last_run",
       value: JSON.stringify(report),
-      note: "Latest automatic pre-call Gmail context refresh",
+      note: "Latest automatic pre-call email context refresh",
     });
     return NextResponse.json(report);
   } catch (error: any) {
@@ -284,7 +284,7 @@ export async function GET(req: NextRequest) {
       skipped: "Outside the London pre-call email refresh window",
     });
   }
-  const accounts = await listActiveAccountScopes({ googleConnectedOnly: true });
+  const accounts = await listActiveAccountScopes({ connectedOnly: true });
   const results = await Promise.all(accounts.map(async (account) => {
     const response = await runWithServiceRecordScope(account, () => runAccount(req));
     return { userId: account.userId, status: response.status, result: await response.json() };

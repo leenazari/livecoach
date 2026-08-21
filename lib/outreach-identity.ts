@@ -9,6 +9,9 @@ export type OutreachIdentity = {
   workspaceId: string;
   senderName: string;
   senderEmail: string;
+  provider: "google" | "microsoft";
+  mailboxEmail: string;
+  // Kept while older call sites migrate to the provider-neutral name.
   googleEmail: string;
 };
 
@@ -20,7 +23,12 @@ export async function resolveOutreachIdentity(
   if (requestScope && scope.userId !== requestScope.userId) {
     throw new Error("Another account's outreach identity is not available");
   }
-  const [{ data: member, error: memberError }, { data: profile, error: profileError }, { data: google, error: googleError }] =
+  const [
+    { data: member, error: memberError },
+    { data: profile, error: profileError },
+    { data: google, error: googleError },
+    { data: microsoft, error: microsoftError },
+  ] =
     await Promise.all([
       supabaseService
         .from("workspace_members")
@@ -38,19 +46,33 @@ export async function resolveOutreachIdentity(
         .select("email,refresh_token")
         .eq("owner_id", scope.userId)
         .maybeSingle(),
+      supabaseService
+        .from("microsoft_oauth")
+        .select("email,refresh_token")
+        .eq("owner_id", scope.userId)
+        .maybeSingle(),
     ]);
   if (memberError) throw memberError;
   if (profileError) throw profileError;
   if (googleError) throw googleError;
+  if (microsoftError) throw microsoftError;
   if (!member || member.status !== "active")
     throw new Error("This account is not active");
-  if (!google?.refresh_token || !google.email)
-    throw new Error("Connect this account's Google Calendar and Gmail first");
-  const senderEmail = String(profile?.outreach_sender_email || google.email)
+  const provider = google?.refresh_token && google.email
+    ? "google"
+    : microsoft?.refresh_token && microsoft.email
+      ? "microsoft"
+      : null;
+  const mailboxEmail = String(google?.email || microsoft?.email || "")
+    .trim()
+    .toLowerCase();
+  if (!provider || !mailboxEmail)
+    throw new Error("Connect this account's Google or Microsoft email first");
+  const senderEmail = String(profile?.outreach_sender_email || mailboxEmail)
     .trim()
     .toLowerCase();
   const senderName = String(
-    profile?.outreach_sender_name || profile?.display_name || google.email
+    profile?.outreach_sender_name || profile?.display_name || mailboxEmail
   ).trim();
   if (!senderEmail || !senderName)
     throw new Error("This account needs an outreach sender identity");
@@ -59,6 +81,8 @@ export async function resolveOutreachIdentity(
     workspaceId: scope.workspaceId,
     senderName,
     senderEmail,
-    googleEmail: String(google.email).trim().toLowerCase(),
+    provider,
+    mailboxEmail,
+    googleEmail: mailboxEmail,
   };
 }

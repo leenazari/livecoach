@@ -1,4 +1,4 @@
-import { googleConnected } from "@/lib/google";
+import { connectedEmail } from "@/lib/mail";
 
 // SPEAKER IDENTITY.
 //
@@ -60,15 +60,14 @@ export type SpeakerMap = {
   canonical: Map<string, string>;
 };
 
-// Who the host is. Read from the connected Google account and the workspace
+// Who the host is. Read from the user's connected email account and workspace
 // profile rather than hardcoded, so this does not rot the moment someone else
 // uses the app.
 export async function loadHostIdentity(): Promise<{
   name: string;
   email: string;
 }> {
-  const connection = await googleConnected();
-  const email = connection.email || "";
+  const email = await connectedEmail();
 
   // A name from the email local part is a decent fallback when nothing better
   // exists: lee.nazari@ becomes "Lee Nazari".

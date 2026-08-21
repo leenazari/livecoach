@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { listActiveAccountScopes } from "@/lib/automation-accounts";
 import { runWithServiceRecordScope } from "@/lib/service-scope";
 import { supabaseAdmin } from "@/lib/supabase";
-import { sendMail } from "@/lib/gmail";
+import { sendConnectedMail } from "@/lib/mail";
 import { GET as getDashboard } from "@/app/api/crm/dashboard/route";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
@@ -127,7 +127,7 @@ async function runDigest(req: NextRequest) {
     ) {
       throw new Error(
         syncResult?.error ||
-          "Google Calendar could not be completely reconciled before the brief"
+          "The connected calendar could not be completely reconciled before the brief"
       );
     }
 
@@ -470,7 +470,7 @@ async function runDigest(req: NextRequest) {
       dashboardUrl,
     });
 
-    const sent = await sendMail({
+    const sent = await sendConnectedMail({
       to: RECIPIENT,
       subject: isSunday
         ? `LiveCoach week ahead: ${when}`
@@ -509,7 +509,7 @@ export async function GET(req: NextRequest) {
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "not authorised" }, { status: 401 });
   }
-  const owners = await listActiveAccountScopes({ ownersOnly: true, googleConnectedOnly: true });
+  const owners = await listActiveAccountScopes({ ownersOnly: true, connectedOnly: true });
   if (owners.length !== 1)
     return NextResponse.json({ error: "A single active workspace owner is required for the founder digest" }, { status: 409 });
   return runWithServiceRecordScope(owners[0], () => runDigest(req));
