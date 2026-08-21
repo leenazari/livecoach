@@ -226,6 +226,11 @@ export default function TeamAccessPage() {
     }
   };
 
+  const pendingInvitations =
+    data?.invitations.filter((invitation) => invitation.status === "pending") || [];
+  const previousInvitationAttempts =
+    data?.invitations.filter((invitation) => invitation.status !== "pending") || [];
+
   return (
     <main className="relative z-10 mx-auto max-w-[1050px] px-4 py-8 sm:px-6 sm:py-10">
       <NavMenu />
@@ -567,9 +572,12 @@ export default function TeamAccessPage() {
           </section>
 
           <section className="rounded-2xl border border-edge bg-panel/45 p-5">
-            <h2 className="font-display text-lg text-bone">Invitation history</h2>
+            <h2 className="font-display text-lg text-bone">Pending invitations</h2>
+            <p className="mt-1 text-xs leading-relaxed text-muted">
+              One current invitation is shown per person. Replaced links remain in the audit history but are not extra accounts.
+            </p>
             <div className="mt-4 space-y-3">
-              {data.invitations.length ? data.invitations.map((invitation) => (
+              {pendingInvitations.length ? pendingInvitations.map((invitation) => (
                 <div key={invitation.id} className="flex flex-col gap-3 rounded-xl border border-edge bg-ink/35 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm text-bone">{invitation.email}</p>
@@ -586,9 +594,26 @@ export default function TeamAccessPage() {
                   </div>
                 </div>
               )) : (
-                <p className="text-sm text-muted">No invitations have been sent.</p>
+                <p className="text-sm text-muted">No invitations are waiting to be accepted.</p>
               )}
             </div>
+            {previousInvitationAttempts.length ? (
+              <details className="mt-4 rounded-xl border border-edge bg-ink/20 p-4">
+                <summary className="cursor-pointer font-mono text-[0.6rem] uppercase tracking-wider text-muted">
+                  Previous invitation attempts ({previousInvitationAttempts.length})
+                </summary>
+                <div className="mt-3 space-y-2">
+                  {previousInvitationAttempts.map((invitation) => (
+                    <div key={invitation.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-edge/60 pt-2 text-xs text-muted first:border-t-0 first:pt-0">
+                      <span>{invitation.email} · {new Date(invitation.created_at).toLocaleString("en-GB")}</span>
+                      <span className={`rounded-full border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-wider ${badge(invitation.status)}`}>
+                        {invitation.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ) : null}
           </section>
         </div>
       ) : null}
