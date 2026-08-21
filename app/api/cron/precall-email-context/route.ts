@@ -4,10 +4,14 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { setAppConfigValue } from "@/lib/app-config";
 import { resolveRecordScope } from "@/lib/record-scope";
+import { listActiveAccountScopes } from "@/lib/automation-accounts";
+import { runWithServiceRecordScope } from "@/lib/service-scope";
+import { POST as pullEmailContext } from "@/app/api/crm/email-pull/route";
+import { POST as buildPrepIntent } from "@/app/api/crm/companies/[id]/prep-intent/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const HOUR = 60 * 60 * 1000;
 const LOOK_AHEAD_HOURS = 72;
@@ -82,18 +86,7 @@ const attendeeEmailFor = (
   );
 };
 
-async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET || "";
-  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
-    return NextResponse.json({ error: "not authorised" }, { status: 401 });
-  }
-  if (!scheduledRefreshWindow()) {
-    return NextResponse.json({
-      ok: true,
-      skipped: "Outside the London pre-call email refresh window",
-    });
-  }
-
+async function runAccount(req: NextRequest) {
   try {
     await resolveRecordScope();
     const startedAt = new Date();
@@ -154,12 +147,6 @@ async function run(req: NextRequest) {
     attendeeConfig.internalDomains.add("ai13.com");
     attendeeConfig.internalDomains.add("interviewa.com");
     const selected = groups.slice(0, MAX_COMPANIES_PER_RUN);
-    const origin = new URL(req.url).origin;
-    const serviceHeaders = {
-      Authorization: `Bearer ${secret}`,
-      "Content-Type": "application/json",
-    };
-
     let checked = 0;
     let contextRefreshed = 0;
     let intentsRefreshed = 0;
@@ -181,15 +168,15 @@ async function run(req: NextRequest) {
       let errorText = "";
 
       try {
-        const emailResponse = await fetch(`${origin}/api/crm/email-pull`, {
+        const emailResponse = await pullEmailContext(new NextRequest(new URL("/api/crm/email-pull", req.url), {
           method: "POST",
           cache: "no-store",
-          headers: serviceHeaders,
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             companyId: group.companyId,
             ...(email ? { email } : {}),
           }),
-        });
+        }));
         const result = await emailResponse.json().catch(() => ({}));
         messages = Number(result?.messages) || 0;
         if (emailResponse.ok && result?.ok) {
@@ -236,14 +223,14 @@ async function run(req: NextRequest) {
       if (changed) {
         for (const call of group.calls) {
           try {
-            const intentResponse = await fetch(
-              `${origin}/api/crm/companies/${group.companyId}/prep-intent`,
-              {
+            const intentResponse = await buildPrepIntent(
+              new NextRequest(new URL(`/api/crm/companies/${group.companyId}/prep-intent`, req.url), {
                 method: "POST",
                 cache: "no-store",
-                headers: serviceHeaders,
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ concise: true, upcomingId: call.id }),
-              }
+              }),
+              { params: { id: group.companyId } }
             );
             if (intentResponse.ok) intentsRefreshed += 1;
           } catch {
@@ -287,5 +274,23 @@ async function run(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  return run(req);
+  const secret = process.env.CRON_SECRET || "";
+  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "not authorised" }, { status: 401 });
+  }
+  if (!scheduledRefreshWindow()) {
+    return NextResponse.json({
+      ok: true,
+      skipped: "Outside the London pre-call email refresh window",
+    });
+  }
+  const accounts = await listActiveAccountScopes({ googleConnectedOnly: true });
+  const results = await Promise.all(accounts.map(async (account) => {
+    const response = await runWithServiceRecordScope(account, () => runAccount(req));
+    return { userId: account.userId, status: response.status, result: await response.json() };
+  }));
+  return NextResponse.json({
+    ok: results.every((row) => row.status < 400),
+    accounts: results,
+  });
 }

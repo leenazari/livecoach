@@ -13,6 +13,9 @@ import { upsertTasks } from "@/lib/tasks";
 import { getAppConfigValue, setAppConfigValue } from "@/lib/app-config";
 import { POST as runCalendarSync } from "@/app/api/crm/calendar-sync/route";
 import { enqueueOpportunitySignal } from "@/lib/opportunity-signals";
+import { listActiveAccountScopes } from "@/lib/automation-accounts";
+import { runWithServiceRecordScope } from "@/lib/service-scope";
+import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,12 +23,6 @@ export const maxDuration = 120;
 
 const CURSOR_KEY = "important_email_monitor_cursor";
 const REPORT_KEY = "important_email_monitor_last_run";
-const MINE = new Set([
-  "lee@ai13.com",
-  "lee@interviewa.com",
-  "lee.nazari@gmail.com",
-]);
-
 const ACTION_SIGNAL = /\b(action required|urgent|please (?:confirm|review|approve|reply|respond|sign|send)|can you|could you|would you|need you|deadline|due by|overdue|proposal|contract|agreement|invoice|payment|reschedul|new time|new date|moved|cancelled|canceled|availability)\b/i;
 const CALENDAR_SIGNAL = /\b(calendar|invite|meeting|call|appointment|reschedul|new time|new date|time has changed|date has changed|moved to|cancelled|canceled|availability)\b/i;
 const LOW_VALUE_SIGNAL = /\b(newsletter|weekly digest|daily digest|roundup|sale ends|special offer|webinar|unsubscribe|marketing preferences|your receipt|order confirmation)\b/i;
@@ -133,16 +130,10 @@ High means a direct request, commitment, material client or partner development,
   };
 }
 
-export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET || "";
-  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
-    return NextResponse.json({ error: "not authorised" }, { status: 401 });
-  }
-  if (!scheduledMonitorWindow()) {
-    return NextResponse.json({ ok: true, skipped: "Outside the London monitoring window" });
-  }
-
+async function runAccount() {
   try {
+    const identity = await resolveOutreachIdentity();
+    const ownAddresses = new Set([identity.googleEmail, identity.senderEmail]);
     const config = await getAppConfigValue(CURSOR_KEY);
     // A full quiet weekend can contain more than 30 automated messages. The
     // metadata pass is inexpensive, so keep enough headroom to avoid skipping
@@ -157,7 +148,7 @@ export async function GET(req: NextRequest) {
     for (const message of delta.messages) {
       checked += 1;
       const senderEmail = emailFromHeader(message.from);
-      if (!senderEmail || MINE.has(senderEmail)) continue;
+      if (!senderEmail || ownAddresses.has(senderEmail)) continue;
       const metadataText = `${message.subject}\n${message.snippet}`;
       const calendarSignal = CALENDAR_SIGNAL.test(metadataText);
       if (calendarSignal) calendarSignals += 1;
@@ -274,4 +265,23 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  const secret = process.env.CRON_SECRET || "";
+  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "not authorised" }, { status: 401 });
+  }
+  if (!scheduledMonitorWindow()) {
+    return NextResponse.json({ ok: true, skipped: "Outside the London monitoring window" });
+  }
+  const accounts = await listActiveAccountScopes({ googleConnectedOnly: true });
+  const results = await Promise.all(accounts.map(async (account) => {
+    const response = await runWithServiceRecordScope(account, () => runAccount());
+    return { userId: account.userId, status: response.status, result: await response.json() };
+  }));
+  return NextResponse.json({
+    ok: results.every((row) => row.status < 400),
+    accounts: results,
+  });
 }

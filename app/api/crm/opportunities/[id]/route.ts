@@ -9,6 +9,8 @@ import {
   WIN_OUTLOOKS,
   cleanStringList,
 } from "@/lib/opportunity-fields";
+import { requireRequestScope } from "@/lib/request-scope";
+import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -53,6 +55,7 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    const account = requireRequestScope();
     const body = await req.json();
     const { data: current, error: currentError } = await supabaseAdmin
       .from("opportunities")
@@ -64,6 +67,33 @@ export async function PATCH(
       return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
 
     const patch: Record<string, any> = {};
+    if (body.assignedToUserId === null || body.assignedToUserId === "") {
+      if (
+        account.role === "sales" &&
+        current.assigned_to_user_id !== account.userId
+      ) {
+        return NextResponse.json({ error: "You can only release your own opportunity" }, { status: 403 });
+      }
+      patch.assigned_to_user_id = null;
+    } else if (typeof body.assignedToUserId === "string") {
+      const requested = body.assignedToUserId.trim();
+      if (account.role === "sales" && requested !== account.userId)
+        return NextResponse.json({ error: "You can only claim an opportunity for yourself" }, { status: 403 });
+      const { data: assignee } = await supabaseService
+        .from("workspace_members")
+        .select("user_id")
+        .eq("workspace_id", account.workspaceId)
+        .eq("user_id", requested)
+        .eq("status", "active")
+        .maybeSingle();
+      if (!assignee)
+        return NextResponse.json({ error: "Choose an active team member" }, { status: 400 });
+      patch.assigned_to_user_id = requested;
+      // Assignment is the owner's explicit sharing decision for the pipeline
+      // record only. The linked client, calls, emails and transcripts retain
+      // their own visibility and are never promoted with it.
+      if (requested !== current.owner_id) patch.visibility = "team";
+    }
     if (typeof body.status === "string" && STATUSES.includes(body.status)) {
       patch.status = body.status;
     }
@@ -251,7 +281,7 @@ export async function PATCH(
     // Opportunity fields are duplicated into the compact commercial memory
     // used by Brain and call prep. Refresh it now so a saved probability or
     // next action cannot remain stale until another call is processed.
-    if (data?.company_id)
+    if (data?.company_id && data.owner_id === account.userId)
       await getCommercialMemory(data.company_id, data.workstream_id || null);
     return NextResponse.json({ opportunity: data });
   } catch (err: any) {

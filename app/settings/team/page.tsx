@@ -15,6 +15,10 @@ type Member = {
   googleConnected: boolean;
   googleEmail: string | null;
   transcriberName: string;
+  outreachSenderName: string | null;
+  outreachSenderEmail: string | null;
+  canActivate: boolean;
+  activationIssues: string[];
   created_at: string;
 };
 
@@ -98,6 +102,24 @@ export default function TeamAccessPage() {
       await load();
     } catch (err: any) {
       setError(err?.message || "The invitation was not revoked");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setMemberAccess = async (userId: string, action: "activate" | "suspend") => {
+    setBusy(true);
+    setError("");
+    setNote("");
+    try {
+      await crmFetch("/api/crm/team", {
+        method: "PATCH",
+        body: JSON.stringify({ userId, action }),
+      });
+      setNote(action === "activate" ? "Account activated." : "Account suspended immediately.");
+      await load();
+    } catch (err: any) {
+      setError(err?.message || "The account was not updated");
     } finally {
       setBusy(false);
     }
@@ -209,10 +231,22 @@ export default function TeamAccessPage() {
                     <p className="mt-1 text-xs text-muted">
                       Notetaker ready as {member.transcriberName}
                     </p>
+                    <p className="mt-1 text-xs text-muted">
+                      Outreach sends as {member.outreachSenderName || member.displayName || "this user"} &lt;{member.outreachSenderEmail || member.googleEmail || "Google connection required"}&gt;
+                    </p>
+                    {member.activationIssues?.length && member.status !== "active" ? (
+                      <p className="mt-2 text-xs text-amber">{member.activationIssues.join(". ")}</p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-muted">{member.role}</span>
                     <span className={`rounded-full border px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider ${badge(member.status)}`}>{member.status}</span>
+                    {member.role !== "owner" && member.status !== "active" ? (
+                      <button type="button" onClick={() => setMemberAccess(member.user_id, "activate")} disabled={busy || !member.canActivate} className="rounded-full border border-sage/50 bg-sage/10 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-sage disabled:opacity-40">Activate</button>
+                    ) : null}
+                    {member.role !== "owner" && member.status === "active" ? (
+                      <button type="button" onClick={() => setMemberAccess(member.user_id, "suspend")} disabled={busy} className="rounded-full border border-rust/50 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-rust disabled:opacity-40">Suspend</button>
+                    ) : null}
                   </div>
                 </div>
               ))}

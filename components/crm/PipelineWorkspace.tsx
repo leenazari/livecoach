@@ -27,11 +27,17 @@ type Row = Record<string, any> & {
   risks: { code: string; label: string; severity: "high" | "medium" }[];
   outlookQuestions: string[];
   priorityReasons: string[];
+  assigned_to_user_id: string | null;
 };
+
+type TeamMember = { userId: string; role: string; name: string };
 
 type Props = {
   rows: Row[];
   stageDefinitions: { key: string; label: string }[];
+  team: TeamMember[];
+  currentUser: string;
+  canManageAssignments: boolean;
   busy: string;
   onChange: (id: string, patch: Partial<Row>) => void;
   onSave: (row: Row) => void;
@@ -53,7 +59,16 @@ const outlookTone: Record<WinOutlook, string> = {
   won: "border-moss/70 bg-moss/25 text-moss",
 };
 
-function DealDetails({ row, stageDefinitions, busy, onChange, onSave }: Props & { row: Row }) {
+function DealDetails({
+  row,
+  stageDefinitions,
+  team,
+  currentUser,
+  canManageAssignments,
+  busy,
+  onChange,
+  onSave,
+}: Props & { row: Row }) {
   const reasons = Array.isArray(row.win_outlook_reasons) ? row.win_outlook_reasons : [];
   const questions = Array.isArray(row.outlookQuestions) ? row.outlookQuestions : [];
   const [history, setHistory] = useState<Record<string, any>[] | null>(null);
@@ -110,6 +125,14 @@ function DealDetails({ row, stageDefinitions, busy, onChange, onSave }: Props & 
           <select className={input} value={row.active_contact_method || ""} onChange={(event) => onChange(row.id, { active_contact_method: event.target.value || null })}>
             <option value="">Not set</option>
             {CONTACT_METHODS.map((value) => <option key={value} value={value}>{formatLabel(value)}</option>)}
+          </select>
+        </label>
+        <label>
+          <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Deal owner</span>
+          <select className={input} value={row.assigned_to_user_id || ""} onChange={(event) => onChange(row.id, { assigned_to_user_id: event.target.value || null })} disabled={!canManageAssignments && !!row.assigned_to_user_id && row.assigned_to_user_id !== currentUser}>
+            <option value="">Unassigned</option>
+            {canManageAssignments ? team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>) : <option value={currentUser}>Me</option>}
+            {!canManageAssignments && row.assigned_to_user_id && row.assigned_to_user_id !== currentUser ? <option value={row.assigned_to_user_id}>{team.find((member) => member.userId === row.assigned_to_user_id)?.name || "Another team member"}</option> : null}
           </select>
         </label>
         <label>
@@ -171,7 +194,10 @@ function OutlookBadge({ row }: { row: Row }) {
 }
 
 export default function PipelineWorkspace(props: Props) {
-  const { rows, stageDefinitions } = props;
+  const { rows, stageDefinitions, team, currentUser } = props;
+  const ownerName = (row: Row) => row.assigned_to_user_id === currentUser
+    ? "Mine"
+    : team.find((member) => member.userId === row.assigned_to_user_id)?.name || "Unassigned";
   const [view, setView] = useState<"table" | "kanban">("table");
   const stats = useMemo(() => ({
     overdue: rows.filter((row) => row.risks.some((risk) => risk.code === "next_action_overdue" || risk.code === "overdue_actions")).length,
@@ -202,15 +228,15 @@ export default function PipelineWorkspace(props: Props) {
           <div className="mt-3 space-y-2 md:hidden">
             {rows.map((row) => <article key={row.id} className="rounded-xl border border-edge bg-ink/35 p-3">
               <div className="flex items-start justify-between gap-2"><div><Link href={`/crm/${row.company_id}`} className="font-display text-lg text-bone hover:text-amber">{row.company}</Link><p className="text-sm text-muted">{row.title}</p></div><OutlookBadge row={row} /></div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Stage</span><strong className="text-bone">{formatLabel(row.pipeline_stage)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Value</span><strong className="text-bone">{gbp(row.value)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Motion</span><strong className="text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Last activity</span><strong className="text-bone">{dateTime(row.lastMeaningfulActivityAt)}</strong></div></div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Stage</span><strong className="text-bone">{formatLabel(row.pipeline_stage)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Value</span><strong className="text-bone">{gbp(row.value)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Owner</span><strong className="text-bone">{ownerName(row)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Motion</span><strong className="text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Last activity</span><strong className="text-bone">{dateTime(row.lastMeaningfulActivityAt)}</strong></div></div>
               <p className="mt-3 rounded-lg border border-amber/25 bg-amber/[0.05] p-2 text-sm text-amber">{row.next_action || row.nextAction}</p>
               <DealDetails {...props} row={row} />
             </article>)}
           </div>
           <div className="mt-3 hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[980px] border-separate border-spacing-y-2 text-left">
-              <thead><tr className="font-mono text-[0.5rem] uppercase text-muted"><th className="px-2">Deal</th><th className="px-2">Stage</th><th className="px-2">Win outlook</th><th className="px-2">Value</th><th className="px-2">Engagement</th><th className="px-2">Last activity</th><th className="px-2">Next action</th></tr></thead>
-              <tbody>{rows.map((row) => <tr key={row.id} className="align-top [&>td]:border-y [&>td]:border-edge [&>td]:bg-ink/35 [&>td]:p-2 first:[&>td]:rounded-l-lg last:[&>td]:rounded-r-lg"><td className="w-52 border-l"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><p className="max-w-52 text-xs text-muted">{row.title}</p>{row.priorityReasons?.length ? <p className="mt-1 text-[0.67rem] text-amber">{row.priorityReasons.slice(0, 2).join(" · ")}</p> : null}</td><td><span className="text-sm text-bone">{formatLabel(row.pipeline_stage)}</span></td><td><OutlookBadge row={row} /></td><td className="text-sm text-bone">{gbp(row.value)}</td><td className="max-w-36 text-xs text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}<span className="mt-1 block text-muted">{row.active_contact_method ? formatLabel(row.active_contact_method) : "Method not set"}</span></td><td className="text-xs text-bone">{dateTime(row.lastMeaningfulActivityAt)}{row.nextMeetingAt ? <span className="mt-1 block text-amber">Meeting {dateTime(row.nextMeetingAt)}</span> : null}</td><td className="w-72"><p className="text-sm text-amber">{row.next_action || row.nextAction}</p><p className="mt-1 text-xs text-muted">{row.next_action_due_at ? `Due ${dateTime(row.next_action_due_at)}` : "No due date"}</p><DealDetails {...props} row={row} /></td></tr>)}</tbody>
+            <table className="w-full min-w-[1080px] border-separate border-spacing-y-2 text-left">
+              <thead><tr className="font-mono text-[0.5rem] uppercase text-muted"><th className="px-2">Deal</th><th className="px-2">Owner</th><th className="px-2">Stage</th><th className="px-2">Win outlook</th><th className="px-2">Value</th><th className="px-2">Engagement</th><th className="px-2">Last activity</th><th className="px-2">Next action</th></tr></thead>
+              <tbody>{rows.map((row) => <tr key={row.id} className="align-top [&>td]:border-y [&>td]:border-edge [&>td]:bg-ink/35 [&>td]:p-2 first:[&>td]:rounded-l-lg last:[&>td]:rounded-r-lg"><td className="w-52 border-l"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><p className="max-w-52 text-xs text-muted">{row.title}</p>{row.priorityReasons?.length ? <p className="mt-1 text-[0.67rem] text-amber">{row.priorityReasons.slice(0, 2).join(" · ")}</p> : null}</td><td className="text-xs text-bone">{ownerName(row)}</td><td><span className="text-sm text-bone">{formatLabel(row.pipeline_stage)}</span></td><td><OutlookBadge row={row} /></td><td className="text-sm text-bone">{gbp(row.value)}</td><td className="max-w-36 text-xs text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}<span className="mt-1 block text-muted">{row.active_contact_method ? formatLabel(row.active_contact_method) : "Method not set"}</span></td><td className="text-xs text-bone">{dateTime(row.lastMeaningfulActivityAt)}{row.nextMeetingAt ? <span className="mt-1 block text-amber">Meeting {dateTime(row.nextMeetingAt)}</span> : null}</td><td className="w-72"><p className="text-sm text-amber">{row.next_action || row.nextAction}</p><p className="mt-1 text-xs text-muted">{row.next_action_due_at ? `Due ${dateTime(row.next_action_due_at)}` : "No due date"}</p><DealDetails {...props} row={row} /></td></tr>)}</tbody>
             </table>
           </div>
         </>
@@ -218,7 +244,7 @@ export default function PipelineWorkspace(props: Props) {
         <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
           {stageDefinitions.filter((stage) => !["won", "lost"].includes(stage.key)).map((stage) => {
             const members = rows.filter((row) => row.pipeline_stage === stage.key);
-            return <section key={stage.key} className="w-[280px] shrink-0 rounded-xl border border-edge bg-ink/30 p-2.5"><div className="mb-2 flex items-center justify-between"><h3 className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</h3><span className="rounded-full bg-panel px-2 py-1 text-xs text-muted">{members.length}</span></div><div className="space-y-2">{members.length ? members.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-panel p-3"><div className="flex items-start justify-between gap-2"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><span className="text-xs text-muted">{gbp(row.value)}</span></div><p className="mt-1 text-xs text-muted">{row.title}</p><div className="mt-2"><OutlookBadge row={row} /></div><p className="mt-2 text-sm text-amber">{row.next_action || row.nextAction}</p>{row.next_action_due_at ? <p className="mt-1 text-xs text-muted">Due {dateTime(row.next_action_due_at)}</p> : null}<DealDetails {...props} row={row} /></article>) : <p className="rounded-lg border border-dashed border-edge p-3 text-center text-xs text-muted">No deals</p>}</div></section>;
+            return <section key={stage.key} className="w-[280px] shrink-0 rounded-xl border border-edge bg-ink/30 p-2.5"><div className="mb-2 flex items-center justify-between"><h3 className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</h3><span className="rounded-full bg-panel px-2 py-1 text-xs text-muted">{members.length}</span></div><div className="space-y-2">{members.length ? members.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-panel p-3"><div className="flex items-start justify-between gap-2"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><span className="text-xs text-muted">{gbp(row.value)}</span></div><p className="mt-1 text-xs text-muted">{row.title}</p><p className="mt-1 font-mono text-[0.48rem] uppercase text-sky">{ownerName(row)}</p><div className="mt-2"><OutlookBadge row={row} /></div><p className="mt-2 text-sm text-amber">{row.next_action || row.nextAction}</p>{row.next_action_due_at ? <p className="mt-1 text-xs text-muted">Due {dateTime(row.next_action_due_at)}</p> : null}<DealDetails {...props} row={row} /></article>) : <p className="rounded-lg border border-dashed border-edge p-3 text-center text-xs text-muted">No deals</p>}</div></section>;
           })}
         </div>
       )}

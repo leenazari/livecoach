@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { listActiveAccountScopes } from "@/lib/automation-accounts";
+import { runWithServiceRecordScope } from "@/lib/service-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 import { sendMail } from "@/lib/gmail";
 import { GET as getDashboard } from "@/app/api/crm/dashboard/route";
@@ -94,7 +96,7 @@ const list = (items: string[], empty: string) =>
         .join("")}</ul>`
     : `<p style="margin:0;font-size:14px;color:#858078;">${esc(empty)}</p>`;
 
-export async function GET(req: NextRequest) {
+async function runDigest(req: NextRequest) {
   const secret = process.env.CRON_SECRET || "";
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "not authorised" }, { status: 401 });
@@ -500,6 +502,17 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  const secret = process.env.CRON_SECRET || "";
+  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "not authorised" }, { status: 401 });
+  }
+  const owners = await listActiveAccountScopes({ ownersOnly: true, googleConnectedOnly: true });
+  if (owners.length !== 1)
+    return NextResponse.json({ error: "A single active workspace owner is required for the founder digest" }, { status: 409 });
+  return runWithServiceRecordScope(owners[0], () => runDigest(req));
 }
 
 function renderEmail(data: {

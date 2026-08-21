@@ -3,6 +3,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { defaultOutlookQuestions, WIN_OUTLOOKS } from "@/lib/opportunity-fields";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { getAppConfigRows, setAppConfigValue } from "@/lib/app-config";
+import { requireRequestScope } from "@/lib/request-scope";
+import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +22,7 @@ const DAY = 24 * 60 * 60 * 1000;
 
 export async function GET() {
   try {
+    const account = requireRequestScope();
     const now = new Date();
     const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1)).toISOString();
     const [
@@ -30,6 +33,7 @@ export async function GET() {
       { data: calls },
       { data: tasks },
       { count: prospectCount },
+      { data: outreachCompanyRows },
       { data: sentMessages },
       { data: outreachEvents },
       { data: signalReceipts },
@@ -43,6 +47,7 @@ export async function GET() {
       supabaseAdmin.from("interview_summaries").select("company_id,created_at").not("company_id", "is", null).order("created_at", { ascending: false }).limit(2000),
       supabaseAdmin.from("tasks").select("company_id,text,due_at,kind").eq("status", "open").not("company_id", "is", null).limit(2000),
       supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }),
+      supabaseAdmin.from("outreach_prospects").select("crm_company_id,company_name").not("crm_company_id", "is", null).limit(2000),
       supabaseAdmin.from("outreach_messages").select("prospect_id,message_tags,step_number,variant").eq("status", "sent").limit(5000),
       supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,created_at").in("kind", ["reply", "positive_reply", "objection", "later", "referral", "meeting_booked"]).limit(5000),
       supabaseAdmin.from("opportunity_signal_receipts").select("opportunity_id,status").in("status", ["queued", "processing", "failed"]).not("opportunity_id", "is", null).limit(1000),
@@ -62,6 +67,7 @@ export async function GET() {
 
     const target = Math.max(1, Number((config || []).find((row: any) => row.key === "revenue_target_gbp")?.value) || 2_000_000);
     const nameByCompany = new Map<string, string>();
+    const outreachNameByCompany = new Map<string, string>();
     const stageByCompany = new Map<string, string>();
     const lastTouchByCompany = new Map<string, number>();
     const nextMeetingByCompany = new Map<string, string>();
@@ -73,6 +79,10 @@ export async function GET() {
       if (company.stage) stageByCompany.set(company.id, company.stage);
       const emailAt = (company.profile as any)?.email_last_message_at;
       if (emailAt) lastTouchByCompany.set(company.id, new Date(emailAt).getTime());
+    }
+    for (const prospect of outreachCompanyRows || []) {
+      if (prospect.crm_company_id && prospect.company_name && !outreachNameByCompany.has(prospect.crm_company_id))
+        outreachNameByCompany.set(prospect.crm_company_id, prospect.company_name);
     }
     for (const call of calls || []) {
       const at = new Date(call.created_at as string).getTime();
@@ -171,7 +181,7 @@ export async function GET() {
         value,
         probability,
         weightedValue: value * probability / 100,
-        company: nameByCompany.get(companyId) || "a client",
+        company: nameByCompany.get(companyId) || outreachNameByCompany.get(companyId) || "Private client",
         relationshipStage: stageByCompany.get(companyId) || null,
         nextMeetingAt,
         lastMeaningfulActivityAt: lastTouch ? new Date(lastTouch).toISOString() : null,
@@ -193,7 +203,7 @@ export async function GET() {
     const excludedRows = excluded.map((op: any) => ({
       ...op,
       value: Number(op.value) || 0,
-      company: nameByCompany.get(op.company_id) || "a client",
+      company: nameByCompany.get(op.company_id) || outreachNameByCompany.get(op.company_id) || "Private client",
     })).sort((a: any, b: any) => a.company.localeCompare(b.company) || a.title.localeCompare(b.title));
 
     const stages = STAGES.map((stage) => {
@@ -265,6 +275,28 @@ export async function GET() {
       };
     });
 
+    const { data: members, error: membersError } = await supabaseService
+      .from("workspace_members")
+      .select("user_id,role")
+      .eq("workspace_id", account.workspaceId)
+      .eq("status", "active")
+      .order("created_at");
+    if (membersError) throw membersError;
+    const memberIds = (members || []).map((member: any) => member.user_id);
+    const { data: profiles, error: profilesError } = memberIds.length
+      ? await supabaseService
+          .from("profiles")
+          .select("user_id,display_name")
+          .in("user_id", memberIds)
+      : { data: [] as any[], error: null };
+    if (profilesError) throw profilesError;
+    const profileById = new Map((profiles || []).map((profile: any) => [profile.user_id, profile]));
+    const team = (members || []).map((member: any) => ({
+      userId: member.user_id,
+      role: member.role,
+      name: (profileById.get(member.user_id) as any)?.display_name || "Team member",
+    }));
+
     return NextResponse.json({
       goal: { target, wonYtd: wonValue, gap, monthsRemaining, requiredPerMonth: gap / monthsRemaining },
       kpis: { rawPipeline, weightedPipeline, commit, bestCase, wonYtd: wonValue, coverage: gap ? rawPipeline / gap : 0 },
@@ -297,6 +329,9 @@ export async function GET() {
         recentAssessments,
       },
       stageDefinitions: STAGES,
+      team,
+      currentUser: account.userId,
+      canManageAssignments: account.role === "owner" || account.role === "manager",
       generatedAt: new Date().toISOString(),
     });
   } catch (error: any) {

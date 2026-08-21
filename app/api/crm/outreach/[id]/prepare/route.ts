@@ -5,8 +5,8 @@ import { getAppConfigValue } from "@/lib/app-config";
 import { openai, OPENAI_MODEL_LIVE, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { londonDate, modelSources, modelText, parseObject } from "@/lib/outreach";
-import { OUTREACH_FROM_EMAIL } from "@/lib/gmail";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
+import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,6 +78,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const startedAt = Date.now();
   console.log(JSON.stringify({ level: "info", msg: "outreach prepare started", route: "/api/crm/outreach/[id]/prepare", prospectId: params.id, requestId: req.headers.get("x-vercel-id") }));
   try {
+    const sender = await resolveOutreachIdentity();
     const profileId = await ensureWorkspaceProfileId();
     const prospectId = params.id;
     const body = await req.json().catch(() => ({}));
@@ -90,6 +91,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     ]);
     const enrolment = enrolments?.[0];
     if (!prospect || !enrolment) return NextResponse.json({ error: "This person is not in today's queue" }, { status: 400 });
+    if (prospect.assigned_to_user_id !== sender.userId)
+      return NextResponse.json({ error: "Assign this prospect to yourself before preparing outreach" }, { status: 403 });
     const { data: campaign } = await supabaseAdmin.from("outreach_campaigns").select("*").eq("id", enrolment.campaign_id).single();
     if (!campaign || campaign.status !== "active") return NextResponse.json({ error: "The campaign is not active" }, { status: 400 });
     const { data: learnings } = await supabaseAdmin.from("outreach_learnings").select("dimension,label,insight,confidence,sent_count,positive_reply_count,meeting_count").eq("campaign_id", campaign.id).eq("status", "promoted").order("meeting_count", { ascending: false }).limit(8);
@@ -116,7 +119,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     };
     const lastStep = Math.max(1, ...sequence.map((row: any) => Number(row?.step) || 0));
     const includeBooking = !!campaign.booking_url && (campaign.booking_cta_mode === "always" || (campaign.booking_cta_mode === "final_step" && step >= lastStep));
-    const system = `You are Lee Nazari's careful B2B outreach researcher and copywriter for Interviewa. Use web_search to check this exact person and company today. Return ONLY compact JSON.
+    const system = `You are ${sender.senderName}'s careful B2B outreach researcher and copywriter for Interviewa. Use web_search to check this exact person and company today. Return ONLY compact JSON.
 
 COMMERCIAL NORTH STAR: help Interviewa build toward £${revenueTarget.toLocaleString("en-GB")} revenue over the next 12 months, in support of a roughly £10m valuation. Use this to prioritise credible routes to revenue and strong strategic relationships. Never invent a prospect's budget, deal value, urgency or buying authority to make them look valuable.
 
@@ -128,7 +131,7 @@ VOICE TO FOLLOW: ${clean(voice.tone || "warm, commercially curious and concise",
 COACHING RULES: ${Array.isArray(voice.rules) ? voice.rules.join(" | ").slice(0, 1000) : "Lead with one verified relevance signal | make one useful commercial observation | ask one easy question | never pretend familiarity"}
 BANNED PHRASES: ${banned.join(" | ") || "quick question | hope you are well | reaching out"}.
 
-The email must be plain text, 90 to 135 words, short mobile friendly paragraphs, one easy question as the CTA, and signed "${clean(voice.signature || "Lee", 80)}". End with a natural one line opt out such as "If this is not relevant, tell me and I will not follow up." It must sound individually written by Lee, not like a template or a faceless product message. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Write "better prepared", never "better-prepared". Subject under 45 characters. Use one or two verified current vacancies when available. Say that Interviewa specialises in preparing candidates for those exact types of roles, rather than making a generic recruitment claim. Explain that the prospect can try Interviewa free on a current vacancy, setup takes about 10 minutes, it adds no extra administration for their team, they control and can reuse the interview, and results appear in their dashboard. Where natural, state the approved proof that thousands of candidates already use Interviewa. Position better preparation as a credible way to improve candidate acceptance or client placement rates, but never guarantee a result. Say Lee will prove the value through the free trial, not that a placement outcome is guaranteed. Candidate training is the primary campaign angle. Mention screening only as a secondary possibility when verified vacancy volume makes it credible and product truth supports it. Be commercially vivid without hype. If no approved case study exists, use a concrete illustrative workflow such as practising for one live role, but never imply another customer achieved a result. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? "This is a follow up. Do not repeat Lee's full introduction or the opening email, and make it easy to close the loop." : "This is the first email. After the personalised opening, introduce Lee naturally with: I’m Lee Nazari, CEO of Interviewa. Then explain in Lee's voice that we built it specifically to help recruiters prepare candidates for successful job placements. Keep Lee's name, CEO role and purpose."} ${includeBooking ? `Include this booking link once, naturally, as the optional next step: ${campaign.booking_url}` : "Do not include a calendar or booking link. Earn interest first."}
+The email must be plain text, 90 to 135 words, short mobile friendly paragraphs, one easy question as the CTA, and signed "${clean(voice.signature || sender.senderName.split(" ")[0], 80)}". End with a natural one line opt out such as "If this is not relevant, tell me and I will not follow up." It must sound individually written by ${sender.senderName}, not like a template or a faceless product message. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Write "better prepared", never "better-prepared". Subject under 45 characters. Use one or two verified current vacancies when available. Say that Interviewa specialises in preparing candidates for those exact types of roles, rather than making a generic recruitment claim. Explain that the prospect can try Interviewa free on a current vacancy, setup takes about 10 minutes, it adds no extra administration for their team, they control and can reuse the interview, and results appear in their dashboard. Where natural, state the approved proof that thousands of candidates already use Interviewa. Position better preparation as a credible way to improve candidate acceptance or client placement rates, but never guarantee a result. Say the sender will prove the value through the free trial, not that a placement outcome is guaranteed. Candidate training is the primary campaign angle. Mention screening only as a secondary possibility when verified vacancy volume makes it credible and product truth supports it. Be commercially vivid without hype. If no approved case study exists, use a concrete illustrative workflow such as practising for one live role, but never imply another customer achieved a result. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? `This is a follow up. Do not repeat ${sender.senderName}'s full introduction or the opening email, and make it easy to close the loop.` : `This is the first email. After the personalised opening, introduce the sender naturally with: I’m ${sender.senderName} from Interviewa. Then explain that Interviewa was built specifically to help recruiters prepare candidates for successful job placements.`} ${includeBooking ? `Include this booking link once, naturally, as the optional next step: ${campaign.booking_url}` : "Do not include a calendar or booking link. Earn interest first."}
 
 APPROVED SEQUENCE BRIEF FOR THIS STEP:
 Purpose: ${clean(sequenceStep.purpose, 240)}
@@ -136,7 +139,7 @@ Content type: ${clean(sequenceStep.contentType || "plain", 60)}
 Extra guidance: ${clean(sequenceStep.guidance, 500) || "none"}
 ${sequenceStep.assetUrl ? `Approved asset link: ${clean(sequenceStep.assetUrl, 600)}. Include it once only if it directly supports this step, never invent what the asset contains.` : "No asset link is approved for this step."}
 
-Before writing, choose ONE evidence-backed reason this person should care now and ONE Interviewa angle. The first sentence must be grounded in a verified fact or transparently framed hypothesis. Never mix several random use cases. Explain your evidence and choice in strategy so Lee can approve the thinking as well as the words.
+Before writing, choose ONE evidence-backed reason this person should care now and ONE Interviewa angle. The first sentence must be grounded in a verified fact or transparently framed hypothesis. Never mix several random use cases. Explain your evidence and choice in strategy so ${sender.senderName} can approve the thinking as well as the words.
 
 Output exactly:
 {"research":{"summary":"max 65 words, only decision useful facts","signals":["max 3 factual current signals"],"activeJobs":["max 4 verified current or recent roles with location and recency when available"],"volumeAssessment":"high|medium|low|unknown","volumeReason":"evidence based reason, max 35 words","likelyNeeds":["max 2 clearly labelled hypotheses"],"bestAngle":"one grounded Interviewa angle led by candidate training","commercialPath":"customer deal|relationship|partnership plus one short reason","fitDecision":"contact now|hold|skip plus one short reason","personalisationFact":"one verifiable fact or empty string","approvedProof":"verified Interviewa case study or result from product truth, otherwise empty string","freshness":"what was checked and how current it is, max 25 words","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 55 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."}}`;
@@ -165,7 +168,7 @@ PROMOTED LEARNINGS, only use these when supported by enough evidence and relevan
 ${(learnings || []).length ? (learnings || []).map((learning: any) => `- ${learning.dimension}/${learning.label}: ${learning.insight} (${learning.confidence}, ${learning.sent_count} sent, ${learning.positive_reply_count} positive replies, ${learning.meeting_count} meetings)`).join("\n") : "No conversion learning yet. Do not invent best practices from nonexistent campaign results."}
 
 ${existingResearch ? `RESEARCH ALREADY SAVED, refresh only what may have changed and reuse solid facts:\n${JSON.stringify(existingResearch).slice(0, 3500)}` : ""}
-${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDANCE:\n${body.guidance.trim().slice(0, 1000)}` : ""}`;
+${typeof body.guidance === "string" && body.guidance.trim() ? `SENDER'S EXTRA GUIDANCE:\n${body.guidance.trim().slice(0, 1000)}` : ""}`;
     const message = await openai.messages.create({
       model: OPENAI_MODEL_PRO,
       max_tokens: 2000,
@@ -193,7 +196,7 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `LEE'S EXTRA GUIDA
         model: OPENAI_MODEL_LIVE,
         max_tokens: 1800,
         response_format: OUTREACH_DRAFT_FORMAT,
-        system: `Repair an incomplete structured outreach result and return ONLY the required JSON. Preserve every supplied research fact. Never invent facts about the person, company, vacancies, customers, savings or results. If a research field is missing, use an empty array, empty string, unknown volume, or low confidence as appropriate. You may complete the email using only the supplied facts and approved Interviewa truth. Use British English, short mobile friendly paragraphs, one question, no semicolons, and no hyphens or dashes in prose. The first email must naturally introduce: I’m Lee Nazari, CEO of Interviewa. Include a natural opt out.`,
+        system: `Repair an incomplete structured outreach result and return ONLY the required JSON. Preserve every supplied research fact. Never invent facts about the person, company, vacancies, customers, savings or results. If a research field is missing, use an empty array, empty string, unknown volume, or low confidence as appropriate. You may complete the email using only the supplied facts and approved Interviewa truth. Use British English, short mobile friendly paragraphs, one question, no semicolons, and no hyphens or dashes in prose. The first email must naturally introduce: I’m ${sender.senderName} from Interviewa. Include a natural opt out.`,
         messages: [{ role: "user", content: `PERSON: ${prospect.first_name || ""} ${prospect.last_name || ""}, ${prospect.job_title || ""} at ${prospect.company_name || ""}
 CAMPAIGN GOAL: ${campaign.goal || ""}
 CAMPAIGN ANGLE: ${campaign.offer_angle || ""}
@@ -276,7 +279,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
 
     const { data: draft, error: draftError } = await supabaseAdmin.from("outreach_messages").upsert({
       enrolment_id: enrolment.id, campaign_id: campaign.id, prospect_id: prospect.id,
-      step_number: step, variant, from_email: OUTREACH_FROM_EMAIL, subject: email.subject,
+      step_number: step, variant, from_email: sender.senderEmail, sender_user_id: sender.userId, subject: email.subject,
       preview_text: email.preview_text, body_text: email.body_text, status: "draft", updated_at: new Date().toISOString(),
       strategy, quality_score: qualityScore, message_tags: messageTags, booking_link_included: includeBooking,
     }, { onConflict: "enrolment_id,step_number" }).select("*").single();

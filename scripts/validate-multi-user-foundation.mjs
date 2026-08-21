@@ -60,6 +60,30 @@ const onboardingMigration = readFileSync(
   ),
   "utf8"
 );
+const assignmentMigration = readFileSync(
+  path.join(root, "supabase/migrations/20260821160000_team_work_assignment.sql"),
+  "utf8"
+);
+const senderProtectionMigration = readFileSync(
+  path.join(root, "supabase/migrations/20260821170000_protect_outreach_sender_identity.sql"),
+  "utf8"
+);
+const serviceScope = readFileSync(path.join(root, "lib/service-scope.ts"), "utf8");
+const outreachIdentity = readFileSync(path.join(root, "lib/outreach-identity.ts"), "utf8");
+const outreachSendQueue = readFileSync(path.join(root, "lib/outreach-send-queue.ts"), "utf8");
+const opportunityRoute = readFileSync(
+  path.join(root, "app/api/crm/opportunities/[id]/route.ts"),
+  "utf8"
+);
+const revenueRoute = readFileSync(path.join(root, "app/api/crm/revenue/route.ts"), "utf8");
+const pipelineWorkspace = readFileSync(
+  path.join(root, "components/crm/PipelineWorkspace.tsx"),
+  "utf8"
+);
+const opportunitySignalCron = readFileSync(
+  path.join(root, "app/api/cron/opportunity-signals/route.ts"),
+  "utf8"
+);
 const opportunitySignals = readFileSync(
   path.join(root, "lib/opportunity-signals.ts"),
   "utf8"
@@ -306,7 +330,34 @@ assert.match(teamRoute, /requireWorkspaceOwner\(\)/);
 assert.match(teamRoute, /randomBytes\(32\)/);
 assert.match(teamRoute, /createHash\("sha256"\)/);
 assert.match(teamRoute, /generateLink/);
-assert.match(teamRoute, /ready: false/);
+assert.match(teamRoute, /ready: true/);
+assert.match(teamRoute, /workspace_member_activated/);
+assert.match(teamRoute, /workspace_member_suspended/);
+assert.match(teamRoute, /outreach_sender_email/);
+assert.match(joinTeam, /Lee presses Activate/i);
+assert.match(assignmentMigration, /assigned_to_user_id/);
+assert.match(assignmentMigration, /sender_user_id/);
+assert.match(assignmentMigration, /audit_livecoach_work_assignment/);
+assert.match(senderProtectionMigration, /profiles_protect_outreach_sender_identity/);
+assert.match(senderProtectionMigration, /auth\.uid\(\)/);
+assert.match(senderProtectionMigration, /verified account setup/);
+assert.match(serviceScope, /AsyncLocalStorage/);
+assert.match(supabase, /getServiceRecordScope/);
+assert.match(supabase, /Cross-account service insert is not permitted/);
+assert.match(outreachIdentity, /resolveOutreachIdentity/);
+assert.match(outreachIdentity, /outreach_sender_email/);
+assert.match(outreachSendQueue, /sender_user_id/);
+assert.match(outreachSendQueue, /ownerId: sender\.userId/);
+assert.match(opportunityRoute, /assignedToUserId/);
+assert.match(opportunityRoute, /if \(requested !== current\.owner_id\) patch\.visibility = "team"/);
+assert.match(opportunityRoute, /linked client, calls, emails and transcripts retain/);
+assert.match(revenueRoute, /outreachNameByCompany/);
+assert.match(revenueRoute, /canManageAssignments/);
+assert.match(pipelineWorkspace, /Deal owner/);
+assert.match(pipelineWorkspace, /assigned_to_user_id/);
+assert.match(pipelineWorkspace, /canManageAssignments/);
+assert.match(opportunitySignalCron, /listActiveAccountScopes/);
+assert.match(opportunitySignalCron, /runWithServiceRecordScope/);
 assert.match(invitationAcceptance, /getVerifiedUser\(\)/);
 assert.match(invitationAcceptance, /accept_livecoach_invitation/);
 assert.match(joinTeam, /at least 12 characters/i);

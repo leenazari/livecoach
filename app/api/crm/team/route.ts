@@ -60,7 +60,7 @@ export async function GET() {
         ? await Promise.all([
             supabaseService
               .from("profiles")
-              .select("user_id,display_name,email,transcriber_name")
+              .select("user_id,display_name,email,transcriber_name,outreach_sender_name,outreach_sender_email")
               .in("user_id", memberIds),
             supabaseService
               .from("google_oauth")
@@ -89,6 +89,18 @@ export async function GET() {
         email: profile?.email || null,
         googleConnected: !!google?.refresh_token,
         googleEmail: google?.email || null,
+        outreachSenderName: profile?.outreach_sender_name || profile?.display_name || null,
+        outreachSenderEmail: profile?.outreach_sender_email || google?.email || null,
+        canActivate:
+          member.status !== "active" &&
+          member.status !== "removed" &&
+          !!profile?.display_name &&
+          !!google?.refresh_token &&
+          !!google?.email,
+        activationIssues: [
+          ...(!profile?.display_name ? ["Finish account setup"] : []),
+          ...(!google?.refresh_token || !google?.email ? ["Connect this user's Google account"] : []),
+        ],
         transcriberName:
           profile?.transcriber_name ||
           deriveTranscriberName(profile?.display_name || null),
@@ -105,9 +117,9 @@ export async function GET() {
           opportunities: opportunitiesResult.count || 0,
         },
         activation: {
-          ready: false,
+          ready: true,
           reason:
-            "Invited colleagues can finish account and Google setup. CRM access remains locked until the owner-specific automation pass is deployed.",
+            "After account and Google setup, the owner activates access. Each user keeps a separate Calendar, Gmail, transcriber and private Brain memory.",
         },
       },
       { headers: { "Cache-Control": "private, no-store" } }
@@ -115,6 +127,108 @@ export async function GET() {
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "Team access is unavailable" },
+      { status: 403 }
+    );
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const scope = requireWorkspaceOwner();
+    const body = await req.json();
+    const userId = typeof body.userId === "string" ? body.userId.trim() : "";
+    const action = body.action === "activate" || body.action === "suspend"
+      ? body.action
+      : "";
+    if (!userId || !action)
+      return NextResponse.json({ error: "Choose an account action" }, { status: 400 });
+    if (userId === scope.userId)
+      return NextResponse.json({ error: "The workspace owner cannot suspend their own account here" }, { status: 400 });
+
+    const { data: member, error: memberError } = await supabaseService
+      .from("workspace_members")
+      .select("user_id,role,status")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (memberError) throw memberError;
+    if (!member || member.status === "removed")
+      return NextResponse.json({ error: "Team account not found" }, { status: 404 });
+
+    if (action === "activate") {
+      const [{ data: profile, error: profileError }, { data: google, error: googleError }] =
+        await Promise.all([
+          supabaseService
+            .from("profiles")
+            .select("display_name,email,outreach_sender_name,outreach_sender_email")
+            .eq("user_id", userId)
+            .maybeSingle(),
+          supabaseService
+            .from("google_oauth")
+            .select("email,refresh_token")
+            .eq("owner_id", userId)
+            .maybeSingle(),
+        ]);
+      if (profileError) throw profileError;
+      if (googleError) throw googleError;
+      if (!profile?.display_name)
+        return NextResponse.json({ error: "This person must finish account setup first" }, { status: 409 });
+      if (!google?.refresh_token || !google.email)
+        return NextResponse.json({ error: "This person must connect their own Google account first" }, { status: 409 });
+      const senderName = String(profile.display_name).trim();
+      // A newly activated account must begin with its own verified Google
+      // mailbox. A different Gmail alias can be enabled later through an
+      // owner-controlled verification flow, never from a self-edited profile.
+      const senderEmail = String(google.email).trim().toLowerCase();
+      const { error: profileUpdateError } = await supabaseService
+        .from("profiles")
+        .update({
+          outreach_sender_name: senderName,
+          outreach_sender_email: senderEmail,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId);
+      if (profileUpdateError) throw profileUpdateError;
+    } else {
+      await Promise.all([
+        supabaseService
+          .from("meet_stream_tokens")
+          .update({ revoked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", userId)
+          .is("revoked_at", null),
+        supabaseService
+          .from("meet_bots")
+          .update({ status: "left", ended_at: new Date().toISOString() })
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", userId)
+          .eq("status", "active"),
+      ]);
+    }
+
+    const nextStatus = action === "activate" ? "active" : "suspended";
+    const { data: updated, error: updateError } = await supabaseService
+      .from("workspace_members")
+      .update({ status: nextStatus, updated_at: new Date().toISOString() })
+      .eq("workspace_id", scope.workspaceId)
+      .eq("user_id", userId)
+      .select("user_id,role,status")
+      .single();
+    if (updateError) throw updateError;
+    await supabaseService.from("access_audit_events").insert({
+      workspace_id: scope.workspaceId,
+      actor_user_id: scope.userId,
+      source: "human",
+      action: action === "activate" ? "workspace_member_activated" : "workspace_member_suspended",
+      target_table: "workspace_members",
+      target_id: userId,
+      previous_scope: { status: member.status },
+      next_scope: { status: nextStatus },
+    });
+    return NextResponse.json({ member: updated });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error?.message || "Could not update team access" },
       { status: 403 }
     );
   }

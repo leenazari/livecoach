@@ -32,6 +32,7 @@ type Opportunity = Record<string, any> & {
   win_outlook_questions: string[];
   engagement_motion: string | null;
   active_contact_method: string | null;
+  assigned_to_user_id: string | null;
 };
 
 const input = "min-h-11 w-full rounded-lg border border-edge bg-ink/60 px-3 py-2.5 text-sm text-bone outline-none focus:border-amber/60";
@@ -104,6 +105,7 @@ export default function RevenuePage() {
           winOutlookQuestions: row.win_outlook_questions || [],
           engagementMotion: row.engagement_motion || null,
           activeContactMethod: row.active_contact_method || null,
+          assignedToUserId: row.assigned_to_user_id || null,
           sourceType: "human",
           sourceChannel: "pipeline_dashboard",
           rationale: "Confirmed from the pipeline dashboard",
@@ -204,6 +206,9 @@ export default function RevenuePage() {
         <PipelineWorkspace
           rows={revenueRows as any}
           stageDefinitions={data.stageDefinitions}
+          team={data.team || []}
+          currentUser={data.currentUser || ""}
+          canManageAssignments={data.canManageAssignments === true}
           busy={busy}
           onChange={updateRow as any}
           onSave={saveOpportunity as any}

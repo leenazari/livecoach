@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { sendOutreachMail, OUTREACH_FROM_EMAIL } from "@/lib/gmail";
+import { sendOutreachMail } from "@/lib/gmail";
+import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const REHEARSAL_RECIPIENT = "lee@ai13.com";
 
 // Send the exact prepared body to Lee, never to the prospect. This deliberately
 // does not update the message, enrolment, prospect, event stream, daily limit or
@@ -15,9 +14,10 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const sender = await resolveOutreachIdentity();
     const { data: message, error: messageError } = await supabaseAdmin
       .from("outreach_messages")
-      .select("id,subject,body_text,from_email,status,prospect_id")
+      .select("id,subject,body_text,from_email,sender_user_id,status,prospect_id")
       .eq("id", params.id)
       .single();
     if (messageError || !message)
@@ -27,7 +27,7 @@ export async function POST(
         { error: "This email has already been sent to the prospect" },
         { status: 400 }
       );
-    if (message.from_email !== OUTREACH_FROM_EMAIL)
+    if (message.sender_user_id !== sender.userId || message.from_email !== sender.senderEmail)
       return NextResponse.json(
         { error: "Sender safety check failed" },
         { status: 400 }
@@ -51,11 +51,14 @@ export async function POST(
       .join(" at ");
     const rehearsalSubject = `[REHEARSAL${intendedFor ? ` · ${intendedFor}` : ""}] ${message.subject}`;
     const sent = await sendOutreachMail({
-      to: REHEARSAL_RECIPIENT,
+      to: sender.googleEmail,
       subject: rehearsalSubject,
       // Keep the body byte-for-byte equivalent to the saved draft so Lee sees
       // the actual prospect experience. Only the subject carries the warning.
       text: message.body_text,
+      ownerId: sender.userId,
+      senderName: sender.senderName,
+      fromEmail: sender.senderEmail,
     });
     if (!sent.ok)
       return NextResponse.json(
@@ -65,8 +68,8 @@ export async function POST(
 
     return NextResponse.json({
       ok: true,
-      sentTo: REHEARSAL_RECIPIENT,
-      from: OUTREACH_FROM_EMAIL,
+      sentTo: sender.googleEmail,
+      from: sender.senderEmail,
       intendedFor: intendedFor || null,
       campaignChanged: false,
     });

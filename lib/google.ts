@@ -1,4 +1,5 @@
 import { getRequestScope, isVerifiedServiceRequest } from "@/lib/request-scope";
+import { getServiceRecordScope } from "@/lib/service-scope";
 import { supabaseService } from "@/lib/supabase";
 
 // In-app Google Calendar connection. The deployed app reads/writes the user's
@@ -85,10 +86,14 @@ async function connectionForOwner(
   ownerId?: string
 ): Promise<GoogleConnection | null> {
   const requestScope = getRequestScope();
+  const serviceScope = getServiceRecordScope();
   if (requestScope && ownerId && ownerId !== requestScope.userId) {
     throw new Error("Cross-account Google access is not permitted");
   }
-  const exactOwner = ownerId || requestScope?.userId || null;
+  if (serviceScope && ownerId && ownerId !== serviceScope.userId) {
+    throw new Error("Cross-account Google service access is not permitted");
+  }
+  const exactOwner = ownerId || requestScope?.userId || serviceScope?.userId || null;
 
   if (exactOwner) {
     const { data, error } = await supabaseService
@@ -201,8 +206,8 @@ export async function getAccessToken(
 // Google can be connected while the stored grant is missing a newer scope.
 // Tokeninfo lets Settings distinguish that partial state without sending a
 // test email or exposing the access token to the browser.
-export async function googleGrantedScopes(): Promise<Set<string>> {
-  const token = await getAccessToken();
+export async function googleGrantedScopes(ownerId?: string): Promise<Set<string>> {
+  const token = await getAccessToken(false, ownerId);
   if (!token) return new Set();
   try {
     const response = await fetch(
@@ -217,8 +222,8 @@ export async function googleGrantedScopes(): Promise<Set<string>> {
   }
 }
 
-export async function googleHasScope(scope: string): Promise<boolean> {
-  return (await googleGrantedScopes()).has(scope);
+export async function googleHasScope(scope: string, ownerId?: string): Promise<boolean> {
+  return (await googleGrantedScopes(ownerId)).has(scope);
 }
 
 // List events on ONE calendar between two ISO times (single instances, recurring

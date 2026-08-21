@@ -6,8 +6,9 @@ import {
   googleConnected,
   googleGrantedScopes,
 } from "@/lib/google";
-import { gmailAccessStatus, OUTREACH_FROM_EMAIL } from "@/lib/gmail";
+import { gmailAccessStatus } from "@/lib/gmail";
 import { londonDate, OUTREACH_DAILY_HARD_LIMIT } from "@/lib/outreach";
+import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,7 @@ type ReadinessCheck = {
 
 export async function GET() {
   try {
+    const sender = await resolveOutreachIdentity();
     const today = londonDate();
     const [google, campaignResult, eligibleResult, queuedResult, sentAliasResult] =
       await Promise.all([
@@ -35,6 +37,7 @@ export async function GET() {
         supabaseAdmin
           .from("outreach_prospects")
           .select("id", { count: "exact", head: true })
+          .eq("assigned_to_user_id", sender.userId)
           .in("status", ["imported", "queued"])
           .not("email", "is", null),
         supabaseAdmin
@@ -46,7 +49,8 @@ export async function GET() {
           .from("outreach_messages")
           .select("id", { count: "exact", head: true })
           .eq("status", "sent")
-          .eq("from_email", OUTREACH_FROM_EMAIL),
+          .eq("sender_user_id", sender.userId)
+          .eq("from_email", sender.senderEmail),
       ]);
 
     const [scopes, gmailApi] = google.connected
@@ -106,8 +110,8 @@ export async function GET() {
         label: "Interviewa sender",
         status: aliasPreviouslyVerified ? "pass" : "warn",
         detail: aliasPreviouslyVerified
-          ? `${OUTREACH_FROM_EMAIL} has already sent successfully.`
-          : `${OUTREACH_FROM_EMAIL} is locked in. Gmail will verify the alias on the first approved send.`,
+          ? `${sender.senderEmail} has already sent successfully.`
+          : `${sender.senderEmail} is locked in. Gmail will verify the address on the first approved send.`,
       },
       {
         id: "campaign",

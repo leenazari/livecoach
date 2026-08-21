@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { POST as buildQueue } from "@/app/api/crm/outreach/queue/route";
+import { listActiveAccountScopes } from "@/lib/automation-accounts";
+import { runWithServiceRecordScope } from "@/lib/service-scope";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -10,15 +13,18 @@ export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET || "";
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ error: "not authorised" }, { status: 401 });
   try {
-    const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
-    const response = await fetch(`${origin}/api/crm/outreach/queue`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
-      body: "{}",
-      cache: "no-store",
-    });
-    const data = await response.json().catch(() => ({}));
-    return NextResponse.json(data, { status: response.status });
+    const accounts = await listActiveAccountScopes();
+    const results = await Promise.all(accounts.map(async (account) => {
+      const response = await runWithServiceRecordScope(account, () =>
+        buildQueue(new NextRequest(new URL("/api/crm/outreach/queue", req.url), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        }))
+      );
+      return { userId: account.userId, status: response.status, body: await response.json() };
+    }));
+    return NextResponse.json({ ok: true, accounts: results });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to build daily outreach queue" }, { status: 500 });
   }

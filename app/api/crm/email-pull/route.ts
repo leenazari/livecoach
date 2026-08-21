@@ -15,6 +15,7 @@ import {
   gmailConnected,
 } from "@/lib/gmail";
 import { googleConnected } from "@/lib/google";
+import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,16 +43,18 @@ const houseStyle = (s: string) =>
     .trim();
 
 async function myAddresses(): Promise<Set<string>> {
-  const set = new Set<string>([
-    "lee@interviewa.com",
-    "lee@ai13.com",
-    "lee.nazari@gmail.com",
-  ]);
+  const set = new Set<string>();
   try {
-    const connection = await googleConnected();
-    if (connection.email) set.add(connection.email.toLowerCase());
+    const identity = await resolveOutreachIdentity();
+    set.add(identity.senderEmail);
+    set.add(identity.googleEmail);
   } catch {
-    /* best-effort */
+    try {
+      const connection = await googleConnected();
+      if (connection.email) set.add(connection.email.toLowerCase());
+    } catch {
+      /* best-effort */
+    }
   }
   return set;
 }

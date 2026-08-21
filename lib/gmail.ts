@@ -39,7 +39,8 @@ type GmailFetchInit = Omit<RequestInit, "headers"> & {
 async function gmailFetch(
   path: string,
   token: string,
-  init: GmailFetchInit = {}
+  init: GmailFetchInit = {},
+  ownerId?: string
 ): Promise<Response | null> {
   const request = (accessToken: string) =>
     fetch(`${GMAIL}${path}`, {
@@ -52,7 +53,7 @@ async function gmailFetch(
   try {
     let res = await request(token);
     if (res.status === 401) {
-      const refreshed = await getAccessToken(true);
+      const refreshed = await getAccessToken(true, ownerId);
       if (refreshed) res = await request(refreshed);
     }
     return res;
@@ -61,9 +62,9 @@ async function gmailFetch(
   }
 }
 
-async function api(path: string, token: string): Promise<any | null> {
+async function api(path: string, token: string, ownerId?: string): Promise<any | null> {
   try {
-    const res = await gmailFetch(path, token);
+    const res = await gmailFetch(path, token, {}, ownerId);
     if (!res) return null;
     if (!res.ok) return null;
     return await res.json();
@@ -83,8 +84,8 @@ const header = (headers: any, name: string): string => {
 // Whether Google is connected at all (a token comes back). Note: the token is
 // shared with calendar - if only the calendar scope was granted, Gmail calls
 // 403 and recentMessages returns [], which the caller treats as "reconnect".
-export async function gmailConnected(): Promise<boolean> {
-  return !!(await getAccessToken());
+export async function gmailConnected(ownerId?: string): Promise<boolean> {
+  return !!(await getAccessToken(false, ownerId));
 }
 
 // Verify Gmail itself, not merely the shared Google token. This distinguishes
@@ -99,16 +100,16 @@ export type GmailAccessIssue =
   | "rate_limited"
   | "google_error";
 
-export async function gmailAccessDiagnostic(): Promise<{
+export async function gmailAccessDiagnostic(ownerId?: string): Promise<{
   status: "ok" | "missing" | "disconnected";
   issue: GmailAccessIssue;
 }> {
-  const token = await getAccessToken();
+  const token = await getAccessToken(false, ownerId);
   if (!token) return { status: "disconnected", issue: "disconnected" };
   try {
     const res = await gmailFetch("/profile", token, {
       cache: "no-store",
-    });
+    }, ownerId);
     if (!res) return { status: "missing", issue: "google_error" };
     if (res.ok) return { status: "ok", issue: "none" };
 
@@ -143,24 +144,26 @@ export async function gmailAccessDiagnostic(): Promise<{
   }
 }
 
-export async function gmailAccessStatus(): Promise<"ok" | "missing" | "disconnected"> {
-  return (await gmailAccessDiagnostic()).status;
+export async function gmailAccessStatus(ownerId?: string): Promise<"ok" | "missing" | "disconnected"> {
+  return (await gmailAccessDiagnostic(ownerId)).status;
 }
 
 // Recent messages matching a Gmail query (e.g. "from:x@y.com OR to:x@y.com"),
 // newest first, metadata + snippet only.
 export async function recentMessages(
   query: string,
-  max = 12
+  max = 12,
+  ownerId?: string
 ): Promise<GmailMsg[]> {
-  const token = await getAccessToken();
+  const token = await getAccessToken(false, ownerId);
   if (!token) return [];
   const list = await api(
     `/messages?q=${encodeURIComponent(query)}&maxResults=${Math.min(
       Math.max(max, 1),
       25
     )}`,
-    token
+    token,
+    ownerId
   );
   const ids: string[] = Array.isArray(list?.messages)
     ? list.messages.map((m: any) => m?.id).filter(Boolean)
@@ -170,7 +173,8 @@ export async function recentMessages(
   const fetched = await Promise.all(ids.map(async (id): Promise<GmailMsg | null> => {
     const m = await api(
       `/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date`,
-      token
+      token,
+      ownerId
     );
     if (!m) return null;
     const headers = m.payload?.headers || [];
@@ -193,13 +197,14 @@ export async function recentMessages(
   return out;
 }
 
-async function gmailProfile(token: string): Promise<any | null> {
-  return api("/profile", token);
+async function gmailProfile(token: string, ownerId?: string): Promise<any | null> {
+  return api("/profile", token, ownerId);
 }
 
 async function messageMetadata(
   id: string,
-  token: string
+  token: string,
+  ownerId?: string
 ): Promise<GmailMsg | null> {
   const fields = [
     "From",
@@ -212,7 +217,7 @@ async function messageMetadata(
   ]
     .map((name) => `metadataHeaders=${encodeURIComponent(name)}`)
     .join("&");
-  const message = await api(`/messages/${id}?format=metadata&${fields}`, token);
+  const message = await api(`/messages/${id}?format=metadata&${fields}`, token, ownerId);
   if (!message) return null;
   const headers = message.payload?.headers || [];
   const dateMs = message.internalDate
@@ -239,11 +244,12 @@ async function messageMetadata(
 // without treating old inbox mail as new.
 export async function newInboxMessagesSince(
   startHistoryId: string | null,
-  maxMessages = 50
+  maxMessages = 50,
+  ownerId?: string
 ): Promise<GmailInboxDelta> {
-  const token = await getAccessToken();
+  const token = await getAccessToken(false, ownerId);
   if (!token) throw new Error("Google is not connected");
-  const profile = await gmailProfile(token);
+  const profile = await gmailProfile(token, ownerId);
   const currentCursor = String(profile?.historyId || "");
   if (!currentCursor) throw new Error("Gmail history is unavailable");
   if (!startHistoryId) {
@@ -264,7 +270,7 @@ export async function newInboxMessagesSince(
     if (pageToken) params.set("pageToken", pageToken);
     const response = await gmailFetch(`/history?${params.toString()}`, token, {
       cache: "no-store",
-    });
+    }, ownerId);
     if (!response) throw new Error("Gmail history check failed");
     if (response.status === 404) {
       return { cursor: currentCursor, messages: [], reset: true };
@@ -289,7 +295,7 @@ export async function newInboxMessagesSince(
   } while (pageToken && ids.size < maxMessages && pages < 5);
 
   const metadata = await Promise.all(
-    [...ids].slice(0, maxMessages).map((id) => messageMetadata(id, token))
+    [...ids].slice(0, maxMessages).map((id) => messageMetadata(id, token, ownerId))
   );
   const messages = metadata
     .filter((message): message is GmailMsg => !!message)
@@ -351,10 +357,10 @@ export function freshReplyOnly(value: unknown, max = 6000): string {
 
 // Fetches ONE Gmail message, never its thread. The caller pays for only the
 // fresh message body, with quoted history stripped and a hard character cap.
-export async function freshMessageText(id: string, max = 6000): Promise<string> {
-  const token = await getAccessToken();
+export async function freshMessageText(id: string, max = 6000, ownerId?: string): Promise<string> {
+  const token = await getAccessToken(false, ownerId);
   if (!token || !id) return "";
-  const message = await api(`/messages/${encodeURIComponent(id)}?format=full`, token);
+  const message = await api(`/messages/${encodeURIComponent(id)}?format=full`, token, ownerId);
   if (!message?.payload) return "";
   const plain = mimeText(message.payload, "text/plain");
   const html = plain ? "" : mimeText(message.payload, "text/html");
@@ -417,8 +423,8 @@ export async function sendMail(opts: {
   from?: string;
   replyTo?: string;
   threadId?: string;
-}): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
-  const token = await getAccessToken();
+}, ownerId?: string): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
+  const token = await getAccessToken(false, ownerId);
   if (!token) {
     return { ok: false, error: "Google is not connected, connect it in Settings" };
   }
@@ -469,7 +475,7 @@ export async function sendMail(opts: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ raw: encoded, ...(opts.threadId ? { threadId: opts.threadId } : {}) }),
-    });
+    }, ownerId);
     if (!res) return { ok: false, error: "Gmail could not be reached" };
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -489,19 +495,20 @@ export async function sendMail(opts: {
   }
 }
 
-// Prospect outreach must never silently fall back to the connected account.
-// Gmail accepts this From header only when the address is an approved "Send
-// mail as" alias. If the alias is removed or becomes invalid, Gmail refuses the
-// request and the prospect stays unsent for the user to fix safely.
-export const OUTREACH_FROM_EMAIL = "lee@interviewa.com";
-
 export async function sendOutreachMail(opts: {
   to: string;
   subject: string;
   text: string;
   threadId?: string;
+  ownerId: string;
+  senderName: string;
+  fromEmail: string;
 }): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
   const safeText = String(opts.text || "").trim();
+  const fromEmail = String(opts.fromEmail).trim().toLowerCase();
+  const senderName = String(opts.senderName).trim();
+  if (!fromEmail || !senderName || !opts.ownerId)
+    return { ok: false, error: "The outreach sender identity is incomplete" };
   return sendMail({
     to: opts.to,
     subject: opts.subject,
@@ -510,10 +517,10 @@ export async function sendOutreachMail(opts: {
       .split(/\n{2,}/)
       .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
       .join(""),
-    from: `Lee Nazari <${OUTREACH_FROM_EMAIL}>`,
-    replyTo: OUTREACH_FROM_EMAIL,
+    from: `${senderName} <${fromEmail}>`,
+    replyTo: fromEmail,
     threadId: opts.threadId,
-  });
+  }, opts.ownerId);
 }
 
 function escapeHtml(value: string): string {
@@ -542,7 +549,7 @@ function stripHtml(html: string): string {
 }
 
 // The address the digest goes to: whoever connected Google.
-export async function connectedEmail(): Promise<string> {
-  const connection = await googleConnected();
+export async function connectedEmail(ownerId?: string): Promise<string> {
+  const connection = await googleConnected(ownerId);
   return connection.email || "";
 }
