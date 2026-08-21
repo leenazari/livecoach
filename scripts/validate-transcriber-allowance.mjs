@@ -9,6 +9,7 @@ const {
   londonDayBounds,
   normaliseDailyTranscriberLimit,
 } = await import("../lib/transcriber-usage.ts");
+const { currentRecallBotState } = await import("../lib/recall-bot-status.ts");
 
 const summer = londonDayBounds(new Date("2026-08-21T12:00:00.000Z"));
 assert.equal(summer.start.toISOString(), "2026-08-20T23:00:00.000Z");
@@ -68,6 +69,28 @@ assert.equal(normaliseDailyTranscriberLimit(10), 30);
 assert.equal(normaliseDailyTranscriberLimit(900), 720);
 assert.equal(normaliseDailyTranscriberLimit("bad"), 360);
 
+assert.deepEqual(
+  currentRecallBotState({
+    status_changes: [
+      { code: "joining_call", created_at: "2026-08-21T10:00:00.000Z" },
+      { code: "bot.call_ended", created_at: "2026-08-21T11:00:00.000Z" },
+    ],
+  }),
+  {
+    code: "call_ended",
+    terminal: true,
+    endedAt: "2026-08-21T11:00:00.000Z",
+  }
+);
+assert.equal(
+  currentRecallBotState({
+    status_changes: [
+      { code: "in_call_recording", created_at: "2026-08-21T11:00:00.000Z" },
+    ],
+  }).terminal,
+  false
+);
+
 const migration = read(
   "supabase/migrations/20260821192645_transcriber_cost_controls.sql"
 );
@@ -81,6 +104,8 @@ assert.match(migration, /created_at \+ interval '3 hours'/i);
 assert.match(startRoute, /transcriber_daily_limit_reached/);
 assert.match(startRoute, /transcriber_already_active/);
 assert.match(startRoute, /botHardLimitSeconds/);
+assert.match(startRoute, /reconcileRecallBotState/);
+assert.match(startRoute, /currentRecallBotState/);
 assert.match(teamRoute, /update_transcriber_limit/);
 assert.match(teamRoute, /access_audit_events/);
 assert.match(teamPage, /Notetaker today/);

@@ -2,6 +2,7 @@
 import { createHash, randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
+import { currentRecallBotState } from "@/lib/recall-bot-status";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   getTranscriberIdentity,
@@ -64,6 +65,77 @@ async function leaveUntrackedBot(
   }
 }
 
+type ActiveBotRow = {
+  bot_id: string;
+  bot_name: string | null;
+  session_id: string;
+};
+
+async function reconcileRecallBotState(
+  bots: ActiveBotRow[],
+  workspaceId: string,
+  ownerId: string,
+  region: string,
+  key: string
+) {
+  const active: ActiveBotRow[] = [];
+  for (const bot of bots) {
+    try {
+      // This is one on-demand reconciliation when a person starts another
+      // call, not background polling. It prevents a provider auto-leave from
+      // leaving a stale database row that blocks the next meeting.
+      const response = await recallRequest(
+        `https://${region}.recall.ai/api/v1/bot/${encodeURIComponent(
+          bot.bot_id
+        )}/`,
+        key,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (response.status === 404) {
+        const endedAt = new Date().toISOString();
+        const { error } = await supabaseAdmin
+          .from("meet_bots")
+          .update({ status: "left", ended_at: endedAt })
+          .eq("workspace_id", workspaceId)
+          .eq("owner_id", ownerId)
+          .eq("bot_id", bot.bot_id)
+          .eq("status", "active");
+        if (error) throw error;
+        continue;
+      }
+      if (!response.ok) {
+        active.push(bot);
+        continue;
+      }
+      const providerState = currentRecallBotState(await response.json());
+      if (!providerState.terminal) {
+        active.push(bot);
+        continue;
+      }
+      const endedAt = providerState.endedAt || new Date().toISOString();
+      const { error } = await supabaseAdmin
+        .from("meet_bots")
+        .update({ status: "left", ended_at: endedAt })
+        .eq("workspace_id", workspaceId)
+        .eq("owner_id", ownerId)
+        .eq("bot_id", bot.bot_id)
+        .eq("status", "active");
+      if (error) throw error;
+      await supabaseAdmin
+        .from("meet_stream_tokens")
+        .update({ revoked_at: endedAt, updated_at: endedAt })
+        .eq("workspace_id", workspaceId)
+        .eq("owner_id", ownerId)
+        .eq("session_id", bot.session_id)
+        .is("revoked_at", null);
+    } catch (error) {
+      console.error("Could not reconcile Recall bot state", error);
+      active.push(bot);
+    }
+  }
+  return active;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const accountScope = await resolveRecordScope();
@@ -92,7 +164,7 @@ export async function POST(req: NextRequest) {
       .lt("created_at", staleBefore.toISOString());
     if (staleBotError) throw staleBotError;
 
-    const { data: activeBots, error: existingError } = await supabaseAdmin
+    const { data: activeBotRows, error: existingError } = await supabaseAdmin
       .from("meet_bots")
       .select("bot_id,bot_name,session_id")
       .eq("workspace_id", accountScope.workspaceId)
@@ -101,7 +173,19 @@ export async function POST(req: NextRequest) {
       .gte("created_at", staleBefore.toISOString())
       .limit(2);
     if (existingError) throw existingError;
-    const existing = (activeBots || []).find(
+    const key = process.env.RECALL_API_KEY;
+    const region = process.env.RECALL_REGION;
+    const activeBots =
+      activeBotRows?.length && key && region
+        ? await reconcileRecallBotState(
+            activeBotRows as ActiveBotRow[],
+            accountScope.workspaceId,
+            accountScope.userId,
+            region,
+            key
+          )
+        : (activeBotRows || []);
+    const existing = activeBots.find(
       (bot: any) => bot.session_id === sessionId
     );
     if (existing?.bot_id) {
@@ -114,7 +198,7 @@ export async function POST(req: NextRequest) {
         { headers: { "Cache-Control": "private, no-store" } }
       );
     }
-    if (activeBots?.length) {
+    if (activeBots.length) {
       return NextResponse.json(
         {
           error:
@@ -170,8 +254,6 @@ export async function POST(req: NextRequest) {
       usage.remainingSeconds
     );
 
-    const key = process.env.RECALL_API_KEY;
-    const region = process.env.RECALL_REGION; // e.g. us-west-2, eu-central-1
     if (!key) {
       return NextResponse.json(
         { error: "RECALL_API_KEY is not set in Vercel env" },
