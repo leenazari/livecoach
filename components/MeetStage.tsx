@@ -6,9 +6,6 @@
 // arrives from the Railway worker websocket (Recall.ai -> worker -> here).
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const WORKER_WS =
-  "wss://livecoach-meet-worker-production.up.railway.app/ws";
-
 type Props = {
   room: string;
   onFinalTranscript: (role: string, text: string, speaker?: string) => void;
@@ -23,6 +20,13 @@ type Props = {
 };
 
 type Speaker = { name: string; lastRole: string };
+type StreamAccess = {
+  token: string;
+  expiresAt: string;
+  workerWs: string;
+  botName: string;
+  coachHints: string[];
+};
 
 // How we decide a candidate "turn" ended (so cues/summary fire):
 const PAUSE_MS = 1600; // they stopped talking
@@ -33,14 +37,16 @@ const CHECKPOINT_EVERY = 4; // ...or mid-monologue, every N finalised chunks
 // because a single early line had already latched the on-air state true.
 const CAPTURE_STALE_MS = 90000;
 
-// Default "You" detection for the POC (single user = Lee). Becomes a per-user
-// account setting later. We match by NAME, not the meeting host, because the
-// coach often isn't the person who created the Meet.
-const COACH_HINTS = ["lee nazari", "l n"];
-function looksLikeCoach(name: string) {
+// Each account receives its own coach aliases from its private profile. We
+// match by name rather than meeting host because the coach is not always the
+// person who created the calendar event.
+function looksLikeCoach(name: string, coachHints: string[]) {
   const n = (name || "").trim().toLowerCase();
   if (!n) return false;
-  return COACH_HINTS.some((h) => n === h || n.includes(h));
+  return coachHints.some((hint) => {
+    const h = hint.trim().toLowerCase();
+    return !!h && (n === h || n.includes(h));
+  });
 }
 
 export default function MeetStage({
@@ -55,6 +61,7 @@ export default function MeetStage({
   const meetingUrl = meetingUrlProp ?? meetingUrlInternal;
   const setMeetingUrl = onMeetingUrlChange ?? setMeetingUrlInternal;
   const [botId, setBotId] = useState("");
+  const [botName, setBotName] = useState("Your LiveCoach Notetaker");
   const [status, setStatus] = useState("not connected");
   // Honest join state. transcribing = real audio has come through (the bot is
   // genuinely in the room), joinWarn = the watchdog fired without any transcript.
@@ -86,7 +93,13 @@ export default function MeetStage({
   const retryRef = useRef(0); // backoff attempt counter
   const deliveredRef = useRef(0); // how many utterances we've delivered so far
   const sendingRef = useRef(false); // in-flight guard so a double-tap can't send two bots
+  const connectingRef = useRef(false);
+  const connectionAttemptRef = useRef(0);
   const botIdRef = useRef(""); // synchronous mirror of botId (closures + retry)
+  const streamAccessRef = useRef<StreamAccess | null>(null);
+  const accessPromiseRef = useRef<Promise<StreamAccess> | null>(null);
+  const coachHintsRef = useRef<string[]>([]);
+  const roomRef = useRef(room);
   const joinWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastUtterAtRef = useRef(0); // when the last utterance landed (stall check)
 
@@ -105,7 +118,7 @@ export default function MeetStage({
   const mapRole = useCallback((speaker: string, recallRole: string) => {
     const c = coachRef.current;
     if (c) return speaker === c ? "interviewer" : "candidate";
-    if (looksLikeCoach(speaker)) return "interviewer";
+    if (looksLikeCoach(speaker, coachHintsRef.current)) return "interviewer";
     return "candidate";
   }, []);
 
@@ -142,7 +155,10 @@ export default function MeetStage({
         if (prev.some((s) => s.name === speaker)) return prev;
         return [...prev, { name: speaker, lastRole: recallRole }];
       });
-      if (!coachRef.current && looksLikeCoach(speaker)) {
+      if (
+        !coachRef.current &&
+        looksLikeCoach(speaker, coachHintsRef.current)
+      ) {
         coachRef.current = speaker;
         setCoach(speaker);
       }
@@ -208,7 +224,66 @@ export default function MeetStage({
     deliverBackfill(0);
   }, [deliverBackfill]);
 
-  const connect = useCallback(() => {
+  const ensureStreamAccess = useCallback(async (): Promise<StreamAccess> => {
+    const cached = streamAccessRef.current;
+    if (cached && Date.parse(cached.expiresAt) > Date.now() + 60000) {
+      return cached;
+    }
+    if (accessPromiseRef.current) return accessPromiseRef.current;
+
+    const request = fetch("/api/meet/access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: room }),
+      })
+      .then(async (response) => {
+        const data = await response.json();
+        if (roomRef.current !== room) {
+          throw new Error("The call room changed while access was loading");
+        }
+        if (
+          !response.ok ||
+          typeof data.token !== "string" ||
+          typeof data.workerWs !== "string" ||
+          typeof data.expiresAt !== "string"
+        ) {
+          throw new Error(data.error || "Private transcript access failed");
+        }
+        const access: StreamAccess = {
+          token: data.token,
+          workerWs: data.workerWs,
+          expiresAt: data.expiresAt,
+          botName:
+            typeof data.botName === "string"
+              ? data.botName
+              : "Your LiveCoach Notetaker",
+          coachHints: Array.isArray(data.coachHints)
+            ? data.coachHints.filter((hint: unknown) => typeof hint === "string")
+            : [],
+        };
+        streamAccessRef.current = access;
+        coachHintsRef.current = access.coachHints;
+        setBotName(access.botName);
+        return access;
+      })
+      .finally(() => {
+        if (roomRef.current === room) accessPromiseRef.current = null;
+      });
+    accessPromiseRef.current = request;
+    return request;
+  }, [room]);
+
+  useEffect(() => {
+    roomRef.current = room;
+    streamAccessRef.current = null;
+    accessPromiseRef.current = null;
+    coachHintsRef.current = [];
+  }, [room]);
+
+  const connect = useCallback(async () => {
+    if (connectingRef.current) return;
+    connectingRef.current = true;
+    const connectionAttempt = ++connectionAttemptRef.current;
     closedRef.current = false;
     if (reconnectRef.current) {
       clearTimeout(reconnectRef.current);
@@ -216,56 +291,89 @@ export default function MeetStage({
     }
     if (wsRef.current) {
       try {
+        // Replacing a socket is intentional. Do not let the old socket's
+        // close handler schedule another connection for a stale call room.
+        wsRef.current.onclose = null;
         wsRef.current.close();
       } catch {
         /* ignore */
       }
       wsRef.current = null;
     }
-    const ws = new WebSocket(`${WORKER_WS}?session=${encodeURIComponent(room)}`);
-    wsRef.current = ws;
     setWsState("connecting");
-    ws.onopen = () => {
-      setWsState("on");
-      retryRef.current = 0;
-      // We may have missed utterances while the socket was down - recover them.
-      deliverBackfill(deliveredRef.current);
-    };
-    ws.onerror = () => setWsState("error");
-    ws.onclose = () => {
-      setWsState("off");
-      // Auto-reconnect with backoff unless we're intentionally tearing down. A
-      // dropped socket must never silently end the capture mid-call.
-      if (closedRef.current) return;
-      const delay = Math.min(8000, 800 * Math.pow(2, retryRef.current));
-      retryRef.current += 1;
-      if (reconnectRef.current) clearTimeout(reconnectRef.current);
-      reconnectRef.current = setTimeout(() => {
-        if (!closedRef.current) connect();
-      }, delay);
-    };
-    ws.onmessage = (e: MessageEvent) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "utterance") {
-          handleUtterance(msg.speaker || "", msg.role || "", msg.text || "");
-        }
-      } catch {
-        /* ignore */
+    try {
+      const access = await ensureStreamAccess();
+      if (
+        closedRef.current ||
+        connectionAttempt !== connectionAttemptRef.current
+      ) {
+        return;
       }
-    };
-  }, [room, handleUtterance, deliverBackfill]);
+      const ws = new WebSocket(
+        `${access.workerWs}?session=${encodeURIComponent(room)}`,
+        ["livecoach-v1", `livecoach-token.${access.token}`]
+      );
+      wsRef.current = ws;
+      ws.onopen = () => {
+        setWsState("on");
+        retryRef.current = 0;
+        // We may have missed utterances while the socket was down - recover them.
+        deliverBackfill(deliveredRef.current);
+      };
+      ws.onerror = () => setWsState("error");
+      ws.onclose = (event) => {
+        setWsState("off");
+        if (event.code === 4401 || event.code === 4403) {
+          streamAccessRef.current = null;
+        }
+        // Auto-reconnect with backoff unless we're intentionally tearing down.
+        if (closedRef.current) return;
+        const delay = Math.min(8000, 800 * Math.pow(2, retryRef.current));
+        retryRef.current += 1;
+        if (reconnectRef.current) clearTimeout(reconnectRef.current);
+        reconnectRef.current = setTimeout(() => {
+          if (!closedRef.current) connect();
+        }, delay);
+      };
+      ws.onmessage = (e: MessageEvent) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === "utterance") {
+            handleUtterance(msg.speaker || "", msg.role || "", msg.text || "");
+          }
+        } catch {
+          /* ignore */
+        }
+      };
+    } catch (error: any) {
+      setWsState("error");
+      setStatus(error?.message || "Private transcript access failed");
+      if (
+        !closedRef.current &&
+        connectionAttempt === connectionAttemptRef.current
+      ) {
+        reconnectRef.current = setTimeout(() => connect(), 2000);
+      }
+    } finally {
+      if (connectionAttempt === connectionAttemptRef.current) {
+        connectingRef.current = false;
+      }
+    }
+  }, [room, handleUtterance, deliverBackfill, ensureStreamAccess]);
 
   // open the socket as soon as we're in the call; clean up on unmount
   useEffect(() => {
     connect();
     return () => {
       closedRef.current = true;
+      connectionAttemptRef.current += 1;
+      connectingRef.current = false;
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
       if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
       if (joinWatchdogRef.current) clearTimeout(joinWatchdogRef.current);
       if (wsRef.current) {
         try {
+          wsRef.current.onclose = null;
           wsRef.current.close();
         } catch {
           /* ignore */
@@ -326,6 +434,9 @@ export default function MeetStage({
         return;
       }
       setBotId(d.botId);
+      if (typeof d.botName === "string" && d.botName.trim()) {
+        setBotName(d.botName.trim());
+      }
       botIdRef.current = d.botId;
       setTranscribing(false);
       setJoinWarn(false);
@@ -423,9 +534,12 @@ export default function MeetStage({
   return (
     <div className="grid gap-4 rounded-2xl border border-edge bg-panel/50 p-5">
       <div className="flex items-center justify-between">
-        <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
-          Meet / Teams / Zoom
-        </p>
+        <div>
+          <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
+            Meet / Teams / Zoom
+          </p>
+          <p className="mt-1 font-mono text-[0.56rem] text-muted">{botName}</p>
+        </div>
         <span
           className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[0.58rem] uppercase tracking-[0.15em] ${airPill.cls}`}
         >

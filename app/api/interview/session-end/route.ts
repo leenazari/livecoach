@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { resolveRecordScope } from "@/lib/record-scope";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { completeUpcomingForCall } from "@/lib/calls";
+import { validMeetSessionId } from "@/lib/transcriber";
 
 export const runtime = "nodejs";
 
@@ -9,8 +11,9 @@ export const runtime = "nodejs";
 // live. Best-effort and idempotent - never blocks ending a call.
 export async function POST(req: NextRequest) {
   try {
+    const accountScope = await resolveRecordScope();
     const { sessionId, transcript, totalCost, upcomingId } = await req.json();
-    if (!sessionId || typeof sessionId !== "string") {
+    if (!validMeetSessionId(sessionId)) {
       return NextResponse.json({ ok: false, skipped: "no sessionId" });
     }
 
@@ -28,8 +31,21 @@ export async function POST(req: NextRequest) {
     const { error } = await supabaseAdmin
       .from("interview_sessions")
       .update(patch)
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
       .eq("session_id", sessionId);
     if (error) throw error;
+
+    await supabaseService
+      .from("meet_stream_tokens")
+      .update({
+        revoked_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
+      .eq("session_id", sessionId)
+      .is("revoked_at", null);
 
     // Ending the call clears the scheduled call it came from, so a finished
     // meeting drops off the upcoming list and stops spawning a prep to-do.

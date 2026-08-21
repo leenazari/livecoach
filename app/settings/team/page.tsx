@@ -14,6 +14,7 @@ type Member = {
   email: string | null;
   googleConnected: boolean;
   googleEmail: string | null;
+  transcriberName: string;
   created_at: string;
 };
 
@@ -204,6 +205,9 @@ export default function TeamAccessPage() {
                       {member.googleConnected
                         ? `Google connected as ${member.googleEmail || member.email || "this account"}`
                         : "Google not connected"}
+                    </p>
+                    <p className="mt-1 text-xs text-muted">
+                      Notetaker ready as {member.transcriberName}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">

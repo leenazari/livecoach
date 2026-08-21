@@ -1,20 +1,91 @@
 // FIRST LINE MARKER (route): app/api/meet/start/route.ts  — exports POST, no JSX
+import { createHash, randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { supabaseAdmin } from "@/lib/supabase";
+import {
+  getTranscriberIdentity,
+  validMeetingUrl,
+  validMeetSessionId,
+} from "@/lib/transcriber";
 
 // Public Railway worker that receives Recall's transcript webhooks.
 // Override in Vercel env with MEET_WORKER_URL if the domain ever changes.
 const WORKER_URL =
-  process.env.MEET_WORKER_URL ||
-  "https://livecoach-meet-worker-production.up.railway.app";
+  (process.env.MEET_WORKER_URL ||
+    "https://livecoach-meet-worker-production.up.railway.app").replace(
+    /\/+$/,
+    ""
+  );
+
+async function recallRequest(
+  endpoint: string,
+  key: string,
+  init: Omit<RequestInit, "headers"> = {}
+) {
+  const call = (authorization: string) =>
+    fetch(endpoint, {
+      ...init,
+      headers: {
+        Authorization: authorization,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+    });
+  let response = await call(key);
+  if (response.status === 401 || response.status === 403) {
+    response = await call(`Token ${key}`);
+  }
+  return response;
+}
+
+async function leaveUntrackedBot(
+  region: string,
+  key: string,
+  botId: string
+) {
+  try {
+    await recallRequest(
+      `https://${region}.recall.ai/api/v1/bot/${encodeURIComponent(
+        botId
+      )}/leave_call/`,
+      key,
+      { method: "POST" }
+    );
+  } catch (error) {
+    console.error("Failed to remove untracked Recall bot", error);
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
+    const accountScope = await resolveRecordScope();
     const { meetingUrl, sessionId } = await req.json();
-    if (!meetingUrl || !sessionId) {
+    if (!validMeetingUrl(meetingUrl) || !validMeetSessionId(sessionId)) {
       return NextResponse.json(
-        { error: "meetingUrl and sessionId are required" },
+        { error: "A supported meeting link and LiveCoach session are required" },
         { status: 400 }
+      );
+    }
+
+    const identity = await getTranscriberIdentity(accountScope.userId);
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from("meet_bots")
+      .select("bot_id,bot_name")
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
+      .eq("session_id", sessionId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing?.bot_id) {
+      return NextResponse.json(
+        {
+          botId: existing.bot_id,
+          botName: existing.bot_name || identity.botName,
+          status: "already_active",
+        },
+        { headers: { "Cache-Control": "private, no-store" } }
       );
     }
 
@@ -34,9 +105,18 @@ export async function POST(req: NextRequest) {
     }
 
     const endpoint = `https://${region}.recall.ai/api/v1/bot/`;
+    const webhookToken = randomBytes(32).toString("base64url");
+    const webhookTokenHash = createHash("sha256")
+      .update(webhookToken)
+      .digest("hex");
+    const webhookTokenExpiresAt = new Date(
+      Date.now() + 4 * 60 * 60 * 1000
+    );
+    const realtimeEndpoint = new URL(`${WORKER_URL}/webhook/recall`);
+    realtimeEndpoint.searchParams.set("token", webhookToken);
     const body = {
       meeting_url: meetingUrl,
-      bot_name: "Lee's Transcriber",
+      bot_name: identity.botName,
       // Provider-side protection against abandoned bots. This runs inside
       // Recall, so it still works if the LiveCoach tab is closed, asleep or
       // offline. `everyone_left_timeout` handles the normal case. The two bot
@@ -88,15 +168,19 @@ export async function POST(req: NextRequest) {
         in_call_recording_timeout: 10800,
         recording_permission_denied_timeout: 30,
       },
-      // session_id flows through here and comes back on every webhook,
-      // so the worker knows which call each utterance belongs to.
-      metadata: { session_id: String(sessionId) },
+      // Recall returns this signed metadata on every webhook. The worker still
+      // checks it against the canonical meet_bots row before relaying anything.
+      metadata: {
+        session_id: sessionId,
+        owner_id: accountScope.userId,
+        workspace_id: accountScope.workspaceId,
+      },
       recording_config: {
         transcript: {
           provider: {
             recallai_streaming: {
               mode: "prioritize_low_latency",
-              language_code: "en",
+              language_code: identity.languageCode,
             },
           },
         },
@@ -104,30 +188,17 @@ export async function POST(req: NextRequest) {
         realtime_endpoints: [
           {
             type: "webhook",
-            url: `${WORKER_URL}/webhook/recall`,
+            url: realtimeEndpoint.toString(),
             events: ["transcript.data"],
           },
         ],
       },
     };
 
-    const callRecall = (authHeader: string) =>
-      fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: authHeader,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-
-    // Recall docs show the auth header two ways across versions.
-    // Try the raw key; if it's rejected as unauthorized, retry with "Token ".
-    let res = await callRecall(key);
-    if (res.status === 401 || res.status === 403) {
-      res = await callRecall(`Token ${key}`);
-    }
+    const res = await recallRequest(endpoint, key, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
 
     const raw = await res.text();
     if (!res.ok) {
@@ -141,28 +212,42 @@ export async function POST(req: NextRequest) {
     }
 
     const data = JSON.parse(raw);
-
-    // Record the bot so it can be stopped by session_id later, even if the
-    // browser tab that started it is gone. Non-fatal if it fails.
-    try {
-      await supabaseAdmin.from("meet_bots").insert({
-        session_id: String(sessionId),
-        bot_id: data.id,
-        status: "active",
-      });
-    } catch (e) {
-      console.error("meet_bots insert failed:", e);
+    if (!data?.id || typeof data.id !== "string") {
+      throw new Error("Recall returned a bot without an identifier");
     }
 
-    return NextResponse.json({
-      botId: data.id,
-      status: "joining",
-      autoStop: {
-        everyoneLeftSeconds: 30,
-        silentFallbackMinutes: 10,
-        hardLimitHours: 3,
+    // A bot without a scoped database record cannot be stopped safely and its
+    // transcript cannot be assigned safely. Remove it immediately on failure.
+    const { error: botInsertError } = await supabaseAdmin
+      .from("meet_bots")
+      .insert({
+        session_id: String(sessionId),
+        bot_id: data.id,
+        bot_name: identity.botName,
+        provider: "recall",
+        webhook_token_hash: webhookTokenHash,
+        webhook_token_expires_at: webhookTokenExpiresAt.toISOString(),
+        status: "active",
+        ...privateRecordFields(accountScope),
+      });
+    if (botInsertError) {
+      await leaveUntrackedBot(region, key, data.id);
+      throw botInsertError;
+    }
+
+    return NextResponse.json(
+      {
+        botId: data.id,
+        botName: identity.botName,
+        status: "joining",
+        autoStop: {
+          everyoneLeftSeconds: 30,
+          silentFallbackMinutes: 10,
+          hardLimitHours: 3,
+        },
       },
-    });
+      { headers: { "Cache-Control": "private, no-store" } }
+    );
   } catch (e: any) {
     return NextResponse.json(
       { error: e?.message || "unknown error" },
