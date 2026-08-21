@@ -5,6 +5,7 @@ import { requireWorkspaceOwner } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
 import { deriveTranscriberName } from "@/lib/transcriber";
 import { publicAppOrigin } from "@/lib/public-app-url";
+import { buildTeamInvitationActionUrl } from "@/lib/team-invitation-link";
 import {
   calculateTranscriberUsage,
   londonDayBounds,
@@ -744,10 +745,6 @@ export async function POST(req: NextRequest) {
     invitationId = invitation.id;
 
     const appUrl = publicAppOrigin(req.nextUrl.origin);
-    const nextPath = `/join-team?invite=${encodeURIComponent(rawToken)}`;
-    const callback = new URL("/auth/callback", appUrl);
-    callback.searchParams.set("next", nextPath);
-
     const { data: usersData, error: usersError } =
       await supabaseService.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (usersError) throw usersError;
@@ -758,11 +755,18 @@ export async function POST(req: NextRequest) {
       await supabaseService.auth.admin.generateLink({
         type: existingAuthUser ? "magiclink" : "invite",
         email,
-        options: { redirectTo: callback.toString() },
       } as any);
     if (linkError) throw linkError;
-    const actionLink = linkData.properties?.action_link;
-    if (!actionLink) throw new Error("Supabase did not create an invitation link");
+    const verificationType = linkData.properties?.verification_type;
+    if (verificationType !== "invite" && verificationType !== "magiclink") {
+      throw new Error("Supabase created an unsupported invitation type");
+    }
+    const actionLink = buildTeamInvitationActionUrl({
+      appOrigin: appUrl,
+      authTokenHash: linkData.properties.hashed_token,
+      authVerificationType: verificationType,
+      workspaceInvitationToken: rawToken,
+    });
 
     const safeLink = htmlEscape(actionLink);
     const sent = await sendConnectedMail({

@@ -7,15 +7,13 @@ export const runtime = "nodejs";
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
+  const tokenHash = url.searchParams.get("token_hash");
+  const verificationType = url.searchParams.get("type");
   const requestedNext = url.searchParams.get("next") || "/login";
   const next =
     requestedNext.startsWith("/") && !requestedNext.startsWith("//")
       ? requestedNext
       : "/login";
-
-  if (!code) {
-    return NextResponse.redirect(new URL("/login?invite=error", url.origin));
-  }
 
   const cookieStore = cookies();
   const supabase = createServerClient(
@@ -45,7 +43,23 @@ export async function GET(req: NextRequest) {
     }
   );
 
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  let error: Error | null = null;
+  if (code) {
+    const result = await supabase.auth.exchangeCodeForSession(code);
+    error = result.error;
+  } else if (
+    tokenHash &&
+    (verificationType === "invite" || verificationType === "magiclink")
+  ) {
+    const result = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: verificationType,
+    });
+    error = result.error;
+  } else {
+    error = new Error("The authentication link is incomplete");
+  }
+
   return NextResponse.redirect(
     new URL(error ? "/login?invite=error" : next, url.origin)
   );
