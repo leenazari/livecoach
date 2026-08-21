@@ -1,5 +1,15 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { getRequestScope, isVerifiedServiceRequest } from "@/lib/request-scope";
+import {
+  crmCompanyAllowsColdOutreach,
+  normalizeOutreachDomain,
+  type OutreachCrmGuard,
+} from "@/lib/outreach-crm-eligibility";
+
+export {
+  prospectHasBlockedCrmRelationship,
+  type OutreachCrmGuard,
+} from "@/lib/outreach-crm-eligibility";
 
 export const OUTREACH_DAILY_HARD_LIMIT = 20;
 export const OUTREACH_TIME_ZONE = "Europe/London";
@@ -64,26 +74,82 @@ export function modelSources(message: any): { title: string; url: string }[] {
   return out.slice(0, 8);
 }
 
-export async function activeClientDomains(): Promise<Set<string>> {
-  let query = supabaseAdmin.from("companies").select("domain,website");
-  // A shared outreach cron must never use a private account's client list as
-  // hidden scoring input. Interactive users still see their own private plus
-  // shared records through RLS.
-  if (!getRequestScope() && isVerifiedServiceRequest()) {
-    query = query.eq("visibility", "team");
+const CRM_GUARD_PAGE_SIZE = 500;
+
+async function loadCrmCompaniesForOutreach(): Promise<any[]> {
+  const companies: any[] = [];
+  for (let from = 0; ; from += CRM_GUARD_PAGE_SIZE) {
+    let query = supabaseAdmin
+      .from("companies")
+      .select("id,domain,website,stage")
+      .order("id", { ascending: true });
+    // A shared outreach cron must never use a private account's client list as
+    // hidden scoring input. Interactive users still see their own private plus
+    // shared records through RLS.
+    if (!getRequestScope() && isVerifiedServiceRequest()) {
+      query = query.eq("visibility", "team");
+    }
+    const { data, error } = await query.range(
+      from,
+      from + CRM_GUARD_PAGE_SIZE - 1
+    );
+    if (error) throw error;
+    companies.push(...(data || []));
+    if ((data || []).length < CRM_GUARD_PAGE_SIZE) break;
   }
-  const { data } = await query.limit(1000);
-  const domains = new Set<string>();
-  for (const company of data || []) {
-    const raw = String(company.domain || company.website || "").trim();
-    if (!raw) continue;
-    try {
-      domains.add(new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.replace(/^www\./, "").toLowerCase());
-    } catch {
-      domains.add(raw.replace(/^www\./, "").toLowerCase());
+  return companies;
+}
+
+async function loadOpenOpportunityCompanyIds(): Promise<Set<string>> {
+  const ids = new Set<string>();
+  for (let from = 0; ; from += CRM_GUARD_PAGE_SIZE) {
+    let query = supabaseAdmin
+      .from("opportunities")
+      .select("id,company_id")
+      .eq("status", "open")
+      .order("id", { ascending: true });
+    if (!getRequestScope() && isVerifiedServiceRequest()) {
+      query = query.eq("visibility", "team");
+    }
+    const { data, error } = await query.range(
+      from,
+      from + CRM_GUARD_PAGE_SIZE - 1
+    );
+    if (error) throw error;
+    for (const opportunity of data || []) {
+      if (opportunity.company_id) ids.add(String(opportunity.company_id));
+    }
+    if ((data || []).length < CRM_GUARD_PAGE_SIZE) break;
+  }
+  return ids;
+}
+
+export async function outreachCrmGuard(): Promise<OutreachCrmGuard> {
+  const [companies, openOpportunityCompanyIds] = await Promise.all([
+    loadCrmCompaniesForOutreach(),
+    loadOpenOpportunityCompanyIds(),
+  ]);
+  const guard: OutreachCrmGuard = {
+    eligibleCompanyIds: new Set<string>(),
+    blockedCompanyIds: new Set<string>(),
+    blockedDomains: new Set<string>(),
+  };
+
+  for (const company of companies) {
+    const companyId = String(company.id || "");
+    const eligible = crmCompanyAllowsColdOutreach(
+      company,
+      openOpportunityCompanyIds
+    );
+    if (eligible) guard.eligibleCompanyIds.add(companyId);
+    else guard.blockedCompanyIds.add(companyId);
+
+    if (!eligible) {
+      const domain = normalizeOutreachDomain(company.domain || company.website);
+      if (domain) guard.blockedDomains.add(domain);
     }
   }
-  return domains;
+  return guard;
 }
 
 export function stepDelay(sequence: any, step: number): number {

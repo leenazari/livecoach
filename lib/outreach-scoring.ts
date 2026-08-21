@@ -1,3 +1,8 @@
+import {
+  prospectHasBlockedCrmRelationship,
+  type OutreachCrmGuard,
+} from "@/lib/outreach-crm-eligibility";
+
 export type OutreachRecommendationAction = "contact_today" | "hold" | "skip";
 
 export type OutreachRecommendation = {
@@ -13,7 +18,7 @@ type ScoringOptions = {
   campaign?: any;
   learnings?: any[];
   blockedTargets?: Set<string>;
-  activeClientDomains?: Set<string>;
+  crmGuard?: OutreachCrmGuard;
   dueFollowUp?: boolean;
 };
 
@@ -75,7 +80,11 @@ export function scoreOutreachProspect(
   const companyDomain = clean(prospect?.company_domain).replace(/^www\./, "");
   const status = clean(prospect?.status || "imported");
   const blocked = options.blockedTargets || new Set<string>();
-  const activeDomains = options.activeClientDomains || new Set<string>();
+  const crmGuard = options.crmGuard || {
+    eligibleCompanyIds: new Set<string>(),
+    blockedCompanyIds: new Set<string>(),
+    blockedDomains: new Set<string>(),
+  };
 
   const hardSkip = (reason: string): OutreachRecommendation => ({
     action: "skip",
@@ -90,8 +99,8 @@ export function scoreOutreachProspect(
   if (blocked.has(email) || (companyDomain && blocked.has(companyDomain))) {
     return hardSkip("On the do-not-contact list");
   }
-  if (prospect?.crm_company_id || (companyDomain && activeDomains.has(companyDomain))) {
-    return hardSkip("Already an active CRM relationship");
+  if (prospectHasBlockedCrmRelationship(prospect || {}, crmGuard)) {
+    return hardSkip("CRM relationship is engaged, dormant or not confirmed as a new lead");
   }
   if (["suppressed", "not_interested"].includes(status)) {
     return hardSkip("Previously opted out or marked not interested");

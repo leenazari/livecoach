@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { activeClientDomains } from "@/lib/outreach";
+import { outreachCrmGuard } from "@/lib/outreach";
 import { scoreOutreachProspect } from "@/lib/outreach-scoring";
 
 export const runtime = "nodejs";
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin.from("outreach_campaigns").select("*").order("created_at"),
       supabaseAdmin.from("outreach_learnings").select("*").eq("status", "promoted").limit(100),
       supabaseAdmin.from("outreach_suppressions").select("target"),
-      activeClientDomains(),
+      outreachCrmGuard(),
     ]);
     const historyPromise = Promise.all([
       supabaseAdmin
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
       historyPromise,
     ]);
     if (error) throw error;
-    const [{ data: campaigns }, { data: learnings }, { data: suppressions }, activeDomains] = context;
+    const [{ data: campaigns }, { data: learnings }, { data: suppressions }, crmGuard] = context;
     const [{ data: messages }, { data: enrolments }] = history;
     const campaign = (campaigns || []).find((row: any) => row.status === "active") || campaigns?.[0] || null;
     const campaignMap = new Map((campaigns || []).map((row: any) => [row.id, row]));
@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
             campaign: scoringCampaign,
             learnings: (learnings || []).filter((learning: any) => !scoringCampaign || learning.campaign_id === scoringCampaign.id),
             blockedTargets,
-            activeClientDomains: activeDomains,
+            crmGuard,
           }),
         };
       })
