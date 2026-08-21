@@ -103,6 +103,12 @@ export default function SettingsPage() {
       if (g === "connected") setGcalNote("Google Calendar connected.");
       else if (g === "denied") setGcalNote("Connection cancelled.");
       else if (g === "error") setGcalNote("Couldn't connect - try again.");
+      else if (g === "account_in_use")
+        setGcalNote(
+          "That Google account is already connected to another LiveCoach user. Choose your own separate work account."
+        );
+      else if (g === "identity_missing")
+        setGcalNote("Google did not return an account identity. Try connecting again.");
     }
   }, []);
 

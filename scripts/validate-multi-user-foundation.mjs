@@ -117,12 +117,20 @@ const teamRoute = readFileSync(
   path.join(root, "app/api/crm/team/route.ts"),
   "utf8"
 );
+const teamPage = readFileSync(
+  path.join(root, "app/settings/team/page.tsx"),
+  "utf8"
+);
 const invitationAcceptance = readFileSync(
   path.join(root, "app/api/auth/team/accept/route.ts"),
   "utf8"
 );
 const joinTeam = readFileSync(
   path.join(root, "app/join-team/page.tsx"),
+  "utf8"
+);
+const googleCallback = readFileSync(
+  path.join(root, "app/api/auth/google/callback/route.ts"),
   "utf8"
 );
 const bulkOutreachAssignment = readFileSync(
@@ -342,6 +350,24 @@ assert.match(teamRoute, /ready: true/);
 assert.match(teamRoute, /workspace_member_activated/);
 assert.match(teamRoute, /workspace_member_suspended/);
 assert.match(teamRoute, /outreach_sender_email/);
+assert.match(teamRoute, /workspaceOwnerIdentities/);
+assert.match(teamRoute, /memberSetupEvidence/);
+assert.match(teamRoute, /workspace_member_privacy_test_confirmed/);
+assert.match(teamRoute, /assignedProspects/);
+assert.match(teamRoute, /sentMessages/);
+assert.match(teamRoute, /transcribedCalls/);
+assert.match(teamRoute, /A privacy test requires a genuinely separate Google Workspace user/);
+assert.match(teamRoute, /This Google account is already connected to another workspace member/);
+assert.match(teamPage, /Salesperson setup checklist/);
+assert.match(teamPage, /I tested isolation and confirm/);
+assert.match(teamPage, /Ready for live work/);
+assert.match(teamPage, /sales-test@interviewa\.com/);
+assert.match(teamPage, /ownerIdentityConflict/);
+assert.match(googleCallback, /scope\?\.role !== "owner" && !email/);
+assert.match(googleCallback, /account_in_use/);
+assert.match(googleCallback, /workspace_members/);
+assert.match(googleCallback, /google_oauth/);
+assert.match(joinTeam, /Google account already belongs to another LiveCoach user/);
 assert.match(joinTeam, /Lee presses Activate/i);
 assert.match(assignmentMigration, /assigned_to_user_id/);
 assert.match(assignmentMigration, /sender_user_id/);
