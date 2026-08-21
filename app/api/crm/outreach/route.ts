@@ -4,6 +4,7 @@ import { outreachCrmGuard } from "@/lib/outreach";
 import { scoreOutreachProspect } from "@/lib/outreach-scoring";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
+import { isActiveOutreachEnrolmentStatus } from "@/lib/outreach-team-safety";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,17 +71,24 @@ export async function GET(req: NextRequest) {
     }
     const latestEnrolment = new Map<string, any>();
     const campaignIdsByProspect = new Map<string, string[]>();
+    const activeCampaignIdsByProspect = new Map<string, string[]>();
     for (const enrolment of enrolments || []) {
       if (!latestEnrolment.has(enrolment.prospect_id))
         latestEnrolment.set(enrolment.prospect_id, enrolment);
       const campaignIds = campaignIdsByProspect.get(enrolment.prospect_id) || [];
       if (!campaignIds.includes(enrolment.campaign_id)) campaignIds.push(enrolment.campaign_id);
       campaignIdsByProspect.set(enrolment.prospect_id, campaignIds);
+      if (isActiveOutreachEnrolmentStatus(enrolment.status)) {
+        const activeCampaignIds = activeCampaignIdsByProspect.get(enrolment.prospect_id) || [];
+        if (!activeCampaignIds.includes(enrolment.campaign_id)) activeCampaignIds.push(enrolment.campaign_id);
+        activeCampaignIdsByProspect.set(enrolment.prospect_id, activeCampaignIds);
+      }
     }
     const prospects = (data || [])
       .map((prospect: any) => {
         const campaignIds = campaignIdsByProspect.get(prospect.id) || [];
-        const scoringCampaign = campaignMap.get(campaignIds[0]) || campaign;
+        const activeCampaignIds = activeCampaignIdsByProspect.get(prospect.id) || [];
+        const scoringCampaign = campaignMap.get(activeCampaignIds[0]) || campaign;
         return {
           ...prospect,
           outreach: {
@@ -91,6 +99,7 @@ export async function GET(req: NextRequest) {
             }),
             enrolment: latestEnrolment.get(prospect.id) || null,
             campaignIds,
+            activeCampaignIds,
           },
           recommendation: scoreOutreachProspect(prospect, {
             campaign: scoringCampaign,
@@ -106,7 +115,7 @@ export async function GET(req: NextRequest) {
       )
       .map((prospect: any) => {
         if (prospect.recommendation.action !== "contact_today") return prospect;
-        const belongsToActiveCampaign = !prospect.outreach.campaignIds.length || prospect.outreach.campaignIds.includes(campaign?.id);
+        const belongsToActiveCampaign = !prospect.outreach.activeCampaignIds.length || prospect.outreach.activeCampaignIds.includes(campaign?.id);
         if (!belongsToActiveCampaign) return prospect;
         if (contactSlots > 0) {
           contactSlots -= 1;

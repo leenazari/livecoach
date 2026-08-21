@@ -3,16 +3,76 @@ import { sendConnectedOutreachMail } from "@/lib/mail";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import {
   emailDomain,
+  londonDate,
   londonDayBounds,
   OUTREACH_DAILY_HARD_LIMIT,
   outreachCrmGuard,
   prospectHasBlockedCrmRelationship,
   stepDelay,
 } from "@/lib/outreach";
+import {
+  isDeliveryDayConflict,
+  isSenderSlotConflict,
+  normalizeOutreachCompanySafetyKey,
+  outreachSafetyError,
+} from "@/lib/outreach-team-safety";
 
 export const OUTREACH_SEND_SPACING_MINUTES = 5;
 const SEND_SPACING_MS = OUTREACH_SEND_SPACING_MINUTES * 60 * 1000;
 const CLAIM_WINDOW_MS = 10 * 60 * 1000;
+const MAX_DELIVERY_ATTEMPTS = 200;
+
+async function reserveOutreachDelivery(
+  messageId: string,
+  startingAt: Date,
+  options: { requireUnscheduled: boolean; claimExpiresAt?: string | null }
+) {
+  let candidate = new Date(startingAt);
+  for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS; attempt += 1) {
+    const scheduledAt = candidate.toISOString();
+    let query = supabaseAdmin
+      .from("outreach_messages")
+      .update({
+        scheduled_at: scheduledAt,
+        delivery_day: londonDate(candidate),
+        claim_expires_at: options.claimExpiresAt ?? null,
+        error: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", messageId)
+      .eq("status", "approved");
+    if (options.requireUnscheduled) query = query.is("scheduled_at", null);
+    const { data, error } = await query
+      .select("id,scheduled_at,delivery_day,claim_expires_at")
+      .maybeSingle();
+    if (!error && data) return data;
+    if (!error && options.requireUnscheduled) {
+      const { data: current, error: currentError } = await supabaseAdmin
+        .from("outreach_messages")
+        .select("id,scheduled_at,delivery_day,claim_expires_at")
+        .eq("id", messageId)
+        .eq("status", "approved")
+        .maybeSingle();
+      if (currentError) throw currentError;
+      if (current?.scheduled_at) return current;
+    }
+    if (error && isDeliveryDayConflict(error)) {
+      candidate = new Date(candidate.getTime() + 24 * 60 * 60 * 1000);
+      continue;
+    }
+    if (error && isSenderSlotConflict(error)) {
+      candidate = new Date(candidate.getTime() + SEND_SPACING_MS);
+      continue;
+    }
+    if (error) {
+      const safetyMessage = outreachSafetyError(error);
+      if (safetyMessage) throw new Error(safetyMessage);
+      throw error;
+    }
+    break;
+  }
+  throw new Error("The team outreach calendar has no safe delivery day in the next 30 days");
+}
 
 export async function queueApprovedOutreachMessage(messageId: string) {
   const sender = await resolveOutreachIdentity();
@@ -49,17 +109,11 @@ export async function queueApprovedOutreachMessage(messageId: string) {
   const scheduledMs =
     Math.ceil(Math.max(earliestMs, afterLatestMs) / SEND_SPACING_MS) *
     SEND_SPACING_MS;
-  const scheduledAt = new Date(scheduledMs).toISOString();
-
-  const { data: queued, error } = await supabaseAdmin
-    .from("outreach_messages")
-    .update({ scheduled_at: scheduledAt, error: null, updated_at: now.toISOString() })
-    .eq("id", messageId)
-    .eq("status", "approved")
-    .is("scheduled_at", null)
-    .select("id, scheduled_at")
-    .maybeSingle();
-  if (error) throw error;
+  const queued = await reserveOutreachDelivery(
+    messageId,
+    new Date(scheduledMs),
+    { requireUnscheduled: true }
+  );
   if (!queued) {
     const { data: current } = await supabaseAdmin
       .from("outreach_messages")
@@ -70,6 +124,7 @@ export async function queueApprovedOutreachMessage(messageId: string) {
       throw new Error("The database did not confirm the send queue");
     return { queued: true, scheduledAt: current.scheduled_at };
   }
+  const scheduledAt = queued.scheduled_at;
   await supabaseAdmin.from("outreach_events").insert({
     campaign_id: message.campaign_id,
     prospect_id: message.prospect_id,
@@ -86,18 +141,21 @@ export async function queueApprovedOutreachMessage(messageId: string) {
 
 export async function dispatchDueOutreachMessage(messageId: string) {
   const now = new Date();
-  // Move the due time forward before sending. A second overlapping cron run can
-  // no longer claim the same row, while a crashed worker becomes eligible again.
+  const claimExpiresAt = new Date(now.getTime() + CLAIM_WINDOW_MS).toISOString();
+  // The claim has its own visibility timeout. Scheduled delivery time remains
+  // immutable while the worker runs, so its team-wide delivery-day reservation
+  // cannot silently move across midnight.
   const { data: message, error: claimError } = await supabaseAdmin
     .from("outreach_messages")
     .update({
-      scheduled_at: new Date(now.getTime() + CLAIM_WINDOW_MS).toISOString(),
+      claim_expires_at: claimExpiresAt,
       updated_at: now.toISOString(),
     })
     .eq("id", messageId)
     .eq("status", "approved")
     .not("scheduled_at", "is", null)
     .lte("scheduled_at", now.toISOString())
+    .or(`claim_expires_at.is.null,claim_expires_at.lte.${now.toISOString()}`)
     .select("*")
     .maybeSingle();
   if (claimError) throw claimError;
@@ -114,6 +172,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         .update({
           status,
           scheduled_at: null,
+          claim_expires_at: null,
           error: reason,
           updated_at: new Date().toISOString(),
         })
@@ -170,10 +229,17 @@ export async function dispatchDueOutreachMessage(messageId: string) {
   )
     await stopClaim("This person is suppressed");
 
-  const email = String(prospect.email || "").toLowerCase();
+  const email = String(prospect.email || "").trim().toLowerCase();
   const domain = String(
     prospect.company_domain || emailDomain(email)
   ).toLowerCase();
+  const companyKey = normalizeOutreachCompanySafetyKey(prospect);
+  if (
+    message.recipient_email !== email ||
+    message.company_key !== companyKey
+  ) {
+    await stopClaim("Recipient safety identity changed before send", "failed");
+  }
   const { data: blocked } = await supabaseAdmin
     .from("outreach_suppressions")
     .select("target")
@@ -188,6 +254,27 @@ export async function dispatchDueOutreachMessage(messageId: string) {
       "This CRM relationship is engaged, dormant or not confirmed as a new lead"
     );
 
+  const today = londonDate(now);
+  if (message.delivery_day !== today) {
+    const reservation = await reserveOutreachDelivery(message.id, now, {
+      requireUnscheduled: false,
+      claimExpiresAt,
+    });
+    if (reservation.delivery_day !== today) {
+      await supabaseAdmin
+        .from("outreach_messages")
+        .update({ claim_expires_at: null, updated_at: now.toISOString() })
+        .eq("id", message.id);
+      return {
+        sent: false,
+        deferred: true,
+        scheduledAt: reservation.scheduled_at,
+      };
+    }
+    message.delivery_day = reservation.delivery_day;
+    message.scheduled_at = reservation.scheduled_at;
+  }
+
   const { start, end } = londonDayBounds(now);
   const { count } = await supabaseAdmin
     .from("outreach_messages")
@@ -201,12 +288,34 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     Number(campaign.daily_limit) || 20
   );
   if ((count || 0) >= dailyLimit) {
-    const retryAt = new Date(now.getTime() + 12 * 60 * 60 * 1000).toISOString();
-    await supabaseAdmin
-      .from("outreach_messages")
-      .update({ scheduled_at: retryAt, updated_at: now.toISOString() })
-      .eq("id", message.id);
-    return { sent: false, deferred: true, scheduledAt: retryAt };
+    const retry = await reserveOutreachDelivery(
+      message.id,
+      new Date(now.getTime() + 12 * 60 * 60 * 1000),
+      { requireUnscheduled: false }
+    );
+    return { sent: false, deferred: true, scheduledAt: retry.scheduled_at };
+  }
+
+  // Claim the irreversible step separately. If the worker stops after Gmail
+  // accepts the email but before LiveCoach records the result, the message
+  // remains in `sending` for reconciliation instead of being sent twice.
+  const { data: sending, error: sendingError } = await supabaseAdmin
+    .from("outreach_messages")
+    .update({ status: "sending", updated_at: new Date().toISOString() })
+    .eq("id", message.id)
+    .eq("status", "approved")
+    .eq("claim_expires_at", claimExpiresAt)
+    .eq("recipient_email", email)
+    .eq("company_key", companyKey)
+    .select("id,recipient_email,company_key")
+    .maybeSingle();
+  if (sendingError) throw sendingError;
+  if (!sending) return { sent: false, skipped: true };
+  if (
+    sending.recipient_email !== email ||
+    sending.company_key !== companyKey
+  ) {
+    await stopClaim("Recipient safety identity changed before delivery", "failed");
   }
 
   const sent = await sendConnectedOutreachMail({
@@ -225,6 +334,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         .update({
           status: "failed",
           scheduled_at: null,
+          claim_expires_at: null,
           error: sent.error,
           updated_at: new Date().toISOString(),
         })
@@ -257,6 +367,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
       .update({
         status: "sent",
         scheduled_at: null,
+        claim_expires_at: null,
         sent_at: sentAt.toISOString(),
         gmail_message_id: sent.id || null,
         gmail_thread_id: sent.threadId || null,
