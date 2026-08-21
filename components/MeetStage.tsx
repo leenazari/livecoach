@@ -36,6 +36,10 @@ const CHECKPOINT_EVERY = 4; // ...or mid-monologue, every N finalised chunks
 // or lost audio - the exact failure that once read as a healthy green light
 // because a single early line had already latched the on-air state true.
 const CAPTURE_STALE_MS = 90000;
+// A short browser or network wobble is normal, especially when a tab wakes
+// from the background. Do not alarm the coach unless the live display has
+// remained disconnected continuously for long enough to be actionable.
+const WS_RECONNECT_WARNING_GRACE_MS = 8000;
 
 // Each account receives its own coach aliases from its private profile. We
 // match by name rather than meeting host because the coach is not always the
@@ -72,6 +76,7 @@ export default function MeetStage({
   const [wsState, setWsState] = useState<"off" | "connecting" | "on" | "error">(
     "off"
   );
+  const [showReconnectWarning, setShowReconnectWarning] = useState(false);
   const [speakers, setSpeakers] = useState<Speaker[]>([]);
   const [coach, setCoach] = useState<string | null>(null);
 
@@ -314,14 +319,26 @@ export default function MeetStage({
         ["livecoach-v1", `livecoach-token.${access.token}`]
       );
       wsRef.current = ws;
+      const isCurrentSocket = () =>
+        !closedRef.current &&
+        wsRef.current === ws &&
+        connectionAttempt === connectionAttemptRef.current;
       ws.onopen = () => {
+        if (!isCurrentSocket()) return;
         setWsState("on");
         retryRef.current = 0;
         // We may have missed utterances while the socket was down - recover them.
         deliverBackfill(deliveredRef.current);
       };
-      ws.onerror = () => setWsState("error");
+      ws.onerror = () => {
+        if (!isCurrentSocket()) return;
+        setWsState("error");
+      };
       ws.onclose = (event) => {
+        // An older socket can finish closing after its replacement is already
+        // live. Never let that stale callback overwrite the healthy state.
+        if (!isCurrentSocket()) return;
+        wsRef.current = null;
         setWsState("off");
         if (event.code === 4401 || event.code === 4403) {
           streamAccessRef.current = null;
@@ -336,9 +353,13 @@ export default function MeetStage({
         }, delay);
       };
       ws.onmessage = (e: MessageEvent) => {
+        if (!isCurrentSocket()) return;
         try {
           const msg = JSON.parse(e.data);
           if (msg.type === "utterance") {
+            // Receiving speech is definitive proof that this display socket is
+            // healthy, even if the browser emitted a transient error first.
+            setWsState("on");
             handleUtterance(msg.speaker || "", msg.role || "", msg.text || "");
           }
         } catch {
@@ -381,6 +402,19 @@ export default function MeetStage({
       }
     };
   }, [connect]);
+
+  const wsConnected = wsState === "on";
+  useEffect(() => {
+    if (!botId || wsConnected) {
+      setShowReconnectWarning(false);
+      return;
+    }
+    const warningTimer = setTimeout(
+      () => setShowReconnectWarning(true),
+      WS_RECONNECT_WARNING_GRACE_MS
+    );
+    return () => clearTimeout(warningTimer);
+  }, [botId, wsConnected]);
 
   // Mid-call stall watch. The join watchdog only covers getting IN; this covers
   // capture dying AFTER it started - the socket stays "on" so the disconnect
@@ -603,16 +637,14 @@ export default function MeetStage({
         </p>
       )}
 
-      {/* Loud, impossible-to-miss warning when a bot is live but the transcript
-          socket is down - this is the moment capture silently stopped before.
-          It recovers on its own; the banner just tells you not to trust the
-          window or end the call until it's back. */}
-      {botId && wsState !== "on" && (
-        <div className="rounded-lg border border-rust/60 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-rust">
-          {"⚠"} Transcriber disconnected{" "}
-          {wsState === "connecting" ? "- reconnecting now" : "- reconnecting"}.
-          New speech is not being captured this second. Keep the call open, it
-          recovers and backfills what it missed automatically.
+      {/* The browser display socket is separate from Recall's recording and the
+          worker's persistence path. Only warn after a sustained interruption,
+          and never claim that a display reconnect means capture has stopped. */}
+      {botId && showReconnectWarning && (
+        <div className="rounded-lg border border-amber/60 bg-amber/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-amber">
+          {"⚠"} Live transcript display reconnecting. This does not mean the
+          notetaker has stopped recording. Saved speech will backfill
+          automatically when the display reconnects.
         </div>
       )}
 
