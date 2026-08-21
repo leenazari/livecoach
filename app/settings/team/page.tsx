@@ -19,6 +19,14 @@ type Member = {
   outreachSenderEmail: string | null;
   canActivate: boolean;
   activationIssues: string[];
+  transcriber_daily_minutes_limit: number;
+  transcriberUsage: {
+    usedMinutes: number;
+    remainingMinutes: number;
+    dailyLimitMinutes: number;
+    activeBot: boolean;
+    botCount: number;
+  };
   created_at: string;
 };
 
@@ -57,11 +65,21 @@ export default function TeamAccessPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  const [limitDrafts, setLimitDrafts] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setError("");
     try {
-      setData(await crmFetch<TeamData>("/api/crm/team"));
+      const nextData = await crmFetch<TeamData>("/api/crm/team");
+      setData(nextData);
+      setLimitDrafts(
+        Object.fromEntries(
+          nextData.members.map((member) => [
+            member.user_id,
+            String(member.transcriber_daily_minutes_limit),
+          ])
+        )
+      );
     } catch (err: any) {
       setError(err?.message || "Team access could not be loaded");
     }
@@ -120,6 +138,35 @@ export default function TeamAccessPage() {
       await load();
     } catch (err: any) {
       setError(err?.message || "The account was not updated");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveTranscriberLimit = async (member: Member) => {
+    const dailyMinutes = Number(limitDrafts[member.user_id]);
+    if (!Number.isInteger(dailyMinutes) || dailyMinutes < 30 || dailyMinutes > 720) {
+      setError("Choose a daily notetaker allowance from 30 to 720 minutes.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNote("");
+    try {
+      await crmFetch("/api/crm/team", {
+        method: "PATCH",
+        body: JSON.stringify({
+          userId: member.user_id,
+          action: "update_transcriber_limit",
+          dailyMinutes,
+        }),
+      });
+      setNote(
+        `${member.displayName || member.email || "Account"} now has ${dailyMinutes} notetaker minutes per day.`
+      );
+      await load();
+    } catch (err: any) {
+      setError(err?.message || "The notetaker allowance was not updated");
     } finally {
       setBusy(false);
     }
@@ -219,8 +266,8 @@ export default function TeamAccessPage() {
             <h2 className="font-display text-lg text-bone">Accounts</h2>
             <div className="mt-4 space-y-3">
               {data.members.map((member) => (
-                <div key={member.user_id} className="flex flex-col gap-3 rounded-xl border border-edge bg-ink/35 p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
+                <div key={member.user_id} className="grid gap-4 rounded-xl border border-edge bg-ink/35 p-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+                  <div className="min-w-0">
                     <p className="font-sans text-sm font-semibold text-bone">{member.displayName || member.email || "Invited account"}</p>
                     <p className="mt-1 text-xs text-muted">{member.email || "Email pending"}</p>
                     <p className="mt-1 text-xs text-muted">
@@ -237,16 +284,65 @@ export default function TeamAccessPage() {
                     {member.activationIssues?.length && member.status !== "active" ? (
                       <p className="mt-2 text-xs text-amber">{member.activationIssues.join(". ")}</p>
                     ) : null}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-muted">{member.role}</span>
+                      <span className={`rounded-full border px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider ${badge(member.status)}`}>{member.status}</span>
+                      {member.role !== "owner" && member.status !== "active" ? (
+                        <button type="button" onClick={() => setMemberAccess(member.user_id, "activate")} disabled={busy || !member.canActivate} className="rounded-full border border-sage/50 bg-sage/10 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-sage disabled:opacity-40">Activate</button>
+                      ) : null}
+                      {member.role !== "owner" && member.status === "active" ? (
+                        <button type="button" onClick={() => setMemberAccess(member.user_id, "suspend")} disabled={busy} className="rounded-full border border-rust/50 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-rust disabled:opacity-40">Suspend</button>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-muted">{member.role}</span>
-                    <span className={`rounded-full border px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider ${badge(member.status)}`}>{member.status}</span>
-                    {member.role !== "owner" && member.status !== "active" ? (
-                      <button type="button" onClick={() => setMemberAccess(member.user_id, "activate")} disabled={busy || !member.canActivate} className="rounded-full border border-sage/50 bg-sage/10 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-sage disabled:opacity-40">Activate</button>
-                    ) : null}
-                    {member.role !== "owner" && member.status === "active" ? (
-                      <button type="button" onClick={() => setMemberAccess(member.user_id, "suspend")} disabled={busy} className="rounded-full border border-rust/50 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-rust disabled:opacity-40">Suspend</button>
-                    ) : null}
+                  <div className="rounded-xl border border-edge bg-panel/55 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-mono text-[0.58rem] uppercase tracking-wider text-muted">Notetaker today</p>
+                      <span className={`rounded-full border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-wider ${member.transcriberUsage.activeBot ? "border-sage/50 bg-sage/10 text-sage" : "border-edge text-muted"}`}>
+                        {member.transcriberUsage.activeBot ? "Live now" : "One bot max"}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm font-semibold text-bone">
+                      {member.transcriberUsage.usedMinutes} of {member.transcriberUsage.dailyLimitMinutes} minutes used
+                    </p>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-ink">
+                      <div
+                        className={`h-full rounded-full ${member.transcriberUsage.usedMinutes >= member.transcriberUsage.dailyLimitMinutes ? "bg-rust" : "bg-sage"}`}
+                        style={{
+                          width: `${Math.min(100, (member.transcriberUsage.usedMinutes / Math.max(1, member.transcriberUsage.dailyLimitMinutes)) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <p className="mt-2 text-xs text-muted">
+                      {member.transcriberUsage.remainingMinutes} minutes remain. Resets at midnight UK time.
+                    </p>
+                    <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                      <label className="sr-only" htmlFor={`limit-${member.user_id}`}>Daily notetaker minutes</label>
+                      <input
+                        id={`limit-${member.user_id}`}
+                        type="number"
+                        min={30}
+                        max={720}
+                        step={30}
+                        inputMode="numeric"
+                        value={limitDrafts[member.user_id] ?? ""}
+                        onChange={(event) =>
+                          setLimitDrafts((current) => ({
+                            ...current,
+                            [member.user_id]: event.target.value,
+                          }))
+                        }
+                        className="min-h-10 min-w-0 rounded-lg border border-edge bg-ink/70 px-3 text-sm text-bone outline-none focus:border-amber/60"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => saveTranscriberLimit(member)}
+                        disabled={busy || !limitDrafts[member.user_id]}
+                        className="min-h-10 rounded-full border border-amber/50 px-3 font-mono text-[0.58rem] uppercase tracking-wider text-amber disabled:opacity-40"
+                      >
+                        Save limit
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
