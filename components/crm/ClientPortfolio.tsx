@@ -14,6 +14,8 @@ export type ClientHealth = "red" | "amber" | "green" | "grey";
 export type ClientPortfolioRow = {
   id: string;
   name: string;
+  shared: boolean;
+  accessMode: "owner" | "shared_sales";
   sector: string | null;
   relationshipStage: string | null;
   relationshipType: string | null;
@@ -194,7 +196,10 @@ function MobileClientCard({
     >
       <div className="flex items-start justify-between gap-3">
         <Link href={`/crm/${row.id}`} className="min-w-0 flex-1">
-          <p className="truncate font-sans text-[0.96rem] font-medium text-bone">{row.name}</p>
+          <p className="flex min-w-0 items-center gap-2 font-sans text-[0.96rem] font-medium text-bone">
+            <span className="truncate">{row.name}</span>
+            {row.shared ? <span className="shrink-0 rounded-full border border-sage/40 bg-sage/10 px-2 py-0.5 font-mono text-[0.45rem] uppercase text-sage">team</span> : null}
+          </p>
           <p className="mt-0.5 truncate font-mono text-[0.54rem] uppercase tracking-wider text-muted">
             {[row.category, row.sector].filter(Boolean).join(" · ")}
           </p>
@@ -256,14 +261,16 @@ function MobileClientCard({
           >
             open
           </Link>
-          <button
-            type="button"
-            onClick={() => onDelete(row.id, row.name)}
-            aria-label={`Delete ${row.name}`}
-            className="rounded-full border border-edge px-2.5 py-1 font-mono text-[0.62rem] text-muted transition hover:border-rust/50 hover:text-rust"
-          >
-            ×
-          </button>
+          {row.accessMode === "owner" ? (
+            <button
+              type="button"
+              onClick={() => onDelete(row.id, row.name)}
+              aria-label={`Delete ${row.name}`}
+              className="rounded-full border border-edge px-2.5 py-1 font-mono text-[0.62rem] text-muted transition hover:border-rust/50 hover:text-rust"
+            >
+              ×
+            </button>
+          ) : null}
         </span>
       </div>
     </article>
@@ -559,7 +566,7 @@ export default function ClientPortfolio({
                   <td className="px-3 py-3"><HealthBadge row={row} /></td>
                   <td className="max-w-[180px] px-3 py-3">
                     <Link href={`/crm/${row.id}`} className="block min-w-0">
-                      <p className="truncate font-sans text-[0.84rem] font-medium text-bone hover:text-amber">{row.name}</p>
+                      <p className="flex min-w-0 items-center gap-2 font-sans text-[0.84rem] font-medium text-bone hover:text-amber"><span className="truncate">{row.name}</span>{row.shared ? <span className="shrink-0 rounded-full border border-sage/40 bg-sage/10 px-1.5 py-0.5 font-mono text-[0.42rem] uppercase text-sage">team</span> : null}</p>
                       <p className="mt-0.5 truncate font-mono text-[0.5rem] uppercase tracking-wider text-muted">
                         {[row.category, row.sector].filter(Boolean).join(" · ")}
                       </p>
@@ -617,7 +624,7 @@ export default function ClientPortfolio({
                   <td className="px-3 py-3 text-right">
                     <span className="inline-flex items-center gap-1">
                       <Link href={`/crm/${row.id}`} aria-label={`Open ${row.name}`} className="rounded-full border border-sky/35 px-2 py-1 font-mono text-[0.52rem] text-sky transition hover:bg-sky/10">↗</Link>
-                      <button type="button" onClick={() => onDelete(row.id, row.name)} aria-label={`Delete ${row.name}`} className="rounded-full border border-edge px-2 py-1 font-mono text-[0.6rem] text-muted transition hover:border-rust/50 hover:text-rust">×</button>
+                      {row.accessMode === "owner" ? <button type="button" onClick={() => onDelete(row.id, row.name)} aria-label={`Delete ${row.name}`} className="rounded-full border border-edge px-2 py-1 font-mono text-[0.6rem] text-muted transition hover:border-rust/50 hover:text-rust">×</button> : null}
                     </span>
                   </td>
                 </tr>

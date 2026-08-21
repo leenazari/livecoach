@@ -7,6 +7,10 @@ import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
+import {
+  activeSharedClientIds,
+  loadSafeSharedCompanies,
+} from "@/lib/team-client-sharing";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -91,23 +95,29 @@ export async function GET(req: Request) {
     const graceIso = new Date(nowMs - 3 * 60 * 60 * 1000).toISOString();
 
     const [
-      { data: companies },
+      { data: ownedCompanies },
       { data: openTasks },
       { data: ucals },
       { data: opps },
       { data: prio },
       { data: recentCalls },
+      sharedClientIds,
     ] = await Promise.all([
-      supabaseAdmin.from("companies").select("id, name, stage, profile"),
+      supabaseAdmin
+        .from("companies")
+        .select("id, name, stage, profile")
+        .eq("owner_id", accountScope.userId),
       supabaseAdmin
         .from("tasks")
         .select("company_id, text, due_at, kind")
+        .eq("owner_id", accountScope.userId)
         .eq("status", "open")
         .not("company_id", "is", null)
         .limit(1000),
       supabaseAdmin
         .from("upcoming_calls")
         .select("company_id, title, scheduled_at, prepped")
+        .eq("owner_id", accountScope.userId)
         .not("company_id", "is", null)
         .eq("prepped", false)
         .gte("scheduled_at", graceIso)
@@ -119,14 +129,26 @@ export async function GET(req: Request) {
         .limit(300),
       supabaseAdmin
         .from("company_priority")
-        .select("company_id, position"),
+        .select("company_id, position")
+        .eq("owner_id", accountScope.userId),
       supabaseAdmin
         .from("interview_summaries")
         .select("company_id, created_at")
+        .eq("owner_id", accountScope.userId)
         .not("company_id", "is", null)
         .order("created_at", { ascending: false })
         .limit(1000),
+      activeSharedClientIds(),
     ]);
+
+    const ownedCompanyIds = new Set(
+      (ownedCompanies || []).map((company: any) => company.id)
+    );
+    const sharedCompanies = await loadSafeSharedCompanies(
+      sharedClientIds.filter((id) => !ownedCompanyIds.has(id)),
+      accountScope.workspaceId
+    );
+    const companies = [...(ownedCompanies || []), ...sharedCompanies];
 
     const nameById = new Map<string, string>();
     const stageById = new Map<string, string | null>();

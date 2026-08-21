@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { defaultOutlookQuestions } from "@/lib/opportunity-fields";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import { requireRequestScope } from "@/lib/request-scope";
+import {
+  activeSharedClientIds,
+  loadSafeSharedCompanies,
+} from "@/lib/team-client-sharing";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -13,10 +18,14 @@ export const dynamic = "force-dynamic";
 // name. Powers the dashboard "opportunities" drill-down. ?status=open to filter.
 export async function GET(req: NextRequest) {
   try {
+    const scope = requireRequestScope();
     const status = req.nextUrl.searchParams.get("status");
     const nowMs = Date.now();
-    const [{ data: companies }, oppRes, { data: calls }, { data: upcoming }] = await Promise.all([
-      supabaseAdmin.from("companies").select("id, name, profile"),
+    const [{ data: ownedCompanies }, oppRes, { data: calls }, { data: upcoming }, sharedIds] = await Promise.all([
+      supabaseAdmin
+        .from("companies")
+        .select("id, name, profile")
+        .eq("owner_id", scope.userId),
       (async () => {
         let q = supabaseAdmin
           .from("opportunities")
@@ -29,18 +38,27 @@ export async function GET(req: NextRequest) {
       supabaseAdmin
         .from("interview_summaries")
         .select("company_id, created_at")
+        .eq("owner_id", scope.userId)
         .not("company_id", "is", null)
         .order("created_at", { ascending: false })
         .limit(1000),
       supabaseAdmin
         .from("upcoming_calls")
         .select("company_id, title, scheduled_at")
+        .eq("owner_id", scope.userId)
         .not("company_id", "is", null)
         .is("completed_at", null)
         .gte("scheduled_at", new Date(nowMs).toISOString())
         .order("scheduled_at", { ascending: true })
         .limit(500),
+      activeSharedClientIds(),
     ]);
+    const ownedIds = new Set((ownedCompanies || []).map((company: any) => company.id));
+    const sharedCompanies = await loadSafeSharedCompanies(
+      sharedIds.filter((id) => !ownedIds.has(id)),
+      scope.workspaceId
+    );
+    const companies = [...(ownedCompanies || []), ...sharedCompanies];
     const nameById = new Map<string, string>();
     const lastTouchById = new Map<string, number>();
     const nextMeetingById = new Map<string, string>();

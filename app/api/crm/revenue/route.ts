@@ -5,6 +5,10 @@ import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { getAppConfigRows, setAppConfigValue } from "@/lib/app-config";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
+import {
+  activeSharedClientIds,
+  loadSafeSharedCompanies,
+} from "@/lib/team-client-sharing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,7 +31,7 @@ export async function GET() {
     const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1)).toISOString();
     const [
       { data: config },
-      { data: companies },
+      { data: ownedCompanies },
       { data: opportunities },
       { data: upcoming },
       { data: calls },
@@ -39,13 +43,17 @@ export async function GET() {
       { data: signalReceipts },
       { data: recentSignalReceipts },
       { data: signalUsage },
+      sharedClientIds,
     ] = await Promise.all([
       getAppConfigRows(["revenue_target_gbp"]).then((data) => ({ data })),
-      supabaseAdmin.from("companies").select("id,name,stage,profile"),
+      supabaseAdmin
+        .from("companies")
+        .select("id,name,stage,profile")
+        .eq("owner_id", account.userId),
       supabaseAdmin.from("opportunities").select("*").order("updated_at", { ascending: false }).limit(500),
-      supabaseAdmin.from("upcoming_calls").select("company_id,title,scheduled_at").is("completed_at", null).gte("scheduled_at", now.toISOString()).order("scheduled_at", { ascending: true }).limit(500),
-      supabaseAdmin.from("interview_summaries").select("company_id,created_at").not("company_id", "is", null).order("created_at", { ascending: false }).limit(2000),
-      supabaseAdmin.from("tasks").select("company_id,text,due_at,kind").eq("status", "open").not("company_id", "is", null).limit(2000),
+      supabaseAdmin.from("upcoming_calls").select("company_id,title,scheduled_at").eq("owner_id", account.userId).is("completed_at", null).gte("scheduled_at", now.toISOString()).order("scheduled_at", { ascending: true }).limit(500),
+      supabaseAdmin.from("interview_summaries").select("company_id,created_at").eq("owner_id", account.userId).not("company_id", "is", null).order("created_at", { ascending: false }).limit(2000),
+      supabaseAdmin.from("tasks").select("company_id,text,due_at,kind").eq("owner_id", account.userId).eq("status", "open").not("company_id", "is", null).limit(2000),
       supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }),
       supabaseAdmin.from("outreach_prospects").select("crm_company_id,company_name").not("crm_company_id", "is", null).limit(2000),
       supabaseAdmin.from("outreach_messages").select("prospect_id,message_tags,step_number,variant").eq("status", "sent").limit(5000),
@@ -63,7 +71,17 @@ export async function GET() {
         .eq("kind", "opportunity_outlook_assessment")
         .gte("created_at", new Date(Date.now() - 7 * DAY).toISOString())
         .limit(1000),
+      activeSharedClientIds(),
     ]);
+
+    const ownedCompanyIds = new Set(
+      (ownedCompanies || []).map((company: any) => company.id)
+    );
+    const sharedCompanies = await loadSafeSharedCompanies(
+      sharedClientIds.filter((id) => !ownedCompanyIds.has(id)),
+      account.workspaceId
+    );
+    const companies = [...(ownedCompanies || []), ...sharedCompanies];
 
     const target = Math.max(1, Number((config || []).find((row: any) => row.key === "revenue_target_gbp")?.value) || 2_000_000);
     const nameByCompany = new Map<string, string>();

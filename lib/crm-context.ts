@@ -1,6 +1,12 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { londonDayBounds } from "@/lib/outreach";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import { getRequestScope } from "@/lib/request-scope";
+import {
+  activeSharedClientIds,
+  loadSafeSharedCompanies,
+  loadSafeSharedCompany,
+} from "@/lib/team-client-sharing";
 
 // Gathers EVERYTHING we know about one client into a single grounding string:
 // profile, recent call scorecards (incl. focus scores), open opportunities,
@@ -15,7 +21,7 @@ export async function gatherClientContext(
     typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : "";
 
   const [
-    { data: company },
+    { data: visibleCompany },
     contactsRes,
     summariesRes,
     oppsRes,
@@ -28,7 +34,7 @@ export async function gatherClientContext(
     await Promise.all([
       supabaseAdmin
         .from("companies")
-        .select("name, sector, stage, profile, attributes, notes, email_context")
+        .select("id, owner_id, name, sector, stage, profile, attributes, notes, email_context")
         .eq("id", companyId)
         .single(),
       supabaseAdmin
@@ -87,6 +93,26 @@ export async function gatherClientContext(
     .order("scheduled_at", { ascending: true })
     .limit(10);
 
+  const requestScope = getRequestScope();
+  let company: any =
+    visibleCompany &&
+    (!requestScope || visibleCompany.owner_id === requestScope.userId)
+      ? visibleCompany
+      : null;
+  let sharedSalesAccess = false;
+  if (!company && requestScope) {
+    const { data: share } = await supabaseAdmin
+      .from("team_client_shares")
+      .select("id")
+      .eq("workspace_id", requestScope.workspaceId)
+      .eq("company_id", companyId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (share) {
+      company = await loadSafeSharedCompany(companyId, requestScope.workspaceId);
+      sharedSalesAccess = !!company;
+    }
+  }
   if (!company) return "";
 
   // Pre-compute every field so we can render it as a value OR an explicit
@@ -127,6 +153,13 @@ export async function gatherClientContext(
     ctx.length === 0;
 
   const lines: string[] = [];
+
+  if (sharedSalesAccess) {
+    lines.push(
+      "ACCESS BOUNDARY: this is a team-shared sales record. Use the client basics and team-visible opportunity below. The original owner's calls, transcripts, calendar, mailbox context, notes, documents and Brain memory are private and are not available. Never imply that you have read them.",
+      ""
+    );
+  }
 
   if (isThin) {
     lines.push(
@@ -350,11 +383,12 @@ export async function gatherGlobalContext(
       message
     );
 
+  const requestScope = getRequestScope();
   const [companiesRes, draftsRes, oppsRes, tasksRes, callsRes] =
     await Promise.all([
       supabaseAdmin
         .from("companies")
-        .select("id, name, sector, stage, profile")
+        .select("id, owner_id, name, sector, stage, profile")
         .limit(500),
       supabaseAdmin
         .from("follow_ups")
@@ -380,7 +414,20 @@ export async function gatherGlobalContext(
         .limit(500),
     ]);
 
-  const companies = companiesRes.data || [];
+  const ownedCompanies = (companiesRes.data || []).filter(
+    (company: any) =>
+      !requestScope || company.owner_id === requestScope.userId
+  );
+  let companies: any[] = [...ownedCompanies];
+  if (requestScope) {
+    const sharedIds = await activeSharedClientIds();
+    const ownedIds = new Set(ownedCompanies.map((company: any) => company.id));
+    const sharedCompanies = await loadSafeSharedCompanies(
+      sharedIds.filter((id) => !ownedIds.has(id)),
+      requestScope.workspaceId
+    );
+    companies = [...companies, ...sharedCompanies];
+  }
   if (companies.length === 0) {
     return "The user has no clients in their CRM yet.";
   }
@@ -820,12 +867,27 @@ export async function findCompaniesNamedIn(
       .trim();
   const m = ` ${norm(message)} `;
   if (m.trim().length < 2) return [];
+  const requestScope = getRequestScope();
   const { data } = await supabaseAdmin
     .from("companies")
-    .select("id, name, profile")
+    .select("id, owner_id, name, profile")
     .limit(500);
+  const ownedCompanies = (data || []).filter(
+    (company: any) =>
+      !requestScope || company.owner_id === requestScope.userId
+  );
+  let visibleCompanies: any[] = [...ownedCompanies];
+  if (requestScope) {
+    const sharedIds = await activeSharedClientIds();
+    const ownedIds = new Set(ownedCompanies.map((company: any) => company.id));
+    const sharedCompanies = await loadSafeSharedCompanies(
+      sharedIds.filter((id) => !ownedIds.has(id)),
+      requestScope.workspaceId
+    );
+    visibleCompanies = [...visibleCompanies, ...sharedCompanies];
+  }
   const out: { id: string; name: string }[] = [];
-  for (const c of (data || []) as any[]) {
+  for (const c of visibleCompanies) {
     const full = norm(c.name);
     let matched = full.length >= 4 && m.includes(` ${full} `);
     if (!matched) {

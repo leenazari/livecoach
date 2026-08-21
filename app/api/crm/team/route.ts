@@ -130,10 +130,10 @@ export async function GET() {
           .eq("workspace_id", scope.workspaceId)
           .eq("visibility", "team"),
         supabaseService
-          .from("companies")
+          .from("team_client_shares")
           .select("id", { count: "exact", head: true })
           .eq("workspace_id", scope.workspaceId)
-          .eq("visibility", "team"),
+          .eq("status", "active"),
         supabaseService
           .from("opportunities")
           .select("id", { count: "exact", head: true })
