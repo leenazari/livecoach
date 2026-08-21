@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicAppOrigin } from "@/lib/public-app-url";
 import { listActiveAccountScopes } from "@/lib/automation-accounts";
 import { runWithServiceRecordScope } from "@/lib/service-scope";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -133,7 +134,7 @@ async function runDigest(req: NextRequest) {
 
     const since = new Date(now.getTime() - 36 * 60 * 60 * 1000).toISOString();
     const horizon = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000).toISOString();
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://livecoach-alpha.vercel.app";
+    const appUrl = publicAppOrigin();
     // Use the dashboard's own deterministic ranking for the email too. Calling
     // the light route keeps it model-free while guaranteeing that the first
     // five priorities in both places are the same at send time.

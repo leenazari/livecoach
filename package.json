@@ -11,6 +11,7 @@
     "lint": "next lint",
     "validate:outreach-eligibility": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-crm-eligibility.mjs",
     "validate:multi-user": "node scripts/validate-multi-user-foundation.mjs",
+    "validate:public-url": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-public-app-url.mjs",
     "validate:transcriber": "node scripts/validate-transcriber-isolation.mjs",
     "validate:transcriber-allowance": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-transcriber-allowance.mjs"
   },

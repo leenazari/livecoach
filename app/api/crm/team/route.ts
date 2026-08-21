@@ -4,6 +4,7 @@ import { sendConnectedMail } from "@/lib/mail";
 import { requireWorkspaceOwner } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
 import { deriveTranscriberName } from "@/lib/transcriber";
+import { publicAppOrigin } from "@/lib/public-app-url";
 import {
   calculateTranscriberUsage,
   londonDayBounds,
@@ -703,6 +704,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // A pending invitation cannot be reused because only the hashed token is
+    // stored. Replace it when Lee resends so the old broken or exposed link is
+    // invalid immediately and the new email receives a fresh seven-day token.
+    const { data: replacedInvitations, error: replaceError } = await supabaseService
+      .from("workspace_invitations")
+      .update({ status: "revoked", updated_at: new Date().toISOString() })
+      .eq("workspace_id", scope.workspaceId)
+      .ilike("email", email)
+      .eq("status", "pending")
+      .select("id");
+    if (replaceError) throw replaceError;
+
     const rawToken = randomBytes(32).toString("base64url");
     const tokenHash = createHash("sha256").update(rawToken).digest("hex");
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -730,7 +743,7 @@ export async function POST(req: NextRequest) {
     }
     invitationId = invitation.id;
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
+    const appUrl = publicAppOrigin(req.nextUrl.origin);
     const nextPath = `/join-team?invite=${encodeURIComponent(rawToken)}`;
     const callback = new URL("/auth/callback", appUrl);
     callback.searchParams.set("next", nextPath);
@@ -769,6 +782,20 @@ export async function POST(req: NextRequest) {
       target_id: invitation.id,
       next_scope: { email, role, status: "pending" },
     });
+    if (replacedInvitations?.length) {
+      await supabaseService.from("access_audit_events").insert(
+        replacedInvitations.map((replaced) => ({
+          workspace_id: scope.workspaceId,
+          actor_user_id: scope.userId,
+          source: "human",
+          action: "workspace_invitation_replaced",
+          target_table: "workspace_invitations",
+          target_id: replaced.id,
+          previous_scope: { email, status: "pending" },
+          next_scope: { email, status: "revoked", replacement_id: invitation.id },
+        }))
+      );
+    }
 
     return NextResponse.json({ invitation }, { status: 201 });
   } catch (error: any) {

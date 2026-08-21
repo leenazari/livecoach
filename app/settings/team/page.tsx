@@ -110,17 +110,23 @@ export default function TeamAccessPage() {
     load();
   }, [load]);
 
-  const invite = async () => {
-    if (!email.trim() || busy) return;
+  const sendInvitation = async (
+    inviteEmail: string,
+    inviteRole: "sales" | "manager",
+    replacement = false
+  ) => {
+    if (!inviteEmail.trim() || busy) return;
     setBusy(true);
     setError("");
     setNote("");
     try {
       await crmFetch("/api/crm/team", {
         method: "POST",
-        body: JSON.stringify({ email, role }),
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
       });
-      setNote(`Invitation sent to ${email.trim().toLowerCase()}.`);
+      setNote(
+        `${replacement ? "Fresh invitation" : "Invitation"} sent to ${inviteEmail.trim().toLowerCase()}.`
+      );
       setEmail("");
       await load();
     } catch (err: any) {
@@ -129,6 +135,8 @@ export default function TeamAccessPage() {
       setBusy(false);
     }
   };
+
+  const invite = async () => sendInvitation(email, role);
 
   const revoke = async (invitationId: string) => {
     setBusy(true);
@@ -570,7 +578,10 @@ export default function TeamAccessPage() {
                   <div className="flex items-center gap-2">
                     <span className={`rounded-full border px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider ${badge(invitation.status)}`}>{invitation.status}</span>
                     {invitation.status === "pending" ? (
-                      <button type="button" onClick={() => revoke(invitation.id)} disabled={busy} className="rounded-full border border-rust/50 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-rust disabled:opacity-50">Revoke</button>
+                      <>
+                        <button type="button" onClick={() => sendInvitation(invitation.email, invitation.role, true)} disabled={busy} className="rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-amber disabled:opacity-50">Resend</button>
+                        <button type="button" onClick={() => revoke(invitation.id)} disabled={busy} className="rounded-full border border-rust/50 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-rust disabled:opacity-50">Revoke</button>
+                      </>
                     ) : null}
                   </div>
                 </div>
