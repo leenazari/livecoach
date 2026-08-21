@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sendMail } from "@/lib/gmail";
 import { requireWorkspaceOwner } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
+import { deriveTranscriberName } from "@/lib/transcriber";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,7 +60,7 @@ export async function GET() {
         ? await Promise.all([
             supabaseService
               .from("profiles")
-              .select("user_id,display_name,email")
+              .select("user_id,display_name,email,transcriber_name")
               .in("user_id", memberIds),
             supabaseService
               .from("google_oauth")
@@ -88,6 +89,9 @@ export async function GET() {
         email: profile?.email || null,
         googleConnected: !!google?.refresh_token,
         googleEmail: google?.email || null,
+        transcriberName:
+          profile?.transcriber_name ||
+          deriveTranscriberName(profile?.display_name || null),
       };
     });
 

@@ -3,9 +3,6 @@
 // Throwaway diagnostic harness for the Meet/Recall pipeline. Not user-facing.
 import { useEffect, useRef, useState } from "react";
 
-const WORKER_WS =
-  "wss://livecoach-meet-worker-production.up.railway.app/ws";
-
 type Line = { speaker: string; role: string; text: string; ts: string };
 
 export default function MeetTestPage() {
@@ -18,21 +15,35 @@ export default function MeetTestPage() {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    setRoom("meet-test-" + Math.random().toString(36).slice(2, 8));
+    setRoom("lc-test-" + Math.random().toString(36).slice(2, 10));
     return () => {
       if (wsRef.current) wsRef.current.close();
     };
   }, []);
 
-  function connectWs() {
+  async function connectWs() {
     if (!room) return;
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
-    const ws = new WebSocket(`${WORKER_WS}?session=${encodeURIComponent(room)}`);
-    wsRef.current = ws;
     setWsState("connecting");
+    const accessResponse = await fetch("/api/meet/access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: room }),
+    });
+    const access = await accessResponse.json();
+    if (!accessResponse.ok || !access.token || !access.workerWs) {
+      setWsState("error");
+      setStatus(access.error || "private stream access failed");
+      return;
+    }
+    const ws = new WebSocket(
+      `${access.workerWs}?session=${encodeURIComponent(room)}`,
+      ["livecoach-v1", `livecoach-token.${access.token}`]
+    );
+    wsRef.current = ws;
     ws.onopen = () => setWsState("connected");
     ws.onclose = () => setWsState("disconnected");
     ws.onerror = () => setWsState("error");
