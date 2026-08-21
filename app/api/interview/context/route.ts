@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { extractTextFromPDF } from "@/lib/pdf-extract";
 import { getWorkstreamScope } from "@/lib/workstreams";
+import { requireRequestScope } from "@/lib/request-scope";
+import { storageSegment } from "@/lib/storage-scope";
+import { getAppConfigValue } from "@/lib/app-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -9,14 +12,17 @@ export const maxDuration = 60;
 const BUCKET = "knowledge_docs";
 
 async function listFiles(prefix: string) {
-  const { data, error } = await supabaseAdmin.storage
+  const { data, error } = await supabaseService.storage
     .from(BUCKET)
     .list(prefix, {
       limit: 100,
       sortBy: { column: "created_at", order: "desc" },
     });
   if (error || !data) return [];
-  return data;
+  return data.map((file) => ({
+    ...file,
+    storagePath: `${prefix}/${file.name}`,
+  }));
 }
 
 // PHASE 2 - auto-attach client history. When a call is linked to a company,
@@ -259,7 +265,7 @@ async function companyHistoryBlock(
 }
 
 async function downloadText(path: string): Promise<string> {
-  const { data, error } = await supabaseAdmin.storage
+  const { data, error } = await supabaseService.storage
     .from(BUCKET)
     .download(path);
   if (error || !data) return "";
@@ -277,16 +283,34 @@ async function downloadText(path: string): Promise<string> {
 
 export async function POST(req: NextRequest) {
   try {
+    const account = requireRequestScope();
     const { sessionId, companyId, workstreamId } = await req.json();
+    const safeSessionId = sessionId ? storageSegment(sessionId) : null;
+    if (sessionId && !safeSessionId) {
+      return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 });
+    }
+    const legacyOwner = await getAppConfigValue("legacy_storage_owner_id");
+    const canReadLegacy = legacyOwner?.value === account.userId;
 
     let context = "";
     const sources: string[] = [];
 
-    // 1. Frameworks - always (reusable, global).
-    const frameworks = await listFiles("framework/global");
+    // New files always live below the signed-in account. The owner can still
+    // read Lee's legacy unprefixed files while they are gradually replaced.
+    // Compatibility access is bound to the original account in app_config.
+    // Roles alone can never grant access to Lee's unprefixed legacy files.
+    const rootsFor = (suffix: string) => [
+      `users/${account.userId}/${suffix}`,
+      ...(canReadLegacy ? [suffix] : []),
+    ];
+
+    // 1. Frameworks for this account only.
+    const frameworks = (
+      await Promise.all(rootsFor("framework/global").map(listFiles))
+    ).flat();
     for (const f of frameworks) {
       if (!f.name || f.id === null) continue;
-      const t = await downloadText(`framework/global/${f.name}`);
+      const t = await downloadText(f.storagePath);
       if (t.trim()) {
         context += `### QUESTION FRAMEWORK (${f.name})\n${t}\n\n`;
         sources.push(`${f.name} (framework)`);
@@ -295,21 +319,29 @@ export async function POST(req: NextRequest) {
 
     // 2. CV + summary - ONLY for this session. No global fallback, so an
     //    empty session loads no candidate context and cues stay generic.
-    if (sessionId) {
-      const cvs = await listFiles(`session/${sessionId}/cv`);
+    if (safeSessionId) {
+      const cvs = (
+        await Promise.all(
+          rootsFor(`session/${safeSessionId}/cv`).map(listFiles)
+        )
+      ).flat();
       for (const f of cvs) {
         if (!f.name || f.id === null) continue;
-        const t = await downloadText(`session/${sessionId}/cv/${f.name}`);
+        const t = await downloadText(f.storagePath);
         if (t.trim()) {
           context += `### UPLOADED DOCUMENT (${f.name}) - subject matter for this call\n${t}\n\n`;
           sources.push(`${f.name} (cv)`);
         }
       }
 
-      const summaries = await listFiles(`session/${sessionId}/summary`);
+      const summaries = (
+        await Promise.all(
+          rootsFor(`session/${safeSessionId}/summary`).map(listFiles)
+        )
+      ).flat();
       for (const f of summaries) {
         if (!f.name || f.id === null) continue;
-        const t = await downloadText(`session/${sessionId}/summary/${f.name}`);
+        const t = await downloadText(f.storagePath);
         if (t.trim()) {
           context += `### PREVIOUS SUMMARY (${f.name})\n${t}\n\n`;
           sources.push(`${f.name} (summary)`);

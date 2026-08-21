@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { usageCostUSD, USD_TO_GBP } from "@/lib/costs";
+import { privateRecordFields, type RecordScope } from "@/lib/record-scope";
 
 // One place to record every AI pass's cost so the dashboard can total true
 // spend, not just live calls. Best-effort: never throws into the caller.
@@ -12,13 +13,19 @@ import { usageCostUSD, USD_TO_GBP } from "@/lib/costs";
 export async function logUsage(
   kind: string,
   costGbp: number,
-  meta: Record<string, any> = {}
+  meta: Record<string, any> = {},
+  recordScope?: RecordScope
 ): Promise<void> {
   if (!costGbp || costGbp < 0) costGbp = costGbp < 0 ? 0 : costGbp;
   try {
     await supabaseAdmin
       .from("usage_log")
-      .insert({ kind, cost_gbp: costGbp, meta });
+      .insert({
+        kind,
+        cost_gbp: costGbp,
+        meta,
+        ...(recordScope ? privateRecordFields(recordScope) : {}),
+      });
   } catch {
     /* best-effort */
   }
@@ -29,8 +36,9 @@ export async function logModelUsage(
   kind: string,
   model: "live" | "pro" | "think" | "brain",
   usage: any,
-  meta: Record<string, any> = {}
+  meta: Record<string, any> = {},
+  recordScope?: RecordScope
 ): Promise<void> {
   const gbp = usageCostUSD(model, usage) * USD_TO_GBP;
-  await logUsage(kind, gbp, { model, ...meta });
+  await logUsage(kind, gbp, { model, ...meta }, recordScope);
 }

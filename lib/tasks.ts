@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
+import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { capitaliseSentenceStarts } from "@/lib/text";
 
 // A stable fingerprint per (company, action). Same action for the same client
@@ -196,6 +197,7 @@ export async function upsertTasks(
   items: NewTask[],
   workstreamId?: string | null
 ): Promise<any[]> {
+  const accountScope = await resolveRecordScope();
   const candidates = (items || []).filter(
     (i) => i && typeof i.text === "string" && i.text.trim()
   );
@@ -252,12 +254,16 @@ export async function upsertTasks(
         workstreamId
       ),
       status: "open",
+      ...privateRecordFields(accountScope),
     }));
   if (!rows.length) return [];
   try {
     const { data } = await supabaseAdmin
       .from("tasks")
-      .upsert(rows, { onConflict: "fingerprint", ignoreDuplicates: true })
+      .upsert(rows, {
+        onConflict: "owner_id,fingerprint",
+        ignoreDuplicates: true,
+      })
       .select(
         "id, company_id, workstream_id, text, kind, link_kind, status, done_at, created_at, payload, due_at"
       );

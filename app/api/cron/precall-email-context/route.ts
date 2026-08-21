@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { loadAttendeeConfig, type Attendee } from "@/lib/attendees";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import { setAppConfigValue } from "@/lib/app-config";
+import { resolveRecordScope } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -93,6 +95,7 @@ async function run(req: NextRequest) {
   }
 
   try {
+    await resolveRecordScope();
     const startedAt = new Date();
     const nowMs = startedAt.getTime();
     const horizon = new Date(nowMs + LOOK_AHEAD_HOURS * HOUR).toISOString();
@@ -269,11 +272,10 @@ async function run(req: NextRequest) {
       horizonHours: LOOK_AHEAD_HOURS,
       finishedAt: new Date().toISOString(),
     };
-    await supabaseAdmin.from("app_config").upsert({
+    await setAppConfigValue({
       key: "precall_email_context_last_run",
       value: JSON.stringify(report),
       note: "Latest automatic pre-call Gmail context refresh",
-      updated_at: report.finishedAt,
     });
     return NextResponse.json(report);
   } catch (error: any) {

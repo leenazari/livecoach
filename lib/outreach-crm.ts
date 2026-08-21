@@ -349,6 +349,7 @@ export async function ensureOutreachCompany(
           auto_created_from: "outreach",
           outreach_prospect_id: prospect.id,
         },
+        visibility: "team",
       })
       .select("*")
       .single();
@@ -381,6 +382,7 @@ export async function ensureOutreachCompany(
           source: "outreach",
           personLinkedIn: prospect.person_linkedin_url || null,
         },
+        visibility: "team",
       })
       .select("id")
       .single();

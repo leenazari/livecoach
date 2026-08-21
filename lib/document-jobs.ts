@@ -16,7 +16,7 @@ import {
   TextRun,
   WidthType,
 } from "docx";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { usageCostUSD, USD_TO_GBP } from "@/lib/costs";
@@ -509,7 +509,7 @@ export async function processDocumentJob(jobId: string) {
       jobId: job.id,
       documentType: job.document_type,
       companyId: job.company_id || null,
-    });
+    }, { userId: job.owner_id, workspaceId: job.workspace_id });
     const parsed = parseObject(modelText(message));
     if (!parsed) throw new Error("The document response format was incomplete");
     const content = normaliseDocument(parsed, job.title);
@@ -534,8 +534,8 @@ export async function processDocumentJob(jobId: string) {
       throw new Error("The Word file did not pass the completeness check");
     const fileName = safeFileName(content.title || job.title);
     const yearMonth = new Date().toISOString().slice(0, 7).replace("-", "/");
-    const filePath = `${yearMonth}/${job.id}/${fileName}`;
-    const { error: uploadError } = await supabaseAdmin.storage
+    const filePath = `users/${job.owner_id}/${yearMonth}/${job.id}/${fileName}`;
+    const { error: uploadError } = await supabaseService.storage
       .from(DOCUMENT_BUCKET)
       .upload(filePath, buffer, {
         contentType: DOCUMENT_MIME,

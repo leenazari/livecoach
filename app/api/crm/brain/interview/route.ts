@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openai, OPENAI_MODEL_THINK } from "@/lib/openai";
 import { supabaseAdmin } from "@/lib/supabase";
+import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { upsertTasks, actionToLinkKind } from "@/lib/tasks";
 import { logModelUsage } from "@/lib/usage";
@@ -129,10 +130,11 @@ function convoText(question: string, turns: Turn[]): string {
 
 export async function GET() {
   try {
+    const profileId = await ensureWorkspaceProfileId();
     const { data } = await supabaseAdmin
       .from("workspace_profile")
       .select("open_questions, curriculum, skipped_questions, checkin_snoozed_on")
-      .eq("id", "main")
+      .eq("id", profileId)
       .maybeSingle();
 
     // "NOT NOW" MEANS NOT TODAY. Pressing it parks the whole check-in until
@@ -276,6 +278,7 @@ Be brief and conversational. Honest, never flattering. Never invent detail Lee d
 // Distil the whole exchange, save the durable learning, advance the topic's
 // coverage, remove the answered question, and spin out any to-dos.
 async function save(question: string, turns: Turn[]) {
+  const profileId = await ensureWorkspaceProfileId();
   const answerJoined = turns
     .filter((t) => t.role === "user" && t.text && t.text.trim())
     .map((t) => t.text.trim())
@@ -334,7 +337,7 @@ Never invent facts beyond what Lee actually said.`
   const { data: prof } = await supabaseAdmin
     .from("workspace_profile")
     .select("learned, open_questions, curriculum")
-    .eq("id", "main")
+    .eq("id", profileId)
     .maybeSingle();
   const prevLearned =
     typeof prof?.learned === "string" ? prof.learned.trim() : "";
@@ -375,7 +378,7 @@ Never invent facts beyond what Lee actually said.`
       open_questions: nextOpen,
       curriculum: coverage,
     })
-    .eq("id", "main");
+    .eq("id", profileId);
 
   const clean = tasks
     .filter((t) => t && typeof t.text === "string" && t.text.trim())
@@ -392,6 +395,7 @@ Never invent facts beyond what Lee actually said.`
 
 export async function POST(req: NextRequest) {
   try {
+    const profileId = await ensureWorkspaceProfileId();
     const body = await req.json();
     const question = typeof body.question === "string" ? body.question.trim() : "";
     const action =
@@ -412,7 +416,7 @@ export async function POST(req: NextRequest) {
       const { data } = await supabaseAdmin
         .from("workspace_profile")
         .select("skipped_questions")
-        .eq("id", "main")
+        .eq("id", profileId)
         .maybeSingle();
       const existing: string[] = Array.isArray(data?.skipped_questions)
         ? (data!.skipped_questions as any[]).filter(
@@ -424,7 +428,7 @@ export async function POST(req: NextRequest) {
         .from("workspace_profile")
         // Keep it bounded so this can never grow without limit.
         .update({ skipped_questions: existing.slice(-300) })
-        .eq("id", "main");
+        .eq("id", profileId);
       return NextResponse.json({ ok: true, skipped: existing.length });
     }
 
@@ -434,7 +438,7 @@ export async function POST(req: NextRequest) {
       await supabaseAdmin
         .from("workspace_profile")
         .update({ checkin_snoozed_on: today })
-        .eq("id", "main");
+        .eq("id", profileId);
       return NextResponse.json({ ok: true, snoozedOn: today });
     }
 

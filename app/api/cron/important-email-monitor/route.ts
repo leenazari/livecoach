@@ -10,6 +10,7 @@ import {
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { upsertTasks } from "@/lib/tasks";
+import { getAppConfigValue, setAppConfigValue } from "@/lib/app-config";
 import { POST as runCalendarSync } from "@/app/api/crm/calendar-sync/route";
 import { enqueueOpportunitySignal } from "@/lib/opportunity-signals";
 
@@ -142,11 +143,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const { data: config } = await supabaseAdmin
-      .from("app_config")
-      .select("value")
-      .eq("key", CURSOR_KEY)
-      .maybeSingle();
+    const config = await getAppConfigValue(CURSOR_KEY);
     // A full quiet weekend can contain more than 30 automated messages. The
     // metadata pass is inexpensive, so keep enough headroom to avoid skipping
     // a real request while still sending only selected messages to the model.
@@ -256,20 +253,18 @@ export async function GET(req: NextRequest) {
       finishedAt,
     };
     await Promise.all([
-      supabaseAdmin.from("app_config").upsert({
+      setAppConfigValue({
         key: CURSOR_KEY,
         // A transient classifier failure must not silently lose a message.
         // Reusing the old cursor retries that delta next run; task fingerprints
         // keep any already successful alerts from duplicating.
         value: failed > 0 ? config?.value || delta.cursor : delta.cursor,
         note: "Gmail History cursor for new-message-only monitoring",
-        updated_at: finishedAt,
       }),
-      supabaseAdmin.from("app_config").upsert({
+      setAppConfigValue({
         key: REPORT_KEY,
         value: JSON.stringify(report),
         note: "Latest low-token important email monitoring report",
-        updated_at: finishedAt,
       }),
     ]);
     return NextResponse.json(report);

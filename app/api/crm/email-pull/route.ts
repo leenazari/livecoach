@@ -14,6 +14,7 @@ import {
   nameFromHeader,
   gmailConnected,
 } from "@/lib/gmail";
+import { googleConnected } from "@/lib/google";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,12 +48,8 @@ async function myAddresses(): Promise<Set<string>> {
     "lee.nazari@gmail.com",
   ]);
   try {
-    const { data } = await supabaseAdmin
-      .from("google_oauth")
-      .select("email")
-      .eq("id", "main")
-      .maybeSingle();
-    if (data?.email) set.add(String(data.email).toLowerCase());
+    const connection = await googleConnected();
+    if (connection.email) set.add(connection.email.toLowerCase());
   } catch {
     /* best-effort */
   }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseService } from "@/lib/supabase";
+import { requireRequestScope } from "@/lib/request-scope";
+import { storageSegment } from "@/lib/storage-scope";
 
 export const runtime = "nodejs";
 
@@ -12,10 +14,12 @@ const BUCKET = "knowledge_docs";
 
 export async function POST(req: NextRequest) {
   try {
+    const account = requireRequestScope();
     const { sessionId, name, text } = await req.json();
-    if (typeof sessionId !== "string" || !sessionId) {
+    const safeSessionId = storageSegment(sessionId);
+    if (!safeSessionId) {
       return NextResponse.json(
-        { error: "sessionId is required" },
+        { error: "a valid sessionId is required" },
         { status: 400 }
       );
     }
@@ -31,9 +35,9 @@ export async function POST(req: NextRequest) {
         .replace(/\.[^.]+$/, "")
         .replace(/[^a-zA-Z0-9._ -]/g, "_")
         .slice(0, 80) || "document";
-    const path = `session/${sessionId}/cv/${Date.now()}_${base}.txt`;
+    const path = `users/${account.userId}/session/${safeSessionId}/cv/${Date.now()}_${base}.txt`;
 
-    const { error } = await supabaseAdmin.storage
+    const { error } = await supabaseService.storage
       .from(BUCKET)
       .upload(path, new Blob([text], { type: "text/plain" }), {
         contentType: "text/plain; charset=utf-8",

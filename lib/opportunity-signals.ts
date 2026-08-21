@@ -9,6 +9,7 @@ import {
   cleanStringList,
   defaultOutlookQuestions,
 } from "@/lib/opportunity-fields";
+import { getRequestScope } from "@/lib/request-scope";
 
 export type OpportunitySignalSource =
   | "call_summary"
@@ -80,9 +81,10 @@ const validDate = (value: string | null | undefined) => {
 };
 
 async function resolveOpportunity(input: EnqueueSignal) {
+  const requestScope = getRequestScope();
   let query = supabaseAdmin
     .from("opportunities")
-    .select("id, workstream_id")
+    .select("id, workstream_id, owner_id, workspace_id, visibility")
     .eq("company_id", input.companyId)
     .eq("opportunity_type", "revenue")
     .eq("status", "open")
@@ -93,7 +95,11 @@ async function resolveOpportunity(input: EnqueueSignal) {
   const { data, error } = await query;
   if (error) throw error;
   if ((data || []).length !== 1) return null;
-  return data![0];
+  const opportunity = data![0];
+  // A person's private call or email may not silently change a shared deal
+  // owned by somebody else. They can still make an explicit pipeline edit.
+  if (requestScope && opportunity.owner_id !== requestScope.userId) return null;
+  return opportunity;
 }
 
 // Called at the same boundary that saves the authoritative call/email/activity.
@@ -101,7 +107,23 @@ async function resolveOpportunity(input: EnqueueSignal) {
 export async function enqueueOpportunitySignal(input: EnqueueSignal) {
   if (!input.companyId || !input.sourceRecordId) return { queued: false, reason: "missing_identity" };
   if (!CONTACT_METHODS.includes(input.sourceChannel)) return { queued: false, reason: "invalid_channel" };
+  const requestScope = getRequestScope();
   const opportunity = await resolveOpportunity(input);
+  let recordOwnerId = opportunity?.owner_id || requestScope?.userId || "";
+  let recordWorkspaceId = opportunity?.workspace_id || requestScope?.workspaceId || "";
+  if (!recordOwnerId || !recordWorkspaceId) {
+    const { data: company, error: companyError } = await supabaseAdmin
+      .from("companies")
+      .select("owner_id,workspace_id")
+      .eq("id", input.companyId)
+      .maybeSingle();
+    if (companyError) throw companyError;
+    recordOwnerId = company?.owner_id || "";
+    recordWorkspaceId = company?.workspace_id || "";
+  }
+  if (!recordOwnerId || !recordWorkspaceId) {
+    return { queued: false, reason: "missing_record_scope" };
+  }
   const status = opportunity ? "queued" : "ignored";
   const result = opportunity
     ? {}
@@ -120,10 +142,13 @@ export async function enqueueOpportunitySignal(input: EnqueueSignal) {
         evidence: compactEvidence(input.evidence),
         status,
         result,
+        owner_id: recordOwnerId,
+        workspace_id: recordWorkspaceId,
+        visibility: "private",
         updated_at: new Date().toISOString(),
       },
       {
-        onConflict: "company_id,source_record_type,source_record_id",
+        onConflict: "owner_id,company_id,source_record_type,source_record_id",
         ignoreDuplicates: true,
       }
     )
@@ -163,6 +188,8 @@ async function assessReceipt(receipt: any) {
       .select("*")
       .eq("id", claimed.opportunity_id)
       .eq("company_id", claimed.company_id)
+      .eq("owner_id", claimed.owner_id)
+      .eq("workspace_id", claimed.workspace_id)
       .maybeSingle();
     if (error) throw error;
     if (!opportunity || opportunity.status !== "open") {
@@ -255,10 +282,16 @@ Rules:
         content: `CURRENT OPPORTUNITY:\n${JSON.stringify(current)}\n\nNEW STORED EVIDENCE (${claimed.source_record_type}, ${claimed.occurred_at}):\n${JSON.stringify(claimed.evidence)}`,
       }],
     });
-    await logModelUsage("opportunity_outlook_assessment", "live", (message as any).usage, {
-      sourceRecordType: claimed.source_record_type,
-      opportunityId: opportunity.id,
-    });
+    await logModelUsage(
+      "opportunity_outlook_assessment",
+      "live",
+      (message as any).usage,
+      {
+        sourceRecordType: claimed.source_record_type,
+        opportunityId: opportunity.id,
+      },
+      { userId: claimed.owner_id, workspaceId: claimed.workspace_id }
+    );
     const assessment = parseObject(modelText(message));
     if (!assessment || !WIN_OUTLOOKS.includes(assessment.outlook))
       throw new Error("outlook assessment was incomplete");
@@ -316,6 +349,8 @@ Rules:
         updated_at: assessedAt,
       })
       .eq("id", opportunity.id)
+      .eq("owner_id", claimed.owner_id)
+      .eq("workspace_id", claimed.workspace_id)
       .eq("status", "open")
       .eq("win_outlook_override", false)
       .select("id")

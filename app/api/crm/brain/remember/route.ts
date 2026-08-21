@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 
 export const runtime = "nodejs";
 
@@ -12,11 +13,12 @@ export async function POST(req: NextRequest) {
     const { note } = await req.json();
     const n = typeof note === "string" ? note.trim() : "";
     if (!n) return NextResponse.json({ error: "nothing to remember" }, { status: 400 });
+    const profileId = await ensureWorkspaceProfileId();
 
     const { data } = await supabaseAdmin
       .from("workspace_profile")
       .select("learned")
-      .eq("id", "main")
+      .eq("id", profileId)
       .maybeSingle();
     const prev = data && typeof data.learned === "string" ? data.learned.trim() : "";
 
@@ -31,7 +33,7 @@ export async function POST(req: NextRequest) {
     await supabaseAdmin
       .from("workspace_profile")
       .update({ learned: next })
-      .eq("id", "main");
+      .eq("id", profileId);
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json(

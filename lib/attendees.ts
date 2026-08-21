@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 
 // Infer WHO a calendar event is with from its guest list, not from the note.
 // The invitees are the ground truth: an all-internal guest list (your own team's
@@ -50,12 +51,13 @@ function humanizeDomain(domain: string): string {
 // Load the config once per sync (internal domains, the designated internal
 // entity, and the client contact-email index), so per-event inference is cheap.
 export async function loadAttendeeConfig(): Promise<AttendeeConfig> {
+  const profileId = await ensureWorkspaceProfileId();
   const [{ data: prof }, { data: companies }, { data: contacts }] =
     await Promise.all([
       supabaseAdmin
         .from("workspace_profile")
         .select("internal_domains")
-        .eq("id", "main")
+        .eq("id", profileId)
         .maybeSingle(),
       supabaseAdmin.from("companies").select("id, profile, domain"),
       supabaseAdmin

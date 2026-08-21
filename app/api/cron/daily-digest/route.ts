@@ -5,6 +5,7 @@ import { GET as getDashboard } from "@/app/api/crm/dashboard/route";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { POST as runCalendarSync } from "@/app/api/crm/calendar-sync/route";
+import { getAppConfigValue, setAppConfigValue } from "@/lib/app-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -107,11 +108,7 @@ export async function GET(req: NextRequest) {
 
     // Vercel may retry a cron invocation. Store the London date after a
     // successful send so retries cannot produce a second copy of the email.
-    const { data: sentConfig } = await supabaseAdmin
-      .from("app_config")
-      .select("value")
-      .eq("key", SENT_KEY)
-      .maybeSingle();
+    const sentConfig = await getAppConfigValue(SENT_KEY);
     if (!force && sentConfig?.value === today) {
       return NextResponse.json({ ok: true, skipped: "already sent today" });
     }
@@ -480,16 +477,11 @@ export async function GET(req: NextRequest) {
     });
     if (!sent.ok) throw new Error(sent.error || "email send failed");
 
-    const { error: stampError } = await supabaseAdmin.from("app_config").upsert(
-      {
+    await setAppConfigValue({
         key: SENT_KEY,
         value: today,
         note: "London date of the last successful daily progress email",
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "key" }
-    );
-    if (stampError) throw stampError;
+      });
 
     return NextResponse.json({
       ok: true,

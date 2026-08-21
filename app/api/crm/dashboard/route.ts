@@ -5,6 +5,7 @@ import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
 export const maxDuration = 25;
@@ -53,6 +54,7 @@ export async function GET(req: Request) {
   // it loads instantly. The dashboard home fetches the blurb separately.
   const light = new URL(req.url).searchParams.get("light") === "1";
   try {
+    const accountScope = await resolveRecordScope();
     const [
       companiesRes,
       draftsRes,
@@ -711,11 +713,15 @@ export async function GET(req: Request) {
             }
             if (dayParts.length) {
               try {
-                await supabaseAdmin.from("ai_cache").upsert({
-                  key: cacheKey,
-                  value: JSON.stringify(dayParts),
-                  created_at: new Date().toISOString(),
-                });
+                await supabaseAdmin.from("ai_cache").upsert(
+                  {
+                    key: cacheKey,
+                    value: JSON.stringify(dayParts),
+                    created_at: new Date().toISOString(),
+                    ...privateRecordFields(accountScope),
+                  },
+                  { onConflict: "owner_id,key" }
+                );
               } catch {
                 /* storing the cache is best-effort */
               }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseService } from "@/lib/supabase";
+import { requireRequestScope } from "@/lib/request-scope";
+import { storageSegment } from "@/lib/storage-scope";
 import { extractTextFromPDF } from "@/lib/pdf-extract";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 
@@ -7,6 +9,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const BUCKET = "knowledge_docs";
+const DOCUMENT_TYPES = new Set(["framework", "cv", "summary"]);
 
 function cleanName(raw: string): string {
   return raw.replace(/[\/\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
@@ -36,14 +39,23 @@ async function extractCandidateName(cvText: string): Promise<string | null> {
 
 export async function POST(req: NextRequest) {
   try {
+    const account = requireRequestScope();
     const form = await req.formData();
     const file = form.get("file") as File | null;
-    const docType = (form.get("doc_type") as string) || "framework";
+    const rawDocType = (form.get("doc_type") as string) || "framework";
+    const docType = DOCUMENT_TYPES.has(rawDocType) ? rawDocType : null;
     const qpSession = new URL(req.url).searchParams.get("sessionId") || "";
-    const sessionId = qpSession || ((form.get("sessionId") as string) || "");
+    const rawSessionId = qpSession || ((form.get("sessionId") as string) || "");
+    const sessionId = rawSessionId ? storageSegment(rawSessionId) : null;
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    }
+    if (!docType) {
+      return NextResponse.json({ error: "Unsupported document type" }, { status: 400 });
+    }
+    if (rawSessionId && !sessionId) {
+      return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 });
     }
 
     const arrayBuf = await file.arrayBuffer();
@@ -73,13 +85,15 @@ export async function POST(req: NextRequest) {
     // so a previous interview's CV can never bleed into a new call.
     let storagePath: string;
     if (docType === "framework") {
-      storagePath = `framework/global/${fileSafe}`;
+      storagePath = `users/${account.userId}/framework/global/${fileSafe}`;
     } else {
-      const scope = sessionId ? `session/${sessionId}` : "session/_legacy";
+      const scope = sessionId
+        ? `users/${account.userId}/session/${sessionId}`
+        : `users/${account.userId}/session/_legacy`;
       storagePath = `${scope}/${docType}/${fileSafe}`;
     }
 
-    const { error: uploadError } = await supabaseAdmin.storage
+    const { error: uploadError } = await supabaseService.storage
       .from(BUCKET)
       .upload(storagePath, file);
     if (uploadError) throw uploadError;

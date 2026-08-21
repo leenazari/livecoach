@@ -1,8 +1,9 @@
-import { supabaseAdmin } from "@/lib/supabase";
+import { getRequestScope, isVerifiedServiceRequest } from "@/lib/request-scope";
+import { supabaseService } from "@/lib/supabase";
 
 // In-app Google Calendar connection. The deployed app reads/writes the user's
-// real calendar using OAuth tokens stored in the google_oauth table (single
-// row, id='main'). All credentials come from env vars the user sets in Vercel:
+// real calendar using OAuth tokens stored in a private, per-user google_oauth
+// row. All credentials come from env vars the user sets in Vercel:
 //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
 // Nothing is hardcoded.
 
@@ -70,24 +71,100 @@ export async function exchangeCode(code: string): Promise<any> {
   return res.json();
 }
 
-// Whether a calendar is connected (a refresh token is on file).
-export async function googleConnected(): Promise<{ connected: boolean; email: string | null }> {
-  const { data } = await supabaseAdmin
+type GoogleConnection = {
+  id: string;
+  owner_id: string;
+  workspace_id: string;
+  refresh_token: string | null;
+  access_token: string | null;
+  expiry: string | null;
+  email: string | null;
+};
+
+async function connectionForOwner(
+  ownerId?: string
+): Promise<GoogleConnection | null> {
+  const requestScope = getRequestScope();
+  if (requestScope && ownerId && ownerId !== requestScope.userId) {
+    throw new Error("Cross-account Google access is not permitted");
+  }
+  const exactOwner = ownerId || requestScope?.userId || null;
+
+  if (exactOwner) {
+    const { data, error } = await supabaseService
+      .from("google_oauth")
+      .select(
+        "id,owner_id,workspace_id,refresh_token,access_token,expiry,email"
+      )
+      .eq("owner_id", exactOwner)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as GoogleConnection | null) || null;
+  }
+
+  // Existing crons predate per-user connectors. They may use the only stored
+  // connection while LiveCoach still has one member. The moment a second
+  // connection exists they fail closed until the cron explicitly supplies an
+  // owner, preventing one person's mailbox or calendar from being selected by
+  // accident.
+  if (!isVerifiedServiceRequest()) {
+    throw new Error("A verified account is required for Google access");
+  }
+  const { data, error } = await supabaseService
     .from("google_oauth")
-    .select("refresh_token, email")
-    .eq("id", "main")
-    .maybeSingle();
+    .select("id,owner_id,workspace_id,refresh_token,access_token,expiry,email")
+    .order("updated_at", { ascending: false })
+    .limit(2);
+  if (error) throw error;
+  if (!data?.length) return null;
+  if (data.length !== 1) {
+    throw new Error("A Google connector owner must be selected for this job");
+  }
+  return data[0] as GoogleConnection;
+}
+
+export async function saveGoogleConnection(input: {
+  accessToken?: string | null;
+  refreshToken?: string | null;
+  expiry: string;
+  email?: string | null;
+}): Promise<void> {
+  const scope = getRequestScope();
+  if (!scope) throw new Error("A verified account is required to connect Google");
+  const existing = await connectionForOwner(scope.userId);
+  const row: Record<string, unknown> = {
+    id: existing?.id || `user:${scope.userId}`,
+    owner_id: scope.userId,
+    workspace_id: scope.workspaceId,
+    visibility: "private",
+    access_token: input.accessToken || null,
+    expiry: input.expiry,
+    updated_at: new Date().toISOString(),
+  };
+  if (input.refreshToken) row.refresh_token = input.refreshToken;
+  if (input.email) row.email = input.email;
+  const { error } = await supabaseService
+    .from("google_oauth")
+    .upsert(row, { onConflict: "id" });
+  if (error) throw error;
+}
+
+// Whether a calendar is connected (a refresh token is on file).
+export async function googleConnected(
+  ownerId?: string
+): Promise<{ connected: boolean; email: string | null }> {
+  const data = await connectionForOwner(ownerId);
   return { connected: !!data?.refresh_token, email: data?.email || null };
 }
 
 // A valid access token, refreshing via the stored refresh token when needed.
 // Returns null if not connected.
-export async function getAccessToken(forceRefresh = false): Promise<string | null> {
-  const { data } = await supabaseAdmin
-    .from("google_oauth")
-    .select("refresh_token, access_token, expiry")
-    .eq("id", "main")
-    .maybeSingle();
+export async function getAccessToken(
+  forceRefresh = false,
+  ownerId?: string
+): Promise<string | null> {
+  const data = await connectionForOwner(ownerId);
   if (!data?.refresh_token) return null;
   // Reuse the cached access token while it has more than a minute left.
   if (
@@ -113,10 +190,11 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
   const tok = await res.json();
   const access = tok.access_token as string;
   const expiry = new Date(Date.now() + (tok.expires_in || 3600) * 1000).toISOString();
-  await supabaseAdmin
+  await supabaseService
     .from("google_oauth")
     .update({ access_token: access, expiry, updated_at: new Date().toISOString() })
-    .eq("id", "main");
+    .eq("id", data.id)
+    .eq("owner_id", data.owner_id);
   return access;
 }
 

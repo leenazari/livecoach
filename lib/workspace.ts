@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveRecordScope } from "@/lib/record-scope";
 
 // The global "brain": one editable knowledge base about the user and their
 // business (products, sales motion, goals). Read this and prepend it to every
@@ -6,10 +7,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 // real-world context. Best-effort - never throws into the caller.
 export async function getWorkspaceContext(): Promise<string> {
   try {
+    const scope = await resolveRecordScope();
     const { data } = await supabaseAdmin
       .from("workspace_profile")
       .select("knowledge")
-      .eq("id", "main")
+      .eq("owner_id", scope.userId)
       .maybeSingle();
     const k = data?.knowledge;
     return typeof k === "string" ? k.trim() : "";
@@ -42,10 +44,11 @@ export async function workspaceContextBlock(): Promise<string> {
   let learned = "";
   let coaching = "";
   try {
+    const scope = await resolveRecordScope();
     const { data } = await supabaseAdmin
       .from("workspace_profile")
       .select("knowledge, learned, coaching")
-      .eq("id", "main")
+      .eq("owner_id", scope.userId)
       .maybeSingle();
     knowledge = typeof data?.knowledge === "string" ? data.knowledge.trim() : "";
     learned = typeof data?.learned === "string" ? data.learned.trim() : "";
@@ -72,10 +75,11 @@ export async function workspaceContextBlock(): Promise<string> {
 // in fact, not invented. Empty string if unset.
 export async function getObjectionStancesBlock(): Promise<string> {
   try {
+    const scope = await resolveRecordScope();
     const { data } = await supabaseAdmin
       .from("workspace_profile")
       .select("objection_stances")
-      .eq("id", "main")
+      .eq("owner_id", scope.userId)
       .maybeSingle();
     const s =
       typeof data?.objection_stances === "string"
@@ -92,10 +96,11 @@ export async function getObjectionStancesBlock(): Promise<string> {
 // Surfaced to the assistant so it can raise them naturally and brainstorm.
 export async function getBrainQuestions(): Promise<string> {
   try {
+    const scope = await resolveRecordScope();
     const { data } = await supabaseAdmin
       .from("workspace_profile")
       .select("open_questions")
-      .eq("id", "main")
+      .eq("owner_id", scope.userId)
       .maybeSingle();
     return typeof data?.open_questions === "string"
       ? data.open_questions.trim()

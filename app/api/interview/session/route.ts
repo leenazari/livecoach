@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveCallScope } from "@/lib/workstreams";
+import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,7 @@ export const runtime = "nodejs";
 // (interview_sessions already carries a user_id, currently null).
 export async function POST(req: NextRequest) {
   try {
+    const accountScope = await resolveRecordScope();
     const {
       sessionId,
       brief,
@@ -57,8 +59,9 @@ export async function POST(req: NextRequest) {
         company_id: exactCompanyId,
         workstream_id: scope.workstream?.id || null,
         upcoming_id: exactUpcomingId,
+        ...privateRecordFields(accountScope),
       },
-      { onConflict: "session_id" }
+      { onConflict: "owner_id,session_id" }
     );
 
     if (error) throw error;
