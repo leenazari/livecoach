@@ -9,6 +9,9 @@ const read = (file) => readFileSync(path.join(root, file), "utf8");
 const migration = read(
   "supabase/migrations/20260822105657_realtime_token_security.sql"
 );
+const indexMigration = read(
+  "supabase/migrations/20260822111743_realtime_token_security_indexes.sql"
+);
 const middleware = read("middleware.ts");
 const security = read("lib/realtime-token-security.ts");
 const livekit = read("lib/livekit.ts");
@@ -43,6 +46,8 @@ assert.match(
 assert.match(migration, /invite_token_hash text not null unique/i);
 assert.match(migration, /candidate_session_hash text unique/i);
 assert.match(migration, /unique \(owner_id, room_id\)/i);
+assert.match(indexMigration, /livekit_join_invites_room_idx/i);
+assert.match(indexMigration, /livekit_rooms_owner_idx/i);
 assert.match(migration, /create table if not exists public\.realtime_token_rate_limits/i);
 assert.match(migration, /create or replace function public\.consume_realtime_token_rate_limit/i);
 assert.match(migration, /security invoker/i);
