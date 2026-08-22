@@ -192,6 +192,17 @@ export async function middleware(request: NextRequest) {
       return finish(denied);
     }
 
+    // Salespeople and managers start in their own execution queue. The owner
+    // dashboard still contains private founder records and is not a suitable
+    // team landing page. The API also enforces this boundary independently.
+    if (path === "/crm" && membership.role !== "owner") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/crm/inbox";
+      const redirected = NextResponse.redirect(url);
+      redirected.headers.set("Cache-Control", "private, no-store");
+      return finish(redirected);
+    }
+
     // getUser above validates the account with Supabase Auth. getSession is
     // used only to forward that already-verified request's access token so the
     // route's database queries execute under RLS as this person.

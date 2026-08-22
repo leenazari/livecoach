@@ -60,11 +60,18 @@ export async function PATCH(
     const { data: current, error: currentError } = await supabaseAdmin
       .from("opportunities")
       .select("*")
+      .eq("workspace_id", account.workspaceId)
       .eq("id", params.id)
       .maybeSingle();
     if (currentError) throw currentError;
     if (!current)
       return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
+    if (
+      current.owner_id !== account.userId &&
+      current.visibility !== "team"
+    ) {
+      return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
+    }
     if (
       account.role === "sales" &&
       current.assigned_to_user_id &&
@@ -294,6 +301,7 @@ export async function PATCH(
     const { data, error } = await supabaseAdmin
       .from("opportunities")
       .update(patch)
+      .eq("workspace_id", account.workspaceId)
       .eq("id", params.id)
       .select()
       .single();
@@ -317,9 +325,32 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const account = requireRequestScope();
+    const { data: current, error: currentError } = await supabaseAdmin
+      .from("opportunities")
+      .select("id,owner_id,visibility")
+      .eq("workspace_id", account.workspaceId)
+      .eq("id", params.id)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!current)
+      return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
+    if (
+      current.owner_id !== account.userId &&
+      current.visibility !== "team"
+    ) {
+      return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
+    }
+    if (account.role === "sales" && current.owner_id !== account.userId) {
+      return NextResponse.json(
+        { error: "Shared opportunities should be closed or dismissed, not deleted" },
+        { status: 403 }
+      );
+    }
     const { data, error } = await supabaseAdmin
       .from("opportunities")
       .delete()
+      .eq("workspace_id", account.workspaceId)
       .eq("id", params.id)
       .select("id")
       .maybeSingle();

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { buildWorkCleanup, type CleanupTask } from "@/lib/work-cleanup";
+import {
+  requireRequestScope,
+  type RequestScope,
+} from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,17 +14,26 @@ const noStore = {
   "Cache-Control": "private, no-store, no-cache, max-age=0, must-revalidate",
 };
 
-async function currentCleanup() {
+async function currentCleanup(account: RequestScope) {
   const [tasksResult, companiesResult, opportunitiesResult] = await Promise.all([
     supabaseAdmin
       .from("tasks")
       .select("id,company_id,text,kind,link_kind,status,created_at,due_at,payload")
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .eq("status", "open")
       .limit(600),
-    supabaseAdmin.from("companies").select("id,name").limit(1500),
+    supabaseAdmin
+      .from("companies")
+      .select("id,name")
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
+      .limit(1500),
     supabaseAdmin
       .from("opportunities")
       .select("company_id")
+      .eq("workspace_id", account.workspaceId)
+      .eq("assigned_to_user_id", account.userId)
       .eq("status", "open")
       .eq("opportunity_type", "revenue")
       .limit(1000),
@@ -61,6 +74,7 @@ const validIds = (value: unknown) =>
 
 export async function POST(req: NextRequest) {
   try {
+    const account = requireRequestScope();
     const body = await req.json();
     if (body?.mode === "undo") {
       const taskIds = validIds(body.taskIds);
@@ -72,6 +86,8 @@ export async function POST(req: NextRequest) {
       const { data, error } = await supabaseAdmin
         .from("tasks")
         .update({ status: "open", done_at: null })
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
         .in("id", taskIds)
         .eq("status", "dismissed")
         .select("id,status");
@@ -106,7 +122,7 @@ export async function POST(req: NextRequest) {
 
     // Recompute immediately before writing. A stale browser cannot archive a
     // task that no longer meets the conservative cleanup rules.
-    const cleanup = await currentCleanup();
+    const cleanup = await currentCleanup(account);
     const available = new Map(
       cleanup.suggestions
         .filter((suggestion) => suggestion.safeToApply)
@@ -128,6 +144,8 @@ export async function POST(req: NextRequest) {
       const { data, error } = await supabaseAdmin
         .from("tasks")
         .update({ status: "dismissed" })
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
         .in("id", suggestion.taskIds)
         .eq("status", "open")
         .select("id,status");

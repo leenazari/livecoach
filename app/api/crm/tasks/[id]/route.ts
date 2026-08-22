@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { actionToLinkKind, fingerprintTask } from "@/lib/tasks";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 
@@ -12,7 +13,18 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    const account = requireRequestScope();
     const body = await req.json();
+    const { data: current, error: currentError } = await supabaseAdmin
+      .from("tasks")
+      .select("id,company_id")
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
+      .eq("id", params.id)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!current)
+      return NextResponse.json({ error: "task not found" }, { status: 404 });
     const patch: Record<string, any> = {};
     if (body.status === "done") {
       patch.status = "done";
@@ -27,14 +39,6 @@ export async function PATCH(
     }
     if (typeof body.text === "string" && body.text.trim()) {
       const text = capitaliseSentenceStarts(body.text.trim());
-      const { data: current, error: currentError } = await supabaseAdmin
-        .from("tasks")
-        .select("company_id")
-        .eq("id", params.id)
-        .maybeSingle();
-      if (currentError) throw currentError;
-      if (!current)
-        return NextResponse.json({ error: "task not found" }, { status: 404 });
       patch.text = text;
       patch.fingerprint = fingerprintTask(current.company_id || null, text);
     }
@@ -52,6 +56,8 @@ export async function PATCH(
     const { data, error } = await supabaseAdmin
       .from("tasks")
       .update(patch)
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .eq("id", params.id)
       .select("id, company_id, text, kind, link_kind, status, due_at, payload")
       .maybeSingle();
@@ -76,9 +82,12 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const account = requireRequestScope();
     const { data, error } = await supabaseAdmin
       .from("tasks")
       .delete()
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .eq("id", params.id)
       .select("id")
       .maybeSingle();

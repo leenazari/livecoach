@@ -5,7 +5,8 @@ import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
-import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
+import { privateRecordFields } from "@/lib/record-scope";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 export const maxDuration = 25;
@@ -54,7 +55,20 @@ export async function GET(req: Request) {
   // it loads instantly. The dashboard home fetches the blurb separately.
   const light = new URL(req.url).searchParams.get("light") === "1";
   try {
-    const accountScope = await resolveRecordScope();
+    const requestScope = requireRequestScope();
+    if (requestScope.role !== "owner") {
+      return NextResponse.json(
+        { error: "Use your personal Work Inbox for assigned sales activity" },
+        {
+          status: 403,
+          headers: { "Cache-Control": "private, no-store" },
+        }
+      );
+    }
+    const accountScope = {
+      userId: requestScope.userId,
+      workspaceId: requestScope.workspaceId,
+    };
     const [
       companiesRes,
       draftsRes,

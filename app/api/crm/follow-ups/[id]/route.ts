@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,7 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    const account = requireRequestScope();
     const body = await req.json();
     const patch: Record<string, any> = {};
     if (typeof body.status === "string" && STATUSES.includes(body.status)) {
@@ -30,10 +32,14 @@ export async function PATCH(
     const { data, error } = await supabaseAdmin
       .from("follow_ups")
       .update(patch)
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .eq("id", params.id)
       .select()
-      .single();
+      .maybeSingle();
     if (error) throw error;
+    if (!data)
+      return NextResponse.json({ error: "follow-up not found" }, { status: 404 });
     return NextResponse.json({ followUp: data });
   } catch (err: any) {
     return NextResponse.json(
@@ -48,9 +54,12 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const account = requireRequestScope();
     const { data, error } = await supabaseAdmin
       .from("follow_ups")
       .delete()
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .eq("id", params.id)
       .select("id")
       .maybeSingle();
