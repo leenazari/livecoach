@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { isUntouchedOutreachAssignment } from "@/lib/outreach-assignment";
 import { requireWorkspaceOwner } from "@/lib/request-scope";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import {
@@ -13,7 +14,32 @@ export const fetchCache = "force-no-store";
 export const revalidate = 0;
 
 const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function prospectName(prospect: any): string {
+  return [prospect.first_name, prospect.last_name]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" ") || "Unnamed prospect";
+}
+
+function prospectSource(prospect: any): string | null {
+  const metadata =
+    prospect.source_metadata && typeof prospect.source_metadata === "object"
+      ? prospect.source_metadata
+      : {};
+  const explicit = [
+    metadata.campaign,
+    metadata.cohort,
+    metadata.integration,
+    metadata.technology,
+    metadata.tag,
+    metadata.ringleads?.source,
+    prospect.source_file,
+    prospect.source_sheet,
+  ].find((value) => typeof value === "string" && value.trim());
+  return explicit ? String(explicit).trim().replace(/\.(xlsx|xls|csv)$/i, "") : null;
+}
 
 export async function GET() {
   try {
@@ -22,6 +48,8 @@ export async function GET() {
       { data: companies, error: companiesError },
       grants,
       { data: members, error: membersError },
+      { data: prospects, error: prospectsError },
+      { data: candidateResearch, error: candidateResearchError },
     ] =
       await Promise.all([
         supabaseService
@@ -38,9 +66,29 @@ export async function GET() {
           .eq("workspace_id", scope.workspaceId)
           .eq("status", "active")
           .order("created_at"),
+        supabaseAdmin
+          .from("outreach_prospects")
+          .select(
+            "id,email,first_name,last_name,job_title,company_name,priority,priority_score,status,assigned_to_user_id,last_researched_at,last_contacted_at,last_reply_at,source_file,source_sheet,source_metadata,updated_at"
+          )
+          .eq("workspace_id", scope.workspaceId)
+          .order("priority_score", { ascending: false })
+          .order("company_name", { ascending: true })
+          .limit(1000),
+        supabaseAdmin
+          .from("outreach_prospects")
+          .select("id,research")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("status", "imported")
+          .is("last_researched_at", null)
+          .is("last_contacted_at", null)
+          .is("last_reply_at", null)
+          .limit(1000),
       ]);
     if (companiesError) throw companiesError;
     if (membersError) throw membersError;
+    if (prospectsError) throw prospectsError;
+    if (candidateResearchError) throw candidateResearchError;
 
     const memberIds = (members || []).map((member: any) => member.user_id);
     const { data: profiles, error: profilesError } = memberIds.length
@@ -53,27 +101,38 @@ export async function GET() {
     const profileById = new Map(
       (profiles || []).map((profile: any) => [profile.user_id, profile])
     );
-    const team = (members || []).map((member: any) => ({
-      userId: member.user_id,
-      role: member.role,
-      name:
-        (profileById.get(member.user_id) as any)?.display_name ||
-        (member.user_id === scope.userId ? "Lee" : "Team member"),
-    }));
-
     const companyIds = (companies || []).map((company: any) => company.id);
-    const { data: opportunities, error: opportunitiesError } = companyIds.length
-      ? await supabaseService
-          .from("opportunities")
-          .select("company_id")
-          .eq("workspace_id", scope.workspaceId)
-          .eq("status", "open")
-          .eq("opportunity_type", "revenue")
-          .in("company_id", companyIds)
-          .or(`owner_id.eq.${scope.userId},visibility.eq.team`)
-          .limit(3000)
-      : { data: [], error: null };
+    const [
+      opportunitiesResult,
+      messagesResult,
+      enrolmentsResult,
+    ] = await Promise.all([
+      companyIds.length
+        ? supabaseService
+            .from("opportunities")
+            .select("company_id,assigned_to_user_id")
+            .eq("workspace_id", scope.workspaceId)
+            .eq("status", "open")
+            .eq("opportunity_type", "revenue")
+            .in("company_id", companyIds)
+            .or(`owner_id.eq.${scope.userId},visibility.eq.team`)
+            .limit(3000)
+        : Promise.resolve({ data: [] as any[], error: null }),
+      supabaseAdmin
+        .from("outreach_messages")
+        .select("prospect_id")
+        .eq("workspace_id", scope.workspaceId)
+        .limit(5000),
+      supabaseAdmin
+        .from("outreach_enrolments")
+        .select("prospect_id")
+        .eq("workspace_id", scope.workspaceId)
+        .limit(5000),
+    ]);
+    const { data: opportunities, error: opportunitiesError } = opportunitiesResult;
     if (opportunitiesError) throw opportunitiesError;
+    if (messagesResult.error) throw messagesResult.error;
+    if (enrolmentsResult.error) throw enrolmentsResult.error;
 
     const opportunityCount = new Map<string, number>();
     for (const opportunity of opportunities || []) {
@@ -86,6 +145,52 @@ export async function GET() {
     const grantByCompany = new Map(
       grants.map((grant) => [grant.company_id, grant])
     );
+
+    const prospectIdsWithMessages = new Set(
+      (messagesResult.data || []).map((message: any) => message.prospect_id)
+    );
+    const prospectIdsWithEnrolments = new Set(
+      (enrolmentsResult.data || []).map((enrolment: any) => enrolment.prospect_id)
+    );
+    const researchByProspect = new Map(
+      (candidateResearch || []).map((row: any) => [row.id, row.research])
+    );
+    const prospectRecords = (prospects || [])
+      .map((prospect: any) => {
+        const assignable = isUntouchedOutreachAssignment(
+          { ...prospect, research: researchByProspect.get(prospect.id) },
+          {
+            hasMessage: prospectIdsWithMessages.has(prospect.id),
+            hasEnrolment: prospectIdsWithEnrolments.has(prospect.id),
+          }
+        );
+        return {
+          id: prospect.id,
+          name: prospectName(prospect),
+          email: prospect.email,
+          jobTitle: prospect.job_title || null,
+          companyName: prospect.company_name,
+          priority: prospect.priority,
+          priorityScore: prospect.priority_score,
+          status: prospect.status,
+          assignedToUserId: prospect.assigned_to_user_id || null,
+          source: prospectSource(prospect),
+          updatedAt: prospect.updated_at,
+          assignable,
+          blockedReason: assignable
+            ? null
+            : prospect.status === "suppressed"
+              ? "Removed from outreach"
+              : "Activity already exists. Review this person in Outreach before changing ownership.",
+        };
+      })
+      .sort(
+        (a: any, b: any) =>
+          Number(b.assignable) - Number(a.assignable) ||
+          Number(!b.assignedToUserId) - Number(!a.assignedToUserId) ||
+          b.priorityScore - a.priorityScore ||
+          a.companyName.localeCompare(b.companyName)
+      );
 
     const records = (companies || [])
       .map((company: any) => ({
@@ -106,13 +211,45 @@ export async function GET() {
           String(a.name).localeCompare(String(b.name))
       );
 
+    const activeProspects = prospectRecords.filter(
+      (prospect: any) => prospect.status !== "suppressed"
+    );
+    const activeGrants = grants.filter((grant) => grant.status === "active");
+    const team = (members || []).map((member: any) => ({
+      userId: member.user_id,
+      role: member.role,
+      name:
+        (profileById.get(member.user_id) as any)?.display_name ||
+        (member.user_id === scope.userId ? "Lee" : "Team member"),
+      workload: {
+        prospects: activeProspects.filter(
+          (prospect: any) => prospect.assignedToUserId === member.user_id
+        ).length,
+        clients: activeGrants.filter(
+          (grant) => grant.assigned_to_user_id === member.user_id
+        ).length,
+        opportunities: (opportunities || []).filter(
+          (opportunity: any) =>
+            opportunity.assigned_to_user_id === member.user_id
+        ).length,
+      },
+    }));
+
     return NextResponse.json(
       {
         records,
+        prospects: prospectRecords,
         summary: {
           total: records.length,
           shared: records.filter((record: any) => record.shared).length,
           protected: records.filter((record: any) => record.blockedReason).length,
+          outreachTotal: activeProspects.length,
+          outreachAssignable: activeProspects.filter(
+            (prospect: any) => prospect.assignable
+          ).length,
+          outreachInProgress: activeProspects.filter(
+            (prospect: any) => !prospect.assignable
+          ).length,
         },
         team,
         currentUser: scope.userId,

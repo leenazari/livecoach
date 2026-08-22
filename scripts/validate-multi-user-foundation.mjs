@@ -159,6 +159,10 @@ const bulkOutreachAssignment = readFileSync(
   path.join(root, "app/api/crm/outreach/assign/route.ts"),
   "utf8"
 );
+const outreachAssignment = readFileSync(
+  path.join(root, "lib/outreach-assignment.ts"),
+  "utf8"
+);
 const outreachPage = readFileSync(
   path.join(root, "app/crm/outreach/page.tsx"),
   "utf8"
@@ -460,10 +464,14 @@ assert.match(bulkOutreachAssignment, /account\.role !== "owner"/);
 assert.match(bulkOutreachAssignment, /account\.role !== "manager"/);
 assert.match(bulkOutreachAssignment, /workspace_members/);
 assert.match(bulkOutreachAssignment, /\.eq\("workspace_id", account\.workspaceId\)/);
-assert.match(bulkOutreachAssignment, /row\.status === "imported"/);
-assert.match(bulkOutreachAssignment, /!row\.last_researched_at/);
-assert.match(bulkOutreachAssignment, /!row\.last_contacted_at/);
-assert.match(bulkOutreachAssignment, /!row\.last_reply_at/);
+assert.match(bulkOutreachAssignment, /isUntouchedOutreachAssignment/);
+assert.match(outreachAssignment, /prospect\.status === "imported"/);
+assert.match(outreachAssignment, /!prospect\.last_researched_at/);
+assert.match(outreachAssignment, /!prospect\.last_contacted_at/);
+assert.match(outreachAssignment, /!prospect\.last_reply_at/);
+assert.match(outreachAssignment, /!hasSavedOutreachResearch\(prospect\.research\)/);
+assert.match(outreachAssignment, /!activity\.hasMessage/);
+assert.match(outreachAssignment, /!activity\.hasEnrolment/);
 assert.match(bulkOutreachAssignment, /messageProspectIds/);
 assert.match(bulkOutreachAssignment, /enrolmentProspectIds/);
 assert.match(bulkOutreachAssignment, /assigned_to_user_id: assignedToUserId/);
