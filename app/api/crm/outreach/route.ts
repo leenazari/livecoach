@@ -17,26 +17,29 @@ export async function GET(req: NextRequest) {
     let query = supabaseAdmin
       .from("outreach_prospects")
       .select("*")
+      .eq("workspace_id", account.workspaceId)
       .order("priority_score", { ascending: false })
       .order("company_name", { ascending: true })
       .limit(1000);
     if (["high", "medium", "low"].includes(priority)) query = query.eq("priority", priority);
     if (status !== "all") query = query.eq("status", status);
     const contextPromise = Promise.all([
-      supabaseAdmin.from("outreach_campaigns").select("*").order("created_at"),
-      supabaseAdmin.from("outreach_learnings").select("*").eq("status", "promoted").limit(100),
-      supabaseAdmin.from("outreach_suppressions").select("target"),
+      supabaseAdmin.from("outreach_campaigns").select("*").eq("workspace_id", account.workspaceId).order("created_at"),
+      supabaseAdmin.from("outreach_learnings").select("*").eq("workspace_id", account.workspaceId).eq("status", "promoted").limit(100),
+      supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", account.workspaceId),
       outreachCrmGuard(),
     ]);
     const historyPromise = Promise.all([
       supabaseAdmin
         .from("outreach_messages")
         .select("id,prospect_id,status,subject,step_number,scheduled_at,sent_at,updated_at")
+        .eq("workspace_id", account.workspaceId)
         .order("updated_at", { ascending: false })
         .limit(5000),
       supabaseAdmin
         .from("outreach_enrolments")
         .select("campaign_id,prospect_id,recipient_email,status,current_step,last_sent_at,next_action_at,updated_at")
+        .eq("workspace_id", account.workspaceId)
         .order("updated_at", { ascending: false })
         .limit(2000),
     ]);

@@ -420,7 +420,7 @@ export async function gatherGlobalContext(
   );
   let companies: any[] = [...ownedCompanies];
   if (requestScope) {
-    const sharedIds = await activeSharedClientIds();
+    const sharedIds = await activeSharedClientIds(requestScope.workspaceId);
     const ownedIds = new Set(ownedCompanies.map((company: any) => company.id));
     const sharedCompanies = await loadSafeSharedCompanies(
       sharedIds.filter((id) => !ownedIds.has(id)),
@@ -878,7 +878,7 @@ export async function findCompaniesNamedIn(
   );
   let visibleCompanies: any[] = [...ownedCompanies];
   if (requestScope) {
-    const sharedIds = await activeSharedClientIds();
+    const sharedIds = await activeSharedClientIds(requestScope.workspaceId);
     const ownedIds = new Set(ownedCompanies.map((company: any) => company.id));
     const sharedCompanies = await loadSafeSharedCompanies(
       sharedIds.filter((id) => !ownedIds.has(id)),

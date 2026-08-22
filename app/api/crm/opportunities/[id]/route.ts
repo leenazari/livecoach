@@ -65,6 +65,26 @@ export async function PATCH(
     if (currentError) throw currentError;
     if (!current)
       return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
+    if (
+      account.role === "sales" &&
+      current.assigned_to_user_id &&
+      current.assigned_to_user_id !== account.userId
+    ) {
+      return NextResponse.json(
+        { error: "This opportunity belongs to another salesperson and is view only" },
+        { status: 403 }
+      );
+    }
+    if (
+      account.role === "sales" &&
+      !current.assigned_to_user_id &&
+      body.assignedToUserId !== account.userId
+    ) {
+      return NextResponse.json(
+        { error: "Claim this unassigned opportunity before changing it" },
+        { status: 409 }
+      );
+    }
 
     const patch: Record<string, any> = {};
     if (body.assignedToUserId === null || body.assignedToUserId === "") {

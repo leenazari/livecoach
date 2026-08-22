@@ -138,7 +138,7 @@ export async function GET(req: Request) {
         .not("company_id", "is", null)
         .order("created_at", { ascending: false })
         .limit(1000),
-      activeSharedClientIds(),
+      activeSharedClientIds(accountScope.workspaceId),
     ]);
 
     const ownedCompanyIds = new Set(

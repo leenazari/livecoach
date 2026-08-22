@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
 
     const [{ data, error }, sharedIds] = await Promise.all([
       query,
-      activeSharedClientIds(),
+      activeSharedClientIds(scope.workspaceId),
     ]);
     if (error) throw error;
     const ownedIds = new Set((data || []).map((company: any) => company.id));
@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ company: existing, existing: true });
     }
 
-    const sharedIds = await activeSharedClientIds();
+    const sharedIds = await activeSharedClientIds(scope.workspaceId);
     const sharedCompanies = await loadSafeSharedCompanies(
       sharedIds,
       scope.workspaceId

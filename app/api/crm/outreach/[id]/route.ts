@@ -10,18 +10,42 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const account = requireRequestScope();
     const body = await req.json();
+    const { data: current, error: currentError } = await supabaseAdmin
+      .from("outreach_prospects")
+      .select("id,workspace_id,assigned_to_user_id")
+      .eq("id", params.id)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!current) {
+      return NextResponse.json({ error: "prospect not found" }, { status: 404 });
+    }
+    if (
+      account.role === "sales" &&
+      current.assigned_to_user_id &&
+      current.assigned_to_user_id !== account.userId
+    ) {
+      return NextResponse.json(
+        { error: "This prospect belongs to another salesperson and is view only" },
+        { status: 403 }
+      );
+    }
+    if (
+      account.role === "sales" &&
+      !current.assigned_to_user_id &&
+      body.assignedToUserId !== account.userId
+    ) {
+      return NextResponse.json(
+        { error: "Claim this unassigned prospect before changing it" },
+        { status: 409 }
+      );
+    }
     const patch: Record<string, any> = {};
     if (typeof body.priority === "string" && PRIORITIES.has(body.priority)) patch.priority = body.priority;
     if (typeof body.status === "string" && STATUSES.has(body.status)) patch.status = body.status;
     if (body.assignedToUserId === null || body.assignedToUserId === "") {
-      const { data: current } = await supabaseAdmin
-        .from("outreach_prospects")
-        .select("assigned_to_user_id")
-        .eq("id", params.id)
-        .maybeSingle();
       if (
         account.role === "sales" &&
-        current?.assigned_to_user_id !== account.userId
+        current.assigned_to_user_id !== account.userId
       ) {
         return NextResponse.json({ error: "You can only release your own prospect" }, { status: 403 });
       }

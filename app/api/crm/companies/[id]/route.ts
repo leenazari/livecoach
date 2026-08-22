@@ -49,7 +49,7 @@ export async function GET(
     if (!company) {
       const { data: share, error: shareError } = await supabaseAdmin
         .from("team_client_shares")
-        .select("id,company_id,status,shared_by_user_id,updated_at")
+        .select("id,company_id,status,shared_by_user_id,assigned_to_user_id,updated_at")
         .eq("company_id", params.id)
         .eq("workspace_id", scope.workspaceId)
         .eq("status", "active")
@@ -63,7 +63,7 @@ export async function GET(
     } else {
       const { data: share, error: shareError } = await supabaseAdmin
         .from("team_client_shares")
-        .select("id,company_id,status,shared_by_user_id,updated_at")
+        .select("id,company_id,status,shared_by_user_id,assigned_to_user_id,updated_at")
         .eq("company_id", params.id)
         .eq("workspace_id", scope.workspaceId)
         .eq("status", "active")
@@ -153,6 +153,12 @@ export async function GET(
           !sharedSalesAccess &&
           scope.role === "owner" &&
           company.owner_id === scope.userId,
+        assignedToUserId: activeShare?.assigned_to_user_id || scope.userId,
+        canEdit:
+          !sharedSalesAccess ||
+          scope.role === "owner" ||
+          scope.role === "manager" ||
+          activeShare?.assigned_to_user_id === scope.userId,
         privateSourcesHidden: sharedSalesAccess,
       },
     });
@@ -182,7 +188,7 @@ export async function PATCH(
     if (!current || current.owner_id !== scope.userId) {
       const { data: share, error: shareError } = await supabaseAdmin
         .from("team_client_shares")
-        .select("id")
+        .select("id,assigned_to_user_id")
         .eq("workspace_id", scope.workspaceId)
         .eq("company_id", params.id)
         .eq("status", "active")
@@ -191,6 +197,15 @@ export async function PATCH(
       sharedSalesAccess = !!share;
       if (!sharedSalesAccess) {
         return NextResponse.json({ error: "company not found" }, { status: 404 });
+      }
+      if (
+        scope.role === "sales" &&
+        share?.assigned_to_user_id !== scope.userId
+      ) {
+        return NextResponse.json(
+          { error: "This client belongs to another salesperson and is view only" },
+          { status: 403 }
+        );
       }
     }
 

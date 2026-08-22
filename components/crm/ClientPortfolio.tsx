@@ -16,6 +16,7 @@ export type ClientPortfolioRow = {
   name: string;
   shared: boolean;
   accessMode: "owner" | "shared_sales";
+  assignedToUserId: string | null;
   sector: string | null;
   relationshipStage: string | null;
   relationshipType: string | null;
@@ -41,6 +42,12 @@ export type ClientPortfolioRow = {
     probability: number;
     value: number | null;
   };
+};
+
+export type ClientTeamMember = {
+  userId: string;
+  role: string;
+  name: string;
 };
 
 export type ClientPortfolioTotals = Record<ClientHealth, number> & {
@@ -143,10 +150,12 @@ function HealthBadge({ row }: { row: ClientPortfolioRow }) {
 function StageSelect({
   row,
   saving,
+  editable,
   onChange,
 }: {
   row: ClientPortfolioRow;
   saving: boolean;
+  editable: boolean;
   onChange: (id: string, stage: string) => void;
 }) {
   const current = row.relationshipStage || "";
@@ -154,7 +163,8 @@ function StageSelect({
     <select
       aria-label={`Relationship stage for ${row.name}`}
       value={current}
-      disabled={saving}
+      disabled={saving || !editable}
+      title={editable ? "Change relationship stage" : "This client belongs to another salesperson"}
       onChange={(event) => onChange(row.id, event.target.value)}
       className={`max-w-full rounded-full border bg-ink/80 px-2 py-1 font-mono text-[0.55rem] uppercase tracking-wider outline-none transition focus:border-amber/70 disabled:opacity-50 ${
         isNonCommercialRelationship(current)
@@ -179,11 +189,15 @@ function StageSelect({
 
 function MobileClientCard({
   row,
+  salesOwner,
+  editable,
   saving,
   onStageChange,
   onDelete,
 }: {
   row: ClientPortfolioRow;
+  salesOwner: string;
+  editable: boolean;
   saving: boolean;
   onStageChange: (id: string, stage: string) => void;
   onDelete: (id: string, name: string) => void;
@@ -208,6 +222,10 @@ function MobileClientCard({
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2 border-y border-edge/45 py-3">
+        <Link href={`/crm/${row.id}`} className="min-w-0 rounded-md hover:bg-bone/[0.035]">
+          <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Sales owner</p>
+          <p className="truncate font-sans text-[0.76rem] text-sky">{salesOwner}</p>
+        </Link>
         <Link href={`/crm/${row.id}`} className="min-w-0 rounded-md hover:bg-bone/[0.035]">
           <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Contact</p>
           <p className="truncate font-sans text-[0.76rem] text-bone/90">
@@ -253,7 +271,7 @@ function MobileClientCard({
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2">
-        <StageSelect row={row} saving={saving} onChange={onStageChange} />
+        <StageSelect row={row} saving={saving} editable={editable} onChange={onStageChange} />
         <span className="flex items-center gap-1">
           <Link
             href={`/crm/${row.id}`}
@@ -280,6 +298,9 @@ function MobileClientCard({
 export default function ClientPortfolio({
   clients,
   totals,
+  team,
+  currentUser,
+  canManageAssignments,
   newName,
   setNewName,
   onCreate,
@@ -289,6 +310,9 @@ export default function ClientPortfolio({
 }: {
   clients: ClientPortfolioRow[];
   totals: ClientPortfolioTotals;
+  team: ClientTeamMember[];
+  currentUser: string;
+  canManageAssignments: boolean;
   newName: string;
   setNewName: (value: string) => void;
   onCreate: () => void;
@@ -301,12 +325,24 @@ export default function ClientPortfolio({
     "all" | ClientHealth | "opportunities" | "archived"
   >("all");
   const [stage, setStage] = useState("all");
+  const [ownerFilter, setOwnerFilter] = useState(
+    canManageAssignments ? "all" : "mine"
+  );
   const [showAdd, setShowAdd] = useState(false);
   const [sort, setSort] = useState<{
-    key: "priority" | "health" | "name" | "contact" | "stage" | "lastActivity" | "nextMeeting" | "commercial" | "nextMove";
+    key: "priority" | "health" | "name" | "owner" | "contact" | "stage" | "lastActivity" | "nextMeeting" | "commercial" | "nextMove";
     direction: "asc" | "desc";
   }>({ key: "priority", direction: "asc" });
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
+
+  const teamNameById = useMemo(
+    () => new Map(team.map((member) => [member.userId, member.name])),
+    [team]
+  );
+  const ownerName = (row: ClientPortfolioRow) =>
+    row.assignedToUserId === currentUser
+      ? "Mine"
+      : teamNameById.get(row.assignedToUserId || "") || "Unassigned";
 
   const stages = useMemo(
     () =>
@@ -328,6 +364,14 @@ export default function ClientPortfolio({
         )
           return false;
         if (stage !== "all" && row.relationshipStage !== stage) return false;
+        if (ownerFilter === "mine" && row.assignedToUserId !== currentUser)
+          return false;
+        if (ownerFilter === "unassigned" && row.assignedToUserId) return false;
+        if (
+          !["all", "mine", "unassigned"].includes(ownerFilter) &&
+          row.assignedToUserId !== ownerFilter
+        )
+          return false;
         if (!deferredQuery) return true;
         const haystack = [
           row.name,
@@ -355,6 +399,7 @@ export default function ClientPortfolio({
       };
       const textValue = (row: ClientPortfolioRow) => {
         if (sort.key === "name") return row.name;
+        if (sort.key === "owner") return ownerName(row);
         if (sort.key === "contact") return row.primaryContact?.name || "";
         if (sort.key === "stage") return row.relationshipStage || "";
         if (sort.key === "nextMove") return row.nextAction || row.healthReason;
@@ -363,7 +408,7 @@ export default function ClientPortfolio({
       return [...filtered].sort((a, b) => {
         let comparison = 0;
         if (sort.key === "health") comparison = healthRank[a.health] - healthRank[b.health];
-        else if (["name", "contact", "stage", "nextMove"].includes(sort.key)) {
+        else if (["name", "owner", "contact", "stage", "nextMove"].includes(sort.key)) {
           comparison = textValue(a).localeCompare(textValue(b), "en-GB", { sensitivity: "base" });
         } else if (sort.key === "lastActivity") {
           comparison = timestamp(a.lastTouchAt, -Infinity) - timestamp(b.lastTouchAt, -Infinity);
@@ -377,7 +422,7 @@ export default function ClientPortfolio({
         if (comparison === 0) comparison = a.name.localeCompare(b.name, "en-GB", { sensitivity: "base" });
         return sort.direction === "asc" ? comparison : -comparison;
       });
-    }, [clients, deferredQuery, health, sort, stage]);
+    }, [clients, currentUser, deferredQuery, health, ownerFilter, sort, stage, teamNameById]);
 
   const chooseSort = (key: typeof sort.key) => {
     setSort((current) => {
@@ -449,6 +494,21 @@ export default function ClientPortfolio({
               <option key={value} value={value}>{value}</option>
             ))}
           </select>
+          <select
+            aria-label="Filter clients by sales owner"
+            value={ownerFilter}
+            onChange={(event) => setOwnerFilter(event.target.value)}
+            className="rounded-lg border border-edge bg-ink/70 px-3 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-bone outline-none focus:border-amber/60"
+          >
+            <option value="all">All team work</option>
+            <option value="mine">My work</option>
+            <option value="unassigned">Unassigned</option>
+            {team.map((member) => (
+              <option key={member.userId} value={member.userId}>
+                {member.name}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             onClick={() => setShowAdd((open) => !open)}
@@ -503,7 +563,7 @@ export default function ClientPortfolio({
       </div>
 
       <p className="mb-2 font-mono text-[0.54rem] uppercase tracking-wider text-muted">
-        Showing {shown.length} of {health === "archived" ? totals.archived : totals.all} · red and overdue relationships appear first
+        Showing {shown.length} of {health === "archived" ? totals.archived : totals.all} · {ownerFilter === "mine" ? "your work" : "team work"} · red and overdue relationships appear first
       </p>
 
       {shown.length === 0 ? (
@@ -517,6 +577,8 @@ export default function ClientPortfolio({
           <MobileClientCard
             key={row.id}
             row={row}
+            salesOwner={ownerName(row)}
+            editable={canManageAssignments || row.assignedToUserId === currentUser}
             saving={savingId === row.id}
             onStageChange={onStageChange}
             onDelete={onDelete}
@@ -531,6 +593,7 @@ export default function ClientPortfolio({
               {[
                 ["health", "Status"],
                 ["name", "Client & category"],
+                ["owner", "Sales owner"],
                 ["contact", "Main contact"],
                 ["stage", "Stage"],
                 ["lastActivity", "Last activity"],
@@ -572,6 +635,11 @@ export default function ClientPortfolio({
                       </p>
                     </Link>
                   </td>
+                  <td className="max-w-[130px] px-3 py-3">
+                    <Link href={`/crm/${row.id}`} className="font-mono text-[0.55rem] uppercase tracking-wider text-sky hover:text-amber">
+                      {ownerName(row)}
+                    </Link>
+                  </td>
                   <td className="max-w-[170px] px-3 py-3">
                     <Link href={`/crm/${row.id}`} className="block hover:text-amber">
                       <p className="truncate font-sans text-[0.76rem] text-bone/90">{row.primaryContact?.name || "Not recorded"}</p>
@@ -579,7 +647,12 @@ export default function ClientPortfolio({
                     </Link>
                   </td>
                   <td className="px-3 py-3">
-                    <StageSelect row={row} saving={savingId === row.id} onChange={onStageChange} />
+                    <StageSelect
+                      row={row}
+                      saving={savingId === row.id}
+                      editable={canManageAssignments || row.assignedToUserId === currentUser}
+                      onChange={onStageChange}
+                    />
                   </td>
                   <td className="whitespace-nowrap px-3 py-3">
                     <Link href={`/crm/${row.id}`} className="block hover:text-amber">

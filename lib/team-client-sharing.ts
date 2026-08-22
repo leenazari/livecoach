@@ -10,6 +10,9 @@ export type SharedClientGrant = {
   company_id: string;
   status: "active" | "revoked";
   shared_by_user_id: string;
+  assigned_to_user_id: string | null;
+  assigned_by_user_id: string | null;
+  assigned_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -50,19 +53,24 @@ export function safeSharedCompany(row: any): SafeSharedCompany {
   };
 }
 
-export async function listVisibleClientGrants(): Promise<SharedClientGrant[]> {
+export async function listVisibleClientGrants(
+  workspaceId: string
+): Promise<SharedClientGrant[]> {
   const { data, error } = await supabaseAdmin
     .from("team_client_shares")
     .select(
-      "id,company_id,status,shared_by_user_id,created_at,updated_at"
+      "id,company_id,status,shared_by_user_id,assigned_to_user_id,assigned_by_user_id,assigned_at,created_at,updated_at"
     )
+    .eq("workspace_id", workspaceId)
     .order("updated_at", { ascending: false });
   if (error) throw error;
   return (data || []) as SharedClientGrant[];
 }
 
-export async function activeSharedClientIds(): Promise<string[]> {
-  const grants = await listVisibleClientGrants();
+export async function activeSharedClientIds(
+  workspaceId: string
+): Promise<string[]> {
+  const grants = await listVisibleClientGrants(workspaceId);
   return grants
     .filter((grant) => grant.status === "active")
     .map((grant) => grant.company_id);

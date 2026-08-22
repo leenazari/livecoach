@@ -12,6 +12,7 @@ import type { ClosePlan } from "@/components/crm/OpportunityClosePlan";
 import type {
   ClientPortfolioRow,
   ClientPortfolioTotals,
+  ClientTeamMember,
 } from "@/components/crm/ClientPortfolio";
 
 const tabLoading = () => (
@@ -67,6 +68,9 @@ function BoardInner() {
     opportunities: 0,
     archived: 0,
   });
+  const [clientTeam, setClientTeam] = useState<ClientTeamMember[]>([]);
+  const [currentUser, setCurrentUser] = useState("");
+  const [canManageAssignments, setCanManageAssignments] = useState(false);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState("");
   const [newName, setNewName] = useState("");
@@ -117,8 +121,14 @@ function BoardInner() {
         const d = await crmFetch<{
           clients: ClientPortfolioRow[];
           totals: ClientPortfolioTotals;
+          team: ClientTeamMember[];
+          currentUser: string;
+          canManageAssignments: boolean;
         }>("/api/crm/clients/portfolio");
         setCompanies(d.clients || []);
+        setClientTeam(d.team || []);
+        setCurrentUser(d.currentUser || "");
+        setCanManageAssignments(d.canManageAssignments === true);
         setClientTotals(d.totals || {
           all: 0,
           red: 0,
@@ -538,6 +548,9 @@ function BoardInner() {
           <ClientPortfolio
             clients={companies}
             totals={clientTotals}
+            team={clientTeam}
+            currentUser={currentUser}
+            canManageAssignments={canManageAssignments}
             newName={newName}
             setNewName={setNewName}
             onCreate={createCompany}

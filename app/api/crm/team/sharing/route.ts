@@ -12,10 +12,17 @@ export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const revalidate = 0;
 
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
+
 export async function GET() {
   try {
     const scope = requireWorkspaceOwner();
-    const [{ data: companies, error: companiesError }, grants] =
+    const [
+      { data: companies, error: companiesError },
+      grants,
+      { data: members, error: membersError },
+    ] =
       await Promise.all([
         supabaseService
           .from("companies")
@@ -24,9 +31,35 @@ export async function GET() {
           .eq("owner_id", scope.userId)
           .order("updated_at", { ascending: false })
           .limit(1500),
-        listVisibleClientGrants(),
+        listVisibleClientGrants(scope.workspaceId),
+        supabaseService
+          .from("workspace_members")
+          .select("user_id,role")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("status", "active")
+          .order("created_at"),
       ]);
     if (companiesError) throw companiesError;
+    if (membersError) throw membersError;
+
+    const memberIds = (members || []).map((member: any) => member.user_id);
+    const { data: profiles, error: profilesError } = memberIds.length
+      ? await supabaseService
+          .from("profiles")
+          .select("user_id,display_name")
+          .in("user_id", memberIds)
+      : { data: [] as any[], error: null };
+    if (profilesError) throw profilesError;
+    const profileById = new Map(
+      (profiles || []).map((profile: any) => [profile.user_id, profile])
+    );
+    const team = (members || []).map((member: any) => ({
+      userId: member.user_id,
+      role: member.role,
+      name:
+        (profileById.get(member.user_id) as any)?.display_name ||
+        (member.user_id === scope.userId ? "Lee" : "Team member"),
+    }));
 
     const companyIds = (companies || []).map((company: any) => company.id);
     const { data: opportunities, error: opportunitiesError } = companyIds.length
@@ -50,8 +83,8 @@ export async function GET() {
         (opportunityCount.get(opportunity.company_id) || 0) + 1
       );
     }
-    const statusByCompany = new Map(
-      grants.map((grant) => [grant.company_id, grant.status])
+    const grantByCompany = new Map(
+      grants.map((grant) => [grant.company_id, grant])
     );
 
     const records = (companies || [])
@@ -61,7 +94,9 @@ export async function GET() {
         sector: company.sector || null,
         stage: company.stage || null,
         updatedAt: company.updated_at,
-        shared: statusByCompany.get(company.id) === "active",
+        shared: grantByCompany.get(company.id)?.status === "active",
+        assignedToUserId:
+          grantByCompany.get(company.id)?.assigned_to_user_id || null,
         openOpportunityCount: opportunityCount.get(company.id) || 0,
         blockedReason: sharedClientBlockReason(company),
       }))
@@ -79,6 +114,8 @@ export async function GET() {
           shared: records.filter((record: any) => record.shared).length,
           protected: records.filter((record: any) => record.blockedReason).length,
         },
+        team,
+        currentUser: scope.userId,
       },
       { headers: { "Cache-Control": "private, no-store" } }
     );
@@ -97,11 +134,38 @@ export async function PATCH(req: NextRequest) {
     const companyId =
       typeof body.companyId === "string" ? body.companyId.trim() : "";
     const shared = body.shared === true;
+    const assignedToUserId =
+      typeof body.assignedToUserId === "string"
+        ? body.assignedToUserId.trim()
+        : "";
     if (!companyId) {
       return NextResponse.json(
         { error: "Choose a client record" },
         { status: 400 }
       );
+    }
+    if (shared && !UUID.test(assignedToUserId)) {
+      return NextResponse.json(
+        { error: "Choose the salesperson responsible for this client" },
+        { status: 400 }
+      );
+    }
+
+    if (shared) {
+      const { data: assignee, error: assigneeError } = await supabaseService
+        .from("workspace_members")
+        .select("user_id")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("user_id", assignedToUserId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (assigneeError) throw assigneeError;
+      if (!assignee) {
+        return NextResponse.json(
+          { error: "Choose an active member of your sales team" },
+          { status: 400 }
+        );
+      }
     }
 
     const { data: company, error: companyError } = await supabaseAdmin
@@ -123,46 +187,30 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: blockedReason }, { status: 409 });
     }
 
-    const { data: existing, error: existingError } = await supabaseAdmin
-      .from("team_client_shares")
-      .select("id,status")
-      .eq("workspace_id", scope.workspaceId)
-      .eq("company_id", companyId)
-      .maybeSingle();
-    if (existingError) throw existingError;
-
-    let saved: any;
-    if (existing) {
-      const { data, error } = await supabaseAdmin
-        .from("team_client_shares")
-        .update({ status: shared ? "active" : "revoked" })
-        .eq("id", existing.id)
-        .select("id,company_id,status,updated_at")
-        .single();
-      if (error) throw error;
-      saved = data;
-    } else if (shared) {
-      const { data, error } = await supabaseAdmin
-        .from("team_client_shares")
-        .insert({
-          workspace_id: scope.workspaceId,
-          company_id: companyId,
-          shared_by_user_id: scope.userId,
-          status: "active",
-        })
-        .select("id,company_id,status,updated_at")
-        .single();
-      if (error) throw error;
-      saved = data;
-    } else {
-      return NextResponse.json({ companyId, shared: false });
+    // One security-invoker database transaction changes the safe client grant
+    // and its open revenue work. A failure cannot leave either half saved.
+    const { data: saved, error: saveError } = await supabaseService.rpc(
+      "set_team_client_sales_assignment_service",
+      {
+        p_actor_user_id: scope.userId,
+        p_company_id: companyId,
+        p_shared: shared,
+        p_assigned_to_user_id: shared ? assignedToUserId : null,
+      }
+    );
+    if (saveError) throw saveError;
+    if (!saved || saved.companyId !== companyId || saved.shared !== shared) {
+      throw new Error("The database did not confirm the complete assignment");
     }
 
     return NextResponse.json(
       {
         companyId,
-        shared: saved.status === "active",
-        updatedAt: saved.updated_at,
+        shared: saved.shared === true,
+        assignedToUserId: saved.assignedToUserId || null,
+        assignedAt: saved.assignedAt || null,
+        opportunitiesUpdated: saved.opportunitiesUpdated || 0,
+        updatedAt: saved.updatedAt,
       },
       { headers: { "Cache-Control": "private, no-store" } }
     );
