@@ -33,6 +33,7 @@ const filters: { key: Filter; label: string }[] = [
 
 const kindCopy: Record<WorkInboxItem["kind"], { label: string; icon: string }> = {
   task: { label: "Task", icon: "✓" },
+  opportunity: { label: "Deal move", icon: "£" },
   prep: { label: "Call prep", icon: "☎" },
   follow_up: { label: "Email draft", icon: "✉" },
   outreach: { label: "Outreach", icon: "↗" },
@@ -89,6 +90,16 @@ const formatWhen = (value: string | null) => {
   });
 };
 
+const dateInputInLondon = (daysFromNow = 1) => {
+  const value = new Date(Date.now() + daysFromNow * 24 * 60 * 60 * 1000);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(value);
+};
+
 const belongsTo = (item: WorkInboxItem, filter: Filter) => {
   if (filter === "now")
     return !item.done && !item.waiting && item.priority >= 78;
@@ -116,6 +127,14 @@ export default function WorkInboxPage() {
     { id: string; reason: string }[]
   >([]);
   const [undoTaskIds, setUndoTaskIds] = useState<string[]>([]);
+  const [powerMode, setPowerMode] = useState(false);
+  const [deferredIds, setDeferredIds] = useState<string[]>([]);
+  const [sessionCompleted, setSessionCompleted] = useState(0);
+  const [sessionStartedAt] = useState(() => Date.now());
+  const [clock, setClock] = useState(() => Date.now());
+  const [nextActionId, setNextActionId] = useState("");
+  const [nextActionText, setNextActionText] = useState("");
+  const [nextActionDue, setNextActionDue] = useState("");
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -129,8 +148,10 @@ export default function WorkInboxPage() {
         current.filter((id) => currentSuggestionIds.has(id))
       );
       setError("");
+      return next;
     } catch (err: any) {
       setError(err?.message || "The Work Inbox could not be loaded. Please try again.");
+      return null;
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -139,6 +160,23 @@ export default function WorkInboxPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!data) return;
+    try {
+      const saved = localStorage.getItem("lc_sales_power_mode");
+      if (saved == null) setPowerMode(data.viewer.role === "sales");
+      else setPowerMode(saved === "1");
+    } catch {
+      setPowerMode(data.viewer.role === "sales");
+    }
+  }, [data?.viewer.role]);
+
+  useEffect(() => {
+    if (!powerMode) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [powerMode]);
 
   useEffect(() => {
     const refresh = (event: Event) => {
@@ -154,13 +192,28 @@ export default function WorkInboxPage() {
     [data?.items, filter]
   );
   const shown = filtered.slice(0, visible);
+  const powerItems = filtered.filter((item) => !deferredIds.includes(item.id));
+  const focusItem = powerItems.find((item) => !item.done) || null;
   const firstActionableId = shown.find((item) => !item.done && !item.waiting)?.id;
 
   const chooseFilter = (next: Filter) => {
     setFilter(next);
     setVisible(10);
     setEditingId("");
+    setDeferredIds([]);
+    setNextActionId("");
     setNotice("");
+  };
+
+  const choosePowerMode = (enabled: boolean) => {
+    setPowerMode(enabled);
+    setDeferredIds([]);
+    setNextActionId("");
+    try {
+      localStorage.setItem("lc_sales_power_mode", enabled ? "1" : "0");
+    } catch {
+      /* The preference is optional. */
+    }
   };
 
   const updateTask = async (
@@ -213,6 +266,8 @@ export default function WorkInboxPage() {
       if (change.text && result.task?.text !== capitaliseSentenceStarts(change.text))
         throw new Error("The database did not confirm that edit.");
       setEditingId("");
+      if (change.status === "done")
+        setSessionCompleted((count) => count + 1);
       setNotice(change.text ? "Edit saved." : change.status === "done" ? "Marked done." : "Removed from the inbox.");
       await load(true);
       window.dispatchEvent(
@@ -223,6 +278,79 @@ export default function WorkInboxPage() {
     } catch (err: any) {
       setData(previous);
       setError(err?.message || "That change did not save. Please try again.");
+    } finally {
+      setSavingId("");
+    }
+  };
+
+  const beginNextDealAction = (item: WorkInboxItem) => {
+    setNextActionId(item.id);
+    setNextActionText("");
+    setNextActionDue(dateInputInLondon(1));
+    setNotice("");
+    setError("");
+  };
+
+  const saveNextDealAction = async (item: WorkInboxItem) => {
+    const nextAction = nextActionText.trim();
+    if (!nextAction || !nextActionDue || savingId) return;
+    setSavingId(item.id);
+    setError("");
+    setNotice("");
+    try {
+      const result = await crmFetch<{
+        opportunity: {
+          next_action: string | null;
+          next_action_due_at: string | null;
+        };
+      }>(`/api/crm/opportunities/${item.sourceId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          nextAction,
+          nextActionDueAt: nextActionDue,
+          nextActionOwner: "us",
+          sourceType: "human",
+          sourceChannel: "sales_power_hour",
+          rationale: "Completed the previous move and set the next sales action",
+        }),
+      });
+      if (
+        result.opportunity?.next_action !== capitaliseSentenceStarts(nextAction) ||
+        !String(result.opportunity?.next_action_due_at || "").startsWith(nextActionDue)
+      ) {
+        throw new Error("The database did not confirm the next action.");
+      }
+      setDeferredIds((current) => [...new Set([...current, item.id])]);
+      setSessionCompleted((count) => count + 1);
+      setNextActionId("");
+      setNextActionText("");
+      setNextActionDue("");
+      setNotice("Progress saved. The next deal action is dated and this item has moved on.");
+      await load(true);
+    } catch (err: any) {
+      setError(err?.message || "The next deal action did not save.");
+    } finally {
+      setSavingId("");
+    }
+  };
+
+  const refreshPowerHour = async () => {
+    if (savingId) return;
+    const current = focusItem;
+    setSavingId("power-refresh");
+    setError("");
+    try {
+      const next = await load(true);
+      if (
+        current &&
+        next &&
+        !next.items.some((item) => item.id === current.id && !item.done)
+      ) {
+        setSessionCompleted((count) => count + 1);
+        setNotice("Action confirmed. Loading the next priority.");
+      } else {
+        setNotice("Queue refreshed. This action is still open until its source record is completed.");
+      }
     } finally {
       setSavingId("");
     }
@@ -357,6 +485,30 @@ export default function WorkInboxPage() {
     return data.counts.done;
   };
 
+  const focusWhen = focusItem
+    ? formatWhen(focusItem.dueAt || focusItem.createdAt)
+    : null;
+  const focusContext = focusItem
+    ? [
+        focusItem.revenue
+          ? "This directly supports revenue"
+          : `${kindCopy[focusItem.kind].label} selected by the fixed priority rules`,
+        focusItem.detail ||
+          (focusItem.company
+            ? `Linked to ${focusItem.company}`
+            : "No extra context is required"),
+        focusWhen
+          ? `${focusItem.dueAt ? "Due" : "Added"} ${focusWhen}`
+          : focusItem.waiting
+            ? "Waiting for the other person"
+            : "No deadline has been saved yet",
+      ]
+    : [];
+  const sessionMinutes = Math.max(
+    0,
+    Math.floor((clock - sessionStartedAt) / 60_000)
+  );
+
   return (
     <>
       <NavMenu />
@@ -371,14 +523,28 @@ export default function WorkInboxPage() {
                 One prioritized queue for tasks, approvals, replies, drafts and call preparation.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => void load()}
-              disabled={loading}
-              className="min-h-11 rounded-full border border-edge px-4 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:border-sky/45 hover:text-sky disabled:opacity-40"
-            >
-              {loading ? "Refreshing…" : "⟳ Refresh"}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => choosePowerMode(!powerMode)}
+                aria-pressed={powerMode}
+                className={`min-h-11 rounded-full border px-4 font-mono text-[0.58rem] uppercase tracking-wider transition ${
+                  powerMode
+                    ? "border-amber/60 bg-amber/15 text-amber"
+                    : "border-edge text-muted hover:border-amber/45 hover:text-amber"
+                }`}
+              >
+                {powerMode ? "Power Hour on" : "Start Power Hour"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void load()}
+                disabled={loading}
+                className="min-h-11 rounded-full border border-edge px-4 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:border-sky/45 hover:text-sky disabled:opacity-40"
+              >
+                {loading ? "Refreshing…" : "⟳ Refresh"}
+              </button>
+            </div>
           </div>
           <p className="mt-3 rounded-lg border border-sage/30 bg-sage/[0.06] px-3 py-2 text-xs leading-5 text-sage">
             No extra AI cost. Email approvals still open the exact draft before anything can be sent.
@@ -613,6 +779,211 @@ export default function WorkInboxPage() {
                 <p className="mt-1 text-sm text-muted">No duplicates, stale loose work or undecided old items were found.</p>
               </div>
             )}
+          </section>
+        ) : powerMode && !["cleanup", "done"].includes(filter) && data ? (
+          <section className="rounded-2xl border border-amber/45 bg-panel p-4 shadow-[0_0_0_1px_rgba(217,161,75,0.06)] sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-edge pb-4">
+              <div>
+                <p className="font-mono text-[0.56rem] uppercase tracking-[0.2em] text-amber">
+                  Sales Power Hour
+                </p>
+                <h2 className="mt-1 font-display text-xl text-bone">
+                  One action. Finish it. Move on.
+                </h2>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="min-w-16 rounded-lg border border-moss/35 bg-moss/[0.06] px-2 py-1.5">
+                  <strong className="block font-display text-lg text-moss">{sessionCompleted}</strong>
+                  <span className="font-mono text-[0.44rem] uppercase text-muted">Done</span>
+                </div>
+                <div className="min-w-16 rounded-lg border border-edge bg-ink/35 px-2 py-1.5">
+                  <strong className="block font-display text-lg text-bone">{sessionMinutes}</strong>
+                  <span className="font-mono text-[0.44rem] uppercase text-muted">Minutes</span>
+                </div>
+                <div className="min-w-16 rounded-lg border border-amber/35 bg-amber/[0.06] px-2 py-1.5">
+                  <strong className="block font-display text-lg text-amber">{powerItems.length}</strong>
+                  <span className="font-mono text-[0.44rem] uppercase text-muted">Left</span>
+                </div>
+              </div>
+            </div>
+
+            {focusItem ? (
+              <article className="pt-5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full border px-2 py-1 font-mono text-[0.5rem] uppercase tracking-wider ${priorityStyle[focusItem.priorityLabel]}`}>
+                    {focusItem.priorityLabel}
+                  </span>
+                  <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                    {kindCopy[focusItem.kind].icon} {kindCopy[focusItem.kind].label}
+                  </span>
+                  {focusItem.revenue ? (
+                    <span className="rounded-full border border-moss/35 px-2 py-1 font-mono text-[0.48rem] uppercase text-moss">
+                      Revenue
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-5 font-mono text-[0.52rem] uppercase tracking-wider text-amber">
+                  Do this next
+                </p>
+                <h3 className="mt-2 max-w-3xl font-display text-2xl leading-tight text-bone sm:text-3xl">
+                  {capitaliseSentenceStarts(focusItem.title)}
+                </h3>
+                {focusItem.companyId ? (
+                  <Link
+                    href={`/crm/${focusItem.companyId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex font-mono text-[0.54rem] uppercase tracking-wider text-sky hover:text-bone"
+                  >
+                    {focusItem.company || "Open client"} ↗
+                  </Link>
+                ) : focusItem.company ? (
+                  <p className="mt-2 text-sm text-sky">{focusItem.company}</p>
+                ) : null}
+
+                <div className="mt-5 rounded-xl border border-edge bg-ink/35 p-4">
+                  <p className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">
+                    Why this is next
+                  </p>
+                  <ul className="mt-2 space-y-2 text-sm leading-5 text-bone/85">
+                    {focusContext.map((reason) => (
+                      <li key={reason} className="flex gap-2">
+                        <span className="text-amber">•</span>
+                        <span>{capitaliseSentenceStarts(reason)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {nextActionId === focusItem.id ? (
+                  <div className="mt-4 rounded-xl border border-moss/40 bg-moss/[0.05] p-4">
+                    <p className="font-display text-lg text-bone">Save progress before moving on</p>
+                    <p className="mt-1 text-xs leading-5 text-muted">
+                      Replace the completed move with one clear dated action. This updates the canonical deal record and the Brain immediately.
+                    </p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_11rem]">
+                      <label>
+                        <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Next action</span>
+                        <input
+                          autoFocus
+                          value={nextActionText}
+                          onChange={(event) => setNextActionText(event.target.value)}
+                          placeholder="The one move that advances this deal"
+                          className="min-h-11 w-full rounded-lg border border-edge bg-ink px-3 text-sm text-bone outline-none focus:border-moss/60"
+                        />
+                      </label>
+                      <label>
+                        <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Due date</span>
+                        <input
+                          type="date"
+                          min={dateInputInLondon(0)}
+                          value={nextActionDue}
+                          onChange={(event) => setNextActionDue(event.target.value)}
+                          className="min-h-11 w-full rounded-lg border border-edge bg-ink px-3 text-sm text-bone outline-none focus:border-moss/60"
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-3 flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setNextActionId("")}
+                        disabled={!!savingId}
+                        className="min-h-11 rounded-lg border border-edge px-4 font-mono text-[0.54rem] uppercase text-muted disabled:opacity-40"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void saveNextDealAction(focusItem)}
+                        disabled={!!savingId || !nextActionText.trim() || !nextActionDue}
+                        className="min-h-11 rounded-lg border border-moss/55 bg-moss/15 px-4 font-mono text-[0.54rem] uppercase text-moss disabled:opacity-40"
+                      >
+                        {savingId === focusItem.id ? "Saving…" : "Save progress and continue"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  {focusItem.kind === "task" ? (
+                    <button
+                      type="button"
+                      onClick={() => void updateTask(focusItem, { status: "done" })}
+                      disabled={!!savingId}
+                      className="min-h-12 rounded-lg border border-moss/55 bg-moss/15 px-5 font-mono text-[0.58rem] uppercase tracking-wider text-moss disabled:opacity-40"
+                    >
+                      {savingId === focusItem.id ? "Saving…" : "✓ Done and continue"}
+                    </button>
+                  ) : focusItem.kind === "opportunity" ? (
+                    <button
+                      type="button"
+                      onClick={() => beginNextDealAction(focusItem)}
+                      disabled={!!savingId || nextActionId === focusItem.id}
+                      className="min-h-12 rounded-lg border border-moss/55 bg-moss/15 px-5 font-mono text-[0.58rem] uppercase tracking-wider text-moss disabled:opacity-40"
+                    >
+                      Complete and set next move
+                    </button>
+                  ) : null}
+                  <Link
+                    href={focusItem.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex min-h-12 items-center justify-center rounded-lg border border-amber/55 bg-amber/10 px-5 font-mono text-[0.58rem] uppercase tracking-wider text-amber"
+                  >
+                    {focusItem.approval ? "Review safely" : focusItem.kind === "prep" ? "Prepare call" : "Open action"} ↗
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => void refreshPowerHour()}
+                    disabled={!!savingId}
+                    className="min-h-12 rounded-lg border border-sky/45 bg-sky/[0.06] px-4 font-mono text-[0.54rem] uppercase text-sky disabled:opacity-40"
+                  >
+                    {savingId === "power-refresh" ? "Checking…" : "I finished it · check"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeferredIds((current) => [...new Set([...current, focusItem.id])]);
+                      setNextActionId("");
+                      setNotice("Moved aside for this Power Hour. Nothing was deleted or changed.");
+                    }}
+                    disabled={!!savingId}
+                    className="min-h-12 rounded-lg border border-edge px-4 font-mono text-[0.54rem] uppercase text-muted disabled:opacity-40"
+                  >
+                    Later this session
+                  </button>
+                </div>
+                <p className="mt-3 text-xs leading-5 text-muted">
+                  Actions open in a new tab, so this ranked queue stays in place. Changes only count when the source record confirms them.
+                </p>
+              </article>
+            ) : (
+              <div className="py-12 text-center">
+                <p className="font-display text-2xl text-bone">
+                  {filtered.length ? "Everything else is paused for this session." : "This queue is complete."}
+                </p>
+                <p className="mt-2 text-sm text-muted">
+                  {sessionCompleted} confirmed {sessionCompleted === 1 ? "action" : "actions"} completed in {sessionMinutes} minutes.
+                </p>
+                {deferredIds.length ? (
+                  <button
+                    type="button"
+                    onClick={() => setDeferredIds([])}
+                    className="mt-4 min-h-11 rounded-lg border border-amber/50 bg-amber/10 px-4 font-mono text-[0.54rem] uppercase text-amber"
+                  >
+                    Bring back {deferredIds.length} paused {deferredIds.length === 1 ? "item" : "items"}
+                  </button>
+                ) : null}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => choosePowerMode(false)}
+              className="mt-4 min-h-11 w-full rounded-xl border border-edge font-mono text-[0.54rem] uppercase tracking-wider text-muted hover:text-bone"
+            >
+              View the full inbox list
+            </button>
           </section>
         ) : loading && !data ? (
           <MatrixRain size="panel" messages={["loading work inbox", "ranking what needs attention"]} />

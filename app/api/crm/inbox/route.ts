@@ -2,7 +2,16 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { londonDayBounds } from "@/lib/outreach";
 import { buildWorkCleanup } from "@/lib/work-cleanup";
-import type { WorkInboxItem, WorkInboxResponse } from "@/lib/work-inbox";
+import {
+  buildOpportunityInboxItem,
+  type WorkInboxItem,
+  type WorkInboxResponse,
+} from "@/lib/work-inbox";
+import { requireRequestScope } from "@/lib/request-scope";
+import {
+  loadSafeSharedCompanies,
+  listVisibleClientGrants,
+} from "@/lib/team-client-sharing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +28,13 @@ const dateMs = (value: unknown) => {
 
 const text = (value: unknown, max = 500) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
+
+const actionKey = (companyId: unknown, value: unknown) => {
+  const action = text(value)
+    .toLocaleLowerCase("en-GB")
+    .replace(/\s+/g, " ");
+  return companyId && action ? `${String(companyId)}\u0000${action}` : "";
+};
 
 const priorityLabel = (score: number, waiting = false, done = false) => {
   if (done) return "done" as const;
@@ -37,6 +53,7 @@ const noStore = {
 // edit or tick is immediately authoritative everywhere in the CRM.
 export async function GET() {
   try {
+    const account = requireRequestScope();
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
     const endTodayMs = new Date(londonDayBounds().end).getTime();
@@ -44,22 +61,27 @@ export async function GET() {
     const [
       tasksResult,
       upcomingResult,
-      companiesResult,
+      ownedCompaniesResult,
       opportunitiesResult,
       followUpsResult,
       outreachMessagesResult,
       outreachProspectsResult,
       outreachMeetingsResult,
+      visibleClientGrants,
     ] = await Promise.all([
       supabaseAdmin
         .from("tasks")
         .select("id,company_id,text,kind,link_kind,status,done_at,created_at,payload,due_at")
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
         .in("status", ["open", "done"])
         .order("created_at", { ascending: false })
         .limit(600),
       supabaseAdmin
         .from("upcoming_calls")
         .select("id,company_id,title,scheduled_at,intent,research,prepped,created_at")
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
         .eq("prepped", false)
         .is("completed_at", null)
         .gte("scheduled_at", new Date(nowMs - 3 * 60 * 60 * 1000).toISOString())
@@ -68,42 +90,53 @@ export async function GET() {
       supabaseAdmin
         .from("companies")
         .select("id,name,stage,profile,commercial_memory")
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
         .limit(1500),
       supabaseAdmin
         .from("opportunities")
-        .select("company_id")
+        .select("id,company_id,title,value,pipeline_stage,win_outlook,next_action,next_action_due_at,next_action_owner,updated_at")
+        .eq("workspace_id", account.workspaceId)
+        .eq("assigned_to_user_id", account.userId)
         .eq("status", "open")
         .eq("opportunity_type", "revenue")
         .limit(1000),
       supabaseAdmin
         .from("follow_ups")
         .select("id,company_id,draft_subject,draft_body,status,created_at")
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
         .in("status", ["draft", "sent"])
         .order("created_at", { ascending: false })
         .limit(300),
       supabaseAdmin
         .from("outreach_messages")
-        .select("id,prospect_id,subject,body_text,status,step_number,created_at,updated_at,sent_at")
+        .select("id,prospect_id,subject,body_text,status,step_number,created_at,updated_at,sent_at,scheduled_at")
+        .eq("workspace_id", account.workspaceId)
+        .eq("sender_user_id", account.userId)
         .in("status", ["draft", "approved", "sent"])
         .order("updated_at", { ascending: false })
         .limit(300),
       supabaseAdmin
         .from("outreach_prospects")
         .select("id,first_name,last_name,company_name,reply_category,reply_summary,last_reply_at,status,crm_company_id")
-        .not("last_reply_at", "is", null)
-        .order("last_reply_at", { ascending: false })
-        .limit(200),
+        .eq("workspace_id", account.workspaceId)
+        .eq("assigned_to_user_id", account.userId)
+        .order("updated_at", { ascending: false })
+        .limit(2000),
       supabaseAdmin
         .from("outreach_events")
         .select("prospect_id")
+        .eq("workspace_id", account.workspaceId)
         .eq("kind", "meeting_booked")
-        .limit(300),
+        .limit(5000),
+      listVisibleClientGrants(account.workspaceId),
     ]);
 
     const firstError = [
       tasksResult.error,
       upcomingResult.error,
-      companiesResult.error,
+      ownedCompaniesResult.error,
       opportunitiesResult.error,
       followUpsResult.error,
       outreachMessagesResult.error,
@@ -112,7 +145,24 @@ export async function GET() {
     ].find(Boolean);
     if (firstError) throw firstError;
 
-    const companies = companiesResult.data || [];
+    const assignedSharedClientIds = visibleClientGrants
+      .filter(
+        (grant) =>
+          grant.status === "active" &&
+          grant.assigned_to_user_id === account.userId
+      )
+      .map((grant) => grant.company_id);
+    const sharedCompanies = await loadSafeSharedCompanies(
+      assignedSharedClientIds,
+      account.workspaceId
+    );
+    const ownedCompanyIds = new Set(
+      (ownedCompaniesResult.data || []).map((company: any) => company.id)
+    );
+    const companies = [
+      ...(ownedCompaniesResult.data || []),
+      ...sharedCompanies.filter((company) => !ownedCompanyIds.has(company.id)),
+    ];
     const companyName = new Map(
       companies.map((company: any) => [company.id, text(company.name, 160)])
     );
@@ -122,9 +172,36 @@ export async function GET() {
         .filter(Boolean)
     );
     const items: WorkInboxItem[] = [];
+    const canonicalOpportunityActions = new Set(
+      (opportunitiesResult.data || [])
+        .map((opportunity: any) =>
+          actionKey(opportunity.company_id, opportunity.next_action)
+        )
+        .filter(Boolean)
+    );
+
+    for (const opportunity of opportunitiesResult.data || []) {
+      items.push(
+        buildOpportunityInboxItem({
+          opportunity,
+          company: companyName.get(opportunity.company_id) || "Shared sales client",
+          nowMs,
+          endTodayMs,
+        })
+      );
+    }
 
     for (const task of tasksResult.data || []) {
       const done = task.status === "done";
+      // A deal's canonical next action is already shown as an opportunity card.
+      // Hide an exact open task copy so the salesperson never performs or
+      // counts the same move twice. Completed task history remains visible.
+      if (
+        !done &&
+        canonicalOpportunityActions.has(actionKey(task.company_id, task.text))
+      ) {
+        continue;
+      }
       const doneMs = dateMs(task.done_at);
       if (done && (!doneMs || doneMs < nowMs - 7 * DAY_MS)) continue;
       const dueMs = dateMs(task.due_at);
@@ -252,6 +329,7 @@ export async function GET() {
     for (const message of outreachMessagesResult.data || []) {
       const prospect: any = prospects.get(message.prospect_id);
       const done = message.status === "sent";
+      if (message.status === "approved" && message.scheduled_at) continue;
       const sentMs = dateMs(message.sent_at);
       if (done && (!sentMs || sentMs < nowMs - 7 * DAY_MS)) continue;
       const isReply = Number(message.step_number) === 10;
@@ -286,6 +364,7 @@ export async function GET() {
 
     for (const prospect of outreachProspectsResult.data || []) {
       if (
+        !prospect.last_reply_at ||
         prospect.reply_category !== "interested" ||
         replyDraftProspects.has(prospect.id) ||
         handledReplyProspects.has(prospect.id)
@@ -382,6 +461,10 @@ export async function GET() {
     );
     const response: WorkInboxResponse = {
       generatedAt: nowIso,
+      viewer: {
+        userId: account.userId,
+        role: account.role,
+      },
       items,
       cleanup,
       counts,
