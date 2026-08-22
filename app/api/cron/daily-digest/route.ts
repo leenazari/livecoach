@@ -9,6 +9,7 @@ import { capitaliseSentenceStarts } from "@/lib/text";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { POST as runCalendarSync } from "@/app/api/crm/calendar-sync/route";
 import { getAppConfigValue, setAppConfigValue } from "@/lib/app-config";
+import { getOptionalSalesProfile } from "@/lib/sales-profile";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -141,7 +142,7 @@ async function runDigest(req: NextRequest) {
     const dashboardPromise = getDashboard(
       new Request(`${appUrl}/api/crm/dashboard?light=1`)
     );
-    const [callsRes, completedRes, openRes, upcomingRes, oppsRes] = await Promise.all([
+    const [callsRes, completedRes, openRes, upcomingRes, oppsRes, salesProfile] = await Promise.all([
       supabaseAdmin
         .from("interview_summaries")
         .select("ref, candidate, role, summary, created_at, company_id")
@@ -175,6 +176,7 @@ async function runDigest(req: NextRequest) {
         .eq("opportunity_type", "revenue")
         .order("value", { ascending: false })
         .limit(200),
+      getOptionalSalesProfile(),
     ]);
     for (const result of [callsRes, completedRes, openRes, upcomingRes, oppsRes]) {
       if (result.error) throw result.error;
@@ -453,6 +455,23 @@ async function runDigest(req: NextRequest) {
       year: "numeric",
     });
     const dashboardUrl = `${appUrl}/crm`;
+    const workingFocus = salesProfile.completedAt
+      ? [
+          salesProfile.roleTitle
+            ? `<strong>Role:</strong> ${esc(salesProfile.roleTitle)}`
+            : "",
+          salesProfile.salesGoal
+            ? `<strong>Target:</strong> ${esc(salesProfile.salesGoal)}`
+            : "",
+          salesProfile.productFocus.length
+            ? `<strong>Products:</strong> ${esc(salesProfile.productFocus.join(", "))}`
+            : "",
+          salesProfile.customerFocus.length
+            ? `<strong>Customers:</strong> ${esc(salesProfile.customerFocus.join(", "))}`
+            : "",
+          `<strong>Working window:</strong> ${esc(salesProfile.workdayStart)} to ${esc(salesProfile.workdayEnd)} ${esc(salesProfile.timezone)}`,
+        ].filter(Boolean)
+      : [];
     const html = renderEmail({
       when,
       callCount: calls.length,
@@ -469,6 +488,7 @@ async function runDigest(req: NextRequest) {
         return Number.isFinite(due) && due < nowMs;
       }).length,
       dashboardUrl,
+      workingFocus,
     });
 
     const sent = await sendConnectedMail({
@@ -529,6 +549,7 @@ function renderEmail(data: {
   openCount: number;
   overdueCount: number;
   dashboardUrl: string;
+  workingFocus: string[];
 }): string {
   const section = (title: string, body: string) => `
     <div style="margin:0 0 24px;padding:0 0 22px;border-bottom:1px solid #ece9e3;">
@@ -541,6 +562,7 @@ function renderEmail(data: {
     <p style="margin:0 0 3px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#718a76;">LiveCoach</p>
     <h1 style="margin:0 0 6px;font-size:22px;">${data.isSunday ? "Your week-ahead brief" : "Your daily executive brief"}</h1>
     <p style="margin:0 0 25px;font-size:14px;color:#777168;">${esc(data.when)} · ${data.openCount} open actions · ${data.overdueCount} overdue · ${data.callCount} calls captured today</p>
+    ${data.workingFocus.length ? section("Your working focus", list(data.workingFocus, "")) : ""}
     ${section("Your dashboard priorities", list(data.attention, "No open actions need attention."))}
     ${section("Tomorrow’s call briefs", list(data.tomorrowItems, "No calls are currently scheduled for tomorrow."))}
     ${section("Tomorrow’s commercial opportunities", list(data.buyingOpportunities, "No genuine open revenue opportunity is attached to tomorrow’s calls."))}

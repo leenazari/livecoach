@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { getTasteBlock } from "@/lib/workspace";
+import { getSalesProfileContextBlock } from "@/lib/sales-profile";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -175,10 +176,22 @@ CONTENT:
 
     // The host's learned cue taste (their thumbs up/down and kept cues). Best
     // effort, so a slow or empty read never blocks a cue.
-    const taste = await getTasteBlock();
+    const [taste, salesProfile] = await Promise.all([
+      getTasteBlock(),
+      getSalesProfileContextBlock(),
+    ]);
 
     const system: any[] = [
       { type: "text", text: instructions },
+      ...(salesProfile
+        ? [
+            {
+              type: "text" as const,
+              text: salesProfile,
+              cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
+            },
+          ]
+        : []),
       ...(taste
         ? [
             {

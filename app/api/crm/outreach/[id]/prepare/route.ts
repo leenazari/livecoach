@@ -7,6 +7,10 @@ import { logModelUsage } from "@/lib/usage";
 import { londonDate, modelSources, modelText, parseObject } from "@/lib/outreach";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
+import {
+  getOptionalSalesProfile,
+  salesProfileContextBlock,
+} from "@/lib/sales-profile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,12 +86,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const profileId = await ensureWorkspaceProfileId();
     const prospectId = params.id;
     const body = await req.json().catch(() => ({}));
-    const [{ data: prospect }, { data: enrolments }, { data: brain }, { data: revenueConfig }, { data: offerConfig }] = await Promise.all([
+    const [
+      { data: prospect },
+      { data: enrolments },
+      { data: brain },
+      { data: revenueConfig },
+      { data: offerConfig },
+      personalProfile,
+    ] = await Promise.all([
       supabaseAdmin.from("outreach_prospects").select("*").eq("id", prospectId).single(),
       supabaseAdmin.from("outreach_enrolments").select("*").eq("prospect_id", prospectId).eq("queued_for", londonDate()).in("status", ["queued", "researched", "drafted"]).limit(1),
       supabaseAdmin.from("workspace_profile").select("knowledge,learned").eq("id", profileId).maybeSingle(),
       getAppConfigValue("revenue_target_gbp").then((data) => ({ data })),
       getAppConfigValue("interviewa_outreach_offer_truth").then((data) => ({ data })),
+      getOptionalSalesProfile(),
     ]);
     const enrolment = enrolments?.[0];
     if (!prospect || !enrolment) return NextResponse.json({ error: "This person is not in today's queue" }, { status: 400 });
@@ -108,6 +120,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const productTruth = `${brain?.knowledge || ""}\n${brain?.learned || ""}\n${offerTruth}`.slice(0, 6200);
     const revenueTarget = Math.max(1_000, Number(revenueConfig?.value) || 2_000_000);
     const voice = campaign.voice && typeof campaign.voice === "object" ? campaign.voice : {};
+    const salesProfile = salesProfileContextBlock(personalProfile);
+    const emailSignoff = clean(
+      personalProfile.emailSignoff ||
+        voice.signature ||
+        sender.senderName.split(" ")[0],
+      160
+    );
     const banned = Array.isArray(campaign.banned_phrases) ? campaign.banned_phrases.map((item: any) => String(item).trim()).filter(Boolean).slice(0, 20) : [];
     const sequence = Array.isArray(campaign.sequence) ? campaign.sequence : [];
     const sequenceStep = sequence.find((row: any) => Number(row?.step) === step) || {
@@ -119,7 +138,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     };
     const lastStep = Math.max(1, ...sequence.map((row: any) => Number(row?.step) || 0));
     const includeBooking = !!campaign.booking_url && (campaign.booking_cta_mode === "always" || (campaign.booking_cta_mode === "final_step" && step >= lastStep));
-    const system = `You are ${sender.senderName}'s careful B2B outreach researcher and copywriter for Interviewa. Use web_search to check this exact person and company today. Return ONLY compact JSON.
+    const system = `You are ${sender.senderName}'s careful B2B outreach researcher and copywriter for Interviewa. Use web_search to check this exact person and company today. Return ONLY compact JSON.${salesProfile}
 
 COMMERCIAL NORTH STAR: help Interviewa build toward £${revenueTarget.toLocaleString("en-GB")} revenue over the next 12 months, in support of a roughly £10m valuation. Use this to prioritise credible routes to revenue and strong strategic relationships. Never invent a prospect's budget, deal value, urgency or buying authority to make them look valuable.
 
@@ -128,10 +147,11 @@ Do not invent personal facts, clients, results, savings, case studies, product c
 RESEARCH DISCIPLINE: bring back only information that changes the decision or message. Prefer recent primary company sources and current role evidence. Find up to four current or very recent vacancies, including role, location and recency when verifiable. Assess hiring volume only from observed current evidence. Never invent a job count or use a generic industry applicant average as if it belongs to this company. Mark volume unknown when evidence is insufficient. Ignore generic biography, old news and facts that do not affect the campaign intent. Tie every retained fact to one of three outcomes: close a customer deal, build a commercially useful relationship, or start a credible partnership. Reuse saved research when still current and refresh only facts likely to have changed. The saved research must be concise enough to reuse in future Brain, intent and call prep prompts without reopening the web.
 
 VOICE TO FOLLOW: ${clean(voice.tone || "warm, commercially curious and concise", 300)}. ${clean(voice.style || "Founder to founder, plain English and respectful", 400)}
+PERSONAL DELIVERY: write in a ${personalProfile.emailTone.replace(/_/g, " ")} style while keeping every campaign rule and factual safeguard below.
 COACHING RULES: ${Array.isArray(voice.rules) ? voice.rules.join(" | ").slice(0, 1000) : "Lead with one verified relevance signal | make one useful commercial observation | ask one easy question | never pretend familiarity"}
 BANNED PHRASES: ${banned.join(" | ") || "quick question | hope you are well | reaching out"}.
 
-The email must be plain text, 90 to 135 words, short mobile friendly paragraphs, one easy question as the CTA, and signed "${clean(voice.signature || sender.senderName.split(" ")[0], 80)}". End with a natural one line opt out such as "If this is not relevant, tell me and I will not follow up." It must sound individually written by ${sender.senderName}, not like a template or a faceless product message. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Write "better prepared", never "better-prepared". Subject under 45 characters. Use one or two verified current vacancies when available. Say that Interviewa specialises in preparing candidates for those exact types of roles, rather than making a generic recruitment claim. Explain that the prospect can try Interviewa free on a current vacancy, setup takes about 10 minutes, it adds no extra administration for their team, they control and can reuse the interview, and results appear in their dashboard. Where natural, state the approved proof that thousands of candidates already use Interviewa. Position better preparation as a credible way to improve candidate acceptance or client placement rates, but never guarantee a result. Say the sender will prove the value through the free trial, not that a placement outcome is guaranteed. Candidate training is the primary campaign angle. Mention screening only as a secondary possibility when verified vacancy volume makes it credible and product truth supports it. Be commercially vivid without hype. If no approved case study exists, use a concrete illustrative workflow such as practising for one live role, but never imply another customer achieved a result. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? `This is a follow up. Do not repeat ${sender.senderName}'s full introduction or the opening email, and make it easy to close the loop.` : `This is the first email. After the personalised opening, introduce the sender naturally with: I’m ${sender.senderName} from Interviewa. Then explain that Interviewa was built specifically to help recruiters prepare candidates for successful job placements.`} ${includeBooking ? `Include this booking link once, naturally, as the optional next step: ${campaign.booking_url}` : "Do not include a calendar or booking link. Earn interest first."}
+The email must be plain text, 90 to 135 words, short mobile friendly paragraphs, one easy question as the CTA, and signed exactly "${emailSignoff}". End with a natural one line opt out such as "If this is not relevant, tell me and I will not follow up." It must sound individually written by ${sender.senderName}, not like a template or a faceless product message. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Write "better prepared", never "better-prepared". Subject under 45 characters. Use one or two verified current vacancies when available. Say that Interviewa specialises in preparing candidates for those exact types of roles, rather than making a generic recruitment claim. Explain that the prospect can try Interviewa free on a current vacancy, setup takes about 10 minutes, it adds no extra administration for their team, they control and can reuse the interview, and results appear in their dashboard. Where natural, state the approved proof that thousands of candidates already use Interviewa. Position better preparation as a credible way to improve candidate acceptance or client placement rates, but never guarantee a result. Say the sender will prove the value through the free trial, not that a placement outcome is guaranteed. Candidate training is the primary campaign angle. Mention screening only as a secondary possibility when verified vacancy volume makes it credible and product truth supports it. Be commercially vivid without hype. If no approved case study exists, use a concrete illustrative workflow such as practising for one live role, but never imply another customer achieved a result. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? `This is a follow up. Do not repeat ${sender.senderName}'s full introduction or the opening email, and make it easy to close the loop.` : `This is the first email. After the personalised opening, introduce the sender naturally with: I’m ${sender.senderName} from Interviewa. Then explain that Interviewa was built specifically to help recruiters prepare candidates for successful job placements.`} ${includeBooking ? `Include this booking link once, naturally, as the optional next step: ${campaign.booking_url}` : "Do not include a calendar or booking link. Earn interest first."}
 
 APPROVED SEQUENCE BRIEF FOR THIS STEP:
 Purpose: ${clean(sequenceStep.purpose, 240)}

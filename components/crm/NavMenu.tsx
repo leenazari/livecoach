@@ -25,6 +25,7 @@ const CORE_ITEMS: Item[] = [
 const MORE_ITEMS: Item[] = [
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
   { href: "/crm/health", label: "Health", icon: "✓" },
+  { href: "/settings/sales-profile", label: "My setup", icon: "◉" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
 const START_ITEM: Item = { href: "/call", label: "Start new call", icon: "▸" };
@@ -131,7 +132,11 @@ function NavMenuInner() {
         !pathname.startsWith("/crm/call-coach");
     if (it.href === "/crm/pitch-playbook")
       return pathname.startsWith("/crm/pitch-playbook");
-    if (it.href === "/settings") return pathname.startsWith("/settings");
+    if (it.href === "/settings/sales-profile")
+      return pathname.startsWith("/settings/sales-profile");
+    if (it.href === "/settings")
+      return pathname.startsWith("/settings") &&
+        !pathname.startsWith("/settings/sales-profile");
     if (it.tab) return pathname.startsWith("/crm/board") && tab === it.tab;
     return false;
   };

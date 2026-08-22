@@ -155,6 +155,7 @@ export async function GET() {
       { data: googleRows, error: googleError },
       { data: microsoftRows, error: microsoftError },
       { data: botRows, error: botRowsError },
+      { data: salesProfileRows, error: salesProfilesError },
     ] =
       memberIds.length
         ? await Promise.all([
@@ -177,8 +178,14 @@ export async function GET() {
               .in("owner_id", memberIds)
               .gte("created_at", usageWindowStart.toISOString())
               .lt("created_at", todayEnd.toISOString()),
+            supabaseService
+              .from("salesperson_profiles")
+              .select("user_id,completed_at")
+              .eq("workspace_id", scope.workspaceId)
+              .in("user_id", memberIds),
           ])
         : [
+            { data: [], error: null },
             { data: [], error: null },
             { data: [], error: null },
             { data: [], error: null },
@@ -188,6 +195,7 @@ export async function GET() {
     if (googleError) throw googleError;
     if (microsoftError) throw microsoftError;
     if (botRowsError) throw botRowsError;
+    if (salesProfilesError) throw salesProfilesError;
 
     const nonOwnerIds = (membersResult.data || [])
       .filter((member) => member.role !== "owner")
@@ -226,6 +234,11 @@ export async function GET() {
       (microsoftRows || []).map((row: any) => [row.owner_id, row])
     );
     const setupByUser = new Map(setupEntries);
+    const completedSalesProfiles = new Set(
+      (salesProfileRows || [])
+        .filter((row: any) => !!row.completed_at)
+        .map((row: any) => row.user_id)
+    );
     const latestPrivacyEventByUser = new Map<string, any>();
     for (const event of privacyEventsResult.data || []) {
       if (event.target_id && !latestPrivacyEventByUser.has(event.target_id)) {
@@ -303,6 +316,7 @@ export async function GET() {
         transcriberUsage,
         setup: {
           separateIdentity,
+          salesProfileComplete: completedSalesProfiles.has(member.user_id),
           outreachSenderReady,
           assignedProspects: setupEvidence.assignedProspects,
           sentMessages: setupEvidence.sentMessages,
@@ -315,7 +329,8 @@ export async function GET() {
             outreachSenderReady &&
             setupEvidence.assignedProspects > 0 &&
             setupEvidence.sentMessages > 0 &&
-            setupEvidence.transcribedCalls > 0,
+            setupEvidence.transcribedCalls > 0 &&
+            completedSalesProfiles.has(member.user_id),
         },
       };
     });
