@@ -17,7 +17,8 @@
     "validate:team-invite": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-team-invitation-link.mjs",
     "validate:transcriber": "node scripts/validate-transcriber-isolation.mjs",
     "validate:transcriber-allowance": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-transcriber-allowance.mjs",
-    "validate:sales-profile": "node scripts/validate-sales-profile.mjs"
+    "validate:sales-profile": "node scripts/validate-sales-profile.mjs",
+    "validate:team-work-allocation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-team-work-allocation.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

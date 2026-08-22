@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  isUntouchedOutreachAssignment,
+} from "@/lib/outreach-assignment";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 
@@ -16,13 +19,6 @@ function batches<T>(items: T[], size = QUERY_BATCH_SIZE): T[][] {
     result.push(items.slice(index, index + size));
   }
   return result;
-}
-
-function hasSavedResearch(value: unknown): boolean {
-  if (value == null) return false;
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "object") return Object.keys(value).length > 0;
-  return String(value).trim().length > 0;
 }
 
 export async function POST(req: NextRequest) {
@@ -116,14 +112,11 @@ export async function POST(req: NextRequest) {
     const eligibleIds = prospectRows
       .filter(
         (row) =>
-          row.status === "imported" &&
           row.assigned_to_user_id !== assignedToUserId &&
-          !row.last_researched_at &&
-          !row.last_contacted_at &&
-          !row.last_reply_at &&
-          !hasSavedResearch(row.research) &&
-          !messageProspectIds.has(row.id) &&
-          !enrolmentProspectIds.has(row.id)
+          isUntouchedOutreachAssignment(row, {
+            hasMessage: messageProspectIds.has(row.id),
+            hasEnrolment: enrolmentProspectIds.has(row.id),
+          })
       )
       .map((row) => row.id);
 
