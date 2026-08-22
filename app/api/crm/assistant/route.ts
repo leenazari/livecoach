@@ -34,6 +34,7 @@ import {
   type BrainActionSignature,
 } from "@/lib/brain-action-signatures";
 import { documentBrainContext } from "@/lib/document-context";
+import { getSalesProfileContextBlock } from "@/lib/sales-profile";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -1124,10 +1125,20 @@ export async function POST(req: NextRequest) {
         },
       ])
       .select("id, role");
-    const [context, histRes, biz, lessons, pitchLessons, brainQuestions, persistedRes] = await Promise.all([
+    const [
+      context,
+      histRes,
+      biz,
+      salesProfile,
+      lessons,
+      pitchLessons,
+      brainQuestions,
+      persistedRes,
+    ] = await Promise.all([
       gatherContext(),
       histQ,
       workspaceContextBlock(),
+      getSalesProfileContextBlock(),
       getLessonsBlock(["negotiation", "strategy", "psychology"]),
       wantsPitchLessons ? getRelevantPitchingLessons(message) : Promise.resolve(""),
       getBrainQuestions(),
@@ -1186,7 +1197,7 @@ export async function POST(req: NextRequest) {
     const system: any[] = [
       {
         type: "text",
-        text: `${biz}${lessons}${pitchLessons}${scope}${qBlock}
+        text: `${biz}${salesProfile}${lessons}${pitchLessons}${scope}${qBlock}
 
 GROUND EVERYTHING in the context provided below. This is the hardest rule and it overrides being helpful.
 - Never state a specific number, money amount, budget, deal value, date, deadline, percentage, stage, name or commitment unless it appears literally in the context. Do not estimate, assume, or infer a figure that isn't written there. If you catch yourself about to put a number in a sentence, check it is actually in the context first.

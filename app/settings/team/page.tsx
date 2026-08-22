@@ -33,6 +33,7 @@ type Member = {
   };
   setup: {
     separateIdentity: boolean;
+    salesProfileComplete: boolean;
     outreachSenderReady: boolean;
     assignedProspects: number;
     sentMessages: number;
@@ -241,12 +242,20 @@ export default function TeamAccessPage() {
           </p>
           <h1 className="mt-1 font-display text-2xl text-bone">Team access</h1>
         </div>
-        <Link
-          href="/settings"
-          className="rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted hover:border-amber/50 hover:text-amber"
-        >
-          Back to settings
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/settings/sales-profile"
+            className="rounded-full border border-sage/45 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage hover:bg-sage/10"
+          >
+            My Sales Setup
+          </Link>
+          <Link
+            href="/settings"
+            className="rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted hover:border-amber/50 hover:text-amber"
+          >
+            Back to settings
+          </Link>
+        </div>
       </header>
 
       {!data && !error ? (
@@ -366,6 +375,14 @@ export default function TeamAccessPage() {
                           ? `${member.mailboxProvider === "microsoft" ? "Microsoft" : "Google"} connected as ${member.microsoftEmail || member.googleEmail || "this user"}`
                           : "Optional for CRM access. Required before outreach sending and automatic calendar sync",
                         complete: member.mailboxConnected && member.setup.separateIdentity,
+                      },
+                      {
+                        id: "profile",
+                        label: "Personal Sales Setup completed",
+                        detail: member.setup.salesProfileComplete
+                          ? "Brain, outreach and live coaching now use this person's own working preferences"
+                          : "This person completes their own role, products, customers, tone and coaching preferences in My Sales Setup",
+                        complete: member.setup.salesProfileComplete,
                       },
                       {
                         id: "sender",
