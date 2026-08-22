@@ -186,6 +186,7 @@ export default function OutreachPage() {
   const prepareJobsRef = useRef<Record<string, PrepareStatus>>({});
   const prepareQueueRef = useRef<string[]>([]);
   const activePrepareRef = useRef<Set<string>>(new Set());
+  const ownerFilterInitialisedRef = useRef(false);
   const [q, setQ] = useState("");
   const [priority, setPriority] = useState<"all" | Priority>("all");
   const [stageFilter, setStageFilter] = useState("active");
@@ -221,6 +222,10 @@ export default function OutreachPage() {
     setTeam(data.team || []);
     setCurrentUser(data.currentUser || "");
     setCanManageAssignments(data.canManageAssignments === true);
+    if (!ownerFilterInitialisedRef.current) {
+      setOwnerFilter(data.canManageAssignments === true ? "all" : "mine");
+      ownerFilterInitialisedRef.current = true;
+    }
   }, []);
 
   const loadMetrics = useCallback(async () => {

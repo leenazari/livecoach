@@ -71,7 +71,7 @@ export async function GET() {
         .eq("kind", "opportunity_outlook_assessment")
         .gte("created_at", new Date(Date.now() - 7 * DAY).toISOString())
         .limit(1000),
-      activeSharedClientIds(),
+      activeSharedClientIds(account.workspaceId),
     ]);
 
     const ownedCompanyIds = new Set(

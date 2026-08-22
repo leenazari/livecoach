@@ -59,6 +59,8 @@ type ClientAccess = {
   mode: "owner" | "shared_sales";
   shared: boolean;
   canManageSharing: boolean;
+  assignedToUserId: string;
+  canEdit: boolean;
   privateSourcesHidden: boolean;
 };
 
@@ -521,24 +523,28 @@ export default function CompanyDetailPage() {
               saved {savedAt}
             </span>
           )}
-          <Link
-            href={`/crm/log-call?company=${id}&companyName=${encodeURIComponent(
-              company.name
-            )}`}
-            title="Log a call you already had (no prep, no plan) - just record what happened and it lands in this client's history"
-            className="min-h-10 flex-1 rounded-full border border-sage/60 bg-sage/15 px-3 py-2 text-center font-mono text-[0.58rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 sm:flex-none sm:px-4 sm:text-[0.62rem]"
-          >
-            ＋ log a call
-          </Link>
-          <Link
-            href={`/crm/prep?company=${id}&companyName=${encodeURIComponent(
-              company.name
-            )}`}
-            title="See past call summaries and get a fresh, suggested intent for your next call with this client"
-            className="min-h-10 flex-1 rounded-full border border-amber/60 bg-amber/15 px-3 py-2 text-center font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 sm:flex-none sm:px-4 sm:text-[0.62rem]"
-          >
-            ✶ prep next call
-          </Link>
+          {access?.canEdit ? (
+            <>
+              <Link
+                href={`/crm/log-call?company=${id}&companyName=${encodeURIComponent(
+                  company.name
+                )}`}
+                title="Log a call you already had (no prep, no plan) - just record what happened and it lands in this client's history"
+                className="min-h-10 flex-1 rounded-full border border-sage/60 bg-sage/15 px-3 py-2 text-center font-mono text-[0.58rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 sm:flex-none sm:px-4 sm:text-[0.62rem]"
+              >
+                ＋ log a call
+              </Link>
+              <Link
+                href={`/crm/prep?company=${id}&companyName=${encodeURIComponent(
+                  company.name
+                )}`}
+                title="See past call summaries and get a fresh, suggested intent for your next call with this client"
+                className="min-h-10 flex-1 rounded-full border border-amber/60 bg-amber/15 px-3 py-2 text-center font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 sm:flex-none sm:px-4 sm:text-[0.62rem]"
+              >
+                ✶ prep next call
+              </Link>
+            </>
+          ) : null}
           {access?.mode !== "shared_sales" ? (
             <button
               type="button"
@@ -553,7 +559,7 @@ export default function CompanyDetailPage() {
           <button
             type="button"
             onClick={save}
-            disabled={saving}
+            disabled={saving || !access?.canEdit}
             className="min-h-10 flex-1 rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40 sm:flex-none sm:px-5 sm:text-[0.62rem]"
           >
             {saving ? "saving…" : "save"}
@@ -567,7 +573,9 @@ export default function CompanyDetailPage() {
         <section className="mb-3 rounded-xl border border-sage/45 bg-sage/[0.07] p-4">
           <p className="font-mono text-[0.58rem] uppercase tracking-wider text-sage">Shared sales record</p>
           <p className="mt-1 text-sm leading-relaxed text-muted">
-            You can work with the client basics and team opportunity. The original owner's calls, transcripts, mailbox context, notes, documents and Brain memory are not available to this account.
+            {access.canEdit
+              ? "This client is assigned to you. You can work with the client basics and team opportunity."
+              : "This client belongs to another salesperson, so it is view only for you."} The original owner's calls, transcripts, mailbox context, notes, documents and Brain memory are not available to this account.
           </p>
         </section>
       ) : null}
@@ -619,7 +627,7 @@ export default function CompanyDetailPage() {
               ) : null}
             </div>
           </div>
-          <div className="flex w-full gap-2 sm:w-auto">
+          {access?.canEdit ? <div className="flex w-full gap-2 sm:w-auto">
             <button
               type="button"
               onClick={() => scrollToId("sec-quick-update")}
@@ -634,7 +642,7 @@ export default function CompanyDetailPage() {
             >
               Next steps ↓
             </button>
-          </div>
+          </div> : null}
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2 border-t border-edge/50 pt-3 lg:grid-cols-5">
           <button type="button" onClick={() => goTab("details")} className={statCls}>
@@ -705,7 +713,7 @@ export default function CompanyDetailPage() {
         </div>
       </section>
 
-      <div id="sec-quick-update" className="scroll-mt-4">
+      {access?.canEdit ? <div id="sec-quick-update" className="scroll-mt-4">
         <QuickClientUpdate
           companyId={id}
           companyName={company.name}
@@ -716,10 +724,10 @@ export default function CompanyDetailPage() {
           }
           sharedSalesAccess={access?.mode === "shared_sales"}
         />
-      </div>
+      </div> : null}
 
       {/* Actionable work stays above the longer intelligence and history. */}
-      <div id="sec-tasks" className="mb-3 rounded-xl border border-sage/35 bg-sage/[0.045] p-4">
+      {access?.canEdit ? <div id="sec-tasks" className="mb-3 rounded-xl border border-sage/35 bg-sage/[0.045] p-4">
         <p className="mb-2.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
           {"→"} Next steps{" "}
           <span className="text-muted">- what to do for {company.name}</span>
@@ -728,7 +736,7 @@ export default function CompanyDetailPage() {
           companyId={id}
           emptyText="No next steps yet. Log an update above or build from context."
         />
-      </div>
+      </div> : null}
 
       {buyingSignals.length || blockers.length ? (
         <section className="mb-3 grid gap-2 sm:grid-cols-2">
@@ -1027,6 +1035,7 @@ export default function CompanyDetailPage() {
                 <span className={labelCls}>Name</span>
                 <input
                   value={core.name}
+                  disabled={!access?.canEdit}
                   onChange={(e) => setCore({ ...core, name: e.target.value })}
                   className={inputCls}
                 />
@@ -1036,6 +1045,7 @@ export default function CompanyDetailPage() {
                   <span className={labelCls}>Sector</span>
                   <input
                     value={core.sector}
+                    disabled={!access?.canEdit}
                     onChange={(e) =>
                       setCore({ ...core, sector: e.target.value })
                     }
@@ -1046,6 +1056,7 @@ export default function CompanyDetailPage() {
                   <span className={labelCls}>Stage</span>
                   <select
                     value={core.stage}
+                    disabled={!access?.canEdit}
                     onChange={(e) => setCore({ ...core, stage: e.target.value })}
                     className={inputCls}
                   >
@@ -1064,6 +1075,7 @@ export default function CompanyDetailPage() {
                   <span className={labelCls}>Website</span>
                   <input
                     value={core.website}
+                    disabled={!access?.canEdit}
                     onChange={(e) =>
                       setCore({ ...core, website: e.target.value })
                     }
@@ -1074,6 +1086,7 @@ export default function CompanyDetailPage() {
                   <span className={labelCls}>Domain</span>
                   <input
                     value={core.domain}
+                    disabled={!access?.canEdit}
                     onChange={(e) =>
                       setCore({ ...core, domain: e.target.value })
                     }

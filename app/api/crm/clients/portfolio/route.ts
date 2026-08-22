@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import {
   isInHouseRelationship,
   isNonCommercialRelationship,
@@ -48,23 +48,27 @@ export async function GET() {
       { data: calls, error: callsError },
       { data: upcoming, error: upcomingError },
       { data: clientShares, error: clientSharesError },
+      { data: members, error: membersError },
     ] = await Promise.all([
       supabaseAdmin
         .from("companies")
         .select("id,name,domain,website,sector,stage,profile,attributes,commercial_memory,created_at,updated_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId)
         .order("updated_at", { ascending: false })
         .limit(1000),
       supabaseAdmin
         .from("contacts")
         .select("id,company_id,name,role,email,attributes,created_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId)
         .not("company_id", "is", null)
         .order("created_at", { ascending: true })
         .limit(3000),
       supabaseAdmin
         .from("opportunities")
-        .select("id,company_id,title,value,status,opportunity_type,pipeline_stage,probability,next_action,next_action_due_at,updated_at")
+        .select("id,company_id,title,value,status,opportunity_type,pipeline_stage,probability,next_action,next_action_due_at,assigned_to_user_id,updated_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("status", "open")
         .eq("opportunity_type", "revenue")
         .order("updated_at", { ascending: false })
@@ -72,6 +76,7 @@ export async function GET() {
       supabaseAdmin
         .from("tasks")
         .select("id,company_id,text,kind,due_at,created_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId)
         .eq("status", "open")
         .not("company_id", "is", null)
@@ -80,6 +85,7 @@ export async function GET() {
       supabaseAdmin
         .from("interview_summaries")
         .select("company_id,created_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId)
         .not("company_id", "is", null)
         .order("created_at", { ascending: false })
@@ -87,6 +93,7 @@ export async function GET() {
       supabaseAdmin
         .from("upcoming_calls")
         .select("company_id,title,scheduled_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId)
         .not("company_id", "is", null)
         .is("completed_at", null)
@@ -95,9 +102,16 @@ export async function GET() {
         .limit(1000),
       supabaseAdmin
         .from("team_client_shares")
-        .select("company_id,status")
+        .select("company_id,status,assigned_to_user_id")
+        .eq("workspace_id", scope.workspaceId)
         .eq("status", "active")
         .limit(1500),
+      supabaseService
+        .from("workspace_members")
+        .select("user_id,role")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("status", "active")
+        .order("created_at"),
     ]);
 
     const firstError = [
@@ -108,6 +122,7 @@ export async function GET() {
       callsError,
       upcomingError,
       clientSharesError,
+      membersError,
     ].find(Boolean);
     if (firstError) throw firstError;
 
@@ -119,6 +134,28 @@ export async function GET() {
     );
     const companies = [...(ownedCompanies || []), ...safeSharedCompanies];
     const activeShareIds = new Set(sharedIds);
+    const shareByCompany = new Map(
+      (clientShares || []).map((share: any) => [share.company_id, share])
+    );
+
+    const memberIds = (members || []).map((member: any) => member.user_id);
+    const { data: profiles, error: profilesError } = memberIds.length
+      ? await supabaseService
+          .from("profiles")
+          .select("user_id,display_name")
+          .in("user_id", memberIds)
+      : { data: [] as any[], error: null };
+    if (profilesError) throw profilesError;
+    const profileById = new Map(
+      (profiles || []).map((profile: any) => [profile.user_id, profile])
+    );
+    const team = (members || []).map((member: any) => ({
+      userId: member.user_id,
+      role: member.role,
+      name:
+        (profileById.get(member.user_id) as any)?.display_name ||
+        (member.user_id === scope.userId ? "Me" : "Team member"),
+    }));
 
     const contactsByCompany = new Map<string, any[]>();
     for (const contact of contacts || []) {
@@ -280,6 +317,9 @@ export async function GET() {
         name: company.name,
         shared: activeShareIds.has(company.id),
         accessMode: ownedIds.has(company.id) ? "owner" : "shared_sales",
+        assignedToUserId:
+          (shareByCompany.get(company.id) as any)?.assigned_to_user_id ||
+          (ownedIds.has(company.id) ? scope.userId : null),
         sector: company.sector || null,
         relationshipStage: company.stage || null,
         relationshipType,
@@ -347,6 +387,10 @@ export async function GET() {
           { all: 0, red: 0, amber: 0, green: 0, grey: 0, opportunities: 0, archived: 0 }
         ),
         generatedAt: new Date().toISOString(),
+        team,
+        currentUser: scope.userId,
+        canManageAssignments:
+          scope.role === "owner" || scope.role === "manager",
       },
       {
         headers: {

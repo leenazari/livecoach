@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
         .gte("scheduled_at", new Date(nowMs).toISOString())
         .order("scheduled_at", { ascending: true })
         .limit(500),
-      activeSharedClientIds(),
+      activeSharedClientIds(scope.workspaceId),
     ]);
     const ownedIds = new Set((ownedCompanies || []).map((company: any) => company.id));
     const sharedCompanies = await loadSafeSharedCompanies(

@@ -14,13 +14,18 @@ type SharingRecord = {
   stage: string | null;
   updatedAt: string;
   shared: boolean;
+  assignedToUserId: string | null;
   openOpportunityCount: number;
   blockedReason: string | null;
 };
 
+type TeamMember = { userId: string; role: string; name: string };
+
 type SharingData = {
   records: SharingRecord[];
   summary: { total: number; shared: number; protected: number };
+  team: TeamMember[];
+  currentUser: string;
 };
 
 export default function TeamSharingPage() {
@@ -28,13 +33,23 @@ export default function TeamSharingPage() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "shared" | "private">("all");
   const [busyId, setBusyId] = useState("");
+  const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
     setError("");
     try {
-      setData(await crmFetch<SharingData>("/api/crm/team/sharing"));
+      const next = await crmFetch<SharingData>("/api/crm/team/sharing");
+      setData(next);
+      setAssignmentDrafts(
+        Object.fromEntries(
+          (next.records || []).map((record) => [
+            record.id,
+            record.assignedToUserId || "",
+          ])
+        )
+      );
     } catch (loadError: any) {
       setError(loadError?.message || "Client sharing could not be loaded");
     }
@@ -58,19 +73,41 @@ export default function TeamSharingPage() {
     });
   }, [data, filter, query]);
 
-  const changeSharing = async (record: SharingRecord, shared: boolean) => {
+  const changeSharing = async (
+    record: SharingRecord,
+    shared: boolean,
+    assignedToUserId = assignmentDrafts[record.id] || ""
+  ) => {
+    const previousAssignee = record.assignedToUserId || "";
+    if (shared && !assignedToUserId) {
+      setError("Choose the salesperson responsible for this client");
+      return;
+    }
     setBusyId(record.id);
     setError("");
     setNotice("");
     try {
-      const result = await crmFetch<{ companyId: string; shared: boolean }>(
+      const result = await crmFetch<{
+        companyId: string;
+        shared: boolean;
+        assignedToUserId: string | null;
+        opportunitiesUpdated: number;
+      }>(
         "/api/crm/team/sharing",
         {
           method: "PATCH",
-          body: JSON.stringify({ companyId: record.id, shared }),
+          body: JSON.stringify({
+            companyId: record.id,
+            shared,
+            assignedToUserId: shared ? assignedToUserId : null,
+          }),
         }
       );
-      if (result.companyId !== record.id || result.shared !== shared) {
+      if (
+        result.companyId !== record.id ||
+        result.shared !== shared ||
+        (shared && result.assignedToUserId !== assignedToUserId)
+      ) {
         throw new Error("The database did not confirm that access change");
       }
       setData((current) => {
@@ -79,7 +116,15 @@ export default function TeamSharingPage() {
         return {
           ...current,
           records: current.records.map((item) =>
-            item.id === record.id ? { ...item, shared } : item
+            item.id === record.id
+              ? {
+                  ...item,
+                  shared,
+                  assignedToUserId: shared
+                    ? result.assignedToUserId
+                    : item.assignedToUserId,
+                }
+              : item
           ),
           summary: {
             ...current.summary,
@@ -89,12 +134,25 @@ export default function TeamSharingPage() {
           },
         };
       });
-      setNotice(
-        shared
-          ? `${record.name} is now available as a shared sales record`
-          : `${record.name} is private again`
-      );
+      if (shared) {
+        const member = data?.team.find(
+          (item) => item.userId === result.assignedToUserId
+        );
+        setAssignmentDrafts((current) => ({
+          ...current,
+          [record.id]: result.assignedToUserId || "",
+        }));
+        setNotice(
+          `${record.name} is assigned to ${member?.name || "the selected salesperson"}. ${result.opportunitiesUpdated || 0} open revenue ${result.opportunitiesUpdated === 1 ? "deal is" : "deals are"} now in their My work view.`
+        );
+      } else {
+        setNotice(`${record.name} is private again`);
+      }
     } catch (saveError: any) {
+      setAssignmentDrafts((current) => ({
+        ...current,
+        [record.id]: previousAssignee,
+      }));
       setError(saveError?.message || "That access change did not save");
     } finally {
       setBusyId("");
@@ -124,7 +182,7 @@ export default function TeamSharingPage() {
           <h2 className="font-display text-lg">What sharing does</h2>
           <div className="mt-3 grid gap-3 text-sm leading-relaxed text-muted md:grid-cols-2">
             <p>
-              A teammate sees the client name, sector, relationship stage and any opportunity already assigned to the team.
+              A shared client has one responsible salesperson. Their open revenue deals appear in the same person’s My work view.
             </p>
             <p>
               Your call recordings, transcripts, calendar, mailbox context, personal notes, documents and Brain history remain private.
@@ -204,27 +262,58 @@ export default function TeamSharingPage() {
                       {record.blockedReason ? (
                         <p className="mt-1 text-xs text-rust">{record.blockedReason}</p>
                       ) : record.shared ? (
-                        <p className="mt-1 text-xs text-sage">Safe sales view shared. Private source material is still hidden.</p>
+                        <p className="mt-1 text-xs text-sage">
+                          Safe sales view shared with {data.team.find((member) => member.userId === record.assignedToUserId)?.name || "one salesperson"}. Private source material is still hidden.
+                        </p>
                       ) : (
                         <p className="mt-1 text-xs text-muted">Owner only</p>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      disabled={busyId === record.id || !!record.blockedReason}
-                      onClick={() => changeSharing(record, !record.shared)}
-                      className={`min-h-10 shrink-0 rounded-full border px-4 font-mono text-[0.58rem] uppercase disabled:cursor-not-allowed disabled:opacity-35 ${
-                        record.shared
-                          ? "border-sage/50 bg-sage/10 text-sage"
-                          : "border-amber/50 bg-amber/10 text-amber"
-                      }`}
-                    >
-                      {busyId === record.id
-                        ? "Saving…"
-                        : record.shared
-                          ? "Shared. Make private"
-                          : "Share sales view"}
-                    </button>
+                    <div className="grid shrink-0 gap-2 sm:min-w-[290px] sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <select
+                        aria-label={`Responsible salesperson for ${record.name}`}
+                        value={assignmentDrafts[record.id] || ""}
+                        disabled={busyId === record.id || !!record.blockedReason}
+                        onChange={(event) => {
+                          const nextAssignee = event.target.value;
+                          setAssignmentDrafts((current) => ({
+                            ...current,
+                            [record.id]: nextAssignee,
+                          }));
+                          if (record.shared && nextAssignee) {
+                            void changeSharing(record, true, nextAssignee);
+                          }
+                        }}
+                        className="min-h-10 rounded-xl border border-edge bg-ink/60 px-3 text-sm text-bone outline-none focus:border-amber/60 disabled:opacity-40"
+                      >
+                        <option value="">Choose salesperson</option>
+                        {data.team.map((member) => (
+                          <option key={member.userId} value={member.userId}>
+                            {member.name}{member.userId === data.currentUser ? " · you" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={
+                          busyId === record.id ||
+                          !!record.blockedReason ||
+                          (!record.shared && !assignmentDrafts[record.id])
+                        }
+                        onClick={() => changeSharing(record, !record.shared)}
+                        className={`min-h-10 rounded-full border px-4 font-mono text-[0.58rem] uppercase disabled:cursor-not-allowed disabled:opacity-35 ${
+                          record.shared
+                            ? "border-rust/45 bg-rust/10 text-rust"
+                            : "border-amber/50 bg-amber/10 text-amber"
+                        }`}
+                      >
+                        {busyId === record.id
+                          ? "Saving…"
+                          : record.shared
+                            ? "Make private"
+                            : "Share"}
+                      </button>
+                    </div>
                   </article>
                 ))}
                 {!shown.length ? (
