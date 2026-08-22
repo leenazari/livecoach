@@ -300,8 +300,10 @@ function splitCue(raw: string): {
 
 export default function CallPage() {
   const router = useRouter();
-  const [room] = useState(() => `lc-${Math.random().toString(36).slice(2, 8)}`);
+  const [room] = useState(() => `lc-${crypto.randomUUID()}`);
   const [origin, setOrigin] = useState("");
+  const [joinLink, setJoinLink] = useState("");
+  const [joinLinkLoading, setJoinLinkLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
 
@@ -1431,14 +1433,34 @@ export default function CallPage() {
     sourceRef.current = source;
   }, [source]);
 
-  const joinLink = origin ? `${origin}/join/${room}` : "";
   const botLink = origin ? `${origin}/candidate-bot/${room}` : "";
 
   const copy = async () => {
-    if (!joinLink) return;
-    await navigator.clipboard.writeText(joinLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (joinLinkLoading) return;
+    setJoinLinkLoading(true);
+    try {
+      let secureLink = joinLink;
+      if (!secureLink) {
+        const response = await fetch("/api/livekit/invite", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ room }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data?.joinUrl) {
+          throw new Error(data?.error || "Could not create the secure call link");
+        }
+        secureLink = data.joinUrl;
+        setJoinLink(secureLink);
+      }
+      await navigator.clipboard.writeText(secureLink);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (error: any) {
+      setStatus(error?.message || "could not create the secure call link");
+    } finally {
+      setJoinLinkLoading(false);
+    }
   };
 
   const onFinalTranscript = useCallback(
@@ -3791,20 +3813,41 @@ export default function CallPage() {
                 <div className="mt-3 flex flex-col gap-2.5">
                   <div>
                     <p className="mb-1.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-amber">
-                      Send this join link
+                      Send this secure one-time join link
                     </p>
                     <div className="flex flex-wrap items-center gap-2">
                       <code className="min-w-0 flex-1 break-all rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-xs text-bone">
-                        {joinLink || "preparing..."}
+                        {joinLink || "created when you press copy"}
                       </code>
                       <button
                         onClick={copy}
-                        disabled={!joinLink}
+                        disabled={joinLinkLoading}
                         className="shrink-0 rounded-full border border-amber/50 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/10 disabled:opacity-40"
                       >
-                        {copied ? "copied" : "copy"}
+                        {joinLinkLoading
+                          ? "securing..."
+                          : copied
+                          ? "copied"
+                          : "copy"}
                       </button>
+                      {joinLink && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setJoinLink("");
+                            setCopied(false);
+                          }}
+                          disabled={joinLinkLoading}
+                          className="shrink-0 rounded-full border border-edge px-3 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-bone disabled:opacity-40"
+                        >
+                          new link
+                        </button>
+                      )}
                     </div>
+                    <p className="mt-1.5 font-mono text-[0.55rem] leading-relaxed text-muted">
+                      Expires after 24 hours and opens for the first candidate
+                      browser only. Pressing copy again reuses the same link.
+                    </p>
                   </div>
                   <a
                     href={botLink || "#"}

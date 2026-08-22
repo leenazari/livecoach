@@ -53,7 +53,6 @@ export default function CandidateBotPage() {
     const payload = new TextEncoder().encode(
       JSON.stringify({
         type: "transcript",
-        role: "candidate",
         text,
         speechFinal: true,
       })
@@ -118,14 +117,10 @@ export default function CandidateBotPage() {
     setConnecting(true);
     setError("");
     try {
-      const res = await fetch("/api/livekit/token", {
+      const res = await fetch("/api/livekit/practice-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          room,
-          identity: "Candidate (bot)",
-          role: "candidate",
-        }),
+        body: JSON.stringify({ room }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Token request failed");
@@ -136,10 +131,16 @@ export default function CandidateBotPage() {
 
       // Listen for the interviewer's transcript. Accumulate their finals and,
       // when they finish a turn (speechFinal), generate a candidate reply.
-      r.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
+      r.on(RoomEvent.DataReceived, (payload: Uint8Array, participant) => {
         try {
           const msg = JSON.parse(new TextDecoder().decode(payload));
-          if (msg.type !== "transcript" || msg.role !== "interviewer") return;
+          let senderRole = "";
+          try {
+            senderRole = JSON.parse(participant?.metadata || "{}").role || "";
+          } catch {
+            senderRole = "";
+          }
+          if (msg.type !== "transcript" || senderRole !== "interviewer") return;
           bufferRef.current = `${bufferRef.current} ${msg.text}`.trim();
           if (msg.speechFinal) {
             const question = bufferRef.current.trim();

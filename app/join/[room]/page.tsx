@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import CallStage from "@/components/CallStage";
 
 export default function JoinPage() {
@@ -9,6 +9,34 @@ export default function JoinPage() {
   const room = Array.isArray(params.room) ? params.room[0] : params.room || "";
   const [name, setName] = useState("");
   const [entered, setEntered] = useState(false);
+  const [inviteToken, setInviteToken] = useState("");
+  const [inviteLoaded, setInviteLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!room) return;
+    const storageKey = `livecoach-candidate-invite:${room}`;
+    const fragment = new URLSearchParams(window.location.hash.slice(1)).get(
+      "invite"
+    );
+    const saved = window.sessionStorage.getItem(storageKey) || "";
+    const token = fragment || saved;
+    if (fragment) {
+      window.sessionStorage.setItem(storageKey, fragment);
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${window.location.search}`
+      );
+    }
+    setInviteToken(token);
+    setInviteLoaded(true);
+  }, [room]);
+
+  const candidateSessionReady = useCallback(() => {
+    if (!room) return;
+    window.sessionStorage.removeItem(`livecoach-candidate-invite:${room}`);
+    setInviteToken("");
+  }, [room]);
 
   return (
     <main className="relative z-10 mx-auto max-w-[700px] px-5 py-10">
@@ -21,6 +49,12 @@ export default function JoinPage() {
 
       {!entered ? (
         <div className="flex flex-col items-start gap-4 rounded-2xl border border-edge bg-panel/50 p-6">
+          {inviteLoaded && !inviteToken && (
+            <p className="font-mono text-[0.7rem] leading-relaxed text-muted">
+              Continue if you already joined this secure call on this device.
+              Otherwise ask the host for a fresh invitation link.
+            </p>
+          )}
           <label className="block w-full max-w-sm">
             <span className="mb-1.5 block font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted">
               Your name
@@ -45,6 +79,8 @@ export default function JoinPage() {
           room={room}
           identity={name.trim() || "Candidate"}
           role="candidate"
+          inviteToken={inviteToken || undefined}
+          onCandidateSessionReady={candidateSessionReady}
         />
       )}
     </main>

@@ -73,7 +73,16 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/api/knowledge") ||
     path === "/api/feedback" ||
     path === "/api/tts" ||
+    path === "/api/livekit/invite" ||
+    path === "/api/livekit/practice-token" ||
     path.startsWith("/api/interview");
+  // These two routes support both an active workspace member and a public
+  // candidate holding the single-use invitation session. Signed-in requests
+  // still receive the fully verified workspace headers below. Anonymous
+  // requests receive no trusted headers and must pass the route's candidate
+  // credential checks before a provider token can be minted.
+  const isCandidateCapableApi =
+    path === "/api/livekit/token" || path === "/api/deepgram-token";
   const isPreMembershipApi = path === "/api/auth/team/accept";
   const isOnboardingApi =
     path === "/api/auth/team/status" ||
@@ -113,7 +122,8 @@ export async function middleware(request: NextRequest) {
 
   // Authentication alone is not authorization. Every private page and API
   // requires an active workspace membership.
-  const requiresWorkspaceMembership = isPrivatePage || isPrivateApi;
+  const requiresWorkspaceMembership =
+    isPrivatePage || isPrivateApi || isCandidateCapableApi;
 
   // The invitation acceptance endpoint needs a verified Supabase user before
   // that user has a workspace membership. Forward only the verified user and
@@ -143,7 +153,7 @@ export async function middleware(request: NextRequest) {
       .maybeSingle();
 
     if (membershipError || !membership) {
-      if (isPrivateApi) {
+      if (isPrivateApi || isCandidateCapableApi) {
         return finish(
           NextResponse.json(
             { error: "workspace access required" },
@@ -166,7 +176,7 @@ export async function middleware(request: NextRequest) {
     if (membership.status !== "active" && !(
       membership.status === "onboarding" && isOnboardingApi
     )) {
-      if (isPrivateApi) {
+      if (isPrivateApi || isCandidateCapableApi) {
         return finish(
           NextResponse.json(
             { error: "workspace access is not active" },
@@ -189,7 +199,7 @@ export async function middleware(request: NextRequest) {
       data: { session },
     } = await supabase.auth.getSession();
     if (!session?.access_token) {
-      if (isPrivateApi) {
+      if (isPrivateApi || isCandidateCapableApi) {
         return finish(
           NextResponse.json(
             { error: "authenticated session is required" },

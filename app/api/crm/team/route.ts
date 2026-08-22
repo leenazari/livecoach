@@ -638,6 +638,18 @@ export async function PATCH(req: NextRequest) {
           .eq("owner_id", userId)
           .is("revoked_at", null),
         supabaseService
+          .from("livekit_join_invites")
+          .update({ revoked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", userId)
+          .is("revoked_at", null),
+        supabaseService
+          .from("livekit_rooms")
+          .update({ revoked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", userId)
+          .is("revoked_at", null),
+        supabaseService
           .from("meet_bots")
           .update({ status: "left", ended_at: new Date().toISOString() })
           .eq("workspace_id", scope.workspaceId)
