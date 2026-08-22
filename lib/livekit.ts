@@ -6,6 +6,7 @@ import { AccessToken } from "livekit-server-sdk";
 export async function createLiveKitToken(opts: {
   room: string;
   identity: string;
+  displayName: string;
   role: "interviewer" | "candidate";
 }) {
   const at = new AccessToken(
@@ -13,6 +14,7 @@ export async function createLiveKitToken(opts: {
     process.env.LIVEKIT_API_SECRET!,
     {
       identity: opts.identity,
+      name: opts.displayName,
       ttl: "2h",
       metadata: JSON.stringify({ role: opts.role }),
     }
@@ -24,6 +26,7 @@ export async function createLiveKitToken(opts: {
     canPublish: true,
     canSubscribe: true,
     canPublishData: true, // needed for sharing transcript over the data channel
+    canUpdateOwnMetadata: false, // role is signed by the server and immutable
   });
 
   // NOTE: in server-sdk v2, toJwt() is async — must be awaited.

@@ -47,6 +47,28 @@ export async function POST(req: NextRequest) {
       .eq("session_id", sessionId)
       .is("revoked_at", null);
 
+    await supabaseService
+      .from("livekit_join_invites")
+      .update({
+        revoked_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
+      .eq("room_id", sessionId)
+      .is("revoked_at", null);
+
+    await supabaseService
+      .from("livekit_rooms")
+      .update({
+        revoked_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
+      .eq("room_id", sessionId)
+      .is("revoked_at", null);
+
     // Ending the call clears the scheduled call it came from, so a finished
     // meeting drops off the upcoming list and stops spawning a prep to-do.
     const clearedUpcoming = await completeUpcomingForCall({

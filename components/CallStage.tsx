@@ -14,6 +14,8 @@ type Props = {
   room: string;
   identity: string;
   role: "interviewer" | "candidate";
+  inviteToken?: string;
+  onCandidateSessionReady?: () => void;
   onFinalTranscript?: (role: string, text: string) => void;
   onCandidateTurnEnd?: () => void;
 };
@@ -24,6 +26,8 @@ export default function CallStage({
   room: roomName,
   identity,
   role,
+  inviteToken,
+  onCandidateSessionReady,
   onFinalTranscript,
   onCandidateTurnEnd,
 }: Props) {
@@ -68,14 +72,14 @@ export default function CallStage({
     const list: Person[] = [];
     if (r.localParticipant) {
       list.push({
-        label: `${r.localParticipant.identity} (you)`,
+        label: `${r.localParticipant.name || r.localParticipant.identity} (you)`,
         role: parseRole(r.localParticipant),
         speaking: speaking.has(r.localParticipant.identity),
       });
     }
     r.remoteParticipants.forEach((p) => {
       list.push({
-        label: p.identity,
+        label: p.name || p.identity,
         role: parseRole(p),
         speaking: speaking.has(p.identity),
       });
@@ -99,7 +103,7 @@ export default function CallStage({
       const r = roomRef.current;
       if (!r) return;
       const payload = new TextEncoder().encode(
-        JSON.stringify({ type: "transcript", role, text, speechFinal })
+        JSON.stringify({ type: "transcript", text, speechFinal })
       );
       r.localParticipant.publishData(payload, { reliable: true });
     },
@@ -244,11 +248,18 @@ export default function CallStage({
       const res = await fetch("/api/livekit/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ room: roomName, identity, role }),
+        body: JSON.stringify({
+          room: roomName,
+          identity,
+          ...(role === "candidate"
+            ? { candidateSession: true, ...(inviteToken ? { inviteToken } : {}) }
+            : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Token request failed");
       if (!data.url) throw new Error("Missing NEXT_PUBLIC_LIVEKIT_URL in env");
+      if (role === "candidate") onCandidateSessionReady?.();
 
       const room = new Room({ adaptiveStream: true, dynacast: true });
       roomRef.current = room;
@@ -269,11 +280,14 @@ export default function CallStage({
         .on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
           refreshPeople(new Set(speakers.map((s) => s.identity)));
         })
-        .on(RoomEvent.DataReceived, (payload: Uint8Array) => {
+        .on(RoomEvent.DataReceived, (payload: Uint8Array, participant) => {
           try {
             const msg = JSON.parse(new TextDecoder().decode(payload));
             if (msg.type === "transcript") {
-              handleLine(msg.role, msg.text, !!msg.speechFinal);
+              const senderRole = participant ? parseRole(participant) : "";
+              if (senderRole === "interviewer" || senderRole === "candidate") {
+                handleLine(senderRole, msg.text, !!msg.speechFinal);
+              }
             }
           } catch {
             /* ignore */
@@ -297,7 +311,16 @@ export default function CallStage({
     } finally {
       setConnecting(false);
     }
-  }, [roomName, identity, role, refreshPeople, handleLine, startTranscription]);
+  }, [
+    roomName,
+    identity,
+    role,
+    inviteToken,
+    onCandidateSessionReady,
+    refreshPeople,
+    handleLine,
+    startTranscription,
+  ]);
 
   const leave = useCallback(async () => {
     stopTranscription();
