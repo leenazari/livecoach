@@ -54,13 +54,18 @@ function likeTerm(s: string): string {
 async function findCalls(title: string): Promise<any[]> {
   const term = likeTerm(title);
   if (!term) return [];
-  const { data } = await supabaseAdmin
+  const requestScope = getRequestScope();
+  let query = supabaseAdmin
     .from("upcoming_calls")
     .select("id, title, scheduled_at, intent")
     .ilike("title", `%${term}%`)
     .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
     .limit(4);
+  if (requestScope && requestScope.role !== "owner") {
+    query = query.eq("owner_id", requestScope.userId);
+  }
+  const { data } = await query;
   return Array.isArray(data) ? data : [];
 }
 function callWhen(iso: string): string {
@@ -81,18 +86,35 @@ function callWhen(iso: string): string {
 async function findCompany(name: string) {
   const term = likeTerm(name);
   if (!term) return null;
-  return resolveExistingCompany(
+  const company = await resolveExistingCompany(
     { name: term },
-    { select: "id,name,domain,website,profile", allowDistinctivePartial: true }
+    {
+      select: "id,name,domain,website,profile,owner_id",
+      allowDistinctivePartial: true,
+    }
   );
+  const requestScope = getRequestScope();
+  if (
+    company &&
+    requestScope &&
+    requestScope.role !== "owner" &&
+    company.owner_id !== requestScope.userId
+  ) {
+    return null;
+  }
+  return company;
 }
 async function findCompanyById(id: string) {
   if (!/^[0-9a-f-]{36}$/i.test(String(id || ""))) return null;
-  const { data } = await supabaseAdmin
+  const requestScope = getRequestScope();
+  let query = supabaseAdmin
     .from("companies")
     .select("id, name")
-    .eq("id", id)
-    .maybeSingle();
+    .eq("id", id);
+  if (requestScope && requestScope.role !== "owner") {
+    query = query.eq("owner_id", requestScope.userId);
+  }
+  const { data } = await query.maybeSingle();
   return data || null;
 }
 async function findTasks(
@@ -107,6 +129,10 @@ async function findTasks(
     .select("id, text, due_at, payload, company_id, link_kind")
     .in("status", statuses)
     .ilike("text", `%${term}%`);
+  const requestScope = getRequestScope();
+  if (requestScope && requestScope.role !== "owner") {
+    query = query.eq("owner_id", requestScope.userId);
+  }
   if (companyId) query = query.eq("company_id", companyId);
   const { data } = await query.limit(4);
   return data || [];
@@ -121,23 +147,33 @@ async function findOpenTask(text: string) {
 async function findContacts(name: string, companyId: string): Promise<any[]> {
   const term = likeTerm(name);
   if (!term || !companyId) return [];
-  const { data } = await supabaseAdmin
+  const requestScope = getRequestScope();
+  let query = supabaseAdmin
     .from("contacts")
     .select("id, name, role, email, attributes")
     .eq("company_id", companyId)
     .ilike("name", `%${term}%`)
     .limit(4);
+  if (requestScope && requestScope.role !== "owner") {
+    query = query.eq("owner_id", requestScope.userId);
+  }
+  const { data } = await query;
   return data || [];
 }
 async function findDraft(subject: string) {
   const term = likeTerm(subject);
   if (!term) return null;
-  const { data } = await supabaseAdmin
+  const requestScope = getRequestScope();
+  let query = supabaseAdmin
     .from("follow_ups")
     .select("id, draft_subject")
     .eq("status", "draft")
     .ilike("draft_subject", `%${term}%`)
     .limit(1);
+  if (requestScope && requestScope.role !== "owner") {
+    query = query.eq("owner_id", requestScope.userId);
+  }
+  const { data } = await query;
   return data && data[0] ? data[0] : null;
 }
 async function findCampaign(name: string) {
@@ -157,11 +193,15 @@ async function findCampaign(name: string) {
 async function findOpportunities(title: string, client: string): Promise<any[]> {
   const company = client ? await findCompany(client) : null;
   const term = likeTerm(title);
+  const requestScope = getRequestScope();
   let q = supabaseAdmin
     .from("opportunities")
-    .select("id, title, company_id, status, pipeline_stage")
+    .select("id, title, company_id, status, pipeline_stage, assigned_to_user_id")
     .order("updated_at", { ascending: false })
     .limit(4);
+  if (requestScope && requestScope.role !== "owner") {
+    q = q.eq("assigned_to_user_id", requestScope.userId);
+  }
   if (company) q = q.eq("company_id", company.id);
   if (term) q = q.ilike("title", `%${term}%`);
   if (!company && !term) return [];
@@ -1190,13 +1230,13 @@ export async function POST(req: NextRequest) {
       }));
 
     const requestScope = getRequestScope();
-    const salesBoundary =
-      requestScope?.role === "sales"
-        ? `You are assisting one salesperson inside a shared CRM. Team-visible data may appear in the context, but personal advice must use only records explicitly assigned or safely shared with this salesperson. Never turn workspace totals, another teammate's prospects, sent counts, approvals, replies, calendar, calls, tasks or private records into this salesperson's work. Treat unassigned outreach prospects only as available to claim, not as assigned work. If there is no assigned work, say so plainly and direct the salesperson to claim available work or ask the owner for an assignment. Label any permitted workspace-wide number as a workspace total.`
-        : `You are assisting a workspace ${requestScope?.role || "owner"}. Workspace-wide pipeline and outreach totals may be used when the context provides them.`;
+    const accessBoundary =
+      requestScope?.role === "owner"
+        ? `You are assisting the verified workspace owner. This is the only role allowed the full Brain view across the owner's private records and the shared workspace.`
+        : `You are assisting a restricted workspace member. Only the verified workspace owner has the full Brain view. Use this member's own private records plus clients, opportunities and outreach prospects explicitly assigned to this member. Never reveal, summarise, search or action another person's calendar, calls, transcripts, email, Brain history, documents, tasks, clients, opportunities, prospects, sent counts, approvals or replies, even if the member names the person or directly asks. Team campaign names and non-sensitive aggregate learnings may be used only as shared context. Treat unassigned outreach prospects only as available to claim. If permitted records do not contain the answer, say this account does not have access and ask the owner to assign or share the record.`;
     const scope = isGlobal
-      ? `${salesBoundary}\n\nYou are the user's overall CRM assistant. You know the clients and pipeline this verified account is permitted to access below. They might ask about one client ("what do I do next with Alaine"), or across their permitted work ("what's my to-do list", "which deal is closest to closing"). When they name a client, match it to the closest permitted one in the context even if the spelling is slightly off. Never imply that inaccessible or unassigned records belong to them.`
-      : `${salesBoundary}\n\nYou are the user's strategic co-founder and CRM assistant. They are currently on ONE client's page, so by default answer about that client (the FOCUSED CLIENT below) and help move that relationship forward. But you are NOT limited to them - the user may bring up another client, a fresh idea, their week, or anything at all, and you should help with whatever they raise, drawing on the wider pipeline below. Whatever the topic, help them plan, prep and take action.`;
+      ? `${accessBoundary}\n\nYou are the user's overall CRM assistant. You know the clients and pipeline this verified account is permitted to access below. They might ask about one client ("what do I do next with Alaine"), or across their permitted work ("what's my to-do list", "which deal is closest to closing"). When they name a client, match it to the closest permitted one in the context even if the spelling is slightly off. Never imply that inaccessible or unassigned records belong to them.`
+      : `${accessBoundary}\n\nYou are the user's strategic co-founder and CRM assistant. They are currently on ONE client's page, so by default answer about that client (the FOCUSED CLIENT below) and help move that relationship forward. But you are NOT limited to them - the user may bring up another permitted client, a fresh idea, their week, or anything at all, and you should help with whatever they raise, drawing only on the permitted pipeline below. Whatever the topic, help them plan, prep and take action without crossing the account boundary.`;
     const qBlock = brainQuestions
       ? `\n\nTHINGS YOU ARE TRYING TO LEARN (open questions about the user's business that would make you sharper). When it fits naturally, when the user asks what you need, or when you are brainstorming, raise one or two of these - never the whole list and never force them. When the user answers, weave it into your reply and treat it as fact from then on:\n${brainQuestions}`
       : "";

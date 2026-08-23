@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { getRequestScope } from "@/lib/request-scope";
 
 // Keep ordinary Brain turns lean. This small lookup runs only when the user
 // explicitly mentions a finished document and does not import the DOCX renderer.
@@ -6,22 +7,29 @@ export async function documentBrainContext(message: string) {
   const wantsDocuments =
     /\b(document|docx|word file|handbook|contract|agreement|proposal|report|business plan|sales plan|produce|write up)\b/i.test(
       message
-    );
+  );
   if (!wantsDocuments) return "";
+  const requestScope = getRequestScope();
+  let tasksQuery = supabaseAdmin
+    .from("tasks")
+    .select("id, company_id, text, due_at, payload")
+    .eq("status", "open")
+    .order("created_at", { ascending: false })
+    .limit(100);
+  let jobsQuery = supabaseAdmin
+    .from("document_jobs")
+    .select(
+      "id, company_id, task_id, title, document_type, status, stage_label, file_name, created_at"
+    )
+    .order("created_at", { ascending: false })
+    .limit(8);
+  if (requestScope && requestScope.role !== "owner") {
+    tasksQuery = tasksQuery.eq("owner_id", requestScope.userId);
+    jobsQuery = jobsQuery.eq("owner_id", requestScope.userId);
+  }
   const [{ data: tasks }, { data: jobs }] = await Promise.all([
-    supabaseAdmin
-      .from("tasks")
-      .select("id, company_id, text, due_at, payload")
-      .eq("status", "open")
-      .order("created_at", { ascending: false })
-      .limit(100),
-    supabaseAdmin
-      .from("document_jobs")
-      .select(
-        "id, company_id, task_id, title, document_type, status, stage_label, file_name, created_at"
-      )
-      .order("created_at", { ascending: false })
-      .limit(8),
+    tasksQuery,
+    jobsQuery,
   ]);
   const documentTasks = (tasks || [])
     .filter((task: any) =>

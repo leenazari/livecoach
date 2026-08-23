@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { getRequestScope } from "@/lib/request-scope";
 
 export type TranscriptCallCandidate = {
   summaryId?: string | null;
@@ -301,19 +302,26 @@ export async function gatherCallTranscriptContext(
   const now = options.now || new Date();
   const since = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString();
   const screenCallId = callIdFromPath(options.screenPath || "");
+  const requestScope = getRequestScope();
+  let summariesQuery = supabaseAdmin
+    .from("interview_summaries")
+    .select("id, session_id, candidate, role, company_id, workstream_id, created_at")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(500);
+  let sessionsQuery = supabaseAdmin
+    .from("interview_sessions")
+    .select("session_id, upcoming_id, candidate, role, company_id, workstream_id, created_at, started_at, ended_at")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (requestScope && requestScope.role !== "owner") {
+    summariesQuery = summariesQuery.eq("owner_id", requestScope.userId);
+    sessionsQuery = sessionsQuery.eq("owner_id", requestScope.userId);
+  }
   const [summariesRes, sessionsRes] = await Promise.all([
-    supabaseAdmin
-      .from("interview_summaries")
-      .select("id, session_id, candidate, role, company_id, workstream_id, created_at")
-      .gte("created_at", since)
-      .order("created_at", { ascending: false })
-      .limit(500),
-    supabaseAdmin
-      .from("interview_sessions")
-      .select("session_id, upcoming_id, candidate, role, company_id, workstream_id, created_at, started_at, ended_at")
-      .gte("created_at", since)
-      .order("created_at", { ascending: false })
-      .limit(500),
+    summariesQuery,
+    sessionsQuery,
   ]);
   if (summariesRes.error) throw summariesRes.error;
   if (sessionsRes.error) throw sessionsRes.error;
@@ -441,23 +449,32 @@ export async function gatherCallTranscriptContext(
 
   let transcript = "";
   if (best.call.sessionId) {
-    const { data, error } = await supabaseAdmin
+    let transcriptQuery = supabaseAdmin
       .from("interview_sessions")
       .select("transcript")
       .eq("session_id", best.call.sessionId)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    if (requestScope && requestScope.role !== "owner") {
+      transcriptQuery = transcriptQuery.eq(
+        "owner_id",
+        requestScope.userId
+      );
+    }
+    const { data, error } = await transcriptQuery.maybeSingle();
     if (error) throw error;
     transcript = typeof data?.transcript === "string" ? data.transcript.trim() : "";
   }
   let manualNotes = "";
   if (!transcript && best.call.summaryId) {
-    const { data, error } = await supabaseAdmin
+    let notesQuery = supabaseAdmin
       .from("interview_summaries")
       .select("summary")
-      .eq("id", best.call.summaryId)
-      .maybeSingle();
+      .eq("id", best.call.summaryId);
+    if (requestScope && requestScope.role !== "owner") {
+      notesQuery = notesQuery.eq("owner_id", requestScope.userId);
+    }
+    const { data, error } = await notesQuery.maybeSingle();
     if (error) throw error;
     const notes = data?.summary && typeof data.summary === "object"
       ? (data.summary as any).userNotes

@@ -3,10 +3,15 @@ import { readFile } from "node:fs/promises";
 import ts from "typescript";
 
 const sourceUrl = new URL("../lib/call-transcript-context.ts", import.meta.url);
-const source = (await readFile(sourceUrl, "utf8")).replace(
-  'import { supabaseAdmin } from "@/lib/supabase";',
-  "const supabaseAdmin = {};"
-);
+const source = (await readFile(sourceUrl, "utf8"))
+  .replace(
+    'import { supabaseAdmin } from "@/lib/supabase";',
+    "const supabaseAdmin = {};"
+  )
+  .replace(
+    'import { getRequestScope } from "@/lib/request-scope";',
+    "const getRequestScope = () => null;"
+  );
 const compiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,

@@ -3,12 +3,13 @@ import { londonDayBounds } from "@/lib/outreach";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { getRequestScope } from "@/lib/request-scope";
 import {
-  isSalesBrainScope,
+  brainSharedClientIds,
+  isLimitedBrainScope,
   partitionBrainOutreach,
   personalOutreachSenderId,
 } from "@/lib/brain-sales-scope";
 import {
-  activeSharedClientIds,
+  listVisibleClientGrants,
   loadSafeSharedCompanies,
   loadSafeSharedCompany,
 } from "@/lib/team-client-sharing";
@@ -24,6 +25,7 @@ export async function gatherClientContext(
 ): Promise<string> {
   const cut = (s: any, n: number) =>
     typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : "";
+  const requestScope = getRequestScope();
 
   const [
     { data: visibleCompany },
@@ -55,7 +57,7 @@ export async function gatherClientContext(
         .limit(6),
       supabaseAdmin
         .from("opportunities")
-        .select("title, detail, deal_intent, value, status, opportunity_type, pipeline_stage, win_outlook, win_outlook_confidence, win_outlook_reasons, win_outlook_questions, win_outlook_override, engagement_motion, active_contact_method, next_action, next_action_due_at, workstream_id")
+        .select("title, detail, deal_intent, value, status, opportunity_type, pipeline_stage, win_outlook, win_outlook_confidence, win_outlook_reasons, win_outlook_questions, win_outlook_override, engagement_motion, active_contact_method, next_action, next_action_due_at, workstream_id, assigned_to_user_id")
         .eq("company_id", companyId)
         .order("created_at", { ascending: false })
         .limit(20),
@@ -90,15 +92,21 @@ export async function gatherClientContext(
 
   // Upcoming calls for this client, synced from the calendar, so the assistant
   // can answer "when's our next call" / "what's coming up" from the CRM's copy.
-  const { data: upcomingRows } = await supabaseAdmin
+  let upcomingRowsQuery = supabaseAdmin
     .from("upcoming_calls")
     .select("title, scheduled_at, meeting_url, intent, prepped, workstream_id")
     .eq("company_id", companyId)
     .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
     .limit(10);
+  if (requestScope && requestScope.role !== "owner") {
+    upcomingRowsQuery = upcomingRowsQuery.eq(
+      "owner_id",
+      requestScope.userId
+    );
+  }
+  const { data: upcomingRows } = await upcomingRowsQuery;
 
-  const requestScope = getRequestScope();
   let company: any =
     visibleCompany &&
     (!requestScope || visibleCompany.owner_id === requestScope.userId)
@@ -106,13 +114,19 @@ export async function gatherClientContext(
       : null;
   let sharedSalesAccess = false;
   if (!company && requestScope) {
-    const { data: share } = await supabaseAdmin
+    let shareQuery = supabaseAdmin
       .from("team_client_shares")
       .select("id")
       .eq("workspace_id", requestScope.workspaceId)
       .eq("company_id", companyId)
-      .eq("status", "active")
-      .maybeSingle();
+      .eq("status", "active");
+    if (requestScope.role !== "owner") {
+      shareQuery = shareQuery.eq(
+        "assigned_to_user_id",
+        requestScope.userId
+      );
+    }
+    const { data: share } = await shareQuery.maybeSingle();
     if (share) {
       company = await loadSafeSharedCompany(companyId, requestScope.workspaceId);
       sharedSalesAccess = !!company;
@@ -130,7 +144,13 @@ export async function gatherClientContext(
     .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
     .join("; ");
   const contacts = contactsRes.data || [];
-  const opps = (oppsRes.data || []).filter((o: any) => o.status === "open");
+  const opps = (oppsRes.data || []).filter(
+    (o: any) =>
+      o.status === "open" &&
+      (!requestScope ||
+        requestScope.role === "owner" ||
+        o.assigned_to_user_id === requestScope.userId)
+  );
   const drafts = (fuRes.data || []).filter((f: any) => f.status === "draft");
   const summaries = summariesRes.data || [];
   const ctx = ctxRes.data || [];
@@ -389,34 +409,48 @@ export async function gatherGlobalContext(
     );
 
   const requestScope = getRequestScope();
+  let companiesQuery = supabaseAdmin
+    .from("companies")
+    .select("id, owner_id, name, sector, stage, profile")
+    .limit(500);
+  let draftsQuery = supabaseAdmin
+    .from("follow_ups")
+    .select("company_id")
+    .eq("status", "draft")
+    .limit(500);
+  let opportunitiesQuery = supabaseAdmin
+    .from("opportunities")
+    .select("company_id, value, opportunity_type")
+    .eq("status", "open")
+    .eq("opportunity_type", "revenue")
+    .limit(500);
+  let tasksQuery = supabaseAdmin
+    .from("tasks")
+    .select("company_id")
+    .eq("status", "open")
+    .limit(1000);
+  let callsQuery = supabaseAdmin
+    .from("interview_summaries")
+    .select("company_id, created_at")
+    .not("company_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (requestScope && requestScope.role !== "owner") {
+    companiesQuery = companiesQuery.eq("owner_id", requestScope.userId);
+    draftsQuery = draftsQuery.eq("owner_id", requestScope.userId);
+    opportunitiesQuery = opportunitiesQuery.or(
+      `owner_id.eq.${requestScope.userId},assigned_to_user_id.eq.${requestScope.userId}`
+    );
+    tasksQuery = tasksQuery.eq("owner_id", requestScope.userId);
+    callsQuery = callsQuery.eq("owner_id", requestScope.userId);
+  }
   const [companiesRes, draftsRes, oppsRes, tasksRes, callsRes] =
     await Promise.all([
-      supabaseAdmin
-        .from("companies")
-        .select("id, owner_id, name, sector, stage, profile")
-        .limit(500),
-      supabaseAdmin
-        .from("follow_ups")
-        .select("company_id")
-        .eq("status", "draft")
-        .limit(500),
-      supabaseAdmin
-        .from("opportunities")
-        .select("company_id, value, opportunity_type")
-        .eq("status", "open")
-        .eq("opportunity_type", "revenue")
-        .limit(500),
-      supabaseAdmin
-        .from("tasks")
-        .select("company_id")
-        .eq("status", "open")
-        .limit(1000),
-      supabaseAdmin
-        .from("interview_summaries")
-        .select("company_id, created_at")
-        .not("company_id", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(500),
+      companiesQuery,
+      draftsQuery,
+      opportunitiesQuery,
+      tasksQuery,
+      callsQuery,
     ]);
 
   const ownedCompanies = (companiesRes.data || []).filter(
@@ -425,7 +459,8 @@ export async function gatherGlobalContext(
   );
   let companies: any[] = [...ownedCompanies];
   if (requestScope) {
-    const sharedIds = await activeSharedClientIds(requestScope.workspaceId);
+    const grants = await listVisibleClientGrants(requestScope.workspaceId);
+    const sharedIds = brainSharedClientIds(grants, requestScope);
     const ownedIds = new Set(ownedCompanies.map((company: any) => company.id));
     const sharedCompanies = await loadSafeSharedCompanies(
       sharedIds.filter((id) => !ownedIds.has(id)),
@@ -434,8 +469,8 @@ export async function gatherGlobalContext(
     companies = [...companies, ...sharedCompanies];
   }
   if (companies.length === 0) {
-    return requestScope?.role === "sales"
-      ? "SALES CRM SCOPE: No client profiles are assigned or safely shared with this salesperson yet. Outreach prospects are separate from client profiles. Do not describe another teammate's clients, prospects, replies or tasks as this salesperson's work."
+    return requestScope && requestScope.role !== "owner"
+      ? "RESTRICTED CRM SCOPE: No client profiles are owned by or explicitly assigned to this member yet. Outreach prospects are separate from client profiles. Do not describe another person's clients, prospects, replies or tasks as this member's work, even if they ask by name."
       : "The user has no clients in their CRM yet.";
   }
 
@@ -529,12 +564,16 @@ export async function gatherGlobalContext(
 
   // Upcoming calls across everyone, synced from the calendar, so "what's on my
   // calendar" / "what's next" works without picking a client first.
-  const { data: upAll } = await supabaseAdmin
+  let upcomingQuery = supabaseAdmin
     .from("upcoming_calls")
     .select("id, company_id, title, scheduled_at, prepped, meeting_url")
     .gte("scheduled_at", new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
     .limit(40);
+  if (requestScope && requestScope.role !== "owner") {
+    upcomingQuery = upcomingQuery.eq("owner_id", requestScope.userId);
+  }
+  const { data: upAll } = await upcomingQuery;
   const allEligible = (upAll || []).filter((call: any) =>
     isPrepEligibleCalendarEvent(call)
   );
@@ -745,13 +784,18 @@ export async function gatherUpcomingCallPrepContext(
   if (!callPrepRequested(message)) return "";
 
   const now = new Date();
-  const { data: calls, error } = await supabaseAdmin
+  const requestScope = getRequestScope();
+  let callsQuery = supabaseAdmin
     .from("upcoming_calls")
     .select("id, company_id, title, scheduled_at, intent, prepped, prep, attendees")
     .gte("scheduled_at", new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString())
     .lte("scheduled_at", new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
     .limit(60);
+  if (requestScope && requestScope.role !== "owner") {
+    callsQuery = callsQuery.eq("owner_id", requestScope.userId);
+  }
+  const { data: calls, error } = await callsQuery;
   const prepCalls = (calls || []).filter((call: any) =>
     isPrepEligibleCalendarEvent(call)
   );
@@ -875,17 +919,22 @@ export async function findCompaniesNamedIn(
   const m = ` ${norm(message)} `;
   if (m.trim().length < 2) return [];
   const requestScope = getRequestScope();
-  const { data } = await supabaseAdmin
+  let companiesQuery = supabaseAdmin
     .from("companies")
     .select("id, owner_id, name, profile")
     .limit(500);
+  if (requestScope && requestScope.role !== "owner") {
+    companiesQuery = companiesQuery.eq("owner_id", requestScope.userId);
+  }
+  const { data } = await companiesQuery;
   const ownedCompanies = (data || []).filter(
     (company: any) =>
       !requestScope || company.owner_id === requestScope.userId
   );
   let visibleCompanies: any[] = [...ownedCompanies];
   if (requestScope) {
-    const sharedIds = await activeSharedClientIds(requestScope.workspaceId);
+    const grants = await listVisibleClientGrants(requestScope.workspaceId);
+    const sharedIds = brainSharedClientIds(grants, requestScope);
     const ownedIds = new Set(ownedCompanies.map((company: any) => company.id));
     const sharedCompanies = await loadSafeSharedCompanies(
       sharedIds.filter((id) => !ownedIds.has(id)),
@@ -977,10 +1026,15 @@ export async function findWorkstreamsNamedIn(message: string): Promise<
     liz: "elizabeth",
   };
   if (!words.size) return [];
-  const { data: contacts } = await supabaseAdmin
+  const requestScope = getRequestScope();
+  let contactsQuery = supabaseAdmin
     .from("contacts")
     .select("id, company_id, name")
     .limit(500);
+  if (requestScope && requestScope.role !== "owner") {
+    contactsQuery = contactsQuery.eq("owner_id", requestScope.userId);
+  }
+  const { data: contacts } = await contactsQuery;
   const matched = (contacts || []).filter((contact: any) => {
     const full = normal(contact.name);
     if (!full) return false;
@@ -1081,7 +1135,7 @@ export async function gatherOutreachContext(
   const normal = (value: unknown) =>
     String(value || "").toLowerCase().replace(/[^a-z0-9@.\s-]/g, " ").replace(/\s+/g, " ").trim();
   const requestScope = getRequestScope();
-  const salesScope = isSalesBrainScope(requestScope);
+  const limitedScope = isLimitedBrainScope(requestScope);
   const senderUserId = personalOutreachSenderId(requestScope);
   const { start, end } = londonDayBounds();
   const learningsQuery = options.detailed
@@ -1115,7 +1169,7 @@ export async function gatherOutreachContext(
       senderUserId
     );
   }
-  const claimableQuery = salesScope
+  const claimableQuery = limitedScope
     ? supabaseAdmin
         .from("outreach_prospects")
         .select("id", { count: "exact", head: true })
@@ -1165,18 +1219,18 @@ export async function gatherOutreachContext(
   const sentToday = sentRes.count || 0;
   const approved = approvedRes.count || 0;
   const dailyLimit = Math.min(20, Math.max(1, Number(campaign?.daily_limit) || 20));
-  const lines = salesScope
+  const lines = limitedScope
     ? [
-        `PERSONAL OUTREACH QUEUE (only work assigned to this salesperson, no teammate reply details loaded): ${prospects.length} assigned prospects, ${priority.high} high priority, ${sentToday}/${dailyLimit} sent by this salesperson today, ${approved} approved for this salesperson, ${replies.length} replies (${positive} interested).`,
-        `WORKSPACE AVAILABILITY (context only, not this salesperson's work): ${claimableRes.count || 0} unassigned prospects can be claimed in Outreach. Other teammates' assigned prospects and reply details were not loaded and must not be recommended as this salesperson's next actions.`,
+        `PERSONAL OUTREACH QUEUE (only work assigned to this member, no teammate reply details loaded): ${prospects.length} assigned prospects, ${priority.high} high priority, ${sentToday}/${dailyLimit} sent by this member today, ${approved} approved for this member, ${replies.length} replies (${positive} interested).`,
+        `WORKSPACE AVAILABILITY (context only, not this member's work): ${claimableRes.count || 0} unassigned prospects can be claimed in Outreach. Other people's assigned prospects and reply details were not loaded and must not be recommended as this member's next actions.`,
       ]
     : [
         `OUTREACH SNAPSHOT (compact live roll-up, no full emails or research loaded): ${prospects.length} prospects, ${priority.high} high priority, ${sentToday}/${dailyLimit} sent today, ${approved} approved, ${replies.length} replies (${positive} interested). Active campaign: ${campaign?.name || "none"}.`,
       ];
 
-  if (salesScope && campaign?.name) {
+  if (limitedScope && campaign?.name) {
     lines.push(
-      `Workspace campaign context: ${campaign.name}. A shared campaign name does not make another teammate's prospects actionable for this salesperson.`
+      `Workspace campaign context: ${campaign.name}. A shared campaign name does not make another person's prospects actionable for this member.`
     );
   }
 
