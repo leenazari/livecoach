@@ -22,6 +22,7 @@
     "validate:sales-profile": "node scripts/validate-sales-profile.mjs",
     "validate:team-work-allocation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-team-work-allocation.mjs",
     "validate:sales-power-hour": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sales-power-hour.mjs",
+    "validate:sales-today-consolidation": "node scripts/validate-sales-today-consolidation.mjs",
     "validate:initial-connector-sync": "node scripts/validate-initial-connector-sync.mjs",
     "validate:brain-dictation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-live-dictation.mjs",
     "validate:brain-sales-scope": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-sales-scope.mjs"
