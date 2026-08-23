@@ -87,6 +87,7 @@ export async function loadSafeSharedCompanies(
     .from("companies")
     .select(SAFE_SHARED_COMPANY_SELECT)
     .eq("workspace_id", workspaceId)
+    .eq("is_confidential", false)
     .in("id", ids);
   if (error) throw error;
   return (data || []).map(safeSharedCompany);

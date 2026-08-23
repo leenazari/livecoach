@@ -103,6 +103,7 @@ const context = read("lib/crm-context.ts");
 const assistant = read("app/api/crm/assistant/route.ts");
 const transcripts = read("lib/call-transcript-context.ts");
 const documents = read("lib/document-context.ts");
+const safeSharing = read("lib/team-client-sharing.ts");
 
 assert.match(context, /assigned_to_user_id/);
 assert.match(context, /partitionBrainOutreach/);
@@ -138,6 +139,7 @@ assert.match(transcripts, /requestScope\.role !== "owner"/);
 assert.match(transcripts, /transcriptQuery = transcriptQuery\.eq\([\s\S]*?"owner_id"/);
 assert.match(documents, /requestScope\.role !== "owner"/);
 assert.match(documents, /jobsQuery = jobsQuery\.eq\("owner_id"/);
+assert.match(safeSharing, /\.eq\("is_confidential", false\)/);
 assert.doesNotMatch(
   assistant,
   /You know ALL their clients and their whole pipeline/
