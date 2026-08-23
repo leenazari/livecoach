@@ -278,12 +278,20 @@ export default function TeamAccessPage() {
           <section className="rounded-2xl border border-sage/40 bg-sage/[0.06] p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <h2 className="font-display text-lg text-bone">What a colleague can see</h2>
-              <Link
-                href="/settings/team/sharing"
-                className="rounded-full border border-sage/50 bg-sage/10 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-sage"
-              >
-                Manage shared sales data
-              </Link>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href="/settings/team/privacy"
+                  className="rounded-full border border-rust/50 bg-rust/10 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-rust"
+                >
+                  Privacy review
+                </Link>
+                <Link
+                  href="/settings/team/sharing"
+                  className="rounded-full border border-sage/50 bg-sage/10 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-sage"
+                >
+                  Manage shared sales data
+                </Link>
+              </div>
             </div>
             <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">
               Only records deliberately marked for the sales team. Private calls, transcripts, calendar events, email, documents, investors, personal clients and Brain memory remain owner only.
