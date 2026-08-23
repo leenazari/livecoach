@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase-browser";
 import ThemeToggle from "@/components/ThemeToggle";
+import InitialCalendarSync from "@/components/InitialCalendarSync";
 
 type AccountStatus = {
   workspace: string;
@@ -132,6 +133,10 @@ export default function JoinTeamPage() {
       <p className="mt-3 text-sm leading-relaxed text-muted">
         Your account is separate from Lee's private calls, email, calendar, investors, documents and Brain memory.
       </p>
+
+      <div className="mt-5">
+        <InitialCalendarSync enabled={status?.crmAccess === true} />
+      </div>
 
       <section className="mt-6 rounded-2xl border border-edge bg-panel/55 p-6">
         {!checked ? <p className="text-sm text-muted">Checking the secure invitation…</p> : null}

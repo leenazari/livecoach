@@ -31,7 +31,10 @@ export async function GET(req: NextRequest) {
   const scope = getRequestScope();
   const onboarding = scope?.status === "onboarding";
   const destination = onboarding ? "/join-team" : "/settings";
-  const resultUrl = (value: string) => `${base}${destination}?microsoft=${value}`;
+  const resultUrl = (value: string) =>
+    `${base}${destination}?microsoft=${value}${
+      value === "connected" ? "&calendar=sync" : ""
+    }`;
   if (!scope) return clearState(NextResponse.redirect(resultUrl("error")));
   if (url.searchParams.get("error")) {
     return clearState(NextResponse.redirect(resultUrl("denied")));
