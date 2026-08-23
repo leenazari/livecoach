@@ -3,6 +3,11 @@ import { londonDayBounds } from "@/lib/outreach";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { getRequestScope } from "@/lib/request-scope";
 import {
+  isSalesBrainScope,
+  partitionBrainOutreach,
+  personalOutreachSenderId,
+} from "@/lib/brain-sales-scope";
+import {
   activeSharedClientIds,
   loadSafeSharedCompanies,
   loadSafeSharedCompany,
@@ -429,7 +434,9 @@ export async function gatherGlobalContext(
     companies = [...companies, ...sharedCompanies];
   }
   if (companies.length === 0) {
-    return "The user has no clients in their CRM yet.";
+    return requestScope?.role === "sales"
+      ? "SALES CRM SCOPE: No client profiles are assigned or safely shared with this salesperson yet. Outreach prospects are separate from client profiles. Do not describe another teammate's clients, prospects, replies or tasks as this salesperson's work."
+      : "The user has no clients in their CRM yet.";
   }
 
   // Compact per-client tallies. We keep this to ONE line per client so the
@@ -1073,6 +1080,9 @@ export async function gatherOutreachContext(
   };
   const normal = (value: unknown) =>
     String(value || "").toLowerCase().replace(/[^a-z0-9@.\s-]/g, " ").replace(/\s+/g, " ").trim();
+  const requestScope = getRequestScope();
+  const salesScope = isSalesBrainScope(requestScope);
+  const senderUserId = personalOutreachSenderId(requestScope);
   const { start, end } = londonDayBounds();
   const learningsQuery = options.detailed
     ? supabaseAdmin
@@ -1083,7 +1093,43 @@ export async function gatherOutreachContext(
         .order("positive_reply_count", { ascending: false })
         .limit(5)
     : Promise.resolve({ data: [] as any[] });
-  const [campaignRes, prospectsRes, sentRes, approvedRes, learningsRes] =
+  let sentQuery = supabaseAdmin
+    .from("outreach_messages")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "sent")
+    .gte("sent_at", start)
+    .lt("sent_at", end);
+  let approvedQuery = supabaseAdmin
+    .from("outreach_messages")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "approved");
+  let prospectsQuery = supabaseAdmin
+    .from("outreach_prospects")
+    .select("first_name,last_name,company_name,email,job_title,priority,status,reply_category,reply_summary,last_reply_at,assigned_to_user_id")
+    .limit(1000);
+  if (senderUserId) {
+    sentQuery = sentQuery.eq("sender_user_id", senderUserId);
+    approvedQuery = approvedQuery.eq("sender_user_id", senderUserId);
+    prospectsQuery = prospectsQuery.eq(
+      "assigned_to_user_id",
+      senderUserId
+    );
+  }
+  const claimableQuery = salesScope
+    ? supabaseAdmin
+        .from("outreach_prospects")
+        .select("id", { count: "exact", head: true })
+        .is("assigned_to_user_id", null)
+    : Promise.resolve({ count: 0 });
+
+  const [
+    campaignRes,
+    prospectsRes,
+    sentRes,
+    approvedRes,
+    claimableRes,
+    learningsRes,
+  ] =
     await Promise.all([
       supabaseAdmin
         .from("outreach_campaigns")
@@ -1092,24 +1138,19 @@ export async function gatherOutreachContext(
         .order("created_at", { ascending: true })
         .limit(1)
         .maybeSingle(),
-      supabaseAdmin
-        .from("outreach_prospects")
-        .select("first_name,last_name,company_name,email,job_title,priority,status,reply_category,reply_summary,last_reply_at")
-        .limit(1000),
-      supabaseAdmin
-        .from("outreach_messages")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "sent")
-        .gte("sent_at", start)
-        .lt("sent_at", end),
-      supabaseAdmin
-        .from("outreach_messages")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "approved"),
+      prospectsQuery,
+      sentQuery,
+      approvedQuery,
+      claimableQuery,
       learningsQuery,
     ]);
 
-  const prospects = (prospectsRes.data || []) as any[];
+  const allVisibleProspects = (prospectsRes.data || []) as any[];
+  const partition = partitionBrainOutreach(
+    allVisibleProspects,
+    requestScope
+  );
+  const prospects = partition.actionable;
   const campaign = campaignRes.data as any;
   const priority = { high: 0, medium: 0, low: 0 };
   const status = new Map<string, number>();
@@ -1124,9 +1165,20 @@ export async function gatherOutreachContext(
   const sentToday = sentRes.count || 0;
   const approved = approvedRes.count || 0;
   const dailyLimit = Math.min(20, Math.max(1, Number(campaign?.daily_limit) || 20));
-  const lines = [
-    `OUTREACH SNAPSHOT (compact live roll-up, no full emails or research loaded): ${prospects.length} prospects, ${priority.high} high priority, ${sentToday}/${dailyLimit} sent today, ${approved} approved, ${replies.length} replies (${positive} interested). Active campaign: ${campaign?.name || "none"}.`,
-  ];
+  const lines = salesScope
+    ? [
+        `PERSONAL OUTREACH QUEUE (only work assigned to this salesperson, no teammate reply details loaded): ${prospects.length} assigned prospects, ${priority.high} high priority, ${sentToday}/${dailyLimit} sent by this salesperson today, ${approved} approved for this salesperson, ${replies.length} replies (${positive} interested).`,
+        `WORKSPACE AVAILABILITY (context only, not this salesperson's work): ${claimableRes.count || 0} unassigned prospects can be claimed in Outreach. Other teammates' assigned prospects and reply details were not loaded and must not be recommended as this salesperson's next actions.`,
+      ]
+    : [
+        `OUTREACH SNAPSHOT (compact live roll-up, no full emails or research loaded): ${prospects.length} prospects, ${priority.high} high priority, ${sentToday}/${dailyLimit} sent today, ${approved} approved, ${replies.length} replies (${positive} interested). Active campaign: ${campaign?.name || "none"}.`,
+      ];
+
+  if (salesScope && campaign?.name) {
+    lines.push(
+      `Workspace campaign context: ${campaign.name}. A shared campaign name does not make another teammate's prospects actionable for this salesperson.`
+    );
+  }
 
   const needle = normal(message);
   const named = prospects.filter((p) => {
