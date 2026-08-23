@@ -3,6 +3,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { crmFetch } from "@/lib/crm";
+import {
+  foldDictationEvent,
+  stabiliseLiveDictationPreview,
+} from "@/lib/dictation";
 
 type Msg = { id?: string; role: string; content: string; actions?: any[] };
 type ScreenContext = { section: string; label: string; path: string };
@@ -353,14 +357,16 @@ export default function ClientAssistant({
   // Dictation transcript, kept so the box never shrinks or drops your last words.
   // committedRef holds the FINALISED transcript this session (only ever grows).
   const committedRef = useRef("");
+  const livePreviewRef = useRef("");
 
   // Grow the input box with the text (typed or dictated) up to a few lines, so
   // you can always see your last lines instead of one scrolling line.
-  const autosize = () => {
+  const autosize = (keepLatestWordsVisible = false) => {
     const el = inputElRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+    el.style.height = Math.min(el.scrollHeight, 144) + "px";
+    if (keepLatestWordsVisible) el.scrollTop = el.scrollHeight;
   };
 
   // Stop the mic immediately and stop it from re-filling the box (used on send).
@@ -406,8 +412,8 @@ export default function ClientAssistant({
   // Resize the input whenever its value changes (covers dictation, which sets
   // the value outside the textarea's own onChange).
   useEffect(() => {
-    autosize();
-  }, [input]);
+    autosize(listening);
+  }, [input, listening]);
 
   // Stop talking NOW: abort any in-flight TTS request, stop ElevenLabs audio,
   // and cancel the browser fallback voice. Called when read-aloud is turned off
@@ -592,6 +598,7 @@ export default function ClientAssistant({
     setInput("");
     inputRef.current = "";
     committedRef.current = "";
+    livePreviewRef.current = "";
     // Add the user message AND an empty assistant bubble to stream the reply
     // into, so words appear as they are written.
     setMessages((p) => [
@@ -713,46 +720,33 @@ export default function ClientAssistant({
     rec.continuous = true;
     suppressMicRef.current = false; // fresh dictation session
     committedRef.current = preserveTranscript ? inputRef.current.trim() : "";
+    livePreviewRef.current = preserveTranscript ? inputRef.current.trim() : "";
     if (!preserveTranscript) lastSpeechAtRef.current = 0;
     rec.onresult = (e: any) => {
       if (suppressMicRef.current) return; // a send already consumed this
-      // Merge an accumulator with a new chunk. Desktop Chrome returns a fresh
-      // SEGMENT per result, so those append. Android Chrome instead RESTATES the
-      // whole phrase so far in each result (and across events) - naive
-      // concatenation turned that into "sosososo theso the day...". So when the
-      // new chunk restates what we already have, REPLACE rather than append, and
-      // drop shorter restatements and exact tail repeats. Desktop behaviour
-      // (distinct segments appended) is unchanged.
-      const merge = (acc: string, seg: string) => {
-        const a = (acc || "").trim();
-        const s = (seg || "").trim();
-        if (!a) return seg || "";
-        if (!s) return acc;
-        const la = a.toLowerCase();
-        const ls = s.toLowerCase();
-        if (ls.startsWith(la)) return seg; // chunk extends everything so far
-        if (la.startsWith(ls)) return acc; // chunk is a shorter restatement
-        if (la.endsWith(ls)) return acc; // chunk already sits at the tail
-        const needsSpace =
-          !acc.endsWith(" ") && !(seg || "").startsWith(" ");
-        return acc + (needsSpace ? " " : "") + seg;
-      };
-      // Fold every FINAL result (stable, so this only ever grows) and keep just
-      // the latest interim as the live tail.
-      let finals = "";
-      let interim = "";
-      for (let i = 0; i < e.results.length; i++) {
-        const seg = e.results[i][0]?.transcript || "";
-        if (e.results[i].isFinal) finals = merge(finals, seg);
-        else interim = seg;
+      const folded = foldDictationEvent(committedRef.current, e.results);
+      committedRef.current = folded.committed;
+      let hasNewFinal = false;
+      const firstChanged = Number.isInteger(e.resultIndex) ? e.resultIndex : 0;
+      for (let i = firstChanged; i < e.results.length; i++) {
+        if (e.results[i]?.isFinal) {
+          hasNewFinal = true;
+          break;
+        }
       }
-      // Carry finals across events too (Android can reset its results list).
-      committedRef.current = merge(committedRef.current, finals);
-      const text = merge(committedRef.current, interim).replace(/\s+/g, " ").trim();
+      // Mobile recognition sometimes sends an empty or shorter interim while
+      // revising the phrase. Keep the last live wording until a final result is
+      // authoritative, rather than making the sentence disappear mid-speech.
+      const text = stabiliseLiveDictationPreview(
+        livePreviewRef.current,
+        folded.text,
+        hasNewFinal
+      );
+      livePreviewRef.current = text;
       inputRef.current = text;
       setInput(text);
-      if (text) lastSpeechAtRef.current = Date.now();
-      if (flushingRef.current) {
+      if (folded.text) lastSpeechAtRef.current = Date.now();
+      if (flushingRef.current && folded.text) {
         // Post-Ask flush: the tail is still arriving. Keep pushing the settle
         // timer back so we only stop ~1.5s after the LAST word lands (still
         // capped at 3s total by flushCapRef), so nothing gets clipped.
@@ -764,7 +758,7 @@ export default function ClientAssistant({
             /* ignore */
           }
         }, 1500);
-      } else if (convoRef.current && text) {
+      } else if (convoRef.current && folded.text) {
         // Hands-free: only end the turn after a full three seconds without a
         // result. Short thinking pauses must never cut the sentence in half.
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
@@ -1514,7 +1508,7 @@ export default function ClientAssistant({
         <textarea
           ref={inputElRef}
           value={input}
-          rows={1}
+          rows={listening ? 4 : 1}
           onChange={(e) => {
             inputRef.current = e.target.value;
             setInput(e.target.value);
@@ -1528,7 +1522,9 @@ export default function ClientAssistant({
             }
           }}
           placeholder={listening ? "listening… tap mic to stop" : "Ask, or tap the mic to talk…"}
-          className="max-h-[120px] min-h-[40px] flex-1 resize-none overflow-y-auto rounded-2xl border border-edge bg-ink/60 px-4 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60"
+          className={`max-h-[144px] flex-1 resize-none overflow-y-auto rounded-2xl border border-edge bg-ink/60 px-4 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60 ${
+            listening ? "min-h-[108px] sm:min-h-[88px]" : "min-h-[40px]"
+          }`}
         />
         <button
           type="button"

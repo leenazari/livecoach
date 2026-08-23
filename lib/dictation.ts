@@ -48,3 +48,28 @@ export function foldDictationEvent(
     .trim();
   return { committed: nextCommitted, text };
 }
+
+// Browser recognition can briefly retract or blank an interim phrase while it
+// revises the guess. Keep the last visible wording during that revision so the
+// dictation box never appears to erase what the user is still saying. A new
+// final result is authoritative and may replace the interim wording.
+export function stabiliseLiveDictationPreview(
+  previous: string,
+  next: string,
+  hasNewFinal: boolean
+): string {
+  const prior = (previous || "").replace(/\s+/g, " ").trim();
+  const candidate = (next || "").replace(/\s+/g, " ").trim();
+  if (!candidate) return prior;
+  if (!prior || hasNewFinal) return candidate;
+
+  const lowerPrior = prior.toLowerCase();
+  const lowerCandidate = candidate.toLowerCase();
+  if (
+    lowerPrior.startsWith(lowerCandidate) &&
+    candidate.length < prior.length
+  ) {
+    return prior;
+  }
+  return candidate;
+}
