@@ -116,6 +116,7 @@ export default function WorkInboxPage() {
   const [filter, setFilter] = useState<Filter>("now");
   const [visible, setVisible] = useState(10);
   const [loading, setLoading] = useState(true);
+  const [syncingCalendar, setSyncingCalendar] = useState(false);
   const [savingId, setSavingId] = useState("");
   const [editingId, setEditingId] = useState("");
   const [editingText, setEditingText] = useState("");
@@ -156,6 +157,48 @@ export default function WorkInboxPage() {
       if (!quiet) setLoading(false);
     }
   }, []);
+
+  const syncCalendar = async () => {
+    if (syncingCalendar) return;
+    setSyncingCalendar(true);
+    setNotice("");
+    setError("");
+    try {
+      const result = await crmFetch<{
+        provider?: string;
+        added?: number;
+        updated?: number;
+        removed?: number;
+        relinked?: number;
+        reconciled?: boolean;
+      }>("/api/crm/calendar-sync", { method: "POST" });
+      await load(true);
+      window.dispatchEvent(
+        new CustomEvent("lc:tasks-updated", {
+          detail: { source: "work-inbox" },
+        })
+      );
+
+      const changes: string[] = [];
+      if (result.added) changes.push(`${result.added} new`);
+      if (result.updated) changes.push(`${result.updated} updated`);
+      if (result.removed) changes.push(`${result.removed} cancelled removed`);
+      if (result.relinked) changes.push(`${result.relinked} relinked`);
+      const provider = result.provider
+        ? `${capitaliseSentenceStarts(result.provider)} calendar`
+        : "Calendar";
+      const outcome = changes.length ? changes.join(", ") : "already up to date";
+      const partial =
+        result.reconciled === false
+          ? " Cancellations were kept safely because the provider returned a partial result."
+          : "";
+      setNotice(`${provider} synced. ${outcome}.${partial}`);
+    } catch (err: any) {
+      setError(err?.message || "Calendar could not be synced. Please try again.");
+    } finally {
+      setSyncingCalendar(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -535,6 +578,14 @@ export default function WorkInboxPage() {
                 }`}
               >
                 {powerMode ? "Power Hour on" : "Start Power Hour"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void syncCalendar()}
+                disabled={syncingCalendar}
+                className="min-h-11 rounded-full border border-edge px-4 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:border-moss/45 hover:text-moss disabled:opacity-40"
+              >
+                {syncingCalendar ? "Syncing calendar…" : "↻ Sync calendar"}
               </button>
               <button
                 type="button"
