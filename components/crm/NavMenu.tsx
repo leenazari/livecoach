@@ -15,8 +15,8 @@ type ViewerRole = "owner" | "manager" | "sales";
 type TeamStatus = { role?: ViewerRole };
 
 const TEAM_STATUS_URL = "/api/auth/team/status";
+const OUTREACH_ITEM: Item = { href: "/crm/outreach", label: "Outreach", icon: "↗" };
 const SHARED_CORE_ITEMS: Item[] = [
-  { href: "/crm/outreach", label: "Outreach", icon: "↗" },
   { href: "/crm/revenue", label: "Pipeline", icon: "◆" },
   { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
   { href: "/crm/calls", label: "Calls", icon: "☎" },
@@ -30,6 +30,11 @@ const MORE_ITEMS: Item[] = [
   { href: "/settings/sales-profile", label: "My setup", icon: "◉" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
+const CAMPAIGNS_ITEM: Item = {
+  href: "/crm/outreach?tab=campaign",
+  label: "Campaigns and prospects",
+  icon: "↗",
+};
 const START_ITEM: Item = { href: "/call", label: "Start new call", icon: "▸" };
 
 const SIDEBAR_W = "15rem";
@@ -82,10 +87,12 @@ function NavMenuInner() {
     ? [homeItem, ...SHARED_CORE_ITEMS]
     : [
         homeItem,
-        { href: "/crm/inbox", label: "Work inbox", icon: "✓" },
+        { href: "/crm/inbox", label: "Sales Today", icon: "✓" },
+        OUTREACH_ITEM,
         ...SHARED_CORE_ITEMS,
       ];
-  const allItems = [...coreItems, START_ITEM, ...MORE_ITEMS];
+  const moreItems = salesHome ? [CAMPAIGNS_ITEM, ...MORE_ITEMS] : MORE_ITEMS;
+  const allItems = [...coreItems, START_ITEM, ...moreItems];
 
   // Phone layout: a thumb-reachable bottom tab bar instead of the left sidebar.
   const [mobile, setMobile] = useState(false);
@@ -159,7 +166,7 @@ function NavMenuInner() {
       return pathname.startsWith("/crm/call-coach");
     if (it.href === "/crm/health")
       return pathname.startsWith("/crm/health");
-    if (it.href === "/crm/outreach")
+    if (it.href.startsWith("/crm/outreach"))
       return pathname.startsWith("/crm/outreach");
     if (it.href === "/crm/calls")
       return pathname.startsWith("/crm/calls") &&
@@ -180,7 +187,9 @@ function NavMenuInner() {
   // its own floating button (nudged up on mobile so it clears this bar).
   if (mobile) {
     const BOTTOM: Item[] = [
-      { href: "/crm/outreach", label: "Outreach", icon: "↗" },
+      salesHome
+        ? { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" }
+        : OUTREACH_ITEM,
       homeItem,
       { href: "/call", label: "Start", icon: "▸" },
       salesHome
@@ -318,15 +327,15 @@ function NavMenuInner() {
           <button
             type="button"
             onClick={() => setDesktopMore((open) => !open)}
-            aria-expanded={desktopMore || MORE_ITEMS.some(isActive)}
+            aria-expanded={desktopMore || moreItems.some(isActive)}
             className="flex w-full items-center justify-between rounded-lg px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:bg-bone/[0.05] hover:text-bone"
           >
             <span>More tools</span>
-            <span>{desktopMore || MORE_ITEMS.some(isActive) ? "−" : "+"}</span>
+            <span>{desktopMore || moreItems.some(isActive) ? "−" : "+"}</span>
           </button>
-          {(desktopMore || MORE_ITEMS.some(isActive)) ? (
+          {(desktopMore || moreItems.some(isActive)) ? (
             <div className="mt-1">
-              {MORE_ITEMS.map((it) => (
+              {moreItems.map((it) => (
                 <Link
                   key={it.href}
                   href={it.href}

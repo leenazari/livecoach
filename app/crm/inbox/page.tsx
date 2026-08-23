@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
@@ -12,8 +13,22 @@ import type {
   WorkInboxResponse,
 } from "@/lib/work-inbox";
 
+const OutreachTodayLane = dynamic(
+  () => import("@/components/crm/OutreachTodayLane"),
+  {
+    ssr: false,
+    loading: () => (
+      <MatrixRain
+        size="panel"
+        messages={["loading today's outreach", "checking protected contacts"]}
+      />
+    ),
+  }
+);
+
 type Filter =
   | "now"
+  | "outreach"
   | "calls"
   | "revenue"
   | "approvals"
@@ -24,6 +39,7 @@ type Filter =
 
 const filters: { key: Filter; label: string }[] = [
   { key: "now", label: "Do now" },
+  { key: "outreach", label: "Outreach" },
   { key: "calls", label: "Calls" },
   { key: "revenue", label: "Revenue" },
   { key: "approvals", label: "Approvals" },
@@ -105,6 +121,8 @@ const dateInputInLondon = (daysFromNow = 1) => {
 const belongsTo = (item: WorkInboxItem, filter: Filter) => {
   if (filter === "now")
     return !item.done && !item.waiting && item.priority >= 78;
+  if (filter === "outreach")
+    return !item.done && ["outreach", "reply", "follow_up"].includes(item.kind);
   if (filter === "calls") return !item.done && item.kind === "prep";
   if (filter === "revenue") return !item.done && item.revenue;
   if (filter === "approvals") return !item.done && item.approval;
@@ -139,6 +157,7 @@ export default function WorkInboxPage() {
   const [nextActionId, setNextActionId] = useState("");
   const [nextActionText, setNextActionText] = useState("");
   const [nextActionDue, setNextActionDue] = useState("");
+  const [outreachQueueCount, setOutreachQueueCount] = useState<number | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -523,6 +542,8 @@ export default function WorkInboxPage() {
   const countFor = (key: Filter) => {
     if (!data) return 0;
     if (key === "now") return data.counts.now;
+    if (key === "outreach")
+      return outreachQueueCount ?? data.items.filter((item) => belongsTo(item, "outreach")).length;
     if (key === "calls")
       return data.items.filter((item) => belongsTo(item, "calls")).length;
     if (key === "revenue") return data.counts.revenue;
@@ -565,10 +586,10 @@ export default function WorkInboxPage() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h1 className="font-display text-[1.65rem] leading-none text-bone">
-                Work <span className="italic text-amber">Inbox</span>
+                Sales <span className="italic text-amber">Today</span>
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-5 text-muted">
-                One prioritized queue for tasks, approvals, replies, drafts and call preparation.
+                One prioritised place for outreach, replies, tasks, deals and call preparation.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -603,7 +624,7 @@ export default function WorkInboxPage() {
             </div>
           </div>
           <p className="mt-3 rounded-lg border border-sage/30 bg-sage/[0.06] px-3 py-2 text-xs leading-5 text-sage">
-            No extra AI cost. Email approvals still open the exact draft before anything can be sent.
+            Opening Sales Today has no extra AI cost. Research runs only when you press Prepare, and every email still opens for exact review before it can be sent.
           </p>
         </header>
 
@@ -624,7 +645,7 @@ export default function WorkInboxPage() {
           </section>
         ) : null}
 
-        <nav aria-label="Work inbox filters" className="mb-4 flex gap-2 overflow-x-auto pb-1">
+        <nav aria-label="Sales Today filters" className="mb-4 flex gap-2 overflow-x-auto pb-1">
           {filters.map((item) => (
             <button
               key={item.key}
@@ -673,7 +694,9 @@ export default function WorkInboxPage() {
           </section>
         ) : null}
 
-        {filter === "cleanup" && data ? (
+        {filter === "outreach" ? (
+          <OutreachTodayLane onQueueCount={setOutreachQueueCount} />
+        ) : filter === "cleanup" && data ? (
           <section>
             <div className="mb-3 rounded-xl border border-amber/35 bg-amber/[0.06] p-3 sm:p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1176,7 +1199,7 @@ export default function WorkInboxPage() {
           </section>
         )}
 
-        {filtered.length > visible ? (
+        {filter !== "outreach" && filtered.length > visible ? (
           <button
             type="button"
             onClick={() => setVisible((count) => count + 10)}
