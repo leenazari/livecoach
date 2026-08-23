@@ -27,8 +27,76 @@ export async function gatherClientContext(
     typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : "";
   const requestScope = getRequestScope();
 
+  // Resolve access before loading any related record. This prevents a shared
+  // client lookup from even fetching the original owner's private contacts,
+  // calls, calendar, notes, documents or email context with the service role.
+  const { data: visibleCompany, error: companyError } = await supabaseAdmin
+    .from("companies")
+    .select(
+      "id, owner_id, name, sector, stage, profile, attributes, notes, email_context"
+    )
+    .eq("id", companyId)
+    .maybeSingle();
+  if (companyError) throw companyError;
+
+  let company: any =
+    visibleCompany &&
+    (!requestScope || visibleCompany.owner_id === requestScope.userId)
+      ? visibleCompany
+      : null;
+  let sharedSalesAccess = false;
+  if (!company && requestScope) {
+    const { data: share, error: shareError } = await supabaseAdmin
+      .from("team_client_shares")
+      .select("id")
+      .eq("workspace_id", requestScope.workspaceId)
+      .eq("company_id", companyId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (shareError) throw shareError;
+    if (share) {
+      company = await loadSafeSharedCompany(companyId, requestScope.workspaceId);
+      sharedSalesAccess = !!company;
+    }
+  }
+  if (!company) return "";
+
+  if (sharedSalesAccess && requestScope) {
+    const { data: assignedOpportunities, error: assignedOpportunitiesError } =
+      await supabaseAdmin
+        .from("opportunities")
+        .select(
+          "title, deal_intent, value, status, opportunity_type, pipeline_stage, win_outlook, win_outlook_confidence, win_outlook_reasons, win_outlook_questions, win_outlook_override, engagement_motion, active_contact_method, next_action, next_action_due_at, assigned_to_user_id"
+        )
+        .eq("company_id", companyId)
+        .eq("status", "open")
+        .eq("assigned_to_user_id", requestScope.userId)
+        .order("created_at", { ascending: false })
+        .limit(20);
+    if (assignedOpportunitiesError) throw assignedOpportunitiesError;
+
+    const opportunities = assignedOpportunities || [];
+    const lines = [
+      "ACCESS BOUNDARY: this client was explicitly shared with the team. Sharing permits only this safe high-level lookup. The original owner's contacts, calls, transcripts, calendar, mailbox context, notes, documents and Brain history were not loaded. Opportunity details appear only when the opportunity is assigned to this account.",
+      "",
+      `CLIENT: ${company.name}`,
+      `Sector: ${company.sector?.trim() || "not set"}`,
+      `Stage: ${company.stage?.trim() || "not set"}`,
+      `Assigned opportunity records: ${
+        opportunities.length
+          ? opportunities
+              .map(
+                (opportunity: any) =>
+                  `[${opportunity.opportunity_type || "revenue"}] ${opportunity.title}. Lifecycle ${opportunity.pipeline_stage || opportunity.status || "not set"}. Win outlook ${opportunity.win_outlook || "not assessed"}${opportunity.win_outlook_confidence == null ? "" : ` at ${opportunity.win_outlook_confidence}% confidence`}${opportunity.win_outlook_override ? " (human override)" : ""}.${opportunity.value ? ` Value ~£${opportunity.value}.` : " Value not set."}${opportunity.deal_intent ? ` Intent: ${cut(opportunity.deal_intent, 320)}.` : ""}${Array.isArray(opportunity.win_outlook_reasons) && opportunity.win_outlook_reasons.length ? ` Evidence: ${opportunity.win_outlook_reasons.slice(0, 3).join(" | ")}.` : ""}${Array.isArray(opportunity.win_outlook_questions) && opportunity.win_outlook_questions.length ? ` Ask next: ${opportunity.win_outlook_questions.slice(0, 3).join(" | ")}.` : ""}${opportunity.next_action ? ` Next: ${cut(opportunity.next_action, 220)}${opportunity.next_action_due_at ? ` due ${String(opportunity.next_action_due_at).slice(0, 10)}` : ""}.` : ""}${opportunity.engagement_motion ? ` Motion ${String(opportunity.engagement_motion).replace(/_/g, " ")}.` : ""}${opportunity.active_contact_method ? ` Contact via ${String(opportunity.active_contact_method).replace(/_/g, " ")}.` : ""}`
+              )
+              .join("; ")
+          : "none assigned to this account"
+      }`,
+    ];
+    return lines.join("\n");
+  }
+
   const [
-    { data: visibleCompany },
     contactsRes,
     summariesRes,
     oppsRes,
@@ -37,13 +105,7 @@ export async function gatherClientContext(
     departmentsRes,
     workstreamsRes,
     workstreamContactsRes,
-  ] =
-    await Promise.all([
-      supabaseAdmin
-        .from("companies")
-        .select("id, owner_id, name, sector, stage, profile, attributes, notes, email_context")
-        .eq("id", companyId)
-        .single(),
+  ] = await Promise.all([
       supabaseAdmin
         .from("contacts")
         .select("id, department_id, name, role, email, attributes")
@@ -88,7 +150,7 @@ export async function gatherClientContext(
         .from("workstream_contacts")
         .select("workstream_id, contact_id")
         .eq("company_id", companyId),
-    ]);
+  ]);
 
   // Upcoming calls for this client, synced from the calendar, so the assistant
   // can answer "when's our next call" / "what's coming up" from the CRM's copy.
@@ -106,33 +168,6 @@ export async function gatherClientContext(
     );
   }
   const { data: upcomingRows } = await upcomingRowsQuery;
-
-  let company: any =
-    visibleCompany &&
-    (!requestScope || visibleCompany.owner_id === requestScope.userId)
-      ? visibleCompany
-      : null;
-  let sharedSalesAccess = false;
-  if (!company && requestScope) {
-    let shareQuery = supabaseAdmin
-      .from("team_client_shares")
-      .select("id")
-      .eq("workspace_id", requestScope.workspaceId)
-      .eq("company_id", companyId)
-      .eq("status", "active");
-    if (requestScope.role !== "owner") {
-      shareQuery = shareQuery.eq(
-        "assigned_to_user_id",
-        requestScope.userId
-      );
-    }
-    const { data: share } = await shareQuery.maybeSingle();
-    if (share) {
-      company = await loadSafeSharedCompany(companyId, requestScope.workspaceId);
-      sharedSalesAccess = !!company;
-    }
-  }
-  if (!company) return "";
 
   // Pre-compute every field so we can render it as a value OR an explicit
   // "not set". Absent fields are what tempt the model to invent (e.g. a budget),
@@ -178,13 +213,6 @@ export async function gatherClientContext(
     ctx.length === 0;
 
   const lines: string[] = [];
-
-  if (sharedSalesAccess) {
-    lines.push(
-      "ACCESS BOUNDARY: this is a team-shared sales record. Use the client basics and team-visible opportunity below. The original owner's calls, transcripts, calendar, mailbox context, notes, documents and Brain memory are private and are not available. Never imply that you have read them.",
-      ""
-    );
-  }
 
   if (isThin) {
     lines.push(
@@ -470,7 +498,7 @@ export async function gatherGlobalContext(
   }
   if (companies.length === 0) {
     return requestScope && requestScope.role !== "owner"
-      ? "RESTRICTED CRM SCOPE: No client profiles are owned by or explicitly assigned to this member yet. Outreach prospects are separate from client profiles. Do not describe another person's clients, prospects, replies or tasks as this member's work, even if they ask by name."
+      ? "RESTRICTED CRM SCOPE: No client profiles are owned by or explicitly shared with this member yet. Outreach prospects are separate from client profiles. Do not describe another person's clients, prospects, replies or tasks as this member's work, even if they ask by name."
       : "The user has no clients in their CRM yet.";
   }
 

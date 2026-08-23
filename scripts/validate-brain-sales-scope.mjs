@@ -86,8 +86,14 @@ const shares = [
     assigned_to_user_id: jimmy.userId,
   },
 ];
-assert.deepEqual(brainSharedClientIds(shares, jimmy), ["jimmy-client"]);
-assert.deepEqual(brainSharedClientIds(shares, manager), ["manager-client"]);
+assert.deepEqual(brainSharedClientIds(shares, jimmy), [
+  "jimmy-client",
+  "manager-client",
+]);
+assert.deepEqual(brainSharedClientIds(shares, manager), [
+  "jimmy-client",
+  "manager-client",
+]);
 assert.deepEqual(
   brainSharedClientIds(shares, { userId: lee, role: "owner" }),
   ["jimmy-client", "manager-client"]
@@ -107,9 +113,26 @@ assert.match(context, /PERSONAL OUTREACH QUEUE/);
 assert.match(context, /WORKSPACE AVAILABILITY/);
 assert.match(context, /brainSharedClientIds/);
 assert.doesNotMatch(context, /activeSharedClientIds/);
-assert.match(context, /No client profiles are owned by or explicitly assigned/);
+assert.doesNotMatch(
+  context,
+  /shareQuery = shareQuery\.eq\([\s\S]*?"assigned_to_user_id"/
+);
+assert.match(context, /Sharing permits only this safe high-level lookup/);
+assert.match(context, /were not loaded/);
+assert.match(context, /\.eq\("assigned_to_user_id", requestScope\.userId\)/);
+assert.match(context, /explicitly shared with this member/);
+const sharedLookupStart = context.indexOf("if (sharedSalesAccess && requestScope)");
+const privateSourceStart = context.indexOf("const [\n    contactsRes");
+assert.ok(sharedLookupStart >= 0 && privateSourceStart > sharedLookupStart);
+const sharedLookupBlock = context.slice(sharedLookupStart, privateSourceStart);
+assert.doesNotMatch(
+  sharedLookupBlock,
+  /\.from\("(?:contacts|interview_summaries|follow_ups|client_context|departments|workstreams|workstream_contacts|upcoming_calls)"\)/,
+  "A shared lookup must not fetch the owner's private related records"
+);
 assert.match(assistant, /Only the verified workspace owner has the full Brain view/);
-assert.match(assistant, /even if the member names the person or directly asks/);
+assert.match(assistant, /Shared client access is lookup access only/);
+assert.match(assistant, /Never reveal or search an unshared client/);
 assert.match(assistant, /assigned_to_user_id/);
 assert.match(transcripts, /requestScope\.role !== "owner"/);
 assert.match(transcripts, /transcriptQuery = transcriptQuery\.eq\([\s\S]*?"owner_id"/);

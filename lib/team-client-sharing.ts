@@ -1,6 +1,7 @@
 import "server-only";
 
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
+export { sharedClientBlockReason } from "@/lib/client-sharing-policy";
 
 export const SAFE_SHARED_COMPANY_SELECT =
   "id,name,domain,website,sector,stage,created_at,updated_at,workspace_id,owner_id";
@@ -97,26 +98,4 @@ export async function loadSafeSharedCompany(
 ): Promise<SafeSharedCompany | null> {
   const rows = await loadSafeSharedCompanies([companyId], workspaceId);
   return rows[0] || null;
-}
-
-export function sharedClientBlockReason(company: any): string | null {
-  const triage =
-    company?.profile?.triage && typeof company.profile.triage === "object"
-      ? company.profile.triage
-      : {};
-  const classification = String(triage.classification || "").toLowerCase();
-  const stage = String(company?.stage || "").toLowerCase();
-  const sector = String(company?.sector || "").toLowerCase();
-  const combined = `${classification} ${stage} ${sector}`;
-  if (/\binvest(or|ment)?\b/.test(combined))
-    return "Investor records stay private";
-  if (/\b(in[ _-]?house|internal|employee|staff)\b/.test(combined))
-    return "Internal and staff records stay private";
-  if (/\b(board|adviser|advisor)\b/.test(combined))
-    return "Board and adviser records stay private";
-  if (/\b(product[ _-]?trial|vendor|supplier)\b/.test(combined))
-    return "Vendors and product trials stay private";
-  if (/\b(personal|private)\b/.test(combined))
-    return "Personal records stay private";
-  return null;
 }
