@@ -14,6 +14,7 @@ import type {
 
 type Filter =
   | "now"
+  | "calls"
   | "revenue"
   | "approvals"
   | "waiting"
@@ -23,6 +24,7 @@ type Filter =
 
 const filters: { key: Filter; label: string }[] = [
   { key: "now", label: "Do now" },
+  { key: "calls", label: "Calls" },
   { key: "revenue", label: "Revenue" },
   { key: "approvals", label: "Approvals" },
   { key: "waiting", label: "Waiting" },
@@ -103,6 +105,7 @@ const dateInputInLondon = (daysFromNow = 1) => {
 const belongsTo = (item: WorkInboxItem, filter: Filter) => {
   if (filter === "now")
     return !item.done && !item.waiting && item.priority >= 78;
+  if (filter === "calls") return !item.done && item.kind === "prep";
   if (filter === "revenue") return !item.done && item.revenue;
   if (filter === "approvals") return !item.done && item.approval;
   if (filter === "waiting") return !item.done && item.waiting;
@@ -520,6 +523,8 @@ export default function WorkInboxPage() {
   const countFor = (key: Filter) => {
     if (!data) return 0;
     if (key === "now") return data.counts.now;
+    if (key === "calls")
+      return data.items.filter((item) => belongsTo(item, "calls")).length;
     if (key === "revenue") return data.counts.revenue;
     if (key === "approvals") return data.counts.approvals;
     if (key === "waiting") return data.counts.waiting;

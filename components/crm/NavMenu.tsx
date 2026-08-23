@@ -4,16 +4,18 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase-browser";
-import { clearCrmCache } from "@/lib/crm";
+import { clearCrmCache, crmFetch, getCached } from "@/lib/crm";
 import ThemeToggle from "@/components/ThemeToggle";
 
 // Persistent left sidebar, OPEN by default. Minimise collapses it to a ☰ button;
 // the choice is remembered (localStorage). When open it pushes the page content
 // right by padding the body, so nothing is hidden behind it.
 type Item = { href: string; label: string; icon: string; tab?: string };
-const CORE_ITEMS: Item[] = [
-  { href: "/crm", label: "Today", icon: "▣" },
-  { href: "/crm/inbox", label: "Work inbox", icon: "✓" },
+type ViewerRole = "owner" | "manager" | "sales";
+type TeamStatus = { role?: ViewerRole };
+
+const TEAM_STATUS_URL = "/api/auth/team/status";
+const SHARED_CORE_ITEMS: Item[] = [
   { href: "/crm/documents", label: "Documents", icon: "▤" },
   { href: "/crm/outreach", label: "Outreach", icon: "↗" },
   { href: "/crm/revenue", label: "Pipeline", icon: "◆" },
@@ -29,7 +31,6 @@ const MORE_ITEMS: Item[] = [
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
 const START_ITEM: Item = { href: "/call", label: "Start new call", icon: "▸" };
-const ITEMS = [...CORE_ITEMS, START_ITEM, ...MORE_ITEMS];
 
 const SIDEBAR_W = "15rem";
 
@@ -52,6 +53,39 @@ function NavMenuInner() {
   const [mobileMore, setMobileMore] = useState(false);
   const [desktopMore, setDesktopMore] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [viewerRole, setViewerRole] = useState<ViewerRole | null>(() => {
+    const cached = getCached<TeamStatus>(TEAM_STATUS_URL);
+    return cached?.role || null;
+  });
+
+  useEffect(() => {
+    let active = true;
+    void crmFetch<TeamStatus>(TEAM_STATUS_URL)
+      .then((status) => {
+        if (active && status.role) setViewerRole(status.role);
+      })
+      .catch(() => {
+        // Navigation still works with the safe salesperson home fallback.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Sales and manager accounts land on their prioritised Work Inbox. Owners
+  // retain the wider executive dashboard and a separate Work Inbox link.
+  const salesHome = viewerRole !== "owner";
+  const homeItem: Item = salesHome
+    ? { href: "/crm/inbox", label: "Today", icon: "▣" }
+    : { href: "/crm", label: "Today", icon: "▣" };
+  const coreItems: Item[] = salesHome
+    ? [homeItem, ...SHARED_CORE_ITEMS]
+    : [
+        homeItem,
+        { href: "/crm/inbox", label: "Work inbox", icon: "✓" },
+        ...SHARED_CORE_ITEMS,
+      ];
+  const allItems = [...coreItems, START_ITEM, ...MORE_ITEMS];
 
   // Phone layout: a thumb-reachable bottom tab bar instead of the left sidebar.
   const [mobile, setMobile] = useState(false);
@@ -147,9 +181,11 @@ function NavMenuInner() {
   if (mobile) {
     const BOTTOM: Item[] = [
       { href: "/crm/outreach", label: "Outreach", icon: "↗" },
-      { href: "/crm", label: "Today", icon: "▣" },
+      homeItem,
       { href: "/call", label: "Start", icon: "▸" },
-      { href: "/crm/inbox", label: "Inbox", icon: "✓" },
+      salesHome
+        ? { href: "/crm/revenue", label: "Pipeline", icon: "◆" }
+        : { href: "/crm/inbox", label: "Inbox", icon: "✓" },
     ];
     return (
       <>
@@ -161,7 +197,7 @@ function NavMenuInner() {
                 <button type="button" onClick={() => setMobileMore(false)} aria-label="Close more menu" className="h-11 w-11 rounded-full text-muted">✕</button>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                {ITEMS.filter((item) => !BOTTOM.some((b) => b.href === item.href) && item.href !== "/call").map((item) => (
+                {allItems.filter((item) => !BOTTOM.some((b) => b.href === item.href) && item.href !== "/call").map((item) => (
                   <Link key={item.href} href={item.href} onClick={() => setMobileMore(false)} className="flex min-h-12 items-center gap-3 rounded-xl border border-edge bg-ink/40 px-3 font-mono text-[0.62rem] uppercase tracking-wider text-bone">
                     <span className="text-amber">{item.icon}</span>{item.label}
                   </Link>
@@ -260,21 +296,9 @@ function NavMenuInner() {
           <span className="w-4 text-center">▸</span>
           Start new call
         </Link>
-        {/* Outreach is the default CRM home, so there is nowhere to go back to
-            from there. Dashboard remains available as its own destination. */}
-        {pathname !== "/crm/outreach" && (
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="mb-1 flex items-center gap-3 rounded-lg px-3 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-muted transition hover:bg-bone/[0.05] hover:text-bone"
-          >
-            <span className="w-4 text-center">←</span>
-            Back
-          </button>
-        )}
         <div className="mt-2">
           <p className="mb-1 px-3 font-mono text-[0.48rem] uppercase tracking-[0.18em] text-muted/60">Work</p>
-          {CORE_ITEMS.map((it) => (
+          {coreItems.map((it) => (
             <Link
               key={it.href}
               href={it.href}

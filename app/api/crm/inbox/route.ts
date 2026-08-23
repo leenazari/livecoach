@@ -250,7 +250,6 @@ export async function GET() {
     const seenMeetings = new Set<string>();
     for (const call of upcomingResult.data || []) {
       const outreach = call.research?.outreach;
-      if (!call.company_id && !outreach?.prospectId) continue;
       const company =
         companyName.get(call.company_id) || text(outreach?.companyName, 160) || null;
       const key = `${String(call.title || "").toLowerCase().trim()}:${call.company_id || outreach?.prospectId || "unlinked"}`;
@@ -270,12 +269,16 @@ export async function GET() {
           ? call.company_id
             ? "Booked from outreach · client linked · suggested intent ready"
             : "Booked from outreach · review the CRM company match"
+          : !call.company_id
+            ? "Client not linked yet · link or create it before relationship prep"
           : within48Hours
             ? "Call is within 48 hours"
             : "Upcoming call",
         company,
         companyId: call.company_id || null,
-        href: `/crm/prep?upcoming=${call.id}`,
+        href: call.company_id
+          ? `/crm/prep?upcoming=${call.id}`
+          : `/call?upcoming=${call.id}`,
         priority,
         priorityLabel: priorityLabel(priority),
         dueAt: call.scheduled_at || null,

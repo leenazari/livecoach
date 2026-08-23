@@ -68,6 +68,7 @@ const taskApi = read("app/api/crm/tasks/[id]/route.ts");
 const followUpApi = read("app/api/crm/follow-ups/[id]/route.ts");
 const opportunityApi = read("app/api/crm/opportunities/[id]/route.ts");
 const inboxPage = read("app/crm/inbox/page.tsx");
+const navMenu = read("components/crm/NavMenu.tsx");
 const dashboardApi = read("app/api/crm/dashboard/route.ts");
 const middleware = read("middleware.ts");
 
@@ -80,6 +81,11 @@ assert.match(inboxApi, /loadSafeSharedCompanies/);
 assert.match(inboxApi, /buildOpportunityInboxItem/);
 assert.match(inboxApi, /canonicalOpportunityActions/);
 assert.match(inboxApi, /viewer:/);
+assert.doesNotMatch(
+  inboxApi,
+  /if \(!call\.company_id && !outreach\?\.prospectId\) continue;/
+);
+assert.match(inboxApi, /`\/call\?upcoming=\$\{call\.id\}`/);
 
 for (const route of [cleanupApi, taskApi, followUpApi]) {
   assert.match(route, /requireRequestScope\(\)/);
@@ -95,6 +101,12 @@ assert.match(inboxPage, /Complete and set next move/);
 assert.match(inboxPage, /sales_power_hour/);
 assert.match(inboxPage, /target="_blank"/);
 assert.match(inboxPage, /Changes only count when the source record confirms them/);
+assert.match(inboxPage, /\{ key: "calls", label: "Calls" \}/);
+assert.match(inboxPage, /item\.kind === "prep"/);
+
+assert.match(navMenu, /viewerRole !== "owner"/);
+assert.match(navMenu, /href: "\/crm\/inbox", label: "Today"/);
+assert.doesNotMatch(navMenu, /router\.back\(\)/);
 
 assert.match(dashboardApi, /requestScope\.role !== "owner"/);
 assert.match(middleware, /path === "\/crm" && membership\.role !== "owner"/);
