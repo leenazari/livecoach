@@ -89,7 +89,9 @@ export async function GET(req: NextRequest) {
       email,
     });
 
-    const res = NextResponse.redirect(`${base}${destination}?google=connected`);
+    const res = NextResponse.redirect(
+      `${base}${destination}?google=connected&calendar=sync`
+    );
     res.cookies.set("g_oauth_state", "", { maxAge: 0, path: "/" });
     return res;
   } catch {

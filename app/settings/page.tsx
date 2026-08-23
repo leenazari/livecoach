@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { crmFetch, getCached, setCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
+import InitialCalendarSync from "@/components/InitialCalendarSync";
 
 type Lesson = {
   id: string;
@@ -276,6 +277,8 @@ export default function SettingsPage() {
           </Link>
         </div>
       </header>
+
+      <InitialCalendarSync />
 
       <div
         className={`mb-5 rounded-xl border p-5 ${
