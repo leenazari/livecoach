@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { sharedClientBlockReason } from "../lib/client-sharing-policy.ts";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
@@ -19,6 +21,7 @@ const serviceBoundaryMigration = read(
   "supabase/migrations/20260822100306_team_client_assignment_service_boundary.sql"
 );
 const sharingHelper = read("lib/team-client-sharing.ts");
+const sharingPolicy = read("lib/client-sharing-policy.ts");
 const companyRoute = read("app/api/crm/companies/[id]/route.ts");
 const activityRoute = read("app/api/crm/companies/[id]/activity/route.ts");
 const contextBuilder = read("lib/crm-context.ts");
@@ -106,10 +109,36 @@ for (const sensitiveField of [
   );
 }
 
-assert.match(sharingHelper, /Investor records stay private/);
-assert.match(sharingHelper, /Internal and staff records stay private/);
-assert.match(sharingHelper, /Board and adviser records stay private/);
-assert.match(sharingHelper, /Vendors and product trials stay private/);
+assert.match(sharingPolicy, /Investor records stay private/);
+assert.match(sharingPolicy, /Internal and staff records stay private/);
+assert.match(sharingPolicy, /Board and adviser records stay private/);
+assert.match(sharingPolicy, /Vendors and product trials stay private/);
+assert.match(sharingPolicy, /Strategic and confidential partner records stay private/);
+assert.equal(
+  sharedClientBlockReason({
+    stage: "Partner",
+    sector: "Recruitment",
+    profile: { triage: { classification: "Partner" } },
+  }),
+  null,
+  "An ordinary partner can still be deliberately shared"
+);
+for (const classification of [
+  "Strategic Partner",
+  "Major Partnership",
+  "Large Partner",
+  "Confidential Partner",
+  "Private Partnership",
+]) {
+  assert.equal(
+    sharedClientBlockReason({
+      stage: "Partner",
+      sector: "Recruitment",
+      profile: { triage: { classification } },
+    }),
+    "Strategic and confidential partner records stay private"
+  );
+}
 assert.match(companyRoute, /mode: sharedSalesAccess \? "shared_sales" : "owner"/);
 assert.match(companyRoute, /privateSourcesHidden: sharedSalesAccess/);
 assert.match(companyRoute, /belongs to another salesperson and is view only/);

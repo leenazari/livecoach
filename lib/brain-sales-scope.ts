@@ -21,7 +21,8 @@ export type BrainOutreachPartition<T> = {
 
 // Team rows can remain visible in intentionally shared CRM screens. Only the
 // workspace owner receives the full Brain view. Every other role is limited to
-// their own assignments, even when they explicitly ask for somebody else's.
+// their own assignments when taking action, even when they explicitly ask for
+// somebody else's work.
 export function partitionBrainOutreach<T extends BrainOutreachAssignment>(
   rows: T[],
   scope: BrainSalesViewerScope
@@ -65,12 +66,9 @@ export function brainSharedClientIds(
 ): string[] {
   if (!scope) return [];
   const ids = shares
-    .filter(
-      (share) =>
-        share.status === "active" &&
-        (scope.role === "owner" ||
-          share.assigned_to_user_id === scope.userId)
-    )
+    // Sharing controls safe lookup. Assignment is deliberately separate and
+    // continues to control opportunity details, edits and recommended actions.
+    .filter((share) => share.status === "active")
     .map((share) => share.company_id)
     .filter(Boolean);
   return [...new Set(ids)];
