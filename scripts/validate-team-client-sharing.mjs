@@ -20,6 +20,9 @@ const assignmentMigration = read(
 const serviceBoundaryMigration = read(
   "supabase/migrations/20260822100306_team_client_assignment_service_boundary.sql"
 );
+const confidentialityMigration = read(
+  "supabase/migrations/20260823224104_add_company_confidentiality_lock.sql"
+);
 const sharingHelper = read("lib/team-client-sharing.ts");
 const sharingPolicy = read("lib/client-sharing-policy.ts");
 const companyRoute = read("app/api/crm/companies/[id]/route.ts");
@@ -80,6 +83,42 @@ assert.match(
   serviceBoundaryMigration,
   /grant execute on function public\.set_team_client_sales_assignment_service[\s\S]*?to service_role/i
 );
+assert.match(confidentialityMigration, /is_confidential boolean not null default false/);
+assert.match(confidentialityMigration, /prevent_confidential_client_sharing/);
+assert.match(confidentialityMigration, /prevent_confidential_opportunity_assignment/);
+assert.match(confidentialityMigration, /confidential client opportunities must stay owner only/);
+assert.match(confidentialityMigration, /enforce_company_confidentiality/);
+assert.match(confidentialityMigration, /client_confidentiality_locked/);
+assert.match(confidentialityMigration, /set_company_confidentiality_service/);
+assert.match(confidentialityMigration, /client_confidential boolean/);
+assert.match(confidentialityMigration, /if p_shared and client_confidential then/);
+assert.match(confidentialityMigration, /Strategic and confidential partner records stay private|strategic\|major\|large\|confidential\|private/i);
+assert.match(
+  confidentialityMigration,
+  /revoke all on function public\.set_company_confidentiality_service[\s\S]*?from public, anon, authenticated/i
+);
+assert.match(
+  confidentialityMigration,
+  /grant execute on function public\.set_company_confidentiality_service[\s\S]*?to service_role/i
+);
+for (const triggerFunction of [
+  confidentialityMigration.match(
+    /create or replace function public\.prevent_confidential_client_sharing\(\)[\s\S]*?\n\$\$;/i
+  )?.[0] || "",
+  confidentialityMigration.match(
+    /create or replace function public\.enforce_company_confidentiality\(\)[\s\S]*?\n\$\$;/i
+  )?.[0] || "",
+  confidentialityMigration.match(
+    /create or replace function public\.prevent_confidential_opportunity_assignment\(\)[\s\S]*?\n\$\$;/i
+  )?.[0] || "",
+]) {
+  assert.match(triggerFunction, /security invoker/i);
+  assert.doesNotMatch(
+    triggerFunction,
+    /security definer/i,
+    "Confidentiality triggers must not bypass row security"
+  );
+}
 for (const triggerFunction of [
   assignmentMigration.match(
     /create or replace function public\.validate_team_client_share_assignment\(\)[\s\S]*?\n\$\$;/i
@@ -115,6 +154,10 @@ assert.match(sharingPolicy, /Board and adviser records stay private/);
 assert.match(sharingPolicy, /Vendors and product trials stay private/);
 assert.match(sharingPolicy, /Strategic and confidential partner records stay private/);
 assert.equal(
+  sharedClientBlockReason({ is_confidential: true }),
+  "Confidential lock is on"
+);
+assert.equal(
   sharedClientBlockReason({
     stage: "Partner",
     sector: "Recruitment",
@@ -122,6 +165,15 @@ assert.equal(
   }),
   null,
   "An ordinary partner can still be deliberately shared"
+);
+assert.equal(
+  sharedClientBlockReason({
+    stage: "Partner",
+    sector: "Large enterprise recruitment",
+    profile: { triage: { classification: "Partner" } },
+  }),
+  null,
+  "A word in another field must not accidentally turn an ordinary partner confidential"
 );
 for (const classification of [
   "Strategic Partner",
@@ -151,8 +203,15 @@ assert.match(sharingApi, /requireWorkspaceOwner\(\)/);
 assert.match(sharingApi, /sharedClientBlockReason/);
 assert.match(sharingApi, /Choose the salesperson responsible for this client/);
 assert.match(sharingApi, /set_team_client_sales_assignment_service/);
+assert.match(sharingApi, /set_company_confidentiality_service/);
+assert.match(sharingApi, /confidential: saved\.confidential === true/);
 assert.match(sharingApi, /supabaseService\.rpc/);
 assert.match(sharingApi, /A failure cannot leave either half saved/);
+assert.match(sharingHelper, /\.eq\("is_confidential", false\)/);
+const sharingPage = read("app/settings/team/sharing/page.tsx");
+assert.match(sharingPage, /Confidential/);
+assert.match(sharingPage, /Lock private/);
+assert.match(sharingPage, /still private until you deliberately share it/);
 assert.match(portfolioApi, /assignedToUserId/);
 assert.match(portfolioApi, /canManageAssignments/);
 assert.match(portfolio, /My work/);

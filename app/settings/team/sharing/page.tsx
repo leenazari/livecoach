@@ -13,6 +13,7 @@ type SharingRecord = {
   sector: string | null;
   stage: string | null;
   updatedAt: string;
+  confidential: boolean;
   shared: boolean;
   assignedToUserId: string | null;
   openOpportunityCount: number;
@@ -48,6 +49,7 @@ type SharingData = {
   summary: {
     total: number;
     shared: number;
+    confidential: number;
     protected: number;
     outreachTotal: number;
     outreachAssignable: number;
@@ -67,7 +69,9 @@ export default function TeamSharingPage() {
   const [data, setData] = useState<SharingData | null>(null);
   const [tab, setTab] = useState<"outreach" | "clients">("outreach");
   const [query, setQuery] = useState("");
-  const [clientFilter, setClientFilter] = useState<"all" | "shared" | "private">("all");
+  const [clientFilter, setClientFilter] = useState<
+    "all" | "shared" | "private" | "confidential"
+  >("all");
   const [prospectFilter, setProspectFilter] = useState("ready");
   const [busyId, setBusyId] = useState("");
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
@@ -104,6 +108,7 @@ export default function TeamSharingPage() {
     return (data?.records || []).filter((record) => {
       if (clientFilter === "shared" && !record.shared) return false;
       if (clientFilter === "private" && record.shared) return false;
+      if (clientFilter === "confidential" && !record.confidential) return false;
       if (!needle) return true;
       return [record.name, record.stage, record.sector]
         .filter(Boolean)
@@ -209,6 +214,51 @@ export default function TeamSharingPage() {
         [record.id]: previousAssignee,
       }));
       setError(saveError?.message || "That access change did not save");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const changeConfidentiality = async (
+    record: SharingRecord,
+    confidential: boolean
+  ) => {
+    setBusyId(record.id);
+    setError("");
+    setNotice("");
+    try {
+      const result = await crmFetch<{
+        companyId: string;
+        confidential: boolean;
+        shared: boolean;
+        opportunitiesUpdated: number;
+      }>("/api/crm/team/sharing", {
+        method: "PATCH",
+        body: JSON.stringify({
+          companyId: record.id,
+          confidential,
+        }),
+      });
+      if (
+        result.companyId !== record.id ||
+        result.confidential !== confidential ||
+        (confidential && result.shared)
+      ) {
+        throw new Error("The database did not confirm the privacy lock");
+      }
+      if (confidential) {
+        setNotice(
+          `${record.name} is confidential and owner only. Any team access was removed.`
+        );
+      } else {
+        setNotice(
+          `${record.name} is unlocked but still private until you deliberately share it.`
+        );
+      }
+      await load();
+    } catch (saveError: any) {
+      setError(saveError?.message || "That privacy change did not save");
+      await load();
     } finally {
       setBusyId("");
     }
@@ -485,7 +535,7 @@ export default function TeamSharingPage() {
                     className="min-h-11 rounded-xl border border-edge bg-ink/60 px-4 text-sm outline-none focus:border-amber/60"
                   />
                   <div className="flex rounded-xl border border-edge bg-ink/60 p-1">
-                    {(["all", "shared", "private"] as const).map((value) => (
+                    {(["all", "shared", "private", "confidential"] as const).map((value) => (
                       <button
                         key={value}
                         type="button"
@@ -500,9 +550,14 @@ export default function TeamSharingPage() {
 
                 <div className="mt-4 space-y-2">
                   {shownClients.map((record) => (
-                    <article key={record.id} className="flex flex-col gap-3 rounded-xl border border-edge bg-ink/35 p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <article key={record.id} className={`flex flex-col gap-3 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between ${record.confidential ? "border-rust/45 bg-rust/[0.07]" : "border-edge bg-ink/35"}`}>
                       <div className="min-w-0">
-                        <Link href={`/crm/${record.id}`} className="font-semibold hover:text-amber">{record.name}</Link>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link href={`/crm/${record.id}`} className="font-semibold hover:text-amber">{record.name}</Link>
+                          {record.confidential ? (
+                            <span className="rounded-full border border-rust/50 bg-rust/10 px-2 py-0.5 font-mono text-[0.47rem] uppercase text-rust">Confidential</span>
+                          ) : null}
+                        </div>
                         <p className="mt-1 text-xs text-muted">
                           {[record.stage || "Stage not set", record.sector, record.openOpportunityCount ? `${record.openOpportunityCount} open opportunity` : null].filter(Boolean).join(" · ")}
                         </p>
@@ -514,11 +569,11 @@ export default function TeamSharingPage() {
                           <p className="mt-1 text-xs text-muted">Owner only</p>
                         )}
                       </div>
-                      <div className="grid shrink-0 gap-2 sm:min-w-[290px] sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <div className="grid shrink-0 gap-2 sm:min-w-[390px] sm:grid-cols-[minmax(0,1fr)_auto_auto]">
                         <select
                           aria-label={`Responsible salesperson for ${record.name}`}
                           value={assignmentDrafts[record.id] || ""}
-                          disabled={busyId === record.id || !!record.blockedReason}
+                          disabled={busyId === record.id || !!record.blockedReason || record.confidential}
                           onChange={(event) => {
                             const nextAssignee = event.target.value;
                             setAssignmentDrafts((current) => ({ ...current, [record.id]: nextAssignee }));
@@ -538,6 +593,18 @@ export default function TeamSharingPage() {
                           className={`min-h-10 rounded-full border px-4 font-mono text-[0.58rem] uppercase disabled:cursor-not-allowed disabled:opacity-35 ${record.shared ? "border-rust/45 bg-rust/10 text-rust" : "border-amber/50 bg-amber/10 text-amber"}`}
                         >
                           {busyId === record.id ? "Saving…" : record.shared ? "Make private" : "Share"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busyId === record.id}
+                          onClick={() => changeConfidentiality(record, !record.confidential)}
+                          className={`min-h-10 rounded-full border px-4 font-mono text-[0.58rem] uppercase disabled:cursor-not-allowed disabled:opacity-35 ${record.confidential ? "border-rust/60 bg-rust text-ink" : "border-edge bg-ink/60 text-muted hover:border-rust/45 hover:text-rust"}`}
+                        >
+                          {busyId === record.id
+                            ? "Saving…"
+                            : record.confidential
+                              ? "Unlock"
+                              : "Lock private"}
                         </button>
                       </div>
                     </article>

@@ -54,7 +54,7 @@ export async function GET() {
       await Promise.all([
         supabaseService
           .from("companies")
-          .select("id,name,sector,stage,profile,updated_at")
+          .select("id,name,sector,stage,profile,is_confidential,updated_at")
           .eq("workspace_id", scope.workspaceId)
           .eq("owner_id", scope.userId)
           .order("updated_at", { ascending: false })
@@ -199,6 +199,7 @@ export async function GET() {
         sector: company.sector || null,
         stage: company.stage || null,
         updatedAt: company.updated_at,
+        confidential: company.is_confidential === true,
         shared: grantByCompany.get(company.id)?.status === "active",
         assignedToUserId:
           grantByCompany.get(company.id)?.assigned_to_user_id || null,
@@ -242,6 +243,7 @@ export async function GET() {
         summary: {
           total: records.length,
           shared: records.filter((record: any) => record.shared).length,
+          confidential: records.filter((record: any) => record.confidential).length,
           protected: records.filter((record: any) => record.blockedReason).length,
           outreachTotal: activeProspects.length,
           outreachAssignable: activeProspects.filter(
@@ -270,25 +272,37 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
     const companyId =
       typeof body.companyId === "string" ? body.companyId.trim() : "";
+    const hasConfidentialityChange = Object.prototype.hasOwnProperty.call(
+      body,
+      "confidential"
+    );
+    const confidentialityChange =
+      typeof body.confidential === "boolean" ? body.confidential : null;
     const shared = body.shared === true;
     const assignedToUserId =
       typeof body.assignedToUserId === "string"
         ? body.assignedToUserId.trim()
         : "";
-    if (!companyId) {
+    if (!UUID.test(companyId)) {
       return NextResponse.json(
         { error: "Choose a client record" },
         { status: 400 }
       );
     }
-    if (shared && !UUID.test(assignedToUserId)) {
+    if (hasConfidentialityChange && confidentialityChange === null) {
+      return NextResponse.json(
+        { error: "Choose whether this client is confidential" },
+        { status: 400 }
+      );
+    }
+    if (confidentialityChange === null && shared && !UUID.test(assignedToUserId)) {
       return NextResponse.json(
         { error: "Choose the salesperson responsible for this client" },
         { status: 400 }
       );
     }
 
-    if (shared) {
+    if (confidentialityChange === null && shared) {
       const { data: assignee, error: assigneeError } = await supabaseService
         .from("workspace_members")
         .select("user_id")
@@ -307,7 +321,7 @@ export async function PATCH(req: NextRequest) {
 
     const { data: company, error: companyError } = await supabaseAdmin
       .from("companies")
-      .select("id,name,stage,sector,profile,workspace_id,owner_id")
+      .select("id,name,stage,sector,profile,is_confidential,workspace_id,owner_id")
       .eq("id", companyId)
       .eq("workspace_id", scope.workspaceId)
       .eq("owner_id", scope.userId)
@@ -319,6 +333,38 @@ export async function PATCH(req: NextRequest) {
         { status: 404 }
       );
     }
+
+    if (confidentialityChange !== null) {
+      const { data: saved, error: saveError } = await supabaseService.rpc(
+        "set_company_confidentiality_service",
+        {
+          p_actor_user_id: scope.userId,
+          p_company_id: companyId,
+          p_confidential: confidentialityChange,
+        }
+      );
+      if (saveError) throw saveError;
+      if (
+        !saved ||
+        saved.companyId !== companyId ||
+        saved.confidential !== confidentialityChange ||
+        (confidentialityChange && saved.shared !== false)
+      ) {
+        throw new Error("The database did not confirm the privacy lock");
+      }
+
+      return NextResponse.json(
+        {
+          companyId,
+          confidential: saved.confidential === true,
+          shared: saved.shared === true,
+          opportunitiesUpdated: saved.opportunitiesUpdated || 0,
+          updatedAt: saved.updatedAt,
+        },
+        { headers: { "Cache-Control": "private, no-store" } }
+      );
+    }
+
     const blockedReason = sharedClientBlockReason(company);
     if (shared && blockedReason) {
       return NextResponse.json({ error: blockedReason }, { status: 409 });
