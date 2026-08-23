@@ -7,19 +7,26 @@ export type BrainOutreachAssignment = {
   assigned_to_user_id?: string | null;
 };
 
+export type BrainClientShare = {
+  company_id: string;
+  status?: string | null;
+  assigned_to_user_id?: string | null;
+};
+
 export type BrainOutreachPartition<T> = {
   actionable: T[];
   claimable: T[];
   assignedToOthers: T[];
 };
 
-// Team outreach rows remain visible in the shared CRM, but a salesperson's
-// Brain must never turn another teammate's assignment into personal advice.
+// Team rows can remain visible in intentionally shared CRM screens. Only the
+// workspace owner receives the full Brain view. Every other role is limited to
+// their own assignments, even when they explicitly ask for somebody else's.
 export function partitionBrainOutreach<T extends BrainOutreachAssignment>(
   rows: T[],
   scope: BrainSalesViewerScope
 ): BrainOutreachPartition<T> {
-  if (!scope || scope.role !== "sales") {
+  if (!scope || scope.role === "owner") {
     return {
       actionable: rows,
       claimable: [],
@@ -43,11 +50,28 @@ export function partitionBrainOutreach<T extends BrainOutreachAssignment>(
 export function personalOutreachSenderId(
   scope: BrainSalesViewerScope
 ): string | null {
-  return scope?.role === "sales" ? scope.userId : null;
+  return scope && scope.role !== "owner" ? scope.userId : null;
 }
 
-export function isSalesBrainScope(
+export function isLimitedBrainScope(
   scope: BrainSalesViewerScope
 ): boolean {
-  return scope?.role === "sales";
+  return !!scope && scope.role !== "owner";
+}
+
+export function brainSharedClientIds(
+  shares: BrainClientShare[],
+  scope: BrainSalesViewerScope
+): string[] {
+  if (!scope) return [];
+  const ids = shares
+    .filter(
+      (share) =>
+        share.status === "active" &&
+        (scope.role === "owner" ||
+          share.assigned_to_user_id === scope.userId)
+    )
+    .map((share) => share.company_id)
+    .filter(Boolean);
+  return [...new Set(ids)];
 }
