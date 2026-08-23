@@ -107,6 +107,44 @@ assert.match(inboxPage, /item\.kind === "prep"/);
 assert.match(navMenu, /viewerRole !== "owner"/);
 assert.match(navMenu, /href: "\/crm\/inbox", label: "Today"/);
 assert.doesNotMatch(navMenu, /router\.back\(\)/);
+const navOutreachIndex = navMenu.indexOf('{ href: "/crm/outreach"');
+const navPipelineIndex = navMenu.indexOf('{ href: "/crm/revenue"');
+const navClientsIndex = navMenu.indexOf('{ href: "/crm/board?tab=clients"');
+const navCallsIndex = navMenu.indexOf('{ href: "/crm/calls"');
+const navPitchIndex = navMenu.indexOf('{ href: "/crm/pitch-playbook"');
+const navCostsIndex = navMenu.indexOf('{ href: "/crm/costs"');
+const navDocumentsIndex = navMenu.indexOf('{ href: "/crm/documents"');
+assert.ok(
+  [
+    navOutreachIndex,
+    navPipelineIndex,
+    navClientsIndex,
+    navCallsIndex,
+    navPitchIndex,
+    navCostsIndex,
+    navDocumentsIndex,
+  ].every((index) => index >= 0)
+);
+assert.deepEqual(
+  [
+    navOutreachIndex,
+    navPipelineIndex,
+    navClientsIndex,
+    navCallsIndex,
+    navPitchIndex,
+    navCostsIndex,
+    navDocumentsIndex,
+  ].slice().sort((a, b) => a - b),
+  [
+    navOutreachIndex,
+    navPipelineIndex,
+    navClientsIndex,
+    navCallsIndex,
+    navPitchIndex,
+    navCostsIndex,
+    navDocumentsIndex,
+  ]
+);
 
 assert.match(dashboardApi, /requestScope\.role !== "owner"/);
 assert.match(middleware, /path === "\/crm" && membership\.role !== "owner"/);

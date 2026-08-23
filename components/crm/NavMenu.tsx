@@ -16,13 +16,13 @@ type TeamStatus = { role?: ViewerRole };
 
 const TEAM_STATUS_URL = "/api/auth/team/status";
 const SHARED_CORE_ITEMS: Item[] = [
-  { href: "/crm/documents", label: "Documents", icon: "▤" },
   { href: "/crm/outreach", label: "Outreach", icon: "↗" },
   { href: "/crm/revenue", label: "Pipeline", icon: "◆" },
-  { href: "/crm/costs", label: "Costs", icon: "£" },
   { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
   { href: "/crm/calls", label: "Calls", icon: "☎" },
   { href: "/crm/pitch-playbook", label: "Pitch playbook", icon: "◇" },
+  { href: "/crm/costs", label: "Costs", icon: "£" },
+  { href: "/crm/documents", label: "Documents", icon: "▤" },
 ];
 const MORE_ITEMS: Item[] = [
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
