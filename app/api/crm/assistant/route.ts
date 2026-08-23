@@ -35,6 +35,7 @@ import {
 } from "@/lib/brain-action-signatures";
 import { documentBrainContext } from "@/lib/document-context";
 import { getSalesProfileContextBlock } from "@/lib/sales-profile";
+import { getRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -1188,9 +1189,14 @@ export async function POST(req: NextRequest) {
         content: String(m.content).slice(-1400),
       }));
 
+    const requestScope = getRequestScope();
+    const salesBoundary =
+      requestScope?.role === "sales"
+        ? `You are assisting one salesperson inside a shared CRM. Team-visible data may appear in the context, but personal advice must use only records explicitly assigned or safely shared with this salesperson. Never turn workspace totals, another teammate's prospects, sent counts, approvals, replies, calendar, calls, tasks or private records into this salesperson's work. Treat unassigned outreach prospects only as available to claim, not as assigned work. If there is no assigned work, say so plainly and direct the salesperson to claim available work or ask the owner for an assignment. Label any permitted workspace-wide number as a workspace total.`
+        : `You are assisting a workspace ${requestScope?.role || "owner"}. Workspace-wide pipeline and outreach totals may be used when the context provides them.`;
     const scope = isGlobal
-      ? `You are the user's overall CRM assistant. You know ALL their clients and their whole pipeline (below). They might ask about one client ("what do I do next with Alaine"), or across everyone ("what's my to-do list", "which deal is closest to closing"). When they name a client, match it to the closest one in the context even if the spelling is slightly off, and answer about them. When the question is across the board, pull from everyone.`
-      : `You are the user's strategic co-founder and CRM assistant. They are currently on ONE client's page, so by default answer about that client (the FOCUSED CLIENT below) and help move that relationship forward. But you are NOT limited to them - the user may bring up another client, a fresh idea, their week, or anything at all, and you should help with whatever they raise, drawing on the wider pipeline below. Whatever the topic, help them plan, prep and take action.`;
+      ? `${salesBoundary}\n\nYou are the user's overall CRM assistant. You know the clients and pipeline this verified account is permitted to access below. They might ask about one client ("what do I do next with Alaine"), or across their permitted work ("what's my to-do list", "which deal is closest to closing"). When they name a client, match it to the closest permitted one in the context even if the spelling is slightly off. Never imply that inaccessible or unassigned records belong to them.`
+      : `${salesBoundary}\n\nYou are the user's strategic co-founder and CRM assistant. They are currently on ONE client's page, so by default answer about that client (the FOCUSED CLIENT below) and help move that relationship forward. But you are NOT limited to them - the user may bring up another client, a fresh idea, their week, or anything at all, and you should help with whatever they raise, drawing on the wider pipeline below. Whatever the topic, help them plan, prep and take action.`;
     const qBlock = brainQuestions
       ? `\n\nTHINGS YOU ARE TRYING TO LEARN (open questions about the user's business that would make you sharper). When it fits naturally, when the user asks what you need, or when you are brainstorming, raise one or two of these - never the whole list and never force them. When the user answers, weave it into your reply and treat it as fact from then on:\n${brainQuestions}`
       : "";
