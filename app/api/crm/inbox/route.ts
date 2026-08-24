@@ -3,11 +3,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { londonDayBounds } from "@/lib/outreach";
 import { buildWorkCleanup } from "@/lib/work-cleanup";
 import {
-  buildOpportunityInboxItem,
+  buildWorkPipeline,
   type WorkInboxItem,
   type WorkInboxResponse,
 } from "@/lib/work-inbox";
 import { requireRequestScope } from "@/lib/request-scope";
+import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 import {
   loadSafeSharedCompanies,
   listVisibleClientGrants,
@@ -62,7 +63,7 @@ export async function GET() {
       tasksResult,
       upcomingResult,
       ownedCompaniesResult,
-      opportunitiesResult,
+      opportunities,
       followUpsResult,
       outreachMessagesResult,
       outreachProspectsResult,
@@ -93,14 +94,20 @@ export async function GET() {
         .eq("workspace_id", account.workspaceId)
         .eq("owner_id", account.userId)
         .limit(1500),
-      supabaseAdmin
-        .from("opportunities")
-        .select("id,company_id,title,value,pipeline_stage,win_outlook,next_action,next_action_due_at,next_action_owner,updated_at")
-        .eq("workspace_id", account.workspaceId)
-        .eq("assigned_to_user_id", account.userId)
-        .eq("status", "open")
-        .eq("opportunity_type", "revenue")
-        .limit(1000),
+      loadVisibleOpportunities<any>(account, {
+        select:
+          "id,company_id,title,value,pipeline_stage,win_outlook,next_action,next_action_due_at,next_action_owner,updated_at,workspace_id,owner_id,visibility,opportunity_type,assigned_to_user_id",
+        status: "open",
+        opportunityType: "revenue",
+        orderBy: "updated_at",
+        ascending: false,
+        limit: 1000,
+      }).then((rows) =>
+        rows.filter(
+          (opportunity) =>
+            opportunity.assigned_to_user_id === account.userId
+        )
+      ),
       supabaseAdmin
         .from("follow_ups")
         .select("id,company_id,draft_subject,draft_body,status,created_at")
@@ -137,7 +144,6 @@ export async function GET() {
       tasksResult.error,
       upcomingResult.error,
       ownedCompaniesResult.error,
-      opportunitiesResult.error,
       followUpsResult.error,
       outreachMessagesResult.error,
       outreachProspectsResult.error,
@@ -152,8 +158,14 @@ export async function GET() {
           grant.assigned_to_user_id === account.userId
       )
       .map((grant) => grant.company_id);
+    const assignedOpportunityCompanyIds = opportunities
+      .map((opportunity: any) => opportunity.company_id)
+      .filter(Boolean);
     const sharedCompanies = await loadSafeSharedCompanies(
-      assignedSharedClientIds,
+      [...new Set([
+        ...assignedSharedClientIds,
+        ...assignedOpportunityCompanyIds,
+      ])],
       account.workspaceId
     );
     const ownedCompanyIds = new Set(
@@ -167,29 +179,25 @@ export async function GET() {
       companies.map((company: any) => [company.id, text(company.name, 160)])
     );
     const revenueCompanies = new Set(
-      (opportunitiesResult.data || [])
+      opportunities
         .map((opportunity: any) => opportunity.company_id)
         .filter(Boolean)
     );
     const items: WorkInboxItem[] = [];
     const canonicalOpportunityActions = new Set(
-      (opportunitiesResult.data || [])
+      opportunities
         .map((opportunity: any) =>
           actionKey(opportunity.company_id, opportunity.next_action)
         )
         .filter(Boolean)
     );
-
-    for (const opportunity of opportunitiesResult.data || []) {
-      items.push(
-        buildOpportunityInboxItem({
-          opportunity,
-          company: companyName.get(opportunity.company_id) || "Shared sales client",
-          nowMs,
-          endTodayMs,
-        })
-      );
-    }
+    const pipelineBuild = buildWorkPipeline({
+      opportunities,
+      companyName,
+      nowMs,
+      endTodayMs,
+    });
+    items.push(...pipelineBuild.items);
 
     for (const task of tasksResult.data || []) {
       const done = task.status === "done";
@@ -477,6 +485,7 @@ export async function GET() {
         role: account.role,
       },
       items,
+      pipeline: pipelineBuild.summary,
       cleanup,
       counts,
     };
