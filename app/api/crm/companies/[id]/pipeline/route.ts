@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
+import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -16,21 +17,25 @@ export async function GET(
 ) {
   try {
     const scope = requireRequestScope();
-    const [{ data: opportunities }, { data: followUps }] = await Promise.all([
-      supabaseAdmin
-        .from("opportunities")
-        .select("*")
-        .eq("company_id", params.id)
-        .order("created_at", { ascending: false })
-        .limit(50),
-      supabaseAdmin
+    let followUpsQuery: any = supabaseAdmin
         .from("follow_ups")
         .select("*")
-        .eq("owner_id", scope.userId)
+        .eq("workspace_id", scope.workspaceId)
         .eq("company_id", params.id)
         .order("created_at", { ascending: false })
-        .limit(20),
+        .limit(20);
+    if (scope.role !== "owner")
+      followUpsQuery = followUpsQuery.eq("owner_id", scope.userId);
+    const [visibleOpportunities, { data: followUps }] = await Promise.all([
+      loadVisibleOpportunities(scope, {
+        orderBy: "created_at",
+        ascending: false,
+        companyId: params.id,
+        limit: 100,
+      }),
+      followUpsQuery,
     ]);
+    const opportunities = visibleOpportunities.slice(0, 50);
     return NextResponse.json({
       opportunities: opportunities || [],
       followUps: followUps || [],

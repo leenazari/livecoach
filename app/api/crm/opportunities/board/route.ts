@@ -6,7 +6,9 @@ import { coachSystemBlock } from "@/lib/brain-coach";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
-import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
+import { privateRecordFields } from "@/lib/record-scope";
+import { requireRequestScope } from "@/lib/request-scope";
+import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 import {
   activeSharedClientIds,
   loadSafeSharedCompanies,
@@ -90,23 +92,27 @@ function heuristicNextAction(o: Opp): string {
 export async function GET(req: Request) {
   const light = new URL(req.url).searchParams.get("light") === "1";
   try {
-    const accountScope = await resolveRecordScope();
+    const accountScope = requireRequestScope();
     const nowMs = Date.now();
     const graceIso = new Date(nowMs - 3 * 60 * 60 * 1000).toISOString();
+
+    let companyQuery = supabaseAdmin
+      .from("companies")
+      .select("id, name, stage, profile")
+      .eq("workspace_id", accountScope.workspaceId);
+    if (accountScope.role !== "owner")
+      companyQuery = companyQuery.eq("owner_id", accountScope.userId);
 
     const [
       { data: ownedCompanies },
       { data: openTasks },
       { data: ucals },
-      { data: opps },
+      opps,
       { data: prio },
       { data: recentCalls },
       sharedClientIds,
     ] = await Promise.all([
-      supabaseAdmin
-        .from("companies")
-        .select("id, name, stage, profile")
-        .eq("owner_id", accountScope.userId),
+      companyQuery,
       supabaseAdmin
         .from("tasks")
         .select("company_id, text, due_at, kind")
@@ -122,11 +128,13 @@ export async function GET(req: Request) {
         .eq("prepped", false)
         .gte("scheduled_at", graceIso)
         .limit(300),
-      supabaseAdmin
-        .from("opportunities")
-        .select("id, company_id, value, title, close_plan")
-        .eq("status", "open")
-        .limit(300),
+      loadVisibleOpportunities(accountScope, {
+        select:
+          "id,company_id,value,title,close_plan,workspace_id,owner_id,visibility,opportunity_type,assigned_to_user_id",
+        status: "open",
+        opportunityType: "revenue",
+        limit: 300,
+      }),
       supabaseAdmin
         .from("company_priority")
         .select("company_id, position")
@@ -138,7 +146,10 @@ export async function GET(req: Request) {
         .not("company_id", "is", null)
         .order("created_at", { ascending: false })
         .limit(1000),
-      activeSharedClientIds(accountScope.workspaceId),
+      activeSharedClientIds(
+        accountScope.workspaceId,
+        accountScope.role === "owner" ? undefined : accountScope.userId
+      ),
     ]);
 
     const ownedCompanyIds = new Set(
@@ -396,7 +407,7 @@ export async function GET(req: Request) {
                 max_tokens: 1100,
                 system: `${biz}${coachSystemBlock()}
 
-You are ranking Lee's open OPPORTUNITIES (one per client) by what most moves him toward the goal. Weigh: the recorded relationship stage, how close the deal is to a decision, an imminent next call, the work that unlocks it, promises Lee is waiting for, how long the relationship has been quiet, and the size of the prize. Never infer a missing stage. A valuable cooling deal may need a specific re-engagement; an old weak opportunity may need closing so it stops creating noise. For each opportunity choose ONE concrete NEXT BEST ACTION Lee should take now. It must be specific and executable, such as send the proposal, confirm the decision-maker, chase promised questions, book the decision meeting, prepare a named call, ask a specific re-engagement question, or close an inactive opportunity. Do not say vague things like "follow up" or "move this forward". Do not invent facts. Order by impact, not recency. For unknown value, estimate rough potential GBP from context. Output ONLY:
+You are ranking the signed-in salesperson's open OPPORTUNITIES (one per client) by what most moves them toward the goal. Weigh: the recorded relationship stage, how close the deal is to a decision, an imminent next call, the work that unlocks it, promises they are waiting for, how long the relationship has been quiet, and the size of the prize. Never infer a missing stage. A valuable cooling deal may need a specific re-engagement; an old weak opportunity may need closing so it stops creating noise. For each opportunity choose ONE concrete NEXT BEST ACTION they should take now. It must be specific and executable, such as send the proposal, confirm the decision-maker, chase promised questions, book the decision meeting, prepare a named call, ask a specific re-engagement question, or close an inactive opportunity. Do not say vague things like "follow up" or "move this forward". Do not invent facts. Order by impact, not recency. For unknown value, estimate rough potential GBP from context. Output ONLY:
 [{"i": index, "action": max 14 word imperative next action, "reason": max 10 word outcome-led reason, "value": GBP number or null}]
 Include every index exactly once. Be honest and specific, never flattering.`,
                 messages: [{ role: "user", content: summary }],

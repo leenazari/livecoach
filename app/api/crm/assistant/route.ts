@@ -36,6 +36,7 @@ import {
 import { documentBrainContext } from "@/lib/document-context";
 import { getSalesProfileContextBlock } from "@/lib/sales-profile";
 import { getRequestScope } from "@/lib/request-scope";
+import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -194,19 +195,24 @@ async function findOpportunities(title: string, client: string): Promise<any[]> 
   const company = client ? await findCompany(client) : null;
   const term = likeTerm(title);
   const requestScope = getRequestScope();
-  let q = supabaseAdmin
-    .from("opportunities")
-    .select("id, title, company_id, status, pipeline_stage, assigned_to_user_id")
-    .order("updated_at", { ascending: false })
-    .limit(4);
-  if (requestScope && requestScope.role !== "owner") {
-    q = q.eq("assigned_to_user_id", requestScope.userId);
-  }
-  if (company) q = q.eq("company_id", company.id);
-  if (term) q = q.ilike("title", `%${term}%`);
-  if (!company && !term) return [];
-  const { data } = await q;
-  return (data || []).map((row: any) => ({ ...row, companyName: company?.name || "client" }));
+  if (!requestScope || (!company && !term)) return [];
+  const rows = await loadVisibleOpportunities<any>(requestScope, {
+    select:
+      "id,title,company_id,status,pipeline_stage,assigned_to_user_id,workspace_id,owner_id,visibility,opportunity_type,updated_at",
+    companyId: company?.id,
+    orderBy: "updated_at",
+    ascending: false,
+    limit: 100,
+  });
+  return rows
+    .filter((row: any) =>
+      !term || String(row.title || "").toLowerCase().includes(term.toLowerCase())
+    )
+    .slice(0, 4)
+    .map((row: any) => ({
+      ...row,
+      companyName: company?.name || "client",
+    }));
 }
 
 function opportunityPatch(item: any): Record<string, any> {

@@ -7,6 +7,7 @@ import {
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { requireRequestScope } from "@/lib/request-scope";
 import { loadSafeSharedCompanies } from "@/lib/team-client-sharing";
+import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,72 +41,85 @@ export async function GET() {
     const scope = requireRequestScope();
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
+    const accountRecords = (query: any) => {
+      const inWorkspace = query.eq("workspace_id", scope.workspaceId);
+      return scope.role === "owner"
+        ? inWorkspace
+        : inWorkspace.eq("owner_id", scope.userId);
+    };
+    let clientSharesQuery: any = supabaseAdmin
+      .from("team_client_shares")
+      .select("company_id,status,assigned_to_user_id")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("status", "active")
+      .limit(1500);
+    if (scope.role !== "owner")
+      clientSharesQuery = clientSharesQuery.eq(
+        "assigned_to_user_id",
+        scope.userId
+      );
     const [
       { data: ownedCompanies, error: companiesError },
       { data: contacts, error: contactsError },
-      { data: opportunities, error: opportunitiesError },
+      opportunities,
       { data: tasks, error: tasksError },
       { data: calls, error: callsError },
       { data: upcoming, error: upcomingError },
       { data: clientShares, error: clientSharesError },
       { data: members, error: membersError },
     ] = await Promise.all([
-      supabaseAdmin
+      accountRecords(
+        supabaseAdmin
         .from("companies")
         .select("id,name,domain,website,sector,stage,profile,attributes,commercial_memory,created_at,updated_at")
-        .eq("workspace_id", scope.workspaceId)
-        .eq("owner_id", scope.userId)
+      )
         .order("updated_at", { ascending: false })
         .limit(1000),
-      supabaseAdmin
+      accountRecords(
+        supabaseAdmin
         .from("contacts")
         .select("id,company_id,name,role,email,attributes,created_at")
-        .eq("workspace_id", scope.workspaceId)
-        .eq("owner_id", scope.userId)
+      )
         .not("company_id", "is", null)
         .order("created_at", { ascending: true })
         .limit(3000),
-      supabaseAdmin
-        .from("opportunities")
-        .select("id,company_id,title,value,status,opportunity_type,pipeline_stage,probability,next_action,next_action_due_at,assigned_to_user_id,updated_at")
-        .eq("workspace_id", scope.workspaceId)
-        .eq("status", "open")
-        .eq("opportunity_type", "revenue")
-        .order("updated_at", { ascending: false })
-        .limit(1000),
-      supabaseAdmin
+      loadVisibleOpportunities(scope, {
+        select:
+          "id,company_id,title,value,status,opportunity_type,pipeline_stage,probability,next_action,next_action_due_at,assigned_to_user_id,updated_at,workspace_id,owner_id,visibility",
+        status: "open",
+        opportunityType: "revenue",
+        orderBy: "updated_at",
+        ascending: false,
+        limit: 1000,
+      }),
+      accountRecords(
+        supabaseAdmin
         .from("tasks")
         .select("id,company_id,text,kind,due_at,created_at")
-        .eq("workspace_id", scope.workspaceId)
-        .eq("owner_id", scope.userId)
+      )
         .eq("status", "open")
         .not("company_id", "is", null)
         .order("due_at", { ascending: true, nullsFirst: false })
         .limit(3000),
-      supabaseAdmin
+      accountRecords(
+        supabaseAdmin
         .from("interview_summaries")
         .select("company_id,created_at")
-        .eq("workspace_id", scope.workspaceId)
-        .eq("owner_id", scope.userId)
+      )
         .not("company_id", "is", null)
         .order("created_at", { ascending: false })
         .limit(3000),
-      supabaseAdmin
+      accountRecords(
+        supabaseAdmin
         .from("upcoming_calls")
         .select("company_id,title,scheduled_at")
-        .eq("workspace_id", scope.workspaceId)
-        .eq("owner_id", scope.userId)
+      )
         .not("company_id", "is", null)
         .is("completed_at", null)
         .gte("scheduled_at", nowIso)
         .order("scheduled_at", { ascending: true })
         .limit(1000),
-      supabaseAdmin
-        .from("team_client_shares")
-        .select("company_id,status,assigned_to_user_id")
-        .eq("workspace_id", scope.workspaceId)
-        .eq("status", "active")
-        .limit(1500),
+      clientSharesQuery,
       supabaseService
         .from("workspace_members")
         .select("user_id,role")
@@ -117,7 +131,6 @@ export async function GET() {
     const firstError = [
       companiesError,
       contactsError,
-      opportunitiesError,
       tasksError,
       callsError,
       upcomingError,
@@ -127,9 +140,15 @@ export async function GET() {
     if (firstError) throw firstError;
 
     const sharedIds = (clientShares || []).map((share: any) => share.company_id);
+    const assignedOpportunityCompanyIds = (opportunities || [])
+      .filter((opportunity: any) => opportunity.owner_id !== scope.userId)
+      .map((opportunity: any) => opportunity.company_id)
+      .filter(Boolean);
     const ownedIds = new Set((ownedCompanies || []).map((company: any) => company.id));
     const safeSharedCompanies = await loadSafeSharedCompanies(
-      sharedIds.filter((id: string) => !ownedIds.has(id)),
+      [...new Set([...sharedIds, ...assignedOpportunityCompanyIds])].filter(
+        (id: string) => !ownedIds.has(id)
+      ),
       scope.workspaceId
     );
     const companies = [...(ownedCompanies || []), ...safeSharedCompanies];

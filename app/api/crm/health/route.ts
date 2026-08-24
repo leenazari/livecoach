@@ -19,6 +19,7 @@ import { gmailAccessDiagnostic } from "@/lib/gmail";
 import { connectedMailProvider } from "@/lib/mail";
 import { microsoftAccessStatus } from "@/lib/microsoft";
 import { getAppConfigValue } from "@/lib/app-config";
+import { requireWorkspaceOwner } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -138,6 +139,7 @@ async function connectedAccountHealth() {
 // parallel. No transcript, email body, profile or research payload is loaded.
 export async function GET() {
   try {
+    const scope = requireWorkspaceOwner();
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
     const thirtyDaysAgo = new Date(now - 30 * DAY).toISOString();
@@ -159,26 +161,31 @@ export async function GET() {
       supabaseAdmin
         .from("companies")
         .select("id,name,domain,website,stage,commercial_memory,updated_at")
+        .eq("workspace_id", scope.workspaceId)
         .limit(1500),
       supabaseAdmin
         .from("contacts")
         .select("id,company_id,email")
+        .eq("workspace_id", scope.workspaceId)
         .limit(4000),
       supabaseAdmin
         .from("tasks")
         .select("id,company_id,text,kind,due_at,status,created_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("status", "open")
         .order("created_at", { ascending: false })
         .limit(3000),
       supabaseAdmin
         .from("opportunities")
         .select("id,company_id,title,status,opportunity_type,pipeline_stage,next_action,next_action_due_at,next_action_owner,updated_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("status", "open")
         .eq("opportunity_type", "revenue")
         .limit(1200),
       supabaseAdmin
         .from("upcoming_calls")
         .select("id,company_id,title,scheduled_at,attendees,source,completed_at")
+        .eq("workspace_id", scope.workspaceId)
         .is("completed_at", null)
         .gte("scheduled_at", nowIso)
         .lte("scheduled_at", thirtyDaysAhead)
@@ -186,18 +193,21 @@ export async function GET() {
       supabaseAdmin
         .from("interview_summaries")
         .select("id,company_id,created_at")
+        .eq("workspace_id", scope.workspaceId)
         .gte("created_at", thirtyDaysAgo)
         .order("created_at", { ascending: false })
         .limit(1000),
       supabaseAdmin
         .from("follow_ups")
         .select("id,company_id,draft_subject,status,created_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("status", "draft")
         .order("created_at", { ascending: false })
         .limit(1000),
       supabaseAdmin
         .from("usage_log")
         .select("kind,cost_gbp,created_at")
+        .eq("workspace_id", scope.workspaceId)
         .gte("created_at", eightDaysAgo)
         .order("created_at", { ascending: false })
         .limit(5000),

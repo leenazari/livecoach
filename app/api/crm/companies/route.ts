@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
     let query = supabaseAdmin
       .from("companies")
       .select("*")
+      .eq("workspace_id", scope.workspaceId)
       .eq("owner_id", scope.userId)
       .order("updated_at", { ascending: false })
       .limit(500);
@@ -48,7 +49,10 @@ export async function GET(req: NextRequest) {
 
     const [{ data, error }, sharedIds] = await Promise.all([
       query,
-      activeSharedClientIds(scope.workspaceId),
+      activeSharedClientIds(
+        scope.workspaceId,
+        scope.role === "owner" ? undefined : scope.userId
+      ),
     ]);
     if (error) throw error;
     const ownedIds = new Set((data || []).map((company: any) => company.id));
@@ -97,7 +101,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ company: existing, existing: true });
     }
 
-    const sharedIds = await activeSharedClientIds(scope.workspaceId);
+    const sharedIds = await activeSharedClientIds(
+      scope.workspaceId,
+      scope.role === "owner" ? undefined : scope.userId
+    );
     const sharedCompanies = await loadSafeSharedCompanies(
       sharedIds,
       scope.workspaceId

@@ -69,11 +69,16 @@ export async function listVisibleClientGrants(
 }
 
 export async function activeSharedClientIds(
-  workspaceId: string
+  workspaceId: string,
+  assignedToUserId?: string
 ): Promise<string[]> {
   const grants = await listVisibleClientGrants(workspaceId);
   return grants
-    .filter((grant) => grant.status === "active")
+    .filter(
+      (grant) =>
+        grant.status === "active" &&
+        (!assignedToUserId || grant.assigned_to_user_id === assignedToUserId)
+    )
     .map((grant) => grant.company_id);
 }
 

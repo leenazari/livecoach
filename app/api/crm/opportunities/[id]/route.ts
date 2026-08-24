@@ -11,6 +11,7 @@ import {
 } from "@/lib/opportunity-fields";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
+import { loadVisibleOpportunityById } from "@/lib/opportunity-access";
 
 export const runtime = "nodejs";
 
@@ -57,21 +58,9 @@ export async function PATCH(
   try {
     const account = requireRequestScope();
     const body = await req.json();
-    const { data: current, error: currentError } = await supabaseAdmin
-      .from("opportunities")
-      .select("*")
-      .eq("workspace_id", account.workspaceId)
-      .eq("id", params.id)
-      .maybeSingle();
-    if (currentError) throw currentError;
+    const current = await loadVisibleOpportunityById<any>(account, params.id);
     if (!current)
       return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
-    if (
-      current.owner_id !== account.userId &&
-      current.visibility !== "team"
-    ) {
-      return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
-    }
     if (
       account.role === "sales" &&
       current.assigned_to_user_id &&
@@ -144,6 +133,16 @@ export async function PATCH(
       patch.forecast_category = body.forecastCategory;
     }
     if (typeof body.opportunityType === "string" && OPPORTUNITY_TYPES.includes(body.opportunityType)) {
+      if (
+        body.opportunityType !== "revenue" &&
+        current.owner_id !== account.userId &&
+        account.role !== "owner"
+      ) {
+        return NextResponse.json(
+          { error: "Only the record owner can classify private non-revenue work" },
+          { status: 403 }
+        );
+      }
       patch.opportunity_type = body.opportunityType;
       if (body.opportunityType !== "revenue" && body.forecastCategory == null) {
         patch.forecast_category = "omitted";
@@ -255,6 +254,13 @@ export async function PATCH(
     if (body.closePlan && typeof body.closePlan === "object") {
       patch.close_plan = cleanClosePlan(body.closePlan);
     }
+    const resultingOpportunityType =
+      patch.opportunity_type || current.opportunity_type || "revenue";
+    if (resultingOpportunityType !== "revenue") {
+      patch.visibility = "private";
+      patch.assigned_to_user_id = current.owner_id;
+      patch.forecast_category = "omitted";
+    }
     if (Object.keys(patch).length === 0) {
       return NextResponse.json({ error: "nothing to update" }, { status: 400 });
     }
@@ -326,21 +332,13 @@ export async function DELETE(
 ) {
   try {
     const account = requireRequestScope();
-    const { data: current, error: currentError } = await supabaseAdmin
-      .from("opportunities")
-      .select("id,owner_id,visibility")
-      .eq("workspace_id", account.workspaceId)
-      .eq("id", params.id)
-      .maybeSingle();
-    if (currentError) throw currentError;
+    const current = await loadVisibleOpportunityById<any>(
+      account,
+      params.id,
+      "id,workspace_id,owner_id,visibility,opportunity_type,assigned_to_user_id,company_id"
+    );
     if (!current)
       return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
-    if (
-      current.owner_id !== account.userId &&
-      current.visibility !== "team"
-    ) {
-      return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
-    }
     if (account.role === "sales" && current.owner_id !== account.userId) {
       return NextResponse.json(
         { error: "Shared opportunities should be closed or dismissed, not deleted" },
