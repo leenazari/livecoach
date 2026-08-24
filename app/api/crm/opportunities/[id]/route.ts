@@ -251,6 +251,32 @@ export async function PATCH(
     ) {
       patch.next_action_owner = body.nextActionOwner;
     }
+    const manualStageChange =
+      sourceType === "human" &&
+      patch.pipeline_stage !== undefined &&
+      patch.pipeline_stage !== current.pipeline_stage;
+    const manualNextActionChange =
+      sourceType === "human" &&
+      ((patch.next_action !== undefined &&
+        patch.next_action !== current.next_action) ||
+        (patch.next_action_due_at !== undefined &&
+          patch.next_action_due_at !== current.next_action_due_at) ||
+        (patch.next_action_owner !== undefined &&
+          patch.next_action_owner !== current.next_action_owner));
+    if (manualStageChange) {
+      patch.pipeline_stage_override = true;
+      patch.pipeline_stage_override_at = new Date().toISOString();
+    } else if (body.clearPipelineStageOverride === true) {
+      patch.pipeline_stage_override = false;
+      patch.pipeline_stage_override_at = null;
+    }
+    if (manualNextActionChange) {
+      patch.next_action_override = true;
+      patch.next_action_override_at = new Date().toISOString();
+    } else if (body.clearNextActionOverride === true) {
+      patch.next_action_override = false;
+      patch.next_action_override_at = null;
+    }
     if (body.closePlan && typeof body.closePlan === "object") {
       patch.close_plan = cleanClosePlan(body.closePlan);
     }

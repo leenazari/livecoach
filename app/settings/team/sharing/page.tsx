@@ -65,6 +65,14 @@ const priorityTone = {
   low: "border-edge bg-ink/40 text-muted",
 } as const;
 
+const sourceLabel = (value: string) => {
+  if (/staffing and recruiting/i.test(value)) return "Recruitment master list";
+  if (/13\.08\.26/i.test(value)) return "Workable campaign";
+  if (/interviewa call list wolves brum/i.test(value))
+    return "Wolves and Birmingham call list";
+  return value;
+};
+
 export default function TeamSharingPage() {
   const [data, setData] = useState<SharingData | null>(null);
   const [tab, setTab] = useState<"outreach" | "clients">("outreach");
@@ -73,6 +81,7 @@ export default function TeamSharingPage() {
     "all" | "shared" | "private" | "confidential"
   >("all");
   const [prospectFilter, setProspectFilter] = useState("ready");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [busyId, setBusyId] = useState("");
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [selectedProspects, setSelectedProspects] = useState<string[]>([]);
@@ -118,10 +127,29 @@ export default function TeamSharingPage() {
     });
   }, [clientFilter, data, query]);
 
+  const availableSources = useMemo(() => {
+    const grouped = new Map<string, { total: number; ready: number }>();
+    for (const prospect of data?.prospects || []) {
+      const source = prospect.source || "Source not recorded";
+      const current = grouped.get(source) || { total: 0, ready: 0 };
+      current.total += 1;
+      if (prospect.assignable) current.ready += 1;
+      grouped.set(source, current);
+    }
+    return [...grouped.entries()].sort((left, right) =>
+      sourceLabel(left[0]).localeCompare(sourceLabel(right[0]))
+    );
+  }, [data]);
+
   const shownProspects = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return (data?.prospects || []).filter((prospect) => {
       if (prospectFilter === "ready" && !prospect.assignable) return false;
+      if (
+        sourceFilter !== "all" &&
+        (prospect.source || "Source not recorded") !== sourceFilter
+      )
+        return false;
       if (
         !["all", "ready"].includes(prospectFilter) &&
         prospect.assignedToUserId !== prospectFilter
@@ -140,7 +168,7 @@ export default function TeamSharingPage() {
         .toLowerCase()
         .includes(needle);
     });
-  }, [data, prospectFilter, query]);
+  }, [data, prospectFilter, query, sourceFilter]);
 
   const selectableProspects = useMemo(
     () =>
@@ -424,6 +452,7 @@ export default function TeamSharingPage() {
                   onClick={() => {
                     setTab(value);
                     setQuery("");
+                    setSourceFilter("all");
                   }}
                   className={`min-h-10 flex-1 rounded-lg px-3 font-mono text-[0.54rem] uppercase sm:text-[0.6rem] ${
                     tab === value ? "bg-amber/20 text-amber" : "text-muted"
@@ -436,13 +465,26 @@ export default function TeamSharingPage() {
 
             {tab === "outreach" ? (
               <section className="mt-3 rounded-2xl border border-edge bg-panel/45 p-3 sm:p-4">
-                <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_190px]">
+                <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_220px_190px]">
                   <input
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="Search person, company, email or source"
                     className="min-h-11 rounded-xl border border-edge bg-ink/60 px-4 text-sm outline-none focus:border-amber/60"
                   />
+                  <select
+                    aria-label="Filter outreach by source list"
+                    value={sourceFilter}
+                    onChange={(event) => setSourceFilter(event.target.value)}
+                    className="min-h-11 rounded-xl border border-edge bg-ink/60 px-3 text-sm text-bone outline-none focus:border-amber/60"
+                  >
+                    <option value="all">All source lists</option>
+                    {availableSources.map(([source, counts]) => (
+                      <option key={source} value={source}>
+                        {sourceLabel(source)} · {counts.ready} of {counts.total} ready
+                      </option>
+                    ))}
+                  </select>
                   <select
                     aria-label="Filter outreach by owner"
                     value={prospectFilter}

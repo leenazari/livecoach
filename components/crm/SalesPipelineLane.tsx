@@ -15,12 +15,20 @@ type Props = {
   actionDue: string;
   minimumDueDate: string;
   stageDrafts: Record<string, string>;
+  quickCallId: string;
+  quickCallNote: string;
+  quickCallOutcome: string;
   onBeginAction: (deal: WorkPipelineDeal) => void;
   onCancelAction: () => void;
   onActionTextChange: (value: string) => void;
   onActionDueChange: (value: string) => void;
   onSaveAction: (deal: WorkPipelineDeal) => void;
   onStageChange: (deal: WorkPipelineDeal, stage: string) => void;
+  onBeginQuickCall: (deal: WorkPipelineDeal) => void;
+  onCancelQuickCall: () => void;
+  onQuickCallNoteChange: (value: string) => void;
+  onQuickCallOutcomeChange: (value: string) => void;
+  onSaveQuickCall: (deal: WorkPipelineDeal) => void;
   onShowAll: () => void;
 };
 
@@ -40,6 +48,13 @@ const GBP_FORMATTER = new Intl.NumberFormat("en-GB", {
 });
 
 const gbp = (value: number) => GBP_FORMATTER.format(value || 0);
+
+const QUICK_CALL_OUTCOMES = [
+  ["connected", "Spoke"],
+  ["voicemail", "Voicemail"],
+  ["no_answer", "No answer"],
+  ["wrong_contact", "Wrong contact"],
+] as const;
 
 const when = (value: string | null) => {
   if (!value) return "No due date";
@@ -72,12 +87,20 @@ export default function SalesPipelineLane({
   actionDue,
   minimumDueDate,
   stageDrafts,
+  quickCallId,
+  quickCallNote,
+  quickCallOutcome,
   onBeginAction,
   onCancelAction,
   onActionTextChange,
   onActionDueChange,
   onSaveAction,
   onStageChange,
+  onBeginQuickCall,
+  onCancelQuickCall,
+  onQuickCallNoteChange,
+  onQuickCallOutcomeChange,
+  onSaveQuickCall,
   onShowAll,
 }: Props) {
   const topDeals = pipeline.deals.slice(0, 5);
@@ -164,6 +187,7 @@ export default function SalesPipelineLane({
         <ol className="mt-3 divide-y divide-edge/70 border-t border-edge/70">
           {topDeals.map((deal) => {
             const isEditing = editingId === deal.itemId;
+            const isLoggingCall = quickCallId === deal.id;
             const stageValue = stageDrafts[deal.id] || deal.stage;
             const stageBusy = busyId === `stage:${deal.id}`;
             return (
@@ -201,6 +225,14 @@ export default function SalesPipelineLane({
                     }`}>
                       {deal.waitingForBuyer ? "Waiting for buyer" : "Due"} · {when(deal.nextActionDueAt)}
                     </p>
+                    {deal.stageProtected || deal.nextActionProtected ? (
+                      <p className="mt-1 font-mono text-[0.44rem] uppercase tracking-wider text-sky">
+                        Human override protects {[
+                          deal.stageProtected ? "stage" : "",
+                          deal.nextActionProtected ? "next action" : "",
+                        ].filter(Boolean).join(" and ")}
+                      </p>
+                    ) : null}
                   </div>
 
                   <label className="block">
@@ -228,7 +260,61 @@ export default function SalesPipelineLane({
                   </label>
                 </div>
 
-                {isEditing ? (
+                {isLoggingCall ? (
+                  <div className="mt-3 rounded-lg border border-amber/40 bg-amber/[0.05] p-3">
+                    <p className="font-mono text-[0.48rem] uppercase tracking-wider text-amber">
+                      Quick call note
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {QUICK_CALL_OUTCOMES.map(([value, text]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => onQuickCallOutcomeChange(value)}
+                          disabled={Boolean(busyId)}
+                          className={`min-h-9 rounded-full border px-3 font-mono text-[0.48rem] uppercase ${
+                            quickCallOutcome === value
+                              ? "border-amber/60 bg-amber/20 text-amber"
+                              : "border-edge text-muted"
+                          }`}
+                        >
+                          {text}
+                        </button>
+                      ))}
+                    </div>
+                    <textarea
+                      autoFocus
+                      rows={4}
+                      maxLength={1600}
+                      value={quickCallNote}
+                      onChange={(event) => onQuickCallNoteChange(event.target.value)}
+                      placeholder="What happened, what they need, what was agreed and what happens next"
+                      aria-label={`Call note for ${deal.company}`}
+                      className="mt-2 w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60"
+                    />
+                    <p className="mt-1 text-xs leading-5 text-muted">
+                      The note saves first. LiveCoach then suggests one next action and a lifecycle stage. Your manual stage or next action is never overwritten.
+                    </p>
+                    <div className="mt-2 flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={onCancelQuickCall}
+                        disabled={Boolean(busyId)}
+                        className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted disabled:opacity-40"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onSaveQuickCall(deal)}
+                        disabled={Boolean(busyId) || quickCallNote.trim().length < 3}
+                        className="min-h-10 rounded-lg border border-amber/55 bg-amber/15 px-3 font-mono text-[0.5rem] uppercase text-amber disabled:opacity-40"
+                      >
+                        {busyId === `call:${deal.id}` ? "Saving note…" : "Save call and update deal"}
+                      </button>
+                    </div>
+                  </div>
+                ) : isEditing ? (
                   <div className="mt-3 rounded-lg border border-moss/40 bg-ink/35 p-3">
                     <p className="font-mono text-[0.48rem] uppercase tracking-wider text-moss">
                       Save the next move before continuing
@@ -278,6 +364,14 @@ export default function SalesPipelineLane({
                     >
                       Open client ↗
                     </Link>
+                    <button
+                      type="button"
+                      onClick={() => onBeginQuickCall(deal)}
+                      disabled={Boolean(busyId)}
+                      className="min-h-10 rounded-lg border border-amber/50 bg-amber/10 px-3 font-mono text-[0.5rem] uppercase text-amber disabled:opacity-40"
+                    >
+                      Log call
+                    </button>
                     <button
                       type="button"
                       onClick={() => onBeginAction(deal)}
