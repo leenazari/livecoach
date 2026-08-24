@@ -96,7 +96,7 @@ export async function GET() {
         .limit(1500),
       loadVisibleOpportunities<any>(account, {
         select:
-          "id,company_id,title,value,pipeline_stage,win_outlook,next_action,next_action_due_at,next_action_owner,updated_at,workspace_id,owner_id,visibility,opportunity_type,assigned_to_user_id",
+          "id,company_id,title,value,pipeline_stage,win_outlook,next_action,next_action_due_at,next_action_owner,pipeline_stage_override,next_action_override,updated_at,workspace_id,owner_id,visibility,opportunity_type,assigned_to_user_id",
         status: "open",
         opportunityType: "revenue",
         orderBy: "updated_at",

@@ -166,6 +166,10 @@ export default function WorkInboxPage() {
   const [pipelineStageDrafts, setPipelineStageDrafts] = useState<
     Record<string, string>
   >({});
+  const [quickCallId, setQuickCallId] = useState("");
+  const [quickCallRequestId, setQuickCallRequestId] = useState("");
+  const [quickCallNote, setQuickCallNote] = useState("");
+  const [quickCallOutcome, setQuickCallOutcome] = useState("connected");
   const [outreachQueueCount, setOutreachQueueCount] = useState<number | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -460,6 +464,64 @@ export default function WorkInboxPage() {
         delete next[deal.id];
         return next;
       });
+      setSavingId("");
+    }
+  };
+
+  const beginQuickCall = (deal: WorkPipelineDeal) => {
+    setNextActionId("");
+    setQuickCallId(deal.id);
+    setQuickCallRequestId(crypto.randomUUID());
+    setQuickCallNote("");
+    setQuickCallOutcome("connected");
+    setNotice("");
+    setError("");
+  };
+
+  const cancelQuickCall = () => {
+    setQuickCallId("");
+    setQuickCallRequestId("");
+    setQuickCallNote("");
+    setQuickCallOutcome("connected");
+  };
+
+  const saveQuickCall = async (deal: WorkPipelineDeal) => {
+    const note = quickCallNote.trim();
+    if (!note || !quickCallRequestId || savingId) return;
+    const busyKey = `call:${deal.id}`;
+    setSavingId(busyKey);
+    setError("");
+    setNotice("");
+    try {
+      const result = await crmFetch<{
+        noteSaved: boolean;
+        applied: string[];
+        protected: string[];
+        opportunity: {
+          pipeline_stage: string;
+          next_action: string | null;
+        };
+      }>(`/api/crm/opportunities/${deal.id}/quick-call`, {
+        method: "POST",
+        body: JSON.stringify({
+          requestId: quickCallRequestId,
+          outcome: quickCallOutcome,
+          note,
+        }),
+      });
+      if (!result.noteSaved) throw new Error("The database did not confirm the call note");
+      const updated = result.applied?.length
+        ? ` Updated ${result.applied.join(" and ")}.`
+        : "";
+      const protectedCopy = result.protected?.length
+        ? ` Your manual ${result.protected.join(" and ")} stayed unchanged.`
+        : "";
+      setNotice(`Call saved.${updated}${protectedCopy}`);
+      cancelQuickCall();
+      await load(true);
+    } catch (err: any) {
+      setError(err?.message || "The call note did not save");
+    } finally {
       setSavingId("");
     }
   };
@@ -854,6 +916,9 @@ export default function WorkInboxPage() {
                 actionDue={nextActionDue}
                 minimumDueDate={dateInputInLondon(0)}
                 stageDrafts={pipelineStageDrafts}
+                quickCallId={quickCallId}
+                quickCallNote={quickCallNote}
+                quickCallOutcome={quickCallOutcome}
                 onBeginAction={(deal) =>
                   beginNextDealAction({ id: deal.itemId })
                 }
@@ -869,6 +934,11 @@ export default function WorkInboxPage() {
                 onStageChange={(deal, stage) =>
                   void updatePipelineStage(deal, stage)
                 }
+                onBeginQuickCall={beginQuickCall}
+                onCancelQuickCall={cancelQuickCall}
+                onQuickCallNoteChange={setQuickCallNote}
+                onQuickCallOutcomeChange={setQuickCallOutcome}
+                onSaveQuickCall={(deal) => void saveQuickCall(deal)}
                 onShowAll={() => chooseFilter("revenue")}
               />
             ) : null}
