@@ -156,7 +156,7 @@ export default function OutreachTodayLane({
   const [sender, setSender] = useState<QueueResponse["sender"]>(null);
   const [loading, setLoading] = useState(true);
   const [building, setBuilding] = useState(false);
-  const [visible, setVisible] = useState(10);
+  const [visible, setVisible] = useState(20);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [prepareJobs, setPrepareJobs] = useState<Record<string, PrepareStatus>>({});
@@ -465,14 +465,12 @@ export default function OutreachTodayLane({
       <div className="rounded-xl border border-amber/35 bg-amber/[0.06] p-3 sm:p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="max-w-xl">
-            <p className="font-mono text-[0.52rem] uppercase tracking-[0.18em] text-amber">
-              Today's outreach
-            </p>
+            <p className="font-mono text-[0.52rem] uppercase tracking-[0.18em] text-amber">Your working list</p>
             <h2 className="mt-1 font-display text-xl text-bone">
-              Prepare, review, then move on
+              Next {dailyLimit} leads
             </h2>
             <p className="mt-1 text-xs leading-5 text-muted">
-              Filling the queue only ranks eligible contacts. AI cost starts only when you press Prepare. Every email still waits for exact review and approval.
+              Work from number one down. Prepare, review, approve and queue each email here. Sent contacts rotate to the bottom automatically.
             </p>
           </div>
           <button
@@ -517,18 +515,19 @@ export default function OutreachTodayLane({
               Prepare all with AI · {unprepared.length}
             </button>
           ) : null}
-          <Link href="/crm/outreach?tab=prospects" className={button}>
-            Prospect database ↗
-          </Link>
-          <Link href="/crm/outreach?tab=campaign" className={button}>
-            Campaign setup ↗
-          </Link>
         </div>
         <p className="mt-2 text-[0.68rem] leading-5 text-muted">
           {sender?.senderEmail
             ? `Connected sender · ${sender.senderEmail}`
             : "Connect a mailbox in Settings before preparing or sending outreach."}
         </p>
+        <details className="mt-3 border-t border-edge/60 pt-3">
+          <summary className="cursor-pointer font-mono text-[0.49rem] uppercase tracking-wider text-muted">Advanced outreach tools</summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Link href="/crm/outreach?tab=prospects" className={button}>Prospect database ↗</Link>
+            <Link href="/crm/outreach?tab=campaign" className={button}>Campaign setup ↗</Link>
+          </div>
+        </details>
       </div>
 
       {researching || queuedResearch ? (

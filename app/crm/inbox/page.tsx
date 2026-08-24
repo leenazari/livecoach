@@ -37,15 +37,18 @@ type Filter =
   | "all"
   | "done";
 
-const filters: { key: Filter; label: string }[] = [
-  { key: "now", label: "Do now" },
-  { key: "outreach", label: "Outreach" },
+const primaryFilters: { key: Filter; label: string }[] = [
+  { key: "outreach", label: "Sales flow" },
+  { key: "now", label: "Other priorities" },
   { key: "calls", label: "Calls" },
-  { key: "revenue", label: "Revenue" },
+  { key: "revenue", label: "Deals" },
+];
+
+const secondaryFilters: { key: Filter; label: string }[] = [
   { key: "approvals", label: "Approvals" },
   { key: "waiting", label: "Waiting" },
   { key: "cleanup", label: "Clean up" },
-  { key: "all", label: "All work" },
+  { key: "all", label: "Everything" },
   { key: "done", label: "Done" },
 ];
 
@@ -134,7 +137,8 @@ const belongsTo = (item: WorkInboxItem, filter: Filter) => {
 
 export default function WorkInboxPage() {
   const [data, setData] = useState<WorkInboxResponse | null>(null);
-  const [filter, setFilter] = useState<Filter>("now");
+  const [filter, setFilter] = useState<Filter>("outreach");
+  const [moreViewsOpen, setMoreViewsOpen] = useState(false);
   const [visible, setVisible] = useState(10);
   const [loading, setLoading] = useState(true);
   const [syncingCalendar, setSyncingCalendar] = useState(false);
@@ -257,6 +261,19 @@ export default function WorkInboxPage() {
     [data?.items, filter]
   );
   const shown = filtered.slice(0, visible);
+  const attentionItems = useMemo(
+    () =>
+      (data?.items || [])
+        .filter(
+          (item) =>
+            !item.done &&
+            !item.waiting &&
+            item.priority >= 78 &&
+            !["outreach", "reply"].includes(item.kind)
+        )
+        .slice(0, 4),
+    [data?.items]
+  );
   const powerItems = filtered.filter((item) => !deferredIds.includes(item.id));
   const focusItem = powerItems.find((item) => !item.done) || null;
   const firstActionableId = shown.find((item) => !item.done && !item.waiting)?.id;
@@ -586,10 +603,10 @@ export default function WorkInboxPage() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h1 className="font-display text-[1.65rem] leading-none text-bone">
-                Sales <span className="italic text-amber">Today</span>
+                Sales <span className="italic text-amber">Desk</span>
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-5 text-muted">
-                One prioritised place for outreach, replies, tasks, deals and call preparation.
+                Start at the top, work down and complete the day without hunting through the CRM.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -645,8 +662,8 @@ export default function WorkInboxPage() {
           </section>
         ) : null}
 
-        <nav aria-label="Sales Today filters" className="mb-4 flex gap-2 overflow-x-auto pb-1">
-          {filters.map((item) => (
+        <nav aria-label="Sales Desk views" className="mb-4 flex flex-wrap gap-2">
+          {primaryFilters.map((item) => (
             <button
               key={item.key}
               type="button"
@@ -661,7 +678,40 @@ export default function WorkInboxPage() {
               {item.label} · {countFor(item.key)}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setMoreViewsOpen((open) => !open)}
+            aria-expanded={moreViewsOpen}
+            aria-controls="sales-desk-more-views"
+            className={`min-h-10 shrink-0 rounded-full border px-3 font-mono text-[0.56rem] uppercase tracking-wider transition ${
+              moreViewsOpen || secondaryFilters.some((item) => item.key === filter)
+                ? "border-sky/50 bg-sky/[0.08] text-sky"
+                : "border-edge text-muted hover:text-bone"
+            }`}
+          >
+            More views {moreViewsOpen ? "−" : "+"}
+          </button>
         </nav>
+
+        {moreViewsOpen || secondaryFilters.some((item) => item.key === filter) ? (
+          <div id="sales-desk-more-views" className="mb-4 flex flex-wrap gap-2 rounded-xl border border-edge bg-panel/35 p-2">
+            {secondaryFilters.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => chooseFilter(item.key)}
+                aria-pressed={filter === item.key}
+                className={`min-h-10 rounded-full border px-3 font-mono text-[0.54rem] uppercase tracking-wider transition ${
+                  filter === item.key
+                    ? "border-amber/60 bg-amber/15 text-amber"
+                    : "border-edge text-muted hover:text-bone"
+                }`}
+              >
+                {item.label} · {countFor(item.key)}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         {notice ? (
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sage/35 bg-sage/10 px-3 py-2 text-sm text-sage">
@@ -695,12 +745,65 @@ export default function WorkInboxPage() {
         ) : null}
 
         {filter === "outreach" ? (
-          <OutreachTodayLane
-            onQueueCount={setOutreachQueueCount}
-            replyItems={(data?.items || []).filter(
-              (item) => item.kind === "reply" && !item.done
-            )}
-          />
+          <section className="space-y-4" aria-label="End to end sales flow">
+            {attentionItems.length ? (
+              <section className="rounded-xl border border-rust/40 bg-rust/[0.05] p-3 sm:p-4" aria-labelledby="attention-before-outreach">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="font-mono text-[0.5rem] uppercase tracking-wider text-rust">Handle first</p>
+                    <h2 id="attention-before-outreach" className="mt-1 font-display text-lg text-bone">Calls and actions that cannot wait</h2>
+                  </div>
+                  <span className="rounded-full border border-rust/45 px-2 py-1 font-mono text-[0.48rem] uppercase text-rust">
+                    {attentionItems.length} shown
+                  </span>
+                </div>
+                <ol className="mt-3 divide-y divide-edge/70">
+                  {attentionItems.map((item) => {
+                    const copy = kindCopy[item.kind];
+                    const when = formatWhen(item.dueAt || item.createdAt);
+                    return (
+                      <li key={item.id} className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-center">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-[0.48rem] uppercase text-rust">{copy.icon} {copy.label}</span>
+                            {when ? <span className="font-mono text-[0.48rem] uppercase text-muted">{when}</span> : null}
+                          </div>
+                          <p className="mt-1 truncate text-sm text-bone">{capitaliseSentenceStarts(item.title)}</p>
+                          {item.company ? <p className="mt-0.5 truncate text-xs text-sky">{item.company}</p> : null}
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          {item.kind === "task" ? (
+                            <button
+                              type="button"
+                              onClick={() => void updateTask(item, { status: "done" })}
+                              disabled={!!savingId}
+                              className="min-h-10 rounded-lg border border-sage/45 bg-sage/10 px-3 font-mono text-[0.52rem] uppercase text-sage disabled:opacity-40"
+                            >
+                              {savingId === item.id ? "Saving…" : "✓ Done"}
+                            </button>
+                          ) : null}
+                          <Link
+                            href={item.href}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex min-h-10 items-center rounded-lg border border-amber/50 bg-amber/10 px-3 font-mono text-[0.52rem] uppercase text-amber"
+                          >
+                            {item.kind === "prep" ? "Prepare call" : item.approval ? "Review" : "Open"} ↗
+                          </Link>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
+            ) : null}
+            <OutreachTodayLane
+              onQueueCount={setOutreachQueueCount}
+              replyItems={(data?.items || []).filter(
+                (item) => item.kind === "reply" && !item.done
+              )}
+            />
+          </section>
         ) : filter === "cleanup" && data ? (
           <section>
             <div className="mb-3 rounded-xl border border-amber/35 bg-amber/[0.06] p-3 sm:p-4">

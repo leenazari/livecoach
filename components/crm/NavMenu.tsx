@@ -22,14 +22,21 @@ const NOTIFICATIONS_ITEM: Item = {
   label: "Notifications",
   icon: "●",
 };
-const SHARED_CORE_ITEMS: Item[] = [
-  { href: "/crm/revenue", label: "Pipeline", icon: "◆" },
-  { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
-  { href: "/crm/calls", label: "Calls", icon: "☎" },
-  { href: "/crm/pitch-playbook", label: "Pitch playbook", icon: "◇" },
-  { href: "/crm/costs", label: "Costs", icon: "£" },
-  { href: "/crm/documents", label: "Documents", icon: "▤" },
+const PIPELINE_ITEM: Item = { href: "/crm/revenue", label: "Pipeline", icon: "◆" };
+const CLIENTS_ITEM: Item = { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" };
+const CALLS_ITEM: Item = { href: "/crm/calls", label: "Calls", icon: "☎" };
+const PLAYBOOK_ITEM: Item = { href: "/crm/pitch-playbook", label: "Pitch playbook", icon: "◇" };
+const COSTS_ITEM: Item = { href: "/crm/costs", label: "Costs", icon: "£" };
+const DOCUMENTS_ITEM: Item = { href: "/crm/documents", label: "Documents", icon: "▤" };
+const OWNER_CORE_ITEMS: Item[] = [
+  PIPELINE_ITEM,
+  CLIENTS_ITEM,
+  CALLS_ITEM,
+  PLAYBOOK_ITEM,
+  COSTS_ITEM,
+  DOCUMENTS_ITEM,
 ];
+const SALES_CORE_ITEMS: Item[] = [PIPELINE_ITEM, CLIENTS_ITEM];
 const MORE_ITEMS: Item[] = [
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
   { href: "/crm/health", label: "Health", icon: "✓" },
@@ -90,15 +97,17 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
     ? { href: "/crm/inbox", label: "Today", icon: "▣" }
     : { href: "/crm", label: "Today", icon: "▣" };
   const coreItems: Item[] = salesHome
-    ? [homeItem, NOTIFICATIONS_ITEM, ...SHARED_CORE_ITEMS]
+    ? [homeItem, ...SALES_CORE_ITEMS, NOTIFICATIONS_ITEM]
     : [
         homeItem,
         NOTIFICATIONS_ITEM,
         { href: "/crm/inbox", label: "Sales Today", icon: "✓" },
         OUTREACH_ITEM,
-        ...SHARED_CORE_ITEMS,
+        ...OWNER_CORE_ITEMS,
       ];
-  const moreItems = salesHome ? [CAMPAIGNS_ITEM, ...MORE_ITEMS] : MORE_ITEMS;
+  const moreItems = salesHome
+    ? [CAMPAIGNS_ITEM, CALLS_ITEM, PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM, ...MORE_ITEMS]
+    : MORE_ITEMS;
   const allItems = [...coreItems, START_ITEM, ...moreItems];
 
   // Phone layout: a thumb-reachable bottom tab bar instead of the left sidebar.
