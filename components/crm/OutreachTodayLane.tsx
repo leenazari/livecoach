@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MatrixRain from "@/components/MatrixRain";
 import { crmFetch } from "@/lib/crm";
+import type { WorkInboxItem } from "@/lib/work-inbox";
 
 type PrepareStatus = "queued" | "researching" | "done" | "error";
 
@@ -14,6 +15,32 @@ type Recommendation = {
   confidence?: string;
   reasons?: string[];
   risks?: string[];
+};
+
+type SavedResearch = {
+  summary?: string;
+  signals?: string[];
+  activeJobs?: string[];
+  likelyNeeds?: string[];
+  bestAngle?: string;
+  personalisationFact?: string;
+  fitDecision?: string;
+  confidence?: string;
+  generatedAt?: string | null;
+};
+
+type OutreachMessage = {
+  id: string;
+  status: string;
+  step_number?: number;
+  from_email?: string;
+  subject?: string;
+  body_text?: string;
+  approved_at?: string | null;
+  scheduled_at?: string | null;
+  sent_at?: string | null;
+  updated_at?: string | null;
+  error?: string | null;
 };
 
 type QueueRow = {
@@ -29,17 +56,11 @@ type QueueRow = {
     email?: string;
   };
   campaign?: { name?: string; daily_limit?: number };
-  message?: {
-    id: string;
-    status: string;
-    subject?: string;
-    scheduled_at?: string | null;
-  } | null;
-  lastSentMessage?: {
-    id?: string;
-    subject?: string;
-    sent_at?: string | null;
-  } | null;
+  message?: OutreachMessage | null;
+  lastSentMessage?: OutreachMessage | null;
+  messageHistory?: OutreachMessage[];
+  savedResearch?: SavedResearch;
+  researchSourceCount?: number;
   recommendation?: Recommendation;
 };
 
@@ -56,6 +77,9 @@ type QueueResponse = {
 
 const PREPARE_QUEUE_KEY = "livecoach:sales-today-prepare-queue:v1";
 const MAX_CONCURRENT_RESEARCH = 2;
+
+type DraftEdit = { subject: string; body: string };
+type ReplyAction = { text: string; dueAt: string };
 
 const button =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-edge px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:border-amber/55 hover:text-amber disabled:cursor-not-allowed disabled:opacity-40";
@@ -79,10 +103,54 @@ const rowState = (row: QueueRow) => {
 const hasBeenSent = (row: QueueRow) =>
   row.message?.status === "sent" || Boolean(row.lastSentMessage);
 
+const displayMessageFor = (row: QueueRow) =>
+  row.message && row.message.status !== "cancelled"
+    ? row.message
+    : row.lastSentMessage || row.messageHistory?.[0] || row.message || null;
+
+const formatHistoryDate = (value?: string | null) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("en-GB", {
+    timeZone: "Europe/London",
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+};
+
+const londonDateInput = (daysFromNow = 1) => {
+  const date = new Date(Date.now() + daysFromNow * 24 * 60 * 60 * 1000);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+};
+
+const replyActionDefault = (item: WorkInboxItem): ReplyAction => {
+  const subject = item.title
+    .replace(/^Review CRM handover for\s+/i, "")
+    .replace(/\s+replied positively$/i, "")
+    .trim();
+  return {
+    text: `Follow up with ${subject || item.company || "the prospect"} about their positive outreach reply`,
+    dueAt: londonDateInput(1),
+  };
+};
+
 export default function OutreachTodayLane({
   onQueueCount,
+  replyItems = [],
 }: {
   onQueueCount?: (count: number) => void;
+  replyItems?: WorkInboxItem[];
 }) {
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [sender, setSender] = useState<QueueResponse["sender"]>(null);
@@ -92,6 +160,12 @@ export default function OutreachTodayLane({
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [prepareJobs, setPrepareJobs] = useState<Record<string, PrepareStatus>>({});
+  const [expandedId, setExpandedId] = useState("");
+  const [draftEdits, setDraftEdits] = useState<Record<string, DraftEdit>>({});
+  const [savingMessageId, setSavingMessageId] = useState("");
+  const [replyActions, setReplyActions] = useState<Record<string, ReplyAction>>({});
+  const [savingReplyId, setSavingReplyId] = useState("");
+  const [handledReplyIds, setHandledReplyIds] = useState<string[]>([]);
   const prepareJobsRef = useRef<Record<string, PrepareStatus>>({});
   const pendingRef = useRef<string[]>([]);
   const activeRef = useRef<Set<string>>(new Set());
@@ -221,6 +295,127 @@ export default function OutreachTodayLane({
     }
   };
 
+  const openMessage = (row: QueueRow) => {
+    const message = displayMessageFor(row);
+    if (message) {
+      setDraftEdits((current) =>
+        current[message.id]
+          ? current
+          : {
+              ...current,
+              [message.id]: {
+                subject: message.subject || "",
+                body: message.body_text || "",
+              },
+            }
+      );
+    }
+    setExpandedId((current) => (current === row.id ? "" : row.id));
+    setError("");
+  };
+
+  const updateDraft = (messageId: string, change: Partial<DraftEdit>) => {
+    setDraftEdits((current) => ({
+      ...current,
+      [messageId]: {
+        subject: current[messageId]?.subject || "",
+        body: current[messageId]?.body || "",
+        ...change,
+      },
+    }));
+  };
+
+  const saveDraft = async (message: OutreachMessage, approveAndQueue = false) => {
+    if (savingMessageId) return;
+    const edit = draftEdits[message.id] || {
+      subject: message.subject || "",
+      body: message.body_text || "",
+    };
+    if (!edit.subject.trim() || !edit.body.trim()) {
+      setError("Add both the subject and email before saving.");
+      return;
+    }
+    setSavingMessageId(message.id);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await crmFetch<{ message: OutreachMessage }>(
+        `/api/crm/outreach/messages/${message.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            subject: edit.subject,
+            body_text: edit.body,
+            ...(approveAndQueue ? { status: "approved" } : {}),
+          }),
+        }
+      );
+      if (approveAndQueue) {
+        if (saved.message?.status !== "approved")
+          throw new Error("The exact draft was not approved");
+        await crmFetch(`/api/crm/outreach/messages/${message.id}/send`, {
+          method: "POST",
+          body: "{}",
+        });
+        setNotice("Exact email approved and added to the spaced send queue.");
+      } else {
+        setNotice("Draft changes saved. Nothing has been sent.");
+      }
+      await load(true);
+      window.dispatchEvent(
+        new CustomEvent("lc:tasks-updated", {
+          detail: { source: "sales-today-outreach" },
+        })
+      );
+    } catch (err: any) {
+      setError(err?.message || "That email could not be saved.");
+    } finally {
+      setSavingMessageId("");
+    }
+  };
+
+  const replyActionFor = (item: WorkInboxItem) =>
+    replyActions[item.sourceId] || replyActionDefault(item);
+
+  const updateReplyAction = (
+    item: WorkInboxItem,
+    change: Partial<ReplyAction>
+  ) => {
+    setReplyActions((current) => ({
+      ...current,
+      [item.sourceId]: { ...replyActionFor(item), ...change },
+    }));
+  };
+
+  const saveReplyAction = async (item: WorkInboxItem) => {
+    if (savingReplyId) return;
+    const action = replyActionFor(item);
+    if (!action.text.trim() || !action.dueAt) {
+      setError("Add the next action and its due date first.");
+      return;
+    }
+    setSavingReplyId(item.sourceId);
+    setError("");
+    setNotice("");
+    try {
+      await crmFetch(`/api/crm/outreach/${item.sourceId}/next-action`, {
+        method: "POST",
+        body: JSON.stringify(action),
+      });
+      setHandledReplyIds((current) => [...new Set([...current, item.sourceId])]);
+      setNotice("Positive reply turned into a dated CRM next step.");
+      window.dispatchEvent(
+        new CustomEvent("lc:tasks-updated", {
+          detail: { source: "sales-today-reply" },
+        })
+      );
+    } catch (err: any) {
+      setError(err?.message || "That next action could not be saved.");
+    } finally {
+      setSavingReplyId("");
+    }
+  };
+
   const orderedQueue = useMemo(
     () =>
       queue
@@ -251,6 +446,10 @@ export default function OutreachTodayLane({
     (status) => status === "queued"
   ).length;
   const dailyLimit = Number(queue[0]?.campaign?.daily_limit || 20);
+  const actionableReplies = replyItems.filter(
+    (item) =>
+      item.kind === "reply" && !handledReplyIds.includes(item.sourceId)
+  );
 
   if (loading) {
     return (
@@ -359,6 +558,85 @@ export default function OutreachTodayLane({
         </p>
       ) : null}
 
+      {actionableReplies.length ? (
+        <section
+          className="rounded-xl border border-moss/45 bg-moss/[0.06] p-3 sm:p-4"
+          aria-labelledby="positive-replies-heading"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="font-mono text-[0.5rem] uppercase tracking-wider text-moss">
+                Buyer replies
+              </p>
+              <h3 id="positive-replies-heading" className="mt-1 font-display text-lg text-bone">
+                Convert interest into a dated next step
+              </h3>
+            </div>
+            <span className="rounded-full border border-moss/45 px-2 py-1 font-mono text-[0.48rem] uppercase text-moss">
+              {actionableReplies.length} to handle
+            </span>
+          </div>
+          <div className="mt-3 space-y-3">
+            {actionableReplies.map((item) => {
+              const action = replyActionFor(item);
+              return (
+                <article
+                  id={`reply-${item.sourceId}`}
+                  key={item.id}
+                  className="rounded-lg border border-edge bg-ink/35 p-3"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <h4 className="text-sm text-bone">{item.title}</h4>
+                      <p className="mt-1 text-xs leading-5 text-muted">
+                        {item.detail || "Positive reply received"}
+                      </p>
+                    </div>
+                    <span className="font-mono text-[0.48rem] uppercase text-moss">
+                      {formatHistoryDate(item.createdAt)}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
+                    <label className="min-w-0">
+                      <span className="sr-only">Next action</span>
+                      <input
+                        value={action.text}
+                        onChange={(event) =>
+                          updateReplyAction(item, { text: event.target.value })
+                        }
+                        className="min-h-11 w-full rounded-lg border border-edge bg-panel px-3 text-sm text-bone outline-none focus:border-moss/60"
+                      />
+                    </label>
+                    <label>
+                      <span className="sr-only">Due date</span>
+                      <input
+                        type="date"
+                        value={action.dueAt}
+                        onChange={(event) =>
+                          updateReplyAction(item, { dueAt: event.target.value })
+                        }
+                        className="min-h-11 w-full rounded-lg border border-edge bg-panel px-3 text-sm text-bone outline-none focus:border-moss/60"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void saveReplyAction(item)}
+                      disabled={savingReplyId === item.sourceId}
+                      className="min-h-11 rounded-lg border border-moss/55 bg-moss/10 px-3 font-mono text-[0.52rem] uppercase tracking-wider text-moss disabled:opacity-40"
+                    >
+                      {savingReplyId === item.sourceId ? "Saving…" : "Save next step"}
+                    </button>
+                  </div>
+                  <p className="mt-2 text-[0.68rem] leading-5 text-muted">
+                    This creates one pinned CRM task. It does not create a duplicate client or opportunity.
+                  </p>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
       {orderedQueue.length ? (
         <ol className="space-y-2">
           {orderedQueue.slice(0, visible).map((row, index) => {
@@ -370,6 +648,26 @@ export default function OutreachTodayLane({
               "Unnamed prospect";
             const recommendation = row.recommendation;
             const canPrepare = !row.message && row.status === "queued";
+            const displayMessage = displayMessageFor(row);
+            const edit = displayMessage
+              ? draftEdits[displayMessage.id] || {
+                  subject: displayMessage.subject || "",
+                  body: displayMessage.body_text || "",
+                }
+              : null;
+            const editableMessage = Boolean(
+              displayMessage &&
+                ["draft", "failed", "approved"].includes(displayMessage.status)
+            );
+            const research = row.savedResearch || {};
+            const hasResearch = Boolean(
+              research.summary ||
+                research.bestAngle ||
+                research.personalisationFact ||
+                research.signals?.length ||
+                research.activeJobs?.length ||
+                research.likelyNeeds?.length
+            );
 
             return (
               <li
@@ -432,28 +730,190 @@ export default function OutreachTodayLane({
                               ? "Retry prepare"
                               : "Prepare research + draft"}
                       </button>
-                    ) : (
-                      <Link
-                        href={
-                          row.status === "replied"
-                            ? "/crm/outreach?tab=replies"
-                            : "/crm/outreach"
-                        }
+                    ) : displayMessage ? (
+                      <button
+                        type="button"
+                        onClick={() => openMessage(row)}
+                        aria-expanded={expandedId === row.id}
                         className={
                           hasBeenSent(row)
                             ? "inline-flex min-h-10 items-center justify-center rounded-lg border border-moss/60 bg-moss/20 px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-moss"
                             : primary
                         }
                       >
-                        {row.status === "replied"
-                          ? "Handle reply"
-                          : hasBeenSent(row)
+                        {hasBeenSent(row)
                             ? "✓ View sent email"
-                            : "Review exact draft"} ↗
-                      </Link>
-                    )}
+                            : "Review exact draft"}
+                      </button>
+                    ) : row.status === "replied" ? (
+                      <a href={`#reply-${row.prospect.id}`} className={primary}>
+                        Handle reply
+                      </a>
+                    ) : null}
                   </div>
                 </div>
+
+                {expandedId === row.id ? (
+                  <div className="mt-4 grid gap-3 border-t border-edge pt-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(17rem,0.8fr)]">
+                    <section aria-label="Exact email" className="rounded-lg border border-edge bg-ink/35 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="font-mono text-[0.49rem] uppercase tracking-wider text-amber">
+                            Exact email
+                          </p>
+                          <p className="mt-1 text-xs text-muted">
+                            From {displayMessage?.from_email || sender?.senderEmail || "connected mailbox"}
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-edge px-2 py-1 font-mono text-[0.46rem] uppercase text-muted">
+                          {displayMessage?.status || "not prepared"}
+                        </span>
+                      </div>
+
+                      {displayMessage && edit ? (
+                        editableMessage ? (
+                          <div className="mt-3 space-y-2">
+                            <label className="block">
+                              <span className="font-mono text-[0.48rem] uppercase text-muted">Subject</span>
+                              <input
+                                value={edit.subject}
+                                onChange={(event) =>
+                                  updateDraft(displayMessage.id, {
+                                    subject: event.target.value,
+                                  })
+                                }
+                                className="mt-1 min-h-11 w-full rounded-lg border border-edge bg-panel px-3 text-sm text-bone outline-none focus:border-amber/60"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="font-mono text-[0.48rem] uppercase text-muted">Email</span>
+                              <textarea
+                                rows={10}
+                                value={edit.body}
+                                onChange={(event) =>
+                                  updateDraft(displayMessage.id, {
+                                    body: event.target.value,
+                                  })
+                                }
+                                className="mt-1 w-full rounded-lg border border-edge bg-panel px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60"
+                              />
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void saveDraft(displayMessage)}
+                                disabled={savingMessageId === displayMessage.id}
+                                className={button}
+                              >
+                                {savingMessageId === displayMessage.id ? "Saving…" : "Save changes"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void saveDraft(displayMessage, true)}
+                                disabled={
+                                  savingMessageId === displayMessage.id ||
+                                  Boolean(displayMessage.scheduled_at)
+                                }
+                                className={primary}
+                              >
+                                {displayMessage.scheduled_at
+                                  ? "✓ Queued safely"
+                                  : savingMessageId === displayMessage.id
+                                    ? "Approving…"
+                                    : "Approve and queue"}
+                              </button>
+                            </div>
+                            <p className="text-[0.68rem] leading-5 text-muted">
+                              Approval covers the exact words above. Delivery uses the existing spaced send queue and daily limit.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="mt-3 rounded-lg border border-moss/30 bg-moss/[0.05] p-3">
+                            <p className="text-sm text-bone">{displayMessage.subject}</p>
+                            <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-bone/80">
+                              {displayMessage.body_text}
+                            </p>
+                            <p className="mt-3 font-mono text-[0.48rem] uppercase text-moss">
+                              {displayMessage.sent_at
+                                ? `Sent ${formatHistoryDate(displayMessage.sent_at)}`
+                                : displayMessage.status}
+                            </p>
+                          </div>
+                        )
+                      ) : (
+                        <p className="mt-3 text-sm text-muted">No email has been prepared yet.</p>
+                      )}
+                    </section>
+
+                    <aside className="space-y-3" aria-label="Saved sales context">
+                      <details open className="rounded-lg border border-sky/35 bg-sky/[0.05] p-3">
+                        <summary className="cursor-pointer font-mono text-[0.49rem] uppercase tracking-wider text-sky">
+                          Saved research · {row.researchSourceCount || 0} sources
+                        </summary>
+                        {hasResearch ? (
+                          <div className="mt-3 space-y-3 text-xs leading-5 text-bone/80">
+                            {research.summary ? <p>{research.summary}</p> : null}
+                            {research.personalisationFact ? (
+                              <p><strong className="text-bone">Relevant fact. </strong>{research.personalisationFact}</p>
+                            ) : null}
+                            {research.bestAngle ? (
+                              <p><strong className="text-bone">Best angle. </strong>{research.bestAngle}</p>
+                            ) : null}
+                            {[...(research.signals || []), ...(research.activeJobs || []), ...(research.likelyNeeds || [])].length ? (
+                              <ul className="space-y-1 border-l border-sky/25 pl-3 text-muted">
+                                {[...(research.signals || []), ...(research.activeJobs || []), ...(research.likelyNeeds || [])]
+                                  .slice(0, 6)
+                                  .map((point, pointIndex) => (
+                                    <li key={`${pointIndex}:${point}`}>• {point}</li>
+                                  ))}
+                              </ul>
+                            ) : null}
+                            {research.fitDecision || research.confidence ? (
+                              <p className="font-mono text-[0.48rem] uppercase text-sky">
+                                {[research.fitDecision, research.confidence]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="mt-3 text-xs leading-5 text-muted">
+                            No research has been saved for this person yet.
+                          </p>
+                        )}
+                      </details>
+
+                      <details className="rounded-lg border border-edge bg-ink/35 p-3">
+                        <summary className="cursor-pointer font-mono text-[0.49rem] uppercase tracking-wider text-muted">
+                          Contact history · {row.messageHistory?.length || 0}
+                        </summary>
+                        {row.messageHistory?.length ? (
+                          <ol className="mt-3 space-y-2">
+                            {row.messageHistory.map((history) => (
+                              <li key={history.id} className="rounded border border-edge/70 p-2 text-xs">
+                                <div className="flex flex-wrap justify-between gap-2 text-muted">
+                                  <span>Step {history.step_number || 1} · {history.status}</span>
+                                  <span>{formatHistoryDate(history.sent_at || history.updated_at)}</span>
+                                </div>
+                                <p className="mt-1 text-bone/85">{history.subject || "No subject"}</p>
+                                {history.body_text ? (
+                                  <details className="mt-1">
+                                    <summary className="cursor-pointer text-sky">Read email</summary>
+                                    <p className="mt-2 whitespace-pre-wrap leading-5 text-muted">
+                                      {history.body_text}
+                                    </p>
+                                  </details>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ol>
+                        ) : (
+                          <p className="mt-3 text-xs text-muted">No email history yet.</p>
+                        )}
+                      </details>
+                    </aside>
+                  </div>
+                ) : null}
               </li>
             );
           })}

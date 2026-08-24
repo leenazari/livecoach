@@ -26,6 +26,48 @@ function safetyResponse(error: any) {
     : null;
 }
 
+const asText = (value: unknown, max = 800) =>
+  typeof value === "string" ? value.trim().slice(0, max) : "";
+
+function compactSavedResearch(value: unknown) {
+  const source = value && typeof value === "object" ? (value as Record<string, any>) : {};
+  const list = (items: unknown, maxItems: number, maxLength = 220) =>
+    Array.isArray(items)
+      ? items
+          .map((item) => asText(item, maxLength))
+          .filter(Boolean)
+          .slice(0, maxItems)
+      : [];
+  return {
+    summary: asText(source.summary, 600),
+    signals: list(source.signals, 3),
+    activeJobs: list(source.activeJobs, 4),
+    likelyNeeds: list(source.likelyNeeds, 2),
+    bestAngle: asText(source.bestAngle, 400),
+    personalisationFact: asText(source.personalisationFact, 300),
+    fitDecision: asText(source.fitDecision, 220),
+    confidence: asText(source.confidence, 30),
+    generatedAt: asText(source.generatedAt, 60) || null,
+  };
+}
+
+function compactMessage(message: any) {
+  if (!message) return null;
+  return {
+    id: message.id,
+    status: message.status,
+    step_number: message.step_number,
+    from_email: message.from_email,
+    subject: message.subject,
+    body_text: message.body_text,
+    approved_at: message.approved_at || null,
+    scheduled_at: message.scheduled_at || null,
+    sent_at: message.sent_at || null,
+    updated_at: message.updated_at || null,
+    error: message.error || null,
+  };
+}
+
 async function loadQueue(
   userId: string,
   workspaceId: string,
@@ -78,6 +120,16 @@ async function loadQueue(
         (a: any, b: any) =>
           new Date(b.sent_at || 0).getTime() - new Date(a.sent_at || 0).getTime()
       )[0];
+    const research = compactSavedResearch(row.research || prospectMap.get(row.prospect_id)?.research);
+    const messageHistory = rows
+      .slice()
+      .sort(
+        (a: any, b: any) =>
+          new Date(b.sent_at || b.updated_at || b.created_at || 0).getTime() -
+          new Date(a.sent_at || a.updated_at || a.created_at || 0).getTime()
+      )
+      .slice(0, 5)
+      .map(compactMessage);
     return {
       ...row,
       prospect: prospectMap.get(row.prospect_id),
@@ -85,8 +137,13 @@ async function loadQueue(
       // Keep the completed send separate from the next draft. After step one
       // sends, current_step advances immediately. Treating the old sent email
       // as the current draft would hide when the follow-up is actually due.
-      message: currentMessage || null,
-      lastSentMessage: lastSentMessage || null,
+      message: compactMessage(currentMessage),
+      lastSentMessage: compactMessage(lastSentMessage),
+      messageHistory,
+      savedResearch: research,
+      researchSourceCount: Array.isArray(row.research_sources)
+        ? row.research_sources.length
+        : 0,
       sentCount: rows.filter((message: any) => message.status === "sent").length,
       recommendation: scoreOutreachProspect(prospectMap.get(row.prospect_id), {
         campaign: campaignMap.get(row.campaign_id),

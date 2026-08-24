@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { actionToLinkKind, upsertTasks } from "@/lib/tasks";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import { resolveRecordScope } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -59,6 +60,7 @@ export async function POST(req: NextRequest) {
 // dismissed item must disappear immediately and stay gone after refresh.
 export async function GET(req: NextRequest) {
   try {
+    const account = await resolveRecordScope();
     const companyId = new URL(req.url).searchParams.get("companyId");
 
     let q = supabaseAdmin
@@ -66,6 +68,8 @@ export async function GET(req: NextRequest) {
       .select(
         "id, company_id, text, kind, link_kind, status, done_at, created_at, payload, due_at"
       )
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .eq("status", "open")
       .order("created_at", { ascending: true })
       .limit(500);
@@ -80,6 +84,8 @@ export async function GET(req: NextRequest) {
       .select(
         "id, company_id, title, scheduled_at, meeting_url, intent, prepped, created_at"
       )
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .not("company_id", "is", null)
       .eq("prepped", false)
       // A finished call (completed_at set when the call ended) stops generating
@@ -92,12 +98,21 @@ export async function GET(req: NextRequest) {
       .limit(200);
     if (companyId) uq = uq.eq("company_id", companyId);
 
-    const [{ data: rows }, { data: ucals }, { data: companies }] =
-      await Promise.all([
-        q,
-        uq,
-        supabaseAdmin.from("companies").select("id, name"),
-      ]);
+    const [{ data: rows }, { data: ucals }] = await Promise.all([q, uq]);
+    const companyIds = [
+      ...new Set(
+        [...(rows || []), ...(ucals || [])]
+          .map((row: any) => row.company_id)
+          .filter(Boolean)
+      ),
+    ];
+    const { data: companies } = companyIds.length
+      ? await supabaseAdmin
+          .from("companies")
+          .select("id, name")
+          .eq("workspace_id", account.workspaceId)
+          .in("id", companyIds)
+      : { data: [] as any[] };
 
     const nameById = new Map<string, string>();
     for (const c of companies || []) nameById.set(c.id, c.name);

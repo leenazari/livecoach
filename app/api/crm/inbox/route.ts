@@ -71,7 +71,7 @@ export async function GET() {
     ] = await Promise.all([
       supabaseAdmin
         .from("tasks")
-        .select("id,company_id,text,kind,link_kind,status,done_at,created_at,payload,due_at")
+        .select("id,company_id,text,kind,link_kind,status,done_at,created_at,payload,due_at,source_ref")
         .eq("workspace_id", account.workspaceId)
         .eq("owner_id", account.userId)
         .in("status", ["open", "done"])
@@ -329,6 +329,11 @@ export async function GET() {
         .map((event: any) => event.prospect_id)
         .filter(Boolean)
     );
+    const handledReplyRefs = new Set(
+      (tasksResult.data || [])
+        .map((task: any) => text(task.source_ref, 500))
+        .filter((sourceRef) => sourceRef.startsWith("outreach-reply:"))
+    );
     for (const message of outreachMessagesResult.data || []) {
       const prospect: any = prospects.get(message.prospect_id);
       const done = message.status === "sent";
@@ -369,6 +374,9 @@ export async function GET() {
       if (
         !prospect.last_reply_at ||
         prospect.reply_category !== "interested" ||
+        handledReplyRefs.has(
+          `outreach-reply:${prospect.id}:${prospect.last_reply_at}`
+        ) ||
         replyDraftProspects.has(prospect.id) ||
         handledReplyProspects.has(prospect.id)
       )

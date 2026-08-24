@@ -209,7 +209,12 @@ export async function upsertTasks(
   // (and exact repeats are still blocked by the fingerprint onConflict).
   let existingOpenTexts: string[] = [];
   try {
-    let q = supabaseAdmin.from("tasks").select("text").eq("status", "open");
+    let q = supabaseAdmin
+      .from("tasks")
+      .select("text")
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
+      .eq("status", "open");
     q = companyId ? q.eq("company_id", companyId) : q.is("company_id", null);
     if (workstreamId) q = q.eq("workstream_id", workstreamId);
     const { data } = await q;
