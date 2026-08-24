@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase-browser";
 import { clearCrmCache, crmFetch, getCached } from "@/lib/crm";
 import ThemeToggle from "@/components/ThemeToggle";
+import NotificationAlerts from "@/components/crm/NotificationAlerts";
 
 // Persistent left sidebar, OPEN by default. Minimise collapses it to a ☰ button;
 // the choice is remembered (localStorage). When open it pushes the page content
@@ -16,6 +17,11 @@ type TeamStatus = { role?: ViewerRole };
 
 const TEAM_STATUS_URL = "/api/auth/team/status";
 const OUTREACH_ITEM: Item = { href: "/crm/outreach", label: "Outreach", icon: "↗" };
+const NOTIFICATIONS_ITEM: Item = {
+  href: "/crm/notifications",
+  label: "Notifications",
+  icon: "●",
+};
 const SHARED_CORE_ITEMS: Item[] = [
   { href: "/crm/revenue", label: "Pipeline", icon: "◆" },
   { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" },
@@ -39,7 +45,7 @@ const START_ITEM: Item = { href: "/call", label: "Start new call", icon: "▸" }
 
 const SIDEBAR_W = "15rem";
 
-function NavMenuInner() {
+function NavMenuInner({ notificationCount }: { notificationCount: number }) {
   const pathname = usePathname() || "";
   const router = useRouter();
   // useSearchParams updates on query-only navigation (e.g. switching board
@@ -84,9 +90,10 @@ function NavMenuInner() {
     ? { href: "/crm/inbox", label: "Today", icon: "▣" }
     : { href: "/crm", label: "Today", icon: "▣" };
   const coreItems: Item[] = salesHome
-    ? [homeItem, ...SHARED_CORE_ITEMS]
+    ? [homeItem, NOTIFICATIONS_ITEM, ...SHARED_CORE_ITEMS]
     : [
         homeItem,
+        NOTIFICATIONS_ITEM,
         { href: "/crm/inbox", label: "Sales Today", icon: "✓" },
         OUTREACH_ITEM,
         ...SHARED_CORE_ITEMS,
@@ -156,6 +163,8 @@ function NavMenuInner() {
     if (it.href === "/crm") return pathname === "/crm";
     if (it.href === "/call") return pathname.startsWith("/call");
     if (it.href === "/crm/inbox") return pathname.startsWith("/crm/inbox");
+    if (it.href === "/crm/notifications")
+      return pathname.startsWith("/crm/notifications");
     if (it.href === "/crm/documents")
       return pathname.startsWith("/crm/documents");
     if (it.href === "/crm/revenue")
@@ -208,7 +217,13 @@ function NavMenuInner() {
               <div className="grid grid-cols-2 gap-2">
                 {allItems.filter((item) => !BOTTOM.some((b) => b.href === item.href) && item.href !== "/call").map((item) => (
                   <Link key={item.href} href={item.href} onClick={() => setMobileMore(false)} className="flex min-h-12 items-center gap-3 rounded-xl border border-edge bg-ink/40 px-3 font-mono text-[0.62rem] uppercase tracking-wider text-bone">
-                    <span className="text-amber">{item.icon}</span>{item.label}
+                    <span className="text-amber">{item.icon}</span>
+                    <span className="min-w-0 flex-1">{item.label}</span>
+                    {item.href === NOTIFICATIONS_ITEM.href && notificationCount > 0 ? (
+                      <span className="rounded-full bg-rust px-2 py-0.5 text-[0.5rem] text-bone">
+                        {notificationCount > 99 ? "99+" : notificationCount}
+                      </span>
+                    ) : null}
                   </Link>
                 ))}
                 <button type="button" onClick={() => { setMobileMore(false); openBrain(); }} className="flex min-h-12 items-center gap-3 rounded-xl border border-amber/40 bg-amber/10 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-amber">
@@ -246,7 +261,12 @@ function NavMenuInner() {
               </Link>
             );
           })}
-          <button type="button" onClick={() => setMobileMore(true)} aria-expanded={mobileMore} className={`flex min-h-14 flex-1 flex-col items-center justify-end gap-1 py-2 font-mono text-[0.55rem] uppercase tracking-wider ${mobileMore ? "text-amber" : "text-muted"}`}>
+          <button type="button" onClick={() => setMobileMore(true)} aria-expanded={mobileMore} className={`relative flex min-h-14 flex-1 flex-col items-center justify-end gap-1 py-2 font-mono text-[0.55rem] uppercase tracking-wider ${mobileMore ? "text-amber" : "text-muted"}`}>
+            {notificationCount > 0 ? (
+              <span className="absolute right-[28%] top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rust px-1 text-[0.45rem] text-bone">
+                {notificationCount > 9 ? "9+" : notificationCount}
+              </span>
+            ) : null}
             <span className="text-[1.05rem] leading-none">•••</span>More
           </button>
         </nav>
@@ -263,6 +283,11 @@ function NavMenuInner() {
         className="fixed left-4 top-4 z-50 flex h-11 w-11 items-center justify-center rounded-full border border-edge bg-panel text-bone shadow-lg transition hover:border-amber/60 hover:text-amber"
       >
         <span className="text-lg leading-none">☰</span>
+        {notificationCount > 0 ? (
+          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-rust px-1 font-mono text-[0.48rem] text-bone">
+            {notificationCount > 9 ? "9+" : notificationCount}
+          </span>
+        ) : null}
       </button>
     );
   }
@@ -319,7 +344,12 @@ function NavMenuInner() {
               }`}
             >
               <span className="w-4 text-center">{it.icon}</span>
-              {it.label}
+              <span className="min-w-0 flex-1">{it.label}</span>
+              {it.href === NOTIFICATIONS_ITEM.href && notificationCount > 0 ? (
+                <span className="rounded-full bg-rust px-2 py-0.5 text-[0.5rem] text-bone">
+                  {notificationCount > 99 ? "99+" : notificationCount}
+                </span>
+              ) : null}
             </Link>
           ))}
         </div>
@@ -373,9 +403,13 @@ function NavMenuInner() {
 
 // useSearchParams needs a Suspense boundary in the App Router.
 export default function NavMenu() {
+  const [notificationCount, setNotificationCount] = useState(0);
   return (
-    <Suspense fallback={null}>
-      <NavMenuInner />
-    </Suspense>
+    <>
+      <NotificationAlerts onUnreadCount={setNotificationCount} />
+      <Suspense fallback={null}>
+        <NavMenuInner notificationCount={notificationCount} />
+      </Suspense>
+    </>
   );
 }
