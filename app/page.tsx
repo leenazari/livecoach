@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 
-// Outreach is the working home for LiveCoach. The call console remains one tap
-// away in the persistent navigation (middleware handles login).
+// The CRM chooses the correct role-aware home. Middleware sends sales and
+// manager accounts to their isolated Sales Desk while owners retain the wider
+// executive dashboard.
 export default function Home() {
-  redirect("/crm/outreach");
+  redirect("/crm");
 }

@@ -46,7 +46,7 @@ export default function LoginPage() {
       });
       if (error) throw error;
       clearCrmCache();
-      router.push("/call");
+      router.push("/crm");
       router.refresh();
     } catch (e: any) {
       setError(e.message || "Authentication failed");
@@ -80,10 +80,10 @@ export default function LoginPage() {
           {error && <p className="font-mono text-xs text-rust">! {error}</p>}
           <div className="flex gap-2">
             <button
-              onClick={() => router.push("/call")}
+              onClick={() => router.push("/crm")}
               className="rounded-full bg-amber px-6 py-2.5 font-mono text-sm font-medium uppercase tracking-wider text-ink transition hover:bg-amberglow"
             >
-              Go to console
+              Open LiveCoach
             </button>
             <button
               onClick={logout}

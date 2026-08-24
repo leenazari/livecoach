@@ -12,16 +12,21 @@ const nav = read("components/crm/NavMenu.tsx");
 const queueRoute = read("app/api/crm/outreach/queue/route.ts");
 const prepareRoute = read("app/api/crm/outreach/[id]/prepare/route.ts");
 
-assert.match(page, /Sales <span className="italic text-amber">Today<\/span>/);
-assert.match(page, /\{ key: "outreach", label: "Outreach" \}/);
+assert.match(page, /Sales <span className="italic text-amber">Desk<\/span>/);
+assert.match(page, /useState<Filter>\("outreach"\)/);
+assert.match(page, /\{ key: "outreach", label: "Sales flow" \}/);
 assert.match(page, /dynamic\([\s\S]*OutreachTodayLane/);
 assert.match(page, /filter === "outreach"[\s\S]*<OutreachTodayLane/);
+assert.match(page, /Calls and actions that cannot wait/);
+assert.match(page, /attentionItems\.map/);
 
 assert.match(lane, /crmFetch<QueueResponse>\("\/api\/crm\/outreach\/queue"\)/);
 assert.match(lane, /method: "POST"[\s\S]*body: "\{\}"/);
 assert.match(lane, /`\/api\/crm\/outreach\/\$\{prospectId\}\/prepare`/);
-assert.match(lane, /AI cost starts only when you press Prepare/);
-assert.match(lane, /Every email still waits for exact review and approval/);
+assert.match(lane, /const \[visible, setVisible\] = useState\(20\)/);
+assert.match(lane, /Next \{dailyLimit\} leads/);
+assert.match(lane, /Prepare, review, approve and queue each email here/);
+assert.match(lane, /Advanced outreach tools/);
 assert.match(lane, /The rest of the CRM remains usable/);
 assert.match(lane, /contentVisibility: "auto"/);
 assert.match(lane, /href="\/crm\/outreach\?tab=prospects"/);
@@ -32,10 +37,10 @@ assert.doesNotMatch(lane, /approve-all|messages\/\$\{.*\}\/approve/);
 assert.match(nav, /const OUTREACH_ITEM/);
 assert.match(
   nav,
-  /salesHome\s*\?\s*\[homeItem, NOTIFICATIONS_ITEM, \.\.\.SHARED_CORE_ITEMS\]/
+  /salesHome\s*\?\s*\[homeItem, \.\.\.SALES_CORE_ITEMS, NOTIFICATIONS_ITEM\]/
 );
 assert.match(nav, /label: "Campaigns and prospects"/);
-assert.match(nav, /OUTREACH_ITEM,[\s\S]*\.\.\.SHARED_CORE_ITEMS/);
+assert.match(nav, /CAMPAIGNS_ITEM, CALLS_ITEM, PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM/);
 
 assert.match(queueRoute, /assigned_to_user_id === userId/);
 assert.match(queueRoute, /reservedEmailsForAnotherCampaign/);

@@ -192,7 +192,7 @@ export default function JoinTeamPage() {
             {status.crmAccess ? (
               <div className="mt-5 grid gap-2 sm:grid-cols-2">
                 <button type="button" onClick={() => router.push("/settings/sales-profile")} className="w-full rounded-full bg-amber px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-ink">Set up my coaching</button>
-                <button type="button" onClick={() => router.push("/crm/outreach")} className="w-full rounded-full border border-sage/50 bg-sage/10 px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-sage">Open LiveCoach</button>
+                <button type="button" onClick={() => router.push("/crm")} className="w-full rounded-full border border-sage/50 bg-sage/10 px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-sage">Open LiveCoach</button>
               </div>
             ) : (
               <p className="mt-5 rounded-xl border border-sage/40 bg-sage/[0.06] px-4 py-3 text-sm leading-relaxed text-sage">Your separate login is ready. Email and calendar are optional. CRM access stays locked until Lee presses Activate in Team access.</p>
