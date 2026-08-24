@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
+import SalesPipelineLane from "@/components/crm/SalesPipelineLane";
 import { crmFetch } from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import MatrixRain from "@/components/MatrixRain";
@@ -11,6 +12,7 @@ import type {
   WorkCleanupSuggestion,
   WorkInboxItem,
   WorkInboxResponse,
+  WorkPipelineDeal,
 } from "@/lib/work-inbox";
 
 const OutreachTodayLane = dynamic(
@@ -41,7 +43,7 @@ const primaryFilters: { key: Filter; label: string }[] = [
   { key: "outreach", label: "Sales flow" },
   { key: "now", label: "Other priorities" },
   { key: "calls", label: "Calls" },
-  { key: "revenue", label: "Deals" },
+  { key: "revenue", label: "Pipeline" },
 ];
 
 const secondaryFilters: { key: Filter; label: string }[] = [
@@ -127,7 +129,7 @@ const belongsTo = (item: WorkInboxItem, filter: Filter) => {
   if (filter === "outreach")
     return !item.done && ["outreach", "reply", "follow_up"].includes(item.kind);
   if (filter === "calls") return !item.done && item.kind === "prep";
-  if (filter === "revenue") return !item.done && item.revenue;
+  if (filter === "revenue") return !item.done && item.kind === "opportunity";
   if (filter === "approvals") return !item.done && item.approval;
   if (filter === "waiting") return !item.done && item.waiting;
   if (filter === "cleanup") return false;
@@ -161,6 +163,9 @@ export default function WorkInboxPage() {
   const [nextActionId, setNextActionId] = useState("");
   const [nextActionText, setNextActionText] = useState("");
   const [nextActionDue, setNextActionDue] = useState("");
+  const [pipelineStageDrafts, setPipelineStageDrafts] = useState<
+    Record<string, string>
+  >({});
   const [outreachQueueCount, setOutreachQueueCount] = useState<number | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -269,7 +274,7 @@ export default function WorkInboxPage() {
             !item.done &&
             !item.waiting &&
             item.priority >= 78 &&
-            !["outreach", "reply"].includes(item.kind)
+            !["outreach", "reply", "opportunity"].includes(item.kind)
         )
         .slice(0, 4),
     [data?.items]
@@ -365,7 +370,7 @@ export default function WorkInboxPage() {
     }
   };
 
-  const beginNextDealAction = (item: WorkInboxItem) => {
+  const beginNextDealAction = (item: Pick<WorkInboxItem, "id">) => {
     setNextActionId(item.id);
     setNextActionText("");
     setNextActionDue(dateInputInLondon(1));
@@ -373,7 +378,9 @@ export default function WorkInboxPage() {
     setError("");
   };
 
-  const saveNextDealAction = async (item: WorkInboxItem) => {
+  const saveNextDealAction = async (
+    item: Pick<WorkInboxItem, "id" | "sourceId">
+  ) => {
     const nextAction = nextActionText.trim();
     if (!nextAction || !nextActionDue || savingId) return;
     setSavingId(item.id);
@@ -412,6 +419,47 @@ export default function WorkInboxPage() {
     } catch (err: any) {
       setError(err?.message || "The next deal action did not save.");
     } finally {
+      setSavingId("");
+    }
+  };
+
+  const updatePipelineStage = async (
+    deal: WorkPipelineDeal,
+    pipelineStage: string
+  ) => {
+    if (savingId || pipelineStage === deal.stage) return;
+    const busyKey = `stage:${deal.id}`;
+    setPipelineStageDrafts((current) => ({
+      ...current,
+      [deal.id]: pipelineStage,
+    }));
+    setSavingId(busyKey);
+    setError("");
+    setNotice("");
+    try {
+      const result = await crmFetch<{
+        opportunity: { pipeline_stage: string };
+      }>(`/api/crm/opportunities/${deal.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          pipelineStage,
+          sourceType: "human",
+          sourceChannel: "sales_desk_pipeline",
+          rationale: "Lifecycle stage confirmed from the Sales Desk",
+        }),
+      });
+      if (result.opportunity?.pipeline_stage !== pipelineStage)
+        throw new Error("The database did not confirm the pipeline stage.");
+      setNotice(`${deal.company} moved to ${pipelineStage.replace(/_/g, " ")}.`);
+      await load(true);
+    } catch (err: any) {
+      setError(err?.message || "The pipeline stage did not save.");
+    } finally {
+      setPipelineStageDrafts((current) => {
+        const next = { ...current };
+        delete next[deal.id];
+        return next;
+      });
       setSavingId("");
     }
   };
@@ -563,7 +611,7 @@ export default function WorkInboxPage() {
       return outreachQueueCount ?? data.items.filter((item) => belongsTo(item, "outreach")).length;
     if (key === "calls")
       return data.items.filter((item) => belongsTo(item, "calls")).length;
-    if (key === "revenue") return data.counts.revenue;
+    if (key === "revenue") return data.pipeline.totalDeals;
     if (key === "approvals") return data.counts.approvals;
     if (key === "waiting") return data.counts.waiting;
     if (key === "cleanup") return data.cleanup?.counts.total || 0;
@@ -656,8 +704,8 @@ export default function WorkInboxPage() {
               <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">Urgent</span>
             </div>
             <div className="rounded-xl border border-moss/35 bg-moss/[0.06] p-3">
-              <strong className="block font-display text-2xl text-moss">{data.counts.revenue}</strong>
-              <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">Revenue</span>
+              <strong className="block font-display text-2xl text-moss">{data.pipeline.totalDeals}</strong>
+              <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">Pipeline deals</span>
             </div>
           </section>
         ) : null}
@@ -796,6 +844,33 @@ export default function WorkInboxPage() {
                   })}
                 </ol>
               </section>
+            ) : null}
+            {data ? (
+              <SalesPipelineLane
+                pipeline={data.pipeline}
+                busyId={savingId}
+                editingId={nextActionId}
+                actionText={nextActionText}
+                actionDue={nextActionDue}
+                minimumDueDate={dateInputInLondon(0)}
+                stageDrafts={pipelineStageDrafts}
+                onBeginAction={(deal) =>
+                  beginNextDealAction({ id: deal.itemId })
+                }
+                onCancelAction={() => setNextActionId("")}
+                onActionTextChange={setNextActionText}
+                onActionDueChange={setNextActionDue}
+                onSaveAction={(deal) =>
+                  void saveNextDealAction({
+                    id: deal.itemId,
+                    sourceId: deal.id,
+                  })
+                }
+                onStageChange={(deal, stage) =>
+                  void updatePipelineStage(deal, stage)
+                }
+                onShowAll={() => chooseFilter("revenue")}
+              />
             ) : null}
             <OutreachTodayLane
               onQueueCount={setOutreachQueueCount}

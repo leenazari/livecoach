@@ -66,6 +66,7 @@ export type WorkInboxResponse = {
     role: "owner" | "manager" | "sales";
   };
   items: WorkInboxItem[];
+  pipeline: WorkPipelineSummary;
   cleanup: WorkCleanupSummary;
   counts: {
     now: number;
@@ -90,6 +91,46 @@ export type WorkInboxOpportunity = {
   next_action_owner?: string | null;
   updated_at?: string | null;
 };
+
+export type WorkPipelineDeal = {
+  id: string;
+  itemId: string;
+  companyId: string;
+  company: string;
+  title: string;
+  stage: string;
+  outlook: string;
+  value: number;
+  nextAction: string | null;
+  nextActionDueAt: string | null;
+  waitingForBuyer: boolean;
+  priority: number;
+};
+
+export type WorkPipelineStage = {
+  key: string;
+  count: number;
+  value: number;
+};
+
+export type WorkPipelineSummary = {
+  totalDeals: number;
+  totalValue: number;
+  overdue: number;
+  atRisk: number;
+  missingNextAction: number;
+  stages: WorkPipelineStage[];
+  deals: WorkPipelineDeal[];
+};
+
+const OPEN_PIPELINE_STAGES = [
+  "new",
+  "discovery",
+  "qualified",
+  "proposal",
+  "negotiation",
+  "verbal",
+] as const;
 
 const dateMs = (value: unknown) => {
   if (typeof value !== "string" || !value) return null;
@@ -162,5 +203,76 @@ export function buildOpportunityInboxItem(args: {
     done: false,
     editable: false,
     dismissible: false,
+  };
+}
+
+export function buildWorkPipeline(args: {
+  opportunities: WorkInboxOpportunity[];
+  companyName: ReadonlyMap<string, string>;
+  nowMs: number;
+  endTodayMs: number;
+}): { summary: WorkPipelineSummary; items: WorkInboxItem[] } {
+  const { opportunities, companyName, nowMs, endTodayMs } = args;
+  const items: WorkInboxItem[] = [];
+  const deals: WorkPipelineDeal[] = [];
+
+  for (const opportunity of opportunities) {
+    const company =
+      companyName.get(opportunity.company_id) || "Shared sales client";
+    const item = buildOpportunityInboxItem({
+      opportunity,
+      company,
+      nowMs,
+      endTodayMs,
+    });
+    items.push(item);
+    deals.push({
+      id: opportunity.id,
+      itemId: item.id,
+      companyId: opportunity.company_id,
+      company,
+      title: String(opportunity.title || company || "Sales opportunity").trim(),
+      stage: String(opportunity.pipeline_stage || "new"),
+      outlook: String(opportunity.win_outlook || "not_assessed"),
+      value: Math.max(0, Number(opportunity.value) || 0),
+      nextAction: opportunity.next_action
+        ? String(opportunity.next_action).trim()
+        : null,
+      nextActionDueAt: opportunity.next_action_due_at || null,
+      waitingForBuyer: opportunity.next_action_owner === "buyer",
+      priority: item.priority,
+    });
+  }
+
+  deals.sort((left, right) => {
+    if (left.priority !== right.priority) return right.priority - left.priority;
+    const leftDue = dateMs(left.nextActionDueAt) ?? Number.POSITIVE_INFINITY;
+    const rightDue = dateMs(right.nextActionDueAt) ?? Number.POSITIVE_INFINITY;
+    return leftDue - rightDue;
+  });
+
+  const stages = OPEN_PIPELINE_STAGES.map((key) => {
+    const stageDeals = deals.filter((deal) => deal.stage === key);
+    return {
+      key,
+      count: stageDeals.length,
+      value: stageDeals.reduce((sum, deal) => sum + deal.value, 0),
+    };
+  });
+
+  return {
+    items,
+    summary: {
+      totalDeals: deals.length,
+      totalValue: deals.reduce((sum, deal) => sum + deal.value, 0),
+      overdue: deals.filter((deal) => {
+        const dueMs = dateMs(deal.nextActionDueAt);
+        return !deal.waitingForBuyer && dueMs != null && dueMs < nowMs;
+      }).length,
+      atRisk: deals.filter((deal) => deal.outlook === "at_risk").length,
+      missingNextAction: deals.filter((deal) => !deal.nextAction).length,
+      stages,
+      deals,
+    },
   };
 }
