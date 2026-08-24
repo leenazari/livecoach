@@ -21,7 +21,7 @@ export default function DigestTestPage() {
       }
 
       setStatus("sent");
-      setMessage("Sunday week-ahead email sent to lee@ai13.com.");
+      setMessage("Test brief sent to your connected email address.");
     } catch (error) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "The test email could not be sent.");
@@ -34,9 +34,9 @@ export default function DigestTestPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-600">
           LiveCoach email preview
         </p>
-        <h1 className="mt-2 text-2xl font-semibold text-slate-950">Send Sunday week-ahead brief</h1>
+        <h1 className="mt-2 text-2xl font-semibold text-slate-950">Send a test brief</h1>
         <p className="mt-3 text-sm leading-6 text-slate-600">
-          This sends one live test to lee@ai13.com using the latest CRM and calendar information.
+          This sends one live test to your own connected email address using only the CRM and calendar information available to your login.
         </p>
 
         <button
