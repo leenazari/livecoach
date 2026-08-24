@@ -15,9 +15,16 @@ const indexMigration = read(
 const sharedClientMigration = read(
   "supabase/migrations/20260824003124_notify_shared_client_assignments.sql"
 );
+const standardUpgradeMigration = read(
+  "supabase/migrations/20260824054534_notification_standard_upgrades.sql"
+);
 const feedRoute = read("app/api/crm/notifications/route.ts");
 const itemRoute = read("app/api/crm/notifications/[id]/route.ts");
+const preferencesRoute = read(
+  "app/api/crm/notifications/preferences/route.ts"
+);
 const alerts = read("components/crm/NotificationAlerts.tsx");
+const helpers = read("lib/crm-notifications.ts");
 const page = read("app/crm/notifications/page.tsx");
 const nav = read("components/crm/NavMenu.tsx");
 
@@ -70,6 +77,25 @@ assert.match(
   sharedClientMigration,
   /revoke execute on function livecoach_private\.notify_work_assignment\(\)/
 );
+assert.match(standardUpgradeMigration, /add column if not exists snoozed_until/);
+assert.match(standardUpgradeMigration, /attention_at timestamptz generated always/);
+assert.match(standardUpgradeMigration, /create table public\.crm_notification_preferences/);
+assert.match(standardUpgradeMigration, /enable row level security/);
+assert.match(standardUpgradeMigration, /user_id = \(select auth\.uid\(\)\)/g);
+assert.match(standardUpgradeMigration, /wm\.status = 'active'/g);
+assert.match(
+  standardUpgradeMigration,
+  /grant select, insert, update on table public\.crm_notification_preferences[\s\S]*to authenticated/
+);
+assert.match(
+  standardUpgradeMigration,
+  /alter publication supabase_realtime add table public\.crm_notifications/
+);
+assert.doesNotMatch(
+  standardUpgradeMigration,
+  /insert into public\.crm_notifications|update public\.crm_notifications|delete from public\.crm_notifications/,
+  "The upgrade must not replay or mutate historical notification receipts"
+);
 
 for (const route of [feedRoute, itemRoute]) {
   assert.match(route, /requireRequestScope\(\)/);
@@ -79,10 +105,34 @@ for (const route of [feedRoute, itemRoute]) {
 }
 assert.match(feedRoute, /Cache-Control": "private, no-store/);
 assert.match(feedRoute, /\.is\("dismissed_at", null\)/);
-assert.match(itemRoute, /new Set\(\["read", "unread", "dismiss"\]\)/);
+assert.match(feedRoute, /BULK_ACTIONS = new Set\(\["read", "unread", "dismiss", "snooze"\]\)/);
+assert.match(feedRoute, /ids\.length > 100/);
+assert.match(feedRoute, /snoozed_until\.lte/);
+assert.match(feedRoute, /crm_notification_preferences/);
+assert.match(itemRoute, /new Set\(\["read", "unread", "dismiss", "snooze"\]\)/);
+assert.match(itemRoute, /parseNotificationSnoozeUntil/);
+
+assert.match(preferencesRoute, /requireRequestScope\(\)/);
+assert.match(preferencesRoute, /workspace_id: account\.workspaceId/);
+assert.match(preferencesRoute, /user_id: account\.userId/);
+assert.match(preferencesRoute, /isValidClockTime/);
+assert.match(preferencesRoute, /isValidTimezone/);
+assert.match(preferencesRoute, /workspace_id,user_id/);
+assert.doesNotMatch(preferencesRoute, /supabaseService/);
+
+assert.match(helpers, /notificationKindEnabled/);
+assert.match(helpers, /isQuietHoursActive/);
+assert.match(helpers, /MAX_SNOOZE_MS = 30 \* 24 \* 60 \* 60 \* 1000/);
 
 assert.match(alerts, /POLL_MS = 60_000/);
 assert.match(alerts, /Establish a baseline without replaying old alerts/);
+assert.match(alerts, /attentionAt/);
+assert.match(alerts, /isQuietHoursActive\(feed\.preferences\)/);
+assert.match(alerts, /notificationKindEnabled\(feed\.preferences, item\.kind\)/);
+assert.match(alerts, /event: "INSERT"/);
+assert.match(alerts, /event: "UPDATE"/);
+assert.match(alerts, /filter: `user_id=eq\.\$\{currentUser\}`/);
+assert.match(alerts, /lc:notifications-realtime/);
 assert.match(alerts, /Notification\.permission === "granted"/);
 assert.doesNotMatch(alerts, /requestPermission/);
 assert.match(alerts, /lc:notifications-updated/);
@@ -90,7 +140,14 @@ assert.doesNotMatch(alerts, /openai|anthropic|messages\.create/i);
 
 assert.match(page, /Notification\.requestPermission\(\)/);
 assert.match(page, /onClick=\{\(\) => void enableDesktop\(\)\}/);
-assert.match(page, /Each teammate has a separate private unread list/);
+assert.match(page, /Changes save immediately/);
+assert.match(page, /useDeferredValue/);
+assert.match(page, /Snooze 1 day/);
+assert.match(page, /Select visible/);
+assert.match(page, /New replies/);
+assert.match(page, /Lead assignments/);
+assert.match(page, /Quiet hours/);
+assert.match(page, /lc:notifications-realtime/);
 assert.match(page, /Mark all read/);
 assert.match(page, /Dismiss/);
 assert.match(page, /Popups work while your browser is running/);
