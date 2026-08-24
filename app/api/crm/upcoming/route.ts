@@ -15,7 +15,18 @@ export async function GET() {
     // so a just-finished call sticks around long enough to open/recap, then
     // drops off on its own. Calls with no set time are always kept.
     const pastCutoff = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const [{ data: companies }, { data: calls }] = await Promise.all([
+    // Keep a short recovery window for calls marked done. This lets the user
+    // reopen an accidentally hidden call without exposing another person's
+    // calendar or duplicating the source event.
+    const recoveryCutoff = new Date(
+      Date.now() - 14 * 24 * 60 * 60 * 1000
+    ).toISOString();
+    const nowIso = new Date().toISOString();
+    const [
+      { data: companies },
+      { data: calls },
+      { data: recentlyCompleted },
+    ] = await Promise.all([
       supabaseAdmin.from("companies").select("id, name"),
       supabaseAdmin
         .from("upcoming_calls")
@@ -27,6 +38,17 @@ export async function GET() {
         .or(`scheduled_at.is.null,scheduled_at.gte.${pastCutoff}`)
         .order("scheduled_at", { ascending: true, nullsFirst: false })
         .limit(200),
+      supabaseAdmin
+        .from("upcoming_calls")
+        .select(
+          "id, company_id, title, scheduled_at, meeting_url, intent, prepped, source, created_at, completed_at"
+        )
+        .not("completed_at", "is", null)
+        // Always include a future call, even if it was hidden more than two
+        // weeks ago. Otherwise keep the recovery list deliberately short.
+        .or(`completed_at.gte.${recoveryCutoff},scheduled_at.gte.${nowIso}`)
+        .order("completed_at", { ascending: false })
+        .limit(20),
     ]);
     const nameById = new Map<string, string>();
     for (const c of companies || []) nameById.set(c.id, c.name);
@@ -36,8 +58,14 @@ export async function GET() {
         ...c,
         company: c.company_id ? nameById.get(c.company_id) || null : null,
       }));
+    const recoverable = (recentlyCompleted || [])
+      .filter((c: any) => isPrepEligibleCalendarEvent(c))
+      .map((c: any) => ({
+        ...c,
+        company: c.company_id ? nameById.get(c.company_id) || null : null,
+      }));
     return NextResponse.json(
-      { calls: items },
+      { calls: items, recentlyCompleted: recoverable },
       { headers: { "Cache-Control": "no-store, max-age=0" } }
     );
   } catch (err: any) {

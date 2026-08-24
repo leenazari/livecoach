@@ -16,6 +16,12 @@ type Upcoming = {
   meeting_url: string | null;
   intent: string | null;
   prepped: boolean;
+  completed_at?: string | null;
+};
+
+type UpcomingFeed = {
+  calls: Upcoming[];
+  recentlyCompleted?: Upcoming[];
 };
 
 const fmtWhen = (iso: string | null) => {
@@ -35,13 +41,18 @@ const fmtWhen = (iso: string | null) => {
 
 export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   const router = useRouter();
-  const cached = getCached<{ calls: Upcoming[] }>("/api/crm/upcoming");
+  const cached = getCached<UpcomingFeed>("/api/crm/upcoming");
   const [calls, setCalls] = useState<Upcoming[]>(cached?.calls || []);
+  const [recentlyCompleted, setRecentlyCompleted] = useState<Upcoming[]>(
+    cached?.recentlyCompleted || []
+  );
   const [adding, setAdding] = useState(false);
   const [prepId, setPrepId] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [restoringId, setRestoringId] = useState("");
 
   // add-form state
   const [title, setTitle] = useState("");
@@ -53,8 +64,11 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   const [intent, setIntent] = useState("");
 
   const load = () =>
-    crmFetch<{ calls: Upcoming[] }>("/api/crm/upcoming")
-      .then((d) => setCalls(d.calls || []))
+    crmFetch<UpcomingFeed>("/api/crm/upcoming")
+      .then((d) => {
+        setCalls(d.calls || []);
+        setRecentlyCompleted(d.recentlyCompleted || []);
+      })
       .catch(() => {});
 
   // Pull the latest from Google now (catches reschedules between the automatic
@@ -234,6 +248,27 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
     }
     // The dashboard's prep to-dos read completion too, so nudge a refresh.
     window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    await load();
+  };
+
+  const restore = async (id: string) => {
+    setRestoringId(id);
+    setSyncMsg("");
+    try {
+      const { call } = await crmFetch<{ call: any }>(`/api/crm/upcoming/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ completed: false }),
+      });
+      if (!call?.id || call.completed_at !== null)
+        throw new Error("database did not confirm the restored call");
+      await load();
+      setSyncMsg("call restored to upcoming");
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+    } catch (e: any) {
+      setSyncMsg(e?.message || "Call could not be restored. Please try again.");
+    } finally {
+      setRestoringId("");
+    }
   };
 
   // Open the call screen preloaded from this scheduled call. The /call screen IS
@@ -301,8 +336,59 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
           >
             {adding ? "close" : "+ schedule"}
           </button>
+          {recentlyCompleted.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowRecovery((value) => !value)}
+              aria-expanded={showRecovery}
+              aria-controls="recently-completed-calls"
+              className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+            >
+              {showRecovery
+                ? "hide completed"
+                : `recover calls · ${recentlyCompleted.length}`}
+            </button>
+          )}
         </div>
       </div>
+
+      {showRecovery && recentlyCompleted.length > 0 && (
+        <div
+          id="recently-completed-calls"
+          className="mb-3 rounded-lg border border-sage/35 bg-sage/[0.04] p-3"
+        >
+          <p className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
+            Recently completed
+          </p>
+          <p className="mt-1 font-mono text-[0.54rem] leading-relaxed text-muted">
+            Accidentally hidden a call? Restore it here and it returns to
+            Upcoming Calls.
+          </p>
+          <ul className="mt-2 flex flex-col gap-2">
+            {recentlyCompleted.map((call) => (
+              <li
+                key={call.id}
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-edge bg-ink/40 px-3 py-2"
+              >
+                <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sky">
+                  {fmtWhen(call.scheduled_at)}
+                </span>
+                <span className="min-w-[10rem] flex-1 text-sm text-bone">
+                  {call.title || "Untitled call"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void restore(call.id)}
+                  disabled={restoringId === call.id}
+                  className="rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 disabled:opacity-40"
+                >
+                  {restoringId === call.id ? "restoring…" : "restore to upcoming"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {adding && (
         <div className="mb-3 flex flex-col gap-2 rounded-lg border border-amber/30 bg-amber/[0.04] p-3">
@@ -367,7 +453,11 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
       ) : (
         <>
         <ul className="flex flex-col gap-2">
-          {shown.map((c) => (
+          {shown.map((c) => {
+            const canMarkDone =
+              !c.scheduled_at ||
+              new Date(c.scheduled_at).getTime() <= Date.now() + 15 * 60 * 1000;
+            return (
             <li
               key={c.id}
               className="rounded-lg border border-edge bg-ink/40 px-3.5 py-3"
@@ -426,8 +516,13 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
                 <button
                   type="button"
                   onClick={() => markDone(c.id)}
-                  title="Mark this call as done - clears it from upcoming. Use it for calls you ran outside the app or that never linked to a client."
-                  className="rounded-full border border-edge bg-bone/[0.04] px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:border-sage/60 hover:text-sage"
+                  disabled={!canMarkDone}
+                  title={
+                    canMarkDone
+                      ? "Mark this call as done. You can restore it from Recover calls."
+                      : "Available 15 minutes before the meeting. This prevents a future call being hidden accidentally."
+                  }
+                  className="rounded-full border border-edge bg-bone/[0.04] px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:border-sage/60 hover:text-sage disabled:cursor-not-allowed disabled:opacity-35"
                 >
                   done ✓
                 </button>
@@ -486,7 +581,8 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
                 </div>
               )}
             </li>
-          ))}
+            );
+          })}
         </ul>
         {calls.length > limit && (
           <button
