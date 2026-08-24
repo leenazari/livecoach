@@ -405,7 +405,7 @@ export default function TeamAccessPage() {
                         label: "Isolated CRM access activated",
                         detail: member.status === "active"
                           ? "Account can enter its own CRM workspace"
-                          : "Activate after the separate identity checks pass",
+                          : "Automatically activates when the secure invitation is accepted. The button below remains as a recovery option",
                         complete: member.status === "active",
                       },
                       {
