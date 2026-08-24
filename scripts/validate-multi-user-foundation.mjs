@@ -67,6 +67,13 @@ const invitationConflictFixMigration = readFileSync(
   ),
   "utf8"
 );
+const automaticInvitationActivationMigration = readFileSync(
+  path.join(
+    root,
+    "supabase/migrations/20260824170537_auto_activate_verified_team_invites.sql"
+  ),
+  "utf8"
+);
 const assignmentMigration = readFileSync(
   path.join(root, "supabase/migrations/20260821160000_team_work_assignment.sql"),
   "utf8"
@@ -386,6 +393,30 @@ assert.doesNotMatch(
   invitationConflictFixMigration,
   /on conflict \(workspace_id, user_id\) do update/i
 );
+assert.match(
+  automaticInvitationActivationMigration,
+  /invitation belongs to a different email address/
+);
+assert.match(
+  automaticInvitationActivationMigration,
+  /status = 'pending'[\s\S]*?expires_at > now\(\)/
+);
+assert.match(
+  automaticInvitationActivationMigration,
+  /on conflict on constraint workspace_members_pkey do update[\s\S]*?status = 'active'/i
+);
+assert.match(
+  automaticInvitationActivationMigration,
+  /workspace_member_auto_activated/
+);
+assert.match(
+  automaticInvitationActivationMigration,
+  /select invitation\.workspace_id, invitation\.role, 'active'::text/
+);
+assert.match(
+  automaticInvitationActivationMigration,
+  /revoke all on function public\.accept_livecoach_invitation[\s\S]*?authenticated/
+);
 assert.match(teamRoute, /requireWorkspaceOwner\(\)/);
 assert.match(teamRoute, /randomBytes\(32\)/);
 assert.match(teamRoute, /createHash\("sha256"\)/);
@@ -431,7 +462,8 @@ assert.match(joinTeam, /Email and calendar are optional/);
 assert.match(calendarSync, /listConnectedCalendarSnapshot/);
 assert.match(calendarSync, /source === "microsoft" \? `microsoft:\$\{ev\.id\}`/);
 assert.match(calendarSync, /connectedOnly: true/);
-assert.match(joinTeam, /Lee presses Activate/i);
+assert.match(joinTeam, /Access active/);
+assert.match(joinTeam, /legacy Activate button/);
 assert.match(assignmentMigration, /assigned_to_user_id/);
 assert.match(assignmentMigration, /sender_user_id/);
 assert.match(assignmentMigration, /audit_livecoach_work_assignment/);
@@ -459,7 +491,7 @@ assert.match(invitationAcceptance, /getVerifiedUser\(\)/);
 assert.match(invitationAcceptance, /accept_livecoach_invitation/);
 assert.match(joinTeam, /at least 8 characters/i);
 assert.match(joinTeam, /Connect Google/);
-assert.match(joinTeam, /CRM access stays locked/i);
+assert.doesNotMatch(joinTeam, /CRM access stays locked until Lee/i);
 assert.match(bulkOutreachAssignment, /account\.role !== "owner"/);
 assert.match(bulkOutreachAssignment, /account\.role !== "manager"/);
 assert.match(bulkOutreachAssignment, /workspace_members/);

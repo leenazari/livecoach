@@ -169,14 +169,16 @@ export default function JoinTeamPage() {
                 <p className="text-sm font-semibold text-bone">{status.workspace}</p>
                 <p className="mt-1 text-xs text-muted">{status.role} account · {status.status}</p>
               </div>
-              <span className="rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-amber">Private onboarding</span>
+              <span className={`rounded-full border px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider ${status.crmAccess ? "border-sage/50 bg-sage/10 text-sage" : "border-amber/50 bg-amber/10 text-amber"}`}>
+                {status.crmAccess ? "Access active" : "Securing access"}
+              </span>
             </div>
             <div className="mt-5 rounded-xl border border-edge bg-ink/35 p-4">
               <p className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">Your email and calendar</p>
               <p className="mt-2 text-sm text-bone">
                 {status.connector.provider
                   ? `${status.connector.provider === "google" ? "Google" : "Microsoft"} connected as ${status.connector.email || email}`
-                  : "Optional. Connect your own Google or Microsoft account for calendar sync, email context and outreach. Lee's connection is never used."}
+                  : "Email and calendar are optional. Connect your own Google or Microsoft account for calendar sync, email context and outreach. Lee's connection is never used."}
               </p>
               {!status.connector.provider ? (
                 <div className="mt-4 flex flex-col gap-2 sm:flex-row">
@@ -195,7 +197,7 @@ export default function JoinTeamPage() {
                 <button type="button" onClick={() => router.push("/crm")} className="w-full rounded-full border border-sage/50 bg-sage/10 px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-sage">Open LiveCoach</button>
               </div>
             ) : (
-              <p className="mt-5 rounded-xl border border-sage/40 bg-sage/[0.06] px-4 py-3 text-sm leading-relaxed text-sage">Your separate login is ready. Email and calendar are optional. CRM access stays locked until Lee presses Activate in Team access.</p>
+              <p className="mt-5 rounded-xl border border-amber/40 bg-amber/[0.06] px-4 py-3 text-sm leading-relaxed text-amber">Your secure invitation is still being finalised. Refresh this page once. If it remains here, ask Lee to use the legacy Activate button in Team access.</p>
             )}
           </div>
         ) : null}
