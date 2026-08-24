@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { publicAppOrigin } from "@/lib/public-app-url";
 import { listActiveAccountScopes } from "@/lib/automation-accounts";
-import { runWithServiceRecordScope } from "@/lib/service-scope";
+import {
+  runWithServiceRecordScope,
+  type ServiceRecordScope,
+} from "@/lib/service-scope";
 import { supabaseAdmin } from "@/lib/supabase";
-import { sendConnectedMail } from "@/lib/mail";
-import { GET as getDashboard } from "@/app/api/crm/dashboard/route";
+import { connectedMailProvider, sendConnectedMail } from "@/lib/mail";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { POST as runCalendarSync } from "@/app/api/crm/calendar-sync/route";
@@ -15,9 +17,10 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
-const RECIPIENT = "lee@ai13.com";
 const TIME_ZONE = "Europe/London";
 const SENT_KEY = "daily_progress_email_last_sent";
+const USER_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const esc = (value: unknown): string =>
   String(value == null ? "" : value)
@@ -98,12 +101,10 @@ const list = (items: string[], empty: string) =>
         .join("")}</ul>`
     : `<p style="margin:0;font-size:14px;color:#858078;">${esc(empty)}</p>`;
 
-async function runDigest(req: NextRequest) {
-  const secret = process.env.CRON_SECRET || "";
-  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
-    return NextResponse.json({ error: "not authorised" }, { status: 401 });
-  }
-
+async function runDigestForAccount(
+  req: NextRequest,
+  account: ServiceRecordScope
+) {
   try {
     const now = new Date();
     const today = dayKey(now);
@@ -114,7 +115,20 @@ async function runDigest(req: NextRequest) {
     // successful send so retries cannot produce a second copy of the email.
     const sentConfig = await getAppConfigValue(SENT_KEY);
     if (!force && sentConfig?.value === today) {
-      return NextResponse.json({ ok: true, skipped: "already sent today" });
+      return { status: "skipped" as const, reason: "already sent today" };
+    }
+
+    // Resolve the recipient from the same exact account as the CRM reads.
+    // Never accept an email address from a URL or request body. This prevents
+    // one user's private brief from being redirected to another team member.
+    const connection = await connectedMailProvider(account.userId);
+    const recipient = String(connection.email || "").trim().toLowerCase();
+    if (
+      !connection.provider ||
+      !recipient ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)
+    ) {
+      throw new Error("This account does not have a connected email mailbox");
     }
 
     // The email must be built from calendar truth at send time. A separate
@@ -136,21 +150,17 @@ async function runDigest(req: NextRequest) {
     const since = new Date(now.getTime() - 36 * 60 * 60 * 1000).toISOString();
     const horizon = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000).toISOString();
     const appUrl = publicAppOrigin();
-    // Use the dashboard's own deterministic ranking for the email too. Calling
-    // the light route keeps it model-free while guaranteeing that the first
-    // five priorities in both places are the same at send time.
-    const dashboardPromise = getDashboard(
-      new Request(`${appUrl}/api/crm/dashboard?light=1`)
-    );
     const [callsRes, completedRes, openRes, upcomingRes, oppsRes, salesProfile] = await Promise.all([
       supabaseAdmin
         .from("interview_summaries")
         .select("ref, candidate, role, summary, created_at, company_id")
+        .eq("owner_id", account.userId)
         .gte("created_at", since)
         .order("created_at", { ascending: true }),
       supabaseAdmin
         .from("tasks")
         .select("id, text, company_id, done_at")
+        .eq("owner_id", account.userId)
         .eq("status", "done")
         .gte("done_at", since)
         .order("done_at", { ascending: true })
@@ -158,12 +168,14 @@ async function runDigest(req: NextRequest) {
       supabaseAdmin
         .from("tasks")
         .select("id, text, company_id, kind, due_at, created_at")
+        .eq("owner_id", account.userId)
         .eq("status", "open")
         .order("due_at", { ascending: true, nullsFirst: false })
         .limit(200),
       supabaseAdmin
         .from("upcoming_calls")
         .select("id, title, company_id, scheduled_at, intent, prepped")
+        .eq("owner_id", account.userId)
         .is("completed_at", null)
         .gte("scheduled_at", now.toISOString())
         .lte("scheduled_at", horizon)
@@ -172,6 +184,7 @@ async function runDigest(req: NextRequest) {
       supabaseAdmin
         .from("opportunities")
         .select("id, company_id, title, value, created_at, pipeline_stage, probability, next_action, next_action_due_at, next_action_owner, opportunity_type")
+        .eq("assigned_to_user_id", account.userId)
         .eq("status", "open")
         .eq("opportunity_type", "revenue")
         .order("value", { ascending: false })
@@ -181,10 +194,6 @@ async function runDigest(req: NextRequest) {
     for (const result of [callsRes, completedRes, openRes, upcomingRes, oppsRes]) {
       if (result.error) throw result.error;
     }
-    const dashboardResponse = await dashboardPromise;
-    const dashboardData = dashboardResponse.ok
-      ? await dashboardResponse.json()
-      : null;
 
     const calls = (callsRes.data || []).filter(
       (row: any) => row.created_at && dayKey(new Date(row.created_at)) === today
@@ -296,16 +305,13 @@ async function runDigest(req: NextRequest) {
         return { ...task, score, reason, opportunity };
       })
       .sort((a: any, b: any) => b.score - a.score);
-    const dashboardActions = Array.isArray(dashboardData?.today?.topActions)
-      ? dashboardData.today.topActions
-      : [];
-    const attentionRows = dashboardActions.length
-      ? dashboardActions.slice(0, 5)
-      : scoredTasks.slice(0, 5).map((task: any) => ({
-          ...task,
-          company: companyNames.get(task.company_id),
-          href: task.company_id ? `/crm/${task.company_id}` : "/crm/board?tab=tasks",
-        }));
+    const attentionRows = scoredTasks.slice(0, 5).map((task: any) => ({
+      ...task,
+      company: companyNames.get(task.company_id),
+      href: task.company_id
+        ? `/crm/${task.company_id}`
+        : "/crm/board?tab=tasks",
+    }));
     const attention = attentionRows.map((item: any) => {
       const colour = /overdue/i.test(String(item.reason || ""))
         ? "#a34b35"
@@ -482,7 +488,7 @@ async function runDigest(req: NextRequest) {
       buyingOpportunities,
       weekAhead,
       isSunday,
-      openCount: Number(dashboardData?.kpis?.tasks) || openTasks.length,
+      openCount: openTasks.length,
       overdueCount: openTasks.filter((task: any) => {
         const due = task.due_at ? new Date(task.due_at).getTime() : NaN;
         return Number.isFinite(due) && due < nowMs;
@@ -491,37 +497,36 @@ async function runDigest(req: NextRequest) {
       workingFocus,
     });
 
-    const sent = await sendConnectedMail({
-      to: RECIPIENT,
-      subject: isSunday
-        ? `LiveCoach week ahead: ${when}`
-        : `LiveCoach daily brief: ${when}`,
-      html,
-    });
+    const sent = await sendConnectedMail(
+      {
+        to: recipient,
+        subject: isSunday
+          ? `LiveCoach week ahead: ${when}`
+          : `LiveCoach daily brief: ${when}`,
+        html,
+      },
+      account.userId
+    );
     if (!sent.ok) throw new Error(sent.error || "email send failed");
 
     await setAppConfigValue({
-        key: SENT_KEY,
-        value: today,
-        note: "London date of the last successful daily progress email",
-      });
+      key: SENT_KEY,
+      value: today,
+      note: "London date of this user's last successful daily progress email",
+    });
 
-    return NextResponse.json({
-      ok: true,
-      to: RECIPIENT,
+    return {
+      status: "sent" as const,
       calls: calls.length,
       completed: completed.length,
       tomorrow: tomorrowCalls.length,
       attention: attention.length,
       buyingOpportunities: buyingOpportunities.length,
       weekly: isSunday,
-    });
+    };
   } catch (error: any) {
-    console.error("daily digest failed:", error);
-    return NextResponse.json(
-      { ok: false, error: error?.message || "daily digest failed" },
-      { status: 500 }
-    );
+    console.error("daily digest account failed:", error);
+    throw error;
   }
 }
 
@@ -530,10 +535,61 @@ export async function GET(req: NextRequest) {
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "not authorised" }, { status: 401 });
   }
-  const owners = await listActiveAccountScopes({ ownersOnly: true, connectedOnly: true });
-  if (owners.length !== 1)
-    return NextResponse.json({ error: "A single active workspace owner is required for the founder digest" }, { status: 409 });
-  return runWithServiceRecordScope(owners[0], () => runDigest(req));
+  const targetUserId = new URL(req.url).searchParams.get("account") || "";
+  if (targetUserId && !USER_ID.test(targetUserId)) {
+    return NextResponse.json({ error: "invalid account" }, { status: 400 });
+  }
+
+  const connectedAccounts = await listActiveAccountScopes({ connectedOnly: true });
+  const accounts = targetUserId
+    ? connectedAccounts.filter((account) => account.userId === targetUserId)
+    : connectedAccounts;
+  if (targetUserId && accounts.length !== 1) {
+    return NextResponse.json(
+      { error: "The selected account is not active or has no connected mailbox" },
+      { status: 404 }
+    );
+  }
+  if (!accounts.length) {
+    return NextResponse.json({
+      ok: true,
+      accounts: 0,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+    });
+  }
+
+  // Each account runs in its own service scope. One failed mailbox does not
+  // block the others. A failing response still makes Vercel retry, while the
+  // successful users' private sent markers prevent duplicate delivery.
+  const results = await Promise.all(
+    accounts.map(async (account) => {
+      try {
+        const result = await runWithServiceRecordScope(account, () =>
+          runDigestForAccount(req, account)
+        );
+        return { ok: true as const, ...result };
+      } catch (error: any) {
+        return {
+          ok: false as const,
+          status: "failed" as const,
+          error: error?.message || "daily digest failed",
+        };
+      }
+    })
+  );
+  const failed = results.filter((result) => !result.ok).length;
+  const payload = {
+    ok: failed === 0,
+    accounts: accounts.length,
+    sent: results.filter((result) => result.status === "sent").length,
+    skipped: results.filter((result) => result.status === "skipped").length,
+    failed,
+    results,
+    ...(failed ? { error: "One or more user briefs could not be sent" } : {}),
+  };
+  return NextResponse.json(payload, { status: failed ? 500 : 200 });
 }
 
 function renderEmail(data: {

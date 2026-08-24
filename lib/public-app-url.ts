@@ -69,3 +69,19 @@ export function publicAppOrigin(requestOrigin?: string): string {
   return request || CANONICAL_PRODUCTION_ORIGIN;
 }
 
+/**
+ * Resolve the current deployment for authenticated server-to-server calls.
+ * Unlike public email links, a preview must call its own preview function and
+ * not silently invoke production. VERCEL_URL is deployment-owned, not taken
+ * from an untrusted browser Host header.
+ */
+export function internalAppOrigin(requestOrigin?: string): string {
+  const deployment = normalizedOrigin(process.env.VERCEL_URL);
+  if (
+    deployment?.startsWith("https://") &&
+    !isLocalOrPrivateOrigin(deployment)
+  ) {
+    return deployment;
+  }
+  return publicAppOrigin(requestOrigin);
+}

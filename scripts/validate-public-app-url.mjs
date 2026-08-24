@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { publicAppOrigin } from "../lib/public-app-url.ts";
+import {
+  internalAppOrigin,
+  publicAppOrigin,
+} from "../lib/public-app-url.ts";
 
 const keys = [
   "VERCEL",
   "VERCEL_ENV",
+  "VERCEL_URL",
   "VERCEL_PROJECT_PRODUCTION_URL",
   "NEXT_PUBLIC_APP_URL",
 ];
@@ -43,6 +47,17 @@ try {
     "local development must remain usable"
   );
 
+  reset();
+  process.env.VERCEL = "1";
+  process.env.VERCEL_ENV = "preview";
+  process.env.VERCEL_URL = "livecoach-example-preview.vercel.app";
+  process.env.NEXT_PUBLIC_APP_URL = "https://livecoach-alpha.vercel.app";
+  assert.equal(
+    internalAppOrigin("https://attacker.example"),
+    "https://livecoach-example-preview.vercel.app",
+    "internal calls must stay on the trusted current deployment"
+  );
+
   console.log("public app URL validation passed");
 } finally {
   reset();
@@ -50,4 +65,3 @@ try {
     if (value !== undefined) process.env[key] = value;
   }
 }
-
