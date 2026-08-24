@@ -2,26 +2,36 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { crmFetch } from "@/lib/crm";
+import { createSupabaseBrowser } from "@/lib/supabase-browser";
+import {
+  type CrmNotificationKind,
+  type NotificationPreferences,
+  isQuietHoursActive,
+  notificationKindEnabled,
+} from "@/lib/crm-notifications";
 
 type CrmNotification = {
   id: string;
-  kind: "outreach_reply" | "lead_assigned";
+  kind: CrmNotificationKind;
   title: string;
   body: string;
   href: string | null;
   readAt: string | null;
+  snoozedUntil: string | null;
+  attentionAt: string;
   createdAt: string;
 };
 
 type NotificationFeed = {
   notifications: CrmNotification[];
   unreadCount: number;
+  preferences: NotificationPreferences;
   currentUser: string;
   serverTime: string;
 };
 
 const POLL_MS = 60_000;
-const LAST_POPUP_KEY = "livecoach:notifications:last-popup:v1";
+const LAST_POPUP_KEY = "livecoach:notifications:last-popup:v2";
 
 export default function NotificationAlerts({
   onUnreadCount,
@@ -29,6 +39,7 @@ export default function NotificationAlerts({
   onUnreadCount: (count: number) => void;
 }) {
   const [toasts, setToasts] = useState<CrmNotification[]>([]);
+  const [currentUser, setCurrentUser] = useState("");
   const loading = useRef(false);
   const popupCursor = useRef(new Map<string, string>());
 
@@ -51,9 +62,10 @@ export default function NotificationAlerts({
     loading.current = true;
     try {
       const feed = await crmFetch<NotificationFeed>(
-        "/api/crm/notifications?unread=1&limit=20"
+        "/api/crm/notifications?unread=1&limit=100"
       );
       onUnreadCount(feed.unreadCount || 0);
+      setCurrentUser(feed.currentUser);
 
       const storageKey = `${LAST_POPUP_KEY}:${feed.currentUser}`;
       let previous = popupCursor.current.get(storageKey) || null;
@@ -76,16 +88,17 @@ export default function NotificationAlerts({
 
       const previousTime = new Date(previous).getTime();
       const fresh = feed.notifications
-        .filter((item) => new Date(item.createdAt).getTime() > previousTime)
+        .filter((item) => new Date(item.attentionAt).getTime() > previousTime)
         .sort(
           (left, right) =>
-            new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
+            new Date(left.attentionAt).getTime() -
+            new Date(right.attentionAt).getTime()
         );
       if (!fresh.length) return;
 
       const latestTime = fresh.reduce(
         (latest, item) =>
-          Math.max(latest, new Date(item.createdAt).getTime()),
+          Math.max(latest, new Date(item.attentionAt).getTime()),
         previousTime
       );
       const nextCursor = new Date(latestTime).toISOString();
@@ -95,13 +108,27 @@ export default function NotificationAlerts({
       } catch {
         // The in-memory cursor above is the safe fallback.
       }
-      setToasts((current) => {
-        const seen = new Set(current.map((item) => item.id));
-        return [...current, ...fresh.filter((item) => !seen.has(item.id))].slice(-3);
-      });
+      const alertable = isQuietHoursActive(feed.preferences)
+        ? []
+        : fresh.filter((item) =>
+            notificationKindEnabled(feed.preferences, item.kind)
+          );
+      if (feed.preferences.inAppEnabled && alertable.length) {
+        setToasts((current) => {
+          const seen = new Set(current.map((item) => item.id));
+          return [
+            ...current,
+            ...alertable.filter((item) => !seen.has(item.id)),
+          ].slice(-3);
+        });
+      }
 
-      if ("Notification" in window && Notification.permission === "granted") {
-        for (const item of fresh) {
+      if (
+        feed.preferences.desktopEnabled &&
+        "Notification" in window &&
+        Notification.permission === "granted"
+      ) {
+        for (const item of alertable) {
           const popup = new Notification(item.title, {
             body: item.body,
             tag: item.id,
@@ -138,6 +165,41 @@ export default function NotificationAlerts({
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [load]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const client = createSupabaseBrowser();
+    const refresh = () => {
+      void load();
+      window.dispatchEvent(new CustomEvent("lc:notifications-realtime"));
+    };
+    const channel = client
+      .channel(`crm-notifications-${currentUser}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "crm_notifications",
+          filter: `user_id=eq.${currentUser}`,
+        },
+        refresh
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "crm_notifications",
+          filter: `user_id=eq.${currentUser}`,
+        },
+        refresh
+      )
+      .subscribe();
+    return () => {
+      void client.removeChannel(channel);
+    };
+  }, [currentUser, load]);
 
   useEffect(() => {
     if (!toasts.length) return;
