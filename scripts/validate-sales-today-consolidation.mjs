@@ -30,7 +30,10 @@ assert.doesNotMatch(lane, /supabaseAdmin|\.from\("outreach_/);
 assert.doesNotMatch(lane, /approve-all|messages\/\$\{.*\}\/approve/);
 
 assert.match(nav, /const OUTREACH_ITEM/);
-assert.match(nav, /salesHome\s*\?\s*\[homeItem, \.\.\.SHARED_CORE_ITEMS\]/);
+assert.match(
+  nav,
+  /salesHome\s*\?\s*\[homeItem, NOTIFICATIONS_ITEM, \.\.\.SHARED_CORE_ITEMS\]/
+);
 assert.match(nav, /label: "Campaigns and prospects"/);
 assert.match(nav, /OUTREACH_ITEM,[\s\S]*\.\.\.SHARED_CORE_ITEMS/);
 
