@@ -41,6 +41,9 @@ function prospectSource(prospect: any): string | null {
   return explicit ? String(explicit).trim().replace(/\.(xlsx|xls|csv)$/i, "") : null;
 }
 
+const normaliseEmail = (value: unknown) =>
+  String(value || "").trim().toLowerCase();
+
 export async function GET() {
   try {
     const scope = requireWorkspaceOwner();
@@ -49,7 +52,6 @@ export async function GET() {
       grants,
       { data: members, error: membersError },
       { data: prospects, error: prospectsError },
-      { data: candidateResearch, error: candidateResearchError },
     ] =
       await Promise.all([
         supabaseService
@@ -69,26 +71,16 @@ export async function GET() {
         supabaseAdmin
           .from("outreach_prospects")
           .select(
-            "id,email,first_name,last_name,job_title,company_name,priority,priority_score,status,assigned_to_user_id,last_researched_at,last_contacted_at,last_reply_at,source_file,source_sheet,source_metadata,updated_at"
+            "id,email,first_name,last_name,job_title,company_name,priority,priority_score,status,assigned_to_user_id,research,last_researched_at,last_contacted_at,last_reply_at,source_file,source_sheet,source_metadata,updated_at"
           )
           .eq("workspace_id", scope.workspaceId)
           .order("priority_score", { ascending: false })
           .order("company_name", { ascending: true })
           .limit(1000),
-        supabaseAdmin
-          .from("outreach_prospects")
-          .select("id,research")
-          .eq("workspace_id", scope.workspaceId)
-          .eq("status", "imported")
-          .is("last_researched_at", null)
-          .is("last_contacted_at", null)
-          .is("last_reply_at", null)
-          .limit(1000),
       ]);
     if (companiesError) throw companiesError;
     if (membersError) throw membersError;
     if (prospectsError) throw prospectsError;
-    if (candidateResearchError) throw candidateResearchError;
 
     const memberIds = (members || []).map((member: any) => member.user_id);
     const { data: profiles, error: profilesError } = memberIds.length
@@ -120,12 +112,14 @@ export async function GET() {
         : Promise.resolve({ data: [] as any[], error: null }),
       supabaseAdmin
         .from("outreach_messages")
-        .select("prospect_id")
+        .select("prospect_id,recipient_email,status")
         .eq("workspace_id", scope.workspaceId)
         .limit(5000),
       supabaseAdmin
         .from("outreach_enrolments")
-        .select("prospect_id")
+        .select(
+          "prospect_id,status,current_step,queued_for,next_action_at,research,research_sources,researched_at,last_sent_at,replied_at,booked_at"
+        )
         .eq("workspace_id", scope.workspaceId)
         .limit(5000),
     ]);
@@ -149,19 +143,27 @@ export async function GET() {
     const prospectIdsWithMessages = new Set(
       (messagesResult.data || []).map((message: any) => message.prospect_id)
     );
-    const prospectIdsWithEnrolments = new Set(
-      (enrolmentsResult.data || []).map((enrolment: any) => enrolment.prospect_id)
+    const recipientEmailsWithMessages = new Set(
+      (messagesResult.data || [])
+        .map((message: any) => normaliseEmail(message.recipient_email))
+        .filter(Boolean)
     );
-    const researchByProspect = new Map(
-      (candidateResearch || []).map((row: any) => [row.id, row.research])
-    );
+    const enrolmentsByProspect = new Map<string, any[]>();
+    for (const enrolment of enrolmentsResult.data || []) {
+      const current = enrolmentsByProspect.get(enrolment.prospect_id) || [];
+      current.push(enrolment);
+      enrolmentsByProspect.set(enrolment.prospect_id, current);
+    }
     const prospectRecords = (prospects || [])
       .map((prospect: any) => {
         const assignable = isUntouchedOutreachAssignment(
-          { ...prospect, research: researchByProspect.get(prospect.id) },
+          prospect,
           {
             hasMessage: prospectIdsWithMessages.has(prospect.id),
-            hasEnrolment: prospectIdsWithEnrolments.has(prospect.id),
+            hasRecipientMessage: recipientEmailsWithMessages.has(
+              normaliseEmail(prospect.email)
+            ),
+            enrolments: enrolmentsByProspect.get(prospect.id) || [],
           }
         );
         return {
@@ -181,7 +183,9 @@ export async function GET() {
             ? null
             : prospect.status === "suppressed"
               ? "Removed from outreach"
-              : "Activity already exists. Review this person in Outreach before changing ownership.",
+              : recipientEmailsWithMessages.has(normaliseEmail(prospect.email))
+                ? "An email draft or send already exists for this address. Ownership is locked."
+                : "Research, contact or active campaign work already exists. Review this person in Outreach before changing ownership.",
         };
       })
       .sort(

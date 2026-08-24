@@ -21,6 +21,9 @@ function batches<T>(items: T[], size = QUERY_BATCH_SIZE): T[][] {
   return result;
 }
 
+const normaliseEmail = (value: unknown) =>
+  String(value || "").trim().toLowerCase();
+
 export async function POST(req: NextRequest) {
   try {
     const account = requireRequestScope();
@@ -74,7 +77,8 @@ export async function POST(req: NextRequest) {
 
     const prospectRows: any[] = [];
     const messageProspectIds = new Set<string>();
-    const enrolmentProspectIds = new Set<string>();
+    const messageRecipientEmails = new Set<string>();
+    const enrolmentsByProspect = new Map<string, any[]>();
 
     // Small batches avoid oversized PostgREST URLs. Every read still runs as
     // the signed-in user, so workspace RLS remains the final authority.
@@ -84,16 +88,21 @@ export async function POST(req: NextRequest) {
           supabaseAdmin
             .from("outreach_prospects")
             .select(
-              "id,status,assigned_to_user_id,research,last_researched_at,last_contacted_at,last_reply_at"
+              "id,email,status,assigned_to_user_id,research,last_researched_at,last_contacted_at,last_reply_at"
             )
+            .eq("workspace_id", account.workspaceId)
             .in("id", idBatch),
           supabaseAdmin
             .from("outreach_messages")
-            .select("prospect_id")
+            .select("prospect_id,recipient_email,status")
+            .eq("workspace_id", account.workspaceId)
             .in("prospect_id", idBatch),
           supabaseAdmin
             .from("outreach_enrolments")
-            .select("prospect_id")
+            .select(
+              "prospect_id,status,current_step,queued_for,next_action_at,research,research_sources,researched_at,last_sent_at,replied_at,booked_at"
+            )
+            .eq("workspace_id", account.workspaceId)
             .in("prospect_id", idBatch),
         ]);
       if (prospectsResult.error) throw prospectsResult.error;
@@ -102,9 +111,35 @@ export async function POST(req: NextRequest) {
       prospectRows.push(...(prospectsResult.data || []));
       for (const row of messagesResult.data || []) {
         messageProspectIds.add(row.prospect_id);
+        const recipientEmail = normaliseEmail(row.recipient_email);
+        if (recipientEmail) messageRecipientEmails.add(recipientEmail);
       }
       for (const row of enrolmentsResult.data || []) {
-        enrolmentProspectIds.add(row.prospect_id);
+        const current = enrolmentsByProspect.get(row.prospect_id) || [];
+        current.push(row);
+        enrolmentsByProspect.set(row.prospect_id, current);
+      }
+    }
+
+    // A duplicate import row must not bypass permanent email history. Search
+    // by the canonical recipient address as well as the selected prospect ID.
+    const selectedEmails = Array.from(
+      new Set(
+        prospectRows
+          .map((row) => normaliseEmail(row.email))
+          .filter(Boolean)
+      )
+    );
+    for (const emailBatch of batches(selectedEmails)) {
+      const { data, error } = await supabaseAdmin
+        .from("outreach_messages")
+        .select("recipient_email")
+        .eq("workspace_id", account.workspaceId)
+        .in("recipient_email", emailBatch);
+      if (error) throw error;
+      for (const row of data || []) {
+        const recipientEmail = normaliseEmail(row.recipient_email);
+        if (recipientEmail) messageRecipientEmails.add(recipientEmail);
       }
     }
 
@@ -113,9 +148,13 @@ export async function POST(req: NextRequest) {
       .filter(
         (row) =>
           row.assigned_to_user_id !== assignedToUserId &&
+          Boolean(normaliseEmail(row.email)) &&
           isUntouchedOutreachAssignment(row, {
             hasMessage: messageProspectIds.has(row.id),
-            hasEnrolment: enrolmentProspectIds.has(row.id),
+            hasRecipientMessage: messageRecipientEmails.has(
+              normaliseEmail(row.email)
+            ),
+            enrolments: enrolmentsByProspect.get(row.id) || [],
           })
       )
       .map((row) => row.id);
@@ -127,8 +166,10 @@ export async function POST(req: NextRequest) {
         .from("outreach_prospects")
         .update({
           assigned_to_user_id: assignedToUserId,
+          visibility: "team",
           updated_at: now,
         })
+        .eq("workspace_id", account.workspaceId)
         .in("id", idBatch)
         .select("id,assigned_to_user_id");
       if (error) throw error;
@@ -146,7 +187,7 @@ export async function POST(req: NextRequest) {
       hiddenOrUnavailable: prospectIds.filter((id) => !visibleIds.has(id)).length,
       assignedIds,
       rule:
-        "Only untouched imported prospects with no research, enrolment, draft, send, contact or reply history were assigned",
+        "Only untouched imported prospects were assigned. A paused campaign membership may move with them only when it has no research, draft, send, contact or reply history. Matching email history anywhere in the workspace always blocks assignment.",
     });
   } catch (err: any) {
     return NextResponse.json(
