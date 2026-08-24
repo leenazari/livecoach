@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   hasSavedOutreachResearch,
+  isPristinePausedOutreachEnrolment,
   isUntouchedOutreachAssignment,
 } from "../lib/outreach-assignment.ts";
 
@@ -27,6 +28,61 @@ assert.equal(
   isUntouchedOutreachAssignment(
     { status: "imported", research: {} },
     { hasMessage: true }
+  ),
+  false
+);
+assert.equal(
+  isPristinePausedOutreachEnrolment({
+    status: "paused",
+    current_step: 1,
+    research: {},
+    research_sources: [],
+  }),
+  true
+);
+assert.equal(
+  isUntouchedOutreachAssignment(
+    { status: "imported", research: {} },
+    {
+      enrolments: [
+        {
+          status: "paused",
+          current_step: 1,
+          research: {},
+          research_sources: [],
+        },
+      ],
+    }
+  ),
+  true
+);
+assert.equal(
+  isUntouchedOutreachAssignment(
+    { status: "imported", research: {} },
+    {
+      enrolments: [
+        {
+          status: "paused",
+          current_step: 1,
+          last_sent_at: "2026-08-20T10:00:00.000Z",
+        },
+      ],
+    }
+  ),
+  false
+);
+assert.equal(
+  isUntouchedOutreachAssignment(
+    { status: "imported", research: {} },
+    { hasRecipientMessage: true, enrolments: [] }
+  ),
+  false,
+  "A duplicate prospect row must not bypass permanent email history"
+);
+assert.equal(
+  isUntouchedOutreachAssignment(
+    { status: "suppressed", research: {} },
+    { enrolments: [] }
   ),
   false
 );
@@ -63,7 +119,13 @@ assert.match(allocationPage, /Client sharing/);
 assert.match(allocationPage, /\/api\/crm\/outreach\/assign/);
 assert.match(allocationPage, /Nothing was researched or emailed/);
 assert.match(allocationPage, /owner Brain memory never move/);
+assert.match(allocationPage, /matching email draft, send, research, contact or reply/);
 assert.match(bulkAssignmentApi, /isUntouchedOutreachAssignment/);
-assert.match(bulkAssignmentApi, /Only untouched imported prospects/);
+assert.match(bulkAssignmentApi, /Matching email history anywhere in the workspace always blocks assignment/);
+assert.match(bulkAssignmentApi, /recipient_email/);
+assert.match(bulkAssignmentApi, /visibility: "team"/);
+assert.match(bulkAssignmentApi, /\.eq\("workspace_id", account\.workspaceId\)/);
+assert.match(allocationApi, /recipientEmailsWithMessages/);
+assert.match(allocationApi, /enrolmentsByProspect/);
 
 console.log("Team sales work allocation checks passed");

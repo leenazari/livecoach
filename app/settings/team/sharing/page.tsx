@@ -408,6 +408,9 @@ export default function TeamSharingPage() {
               <p className="mt-2">
                 Call recordings, transcripts, calendar, mailbox context, personal notes, documents and owner Brain memory never move with an assignment.
               </p>
+              <p className="mt-2">
+                A paused campaign can move with an untouched lead. Any matching email draft, send, research, contact or reply anywhere in the workspace blocks reassignment automatically.
+              </p>
             </section>
 
             <div className="mt-4 flex rounded-xl border border-edge bg-panel/45 p-1">
