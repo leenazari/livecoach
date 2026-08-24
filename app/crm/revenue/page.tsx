@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
 import MatrixRain from "@/components/MatrixRain";
 import PipelineWorkspace from "@/components/crm/PipelineWorkspace";
 import OutlookIntelligencePanel, { type SignalHealth } from "@/components/crm/OutlookIntelligencePanel";
+import { opportunityMatchesOwner } from "@/lib/opportunity-owner-filter";
 
 type Pipeline = Record<string, any>;
 type Opportunity = Record<string, any> & {
@@ -53,6 +54,7 @@ export default function RevenuePage() {
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [ownerFilter, setOwnerFilter] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -143,8 +145,54 @@ export default function RevenuePage() {
   };
 
   const wonProgress = data?.goal?.target ? Math.min(100, (data.goal.wonYtd / data.goal.target) * 100) : 0;
-  const revenueRows = rows.filter((row) => row.opportunity_type === "revenue");
-  const excludedRows = rows.filter((row) => row.opportunity_type !== "revenue");
+  const activeOwnerFilter = ownerFilter || (data?.canManageAssignments ? "all" : "mine");
+  const revenueRows = useMemo(
+    () => rows.filter((row) => row.opportunity_type === "revenue"),
+    [rows]
+  );
+  const visibleRevenueRows = useMemo(
+    () => revenueRows.filter((row) =>
+      opportunityMatchesOwner(row, activeOwnerFilter, data?.currentUser || "")
+    ),
+    [activeOwnerFilter, data?.currentUser, revenueRows]
+  );
+  const excludedRows = useMemo(
+    () => rows.filter((row) =>
+      row.opportunity_type !== "revenue" &&
+      opportunityMatchesOwner(row, activeOwnerFilter, data?.currentUser || "")
+    ),
+    [activeOwnerFilter, data?.currentUser, rows]
+  );
+  const visibleKpis = useMemo(() => {
+    const rawPipeline = visibleRevenueRows.reduce(
+      (sum, row) => sum + (Number(row.value) || 0),
+      0
+    );
+    const weightedPipeline = visibleRevenueRows.reduce(
+      (sum, row) => sum + (Number(row.weightedValue) || 0),
+      0
+    );
+    const commit = visibleRevenueRows
+      .filter((row) => row.forecast_category === "commit")
+      .reduce((sum, row) => sum + (Number(row.value) || 0), 0);
+    const bestCase = visibleRevenueRows
+      .filter((row) => ["commit", "best_case"].includes(row.forecast_category))
+      .reduce((sum, row) => sum + (Number(row.value) || 0), 0);
+    const gap = Number(data?.goal?.gap) || 0;
+    return {
+      rawPipeline,
+      weightedPipeline,
+      commit,
+      bestCase,
+      coverage: gap ? rawPipeline / gap : 0,
+    };
+  }, [data?.goal?.gap, visibleRevenueRows]);
+  const visibleClassification = useMemo(() => ({
+    revenue: visibleRevenueRows.length,
+    investment: excludedRows.filter((row) => row.opportunity_type === "investment").length,
+    internal: excludedRows.filter((row) => row.opportunity_type === "internal").length,
+    strategic: excludedRows.filter((row) => row.opportunity_type === "strategic").length,
+  }), [excludedRows, visibleRevenueRows.length]);
 
   return (
     <main className="relative z-10 mx-auto max-w-[1220px] px-3 py-5 sm:px-5 sm:py-9">
@@ -183,21 +231,21 @@ export default function RevenuePage() {
           <p className="mt-1 text-sm leading-6 text-muted">The original 16 records mixed customer deals with fundraising, internal work and future routes. Nothing was deleted, but only genuine customer revenue is included in the figures below.</p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
-              ["Customer revenue", data.classification.revenue],
-              ["Strategic ideas", data.classification.strategic],
-              ["Internal projects", data.classification.internal],
-              ["Investment", data.classification.investment],
+              ["Customer revenue", visibleClassification.revenue],
+              ["Strategic ideas", visibleClassification.strategic],
+              ["Internal projects", visibleClassification.internal],
+              ["Investment", visibleClassification.investment],
             ].map(([label, value]) => <div key={String(label)} className="rounded-lg border border-edge bg-ink/30 p-3"><strong className="block font-display text-xl text-bone">{value}</strong><span className="font-mono text-[0.52rem] uppercase text-muted">{label}</span></div>)}
           </div>
         </section>
 
         <section className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
           {[
-            ["Raw pipeline", data.kpis.rawPipeline, "Customer sales only"],
-            ["Weighted", data.kpis.weightedPipeline, "Value × probability"],
-            ["Best case", data.kpis.bestCase, "Best case + commit"],
-            ["Commit", data.kpis.commit, "Deals you expect"],
-            ["Coverage", `${Math.round(data.kpis.coverage * 10) / 10}×`, "Pipeline ÷ target gap"],
+            ["Raw pipeline", visibleKpis.rawPipeline, "Customer sales only"],
+            ["Weighted", visibleKpis.weightedPipeline, "Value × probability"],
+            ["Best case", visibleKpis.bestCase, "Best case + commit"],
+            ["Commit", visibleKpis.commit, "Deals you expect"],
+            ["Coverage", `${Math.round(visibleKpis.coverage * 10) / 10}×`, "Pipeline ÷ target gap"],
           ].map(([label, value, note]) => <div key={String(label)} className="rounded-xl border border-edge bg-panel p-3"><p className="font-mono text-[0.53rem] uppercase tracking-wider text-muted">{label}</p><strong className="mt-1 block font-display text-xl text-bone">{typeof value === "number" ? gbp(value) : value}</strong><span className="text-[0.69rem] text-muted">{note}</span></div>)}
         </section>
 
@@ -209,6 +257,8 @@ export default function RevenuePage() {
           team={data.team || []}
           currentUser={data.currentUser || ""}
           canManageAssignments={data.canManageAssignments === true}
+          ownerFilter={activeOwnerFilter}
+          onOwnerFilterChange={setOwnerFilter}
           busy={busy}
           onChange={updateRow as any}
           onSave={saveOpportunity as any}

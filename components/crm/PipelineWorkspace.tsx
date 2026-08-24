@@ -10,6 +10,7 @@ import {
   type WinOutlook,
 } from "@/lib/opportunity-fields";
 import { crmFetch } from "@/lib/crm";
+import { opportunityMatchesOwner } from "@/lib/opportunity-owner-filter";
 
 type Row = Record<string, any> & {
   id: string;
@@ -38,6 +39,8 @@ type Props = {
   team: TeamMember[];
   currentUser: string;
   canManageAssignments: boolean;
+  ownerFilter: string;
+  onOwnerFilterChange: (value: string) => void;
   busy: string;
   onChange: (id: string, patch: Partial<Row>) => void;
   onSave: (row: Row) => void;
@@ -209,25 +212,24 @@ export default function PipelineWorkspace(props: Props) {
     team,
     currentUser,
     canManageAssignments,
+    ownerFilter,
+    onOwnerFilterChange,
   } = props;
   const ownerName = (row: Row) => row.assigned_to_user_id === currentUser
     ? "Mine"
     : team.find((member) => member.userId === row.assigned_to_user_id)?.name || "Unassigned";
   const [view, setView] = useState<"table" | "kanban">("table");
-  const [ownerFilter, setOwnerFilter] = useState(
-    canManageAssignments ? "all" : "mine"
-  );
   const visibleRows = useMemo(
-    () =>
-      rows.filter((row) => {
-        if (ownerFilter === "all") return true;
-        if (ownerFilter === "mine")
-          return row.assigned_to_user_id === currentUser;
-        if (ownerFilter === "unassigned") return !row.assigned_to_user_id;
-        return row.assigned_to_user_id === ownerFilter;
-      }),
+    () => rows.filter((row) => opportunityMatchesOwner(row, ownerFilter, currentUser)),
     [currentUser, ownerFilter, rows]
   );
+  const ownerViewLabel = ownerFilter === "all"
+    ? "all team work"
+    : ownerFilter === "mine"
+      ? "your work"
+      : ownerFilter === "unassigned"
+        ? "unassigned work"
+        : `${team.find((member) => member.userId === ownerFilter)?.name || "selected owner"}'s work`;
   const stats = useMemo(() => ({
     overdue: visibleRows.filter((row) => row.risks.some((risk) => risk.code === "next_action_overdue" || risk.code === "overdue_actions")).length,
     meetings: visibleRows.filter((row) => row.nextMeetingAt && new Date(row.nextMeetingAt).getTime() <= Date.now() + 3 * 86400000).length,
@@ -247,7 +249,7 @@ export default function PipelineWorkspace(props: Props) {
           <select
             aria-label="Filter pipeline by deal owner"
             value={ownerFilter}
-            onChange={(event) => setOwnerFilter(event.target.value)}
+            onChange={(event) => onOwnerFilterChange(event.target.value)}
             className="min-h-11 rounded-lg border border-edge bg-ink px-3 font-mono text-[0.56rem] uppercase text-bone outline-none focus:border-amber/60"
           >
             <option value="all">All team work</option>
@@ -266,7 +268,7 @@ export default function PipelineWorkspace(props: Props) {
       </div>
 
       <p className="mt-3 font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-        Showing {visibleRows.length} of {rows.length} open revenue deals · {ownerFilter === "mine" ? "your work" : "team work"}
+        Showing {visibleRows.length} of {rows.length} open revenue deals · {ownerViewLabel}
       </p>
 
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -300,7 +302,9 @@ export default function PipelineWorkspace(props: Props) {
       )}
       {!visibleRows.length ? (
         <p className="mt-3 rounded-lg border border-dashed border-edge p-5 text-center text-sm text-muted">
-          No deals match this owner view. Choose All team work to see the shared pipeline.
+          {canManageAssignments
+            ? "No deals match this owner view. Choose All team work to see the shared pipeline."
+            : "No revenue deals are assigned to this view."}
         </p>
       ) : null}
     </section>

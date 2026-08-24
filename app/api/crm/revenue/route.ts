@@ -3,8 +3,9 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { defaultOutlookQuestions, WIN_OUTLOOKS } from "@/lib/opportunity-fields";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { getAppConfigRows, setAppConfigValue } from "@/lib/app-config";
-import { requireRequestScope } from "@/lib/request-scope";
+import { requireRequestScope, requireWorkspaceManager } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
+import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 import {
   activeSharedClientIds,
   loadSafeSharedCompanies,
@@ -29,56 +30,164 @@ export async function GET() {
     const account = requireRequestScope();
     const now = new Date();
     const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1)).toISOString();
+
+    const accountRecords = (query: any) => {
+      const inWorkspace = query.eq("workspace_id", account.workspaceId);
+      return account.role === "owner"
+        ? inWorkspace
+        : inWorkspace.eq("owner_id", account.userId);
+    };
+    let companyQuery = supabaseAdmin
+      .from("companies")
+      .select("id,name,stage,profile,owner_id")
+      .eq("workspace_id", account.workspaceId);
+    if (account.role !== "owner")
+      companyQuery = companyQuery.eq("owner_id", account.userId);
+    let prospectCountQuery: any = supabaseAdmin
+      .from("outreach_prospects")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", account.workspaceId);
+    let prospectRowsQuery: any = supabaseAdmin
+      .from("outreach_prospects")
+      .select("id,crm_company_id,company_name")
+      .eq("workspace_id", account.workspaceId)
+      .limit(5000);
+    if (account.role !== "owner") {
+      prospectCountQuery = prospectCountQuery.eq(
+        "assigned_to_user_id",
+        account.userId
+      );
+      prospectRowsQuery = prospectRowsQuery.eq(
+        "assigned_to_user_id",
+        account.userId
+      );
+    }
     const [
       { data: config },
       { data: ownedCompanies },
-      { data: opportunities },
+      opportunities,
       { data: upcoming },
       { data: calls },
       { data: tasks },
       { count: prospectCount },
       { data: outreachCompanyRows },
+      sharedClientIds,
+    ] = await Promise.all([
+      getAppConfigRows(["revenue_target_gbp"]).then((data) => ({ data })),
+      companyQuery,
+      loadVisibleOpportunities(account, {
+        orderBy: "updated_at",
+        ascending: false,
+        limit: 500,
+      }),
+      accountRecords(
+        supabaseAdmin
+          .from("upcoming_calls")
+          .select("company_id,title,scheduled_at")
+      )
+        .is("completed_at", null)
+        .gte("scheduled_at", now.toISOString())
+        .order("scheduled_at", { ascending: true })
+        .limit(500),
+      accountRecords(
+        supabaseAdmin
+          .from("interview_summaries")
+          .select("company_id,created_at")
+      )
+        .not("company_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(2000),
+      accountRecords(
+        supabaseAdmin.from("tasks").select("company_id,text,due_at,kind")
+      )
+        .eq("status", "open")
+        .not("company_id", "is", null)
+        .limit(2000),
+      prospectCountQuery,
+      prospectRowsQuery,
+      activeSharedClientIds(
+        account.workspaceId,
+        account.role === "owner" ? undefined : account.userId
+      ),
+    ]);
+
+    const visibleProspectIds = (outreachCompanyRows || []).map((row: any) => row.id);
+    const visibleOpportunityIds = (opportunities || []).map((row: any) => row.id);
+    const emptyRows = Promise.resolve({ data: [] as any[], error: null });
+    let usageQuery: any = supabaseAdmin
+      .from("usage_log")
+      .select("cost_gbp,created_at")
+      .eq("workspace_id", account.workspaceId)
+      .eq("kind", "opportunity_outlook_assessment")
+      .gte("created_at", new Date(Date.now() - 7 * DAY).toISOString())
+      .limit(1000);
+    if (account.role !== "owner")
+      usageQuery = usageQuery.eq("owner_id", account.userId);
+    const [
       { data: sentMessages },
       { data: outreachEvents },
       { data: signalReceipts },
       { data: recentSignalReceipts },
       { data: signalUsage },
-      sharedClientIds,
     ] = await Promise.all([
-      getAppConfigRows(["revenue_target_gbp"]).then((data) => ({ data })),
-      supabaseAdmin
-        .from("companies")
-        .select("id,name,stage,profile")
-        .eq("owner_id", account.userId),
-      supabaseAdmin.from("opportunities").select("*").order("updated_at", { ascending: false }).limit(500),
-      supabaseAdmin.from("upcoming_calls").select("company_id,title,scheduled_at").eq("owner_id", account.userId).is("completed_at", null).gte("scheduled_at", now.toISOString()).order("scheduled_at", { ascending: true }).limit(500),
-      supabaseAdmin.from("interview_summaries").select("company_id,created_at").eq("owner_id", account.userId).not("company_id", "is", null).order("created_at", { ascending: false }).limit(2000),
-      supabaseAdmin.from("tasks").select("company_id,text,due_at,kind").eq("owner_id", account.userId).eq("status", "open").not("company_id", "is", null).limit(2000),
-      supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }),
-      supabaseAdmin.from("outreach_prospects").select("crm_company_id,company_name").not("crm_company_id", "is", null).limit(2000),
-      supabaseAdmin.from("outreach_messages").select("prospect_id,message_tags,step_number,variant").eq("status", "sent").limit(5000),
-      supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,created_at").in("kind", ["reply", "positive_reply", "objection", "later", "referral", "meeting_booked"]).limit(5000),
-      supabaseAdmin.from("opportunity_signal_receipts").select("opportunity_id,status").in("status", ["queued", "processing", "failed"]).not("opportunity_id", "is", null).limit(1000),
-      supabaseAdmin
-        .from("opportunity_signal_receipts")
-        .select("id,opportunity_id,company_id,source_record_type,source_channel,status,result,evidence,occurred_at,attempts,error,created_at,updated_at")
-        .gte("created_at", new Date(Date.now() - 7 * DAY).toISOString())
-        .order("created_at", { ascending: false })
-        .limit(200),
-      supabaseAdmin
-        .from("usage_log")
-        .select("cost_gbp,created_at")
-        .eq("kind", "opportunity_outlook_assessment")
-        .gte("created_at", new Date(Date.now() - 7 * DAY).toISOString())
-        .limit(1000),
-      activeSharedClientIds(account.workspaceId),
+      visibleProspectIds.length
+        ? supabaseAdmin
+            .from("outreach_messages")
+            .select("prospect_id,message_tags,step_number,variant")
+            .eq("workspace_id", account.workspaceId)
+            .eq("status", "sent")
+            .in("prospect_id", visibleProspectIds)
+            .limit(5000)
+        : emptyRows,
+      visibleProspectIds.length
+        ? supabaseAdmin
+            .from("outreach_events")
+            .select("prospect_id,kind,metadata,created_at")
+            .eq("workspace_id", account.workspaceId)
+            .in("prospect_id", visibleProspectIds)
+            .in("kind", [
+              "reply",
+              "positive_reply",
+              "objection",
+              "later",
+              "referral",
+              "meeting_booked",
+            ])
+            .limit(5000)
+        : emptyRows,
+      visibleOpportunityIds.length
+        ? supabaseAdmin
+            .from("opportunity_signal_receipts")
+            .select("opportunity_id,status")
+            .eq("workspace_id", account.workspaceId)
+            .in("opportunity_id", visibleOpportunityIds)
+            .in("status", ["queued", "processing", "failed"])
+            .limit(1000)
+        : emptyRows,
+      visibleOpportunityIds.length
+        ? supabaseAdmin
+            .from("opportunity_signal_receipts")
+            .select("id,opportunity_id,company_id,source_record_type,source_channel,status,result,evidence,occurred_at,attempts,error,created_at,updated_at")
+            .eq("workspace_id", account.workspaceId)
+            .in("opportunity_id", visibleOpportunityIds)
+            .gte("created_at", new Date(Date.now() - 7 * DAY).toISOString())
+            .order("created_at", { ascending: false })
+            .limit(200)
+        : emptyRows,
+      usageQuery,
     ]);
 
     const ownedCompanyIds = new Set(
       (ownedCompanies || []).map((company: any) => company.id)
     );
+    const visibleOpportunityCompanyIds = (opportunities || [])
+      .filter((opportunity: any) => opportunity.owner_id !== account.userId)
+      .map((opportunity: any) => opportunity.company_id)
+      .filter(Boolean);
     const sharedCompanies = await loadSafeSharedCompanies(
-      sharedClientIds.filter((id) => !ownedCompanyIds.has(id)),
+      [...new Set([...sharedClientIds, ...visibleOpportunityCompanyIds])].filter(
+        (id) => !ownedCompanyIds.has(id)
+      ),
       account.workspaceId
     );
     const companies = [...(ownedCompanies || []), ...sharedCompanies];
@@ -351,6 +460,8 @@ export async function GET() {
       currentUser: account.userId,
       canManageAssignments: account.role === "owner" || account.role === "manager",
       generatedAt: new Date().toISOString(),
+    }, {
+      headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to load revenue pipeline" }, { status: 500 });
@@ -359,6 +470,7 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
   try {
+    requireWorkspaceManager();
     const body = await req.json();
     const target = Math.round(Number(body.target));
     if (!Number.isFinite(target) || target < 1_000 || target > 1_000_000_000) {

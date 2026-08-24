@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { defaultOutlookQuestions } from "@/lib/opportunity-fields";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { requireRequestScope } from "@/lib/request-scope";
+import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 import {
   activeSharedClientIds,
   loadSafeSharedCompanies,
@@ -21,20 +22,20 @@ export async function GET(req: NextRequest) {
     const scope = requireRequestScope();
     const status = req.nextUrl.searchParams.get("status");
     const nowMs = Date.now();
-    const [{ data: ownedCompanies }, oppRes, { data: calls }, { data: upcoming }, sharedIds] = await Promise.all([
-      supabaseAdmin
+    let companyQuery = supabaseAdmin
         .from("companies")
         .select("id, name, profile")
-        .eq("owner_id", scope.userId),
-      (async () => {
-        let q = supabaseAdmin
-          .from("opportunities")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(300);
-        if (status) q = q.eq("status", status);
-        return q;
-      })(),
+        .eq("workspace_id", scope.workspaceId);
+    if (scope.role !== "owner")
+      companyQuery = companyQuery.eq("owner_id", scope.userId);
+    const [{ data: ownedCompanies }, opportunities, { data: calls }, { data: upcoming }, sharedIds] = await Promise.all([
+      companyQuery,
+      loadVisibleOpportunities(scope, {
+        status: status || undefined,
+        orderBy: "created_at",
+        ascending: false,
+        limit: 300,
+      }),
       supabaseAdmin
         .from("interview_summaries")
         .select("company_id, created_at")
@@ -51,7 +52,10 @@ export async function GET(req: NextRequest) {
         .gte("scheduled_at", new Date(nowMs).toISOString())
         .order("scheduled_at", { ascending: true })
         .limit(500),
-      activeSharedClientIds(scope.workspaceId),
+      activeSharedClientIds(
+        scope.workspaceId,
+        scope.role === "owner" ? undefined : scope.userId
+      ),
     ]);
     const ownedIds = new Set((ownedCompanies || []).map((company: any) => company.id));
     const sharedCompanies = await loadSafeSharedCompanies(
@@ -80,7 +84,7 @@ export async function GET(req: NextRequest) {
       if (companyId && !nextMeetingById.has(companyId))
         nextMeetingById.set(companyId, meeting.scheduled_at as string);
     }
-    const items = (oppRes.data || []).map((o: any) => ({
+    const items = (opportunities || []).map((o: any) => ({
       ...o,
       company: nameById.get(o.company_id) || "a client",
       ...(() => {
