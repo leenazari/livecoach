@@ -695,7 +695,12 @@ export default function WorkInboxPage() {
         ) : null}
 
         {filter === "outreach" ? (
-          <OutreachTodayLane onQueueCount={setOutreachQueueCount} />
+          <OutreachTodayLane
+            onQueueCount={setOutreachQueueCount}
+            replyItems={(data?.items || []).filter(
+              (item) => item.kind === "reply" && !item.done
+            )}
+          />
         ) : filter === "cleanup" && data ? (
           <section>
             <div className="mb-3 rounded-xl border border-amber/35 bg-amber/[0.06] p-3 sm:p-4">
