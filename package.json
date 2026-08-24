@@ -28,7 +28,8 @@
     "validate:brain-dictation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-live-dictation.mjs",
     "validate:brain-sales-scope": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-sales-scope.mjs",
     "validate:crm-notifications": "node scripts/validate-crm-notifications.mjs",
-    "validate:user-scoped-digest": "node scripts/validate-user-scoped-digest.mjs"
+    "validate:user-scoped-digest": "node scripts/validate-user-scoped-digest.mjs",
+    "validate:upcoming-recovery": "node scripts/validate-upcoming-call-recovery.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

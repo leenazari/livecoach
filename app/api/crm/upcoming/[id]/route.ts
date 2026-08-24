@@ -154,10 +154,10 @@ export async function PATCH(
     const body = await req.json();
     const patch: Record<string, any> = {};
     let current: any = null;
-    if ("intent" in body || "prep" in body) {
+    if ("intent" in body || "prep" in body || body.completed === true) {
       const { data, error } = await supabaseAdmin
         .from("upcoming_calls")
-        .select("intent, prep")
+        .select("intent, prep, scheduled_at, completed_at")
         .eq("id", params.id)
         .maybeSingle();
       if (error) throw error;
@@ -207,6 +207,19 @@ export async function PATCH(
       patch.prepped = staleFocusSnapshot ? false : body.prepped;
     // Mark a call done (it happened) or re-open it. Clears it from the upcoming
     // list and the derived prep to-dos without deleting the row.
+    if (body.completed === true && current?.scheduled_at) {
+      const scheduledMs = new Date(current.scheduled_at).getTime();
+      const earliestCompletionMs = Date.now() + 15 * 60 * 1000;
+      if (Number.isFinite(scheduledMs) && scheduledMs > earliestCompletionMs) {
+        return NextResponse.json(
+          {
+            error:
+              "This meeting has not started yet. It is still in Upcoming Calls.",
+          },
+          { status: 409 }
+        );
+      }
+    }
     if (typeof body.completed === "boolean")
       patch.completed_at = body.completed ? new Date().toISOString() : null;
     // The prep plan snapshot (focus, goals, opening questions, etc.) built in
