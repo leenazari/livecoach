@@ -5,6 +5,10 @@
 // cues, running summary, intent %, scorecard - works unchanged. The transcript
 // arrives from the Railway worker websocket (Recall.ai -> worker -> here).
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  CALL_SILENCE_WARNING_MS,
+  callSilenceRemainingMs,
+} from "@/lib/call-silence";
 
 type Props = {
   room: string;
@@ -17,6 +21,9 @@ type Props = {
   // Incremented by the parent when the user presses the single Start call
   // action. This lets one button start the workspace and send the notetaker.
   startRequest?: number;
+  // Uses the parent's canonical end-and-summary path. The Meet component only
+  // decides that five quiet minutes have elapsed after real speech began.
+  onSilenceTimeout: () => void;
 };
 
 type Speaker = { name: string; lastRole: string };
@@ -60,6 +67,7 @@ export default function MeetStage({
   meetingUrl: meetingUrlProp,
   onMeetingUrlChange,
   startRequest = 0,
+  onSilenceTimeout,
 }: Props) {
   const [meetingUrlInternal, setMeetingUrlInternal] = useState("");
   const meetingUrl = meetingUrlProp ?? meetingUrlInternal;
@@ -107,6 +115,12 @@ export default function MeetStage({
   const roomRef = useRef(room);
   const joinWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastUtterAtRef = useRef(0); // when the last utterance landed (stall check)
+  const silenceEndRequestedRef = useRef(false);
+  const silenceCheckInFlightRef = useRef(false);
+  const onSilenceTimeoutRef = useRef(onSilenceTimeout);
+  const [silenceRemainingMs, setSilenceRemainingMs] = useState<number | null>(
+    null
+  );
 
   useEffect(() => {
     onFinalRef.current = onFinalTranscript;
@@ -114,6 +128,9 @@ export default function MeetStage({
   useEffect(() => {
     onTurnEndRef.current = onCandidateTurnEnd;
   }, [onCandidateTurnEnd]);
+  useEffect(() => {
+    onSilenceTimeoutRef.current = onSilenceTimeout;
+  }, [onSilenceTimeout]);
   useEffect(() => {
     coachRef.current = coach;
   }, [coach]);
@@ -152,6 +169,8 @@ export default function MeetStage({
       setTranscribing(true);
       setJoinWarn(false);
       lastUtterAtRef.current = Date.now();
+      silenceEndRequestedRef.current = false;
+      setSilenceRemainingMs(null);
       setCaptureStalled(false);
       const role = mapRole(speaker, recallRole);
 
@@ -207,18 +226,31 @@ export default function MeetStage({
         const r = await fetch(
           `/api/meet/backfill?session=${encodeURIComponent(room)}`
         );
-        if (!r.ok) return;
+        if (!r.ok) return false;
         const d = await r.json();
-        if (!Array.isArray(d.utterances)) return;
-        for (let i = Math.max(0, start); i < d.utterances.length; i++) {
+        if (!Array.isArray(d.utterances)) return false;
+        const firstNew = Math.max(0, start);
+        for (let i = firstNew; i < d.utterances.length; i++) {
           const u = d.utterances[i];
           const role = mapRole(u.speaker || "", u.role || "");
           onFinalRef.current(role, (u.text || "").trim(), u.speaker);
         }
+        // A reconnect can backfill speech that arrived while this tab was
+        // asleep. Reset the local clock when that happens so recovered speech
+        // can never be mistaken for five minutes of silence.
+        if (d.utterances.length > firstNew) {
+          lastUtterAtRef.current = Date.now();
+          silenceEndRequestedRef.current = false;
+          setSilenceRemainingMs(null);
+          setTranscribing(true);
+          setJoinWarn(false);
+        }
         if (d.utterances.length > deliveredRef.current)
           deliveredRef.current = d.utterances.length;
+        return true;
       } catch {
         /* no backfill is fine */
+        return false;
       }
     },
     [room, mapRole]
@@ -433,6 +465,58 @@ export default function MeetStage({
     return () => clearInterval(iv);
   }, [botId]);
 
+  // Five-minute quiet-call safety. It starts only after a genuine transcript
+  // has arrived, ignores a disconnected display socket, and checks wall-clock
+  // time on focus as well as on an interval so background throttling cannot
+  // stretch the timer indefinitely. Recall enforces the same limit itself as
+  // the provider-side cost backstop.
+  useEffect(() => {
+    if (!botId || !transcribing) {
+      setSilenceRemainingMs(null);
+      return;
+    }
+
+    const check = async () => {
+      if (!lastUtterAtRef.current || silenceEndRequestedRef.current) return;
+      // A broken display is not proof of silence. Wait for recovery and its
+      // canonical backfill before making an automatic end decision.
+      if (wsState !== "on") return;
+      const remaining = callSilenceRemainingMs(lastUtterAtRef.current);
+      setSilenceRemainingMs(remaining);
+      if (remaining === 0) {
+        if (silenceCheckInFlightRef.current) return;
+        silenceCheckInFlightRef.current = true;
+        const observedLastSpeech = lastUtterAtRef.current;
+        const backfillVerified = await deliverBackfill(deliveredRef.current);
+        silenceCheckInFlightRef.current = false;
+        // Never end on a stale display. A newly recovered utterance restarts
+        // the clock, while an unavailable canonical backfill simply retries on
+        // the next check and leaves Recall's provider timer to stop the cost.
+        if (
+          !backfillVerified ||
+          lastUtterAtRef.current > observedLastSpeech ||
+          silenceEndRequestedRef.current
+        ) {
+          return;
+        }
+        silenceEndRequestedRef.current = true;
+        setStatus("five minutes of silence detected - ending safely...");
+        onSilenceTimeoutRef.current();
+      }
+    };
+
+    void check();
+    const interval = window.setInterval(() => void check(), 15_000);
+    const onWake = () => void check();
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
+    };
+  }, [botId, transcribing, wsState, deliverBackfill]);
+
   const sendBot = useCallback(async () => {
     // Guard against a double-tap firing two bots: `disabled` only updates on the
     // next render, so a fast second click can slip through before React catches
@@ -509,6 +593,8 @@ export default function MeetStage({
     setTranscribing(false);
     setCaptureStalled(false);
     lastUtterAtRef.current = 0; // restart the stall clock for the fresh bot
+    silenceEndRequestedRef.current = false;
+    setSilenceRemainingMs(null);
     setTimeout(() => sendBot(), 400);
   }
 
@@ -532,6 +618,7 @@ export default function MeetStage({
         botIdRef.current = "";
         setTranscribing(false);
         setJoinWarn(false);
+        setSilenceRemainingMs(null);
       }
     } catch (e: any) {
       setStatus("error: " + e.message);
@@ -633,9 +720,20 @@ export default function MeetStage({
       {botId && (
         <p className="font-mono text-[0.58rem] leading-relaxed text-sage">
           Auto stop protected: leaves 30 seconds after everyone leaves, detects
-          other notetakers, and uses a careful silence backup.
+          other notetakers, and ends after five continuous quiet minutes.
         </p>
       )}
+
+      {botId &&
+        silenceRemainingMs !== null &&
+        silenceRemainingMs > 0 &&
+        silenceRemainingMs <= CALL_SILENCE_WARNING_MS && (
+          <div className="rounded-lg border border-amber/60 bg-amber/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-amber">
+            No speech detected for four minutes. LiveCoach will end and build
+            the summary in {Math.max(1, Math.ceil(silenceRemainingMs / 1000))}
+            seconds. Speak to keep it open.
+          </div>
+        )}
 
       {/* The browser display socket is separate from Recall's recording and the
           worker's persistence path. Only warn after a sustained interruption,

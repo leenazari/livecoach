@@ -33,7 +33,8 @@
     "validate:upcoming-recovery": "node scripts/validate-upcoming-call-recovery.mjs",
     "validate:opportunity-privacy": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-opportunity-privacy.mjs",
     "validate:sales-pipeline-core": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sales-desk-pipeline-core.mjs",
-    "validate:quick-call": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-quick-call-workflow.mjs"
+    "validate:quick-call": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-quick-call-workflow.mjs",
+    "validate:call-silence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-call-silence-auto-end.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
