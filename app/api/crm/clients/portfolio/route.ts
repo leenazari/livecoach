@@ -104,7 +104,7 @@ export async function GET() {
       accountRecords(
         supabaseAdmin
         .from("interview_summaries")
-        .select("company_id,created_at")
+        .select("id,company_id,candidate,created_at")
       )
         .not("company_id", "is", null)
         .order("created_at", { ascending: false })
@@ -199,11 +199,21 @@ export async function GET() {
       tasksByCompany.set(task.company_id, list);
     }
 
-    const lastCallByCompany = new Map<string, number>();
+    const lastCallByCompany = new Map<
+      string,
+      { id: string; at: string; atMs: number; title: string | null }
+    >();
     for (const call of calls || []) {
       if (!call.company_id || lastCallByCompany.has(call.company_id)) continue;
       const ms = validDateMs(call.created_at);
-      if (ms != null) lastCallByCompany.set(call.company_id, ms);
+      if (ms != null) {
+        lastCallByCompany.set(call.company_id, {
+          id: call.id,
+          at: call.created_at,
+          atMs: ms,
+          title: call.candidate || null,
+        });
+      }
     }
 
     const nextMeetingByCompany = new Map<string, any>();
@@ -246,7 +256,8 @@ export async function GET() {
         profile.archived === true ||
         String(company.stage || "").trim().toLowerCase() === "dormant";
       const emailMs = validDateMs(profile.email_last_message_at);
-      const callMs = lastCallByCompany.get(company.id) || null;
+      const latestCall = lastCallByCompany.get(company.id) || null;
+      const callMs = latestCall?.atMs || null;
       const outreachMs = Math.max(
         validDateMs(memory.outreach?.lastReplyAt) || 0,
         validDateMs(memory.outreach?.lastContactedAt) || 0
@@ -358,6 +369,9 @@ export async function GET() {
         healthReasons: reasons.slice(0, 3),
         lastTouchAt,
         daysQuiet,
+        lastCallId: latestCall?.id || null,
+        lastCallAt: latestCall?.at || null,
+        lastCallTitle: latestCall?.title || null,
         nextMeetingAt: nextMeeting?.scheduled_at || null,
         nextMeetingTitle: nextMeeting?.title || null,
         nextAction: nextActionText || null,

@@ -25,12 +25,36 @@ export async function GET(
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) throw error;
+    const sessionIds = (data || [])
+      .map((call: any) => call.session_id)
+      .filter((sessionId: unknown): sessionId is string =>
+        typeof sessionId === "string" && !!sessionId.trim()
+      );
+    const { data: transcriptSessions, error: transcriptError } = sessionIds.length
+      ? await supabaseAdmin
+          .from("interview_sessions")
+          .select("session_id")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
+          .in("session_id", sessionIds)
+          .not("transcript", "is", null)
+          .neq("transcript", "")
+      : { data: [] as { session_id: string }[], error: null };
+    if (transcriptError) throw transcriptError;
+    const transcriptIds = new Set(
+      (transcriptSessions || []).map((session: any) => session.session_id)
+    );
+    const calls = (data || []).map((call: any) => ({
+      ...call,
+      hasTranscript:
+        !!call.session_id && transcriptIds.has(call.session_id),
+    }));
     // Explicit no-store as well as force-dynamic. Force-dynamic alone has not
     // been enough here before: a CDN or edge layer could still hand back a
     // snapshot, which is how a recovered call stayed missing from this client's
     // history while the row existed in the database the whole time.
     return NextResponse.json(
-      { calls: data || [] },
+      { calls },
       { headers: { "Cache-Control": "no-store, max-age=0" } }
     );
   } catch (err: any) {

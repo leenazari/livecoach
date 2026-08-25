@@ -14,6 +14,7 @@ type Call = {
   role: string | null;
   created_at: string;
   summary: any;
+  hasTranscript?: boolean;
 };
 
 type Task = {
@@ -1981,6 +1982,15 @@ function PrepInner() {
                         >
                           full scorecard ↗
                         </Link>
+                        {c.hasTranscript ? (
+                          <a
+                            href={`/api/crm/calls/${encodeURIComponent(c.id)}/transcript`}
+                            download
+                            className="rounded-full border border-sage/45 bg-sage/10 px-2.5 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/20"
+                          >
+                            transcript ↓
+                          </a>
+                        ) : null}
                       </div>
                     </div>
 

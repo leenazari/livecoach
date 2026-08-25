@@ -1452,10 +1452,13 @@ export default function CompanyDetailPage() {
                 ? new Date(c.created_at).toLocaleDateString()
                 : "";
               return (
-                <li key={c.id}>
+                <li
+                  key={c.id}
+                  className="rounded-lg border border-edge bg-ink/40 px-4 py-3 transition hover:border-amber/50"
+                >
                   <Link
                     href={`/crm/calls/${c.id}`}
-                    className="block rounded-lg border border-edge bg-ink/40 px-4 py-3 transition hover:border-amber/50"
+                    className="block"
                   >
                     <div className="mb-1 flex items-center justify-between gap-3">
                       <span className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">
@@ -1473,9 +1476,7 @@ export default function CompanyDetailPage() {
                             {Math.round(score)}%
                           </span>
                         )}
-                        <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sky">
-                          view ↗
-                        </span>
+                        <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sky">view ↗</span>
                       </span>
                     </div>
                     {overview && (
@@ -1488,6 +1489,15 @@ export default function CompanyDetailPage() {
                       </p>
                     )}
                   </Link>
+                  {c.hasTranscript ? (
+                    <a
+                      href={`/api/crm/calls/${encodeURIComponent(c.id)}/transcript`}
+                      download
+                      className="mt-2 inline-flex rounded-full border border-sage/45 bg-sage/10 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/20"
+                    >
+                      Download transcript ↓
+                    </a>
+                  ) : null}
                 </li>
               );
             })}

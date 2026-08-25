@@ -211,6 +211,16 @@ export default function CallDetailPage() {
               <span className="text-sage">· {gbp(call.cost)}</span>
             </div>
 
+            {typeof call.transcriptChars === "number" && call.transcriptChars > 0 ? (
+              <a
+                href={`/api/crm/calls/${encodeURIComponent(call.id)}/transcript`}
+                download
+                className="mt-3 inline-flex items-center rounded-full border border-sage/55 bg-sage/10 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-sage transition hover:bg-sage/20"
+              >
+                Download transcript ↓
+              </a>
+            ) : null}
+
             {/* Richer call-event facts from interview_sessions. */}
             {(fmtDuration(call.durationSeconds) ||
               approxWords(call.transcriptChars) ||
