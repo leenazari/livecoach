@@ -73,7 +73,19 @@ export async function GET() {
       attempts: number;
       error: string | null;
       needsClient: boolean;
+      hasTranscript: boolean;
     };
+
+    const transcriptSessionIds = new Set(
+      (sessions || [])
+        .filter(
+          (session: any) =>
+            session.session_id &&
+            typeof session.transcript === "string" &&
+            session.transcript.trim().length > 0
+        )
+        .map((session: any) => session.session_id)
+    );
 
     // 1. SCORECARDS.
     const scored: Item[] = (calls || []).map((c: any) => ({
@@ -92,6 +104,7 @@ export async function GET() {
       attempts: 0,
       error: null,
       needsClient: !c.company_id,
+      hasTranscript: !!c.session_id && transcriptSessionIds.has(c.session_id),
     }));
 
     const summarySessionIds = new Set(
@@ -137,6 +150,7 @@ export async function GET() {
           attempts,
           error: s.summary_error || null,
           needsClient: !s.company_id,
+          hasTranscript: true,
         };
       });
 
@@ -182,6 +196,7 @@ export async function GET() {
         attempts: 0,
         error: null,
         needsClient: !u.company_id,
+        hasTranscript: false,
       }));
 
     const items = [...scored, ...captured, ...unrecorded]

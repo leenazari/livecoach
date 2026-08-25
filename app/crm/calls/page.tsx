@@ -22,6 +22,7 @@ type Call = {
   state?: CallState;
   session_id?: string | null;
   error?: string | null;
+  hasTranscript?: boolean;
 };
 
 const stateOf = (c: Call): CallState =>
@@ -193,7 +194,7 @@ export default function CallsPage() {
             <span>Company</span>
             <span>Date / time</span>
             <span className="text-right">Cost</span>
-            <span className="text-right">View</span>
+            <span className="text-right">Actions</span>
           </div>
           {shown.map((c) => {
             const st = stateOf(c);
@@ -248,28 +249,39 @@ export default function CallsPage() {
                   {st === "scored" ? gbp(c.cost) : "—"}
                 </span>
                 <span className="col-start-2 row-span-2 row-start-1 self-center text-right sm:col-auto sm:row-auto">
-                  {st === "failed" ? (
-                    <button
-                      type="button"
-                      onClick={() => retry(c)}
-                      disabled={retrying === c.id}
-                      className="rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-50"
-                      title={c.error || "rebuild this summary now"}
-                    >
-                      {retrying === c.id ? "retrying…" : "retry ↻"}
-                    </button>
-                  ) : href ? (
-                    <Link
-                      href={href}
-                      className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
-                    >
-                      {st === "unrecorded" ? "log ↗" : "view ↗"}
-                    </Link>
-                  ) : (
-                    <span className="font-mono text-[0.56rem] uppercase tracking-wider text-muted">
-                      working…
-                    </span>
-                  )}
+                  <span className="inline-flex flex-wrap justify-end gap-1.5">
+                    {c.hasTranscript ? (
+                      <a
+                        href={`/api/crm/calls/${encodeURIComponent(c.id)}/transcript`}
+                        download
+                        className="rounded-full border border-sage/50 bg-sage/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-sage transition hover:bg-sage/20"
+                      >
+                        transcript ↓
+                      </a>
+                    ) : null}
+                    {st === "failed" ? (
+                      <button
+                        type="button"
+                        onClick={() => retry(c)}
+                        disabled={retrying === c.id}
+                        className="rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-50"
+                        title={c.error || "rebuild this summary now"}
+                      >
+                        {retrying === c.id ? "retrying…" : "retry ↻"}
+                      </button>
+                    ) : href ? (
+                      <Link
+                        href={href}
+                        className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+                      >
+                        {st === "unrecorded" ? "log ↗" : "view ↗"}
+                      </Link>
+                    ) : (
+                      <span className="self-center font-mono text-[0.56rem] uppercase tracking-wider text-muted">
+                        working…
+                      </span>
+                    )}
+                  </span>
                 </span>
               </div>
             );

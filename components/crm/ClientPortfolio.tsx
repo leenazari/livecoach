@@ -29,6 +29,9 @@ export type ClientPortfolioRow = {
   healthReasons: string[];
   lastTouchAt: string | null;
   daysQuiet: number | null;
+  lastCallId: string | null;
+  lastCallAt: string | null;
+  lastCallTitle: string | null;
   nextMeetingAt: string | null;
   nextMeetingTitle: string | null;
   nextAction: string | null;
@@ -273,6 +276,15 @@ function MobileClientCard({
       <div className="mt-3 flex items-center justify-between gap-2">
         <StageSelect row={row} saving={saving} editable={editable} onChange={onStageChange} />
         <span className="flex items-center gap-1">
+          {row.lastCallId ? (
+            <Link
+              href={`/crm/calls/${row.lastCallId}`}
+              title={row.lastCallTitle || "Open latest call"}
+              className="rounded-full border border-sage/40 bg-sage/10 px-2.5 py-1 font-mono text-[0.52rem] uppercase tracking-wider text-sage transition hover:bg-sage/20"
+            >
+              last call ↗
+            </Link>
+          ) : null}
           <Link
             href={`/crm/${row.id}`}
             className="rounded-full border border-sky/40 bg-sky/10 px-2.5 py-1 font-mono text-[0.52rem] uppercase tracking-wider text-sky"
@@ -382,6 +394,7 @@ export default function ClientPortfolio({
           row.primaryContact?.email,
           row.nextAction,
           row.buyingSignal,
+          row.lastCallTitle,
           activityDate(row.lastTouchAt),
           meetingDate(row.nextMeetingAt),
         ]
@@ -655,16 +668,27 @@ export default function ClientPortfolio({
                     />
                   </td>
                   <td className="whitespace-nowrap px-3 py-3">
-                    <Link href={`/crm/${row.id}`} className="block hover:text-amber">
-                      <p className="font-sans text-[0.74rem] text-bone/80">{activityDate(row.lastTouchAt)}</p>
-                      <p className="font-mono text-[0.49rem] uppercase tracking-wider text-muted">
-                        {row.daysQuiet == null
-                          ? "Unknown"
-                          : row.daysQuiet === 0
-                            ? "Today"
-                            : `${row.daysQuiet} ${row.daysQuiet === 1 ? "day" : "days"} ago`}
-                      </p>
-                    </Link>
+                    <div>
+                      <Link href={`/crm/${row.id}`} className="block hover:text-amber">
+                        <p className="font-sans text-[0.74rem] text-bone/80">{activityDate(row.lastTouchAt)}</p>
+                        <p className="font-mono text-[0.49rem] uppercase tracking-wider text-muted">
+                          {row.daysQuiet == null
+                            ? "Unknown"
+                            : row.daysQuiet === 0
+                              ? "Today"
+                              : `${row.daysQuiet} ${row.daysQuiet === 1 ? "day" : "days"} ago`}
+                        </p>
+                      </Link>
+                      {row.lastCallId ? (
+                        <Link
+                          href={`/crm/calls/${row.lastCallId}`}
+                          title={row.lastCallTitle || "Open latest call"}
+                          className="mt-1.5 inline-flex rounded-full border border-sage/40 bg-sage/10 px-2 py-0.5 font-mono text-[0.49rem] uppercase tracking-wider text-sage transition hover:bg-sage/20"
+                        >
+                          last call · {compactDate(row.lastCallAt)} ↗
+                        </Link>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="max-w-[150px] px-3 py-3">
                     <Link href={`/crm/${row.id}`} className={`block font-sans text-[0.72rem] hover:text-amber ${row.nextMeetingAt ? "text-sage" : "text-muted"}`}>
