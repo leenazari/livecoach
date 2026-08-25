@@ -14,6 +14,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       .from("outreach_prospects")
       .select("id,workspace_id,assigned_to_user_id")
       .eq("id", params.id)
+      .eq("workspace_id", account.workspaceId)
       .maybeSingle();
     if (currentError) throw currentError;
     if (!current) {
@@ -79,8 +80,27 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
     if (!Object.keys(patch).length) return NextResponse.json({ error: "no valid change supplied" }, { status: 400 });
     patch.updated_at = new Date().toISOString();
-    const { data, error } = await supabaseAdmin.from("outreach_prospects").update(patch).eq("id", params.id).select("*").single();
+    const claimingUnassigned =
+      account.role === "sales" &&
+      !current.assigned_to_user_id &&
+      patch.assigned_to_user_id === account.userId;
+    let update = supabaseAdmin
+      .from("outreach_prospects")
+      .update(patch)
+      .eq("id", params.id)
+      .eq("workspace_id", account.workspaceId);
+    if (claimingUnassigned) update = update.is("assigned_to_user_id", null);
+    const { data, error } = await update.select("*").maybeSingle();
     if (error) throw error;
+    if (!data && claimingUnassigned) {
+      return NextResponse.json(
+        { error: "Another teammate claimed this prospect first" },
+        { status: 409 }
+      );
+    }
+    if (!data) {
+      return NextResponse.json({ error: "prospect not found" }, { status: 404 });
+    }
     return NextResponse.json({ prospect: data });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "failed to update prospect" }, { status: 500 });
