@@ -284,7 +284,7 @@ export async function POST(req: NextRequest) {
       // Recall, so it still works if the LiveCoach tab is closed, asleep or
       // offline. `everyone_left_timeout` handles the normal case. The two bot
       // heuristics cover calls where another notetaker remains behind, and the
-      // conservative silence timer is the final fallback. A three-hour hard
+      // five-minute silence timer is the final fallback. A three-hour hard
       // ceiling prevents an exceptional provider/platform state running on
       // indefinitely without cutting off ordinary calls or workshops.
       automatic_leave: {
@@ -322,8 +322,11 @@ export async function POST(req: NextRequest) {
           },
         },
         silence_detection: {
-          activate_after: 1200,
-          timeout: 600,
+          // Keep this inside Recall so cost protection survives a sleeping or
+          // closed browser. The in-app clock starts only after real speech, and
+          // Recall's other waiting-room/no-participant guards cover pre-call time.
+          activate_after: 60,
+          timeout: 300,
         },
         waiting_room_timeout: Math.min(300, botHardLimitSeconds),
         noone_joined_timeout: Math.min(300, botHardLimitSeconds),
@@ -415,7 +418,7 @@ export async function POST(req: NextRequest) {
         status: "joining",
         autoStop: {
           everyoneLeftSeconds: 30,
-          silentFallbackMinutes: 10,
+          silentFallbackMinutes: 5,
           hardLimitMinutes: Math.floor(botHardLimitSeconds / 60),
           dailyRemainingMinutes: usage.remainingMinutes,
         },

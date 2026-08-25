@@ -520,6 +520,7 @@ export default function CallPage() {
   const callStartedAtRef = useRef(0);
   const costTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callEndedAtRef = useRef<number | null>(null);
+  const endRequestedRef = useRef(false);
   const sonnetCallsRef = useRef(0);
   const callLiveRef = useRef(false);
   // Holds the latest goLive() so the transcript funnel (stable, no deps) can
@@ -2515,6 +2516,10 @@ export default function CallPage() {
       );
       return;
     }
+    // The five-minute timer and a manual tap can land together. Only one path
+    // may close, charge and summarise this session.
+    if (endRequestedRef.current) return;
+    endRequestedRef.current = true;
     // End the call NOW. The transcript is already captured in linesRef, so
     // summarising still works - but the live state stops: the cost meter
     // freezes at this moment (no more penny-by-penny ticking) and the
@@ -4591,6 +4596,12 @@ export default function CallPage() {
               meetingUrl={meetingUrl}
               onMeetingUrlChange={setMeetingUrl}
               startRequest={botStartRequest}
+              onSilenceTimeout={() => {
+                setStatus(
+                  "five minutes of silence detected - ending and summarising"
+                );
+                endAndSummarise();
+              }}
             />
           ) : (
             <CallStage
