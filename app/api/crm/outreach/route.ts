@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   try {
     const account = requireRequestScope();
+    const canManageAssignments = account.role === "owner" || account.role === "manager";
     const priority = req.nextUrl.searchParams.get("priority") || "all";
     const status = req.nextUrl.searchParams.get("status") || "all";
     let query = supabaseAdmin
@@ -21,6 +22,11 @@ export async function GET(req: NextRequest) {
       .order("priority_score", { ascending: false })
       .order("company_name", { ascending: true })
       .limit(1000);
+    if (!canManageAssignments) {
+      query = query.or(
+        `assigned_to_user_id.is.null,assigned_to_user_id.eq.${account.userId}`
+      );
+    }
     if (["high", "medium", "low"].includes(priority)) query = query.eq("priority", priority);
     if (status !== "all") query = query.eq("status", status);
     const contextPromise = Promise.all([
@@ -29,20 +35,23 @@ export async function GET(req: NextRequest) {
       supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", account.workspaceId),
       outreachCrmGuard(),
     ]);
-    const historyPromise = Promise.all([
-      supabaseAdmin
+    let messagesQuery = supabaseAdmin
         .from("outreach_messages")
         .select("id,prospect_id,status,subject,step_number,scheduled_at,sent_at,updated_at")
         .eq("workspace_id", account.workspaceId)
         .order("updated_at", { ascending: false })
-        .limit(5000),
-      supabaseAdmin
+        .limit(5000);
+    let enrolmentsQuery = supabaseAdmin
         .from("outreach_enrolments")
         .select("campaign_id,prospect_id,recipient_email,status,current_step,last_sent_at,next_action_at,updated_at")
         .eq("workspace_id", account.workspaceId)
         .order("updated_at", { ascending: false })
-        .limit(2000),
-    ]);
+        .limit(2000);
+    if (!canManageAssignments) {
+      messagesQuery = messagesQuery.eq("sender_user_id", account.userId);
+      enrolmentsQuery = enrolmentsQuery.eq("owner_id", account.userId);
+    }
+    const historyPromise = Promise.all([messagesQuery, enrolmentsQuery]);
     const [{ data, error }, context, history] = await Promise.all([
       query,
       contextPromise,
@@ -179,7 +188,7 @@ export async function GET(req: NextRequest) {
       prospects,
       team,
       currentUser: account.userId,
-      canManageAssignments: account.role === "owner" || account.role === "manager",
+      canManageAssignments,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "failed to load outreach prospects" }, { status: 500 });
