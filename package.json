@@ -41,7 +41,8 @@
     "validate:sales-tutorial": "node scripts/validate-sales-outreach-tutorial.mjs",
     "validate:call-launch": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-one-click-call-launch.mjs",
     "validate:outreach-campaign-selection": "node scripts/validate-per-user-outreach-campaign.mjs",
-    "validate:linkedin-engagement-safety": "node scripts/validate-linkedin-engagement-safety.mjs"
+    "validate:linkedin-engagement-safety": "node scripts/validate-linkedin-engagement-safety.mjs",
+    "validate:provider-disconnect": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-provider-disconnect.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
