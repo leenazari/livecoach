@@ -4,7 +4,9 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { crmFetch, getCached } from "@/lib/crm";
+import { openAndArmCallLaunch } from "@/lib/call-launch";
 import NavMenu from "@/components/crm/NavMenu";
+import { validMeetingUrl } from "@/lib/meeting-url";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import MatrixRain from "@/components/MatrixRain";
 
@@ -209,6 +211,7 @@ function PrepInner() {
   const [savedToCall, setSavedToCall] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showAllCalls, setShowAllCalls] = useState(false);
+  const [meetingUrl, setMeetingUrl] = useState("");
 
   const [battlecard, setBattlecard] = useState<Battlecard | null>(null);
   const [bcBusy, setBcBusy] = useState(false);
@@ -307,6 +310,9 @@ function PrepInner() {
       setCompanyResearch(d.company || null);
       setPersonResearch(d.person || null);
       setOutreachOrigin(d.call?.outreach || null);
+      setMeetingUrl(
+        typeof d.call?.meetingUrl === "string" ? d.call.meetingUrl.trim() : ""
+      );
       bgRef.current = {
         company: d.company?.background || "",
         person: d.person?.background || "",
@@ -1123,6 +1129,13 @@ function PrepInner() {
     if (name) qs.set("companyName", name);
     if (intent.trim()) qs.set("intent", intent.trim());
     if (upcomingId) qs.set("upcoming", upcomingId);
+    if (meetingUrl) qs.set("meetingUrl", meetingUrl);
+    if (validMeetingUrl(meetingUrl)) {
+      // Keep LiveCoach in this tab and open the real meeting alongside it. This
+      // must happen synchronously in the button click or the browser may block
+      // it. The launch flag is consumed once by /call and removed from its URL.
+      if (openAndArmCallLaunch(upcomingId, meetingUrl)) qs.set("launch", "1");
+    }
     router.push(`/call?${qs.toString()}`);
   };
 
@@ -1637,9 +1650,16 @@ function PrepInner() {
                 type="button"
                 onClick={startCall}
                 disabled={!intent.trim()}
+                title={
+                  validMeetingUrl(meetingUrl)
+                    ? "Open the meeting, start LiveCoach and request your notetaker"
+                    : "Continue to LiveCoach and add the meeting link before starting"
+                }
                 className="rounded-full border border-sage/60 bg-sage/15 px-4 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 disabled:opacity-40"
               >
-                start call with this ▸
+                {validMeetingUrl(meetingUrl)
+                  ? "open meeting + start ▸"
+                  : "continue to call setup ▸"}
               </button>
               {upcomingId && (
                 <button

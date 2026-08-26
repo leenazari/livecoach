@@ -12,7 +12,9 @@ import MatrixRain from "@/components/MatrixRain";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
+import { consumeArmedCallLaunch } from "@/lib/call-launch";
 import { crmFetch } from "@/lib/crm";
+import { validMeetingUrl } from "@/lib/meeting-url";
 import { cleanResearchBackground } from "@/lib/research-format";
 import {
   estimateCost,
@@ -324,6 +326,7 @@ export default function CallPage() {
   const [source, setSource] = useState<"inapp" | "meet">("inapp");
   const [meetingUrl, setMeetingUrl] = useState("");
   const [botStartRequest, setBotStartRequest] = useState(0);
+  const [launchRequested, setLaunchRequested] = useState(false);
   const [upcomingId, setUpcomingId] = useState<string | null>(null);
   const [expandSetup, setExpandSetup] = useState(false);
   // When true, the full authoring setup is shown even at the brief stage (the
@@ -523,6 +526,7 @@ export default function CallPage() {
   const endRequestedRef = useRef(false);
   const sonnetCallsRef = useRef(0);
   const callLiveRef = useRef(false);
+  const autoLaunchHandledRef = useRef(false);
   // Holds the latest goLive() so the transcript funnel (stable, no deps) can
   // auto-start the call on first real speech without a stale closure.
   const goLiveRef = useRef<() => void>(() => {});
@@ -1070,6 +1074,23 @@ export default function CallPage() {
     const intent = p.get("intent");
     const url = p.get("meetingUrl");
     const upcoming = p.get("upcoming");
+    const launch = p.get("launch") === "1";
+    if (launch) {
+      // A launch URL is never sufficient on its own. Only a fresh, exact
+      // session marker written by the user's Start click may auto-start a bot.
+      if (upcoming && url && consumeArmedCallLaunch(upcoming, url)) {
+        setLaunchRequested(true);
+      }
+      // Consume the flag in the address bar too. A refresh must never start a
+      // second transcriber or incur another call charge.
+      p.delete("launch");
+      const cleanQuery = p.toString();
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ""}${window.location.hash}`
+      );
+    }
     if (cid && cname) handleLinkCompany({ id: cid, name: cname });
     if (intent) setBrief(intent);
     if (url) {
@@ -2274,6 +2295,42 @@ export default function CallPage() {
     }
   }, [persistSession, linkSession, source, meetingUrl]);
 
+  // Manual starts open the actual meeting and LiveCoach together. Keeping
+  // window.open in this click handler is essential because browsers block
+  // meeting tabs created later from an effect or after an awaited request.
+  const openMeetingAndGoLive = useCallback(() => {
+    if (source === "meet") {
+      const url = meetingUrl.trim();
+      if (!validMeetingUrl(url)) {
+        setStatus("add a supported Teams, Meet or Zoom link before starting");
+        setExpandSetup(true);
+        return;
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+      setStatus("meeting opened - starting LiveCoach and requesting your notetaker");
+    }
+    goLive();
+  }, [source, meetingUrl, goLive]);
+
+  // Dashboard and Prep starts have already opened the meeting in their direct
+  // click handler. Once this exact scheduled call is hydrated, start its
+  // LiveCoach session and bot once. The one-use marker and ref make refreshes,
+  // copied URLs and double navigation safe.
+  useEffect(() => {
+    if (
+      !launchRequested ||
+      autoLaunchHandledRef.current ||
+      !upcomingId ||
+      source !== "meet" ||
+      !validMeetingUrl(meetingUrl)
+    )
+      return;
+    autoLaunchHandledRef.current = true;
+    setLaunchRequested(false);
+    setStatus("meeting opened - starting LiveCoach and requesting your notetaker");
+    goLive();
+  }, [launchRequested, upcomingId, source, meetingUrl, goLive]);
+
   // Keep the ref pointed at the latest goLive so the transcript funnel can call
   // it without taking goLive as a dependency (which would re-create the funnel).
   useEffect(() => {
@@ -2879,10 +2936,11 @@ export default function CallPage() {
       if (callLive) setExpandSetup(true);
       setBriefSetupOpen(false);
     } else {
-      // Live: go live from setup, or return to the cue view if already live.
+      // Live: use the same deliberate meeting + notetaker launch as the fixed
+      // Start control, or return to the cue view if already live.
       if (planStage !== "full") return;
       if (callLive) setExpandSetup(false);
-      else goLive();
+      else openMeetingAndGoLive();
     }
   };
   // Overall progress toward the intent: rank-weighted average of how well each
@@ -5282,7 +5340,7 @@ export default function CallPage() {
                   : planStage === "focus"
                   ? "Focus ready. Build the full plan, start the call, or complete it here if no bot was used."
                   : source === "meet"
-                  ? "Start once to open LiveCoach and send the notetaker."
+                  ? "Open the meeting and start LiveCoach with your notetaker in one step."
                   : "Start once to open the live coaching view."}
               </p>
             </div>
@@ -5319,10 +5377,10 @@ export default function CallPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={goLive}
+                    onClick={openMeetingAndGoLive}
                     className="min-h-11 flex-1 rounded-xl border border-sage/60 bg-sage/20 px-6 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-sage transition hover:bg-sage/30 sm:flex-none"
                   >
-                    {source === "meet" ? "Start call + bot" : "Start call"} {"\u25B8"}
+                    {source === "meet" ? "Open meeting + start" : "Start call"} {"\u25B8"}
                   </button>
                 </>
               )}
