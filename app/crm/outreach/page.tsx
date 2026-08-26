@@ -67,6 +67,7 @@ const pill: Record<string, string> = {
   contacted: "border-moss/50 bg-moss/10 text-moss",
   replied: "border-moss/50 bg-moss/10 text-moss",
   interested: "border-moss/50 bg-moss/10 text-moss",
+  warm: "border-amber/60 bg-amber/15 text-amber",
   suppressed: "border-rust/50 bg-rust/10 text-rust",
   not_started: "border-edge bg-ink/40 text-muted",
 };
@@ -100,6 +101,8 @@ function outreachStage(prospect: Prospect): { key: string; label: string } {
     return { key: "approved", label: sentCount ? "Follow up approved" : "Approved" };
   if (["draft", "failed"].includes(latest?.status))
     return { key: "draft", label: sentCount ? "Follow up draft" : "Draft ready" };
+  if (prospect.source_metadata?.warm_lead && !sentCount)
+    return { key: "warm", label: "Warm lead" };
   if (sentCount || prospect.status === "contacted")
     return { key: "sent", label: sentCount > 1 ? `${sentCount} sent` : "Sent" };
   if (prospect.outreach?.enrolment?.status === "queued" || prospect.status === "queued")
@@ -193,7 +196,7 @@ export default function OutreachPage() {
   const [q, setQ] = useState("");
   const [priority, setPriority] = useState<"all" | Priority>("all");
   const [stageFilter, setStageFilter] = useState("active");
-  const [prospectSort, setProspectSort] = useState<ProspectSort>("activity");
+  const [prospectSort, setProspectSort] = useState<ProspectSort>("priority");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [recommendationFilter, setRecommendationFilter] = useState<"all" | RecommendationAction>("all");
   const [prospectCampaignId, setProspectCampaignId] = useState("all");
@@ -381,6 +384,9 @@ export default function OutreachPage() {
   const activeCampaign = orderedCampaigns.find(
     (campaign) => campaign.id === selectedCampaignId
   ) || orderedCampaigns.find((campaign) => campaign.status === "active");
+  const activeCampaignQueueCount = activeCampaign
+    ? queue.filter((row) => row.campaign?.id === activeCampaign.id).length
+    : 0;
   const selectableCampaigns = orderedCampaigns.filter(
     (campaign) => campaign.status === "active"
   );
@@ -685,9 +691,24 @@ export default function OutreachPage() {
   };
 
   const addProspectToTeamQueue = async (prospect: Prospect) => {
+    const campaignIds = prospect.outreach?.campaignIds || [];
+    const savedCampaignId = prospect.outreach?.enrolment?.campaign_id;
+    const prospectCampaign = campaigns.find(
+      (campaign) =>
+        campaign.status === "active" && campaign.id === savedCampaignId
+    ) || campaigns.find(
+      (campaign) =>
+        campaign.status === "active" && campaignIds.includes(campaign.id)
+    );
+    if (campaignIds.length && !prospectCampaign) {
+      throw new Error("This prospect's campaign is not active");
+    }
+    const targetCampaign = prospectCampaign || activeCampaign;
+    if (!targetCampaign) throw new Error("Choose an active campaign first");
     const payload = {
       prospectId: prospect.id,
-      limit: activeCampaign?.daily_limit || 20,
+      campaignId: targetCampaign.id,
+      limit: targetCampaign.daily_limit || 20,
     };
     try {
       return await crmFetch("/api/crm/outreach/queue", {
@@ -850,7 +871,10 @@ export default function OutreachPage() {
       let compared = 0;
       if (prospectSort === "name") compared = `${left.first_name || ""} ${left.last_name || ""}`.localeCompare(`${right.first_name || ""} ${right.last_name || ""}`);
       else if (prospectSort === "company") compared = String(left.company_name || "").localeCompare(String(right.company_name || ""));
-      else if (prospectSort === "priority") compared = priorityRank[left.priority] - priorityRank[right.priority];
+      else if (prospectSort === "priority") compared =
+        priorityRank[left.priority] - priorityRank[right.priority] ||
+        Number(left.priority_score || 0) - Number(right.priority_score || 0) ||
+        Number(left.recommendation?.score || 0) - Number(right.recommendation?.score || 0);
       else if (prospectSort === "status") compared = outreachStage(left).label.localeCompare(outreachStage(right).label);
       else compared = activityTime(left) - activityTime(right);
       return sortDirection === "asc" ? compared : -compared;
@@ -934,8 +958,8 @@ export default function OutreachPage() {
 
       {!loading && !tabLoading && tab === "queue" ? <section data-sales-tour="outreach-queue">
         <RevenueToday />
-        <div className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.06] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase tracking-wider text-moss">Your active campaign</p><h2 className="mt-1 font-display text-lg text-bone">{activeCampaign?.name || "No active campaign"}</h2><p className="mt-1 text-sm text-muted">This choice controls only your queue. It cannot switch another salesperson’s campaign.</p></div>{selectableCampaigns.length ? <label className="w-full sm:w-72"><span className="sr-only">Choose your active campaign</span><select aria-label="Choose your active campaign" className={`${input} min-h-11`} value={activeCampaign?.id || ""} onChange={(event) => void selectActiveCampaign(event.target.value)} disabled={!!busy}>{selectableCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label> : <button type="button" onClick={() => selectTab("campaign")} className={button}>Review campaigns</button>}</div></div>
-        <div className="mb-4 rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s controlled queue</h2><p className="mt-1 text-sm text-muted">Prepare in the background, approve the exact drafts you have reviewed, then LiveCoach sends one every five minutes. Sent people rotate to the bottom automatically.</p><p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{remainingToPrepare} to prepare · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p></div><button onClick={buildQueue} disabled={!!busy || queue.length >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : queue.length ? `Top up to ${activeCampaign?.daily_limit || 20}` : "Rank + build today’s queue"}</button></div><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare all remaining (${remainingToPrepare})` : "All research prepared"}</button><button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve all prepared & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button></div><p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact drafts already shown below. New research never sends without a separate approval.</p></div>
+        <div className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.06] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase tracking-wider text-moss">Campaign to top up</p><h2 className="mt-1 font-display text-lg text-bone">{activeCampaign?.name || "No active campaign"}</h2><p className="mt-1 text-sm text-muted">This choice controls Rank + build only. The combined list below keeps queued work from every campaign together.</p></div>{selectableCampaigns.length ? <label className="w-full sm:w-72"><span className="sr-only">Choose your active campaign</span><select aria-label="Choose your active campaign" className={`${input} min-h-11`} value={activeCampaign?.id || ""} onChange={(event) => void selectActiveCampaign(event.target.value)} disabled={!!busy}>{selectableCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label> : <button type="button" onClick={() => selectTab("campaign")} className={button}>Review campaigns</button>}</div></div>
+        <div className="mb-4 rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s combined queue</h2><p className="mt-1 text-sm text-muted">Prepare in the background, approve the exact drafts you have reviewed, then LiveCoach sends one every five minutes. Each prospect keeps the correct campaign and sent people rotate to the bottom automatically.</p><p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{remainingToPrepare} to prepare · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p></div><button onClick={buildQueue} disabled={!!busy || activeCampaignQueueCount >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : activeCampaignQueueCount ? `Top up ${activeCampaign?.name || "campaign"} to ${activeCampaign?.daily_limit || 20}` : "Rank + build for this campaign"}</button></div><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare all remaining (${remainingToPrepare})` : "All research prepared"}</button><button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve all prepared & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button></div><p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact drafts already shown below. New research never sends without a separate approval.</p></div>
         <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const canPrepare = !m && row.status === "queued"; const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="font-mono text-[0.55rem] uppercase text-muted">#{index + 1} · step {row.current_step}</p><h3 className="mt-1 font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>{p.priority}</span><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[displayStatus] || "border-edge text-muted"}`}>{displayStatus === "sent" ? "✓ sent" : displayStatus}</span></div>{!m && lastSent && row.next_action_at ? <p className="mt-2 text-xs text-muted">Next follow up becomes ready {formatActivityDate(row.next_action_at)}.</p> : null}</div>{canPrepare ? <button onClick={() => prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>{prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : Number(row.current_step) > 1 ? "Queue follow up draft" : "Queue research + draft"}</button> : !m && lastSent ? <button onClick={() => selectTab("activity")} className="min-h-11 w-full rounded-lg border border-moss bg-moss px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-ink transition hover:bg-moss/85 sm:w-auto">✓ Sent · view email</button> : null}</div>
           {rowErrors[p.id] ? <p className="mt-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm leading-5 text-rust">{rowErrors[p.id]}</p> : null}
@@ -951,13 +975,13 @@ export default function OutreachPage() {
             <input className={input} value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search person, company, role or email…" />
             <select aria-label="Campaign filter" value={prospectCampaignId} onChange={(event) => setProspectCampaignId(event.target.value)} className={input}><option value="all">All campaigns</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select>
             <select aria-label="Outreach status filter" value={stageFilter} onChange={(event) => setStageFilter(event.target.value)} className={input}>
-              <option value="active">Active prospects</option><option value="all">All including removed</option><option value="not_started">Not started</option><option value="queued">Queued</option><option value="draft">Draft ready</option><option value="approved">Approved</option><option value="scheduled">Scheduled</option><option value="sent">Sent</option><option value="replied">Replied</option><option value="interested">Interested</option><option value="suppressed">Removed</option>
+              <option value="active">Active prospects</option><option value="all">All including removed</option><option value="warm">Warm leads</option><option value="not_started">Not started</option><option value="queued">Queued</option><option value="draft">Draft ready</option><option value="approved">Approved</option><option value="scheduled">Scheduled</option><option value="sent">Sent</option><option value="replied">Replied</option><option value="interested">Interested</option><option value="suppressed">Removed</option>
             </select>
             <select aria-label="Manual priority filter" value={priority} onChange={(event) => setPriority(event.target.value as "all" | Priority)} className={input}><option value="all">All priorities</option><option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option></select>
             <select aria-label="Fit recommendation filter" value={recommendationFilter} onChange={(event) => setRecommendationFilter(event.target.value as "all" | RecommendationAction)} className={input}><option value="all">All fit scores</option><option value="contact_today">Contact today</option><option value="hold">Hold</option><option value="skip">Skip</option></select>
             <select aria-label="Owner filter" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} className={input}><option value="available">Mine and available</option><option value="mine">My prospects</option><option value="unassigned">Unassigned</option>{canManageAssignments ? <><option value="all">All owners</option>{team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}</> : null}</select>
           </div>
-          <p className="mt-2 text-xs text-muted">Showing {shown.length} of {prospects.length}. Fit scoring uses no AI tokens. Research only starts when you press Prepare draft.</p>
+          <p className="mt-2 text-xs text-muted">Showing {shown.length} of {prospects.length}. All campaigns is the combined priority list and every prospect keeps the campaign badge shown on their row. Fit scoring uses no AI tokens. Research only starts when you press Prepare draft.</p>
         </div>
 
         {canManageAssignments ? <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.06] p-3">
@@ -986,9 +1010,11 @@ export default function OutreachPage() {
             const prepareStatus = prepareJobs[prospect.id];
             const preparePending = prepareStatus === "adding" || prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done";
             const openTab: Tab = prospect.last_reply_at ? "replies" : prospect.outreach?.sentCount ? "activity" : "queue";
-            const membershipIds = prospect.outreach?.activeCampaignIds || [];
+            const membershipIds = prospect.outreach?.campaignIds || [];
             const membershipCampaigns = campaigns.filter((campaign) => membershipIds.includes(campaign.id));
-            const campaignReady = !membershipIds.length || Boolean(activeCampaign && membershipIds.includes(activeCampaign.id));
+            const savedCampaignId = prospect.outreach?.enrolment?.campaign_id;
+            const workCampaign = campaigns.find((campaign) => campaign.status === "active" && campaign.id === savedCampaignId) || membershipCampaigns.find((campaign) => campaign.status === "active") || (!membershipIds.length ? activeCampaign : null);
+            const campaignReady = Boolean(workCampaign);
             const isMine = prospect.assigned_to_user_id === currentUser;
             const canClaim = !prospect.assigned_to_user_id && !canManageAssignments;
             const canPrepare = isMine && campaignReady && (stage.key === "not_started" || stage.key === "queued");
@@ -1000,7 +1026,7 @@ export default function OutreachPage() {
               <div><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Outreach</span><div className="flex flex-wrap gap-1"><span className={`inline-flex rounded-full border px-2 py-1 font-mono text-[0.5rem] uppercase ${pill[stage.key] || "border-edge text-muted"}`}>{stage.key === "sent" || stage.key === "interested" ? "✓ " : ""}{stage.label}</span>{prospect.outreach?.sentCount && stage.key !== "sent" ? <span className="inline-flex rounded-full border border-moss/50 bg-moss/10 px-2 py-1 font-mono text-[0.5rem] uppercase text-moss">✓ {prospect.outreach.sentCount} sent</span> : null}</div>{prospect.outreach?.latestSentMessage?.subject ? <p className="mt-1 line-clamp-1 text-[0.68rem] text-muted">{prospect.outreach.latestSentMessage.subject}</p> : null}</div>
               <div><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Last activity</span><p className="text-xs text-bone/80">{formatActivityDate(lastActivity)}</p>{prospect.outreach?.enrolment?.next_action_at ? <p className="mt-1 text-[0.65rem] text-amber">Next {formatActivityDate(prospect.outreach.enrolment.next_action_at)}</p> : null}</div>
               <div><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Owner</span>{canManageAssignments ? <select aria-label={`Owner for ${prospect.first_name} ${prospect.last_name}`} value={prospect.assigned_to_user_id || ""} onChange={(event) => updateAssignment(prospect.id, event.target.value)} className="min-h-10 w-full rounded-lg border border-edge bg-ink px-2 text-xs text-bone"><option value="">Unassigned</option>{team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}</select> : <span className={`inline-flex rounded-full border px-2 py-1 font-mono text-[0.49rem] uppercase ${prospect.assigned_to_user_id === currentUser ? "border-moss/45 bg-moss/10 text-moss" : "border-edge text-muted"}`}>{prospect.assigned_to_user_id === currentUser ? "Mine" : assignedMember?.name || "Unassigned"}</span>}</div>
-              <div className="flex flex-wrap gap-2 sm:justify-end">{!isMine ? canClaim ? <button type="button" onClick={() => updateAssignment(prospect.id, currentUser)} disabled={!!busy} className={`${button} min-h-10 px-3`}>Claim</button> : <span className="inline-flex min-h-10 items-center rounded-lg border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted">Assigned to {assignedMember?.name || "another user"}</span> : !campaignReady && stage.key !== "suppressed" ? <span className="inline-flex min-h-10 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 font-mono text-[0.5rem] uppercase text-amber">{membershipCampaigns[0]?.name || "Other campaign"} is not active</span> : canPrepare ? <button type="button" onClick={() => prepareFromProspects(prospect)} disabled={preparePending} className={`${primary} min-h-10 px-3`}>{prepareStatus === "adding" ? "Adding…" : prepareStatus === "researching" ? "Researching…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : "Queue research"}</button> : ["draft", "approved"].includes(stage.key) ? <button type="button" onClick={() => openProspectWork(prospect)} disabled={!!busy} className={`${primary} min-h-10 px-3`}>{busy === `prospect-open:${prospect.id}` ? "Opening…" : pendingStatus === "approved" ? "Review to send" : "Review draft"}</button> : stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab(openTab)} className={`${button} min-h-10 px-3`}>{openTab === "replies" ? "View reply" : "View history"}</button> : null}<button type="button" onClick={() => setRemovalProspectId((current) => current === prospect.id ? "" : prospect.id)} disabled={!!busy || stage.key === "suppressed"} className="min-h-10 rounded-lg px-2 font-mono text-[0.52rem] uppercase text-rust disabled:opacity-35">Remove</button></div>
+              <div className="flex flex-wrap gap-2 sm:justify-end">{!isMine ? canClaim ? <button type="button" onClick={() => updateAssignment(prospect.id, currentUser)} disabled={!!busy} className={`${button} min-h-10 px-3`}>Claim</button> : <span className="inline-flex min-h-10 items-center rounded-lg border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted">Assigned to {assignedMember?.name || "another user"}</span> : !campaignReady && stage.key !== "suppressed" ? <span className="inline-flex min-h-10 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 font-mono text-[0.5rem] uppercase text-amber">{membershipCampaigns[0]?.name || "Campaign"} is not active</span> : canPrepare ? <button type="button" onClick={() => prepareFromProspects(prospect)} disabled={preparePending} className={`${primary} min-h-10 px-3`}>{prepareStatus === "adding" ? "Adding…" : prepareStatus === "researching" ? "Researching…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : "Queue research"}</button> : ["draft", "approved"].includes(stage.key) ? <button type="button" onClick={() => openProspectWork(prospect)} disabled={!!busy} className={`${primary} min-h-10 px-3`}>{busy === `prospect-open:${prospect.id}` ? "Opening…" : pendingStatus === "approved" ? "Review to send" : "Review draft"}</button> : stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab(openTab)} className={`${button} min-h-10 px-3`}>{openTab === "replies" ? "View reply" : "View history"}</button> : null}<button type="button" onClick={() => setRemovalProspectId((current) => current === prospect.id ? "" : prospect.id)} disabled={!!busy || stage.key === "suppressed"} className="min-h-10 rounded-lg px-2 font-mono text-[0.52rem] uppercase text-rust disabled:opacity-35">Remove</button></div>
               {removalProspectId === prospect.id ? <div className="rounded-lg border border-rust/40 bg-rust/[0.07] p-3 sm:col-span-7"><p className="text-sm text-bone/80">Keep the history, but stop future outreach to:</p><div className="mt-2 flex flex-col gap-2 sm:flex-row"><button type="button" onClick={() => removeFromOutreach(prospect, "person")} disabled={!!busy} className={`${button} border-rust/50 text-rust`}>This person only</button>{prospect.company_domain ? <button type="button" onClick={() => removeFromOutreach(prospect, "company")} disabled={!!busy} className={`${button} border-rust/50 text-rust`}>Everyone at {prospect.company_name}</button> : null}<button type="button" onClick={() => setRemovalProspectId("")} className={button}>Cancel</button></div></div> : null}
               <details className="sm:col-span-7"><summary className="cursor-pointer font-mono text-[0.5rem] uppercase tracking-wider text-muted">Why this fit score · {prospect.recommendation?.score || 0}/100</summary><RecommendationCard recommendation={prospect.recommendation} compact /></details>
             </article>;
