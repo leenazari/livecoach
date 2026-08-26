@@ -17,6 +17,11 @@ type TeamStatus = { role?: ViewerRole };
 
 const TEAM_STATUS_URL = "/api/auth/team/status";
 const OUTREACH_ITEM: Item = { href: "/crm/outreach", label: "Outreach", icon: "↗" };
+const SALES_OUTREACH_ITEM: Item = {
+  href: "/crm/outreach?tab=prospects",
+  label: "Outreach",
+  icon: "↗",
+};
 const NOTIFICATIONS_ITEM: Item = {
   href: "/crm/notifications",
   label: "Notifications",
@@ -36,18 +41,17 @@ const OWNER_CORE_ITEMS: Item[] = [
   COSTS_ITEM,
   DOCUMENTS_ITEM,
 ];
-const SALES_CORE_ITEMS: Item[] = [PIPELINE_ITEM, CLIENTS_ITEM];
+const SALES_CORE_ITEMS: Item[] = [
+  SALES_OUTREACH_ITEM,
+  PIPELINE_ITEM,
+  CLIENTS_ITEM,
+];
 const MORE_ITEMS: Item[] = [
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
   { href: "/crm/health", label: "Health", icon: "✓" },
   { href: "/settings/sales-profile", label: "My setup", icon: "◉" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
-const CAMPAIGNS_ITEM: Item = {
-  href: "/crm/outreach?tab=campaign",
-  label: "Campaigns and prospects",
-  icon: "↗",
-};
 const START_ITEM: Item = { href: "/call", label: "Start new call", icon: "▸" };
 
 const SIDEBAR_W = "15rem";
@@ -106,7 +110,7 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
         ...OWNER_CORE_ITEMS,
       ];
   const moreItems = salesHome
-    ? [CAMPAIGNS_ITEM, CALLS_ITEM, PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM, ...MORE_ITEMS]
+    ? [CALLS_ITEM, PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM, ...MORE_ITEMS]
     : MORE_ITEMS;
   const allItems = [...coreItems, START_ITEM, ...moreItems];
 
@@ -211,7 +215,7 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
   if (mobile) {
     const BOTTOM: Item[] = [
       salesHome
-        ? { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" }
+        ? SALES_OUTREACH_ITEM
         : OUTREACH_ITEM,
       homeItem,
       { href: "/call", label: "Start", icon: "▸" },
