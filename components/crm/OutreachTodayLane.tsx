@@ -71,6 +71,7 @@ type QueueResponse = {
   sender?: {
     senderName?: string;
     senderEmail?: string;
+    mailboxEmail?: string;
     provider?: "google" | "microsoft";
   } | null;
 };
@@ -93,6 +94,8 @@ const rowState = (row: QueueRow) => {
     return { label: "Approved", style: "border-moss/45 bg-moss/10 text-moss" };
   if (row.message && ["draft", "failed"].includes(row.message.status))
     return { label: "Draft ready", style: "border-amber/45 bg-amber/10 text-amber" };
+  if (!row.message && row.status === "queued" && Number(row.current_step) > 1)
+    return { label: "Follow up due", style: "border-amber/45 bg-amber/10 text-amber" };
   if (row.message?.status === "sent" || row.lastSentMessage)
     return { label: "Sent", style: "border-moss/45 bg-moss/10 text-moss" };
   if (["replied", "booked"].includes(row.status))
@@ -102,6 +105,25 @@ const rowState = (row: QueueRow) => {
 
 const hasBeenSent = (row: QueueRow) =>
   row.message?.status === "sent" || Boolean(row.lastSentMessage);
+
+const isActionableQueueRow = (row: QueueRow) => {
+  if (["replied", "booked"].includes(row.status)) return false;
+  if (row.message?.status === "approved" && row.message.scheduled_at) return false;
+  if (row.message?.status === "sent") return false;
+  return Boolean(
+    (!row.message && row.status === "queued") ||
+      (row.message && ["draft", "failed", "approved"].includes(row.message.status))
+  );
+};
+
+const queueActionRank = (row: QueueRow) => {
+  if (row.message && ["draft", "failed"].includes(row.message.status)) return 0;
+  if (row.message?.status === "approved" && !row.message.scheduled_at) return 1;
+  if (!row.message && row.status === "queued") return 2;
+  if (row.message?.status === "approved" && row.message.scheduled_at) return 3;
+  if (hasBeenSent(row)) return 5;
+  return 4;
+};
 
 const displayMessageFor = (row: QueueRow) =>
   row.message && row.message.status !== "cancelled"
@@ -120,6 +142,13 @@ const formatHistoryDate = (value?: string | null) => {
     minute: "2-digit",
     hour12: false,
   });
+};
+
+const deliveryStageFor = (message: OutreachMessage) => {
+  if (message.status === "sent") return 3;
+  if (message.scheduled_at) return 2;
+  if (message.status === "approved") return 1;
+  return 0;
 };
 
 const londonDateInput = (daysFromNow = 1) => {
@@ -163,6 +192,10 @@ export default function OutreachTodayLane({
   const [expandedId, setExpandedId] = useState("");
   const [draftEdits, setDraftEdits] = useState<Record<string, DraftEdit>>({});
   const [savingMessageId, setSavingMessageId] = useState("");
+  const [rehearsingMessageId, setRehearsingMessageId] = useState("");
+  const [showFullQueue, setShowFullQueue] = useState(false);
+  const [focusedRowId, setFocusedRowId] = useState("");
+  const [deferredRowIds, setDeferredRowIds] = useState<string[]>([]);
   const [replyActions, setReplyActions] = useState<Record<string, ReplyAction>>({});
   const [savingReplyId, setSavingReplyId] = useState("");
   const [handledReplyIds, setHandledReplyIds] = useState<string[]>([]);
@@ -358,6 +391,8 @@ export default function OutreachTodayLane({
           body: "{}",
         });
         setNotice("Exact email approved and added to the spaced send queue.");
+        setFocusedRowId("");
+        setExpandedId("");
       } else {
         setNotice("Draft changes saved. Nothing has been sent.");
       }
@@ -371,6 +406,68 @@ export default function OutreachTodayLane({
       setError(err?.message || "That email could not be saved.");
     } finally {
       setSavingMessageId("");
+    }
+  };
+
+  const rehearseDraft = async (message: OutreachMessage) => {
+    if (savingMessageId || rehearsingMessageId) return;
+    const edit = draftEdits[message.id] || {
+      subject: message.subject || "",
+      body: message.body_text || "",
+    };
+    if (!edit.subject.trim() || !edit.body.trim()) {
+      setError("Add both the subject and email before sending a rehearsal.");
+      return;
+    }
+    setRehearsingMessageId(message.id);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await crmFetch<{ message: OutreachMessage }>(
+        `/api/crm/outreach/messages/${message.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            subject: edit.subject,
+            body_text: edit.body,
+          }),
+        }
+      );
+      if (
+        !saved.message?.id ||
+        saved.message.subject !== edit.subject.trim() ||
+        saved.message.body_text !== edit.body.trim()
+      )
+        throw new Error("The exact visible draft was not saved for rehearsal");
+      const result = await crmFetch<{
+        ok: boolean;
+        accepted: boolean;
+        sentTo: string;
+        from: string;
+        provider: "google" | "microsoft";
+        deliveryLocation: "sent_or_all_mail" | "inbox_or_sent";
+        campaignChanged: boolean;
+      }>(`/api/crm/outreach/messages/${message.id}/rehearse`, {
+        method: "POST",
+        body: "{}",
+      });
+      if (
+        !result.ok ||
+        !result.accepted ||
+        (sender?.mailboxEmail && result.sentTo !== sender.mailboxEmail) ||
+        result.campaignChanged !== false
+      )
+        throw new Error("The safe rehearsal was not confirmed");
+      setNotice(
+        result.provider === "google"
+          ? "Gmail accepted the rehearsal. Find it in Sent or All Mail. The prospect and campaign were untouched."
+          : "Microsoft accepted the rehearsal. Check Inbox or Sent. The prospect and campaign were untouched."
+      );
+      await load(true);
+    } catch (err: any) {
+      setError(err?.message || "That rehearsal could not be sent.");
+    } finally {
+      setRehearsingMessageId("");
     }
   };
 
@@ -422,12 +519,36 @@ export default function OutreachTodayLane({
         .map((row, index) => ({ row, index }))
         .sort(
           (a, b) =>
-            Number(hasBeenSent(a.row)) - Number(hasBeenSent(b.row)) ||
+            queueActionRank(a.row) - queueActionRank(b.row) ||
             a.index - b.index
         )
         .map(({ row }) => row),
     [queue]
   );
+
+  const deferredRowSet = useMemo(
+    () => new Set(deferredRowIds),
+    [deferredRowIds]
+  );
+  const actionableQueue = useMemo(
+    () =>
+      orderedQueue.filter(
+        (row) => isActionableQueueRow(row) && !deferredRowSet.has(row.id)
+      ),
+    [deferredRowSet, orderedQueue]
+  );
+  const focusedRow =
+    actionableQueue.find((row) => row.id === focusedRowId) ||
+    actionableQueue[0] ||
+    null;
+  const rowsToRender = showFullQueue
+    ? orderedQueue.slice(0, visible)
+    : focusedRow
+      ? [focusedRow]
+      : [];
+  const upNextRows = focusedRow
+    ? actionableQueue.filter((row) => row.id !== focusedRow.id).slice(0, 5)
+    : [];
 
   const unprepared = queue.filter(
     (row) => !row.message && row.status === "queued"
@@ -446,6 +567,10 @@ export default function OutreachTodayLane({
     (status) => status === "queued"
   ).length;
   const dailyLimit = Number(queue[0]?.campaign?.daily_limit || 20);
+  const approvedOrSent = Math.min(dailyLimit, scheduled + sent);
+  const dailyProgress = Math.round(
+    (approvedOrSent / Math.max(1, dailyLimit)) * 100
+  );
   const actionableReplies = replyItems.filter(
     (item) =>
       item.kind === "reply" && !handledReplyIds.includes(item.sourceId)
@@ -465,26 +590,47 @@ export default function OutreachTodayLane({
       <div className="rounded-xl border border-amber/35 bg-amber/[0.06] p-3 sm:p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="max-w-xl">
-            <p className="font-mono text-[0.52rem] uppercase tracking-[0.18em] text-amber">Your working list</p>
+            <p className="font-mono text-[0.52rem] uppercase tracking-[0.18em] text-amber">One prospect at a time</p>
             <h2 className="mt-1 font-display text-xl text-bone">
-              Next {dailyLimit} leads
+              Your outreach Sales Desk
             </h2>
             <p className="mt-1 text-xs leading-5 text-muted">
-              Work from number one down. Prepare, review, approve and queue each email here. Sent contacts rotate to the bottom automatically.
+              Complete the one action shown below. As soon as it is queued, the next prospect opens while delivery continues safely in the background.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void buildQueue()}
-            disabled={building || queue.length >= dailyLimit}
-            className={primary}
-          >
-            {building
-              ? "Ranking eligible contacts…"
-              : queue.length
-                ? `Fill queue to ${dailyLimit}`
-                : "Fill today's queue"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setShowFullQueue((current) => !current)}
+              aria-pressed={showFullQueue}
+              className={button}
+            >
+              {showFullQueue ? "Return to one prospect" : `View full queue · ${queue.length}`}
+            </button>
+            <button
+              type="button"
+              onClick={() => void buildQueue()}
+              disabled={building || queue.length >= dailyLimit}
+              className={primary}
+            >
+              {building
+                ? "Ranking eligible contacts…"
+                : queue.length
+                  ? `Fill queue to ${dailyLimit}`
+                  : "Fill today's queue"}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-hidden rounded-full bg-edge/70" aria-label={`${approvedOrSent} of ${dailyLimit} approved or sent`}>
+          <div
+            className="h-2 rounded-full bg-gradient-to-r from-amber to-moss transition-[width] duration-500"
+            style={{ width: `${dailyProgress}%` }}
+          />
+        </div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 font-mono text-[0.48rem] uppercase tracking-wider text-muted">
+          <span>{approvedOrSent} of {dailyLimit} approved or sent</span>
+          <span>{actionableQueue.length} actions remaining</span>
         </div>
 
         <div className="mt-3 grid grid-cols-4 gap-2 border-t border-edge/60 pt-3 text-center">
@@ -521,8 +667,11 @@ export default function OutreachTodayLane({
             ? `Connected sender · ${sender.senderEmail}`
             : "Connect a mailbox in Settings before preparing or sending outreach."}
         </p>
+        <p className="mt-1 text-[0.68rem] leading-5 text-muted">
+          Sent contacts rotate to the bottom automatically, so the next unsent prospect stays in front of you.
+        </p>
         <details className="mt-3 border-t border-edge/60 pt-3">
-          <summary className="cursor-pointer font-mono text-[0.49rem] uppercase tracking-wider text-muted">Advanced outreach tools</summary>
+          <summary className="cursor-pointer font-mono text-[0.49rem] uppercase tracking-wider text-muted">Manage campaign and prospect database</summary>
           <div className="mt-2 flex flex-wrap gap-2">
             <Link href="/crm/outreach?tab=prospects" className={button}>Prospect database ↗</Link>
             <Link href="/crm/outreach?tab=campaign" className={button}>Campaign setup ↗</Link>
@@ -636,18 +785,24 @@ export default function OutreachTodayLane({
         </section>
       ) : null}
 
-      {orderedQueue.length ? (
+      {rowsToRender.length ? (
         <ol className="space-y-2">
-          {orderedQueue.slice(0, visible).map((row, index) => {
+          {rowsToRender.map((row, index) => {
             const status = rowState(row);
             const job = prepareJobs[row.prospect.id];
+            const isFocus = !showFullQueue && row.id === focusedRow?.id;
+            const rowOpen = isFocus || expandedId === row.id;
             const name =
               `${row.prospect.first_name || ""} ${row.prospect.last_name || ""}`.trim() ||
               row.prospect.email ||
               "Unnamed prospect";
             const recommendation = row.recommendation;
             const canPrepare = !row.message && row.status === "queued";
-            const displayMessage = displayMessageFor(row);
+            const followUpNeedsDraft =
+              canPrepare && Number(row.current_step || 1) > 1;
+            const displayMessage = followUpNeedsDraft
+              ? null
+              : displayMessageFor(row);
             const edit = displayMessage
               ? draftEdits[displayMessage.id] || {
                   subject: displayMessage.subject || "",
@@ -671,20 +826,35 @@ export default function OutreachTodayLane({
             return (
               <li
                 key={row.id}
-                className="rounded-xl border border-edge bg-panel/45 p-3 sm:p-4"
+                className={`rounded-xl border bg-panel/45 p-3 sm:p-4 ${
+                  isFocus
+                    ? "border-amber/60 shadow-[0_0_0_1px_rgba(217,161,75,0.09)]"
+                    : "border-edge"
+                }`}
                 style={{ contentVisibility: "auto", containIntrinsicSize: "0 150px" }}
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">
-                        #{index + 1} · step {row.current_step || 1}
-                      </span>
+                      {isFocus ? (
+                        <span className="rounded-full border border-amber/50 bg-amber/10 px-2 py-0.5 font-mono text-[0.48rem] uppercase tracking-wider text-amber">
+                          Do this next
+                        </span>
+                      ) : (
+                        <span className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">
+                          #{index + 1} · step {row.current_step || 1}
+                        </span>
+                      )}
                       <span
                         className={`rounded-full border px-2 py-0.5 font-mono text-[0.48rem] uppercase tracking-wider ${status.style}`}
                       >
                         {status.label}
                       </span>
+                      {row.campaign?.name ? (
+                        <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.46rem] uppercase tracking-wider text-muted">
+                          {row.campaign.name}
+                        </span>
+                      ) : null}
                     </div>
                     <h3 className="mt-2 text-[0.95rem] text-bone">{name}</h3>
                     <p className="mt-0.5 text-xs text-muted">
@@ -730,29 +900,48 @@ export default function OutreachTodayLane({
                               : "Prepare research + draft"}
                       </button>
                     ) : displayMessage ? (
-                      <button
-                        type="button"
-                        onClick={() => openMessage(row)}
-                        aria-expanded={expandedId === row.id}
-                        className={
-                          hasBeenSent(row)
-                            ? "inline-flex min-h-10 items-center justify-center rounded-lg border border-moss/60 bg-moss/20 px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-moss"
-                            : primary
-                        }
-                      >
-                        {hasBeenSent(row)
-                            ? "✓ View sent email"
-                            : "Review exact draft"}
-                      </button>
+                      isFocus ? (
+                        <span className="inline-flex min-h-10 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 font-mono text-[0.52rem] uppercase tracking-wider text-amber">
+                          Review the exact email below ↓
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openMessage(row)}
+                          aria-expanded={expandedId === row.id}
+                          className={
+                            hasBeenSent(row)
+                              ? "inline-flex min-h-10 items-center justify-center rounded-lg border border-moss/60 bg-moss/20 px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-moss"
+                              : primary
+                          }
+                        >
+                          {hasBeenSent(row)
+                              ? "✓ View sent email"
+                              : "Review exact draft"}
+                        </button>
+                      )
                     ) : row.status === "replied" ? (
                       <a href={`#reply-${row.prospect.id}`} className={primary}>
                         Handle reply
                       </a>
                     ) : null}
+                    {isFocus ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeferredRowIds((current) => [...new Set([...current, row.id])]);
+                          setFocusedRowId("");
+                          setNotice("Moved aside for this session. Nothing was deleted or changed.");
+                        }}
+                        className={button}
+                      >
+                        Later this session
+                      </button>
+                    ) : null}
                   </div>
                 </div>
 
-                {expandedId === row.id ? (
+                {rowOpen && displayMessage ? (
                   <div className="mt-4 grid gap-3 border-t border-edge pt-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(17rem,0.8fr)]">
                     <section aria-label="Exact email" className="rounded-lg border border-edge bg-ink/35 p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -768,6 +957,28 @@ export default function OutreachTodayLane({
                           {displayMessage?.status || "not prepared"}
                         </span>
                       </div>
+
+                      {displayMessage ? (
+                        <div className="mt-3 grid grid-cols-4 gap-1" aria-label="Email delivery progress">
+                          {["Draft", "Approved", "Queued", "Sent"].map((label, stage) => {
+                            const complete = deliveryStageFor(displayMessage) >= stage;
+                            return (
+                              <div key={label} className="min-w-0 text-center">
+                                <span
+                                  className={`mx-auto block h-1.5 rounded-full ${
+                                    complete ? "bg-moss" : "bg-edge"
+                                  }`}
+                                />
+                                <span className={`mt-1 block truncate font-mono text-[0.42rem] uppercase ${
+                                  complete ? "text-moss" : "text-muted"
+                                }`}>
+                                  {label}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
 
                       {displayMessage && edit ? (
                         editableMessage ? (
@@ -800,6 +1011,20 @@ export default function OutreachTodayLane({
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
+                                onClick={() => void rehearseDraft(displayMessage)}
+                                disabled={
+                                  savingMessageId === displayMessage.id ||
+                                  rehearsingMessageId === displayMessage.id ||
+                                  Boolean(displayMessage.scheduled_at)
+                                }
+                                className="inline-flex min-h-10 items-center justify-center rounded-lg border border-sky/45 bg-sky/[0.06] px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-sky disabled:opacity-40"
+                              >
+                                {rehearsingMessageId === displayMessage.id
+                                  ? "Sending test…"
+                                  : "Send test to me"}
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => void saveDraft(displayMessage)}
                                 disabled={savingMessageId === displayMessage.id}
                                 className={button}
@@ -825,6 +1050,11 @@ export default function OutreachTodayLane({
                             <p className="text-[0.68rem] leading-5 text-muted">
                               Approval covers the exact words above. Delivery uses the existing spaced send queue and daily limit.
                             </p>
+                            {sender?.provider === "google" ? (
+                              <p className="text-[0.68rem] leading-5 text-sky">
+                                Gmail self tests normally appear in Sent or All Mail. The test never changes campaign results or contacts the prospect.
+                              </p>
+                            ) : null}
                           </div>
                         ) : (
                           <div className="mt-3 rounded-lg border border-moss/30 bg-moss/[0.05] p-3">
@@ -917,6 +1147,17 @@ export default function OutreachTodayLane({
             );
           })}
         </ol>
+      ) : queue.length ? (
+        <div className="rounded-xl border border-moss/40 bg-moss/[0.06] px-4 py-10 text-center">
+          <p className="font-display text-xl text-bone">
+            {deferredRowIds.length
+              ? "Everything else is moved aside for this session."
+              : "Today's outreach actions are handled."}
+          </p>
+          <p className="mt-1 text-sm text-muted">
+            Scheduled emails will continue sending safely in the background.
+          </p>
+        </div>
       ) : (
         <div className="rounded-xl border border-edge bg-panel/45 px-4 py-10 text-center">
           <p className="font-display text-xl text-bone">No outreach is queued yet.</p>
@@ -926,7 +1167,58 @@ export default function OutreachTodayLane({
         </div>
       )}
 
-      {orderedQueue.length > visible ? (
+      {!showFullQueue && upNextRows.length ? (
+        <section className="rounded-xl border border-edge bg-panel/35 p-3" aria-labelledby="sales-desk-up-next">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="font-mono text-[0.49rem] uppercase tracking-wider text-muted">Up next</p>
+              <h3 id="sales-desk-up-next" className="mt-1 text-sm text-bone">
+                Keep moving without leaving this screen
+              </h3>
+            </div>
+            <span className="font-mono text-[0.48rem] uppercase text-muted">
+              {Math.max(0, actionableQueue.length - 1)} after this
+            </span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {upNextRows.map((row) => {
+              const name =
+                `${row.prospect.first_name || ""} ${row.prospect.last_name || ""}`.trim() ||
+                row.prospect.email ||
+                "Unnamed prospect";
+              return (
+                <button
+                  key={row.id}
+                  type="button"
+                  onClick={() => setFocusedRowId(row.id)}
+                  className="min-h-12 rounded-lg border border-edge bg-ink/35 px-3 py-2 text-left transition hover:border-amber/45"
+                >
+                  <span className="block truncate text-sm text-bone">{name}</span>
+                  <span className="mt-0.5 block truncate font-mono text-[0.46rem] uppercase text-muted">
+                    {rowState(row).label} · {row.prospect.company_name || "Company not saved"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {deferredRowIds.length ? (
+        <button
+          type="button"
+          onClick={() => {
+            setDeferredRowIds([]);
+            setFocusedRowId("");
+            setNotice("Moved aside prospects are back in this session.");
+          }}
+          className={`${button} w-full`}
+        >
+          Bring back {deferredRowIds.length} moved aside
+        </button>
+      ) : null}
+
+      {showFullQueue && orderedQueue.length > visible ? (
         <button
           type="button"
           onClick={() => setVisible((count) => count + 10)}
