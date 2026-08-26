@@ -11,25 +11,84 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 40;
 
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const sender = await resolveOutreachIdentity();
+    if (!UUID.test(params.id))
+      return NextResponse.json({ error: "Outreach relationship not found" }, { status: 404 });
     const [{ data: prospect }, { data: enrolments }] = await Promise.all([
-      supabaseAdmin.from("outreach_prospects").select("*").eq("id", params.id).single(),
-      supabaseAdmin.from("outreach_enrolments").select("*").eq("prospect_id", params.id).order("created_at", { ascending: false }).limit(1),
+      supabaseAdmin
+        .from("outreach_prospects")
+        .select("*")
+        .eq("workspace_id", sender.workspaceId)
+        .eq("assigned_to_user_id", sender.userId)
+        .eq("id", params.id)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("outreach_enrolments")
+        .select("*")
+        .eq("workspace_id", sender.workspaceId)
+        .eq("prospect_id", params.id)
+        .order("created_at", { ascending: false })
+        .limit(1),
     ]);
     const enrolment = enrolments?.[0];
     if (!prospect || !enrolment) return NextResponse.json({ error: "Outreach relationship not found" }, { status: 404 });
-    if (prospect.assigned_to_user_id !== sender.userId)
-      return NextResponse.json({ error: "This prospect belongs to another team member" }, { status: 403 });
     if (prospect.reply_category !== "interested") return NextResponse.json({ error: "A booking reply is only prepared after a positive response" }, { status: 400 });
-    const [{ data: campaign }, { data: lastSent }, { data: globalBooking }] = await Promise.all([
-      supabaseAdmin.from("outreach_campaigns").select("*").eq("id", enrolment.campaign_id).single(),
-      supabaseAdmin.from("outreach_messages").select("*").eq("prospect_id", prospect.id).eq("status", "sent").order("sent_at", { ascending: false }).limit(1).maybeSingle(),
+    const [
+      { data: campaign },
+      { data: lastSent },
+      { data: existingReply },
+      { data: globalBooking },
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("outreach_campaigns")
+        .select("*")
+        .eq("workspace_id", sender.workspaceId)
+        .eq("id", enrolment.campaign_id)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("outreach_messages")
+        .select("*")
+        .eq("workspace_id", sender.workspaceId)
+        .eq("sender_user_id", sender.userId)
+        .eq("prospect_id", prospect.id)
+        .eq("status", "sent")
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("outreach_messages")
+        .select("*")
+        .eq("workspace_id", sender.workspaceId)
+        .eq("enrolment_id", enrolment.id)
+        .eq("step_number", 10)
+        .maybeSingle(),
       getAppConfigValue("outreach_default_booking_url").then((data) => ({ data })),
     ]);
+    if (!campaign)
+      return NextResponse.json({ error: "Outreach campaign not found" }, { status: 404 });
+    if (existingReply && existingReply.sender_user_id !== sender.userId)
+      return NextResponse.json(
+        { error: "This reply thread belongs to another teammate and needs a safe reassignment first" },
+        { status: 409 }
+      );
+    if (
+      existingReply &&
+      ["draft", "approved", "failed"].includes(existingReply.status)
+    ) {
+      return NextResponse.json({ message: existingReply, reused: true });
+    }
+    if (existingReply?.status === "sent")
+      return NextResponse.json(
+        { error: "A reply has already been sent for this response" },
+        { status: 409 }
+      );
     const bookingUrl = String(campaign?.booking_url || globalBooking?.value || "").trim();
-    if (!bookingUrl) return NextResponse.json({ error: "Add your AI13 booking link in the Intelligence tab first" }, { status: 400 });
+    if (!bookingUrl) return NextResponse.json({ error: "Add your booking link in Outreach Intelligence first" }, { status: 400 });
     const voice = campaign?.voice && typeof campaign.voice === "object" ? campaign.voice : {};
     const msg = await openai.messages.create({
       model: OPENAI_MODEL_PRO,
@@ -47,6 +106,9 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       enrolment_id: enrolment.id,
       campaign_id: campaign.id,
       prospect_id: prospect.id,
+      workspace_id: sender.workspaceId,
+      owner_id: sender.userId,
+      visibility: "team",
       step_number: 10,
       variant: "reply",
       from_email: sender.senderEmail,
@@ -63,7 +125,16 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       updated_at: new Date().toISOString(),
     }, { onConflict: "enrolment_id,step_number" }).select("*").single();
     if (error) throw error;
-    await supabaseAdmin.from("outreach_events").insert({ campaign_id: campaign.id, prospect_id: prospect.id, message_id: draft.id, kind: "drafted", metadata: { messageType: "reply", booking: true } });
+    await supabaseAdmin.from("outreach_events").insert({
+      workspace_id: sender.workspaceId,
+      owner_id: sender.userId,
+      visibility: "team",
+      campaign_id: campaign.id,
+      prospect_id: prospect.id,
+      message_id: draft.id,
+      kind: "drafted",
+      metadata: { messageType: "reply", booking: true },
+    });
     return NextResponse.json({ message: draft });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to prepare booking reply" }, { status: 500 });

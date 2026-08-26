@@ -19,8 +19,10 @@ export async function POST(
     const { data: message, error: messageError } = await supabaseAdmin
       .from("outreach_messages")
       .select("id,subject,body_text,from_email,sender_user_id,status,prospect_id")
+      .eq("workspace_id", sender.workspaceId)
+      .eq("sender_user_id", sender.userId)
       .eq("id", params.id)
-      .single();
+      .maybeSingle();
     if (messageError || !message)
       return NextResponse.json({ error: "Draft not found" }, { status: 404 });
     if (message.status === "sent")
@@ -28,7 +30,7 @@ export async function POST(
         { error: "This email has already been sent to the prospect" },
         { status: 400 }
       );
-    if (message.sender_user_id !== sender.userId || message.from_email !== sender.senderEmail)
+    if (message.from_email !== sender.senderEmail)
       return NextResponse.json(
         { error: "Sender safety check failed" },
         { status: 400 }
@@ -42,8 +44,10 @@ export async function POST(
     const { data: prospect } = await supabaseAdmin
       .from("outreach_prospects")
       .select("first_name,last_name,company_name")
+      .eq("workspace_id", sender.workspaceId)
+      .eq("assigned_to_user_id", sender.userId)
       .eq("id", message.prospect_id)
-      .single();
+      .maybeSingle();
     const intendedFor = [
       [prospect?.first_name, prospect?.last_name].filter(Boolean).join(" "),
       prospect?.company_name,

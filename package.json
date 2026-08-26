@@ -44,7 +44,8 @@
     "validate:linkedin-engagement-safety": "node scripts/validate-linkedin-engagement-safety.mjs",
     "validate:provider-disconnect": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-provider-disconnect.mjs",
     "validate:outreach-rehearsal": "node scripts/validate-outreach-rehearsal-receipt.mjs",
-    "validate:focused-outreach": "node scripts/validate-focused-outreach-sales-desk.mjs"
+    "validate:focused-outreach": "node scripts/validate-focused-outreach-sales-desk.mjs",
+    "validate:reply-to-meeting": "node scripts/validate-reply-to-meeting-flow.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
