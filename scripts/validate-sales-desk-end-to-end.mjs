@@ -35,11 +35,15 @@ assert.match(lane, /`\/api\/crm\/outreach\/messages\/\$\{message\.id\}\/send`/);
 assert.match(lane, /Sent contacts rotate to the bottom automatically/);
 assert.match(queue, /assigned_to_user_id === userId/);
 
-// Salespeople see only the working destinations. Secondary tools still exist
-// under More, while owners retain their broader navigation.
-assert.match(nav, /const SALES_CORE_ITEMS: Item\[\] = \[PIPELINE_ITEM, CLIENTS_ITEM\]/);
+// Outreach is a primary salesperson destination on desktop and mobile. It
+// opens directly on the claimable prospect pool instead of being buried under
+// More, while owners retain their broader navigation.
+assert.match(nav, /const SALES_OUTREACH_ITEM: Item = \{[\s\S]*?href: "\/crm\/outreach\?tab=prospects"/);
+assert.match(nav, /const SALES_CORE_ITEMS: Item\[\] = \[[\s\S]*?SALES_OUTREACH_ITEM,[\s\S]*?PIPELINE_ITEM,[\s\S]*?CLIENTS_ITEM/);
 assert.match(nav, /\[homeItem, \.\.\.SALES_CORE_ITEMS, NOTIFICATIONS_ITEM\]/);
-assert.match(nav, /CAMPAIGNS_ITEM, CALLS_ITEM, PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM/);
+assert.match(nav, /\? \[CALLS_ITEM, PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM/);
+assert.match(nav, /salesHome\s*\? SALES_OUTREACH_ITEM\s*: OUTREACH_ITEM/);
+assert.doesNotMatch(nav, /CAMPAIGNS_ITEM/);
 assert.match(nav, /\.\.\.OWNER_CORE_ITEMS/);
 
 console.log("Sales Desk end to end checks passed");

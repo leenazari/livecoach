@@ -39,8 +39,10 @@ assert.match(
   nav,
   /salesHome\s*\?\s*\[homeItem, \.\.\.SALES_CORE_ITEMS, NOTIFICATIONS_ITEM\]/
 );
-assert.match(nav, /label: "Campaigns and prospects"/);
-assert.match(nav, /CAMPAIGNS_ITEM, CALLS_ITEM, PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM/);
+assert.match(nav, /const SALES_OUTREACH_ITEM: Item = \{[\s\S]*?href: "\/crm\/outreach\?tab=prospects"/);
+assert.match(nav, /const SALES_CORE_ITEMS: Item\[\] = \[[\s\S]*?SALES_OUTREACH_ITEM/);
+assert.match(nav, /salesHome\s*\? SALES_OUTREACH_ITEM\s*: OUTREACH_ITEM/);
+assert.doesNotMatch(nav, /CAMPAIGNS_ITEM/);
 
 assert.match(queueRoute, /assigned_to_user_id === userId/);
 assert.match(queueRoute, /reservedEmailsForAnotherCampaign/);
