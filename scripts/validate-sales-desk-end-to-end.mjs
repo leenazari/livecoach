@@ -28,7 +28,8 @@ assert.match(page, /Calls and actions that cannot wait/);
 
 // The next 20 retain exact-draft approval and the existing spaced send queue.
 assert.match(lane, /useState\(20\)/);
-assert.match(lane, /Next \{dailyLimit\} leads/);
+assert.match(lane, /Your outreach Sales Desk/);
+assert.match(lane, /View full queue/);
 assert.match(lane, /`\/api\/crm\/outreach\/\$\{prospectId\}\/prepare`/);
 assert.match(lane, /status: "approved"/);
 assert.match(lane, /`\/api\/crm\/outreach\/messages\/\$\{message\.id\}\/send`/);
