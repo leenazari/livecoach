@@ -40,7 +40,8 @@ assert.match(send, /OUTREACH_SEND_SPACING_MINUTES = 5/);
 assert.match(lane, /Send test to me/);
 assert.match(lane, /result\.campaignChanged !== false/);
 assert.match(rehearsal, /to: sender\.mailboxEmail/);
-assert.match(rehearsal, /sender_user_id !== sender\.userId/);
+assert.match(rehearsal, /\.eq\("workspace_id", sender\.workspaceId\)/);
+assert.match(rehearsal, /\.eq\("sender_user_id", sender\.userId\)/);
 assert.match(rehearsal, /campaignChanged: false/);
 
 // Queue reads remain owner-specific and preserve the existing mobile layout.

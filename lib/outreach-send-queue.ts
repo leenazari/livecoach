@@ -78,12 +78,14 @@ export async function queueApprovedOutreachMessage(messageId: string) {
   const { data: message, error: messageError } = await supabaseAdmin
     .from("outreach_messages")
     .select("*")
+    .eq("workspace_id", sender.workspaceId)
+    .eq("sender_user_id", sender.userId)
     .eq("id", messageId)
-    .single();
+    .maybeSingle();
   if (messageError || !message) throw new Error("Draft not found");
   if (message.status !== "approved")
     throw new Error("Approve this exact draft before queueing it");
-  if (message.sender_user_id !== sender.userId || message.from_email !== sender.senderEmail)
+  if (message.from_email !== sender.senderEmail)
     throw new Error("Sender safety check failed");
   if (message.scheduled_at) {
     return { queued: true, scheduledAt: message.scheduled_at };
@@ -93,6 +95,7 @@ export async function queueApprovedOutreachMessage(messageId: string) {
   const { data: latest } = await supabaseAdmin
     .from("outreach_messages")
     .select("scheduled_at")
+    .eq("workspace_id", sender.workspaceId)
     .eq("status", "approved")
     .eq("sender_user_id", sender.userId)
     .not("scheduled_at", "is", null)
@@ -125,6 +128,9 @@ export async function queueApprovedOutreachMessage(messageId: string) {
   }
   const scheduledAt = queued.scheduled_at;
   await supabaseAdmin.from("outreach_events").insert({
+    workspace_id: sender.workspaceId,
+    owner_id: sender.userId,
+    visibility: "team",
     campaign_id: message.campaign_id,
     prospect_id: message.prospect_id,
     message_id: message.id,

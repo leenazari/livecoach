@@ -26,6 +26,22 @@ export type WorkInboxItem = {
   done: boolean;
   editable: boolean;
   dismissible: boolean;
+  outreach?: {
+    prospectId: string;
+    person: string | null;
+    email: string | null;
+    jobTitle: string | null;
+    messageId: string | null;
+    messageStatus: string | null;
+    draftSubject: string | null;
+    draftBody: string | null;
+    replyText: string | null;
+    replySummary: string | null;
+    lastReplyAt: string | null;
+    previousSubject: string | null;
+    previousBody: string | null;
+    previousSentAt: string | null;
+  };
 };
 
 export type WorkCleanupKind =

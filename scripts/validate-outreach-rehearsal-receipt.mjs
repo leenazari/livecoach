@@ -7,7 +7,8 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 const route = read("app/api/crm/outreach/messages/[id]/rehearse/route.ts");
 const page = read("app/crm/outreach/page.tsx");
 
-assert.match(route, /message\.sender_user_id !== sender\.userId/);
+assert.match(route, /\.eq\("workspace_id", sender\.workspaceId\)/);
+assert.match(route, /\.eq\("sender_user_id", sender\.userId\)/);
 assert.match(route, /to: sender\.mailboxEmail/);
 assert.match(route, /provider: sender\.provider/);
 assert.match(route, /accepted: true/);

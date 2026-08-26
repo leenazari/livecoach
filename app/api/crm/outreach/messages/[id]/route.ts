@@ -8,10 +8,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const sender = await resolveOutreachIdentity();
     const body = await req.json();
-    const { data: existing } = await supabaseAdmin.from("outreach_messages").select("*").eq("id", params.id).single();
-    if (!existing || ["sending", "sent"].includes(existing.status)) return NextResponse.json({ error: "An email being delivered or already sent cannot be changed" }, { status: 400 });
-    if (existing.sender_user_id !== sender.userId || existing.from_email !== sender.senderEmail)
-      return NextResponse.json({ error: "This draft belongs to another sender" }, { status: 403 });
+    const { data: existing } = await supabaseAdmin
+      .from("outreach_messages")
+      .select("*")
+      .eq("workspace_id", sender.workspaceId)
+      .eq("sender_user_id", sender.userId)
+      .eq("id", params.id)
+      .maybeSingle();
+    if (!existing)
+      return NextResponse.json({ error: "Draft not found" }, { status: 404 });
+    if (["sending", "sent"].includes(existing.status))
+      return NextResponse.json({ error: "An email being delivered or already sent cannot be changed" }, { status: 400 });
+    if (existing.from_email !== sender.senderEmail)
+      return NextResponse.json({ error: "Sender safety check failed" }, { status: 403 });
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     const nextSubject = typeof body.subject === "string" && body.subject.trim()
       ? removeDashesFromProse(body.subject.trim()).slice(0, 120)
@@ -37,7 +46,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       patch.scheduled_at = null;
     }
     if (body.status === "draft") { patch.status = "draft"; patch.approved_at = null; patch.scheduled_at = null; }
-    const { data, error } = await supabaseAdmin.from("outreach_messages").update(patch).eq("id", params.id).select("*").single();
+    const { data, error } = await supabaseAdmin
+      .from("outreach_messages")
+      .update(patch)
+      .eq("workspace_id", sender.workspaceId)
+      .eq("sender_user_id", sender.userId)
+      .eq("id", params.id)
+      .select("*")
+      .single();
     if (error) throw error;
     const { data: enrolment, error: enrolmentError } = await supabaseAdmin
       .from("outreach_enrolments")
@@ -45,6 +61,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         status: data.status === "approved" ? "approved" : "drafted",
         updated_at: new Date().toISOString(),
       })
+      .eq("workspace_id", sender.workspaceId)
       .eq("id", data.enrolment_id)
       .select("id, status")
       .maybeSingle();
@@ -55,6 +72,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       const { error: eventError } = await supabaseAdmin
         .from("outreach_events")
         .insert({
+          workspace_id: sender.workspaceId,
+          owner_id: sender.userId,
+          visibility: "team",
           campaign_id: data.campaign_id,
           prospect_id: data.prospect_id,
           message_id: data.id,
