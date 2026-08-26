@@ -6,9 +6,10 @@ import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Send the exact prepared body to Lee, never to the prospect. This deliberately
-// does not update the message, enrolment, prospect, event stream, daily limit or
-// campaign metrics, so a rehearsal cannot masquerade as real outreach.
+// Send the exact prepared body to the signed-in user's own mailbox, never to
+// the prospect. This deliberately does not update the message, enrolment,
+// prospect, event stream, daily limit or campaign metrics, so a rehearsal
+// cannot masquerade as real outreach.
 export async function POST(
   _req: Request,
   { params }: { params: { id: string } }
@@ -66,10 +67,31 @@ export async function POST(
         { status: 502 }
       );
 
+    // Gmail stores a message sent from an account back to that same account as
+    // one message. It is commonly visible under Sent or All Mail rather than as
+    // a new Inbox delivery. Return that distinction so the UI never tells the
+    // user to wait for an Inbox message that Gmail has already accepted.
+    const deliveryLocation = sender.provider === "google"
+      ? "sent_or_all_mail"
+      : "inbox_or_sent";
+    console.log(JSON.stringify({
+      level: "info",
+      msg: "outreach_rehearsal_accepted",
+      route: "/api/crm/outreach/messages/[id]/rehearse",
+      userId: sender.userId,
+      provider: sender.provider,
+      messageId: message.id,
+      deliveryLocation,
+      campaignChanged: false,
+    }));
+
     return NextResponse.json({
       ok: true,
+      accepted: true,
       sentTo: sender.mailboxEmail,
       from: sender.senderEmail,
+      provider: sender.provider,
+      deliveryLocation,
       intendedFor: intendedFor || null,
       campaignChanged: false,
     });
