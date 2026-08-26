@@ -167,13 +167,10 @@ export async function GET() {
     const sender = await resolveOutreachIdentity(account.userId).catch(() => null);
     return NextResponse.json({
       date: londonDate(),
-      queue: selection.campaign
-        ? await loadQueue(
-            account.userId,
-            account.workspaceId,
-            selection.campaign.id
-          )
-        : [],
+      // Today is one working list across every campaign. The selected
+      // campaign remains the boundary for Rank + build, but a salesperson can
+      // review and finish already queued work without switching campaigns.
+      queue: await loadQueue(account.userId, account.workspaceId),
       sender,
       selectedCampaignId: selection.selectedCampaignId,
     });
@@ -191,7 +188,19 @@ export async function POST(req: NextRequest) {
       account.userId,
       account.workspaceId
     );
-    const campaign = campaignSelection.campaign;
+    const requestedCampaignId = String(body.campaignId || "").trim();
+    const campaign = requestedCampaignId
+      ? campaignSelection.campaigns.find(
+          (row: any) =>
+            row.id === requestedCampaignId && row.status === "active"
+        ) || null
+      : campaignSelection.campaign;
+    if (requestedCampaignId && !campaign) {
+      return NextResponse.json(
+        { error: "That prospect's campaign is not active" },
+        { status: 400 }
+      );
+    }
     if (!campaign) {
       return NextResponse.json(
         { error: "Activate and select a campaign first" },
@@ -365,10 +374,17 @@ export async function POST(req: NextRequest) {
         supabaseAdmin.from("outreach_prospects").update({ status: "queued", updated_at: now }).eq("id", requestedProspectId),
         supabaseAdmin.from("outreach_events").insert({ campaign_id: campaign.id, prospect_id: requestedProspectId, kind: "queued", metadata: { date: today, enrolment_id: enrolmentId, source: "prospects_tracker" } }),
       ]);
-      const queue = await loadQueue(account.userId, account.workspaceId, campaign.id);
+      const queue = await loadQueue(account.userId, account.workspaceId);
       return NextResponse.json({ date: today, queue, added: previous ? 0 : 1, selection: { contactToday: 1, held: 0, skipped: 0 } });
     }
-    if (!remaining) return NextResponse.json({ date: today, queue: existing, added: 0, selection: { contactToday: 0, held: 0, skipped: 0 } });
+    if (!remaining) {
+      return NextResponse.json({
+        date: today,
+        queue: await loadQueue(account.userId, account.workspaceId),
+        added: 0,
+        selection: { contactToday: 0, held: 0, skipped: 0 },
+      });
+    }
 
     // Due follow-ups come first. A response or suppression changes enrolment
     // status, so those people can never re-enter this selection.
@@ -526,7 +542,7 @@ export async function POST(req: NextRequest) {
         skipped,
       };
     }
-    const queue = await loadQueue(account.userId, account.workspaceId, campaign.id);
+    const queue = await loadQueue(account.userId, account.workspaceId);
     return NextResponse.json({
       date: today,
       queue,
