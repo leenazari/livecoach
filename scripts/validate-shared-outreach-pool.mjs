@@ -12,6 +12,7 @@ const migration = read(
 const prospectRoute = read("app/api/crm/outreach/[id]/route.ts");
 const queueRoute = read("app/api/crm/outreach/queue/route.ts");
 const safety = read("lib/outreach-team-safety.ts");
+const outreachPage = read("app/crm/outreach/page.tsx");
 
 assert.match(migration, /tg_table_name = 'outreach_prospects'[\s\S]*return new/);
 assert.match(migration, /tg_table_name = 'outreach_messages'[\s\S]*raise exception 'an outreach sender is required'/);
@@ -28,5 +29,12 @@ assert.match(prospectRoute, /Another teammate claimed this prospect first/);
 assert.match(queueRoute, /\.is\("assigned_to_user_id", null\)/);
 assert.match(queueRoute, /Another teammate claimed this prospect first/);
 assert.match(safety, /"paused"/);
+
+// Salespeople land on a useful but still isolated view. They see their own
+// prospects plus unassigned inventory, never another salesperson's assigned
+// work unless they deliberately choose a wider read-only filter.
+assert.match(outreachPage, /setOwnerFilter\(data\.canManageAssignments === true \? "all" : "available"\)/);
+assert.match(outreachPage, /ownerFilter === "available"[\s\S]*?!prospect\.assigned_to_user_id[\s\S]*?prospect\.assigned_to_user_id === currentUser/);
+assert.match(outreachPage, /<option value="available">Mine and available<\/option>/);
 
 console.log("Shared outreach pool checks passed");

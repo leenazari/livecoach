@@ -223,7 +223,10 @@ export default function OutreachPage() {
     setCurrentUser(data.currentUser || "");
     setCanManageAssignments(data.canManageAssignments === true);
     if (!ownerFilterInitialisedRef.current) {
-      setOwnerFilter(data.canManageAssignments === true ? "all" : "mine");
+      // A salesperson's useful default is work they can act on now. Include
+      // their own prospects and the unassigned shared pool, but never another
+      // salesperson's assigned records. Managers retain the whole-team view.
+      setOwnerFilter(data.canManageAssignments === true ? "all" : "available");
       ownerFilterInitialisedRef.current = true;
     }
   }, []);
@@ -779,6 +782,9 @@ export default function OutreachPage() {
       return stageMatches &&
         (prospectCampaignId === "all" || prospect.outreach?.campaignIds?.includes(prospectCampaignId)) &&
         (ownerFilter === "all" ||
+          (ownerFilter === "available" &&
+            (!prospect.assigned_to_user_id ||
+              prospect.assigned_to_user_id === currentUser)) ||
           (ownerFilter === "mine" && prospect.assigned_to_user_id === currentUser) ||
           (ownerFilter === "unassigned" && !prospect.assigned_to_user_id) ||
           prospect.assigned_to_user_id === ownerFilter) &&
@@ -894,7 +900,7 @@ export default function OutreachPage() {
             </select>
             <select aria-label="Manual priority filter" value={priority} onChange={(event) => setPriority(event.target.value as "all" | Priority)} className={input}><option value="all">All priorities</option><option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option></select>
             <select aria-label="Fit recommendation filter" value={recommendationFilter} onChange={(event) => setRecommendationFilter(event.target.value as "all" | RecommendationAction)} className={input}><option value="all">All fit scores</option><option value="contact_today">Contact today</option><option value="hold">Hold</option><option value="skip">Skip</option></select>
-            <select aria-label="Owner filter" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} className={input}><option value="all">All owners</option><option value="mine">My prospects</option><option value="unassigned">Unassigned</option>{team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}</select>
+            <select aria-label="Owner filter" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} className={input}><option value="available">Mine and available</option><option value="mine">My prospects</option><option value="unassigned">Unassigned</option><option value="all">All owners</option>{team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}</select>
           </div>
           <p className="mt-2 text-xs text-muted">Showing {shown.length} of {prospects.length}. Fit scoring uses no AI tokens. Research only starts when you press Prepare draft.</p>
         </div>
