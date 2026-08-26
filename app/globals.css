@@ -132,6 +132,23 @@ body::before {
   animation: shimmer 1.6s linear infinite;
 }
 
+/* Optional product walkthrough. The guide remains non-modal, while the exact
+   area being explained gets one clear focus ring on desktop and mobile. */
+[data-sales-tour-active="true"] {
+  position: relative;
+  z-index: 35;
+  outline: 3px solid rgb(var(--lc-amber) / 0.9);
+  outline-offset: 5px;
+  border-radius: 0.75rem;
+  box-shadow: 0 0 0 8px rgb(var(--lc-amber) / 0.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-sales-tour-active="true"] {
+    scroll-behavior: auto;
+  }
+}
+
 /* The CRM is used from a phone during a working day. NavMenu adds this class
    only at phone widths, keeping desktop density unchanged while giving every
    CRM/call page a consistent safe, readable mobile canvas. */

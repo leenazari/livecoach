@@ -238,7 +238,7 @@ export default function PipelineWorkspace(props: Props) {
   }), [visibleRows]);
 
   return (
-    <section className="mb-4 rounded-xl border border-amber/30 bg-panel p-3 sm:p-4">
+    <section data-sales-tour="pipeline-assignment" className="mb-4 rounded-xl border border-amber/30 bg-panel p-3 sm:p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="font-mono text-[0.55rem] uppercase tracking-widest text-amber">Pipeline operating view</p>

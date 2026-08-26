@@ -155,6 +155,11 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
     if (typeof window !== "undefined" && window.innerWidth < 640) setMinimised(true);
   };
 
+  const openSalesTutorial = () => {
+    window.dispatchEvent(new CustomEvent("lc:start-sales-tutorial"));
+    setMobileMore(false);
+  };
+
   const logout = async () => {
     if (loggingOut) return;
     setLoggingOut(true);
@@ -237,6 +242,9 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
                 ))}
                 <button type="button" onClick={() => { setMobileMore(false); openBrain(); }} className="flex min-h-12 items-center gap-3 rounded-xl border border-amber/40 bg-amber/10 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-amber">
                   <span>▤</span>Talk to brain
+                </button>
+                <button type="button" onClick={openSalesTutorial} className="flex min-h-12 items-center gap-3 rounded-xl border border-sage/40 bg-sage/10 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-sage">
+                  <span>?</span>Sales tutorial
                 </button>
                 <ThemeToggle className="min-h-12 justify-start" />
                 <button type="button" onClick={logout} disabled={loggingOut} className="flex min-h-12 items-center gap-3 rounded-xl border border-edge bg-ink/40 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-muted disabled:opacity-50">
@@ -389,6 +397,14 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
                   {it.label}
                 </Link>
               ))}
+              <button
+                type="button"
+                onClick={openSalesTutorial}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 font-mono text-[0.66rem] uppercase tracking-wider text-sage transition hover:bg-sage/10"
+              >
+                <span className="w-4 text-center">?</span>
+                Sales tutorial
+              </button>
             </div>
           ) : null}
         </div>
