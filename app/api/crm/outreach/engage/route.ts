@@ -3,6 +3,9 @@ import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { modelText, parseObject } from "@/lib/outreach";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
+import { requireRequestScope } from "@/lib/request-scope";
+import { getSalesProfile } from "@/lib/sales-profile";
+import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,6 +57,25 @@ function normaliseSourceUrl(value: string) {
 
 export async function POST(req: NextRequest) {
   try {
+    const scope = requireRequestScope();
+    const [{ data: accountProfile, error: profileError }, salesProfile] =
+      await Promise.all([
+        supabaseService
+          .from("profiles")
+          .select("display_name")
+          .eq("user_id", scope.userId)
+          .maybeSingle(),
+        getSalesProfile(scope),
+      ]);
+    if (profileError) throw profileError;
+    const writerName = clean(accountProfile?.display_name, 100) || "the signed in salesperson";
+    const roleTitle = clean(salesProfile.roleTitle, 140) || "an Interviewa sales team member";
+    const voice = clean(salesProfile.emailTone.replace(/_/g, " "), 80) || "warm and direct";
+    const customerFocus = salesProfile.customerFocus
+      .map((item) => clean(item, 80))
+      .filter(Boolean)
+      .slice(0, 5)
+      .join(", ") || "recruiters and hiring teams";
     const body = await req.json();
     const source = String(body.source || "").trim();
     let sourceText = String(body.sourceText || source).trim().slice(0, 9000);
@@ -69,13 +91,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "That LinkedIn link is not valid." }, { status: 400 });
     const needsPublicLookup = sourceText.length < 25 && !!sourceUrl;
 
-    const system = `You write one excellent LinkedIn comment for Lee Nazari, CEO of Interviewa.
+    const system = `You write one excellent LinkedIn comment for ${writerName}, ${roleTitle}.
 
-Interviewa helps recruiters prepare candidates for interviews and improve the visibility of candidate readiness. Lee wants to build genuine commercial relationships and thoughtful visibility, not spam random posts with a product pitch.
+Interviewa helps recruiters prepare candidates for interviews and improve the visibility of candidate readiness. ${writerName} focuses on ${customerFocus}. They want to build genuine commercial relationships and thoughtful visibility, not spam random posts with a product pitch.
 
-Read the exact supplied post. Respond to what the author actually said. Add one commercially intelligent point, useful observation or thoughtful question. Create curiosity about Lee's work only when there is a natural connection. A subtle first hand reference such as "Building Interviewa has reinforced this for us" is acceptable when directly relevant. Do not force Interviewa, candidate preparation or recruitment into an unrelated post. Credibility creates more interest than a forced sales message.
+Read the exact supplied post. Respond to what the author actually said. Add one commercially intelligent point, useful observation or thoughtful question. Create curiosity about ${writerName}'s work only when there is a natural connection. A subtle first hand reference such as "Working with Interviewa has reinforced this for us" is acceptable when directly relevant. Do not force Interviewa, candidate preparation or recruitment into an unrelated post. Credibility creates more interest than a forced sales message.
 
-The comment must be 35 to 75 words, natural, specific and ready to paste. Avoid generic praise such as "great post", "spot on", "could not agree more" and "this is so true". Do not repeat the post back to the author. Do not ask for a call, include a link, use hashtags, pitch a free trial or claim a relationship. Never invent facts, results, customers or experience. Use British English in Lee's voice. Do not use hyphens, dashes, em dashes or semicolons.
+The comment must be 35 to 75 words, natural, specific and ready to paste. Avoid generic praise such as "great post", "spot on", "could not agree more" and "this is so true". Do not repeat the post back to the author. Do not ask for a call, include a link, use hashtags, pitch a free trial or claim a relationship. Never invent facts, results, customers, job titles or experience. Write in British English with a ${voice} voice. Never present this person as Lee, as Interviewa's CEO or as another teammate unless their own saved identity above explicitly says so. Do not use hyphens, dashes, em dashes or semicolons.
 
 If the exact post cannot be read, return an empty evidence list and an empty comment instead of guessing. Nothing will be posted automatically and nothing from this request will be saved to Brain memory.`;
     const user = `LINKEDIN URL: ${sourceUrl || "not supplied"}
