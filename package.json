@@ -36,7 +36,8 @@
     "validate:quick-call": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-quick-call-workflow.mjs",
     "validate:call-silence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-call-silence-auto-end.mjs",
     "validate:transcript-navigation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-transcript-download-latest-call.mjs",
-    "validate:shared-outreach-pool": "node scripts/validate-shared-outreach-pool.mjs"
+    "validate:shared-outreach-pool": "node scripts/validate-shared-outreach-pool.mjs",
+    "validate:sales-tutorial": "node scripts/validate-sales-outreach-tutorial.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -872,7 +872,7 @@ export default function OutreachPage() {
       {loading ? <MatrixRain size="panel" messages={["loading outreach", "checking today's queue", "refreshing campaign activity"]} /> : null}
       {!loading && tabLoading ? <MatrixRain size="compact" messages={["loading this outreach view"]} /> : null}
 
-      {!loading && !tabLoading && tab === "queue" ? <section>
+      {!loading && !tabLoading && tab === "queue" ? <section data-sales-tour="outreach-queue">
         <RevenueToday />
         <div className="mb-4 rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s controlled queue</h2><p className="mt-1 text-sm text-muted">Prepare in the background, approve the exact drafts you have reviewed, then LiveCoach sends one every five minutes. Sent people rotate to the bottom automatically.</p><p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{remainingToPrepare} to prepare · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p></div><button onClick={buildQueue} disabled={!!busy || queue.length >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : queue.length ? `Top up to ${activeCampaign?.daily_limit || 20}` : "Rank + build today’s queue"}</button></div><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare all remaining (${remainingToPrepare})` : "All research prepared"}</button><button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve all prepared & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button></div><p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact drafts already shown below. New research never sends without a separate approval.</p></div>
         <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const canPrepare = !m && row.status === "queued"; const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
@@ -884,7 +884,7 @@ export default function OutreachPage() {
         </article>; })}{!queue.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">The morning queue can be selected automatically, or you can build it now. Nobody is researched or contacted until you act.</div> : null}</div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "prospects" ? <section>
+      {!loading && !tabLoading && tab === "prospects" ? <section data-sales-tour="prospect-pool">
         <div className="mb-3 rounded-xl border border-edge bg-panel p-3">
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_repeat(5,10rem)]">
             <input className={input} value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search person, company, role or email…" />
@@ -988,7 +988,7 @@ export default function OutreachPage() {
         </div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "campaign" ? <section className="space-y-3">
+      {!loading && !tabLoading && tab === "campaign" ? <section data-sales-tour="campaign-setup" className="space-y-3">
         <div className="grid grid-cols-2 gap-2">{variants.map((row) => <div key={row.variant} className="rounded-xl border border-edge bg-panel p-3"><p className="font-mono text-[0.56rem] uppercase text-muted">Subject variant {row.variant}</p><strong className="mt-1 block font-display text-xl text-bone">{row.replyRate}% replies</strong><span className="text-xs text-muted">{row.replies} replies from {row.sent} sent</span></div>)}</div>
         {campaigns.map((campaign) => <article key={campaign.id} className="rounded-xl border border-edge bg-panel p-4">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-display text-lg text-bone">{campaign.name}</h2><span className={`mt-1 inline-block rounded-full border px-2 py-0.5 font-mono text-[0.55rem] uppercase ${campaign.status === "active" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{campaign.status}</span></div><button onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign"}</button></div>
@@ -1031,7 +1031,7 @@ export default function OutreachPage() {
         </div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "replies" ? <section>
+      {!loading && !tabLoading && tab === "replies" ? <section data-sales-tour="reply-handover">
         <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Every reply stops the sequence. Interested people are linked safely to the CRM, while deal value waits until a real conversation.</p></div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking email…" : "Check replies now"}</button></div>
         <div className="space-y-2">{replies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; const handover = handoverReviews[reply.id]; return <article key={reply.id} className="rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></div><span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${reply.reply_category === "interested" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{reply.reply_category}</span></div>
