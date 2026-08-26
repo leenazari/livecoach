@@ -1,22 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { londonDayBounds } from "@/lib/outreach";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
+    const account = requireRequestScope();
     const summaryOnly = req.nextUrl.searchParams.get("summary") === "1";
     const { start, end } = londonDayBounds();
     const [sent, sentAll, approved, replies, positive, meetings, prospects] = await Promise.all([
-      supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "sent").gte("sent_at", start).lt("sent_at", end),
-      supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "sent"),
-      supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "approved"),
-      supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe"]),
-      supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("kind", "positive_reply"),
-      supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("kind", "meeting_booked"),
-      supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }),
+      supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "sent").gte("sent_at", start).lt("sent_at", end),
+      supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "sent"),
+      supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "approved"),
+      supabaseAdmin.from("outreach_events").select("id,message:outreach_messages!inner(sender_user_id)", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("message.sender_user_id", account.userId).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe"]),
+      supabaseAdmin.from("outreach_events").select("id,message:outreach_messages!inner(sender_user_id)", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("message.sender_user_id", account.userId).eq("kind", "positive_reply"),
+      supabaseAdmin.from("outreach_events").select("id,message:outreach_messages!inner(sender_user_id)", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("message.sender_user_id", account.userId).eq("kind", "meeting_booked"),
+      supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("assigned_to_user_id", account.userId),
     ]);
+    for (const result of [sent, sentAll, approved, replies, positive, meetings, prospects]) {
+      if (result.error) throw result.error;
+    }
     const metrics = {
       sentToday: sent.count || 0,
       sent: sentAll.count || 0,
@@ -28,15 +33,27 @@ export async function GET(req: NextRequest) {
     };
     // The default Today queue needs only five small counts. Avoid loading every
     // historical message, reply and learning until a reporting tab is opened.
-    if (summaryOnly) return NextResponse.json({ metrics });
-    const [{ data: recentReplies }, { data: variantMessages }, { data: variantReplies }, { data: replyDrafts }, { data: learnings }, { data: recentMessages }] = await Promise.all([
-      supabaseAdmin.from("outreach_prospects").select("id,first_name,last_name,company_name,email,reply_category,reply_summary,last_reply_at,status,crm_company_id").not("last_reply_at", "is", null).order("last_reply_at", { ascending: false }).limit(50),
-      supabaseAdmin.from("outreach_messages").select("prospect_id,variant,message_tags,campaign_id").eq("status", "sent"),
-      supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,campaign_id").in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe", "meeting_booked"]),
-      supabaseAdmin.from("outreach_messages").select("*").eq("step_number", 10).in("status", ["draft", "approved", "sent"]).order("updated_at", { ascending: false }),
-      supabaseAdmin.from("outreach_learnings").select("*").order("meeting_count", { ascending: false }).order("positive_reply_count", { ascending: false }).limit(100),
-      supabaseAdmin.from("outreach_messages").select("id,prospect_id,subject,body_text,status,step_number,sent_at,from_email").eq("status", "sent").order("sent_at", { ascending: false }).limit(100),
+    if (summaryOnly) return NextResponse.json(
+      { metrics, scope: "personal" },
+      { headers: { "Cache-Control": "private, no-store" } }
+    );
+    const detailResults = await Promise.all([
+      supabaseAdmin.from("outreach_prospects").select("id,first_name,last_name,company_name,email,reply_category,reply_summary,last_reply_at,status,crm_company_id,personal_messages:outreach_messages!inner(sender_user_id,status)").eq("workspace_id", account.workspaceId).eq("personal_messages.sender_user_id", account.userId).eq("personal_messages.status", "sent").not("last_reply_at", "is", null).order("last_reply_at", { ascending: false }).limit(50),
+      supabaseAdmin.from("outreach_messages").select("prospect_id,variant,message_tags,campaign_id").eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "sent"),
+      supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,campaign_id,message:outreach_messages!inner(sender_user_id)").eq("workspace_id", account.workspaceId).eq("message.sender_user_id", account.userId).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe", "meeting_booked"]),
+      supabaseAdmin.from("outreach_messages").select("*").eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("step_number", 10).in("status", ["draft", "approved", "sent"]).order("updated_at", { ascending: false }),
+      supabaseAdmin.from("outreach_learnings").select("*").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).order("meeting_count", { ascending: false }).order("positive_reply_count", { ascending: false }).limit(100),
+      supabaseAdmin.from("outreach_messages").select("id,prospect_id,subject,body_text,status,step_number,sent_at,from_email").eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "sent").order("sent_at", { ascending: false }).limit(100),
     ]);
+    for (const result of detailResults) if (result.error) throw result.error;
+    const [
+      { data: recentReplies },
+      { data: variantMessages },
+      { data: variantReplies },
+      { data: replyDrafts },
+      { data: learnings },
+      { data: recentMessages },
+    ] = detailResults;
     const variants = ["A", "B"].map((variant) => {
       const sentCount = (variantMessages || []).filter((row: any) => (row.variant || "A") === variant).length;
       const replyCount = (variantReplies || []).filter((row: any) => row.kind !== "meeting_booked" && (row.metadata?.variant || "A") === variant).length;
@@ -48,6 +65,7 @@ export async function GET(req: NextRequest) {
       ? await supabaseAdmin
           .from("outreach_prospects")
           .select("id,first_name,last_name,company_name,email,last_reply_at,reply_category")
+          .eq("workspace_id", account.workspaceId)
           .in("id", messageProspectIds)
       : { data: [] as any[] };
     const messageProspectMap = new Map((messageProspects || []).map((prospect: any) => [prospect.id, prospect]));
@@ -66,6 +84,7 @@ export async function GET(req: NextRequest) {
       ? await supabaseAdmin
           .from("companies")
           .select("id,name")
+          .eq("workspace_id", account.workspaceId)
           .in("id", linkedCompanyIds)
       : { data: [] as any[] };
     const linkedCompanyNames = new Map(
@@ -77,17 +96,21 @@ export async function GET(req: NextRequest) {
         .map((event: any) => [event.prospect_id, event.metadata || {}])
     );
     const replyDraftByProspect = new Map((replyDrafts || []).map((draft: any) => [draft.prospect_id, draft]));
-    const replyRows = (recentReplies || []).map((reply: any) => ({
-      ...reply,
-      bookingDraft: replyDraftByProspect.get(reply.id) || null,
-      crmCompany: reply.crm_company_id
-        ? {
-            id: reply.crm_company_id,
-            name: linkedCompanyNames.get(reply.crm_company_id) || reply.company_name,
-          }
-        : null,
-      bookedMeeting: bookingByProspect.get(reply.id) || null,
-    }));
+    const replyRows = (recentReplies || []).map((reply: any) => {
+      const personalReply = { ...reply };
+      delete personalReply.personal_messages;
+      return {
+        ...personalReply,
+        bookingDraft: replyDraftByProspect.get(reply.id) || null,
+        crmCompany: reply.crm_company_id
+          ? {
+              id: reply.crm_company_id,
+              name: linkedCompanyNames.get(reply.crm_company_id) || reply.company_name,
+            }
+          : null,
+        bookedMeeting: bookingByProspect.get(reply.id) || null,
+      };
+    });
     const positiveProspects = new Set((variantReplies || []).filter((event: any) => event.kind === "positive_reply").map((event: any) => event.prospect_id));
     const meetingProspects = new Set((variantReplies || []).filter((event: any) => event.kind === "meeting_booked").map((event: any) => event.prospect_id));
     const performanceMap = new Map<string, any>();
@@ -105,7 +128,10 @@ export async function GET(req: NextRequest) {
       }
     }
     const performance = [...performanceMap.values()].map((row) => ({ ...row, positiveRate: row.sent ? Math.round((row.positive / row.sent) * 1000) / 10 : 0 })).sort((a, b) => b.meetings - a.meetings || b.positiveRate - a.positiveRate).slice(0, 30);
-    return NextResponse.json({ metrics, replies: replyRows, sentHistory, variants, performance, learnings: learnings || [] });
+    return NextResponse.json(
+      { metrics, replies: replyRows, sentHistory, variants, performance, learnings: learnings || [], scope: "personal" },
+      { headers: { "Cache-Control": "private, no-store" } }
+    );
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to load outreach metrics" }, { status: 500 });
   }

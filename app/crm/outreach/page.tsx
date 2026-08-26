@@ -817,7 +817,7 @@ export default function OutreachPage() {
   const engagementReady = engagementSource.length >= 25 || /^https?:\/\/\S+$/i.test(engagementSource);
 
   const funnel = [
-    { label: "Prospects", value: metrics.prospects || 0, colour: "bg-sky" },
+    { label: "My prospects", value: metrics.prospects || 0, colour: "bg-sky" },
     { label: "Emails sent", value: metrics.sent || 0, colour: "bg-amber" },
     { label: "Replies", value: metrics.replies || 0, colour: "bg-bone" },
     { label: "Interested", value: metrics.positiveReplies || 0, colour: "bg-moss" },
@@ -900,7 +900,7 @@ export default function OutreachPage() {
             </select>
             <select aria-label="Manual priority filter" value={priority} onChange={(event) => setPriority(event.target.value as "all" | Priority)} className={input}><option value="all">All priorities</option><option value="high">High priority</option><option value="medium">Medium priority</option><option value="low">Low priority</option></select>
             <select aria-label="Fit recommendation filter" value={recommendationFilter} onChange={(event) => setRecommendationFilter(event.target.value as "all" | RecommendationAction)} className={input}><option value="all">All fit scores</option><option value="contact_today">Contact today</option><option value="hold">Hold</option><option value="skip">Skip</option></select>
-            <select aria-label="Owner filter" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} className={input}><option value="available">Mine and available</option><option value="mine">My prospects</option><option value="unassigned">Unassigned</option><option value="all">All owners</option>{team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}</select>
+            <select aria-label="Owner filter" value={ownerFilter} onChange={(event) => setOwnerFilter(event.target.value)} className={input}><option value="available">Mine and available</option><option value="mine">My prospects</option><option value="unassigned">Unassigned</option>{canManageAssignments ? <><option value="all">All owners</option>{team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}</> : null}</select>
           </div>
           <p className="mt-2 text-xs text-muted">Showing {shown.length} of {prospects.length}. Fit scoring uses no AI tokens. Research only starts when you press Prepare draft.</p>
         </div>
@@ -980,7 +980,7 @@ export default function OutreachPage() {
 
       {!loading && !tabLoading && tab === "activity" ? <section className="space-y-4">
         <div className="rounded-xl border border-edge bg-panel p-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="font-display text-lg text-bone">Outreach progress</h2><p className="mt-1 text-sm text-muted">A factual view of emails sent, replies and meetings. Opens are deliberately not tracked.</p></div><button type="button" onClick={() => loadMetrics()} className={button}>Refresh progress</button></div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="font-display text-lg text-bone">Your outreach progress</h2><p className="mt-1 text-sm text-muted">Only emails sent from your account, your replies and your meetings. Opens are deliberately not tracked.</p></div><button type="button" onClick={() => loadMetrics()} className={button}>Refresh progress</button></div>
           <div className="mt-4 space-y-3">{funnel.map((item, index) => {
             const previous = index === 0 ? item.value : funnel[index - 1].value;
             const percentage = index === 0 ? 100 : previous ? Math.round((item.value / previous) * 100) : 0;
