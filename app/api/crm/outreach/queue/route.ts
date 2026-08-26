@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
 import {
   londonDate,
   OUTREACH_DAILY_HARD_LIMIT,
@@ -159,11 +160,23 @@ async function loadQueue(
 export async function GET() {
   try {
     const account = await resolveRecordScope();
-    const { data: campaigns, error } = await supabaseAdmin
-      .from("outreach_campaigns").select("id").eq("workspace_id", account.workspaceId).eq("status", "active").order("created_at").limit(1);
-    if (error) throw error;
+    const selection = await resolveOutreachCampaignSelection(
+      account.userId,
+      account.workspaceId
+    );
     const sender = await resolveOutreachIdentity(account.userId).catch(() => null);
-    return NextResponse.json({ date: londonDate(), queue: campaigns?.[0] ? await loadQueue(account.userId, account.workspaceId, campaigns[0].id) : [], sender });
+    return NextResponse.json({
+      date: londonDate(),
+      queue: selection.campaign
+        ? await loadQueue(
+            account.userId,
+            account.workspaceId,
+            selection.campaign.id
+          )
+        : [],
+      sender,
+      selectedCampaignId: selection.selectedCampaignId,
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to load queue" }, { status: 500 });
   }
@@ -174,11 +187,17 @@ export async function POST(req: NextRequest) {
     const account = await resolveRecordScope();
     const requestScope = getRequestScope();
     const body = await req.json().catch(() => ({}));
-    const { data: campaigns, error: campaignError } = await supabaseAdmin
-      .from("outreach_campaigns").select("*").eq("workspace_id", account.workspaceId).eq("status", "active").order("created_at").limit(1);
-    if (campaignError) throw campaignError;
-    const campaign = campaigns?.[0];
-    if (!campaign) return NextResponse.json({ error: "Activate a campaign first" }, { status: 400 });
+    const campaignSelection = await resolveOutreachCampaignSelection(
+      account.userId,
+      account.workspaceId
+    );
+    const campaign = campaignSelection.campaign;
+    if (!campaign) {
+      return NextResponse.json(
+        { error: "Activate and select a campaign first" },
+        { status: 400 }
+      );
+    }
     const limit = Math.min(OUTREACH_DAILY_HARD_LIMIT, Math.max(1, Number(body.limit) || campaign.daily_limit || 20));
     const today = londonDate();
     const existing = await loadQueue(
@@ -204,23 +223,6 @@ export async function POST(req: NextRequest) {
       if (!prospect) return NextResponse.json({ error: "Prospect not found" }, { status: 404 });
       if (prospect.assigned_to_user_id && prospect.assigned_to_user_id !== account.userId)
         return NextResponse.json({ error: "This prospect is assigned to another team member" }, { status: 403 });
-      if (!prospect.assigned_to_user_id) {
-        const { data: claimed, error: claimError } = await supabaseAdmin
-          .from("outreach_prospects")
-          .update({ assigned_to_user_id: account.userId, updated_at: new Date().toISOString() })
-          .eq("id", requestedProspectId)
-          .is("assigned_to_user_id", null)
-          .select("assigned_to_user_id")
-          .maybeSingle();
-        if (claimError) throw claimError;
-        if (!claimed) {
-          return NextResponse.json(
-            { error: "Another teammate claimed this prospect first" },
-            { status: 409 }
-          );
-        }
-        prospect.assigned_to_user_id = account.userId;
-      }
       const email = String(prospect.email || "").trim().toLowerCase();
       const domain = String(prospect.company_domain || email.split("@").pop() || "").trim().toLowerCase();
       const blocked = new Set((suppressions || []).map((row: any) => String(row.target || "").toLowerCase()));
@@ -230,18 +232,39 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "This person or company is on the do-not-contact list" }, { status: 400 });
       if (prospectHasBlockedCrmRelationship(prospect, crmGuard))
         return NextResponse.json({ error: "This CRM relationship is engaged, dormant or not confirmed as a new lead" }, { status: 400 });
-      const { data: previous } = await supabaseAdmin
-        .from("outreach_enrolments")
-        .select("*")
-        .eq("campaign_id", campaign.id)
-        .eq("prospect_id", requestedProspectId)
-        .maybeSingle();
-      const { data: otherCampaigns } = await supabaseAdmin
-        .from("outreach_enrolments")
-        .select("id,campaign_id,status,last_sent_at")
-        .eq("workspace_id", account.workspaceId)
-        .eq("recipient_email", email)
-        .neq("campaign_id", campaign.id);
+      const [
+        { data: previous, error: previousError },
+        { count: campaignMembershipCount, error: membershipCountError },
+        { data: otherCampaigns, error: otherCampaignsError },
+      ] = await Promise.all([
+        supabaseAdmin
+          .from("outreach_enrolments")
+          .select("*")
+          .eq("workspace_id", account.workspaceId)
+          .eq("campaign_id", campaign.id)
+          .eq("prospect_id", requestedProspectId)
+          .maybeSingle(),
+        supabaseAdmin
+          .from("outreach_enrolments")
+          .select("id", { count: "exact", head: true })
+          .eq("workspace_id", account.workspaceId)
+          .eq("campaign_id", campaign.id),
+        supabaseAdmin
+          .from("outreach_enrolments")
+          .select("id,campaign_id,status,last_sent_at")
+          .eq("workspace_id", account.workspaceId)
+          .eq("recipient_email", email)
+          .neq("campaign_id", campaign.id),
+      ]);
+      if (previousError) throw previousError;
+      if (membershipCountError) throw membershipCountError;
+      if (otherCampaignsError) throw otherCampaignsError;
+      if ((campaignMembershipCount || 0) > 0 && !previous) {
+        return NextResponse.json(
+          { error: "This prospect is not part of your selected campaign" },
+          { status: 400 }
+        );
+      }
       const activeOtherCampaign = (otherCampaigns || []).find((row: any) =>
         isActiveOutreachEnrolmentStatus(row.status)
       );
@@ -281,6 +304,28 @@ export async function POST(req: NextRequest) {
       }
       if (previous && ["contacted", "replied", "booked", "completed"].includes(previous.status))
         return NextResponse.json({ error: "This person already has outreach history. Open their history instead." }, { status: 400 });
+      if (!prospect.assigned_to_user_id) {
+        const { data: claimed, error: claimError } = await supabaseAdmin
+          .from("outreach_prospects")
+          .update({
+            assigned_to_user_id: account.userId,
+            visibility: "team",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("workspace_id", account.workspaceId)
+          .eq("id", requestedProspectId)
+          .is("assigned_to_user_id", null)
+          .select("assigned_to_user_id")
+          .maybeSingle();
+        if (claimError) throw claimError;
+        if (!claimed) {
+          return NextResponse.json(
+            { error: "Another teammate claimed this prospect first" },
+            { status: 409 }
+          );
+        }
+        prospect.assigned_to_user_id = account.userId;
+      }
       const now = new Date().toISOString();
       const overrideFields = cooldownConflict && overrideReason
         ? {
@@ -358,14 +403,18 @@ export async function POST(req: NextRequest) {
       const [{ data: enrolments }, { data: suppressions }, { data: prospects }, { data: learnings }, crmGuard] = await Promise.all([
         supabaseAdmin.from("outreach_enrolments").select("id,campaign_id,prospect_id,status,queued_for,last_sent_at,recipient_email").eq("workspace_id", account.workspaceId).limit(5000),
         supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", account.workspaceId),
-        supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", account.workspaceId).eq("assigned_to_user_id", account.userId).in("status", ["imported", "queued"]).order("priority_score", { ascending: false }).limit(1000),
+        supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", account.workspaceId).or(`assigned_to_user_id.is.null,assigned_to_user_id.eq.${account.userId}`).in("status", ["imported", "queued"]).order("priority_score", { ascending: false }).limit(1000),
         supabaseAdmin.from("outreach_learnings").select("*").eq("workspace_id", account.workspaceId).eq("campaign_id", campaign.id).eq("status", "promoted").limit(100),
         outreachCrmGuard(),
       ]);
       const enrolmentByProspect = new Map<string, any>();
+      const campaignProspectIds = new Set<string>();
       const reservedEmailsForAnotherCampaign = new Set<string>();
       for (const enrolment of enrolments || []) {
-        if (enrolment.campaign_id === campaign.id) enrolmentByProspect.set(enrolment.prospect_id, enrolment);
+        if (enrolment.campaign_id === campaign.id) {
+          enrolmentByProspect.set(enrolment.prospect_id, enrolment);
+          campaignProspectIds.add(enrolment.prospect_id);
+        }
         else if (
           isActiveOutreachEnrolmentStatus(enrolment.status) ||
           isInsideCrossCampaignCooldown(enrolment.last_sent_at)
@@ -385,7 +434,16 @@ export async function POST(req: NextRequest) {
       const selected: any[] = [];
       let held = 0;
       let skipped = 0;
-      const ranked = (prospects || []).map((prospect: any) => ({
+      // A populated campaign membership is the audience boundary. This keeps
+      // Workable leads out of the recruitment-leaders campaign and vice versa.
+      // Older campaigns with no memberships retain the legacy ranked-pool
+      // fallback until they are explicitly populated.
+      const audienceProspects = campaignProspectIds.size
+        ? (prospects || []).filter((prospect: any) =>
+            campaignProspectIds.has(prospect.id)
+          )
+        : prospects || [];
+      const ranked = audienceProspects.map((prospect: any) => ({
         prospect,
         recommendation: scoreOutreachProspect(prospect, {
           campaign,
@@ -414,6 +472,26 @@ export async function POST(req: NextRequest) {
       }
       let addedSelected = 0;
       for (const prospect of selected) {
+        if (!prospect.assigned_to_user_id) {
+          const { data: claimed, error: claimError } = await supabaseAdmin
+            .from("outreach_prospects")
+            .update({
+              assigned_to_user_id: account.userId,
+              visibility: "team",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("workspace_id", account.workspaceId)
+            .eq("id", prospect.id)
+            .is("assigned_to_user_id", null)
+            .select("id,assigned_to_user_id")
+            .maybeSingle();
+          if (claimError) throw claimError;
+          if (!claimed) {
+            held += 1;
+            continue;
+          }
+          prospect.assigned_to_user_id = account.userId;
+        }
         const existingEnrolment = enrolmentByProspect.get(prospect.id);
         let enrolmentId = existingEnrolment?.id;
         if (existingEnrolment) {

@@ -166,6 +166,8 @@ export default function OutreachPage() {
   const [currentUser, setCurrentUser] = useState("");
   const [canManageAssignments, setCanManageAssignments] = useState(false);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [selectedCampaignId, setSelectedCampaignId] = useState("");
+  const [canManageCampaigns, setCanManageCampaigns] = useState(false);
   const [metrics, setMetrics] = useState<any>({});
   const [replies, setReplies] = useState<any[]>([]);
   const [sentHistory, setSentHistory] = useState<any[]>([]);
@@ -211,6 +213,10 @@ export default function OutreachPage() {
       setQueue(qd.queue || []);
       setSender(qd.sender || null);
       setCampaigns(c.campaigns || []);
+      setSelectedCampaignId(
+        c.selectedCampaignId || qd.selectedCampaignId || ""
+      );
+      setCanManageCampaigns(c.canManageCampaigns === true);
       setMetrics(m.metrics || {});
     } catch (e: any) { setError(e.message || "Could not load outreach"); }
     finally { setLoading(false); }
@@ -359,7 +365,12 @@ export default function OutreachPage() {
     setDraftEdits(next);
   }, [queue, replies]);
 
-  const activeCampaign = campaigns.find((campaign) => campaign.status === "active") || campaigns[0];
+  const activeCampaign = campaigns.find(
+    (campaign) => campaign.id === selectedCampaignId
+  ) || campaigns.find((campaign) => campaign.status === "active");
+  const selectableCampaigns = campaigns.filter(
+    (campaign) => campaign.status === "active"
+  );
   const selectTab = (next: Tab) => {
     setTab(next);
     const url = new URL(window.location.href);
@@ -378,6 +389,24 @@ export default function OutreachPage() {
     setBusy("queue"); setError(""); setNotice("");
     try { const data = await crmFetch<any>("/api/crm/outreach/queue", { method: "POST", body: JSON.stringify({ limit: activeCampaign?.daily_limit || 20 }) }); setQueue(data.queue || []); const held = data.selection?.held || 0; const skipped = data.selection?.skipped || 0; setNotice(`${data.added || 0} best-fit people added. ${held} held for stronger evidence${skipped ? ` and ${skipped} skipped` : ""}.`); await loadCore(); }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
+  };
+  const selectActiveCampaign = async (campaignId: string) => {
+    if (!campaignId || campaignId === selectedCampaignId) return;
+    setBusy("select-campaign"); setError(""); setNotice("");
+    try {
+      const result = await crmFetch<{ selectedCampaignId: string; campaign: Campaign }>(
+        "/api/crm/outreach/campaigns/select",
+        { method: "POST", body: JSON.stringify({ campaignId }) }
+      );
+      setSelectedCampaignId(result.selectedCampaignId);
+      setQueue([]);
+      setNotice(`${result.campaign.name} is now your campaign. Your teammates keep their own selections.`);
+      await Promise.all([loadCore(), tab === "prospects" ? loadProspects() : Promise.resolve()]);
+    } catch (e: any) {
+      setError(e.message || "The campaign could not be selected");
+    } finally {
+      setBusy("");
+    }
   };
   const prepare = (prospectId: string) => enqueuePrepare(prospectId);
   const saveDraft = async (messageId: string) => {
@@ -569,7 +598,7 @@ export default function OutreachPage() {
       if ((campaign.sequence || []).some((step, index) => index > 0 && (!Number.isFinite(step.delayDays) || step.delayDays < 1 || step.delayDays > 30))) throw new Error("Wait days must be between 1 and 30");
       const { campaign: saved } = await crmFetch<{ campaign: Campaign }>(`/api/crm/outreach/campaigns/${campaign.id}`, { method: "PATCH", body: JSON.stringify(campaign) });
       if (!saved?.id) throw new Error("Campaign was not confirmed");
-      setCampaigns((all) => all.map((item) => item.id === saved.id ? { ...item, ...saved } : saved.status === "active" && item.status === "active" ? { ...item, status: "paused" } : item));
+      setCampaigns((all) => all.map((item) => item.id === saved.id ? { ...item, ...saved } : item));
       setNotice("Campaign settings saved.");
     }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
@@ -880,6 +909,7 @@ export default function OutreachPage() {
 
       {!loading && !tabLoading && tab === "queue" ? <section data-sales-tour="outreach-queue">
         <RevenueToday />
+        <div className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.06] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase tracking-wider text-moss">Your active campaign</p><h2 className="mt-1 font-display text-lg text-bone">{activeCampaign?.name || "No active campaign"}</h2><p className="mt-1 text-sm text-muted">This choice controls only your queue. It cannot switch another salesperson’s campaign.</p></div>{selectableCampaigns.length ? <label className="w-full sm:w-72"><span className="sr-only">Choose your active campaign</span><select aria-label="Choose your active campaign" className={`${input} min-h-11`} value={activeCampaign?.id || ""} onChange={(event) => void selectActiveCampaign(event.target.value)} disabled={!!busy}>{selectableCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label> : <button type="button" onClick={() => selectTab("campaign")} className={button}>Review campaigns</button>}</div></div>
         <div className="mb-4 rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s controlled queue</h2><p className="mt-1 text-sm text-muted">Prepare in the background, approve the exact drafts you have reviewed, then LiveCoach sends one every five minutes. Sent people rotate to the bottom automatically.</p><p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{remainingToPrepare} to prepare · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p></div><button onClick={buildQueue} disabled={!!busy || queue.length >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : queue.length ? `Top up to ${activeCampaign?.daily_limit || 20}` : "Rank + build today’s queue"}</button></div><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare all remaining (${remainingToPrepare})` : "All research prepared"}</button><button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve all prepared & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button></div><p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact drafts already shown below. New research never sends without a separate approval.</p></div>
         <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const canPrepare = !m && row.status === "queued"; const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="font-mono text-[0.55rem] uppercase text-muted">#{index + 1} · step {row.current_step}</p><h3 className="mt-1 font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>{p.priority}</span><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[displayStatus] || "border-edge text-muted"}`}>{displayStatus === "sent" ? "✓ sent" : displayStatus}</span></div>{!m && lastSent && row.next_action_at ? <p className="mt-2 text-xs text-muted">Next follow up becomes ready {formatActivityDate(row.next_action_at)}.</p> : null}</div>{canPrepare ? <button onClick={() => prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>{prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : Number(row.current_step) > 1 ? "Queue follow up draft" : "Queue research + draft"}</button> : !m && lastSent ? <button onClick={() => selectTab("activity")} className="min-h-11 w-full rounded-lg border border-moss bg-moss px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-ink transition hover:bg-moss/85 sm:w-auto">✓ Sent · view email</button> : null}</div>
@@ -997,7 +1027,8 @@ export default function OutreachPage() {
       {!loading && !tabLoading && tab === "campaign" ? <section data-sales-tour="campaign-setup" className="space-y-3">
         <div className="grid grid-cols-2 gap-2">{variants.map((row) => <div key={row.variant} className="rounded-xl border border-edge bg-panel p-3"><p className="font-mono text-[0.56rem] uppercase text-muted">Subject variant {row.variant}</p><strong className="mt-1 block font-display text-xl text-bone">{row.replyRate}% replies</strong><span className="text-xs text-muted">{row.replies} replies from {row.sent} sent</span></div>)}</div>
         {campaigns.map((campaign) => <article key={campaign.id} className="rounded-xl border border-edge bg-panel p-4">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-display text-lg text-bone">{campaign.name}</h2><span className={`mt-1 inline-block rounded-full border px-2 py-0.5 font-mono text-[0.55rem] uppercase ${campaign.status === "active" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{campaign.status}</span></div><button onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign"}</button></div>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-display text-lg text-bone">{campaign.name}</h2><span className={`mt-1 inline-block rounded-full border px-2 py-0.5 font-mono text-[0.55rem] uppercase ${campaign.status === "active" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{campaign.status}</span></div>{canManageCampaigns ? <button onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign"}</button> : <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted">Shared · view only</span>}</div>
+          <fieldset disabled={!canManageCampaigns} className="contents">
           <div className="grid gap-3"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Goal</span><input className={input} value={campaign.goal} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, goal: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Audience</span><textarea className={`${input} min-h-20`} value={campaign.audience} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, audience: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Interviewa angle</span><textarea className={`${input} min-h-24`} value={campaign.offer_angle} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, offer_angle: e.target.value } : c))} /></label><div className="grid grid-cols-2 gap-3"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max="20" className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : Math.min(20, Number(e.target.value)) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active</option><option value="paused">Paused</option><option value="draft">Draft</option></select></label></div></div>
           <div className="mt-4 rounded-xl border border-amber/35 bg-ink/30 p-3">
             <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-mono text-[0.56rem] uppercase text-amber">Editable sequence</p><p className="mt-1 text-sm text-muted">Every step creates a fresh draft for approval. A reply stops all later steps.</p></div>{(campaign.sequence || []).length < 6 ? <button type="button" onClick={() => addSequenceStep(campaign.id)} className={button}>+ Add step</button> : null}</div>
@@ -1011,12 +1042,14 @@ export default function OutreachPage() {
               <div className="mt-2 grid gap-2 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Writing guidance</span><textarea className={`${input} min-h-20`} value={step.guidance || ""} onChange={(event) => updateSequence(campaign.id, index, { guidance: event.target.value })} placeholder="What new angle or proof should this step add?" /></label><label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Approved asset link, optional</span><input type="url" className={input} value={step.assetUrl || ""} onChange={(event) => updateSequence(campaign.id, index, { assetUrl: event.target.value })} placeholder="https://… video, demo or case study" /><span className="mt-1 block text-xs text-muted">The draft can use this exact link, but still cannot send until you approve it.</span></label></div>
             </li>)}</ol>
           </div>
+          </fieldset>
         </article>)}
       </section> : null}
 
       {!loading && !tabLoading && tab === "intelligence" && activeCampaign ? <section className="space-y-4">
+        <fieldset disabled={!canManageCampaigns} className="contents">
         <div className="rounded-xl border border-amber/40 bg-amber/[0.06] p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Message intelligence</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-muted">Set the voice and guardrails once. For every person, Terra must show the evidence, chosen angle and quality score before you approve the exact words.</p></div><button onClick={() => saveCampaign(activeCampaign)} disabled={!!busy} className={primary}>{busy === `campaign:${activeCampaign.id}` ? "Saving…" : "Save intelligence"}</button></div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Message intelligence</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-muted">Set the voice and guardrails once. For every person, Terra must show the evidence, chosen angle and quality score before you approve the exact words.</p></div>{canManageCampaigns ? <button onClick={() => saveCampaign(activeCampaign)} disabled={!!busy} className={primary}>{busy === `campaign:${activeCampaign.id}` ? "Saving…" : "Save intelligence"}</button> : <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted">Shared · view only</span>}</div>
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
             <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Tone</span><select className={input} value={activeCampaign.voice?.tone || "warm, commercially curious and concise"} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, voice: { ...(campaign.voice || {}), tone: e.target.value } } : campaign))}><option value="warm, commercially curious and concise">Warm, commercially curious</option><option value="direct, credible and concise">Direct and credible</option><option value="peer-to-peer founder, thoughtful and natural">Founder to founder</option><option value="consultative, challenging and evidence-led">Consultative challenger</option></select></label>
             <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Writing style</span><input className={input} value={activeCampaign.voice?.style || "founder-to-founder, plain English and respectful"} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, voice: { ...(campaign.voice || {}), style: e.target.value } } : campaign))} /></label>
@@ -1030,6 +1063,7 @@ export default function OutreachPage() {
           <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_13rem]"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Booking link</span><input className={input} placeholder="https://calendar.google.com/calendar/appointments/…" value={activeCampaign.booking_url || ""} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, booking_url: e.target.value } : campaign))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">When to include</span><select className={input} value={activeCampaign.booking_cta_mode || "interested_reply"} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, booking_cta_mode: e.target.value } : campaign))}><option value="interested_reply">Only after interest</option><option value="final_step">Final sequence email</option><option value="always">Every email</option><option value="never">Never</option></select></label></div>
           <p className="mt-3 rounded-lg border border-moss/35 bg-moss/[0.07] px-3 py-2 text-sm text-moss">When a prospect books, Calendar Sync links the meeting and seeds the call intent with the research, sent email and reply. Deal value and probability stay blank until a real conversation supports them.</p>
         </div>
+        </fieldset>
 
         <div className="rounded-xl border border-edge bg-panel p-4"><h2 className="font-display text-lg text-bone">Conversion learning</h2><p className="mt-1 text-sm leading-6 text-muted">We measure positive replies and booked meetings, not vanity opens. A pattern is not fed back into new drafts until it has at least 10 sends and meaningful conversion evidence.</p>
           {learnings.length ? <div className="mt-3 grid gap-2 sm:grid-cols-2">{learnings.map((learning) => <div key={learning.id} className="rounded-lg border border-edge bg-ink/30 p-3"><div className="flex items-center justify-between gap-2"><span className="font-mono text-[0.55rem] uppercase text-amber">{learning.dimension} · {learning.label}</span><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.49rem] uppercase ${learning.status === "promoted" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{learning.status}</span></div><p className="mt-2 text-sm leading-6 text-bone/80">{learning.insight}</p><p className="mt-1 text-xs text-muted">{learning.confidence} confidence</p></div>)}</div> : <div className="mt-3 rounded-lg border border-dashed border-edge p-5 text-center text-sm text-muted">No result is being called a “winner” yet. The system will wait for real sends, positive replies and meetings.</div>}
