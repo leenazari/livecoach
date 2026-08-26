@@ -31,6 +31,7 @@ assert.doesNotMatch(migration, /security definer/i);
 assert.match(selection, /eq\("workspace_id", workspaceId\)/);
 assert.match(selection, /eq\("user_id", userId\)/);
 assert.match(selection, /preference\?\.active_campaign_id/);
+assert.match(selection, /order\("updated_at", \{ ascending: false \}\)/);
 
 assert.match(campaigns, /requireRequestScope\(\)/);
 assert.match(campaigns, /workspace_id: account\.workspaceId/);
@@ -56,6 +57,16 @@ assert.match(prospects, /eq\("status", "paused"\)/);
 assert.match(readiness, /label: "Your active campaign"/);
 assert.match(page, /Choose your active campaign/);
 assert.match(page, /Your teammates keep their own selections/);
+assert.match(page, /const orderedCampaigns = useMemo/);
+assert.match(page, /open=\{expandedCampaignId === campaign\.id\}/);
+assert.match(page, /onToggle=\{\(event\) =>/);
+assert.match(page, /Everything else is newest first and collapsed until you need it/);
+assert.match(page, /aria-label="Outreach sections"/);
+assert.doesNotMatch(
+  page.match(/<nav aria-label="Outreach sections"[\s\S]*?<\/nav>/)?.[0] || "",
+  /sm:static/,
+  "Outreach tabs stay sticky on desktop as well as mobile"
+);
 
 const active = [
   { id: "recruitment", status: "active" },

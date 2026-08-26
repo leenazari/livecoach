@@ -167,6 +167,7 @@ export default function OutreachPage() {
   const [canManageAssignments, setCanManageAssignments] = useState(false);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
+  const [expandedCampaignId, setExpandedCampaignId] = useState("");
   const [canManageCampaigns, setCanManageCampaigns] = useState(false);
   const [metrics, setMetrics] = useState<any>({});
   const [replies, setReplies] = useState<any[]>([]);
@@ -364,11 +365,23 @@ export default function OutreachPage() {
     for (const reply of replies) if (reply.bookingDraft) next[reply.bookingDraft.id] = { subject: reply.bookingDraft.subject || "", body_text: reply.bookingDraft.body_text || "" };
     setDraftEdits(next);
   }, [queue, replies]);
+  useEffect(() => {
+    if (selectedCampaignId) setExpandedCampaignId(selectedCampaignId);
+  }, [selectedCampaignId]);
 
-  const activeCampaign = campaigns.find(
+  const orderedCampaigns = useMemo(
+    () => campaigns.slice().sort((left, right) => {
+      if (left.id === selectedCampaignId) return -1;
+      if (right.id === selectedCampaignId) return 1;
+      return new Date(right.updated_at || right.created_at || 0).getTime() -
+        new Date(left.updated_at || left.created_at || 0).getTime();
+    }),
+    [campaigns, selectedCampaignId]
+  );
+  const activeCampaign = orderedCampaigns.find(
     (campaign) => campaign.id === selectedCampaignId
-  ) || campaigns.find((campaign) => campaign.status === "active");
-  const selectableCampaigns = campaigns.filter(
+  ) || orderedCampaigns.find((campaign) => campaign.status === "active");
+  const selectableCampaigns = orderedCampaigns.filter(
     (campaign) => campaign.status === "active"
   );
   const selectTab = (next: Tab) => {
@@ -897,7 +910,7 @@ export default function OutreachPage() {
         {[{ label: "Today's queue", value: queue.length, tab: "queue" as Tab }, { label: "Sent today", value: metrics.sentToday || 0, tab: "activity" as Tab }, { label: "Awaiting approval", value: queue.filter((r) => r.message?.status === "draft").length, tab: "queue" as Tab }, { label: "Positive replies", value: metrics.positiveReplies || 0, tab: "replies" as Tab }].map((item) => <button type="button" onClick={() => selectTab(item.tab)} key={item.label} className="rounded-xl border border-edge bg-panel p-3 text-left transition hover:border-amber/55"><strong className="block font-display text-2xl text-bone">{item.value}</strong><span className="font-mono text-[0.55rem] uppercase tracking-wider text-muted">{item.label} ↘</span></button>)}
       </section>
 
-      <nav className="sticky top-0 z-20 mb-4 -mx-3 flex overflow-x-auto border-y border-edge bg-ink/95 px-3 backdrop-blur sm:static sm:mx-0 sm:rounded-xl sm:border">
+      <nav aria-label="Outreach sections" className="sticky top-0 z-40 mb-4 -mx-3 flex overflow-x-auto border-y border-edge bg-ink/95 px-3 shadow-[0_10px_25px_rgba(0,0,0,0.32)] backdrop-blur sm:mx-0 sm:rounded-xl sm:border">
         {tabs.map((item) => <button key={item.key} onClick={() => selectTab(item.key)} className={`min-h-12 shrink-0 border-b-2 px-3 font-mono text-[0.6rem] uppercase tracking-wider ${tab === item.key ? "border-amber text-amber" : "border-transparent text-muted"}`}><span className="mr-1.5">{item.icon}</span>{item.label}</button>)}
       </nav>
 
@@ -986,11 +999,12 @@ export default function OutreachPage() {
       {!loading && !tabLoading && tab === "signals" ? <section className="space-y-4">
         <div className="rounded-xl border border-amber/40 bg-amber/[0.06] p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div><h2 className="font-display text-lg text-bone">LinkedIn engagement writer</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-muted">Paste any public LinkedIn post. LiveCoach reads the actual point and writes one useful comment that can create interest in you and Interviewa without forcing a sales pitch.</p></div>
-            <span className="rounded-full border border-sky/45 bg-sky/10 px-3 py-1 font-mono text-[0.52rem] uppercase text-sky">Not saved to Brain</span>
+            <div><h2 className="font-display text-lg text-bone">LinkedIn engagement writer</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-muted">Paste a public LinkedIn post or its words. LiveCoach writes in the signed-in salesperson's own saved voice and creates interest without forcing a sales pitch.</p></div>
+            <span className="rounded-full border border-moss/45 bg-moss/10 px-3 py-1 font-mono text-[0.52rem] uppercase text-moss">Manual safe mode</span>
           </div>
+          <div className="mt-3 rounded-lg border border-moss/35 bg-moss/[0.06] p-3 text-xs leading-5 text-bone/75"><strong className="text-moss">No LinkedIn account connection.</strong> LiveCoach never signs into, scrapes through or posts from your LinkedIn account. You review the comment, copy it and post it yourself.</div>
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Paste link or post</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={engagementInput} onChange={(event) => setEngagementInput(event.target.value)} placeholder="Paste the LinkedIn link here. If LinkedIn cannot read it, paste the post words instead." /><span className="mt-1 block text-xs text-muted">One box is enough. LiveCoach works out whether you pasted a link or the post itself.</span></label>
+            <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Paste post text or a public link</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={engagementInput} onChange={(event) => setEngagementInput(event.target.value)} placeholder="For the safest and most accurate result, paste the post words. You can also paste its public link." /><span className="mt-1 block text-xs text-muted">Post text is best. A public link is only used as a reference and never through your LinkedIn login.</span></label>
             <div className="grid content-start gap-3">
               <div className="rounded-lg border border-edge bg-ink/35 p-3 text-xs leading-5 text-bone/75"><strong className="text-bone">How it writes:</strong> it responds to the real point, adds one useful commercial thought and only mentions Interviewa when the connection feels natural.</div>
               <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3 text-xs leading-5 text-bone/75"><strong className="text-sky">You stay in control:</strong> nothing is posted automatically. The post and comment are not stored in Brain or added to the CRM.</div>
@@ -1025,25 +1039,54 @@ export default function OutreachPage() {
       </section> : null}
 
       {!loading && !tabLoading && tab === "campaign" ? <section data-sales-tour="campaign-setup" className="space-y-3">
-        <div className="grid grid-cols-2 gap-2">{variants.map((row) => <div key={row.variant} className="rounded-xl border border-edge bg-panel p-3"><p className="font-mono text-[0.56rem] uppercase text-muted">Subject variant {row.variant}</p><strong className="mt-1 block font-display text-xl text-bone">{row.replyRate}% replies</strong><span className="text-xs text-muted">{row.replies} replies from {row.sent} sent</span></div>)}</div>
-        {campaigns.map((campaign) => <article key={campaign.id} className="rounded-xl border border-edge bg-panel p-4">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-display text-lg text-bone">{campaign.name}</h2><span className={`mt-1 inline-block rounded-full border px-2 py-0.5 font-mono text-[0.55rem] uppercase ${campaign.status === "active" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{campaign.status}</span></div>{canManageCampaigns ? <button onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign"}</button> : <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted">Shared · view only</span>}</div>
-          <fieldset disabled={!canManageCampaigns} className="contents">
-          <div className="grid gap-3"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Goal</span><input className={input} value={campaign.goal} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, goal: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Audience</span><textarea className={`${input} min-h-20`} value={campaign.audience} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, audience: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Interviewa angle</span><textarea className={`${input} min-h-24`} value={campaign.offer_angle} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, offer_angle: e.target.value } : c))} /></label><div className="grid grid-cols-2 gap-3"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max="20" className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : Math.min(20, Number(e.target.value)) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active</option><option value="paused">Paused</option><option value="draft">Draft</option></select></label></div></div>
-          <div className="mt-4 rounded-xl border border-amber/35 bg-ink/30 p-3">
-            <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-mono text-[0.56rem] uppercase text-amber">Editable sequence</p><p className="mt-1 text-sm text-muted">Every step creates a fresh draft for approval. A reply stops all later steps.</p></div>{(campaign.sequence || []).length < 6 ? <button type="button" onClick={() => addSequenceStep(campaign.id)} className={button}>+ Add step</button> : null}</div>
-            <ol className="mt-3 space-y-3">{(campaign.sequence || []).map((step, index) => <li key={`${campaign.id}:${index}`} className="rounded-lg border border-edge bg-panel/55 p-3">
-              <div className="mb-2 flex items-center justify-between gap-2"><span className="font-mono text-[0.56rem] uppercase text-bone">Step {index + 1}{index === 0 ? " · first email" : ` · ${step.delayDays || 3} days later`}</span>{index > 0 ? <button type="button" onClick={() => removeSequenceStep(campaign.id, index)} className="min-h-9 px-2 font-mono text-[0.52rem] uppercase text-rust">Remove</button> : null}</div>
-              <div className="grid gap-2 sm:grid-cols-[7rem_11rem_minmax(0,1fr)]">
-                <label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Wait days</span><input type="number" min={index === 0 ? 0 : 1} max="30" disabled={index === 0} className={input} value={index === 0 ? 0 : Number.isNaN(step.delayDays) ? "" : step.delayDays ?? 3} onChange={(event) => updateSequence(campaign.id, index, { delayDays: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /></label>
-                <label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Content</span><select className={input} value={step.contentType || "plain"} onChange={(event) => updateSequence(campaign.id, index, { contentType: event.target.value as SequenceStep["contentType"] })}><option value="plain">Plain follow-up</option><option value="insight">Useful insight</option><option value="case_study">Case study</option><option value="video">Video / demo</option><option value="close_loop">Close the loop</option></select></label>
-                <label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Purpose</span><input className={input} value={step.purpose || ""} onChange={(event) => updateSequence(campaign.id, index, { purpose: event.target.value })} placeholder="Why this email deserves a response" /></label>
+        {variants.length ? <details className="group rounded-xl border border-edge bg-panel">
+          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+            <div><h2 className="font-display text-base text-bone">Subject performance</h2><p className="mt-0.5 text-xs text-muted">Open only when you want to compare tested subject lines.</p></div>
+            <span className="font-mono text-[0.55rem] uppercase text-amber"><span className="group-open:hidden">Show</span><span className="hidden group-open:inline">Hide</span> · {variants.length}</span>
+          </summary>
+          <div className="grid grid-cols-1 gap-2 border-t border-edge p-3 sm:grid-cols-2">{variants.map((row) => <div key={row.variant} className="rounded-xl border border-edge bg-ink/35 p-3"><p className="font-mono text-[0.56rem] uppercase text-muted">Subject variant {row.variant}</p><strong className="mt-1 block font-display text-xl text-bone">{row.replyRate}% replies</strong><span className="text-xs text-muted">{row.replies} replies from {row.sent} sent</span></div>)}</div>
+        </details> : null}
+
+        <div className="flex flex-col gap-2 rounded-xl border border-edge bg-panel px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div><h2 className="font-display text-lg text-bone">Campaigns</h2><p className="mt-1 text-sm text-muted">Your current campaign stays first. Everything else is newest first and collapsed until you need it.</p></div>
+          <span className="self-start rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted sm:self-auto">{orderedCampaigns.length} total</span>
+        </div>
+
+        {orderedCampaigns.map((campaign) => {
+          const isCurrent = campaign.id === selectedCampaignId;
+          return <details key={campaign.id} open={expandedCampaignId === campaign.id} onToggle={(event) => {
+            const isOpen = event.currentTarget.open;
+            setExpandedCampaignId((current) => isOpen ? campaign.id : current === campaign.id ? "" : current);
+          }} className={`group overflow-hidden rounded-xl border bg-panel ${isCurrent ? "border-moss/50" : "border-edge"}`}>
+            <summary className="cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-display text-lg text-bone">{campaign.name}</h3>{isCurrent ? <span className="rounded-full border border-moss/50 bg-moss/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-moss">Current</span> : null}<span className={`rounded-full border px-2 py-0.5 font-mono text-[0.5rem] uppercase ${campaign.status === "active" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{campaign.status}</span></div><p className="mt-1 truncate text-sm text-bone/70">{campaign.goal || "No goal saved yet"}</p></div>
+                <span className="shrink-0 font-mono text-[0.55rem] uppercase text-amber"><span className="group-open:hidden">Open ▾</span><span className="hidden group-open:inline">Close ▴</span></span>
               </div>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Writing guidance</span><textarea className={`${input} min-h-20`} value={step.guidance || ""} onChange={(event) => updateSequence(campaign.id, index, { guidance: event.target.value })} placeholder="What new angle or proof should this step add?" /></label><label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Approved asset link, optional</span><input type="url" className={input} value={step.assetUrl || ""} onChange={(event) => updateSequence(campaign.id, index, { assetUrl: event.target.value })} placeholder="https://… video, demo or case study" /><span className="mt-1 block text-xs text-muted">The draft can use this exact link, but still cannot send until you approve it.</span></label></div>
-            </li>)}</ol>
-          </div>
-          </fieldset>
-        </article>)}
+              <p className="mt-2 font-mono text-[0.5rem] uppercase text-muted">Updated {formatActivityDate(campaign.updated_at || campaign.created_at)}</p>
+            </summary>
+
+            <div className="border-t border-edge p-4">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted">Edit only this campaign. The collapsed campaigns remain untouched.</p>{canManageCampaigns ? <button onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign"}</button> : <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted">Shared · view only</span>}</div>
+              <fieldset disabled={!canManageCampaigns} className="contents">
+                <div className="grid gap-3"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Goal</span><input className={input} value={campaign.goal} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, goal: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Audience</span><textarea className={`${input} min-h-20`} value={campaign.audience} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, audience: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Interviewa angle</span><textarea className={`${input} min-h-24`} value={campaign.offer_angle} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, offer_angle: e.target.value } : c))} /></label><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max="20" className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : Math.min(20, Number(e.target.value)) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active</option><option value="paused">Paused</option><option value="draft">Draft</option></select></label></div></div>
+                <div className="mt-4 rounded-xl border border-amber/35 bg-ink/30 p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-mono text-[0.56rem] uppercase text-amber">Editable sequence</p><p className="mt-1 text-sm text-muted">Every step creates a fresh draft for approval. A reply stops all later steps.</p></div>{(campaign.sequence || []).length < 6 ? <button type="button" onClick={() => addSequenceStep(campaign.id)} className={button}>+ Add step</button> : null}</div>
+                  <ol className="mt-3 space-y-3">{(campaign.sequence || []).map((step, index) => <li key={`${campaign.id}:${index}`} className="rounded-lg border border-edge bg-panel/55 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2"><span className="font-mono text-[0.56rem] uppercase text-bone">Step {index + 1}{index === 0 ? " · first email" : ` · ${step.delayDays || 3} days later`}</span>{index > 0 ? <button type="button" onClick={() => removeSequenceStep(campaign.id, index)} className="min-h-9 px-2 font-mono text-[0.52rem] uppercase text-rust">Remove</button> : null}</div>
+                    <div className="grid gap-2 sm:grid-cols-[7rem_11rem_minmax(0,1fr)]">
+                      <label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Wait days</span><input type="number" min={index === 0 ? 0 : 1} max="30" disabled={index === 0} className={input} value={index === 0 ? 0 : Number.isNaN(step.delayDays) ? "" : step.delayDays ?? 3} onChange={(event) => updateSequence(campaign.id, index, { delayDays: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /></label>
+                      <label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Content</span><select className={input} value={step.contentType || "plain"} onChange={(event) => updateSequence(campaign.id, index, { contentType: event.target.value as SequenceStep["contentType"] })}><option value="plain">Plain follow-up</option><option value="insight">Useful insight</option><option value="case_study">Case study</option><option value="video">Video / demo</option><option value="close_loop">Close the loop</option></select></label>
+                      <label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Purpose</span><input className={input} value={step.purpose || ""} onChange={(event) => updateSequence(campaign.id, index, { purpose: event.target.value })} placeholder="Why this email deserves a response" /></label>
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Writing guidance</span><textarea className={`${input} min-h-20`} value={step.guidance || ""} onChange={(event) => updateSequence(campaign.id, index, { guidance: event.target.value })} placeholder="What new angle or proof should this step add?" /></label><label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Approved asset link, optional</span><input type="url" className={input} value={step.assetUrl || ""} onChange={(event) => updateSequence(campaign.id, index, { assetUrl: event.target.value })} placeholder="https://… video, demo or case study" /><span className="mt-1 block text-xs text-muted">The draft can use this exact link, but still cannot send until you approve it.</span></label></div>
+                  </li>)}</ol>
+                </div>
+              </fieldset>
+            </div>
+          </details>;
+        })}
+        {!orderedCampaigns.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">No campaigns have been created yet.</div> : null}
       </section> : null}
 
       {!loading && !tabLoading && tab === "intelligence" && activeCampaign ? <section className="space-y-4">

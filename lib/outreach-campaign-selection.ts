@@ -18,7 +18,8 @@ export async function resolveOutreachCampaignSelection(
         .from("outreach_campaigns")
         .select("*")
         .eq("workspace_id", workspaceId)
-        .order("created_at", { ascending: true }),
+        .order("updated_at", { ascending: false })
+        .order("created_at", { ascending: false }),
       supabaseAdmin
         .from("outreach_user_campaign_preferences")
         .select("active_campaign_id")
