@@ -5,6 +5,7 @@ import { scoreOutreachProspect } from "@/lib/outreach-scoring";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
 import { isActiveOutreachEnrolmentStatus } from "@/lib/outreach-team-safety";
+import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest) {
     if (["high", "medium", "low"].includes(priority)) query = query.eq("priority", priority);
     if (status !== "all") query = query.eq("status", status);
     const contextPromise = Promise.all([
-      supabaseAdmin.from("outreach_campaigns").select("*").eq("workspace_id", account.workspaceId).order("created_at"),
+      resolveOutreachCampaignSelection(account.userId, account.workspaceId),
       supabaseAdmin.from("outreach_learnings").select("*").eq("workspace_id", account.workspaceId).eq("status", "promoted").limit(100),
       supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", account.workspaceId),
       outreachCrmGuard(),
@@ -58,9 +59,58 @@ export async function GET(req: NextRequest) {
       historyPromise,
     ]);
     if (error) throw error;
-    const [{ data: campaigns }, { data: learnings }, { data: suppressions }, crmGuard] = context;
-    const [{ data: messages }, { data: enrolments }] = history;
-    const campaign = (campaigns || []).find((row: any) => row.status === "active") || campaigns?.[0] || null;
+    const [selection, { data: learnings }, { data: suppressions }, crmGuard] = context;
+    const [{ data: messages }, { data: ownEnrolments }] = history;
+    const campaigns = selection.campaigns;
+    const campaign = selection.campaign;
+    let enrolments = ownEnrolments || [];
+    if (!canManageAssignments && data?.length) {
+      // Once a prospect is assigned, its campaign history follows the
+      // prospect even if the original import membership was created by the
+      // workspace owner. An unassigned person exposes only a pristine paused
+      // campaign label, never another sender's active history or reply detail.
+      const assignedIds = (data || [])
+        .filter((row: any) => row.assigned_to_user_id === account.userId)
+        .map((row: any) => row.id);
+      const unassignedIds = (data || [])
+        .filter((row: any) => !row.assigned_to_user_id)
+        .map((row: any) => row.id);
+      const enrolmentFields =
+        "campaign_id,prospect_id,recipient_email,status,current_step,last_sent_at,next_action_at,updated_at";
+      const [assignedMembershipResult, sharedMembershipResult] =
+        await Promise.all([
+          assignedIds.length
+            ? supabaseAdmin
+                .from("outreach_enrolments")
+                .select(enrolmentFields)
+                .eq("workspace_id", account.workspaceId)
+                .in("prospect_id", assignedIds)
+            : Promise.resolve({ data: [] as any[], error: null }),
+          unassignedIds.length
+            ? supabaseAdmin
+                .from("outreach_enrolments")
+                .select(enrolmentFields)
+                .eq("workspace_id", account.workspaceId)
+                .eq("status", "paused")
+                .is("last_sent_at", null)
+                .in("prospect_id", unassignedIds)
+            : Promise.resolve({ data: [] as any[], error: null }),
+        ]);
+      if (assignedMembershipResult.error) throw assignedMembershipResult.error;
+      if (sharedMembershipResult.error) throw sharedMembershipResult.error;
+      enrolments = [
+        ...enrolments,
+        ...(assignedMembershipResult.data || []),
+        ...(sharedMembershipResult.data || []),
+      ].filter(
+        (row: any, index: number, rows: any[]) =>
+          rows.findIndex(
+            (candidate: any) =>
+              candidate.campaign_id === row.campaign_id &&
+              candidate.prospect_id === row.prospect_id
+          ) === index
+      );
+    }
     const campaignMap = new Map((campaigns || []).map((row: any) => [row.id, row]));
     const blockedTargets = new Set(
       (suppressions || []).map((row: any) => String(row.target || "").toLowerCase())
@@ -189,6 +239,7 @@ export async function GET(req: NextRequest) {
       team,
       currentUser: account.userId,
       canManageAssignments,
+      selectedCampaignId: selection.selectedCampaignId,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "failed to load outreach prospects" }, { status: 500 });

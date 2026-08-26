@@ -13,6 +13,7 @@ import {
   loadSafeSharedCompanies,
   loadSafeSharedCompany,
 } from "@/lib/team-client-sharing";
+import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
 
 // Gathers EVERYTHING we know about one client into a single grounding string:
 // profile, recent call scorecards (incl. focus scores), open opportunities,
@@ -1166,7 +1167,7 @@ export async function gatherOutreachContext(
   const limitedScope = isLimitedBrainScope(requestScope);
   const senderUserId = personalOutreachSenderId(requestScope);
   const { start, end } = londonDayBounds();
-  const learningsQuery = options.detailed
+  let learningsQuery: any = options.detailed
     ? supabaseAdmin
         .from("outreach_learnings")
         .select("dimension,label,insight,confidence,positive_reply_count,meeting_count")
@@ -1189,6 +1190,14 @@ export async function gatherOutreachContext(
     .from("outreach_prospects")
     .select("first_name,last_name,company_name,email,job_title,priority,status,reply_category,reply_summary,last_reply_at,assigned_to_user_id")
     .limit(1000);
+  if (requestScope) {
+    learningsQuery = options.detailed
+      ? learningsQuery.eq("workspace_id", requestScope.workspaceId)
+      : learningsQuery;
+    sentQuery = sentQuery.eq("workspace_id", requestScope.workspaceId);
+    approvedQuery = approvedQuery.eq("workspace_id", requestScope.workspaceId);
+    prospectsQuery = prospectsQuery.eq("workspace_id", requestScope.workspaceId);
+  }
   if (senderUserId) {
     sentQuery = sentQuery.eq("sender_user_id", senderUserId);
     approvedQuery = approvedQuery.eq("sender_user_id", senderUserId);
@@ -1201,11 +1210,25 @@ export async function gatherOutreachContext(
     ? supabaseAdmin
         .from("outreach_prospects")
         .select("id", { count: "exact", head: true })
+        .eq("workspace_id", requestScope!.workspaceId)
         .is("assigned_to_user_id", null)
     : Promise.resolve({ count: 0 });
 
+  const campaignPromise = requestScope
+    ? resolveOutreachCampaignSelection(
+        requestScope.userId,
+        requestScope.workspaceId
+      )
+    : supabaseAdmin
+        .from("outreach_campaigns")
+        .select("*")
+        .eq("status", "active")
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle()
+        .then((result) => ({ campaign: result.data }));
   const [
-    campaignRes,
+    campaignSelection,
     prospectsRes,
     sentRes,
     approvedRes,
@@ -1213,13 +1236,7 @@ export async function gatherOutreachContext(
     learningsRes,
   ] =
     await Promise.all([
-      supabaseAdmin
-        .from("outreach_campaigns")
-        .select("name,goal,audience,daily_limit,status")
-        .eq("status", "active")
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle(),
+      campaignPromise,
       prospectsQuery,
       sentQuery,
       approvedQuery,
@@ -1233,7 +1250,7 @@ export async function gatherOutreachContext(
     requestScope
   );
   const prospects = partition.actionable;
-  const campaign = campaignRes.data as any;
+  const campaign = campaignSelection.campaign as any;
   const priority = { high: 0, medium: 0, low: 0 };
   const status = new Map<string, number>();
   for (const prospect of prospects) {

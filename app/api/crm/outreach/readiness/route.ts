@@ -10,6 +10,8 @@ import { gmailAccessStatus } from "@/lib/gmail";
 import { microsoftAccessStatus } from "@/lib/microsoft";
 import { londonDate, OUTREACH_DAILY_HARD_LIMIT } from "@/lib/outreach";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
+import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -25,31 +27,63 @@ type ReadinessCheck = {
 
 export async function GET() {
   try {
+    const account = requireRequestScope();
     const sender = await resolveOutreachIdentity();
     const today = londonDate();
-    const [google, microsoft, campaignResult, eligibleResult, queuedResult, sentAliasResult] =
+    const selection = await resolveOutreachCampaignSelection(
+      account.userId,
+      account.workspaceId
+    );
+    const campaign = selection.campaign;
+    const { data: membershipRows, error: membershipError } = campaign
+      ? await supabaseAdmin
+          .from("outreach_enrolments")
+          .select("prospect_id")
+          .eq("workspace_id", account.workspaceId)
+          .eq("campaign_id", campaign.id)
+          .limit(5000)
+      : { data: [] as any[], error: null };
+    if (membershipError) throw membershipError;
+    const membershipIds = Array.from(
+      new Set((membershipRows || []).map((row: any) => row.prospect_id))
+    );
+    const { data: assignedRows, error: assignedError } = await supabaseAdmin
+      .from("outreach_prospects")
+      .select("id")
+      .eq("workspace_id", account.workspaceId)
+      .eq("assigned_to_user_id", account.userId)
+      .limit(5000);
+    if (assignedError) throw assignedError;
+    const assignedIds = (assignedRows || []).map((row: any) => row.id);
+    let eligibleQuery = supabaseAdmin
+      .from("outreach_prospects")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", account.workspaceId)
+      .or(`assigned_to_user_id.is.null,assigned_to_user_id.eq.${account.userId}`)
+      .in("status", ["imported", "queued"])
+      .not("email", "is", null);
+    if (membershipIds.length) eligibleQuery = eligibleQuery.in("id", membershipIds);
+    else if (campaign) eligibleQuery = eligibleQuery.eq("id", "00000000-0000-0000-0000-000000000000");
+
+    const [google, microsoft, eligibleResult, queuedResult, sentAliasResult] =
       await Promise.all([
         googleConnected(),
         microsoftAccessStatus(),
-        supabaseAdmin
-          .from("outreach_campaigns")
-          .select("*")
-          .eq("status", "active")
-          .order("created_at"),
-        supabaseAdmin
-          .from("outreach_prospects")
-          .select("id", { count: "exact", head: true })
-          .eq("assigned_to_user_id", sender.userId)
-          .in("status", ["imported", "queued"])
-          .not("email", "is", null),
-        supabaseAdmin
-          .from("outreach_enrolments")
-          .select("id", { count: "exact", head: true })
-          .eq("queued_for", today)
-          .in("status", ["queued", "researched", "drafted", "approved", "contacted"]),
+        eligibleQuery,
+        assignedIds.length
+          ? supabaseAdmin
+              .from("outreach_enrolments")
+              .select("id", { count: "exact", head: true })
+              .eq("workspace_id", account.workspaceId)
+              .eq("campaign_id", campaign?.id || "00000000-0000-0000-0000-000000000000")
+              .eq("queued_for", today)
+              .in("prospect_id", assignedIds)
+              .in("status", ["queued", "researched", "drafted", "approved", "contacted"])
+          : Promise.resolve({ count: 0, error: null }),
         supabaseAdmin
           .from("outreach_messages")
           .select("id", { count: "exact", head: true })
+          .eq("workspace_id", account.workspaceId)
           .eq("status", "sent")
           .eq("sender_user_id", sender.userId)
           .eq("from_email", sender.senderEmail),
@@ -65,14 +99,11 @@ export async function GET() {
       ? scopes.has(GMAIL_SEND_SCOPE)
       : microsoft.status === "ok" && microsoft.mailSend;
     const databaseError =
-      campaignResult.error ||
       eligibleResult.error ||
       queuedResult.error ||
       sentAliasResult.error;
     if (databaseError) throw databaseError;
 
-    const activeCampaigns = campaignResult.data || [];
-    const campaign = activeCampaigns[0] || null;
     const sequence = Array.isArray(campaign?.sequence) ? campaign.sequence : [];
     const sequenceValid =
       sequence.length > 0 &&
@@ -138,16 +169,14 @@ export async function GET() {
       },
       {
         id: "campaign",
-        label: "Active campaign",
-        status: activeCampaigns.length === 1 ? "pass" : "fail",
+        label: "Your active campaign",
+        status: campaign ? "pass" : "fail",
         detail:
-          activeCampaigns.length === 1
-            ? `${campaign.name} is active for ${String(campaign.audience || "the saved audience").slice(0, 100)}.`
-            : activeCampaigns.length > 1
-              ? `${activeCampaigns.length} campaigns are active. Keep exactly one active to prevent the wrong audience being selected.`
-              : "Choose and activate one campaign before building the daily queue.",
+          campaign
+            ? `${campaign.name} is selected for your queue. Teammates can use a different active campaign.`
+            : "Choose an active campaign before building your daily queue.",
         href: "/crm/outreach?tab=campaign",
-        action: activeCampaigns.length === 1 ? undefined : "Review campaigns",
+        action: campaign ? undefined : "Review campaigns",
       },
       {
         id: "sequence",

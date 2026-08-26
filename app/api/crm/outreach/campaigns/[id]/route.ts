@@ -1,8 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    const account = requireRequestScope();
+    if (account.role !== "owner" && account.role !== "manager") {
+      return NextResponse.json(
+        { error: "Only a workspace owner or manager can edit campaigns" },
+        { status: 403 }
+      );
+    }
     const body = await req.json();
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     for (const key of ["name", "goal", "audience", "offer_angle"]) if (typeof body[key] === "string" && body[key].trim()) patch[key] = body[key].trim();
@@ -57,16 +65,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (["interested_reply", "final_step", "always", "never"].includes(body.booking_cta_mode)) patch.booking_cta_mode = body.booking_cta_mode;
     // Approval mode is deliberately locked on for this first safe release.
     patch.approval_mode = true;
-    if (patch.status === "active") {
-      const { error: pauseError } = await supabaseAdmin
-        .from("outreach_campaigns")
-        .update({ status: "paused", updated_at: new Date().toISOString() })
-        .neq("id", params.id)
-        .eq("status", "active");
-      if (pauseError) throw pauseError;
-    }
-    const { data, error } = await supabaseAdmin.from("outreach_campaigns").update(patch).eq("id", params.id).select("*").single();
+    const { data, error } = await supabaseAdmin
+      .from("outreach_campaigns")
+      .update(patch)
+      .eq("workspace_id", account.workspaceId)
+      .eq("id", params.id)
+      .select("*")
+      .maybeSingle();
     if (error) throw error;
+    if (!data) {
+      return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
+    }
     return NextResponse.json({ campaign: data });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to update campaign" }, { status: 500 });
