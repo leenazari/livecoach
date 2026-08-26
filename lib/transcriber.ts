@@ -1,41 +1,12 @@
 import "server-only";
 
 import { supabaseService } from "@/lib/supabase";
+export { validMeetingUrl } from "@/lib/meeting-url";
 
 export const MEET_SESSION_ID = /^lc-[a-z0-9-]{6,80}$/;
 
 export function validMeetSessionId(value: unknown): value is string {
   return typeof value === "string" && MEET_SESSION_ID.test(value);
-}
-
-const MEETING_HOSTS = [
-  "meet.google.com",
-  "teams.microsoft.com",
-  "teams.live.com",
-  "zoom.us",
-  "zoom.com",
-  "webex.com",
-  "whereby.com",
-  "meet.jit.si",
-  "chime.aws",
-  "around.co",
-  "around.com",
-  "gotomeeting.com",
-  "gotomeet.me",
-];
-
-export function validMeetingUrl(value: unknown): value is string {
-  if (typeof value !== "string" || value.length > 2000) return false;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:") return false;
-    const host = url.hostname.toLowerCase();
-    return MEETING_HOSTS.some(
-      (allowed) => host === allowed || host.endsWith(`.${allowed}`)
-    );
-  } catch {
-    return false;
-  }
 }
 
 export function deriveTranscriberName(displayName: string | null | undefined) {

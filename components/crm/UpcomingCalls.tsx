@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
+import { openAndArmCallLaunch } from "@/lib/call-launch";
+import { validMeetingUrl } from "@/lib/meeting-url";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
 
@@ -275,7 +277,7 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   // the prep screen: it opens at the plan stage with this client, intent and link
   // already loaded, and only goes live when speech starts or you hit Go live. Both
   // "prep" and "start" route here - prep = prepare ahead, start = jump in now.
-  const openCall = (c: Upcoming) => {
+  const callHref = (c: Upcoming, launch = false) => {
     const qs = new URLSearchParams();
     if (c.company_id) qs.set("company", c.company_id);
     if (c.company) qs.set("companyName", c.company);
@@ -284,7 +286,27 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
     // Tie this session to the scheduled call so the plan you build saves against
     // it and reloads next time you open prep.
     qs.set("upcoming", c.id);
-    router.push(`/call${qs.toString() ? `?${qs.toString()}` : ""}`);
+    if (launch) qs.set("launch", "1");
+    return `/call${qs.toString() ? `?${qs.toString()}` : ""}`;
+  };
+
+  const openCall = (c: Upcoming) => {
+    router.push(callHref(c));
+  };
+
+  // This is the deliberate, cost-bearing start action. Open the external
+  // meeting directly inside the click handler so browser popup protection does
+  // not block it, then move this tab into the matching LiveCoach session. The
+  // one-use launch flag asks that screen to start this user's notetaker.
+  const launchCall = (c: Upcoming) => {
+    const meetingUrl = c.meeting_url?.trim() || "";
+    if (!validMeetingUrl(meetingUrl)) {
+      setSyncMsg("Add a supported Teams, Meet or Zoom link before starting.");
+      setPrepId(c.id);
+      return;
+    }
+    const armed = openAndArmCallLaunch(c.id, meetingUrl);
+    router.push(callHref(c, armed));
   };
 
   // Open the dedicated prep screen for this call: past call summaries plus a
@@ -507,11 +529,11 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => openCall(c)}
-                  title="Jump straight into the live call (same screen, ready to go)"
+                  onClick={() => launchCall(c)}
+                  title="Open the meeting, start LiveCoach and request your notetaker"
                   className="rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
                 >
-                  start ▸
+                  start call ▸
                 </button>
                 <button
                   type="button"
