@@ -88,6 +88,13 @@ export default function SettingsPage() {
     configured: boolean;
   } | null>(null);
   const [microsoftNote, setMicrosoftNote] = useState("");
+  const [disconnectConfirm, setDisconnectConfirm] = useState<
+    "google" | "microsoft" | null
+  >(null);
+  const [disconnecting, setDisconnecting] = useState<
+    "google" | "microsoft" | null
+  >(null);
+  const [disconnectError, setDisconnectError] = useState("");
 
   useEffect(() => {
     crmFetch<{ knowledge: string; objectionStances?: string }>(
@@ -165,6 +172,59 @@ export default function SettingsPage() {
       setLErr(e.message || "couldn't distil that");
     } finally {
       setDistilling(false);
+    }
+  };
+
+  const disconnectConnector = async (provider: "google" | "microsoft") => {
+    setDisconnecting(provider);
+    setDisconnectError("");
+    try {
+      const result = await crmFetch<{
+        ok: boolean;
+        identity: {
+          provider: "google" | "microsoft" | null;
+          senderEmail: string | null;
+        };
+        warning?: string | null;
+      }>(`/api/auth/${provider}/disconnect`, { method: "DELETE" });
+      if (!result.ok) throw new Error("The database did not confirm the disconnect");
+      const warning = result.warning ? ` ${result.warning}` : "";
+      if (provider === "google") {
+        setGcal((current) => ({
+          connected: false,
+          email: null,
+          configured: current?.configured ?? true,
+          gmail: "disconnected",
+          gmailSend: false,
+          gmailIssue: "disconnected",
+        }));
+        setGcalNote(
+          result.identity.provider === "microsoft"
+            ? `Google disconnected. Microsoft remains connected.${warning}`
+            : `Google disconnected. Email, calendar sync and outreach are paused until another provider is connected.${warning}`
+        );
+      } else {
+        setMicrosoft((current) => ({
+          status: "disconnected",
+          email: null,
+          mailRead: false,
+          mailSend: false,
+          calendar: false,
+          configured: current?.configured ?? true,
+        }));
+        setMicrosoftNote(
+          result.identity.provider === "google"
+            ? `Microsoft disconnected. Google remains connected.${warning}`
+            : `Microsoft disconnected. Email, calendar sync and outreach are paused until another provider is connected.${warning}`
+        );
+      }
+      setDisconnectConfirm(null);
+    } catch (error: any) {
+      setDisconnectError(
+        error?.message || "The connection was not removed. Please try again."
+      );
+    } finally {
+      setDisconnecting(null);
     }
   };
 
@@ -289,7 +349,7 @@ export default function SettingsPage() {
               : "border-rust/50 bg-rust/[0.07]"
         }`}
       >
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p
               className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
@@ -322,7 +382,7 @@ export default function SettingsPage() {
                 : "Not connected. Reconnect Google Calendar so meetings, cancellations and reschedules stay in sync."}
             </p>
             {gcalNote && (
-              <p className="mt-1 font-mono text-[0.58rem] text-sage">{gcalNote}</p>
+              <p aria-live="polite" className="mt-1 font-mono text-[0.58rem] text-sage">{gcalNote}</p>
             )}
             {gcal && !gcal.configured && (
               <p className="mt-1 font-mono text-[0.58rem] text-rust">
@@ -332,9 +392,22 @@ export default function SettingsPage() {
             )}
           </div>
           {gcal?.connected ? (
-            <span className="shrink-0 rounded-full border border-sage/55 bg-sage/10 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage">
-              ● Calendar connected
-            </span>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <span className="rounded-full border border-sage/55 bg-sage/10 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage">
+                ● Google connected
+              </span>
+              <button
+                type="button"
+                aria-label="Disconnect Google"
+                onClick={() => {
+                  setDisconnectError("");
+                  setDisconnectConfirm("google");
+                }}
+                className="min-h-10 rounded-full border border-rust/50 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust/10"
+              >
+                Disconnect
+              </button>
+            </div>
           ) : gcal ? (
             <a
               href="/api/auth/google/start"
@@ -348,6 +421,19 @@ export default function SettingsPage() {
             </span>
           )}
         </div>
+        {disconnectConfirm === "google" ? (
+          <div role="alert" className="mt-4 rounded-lg border border-rust/45 bg-rust/[0.07] p-3">
+            <p className="text-sm text-bone">Disconnect Google from this LiveCoach account?</p>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              Google email and calendar access will stop immediately. Another connected provider will take over, otherwise outreach and calendar sync will pause.
+            </p>
+            {disconnectError ? <p className="mt-2 text-xs text-rust">{disconnectError}</p> : null}
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => setDisconnectConfirm(null)} disabled={!!disconnecting} className="min-h-10 rounded-full border border-edge px-4 font-mono text-[0.58rem] uppercase text-muted disabled:opacity-40">Cancel</button>
+              <button type="button" onClick={() => disconnectConnector("google")} disabled={!!disconnecting} className="min-h-10 rounded-full border border-rust/60 bg-rust/15 px-4 font-mono text-[0.58rem] uppercase text-rust disabled:opacity-40">{disconnecting === "google" ? "Disconnecting…" : "Yes, disconnect Google"}</button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div
@@ -356,31 +442,48 @@ export default function SettingsPage() {
             ? "border-edge bg-panel/40"
             : microsoft.status === "ok"
               ? "border-sky/45 bg-sky/[0.06]"
-              : "border-edge bg-panel/40"
+              : microsoft.status === "missing"
+                ? "border-amber/45 bg-amber/[0.06]"
+                : "border-edge bg-panel/40"
         }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${microsoft?.status === "ok" ? "text-sky" : "text-muted"}`}>
-              {microsoft === null ? "◷" : microsoft.status === "ok" ? "✓" : "○"} Microsoft connection
+            <p className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${microsoft?.status === "ok" ? "text-sky" : microsoft?.status === "missing" ? "text-amber" : "text-muted"}`}>
+              {microsoft === null ? "◷" : microsoft.status === "ok" ? "✓" : microsoft.status === "missing" ? "!" : "○"} Microsoft connection
             </p>
             <p className="mt-1 text-sm leading-relaxed text-muted">
               {microsoft === null
                 ? "Checking the live connection…"
                 : microsoft.status === "ok"
                   ? `Connected${microsoft.email ? ` as ${microsoft.email}` : ""}. Outlook email and Microsoft Calendar belong only to this LiveCoach account.`
+                  : microsoft.status === "missing"
+                    ? `A Microsoft connection is saved${microsoft.email ? ` for ${microsoft.email}` : ""}, but Microsoft is not granting access. Reconnect it or disconnect it below.`
                   : microsoft.configured
                     ? "Optional. Connect Outlook, Hotmail or Microsoft 365 for this user's email and calendar."
                     : "Microsoft support is installed but needs the Microsoft app credentials before accounts can connect."}
             </p>
             {microsoftNote ? (
-              <p className="mt-1 font-mono text-[0.58rem] text-sky">{microsoftNote}</p>
+              <p aria-live="polite" className="mt-1 font-mono text-[0.58rem] text-sky">{microsoftNote}</p>
             ) : null}
           </div>
-          {microsoft?.status === "ok" ? (
-            <span className="shrink-0 rounded-full border border-sky/55 bg-sky/10 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sky">
-              ● Microsoft connected
-            </span>
+          {microsoft && microsoft.status !== "disconnected" ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <span className={`rounded-full border px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider ${microsoft.status === "ok" ? "border-sky/55 bg-sky/10 text-sky" : "border-amber/55 bg-amber/10 text-amber"}`}>
+                {microsoft.status === "ok" ? "● Microsoft connected" : "! Microsoft needs attention"}
+              </span>
+              <button
+                type="button"
+                aria-label="Disconnect Microsoft"
+                onClick={() => {
+                  setDisconnectError("");
+                  setDisconnectConfirm("microsoft");
+                }}
+                className="min-h-10 rounded-full border border-rust/50 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust/10"
+              >
+                Disconnect
+              </button>
+            </div>
           ) : microsoft?.configured ? (
             <a
               href="/api/auth/microsoft/start"
@@ -394,6 +497,19 @@ export default function SettingsPage() {
             </span>
           )}
         </div>
+        {disconnectConfirm === "microsoft" ? (
+          <div role="alert" className="mt-4 rounded-lg border border-rust/45 bg-rust/[0.07] p-3">
+            <p className="text-sm text-bone">Disconnect Microsoft from this LiveCoach account?</p>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              Outlook email and Microsoft Calendar access will stop immediately. Another connected provider will take over, otherwise outreach and calendar sync will pause.
+            </p>
+            {disconnectError ? <p className="mt-2 text-xs text-rust">{disconnectError}</p> : null}
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => setDisconnectConfirm(null)} disabled={!!disconnecting} className="min-h-10 rounded-full border border-edge px-4 font-mono text-[0.58rem] uppercase text-muted disabled:opacity-40">Cancel</button>
+              <button type="button" onClick={() => disconnectConnector("microsoft")} disabled={!!disconnecting} className="min-h-10 rounded-full border border-rust/60 bg-rust/15 px-4 font-mono text-[0.58rem] uppercase text-rust disabled:opacity-40">{disconnecting === "microsoft" ? "Disconnecting…" : "Yes, disconnect Microsoft"}</button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-xl border border-amber/40 bg-amber/[0.05] p-5">

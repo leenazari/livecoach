@@ -163,6 +163,35 @@ export async function googleConnected(
   return { connected: !!data?.refresh_token, email: data?.email || null };
 }
 
+export async function disconnectGoogleConnection(): Promise<{
+  disconnected: boolean;
+  email: string | null;
+}> {
+  const scope = getRequestScope();
+  if (!scope) throw new Error("A verified account is required to disconnect Google");
+  const existing = await connectionForOwner(scope.userId);
+  if (!existing) return { disconnected: false, email: null };
+  const wasConnected = !!existing.refresh_token || !!existing.access_token;
+  const { data, error } = await supabaseService
+    .from("google_oauth")
+    .update({
+      refresh_token: null,
+      access_token: null,
+      expiry: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", existing.id)
+    .eq("owner_id", scope.userId)
+    .eq("workspace_id", scope.workspaceId)
+    .select("owner_id,email,refresh_token,access_token")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Google disconnect was not confirmed");
+  if (data.refresh_token || data.access_token)
+    throw new Error("Google credentials were not cleared");
+  return { disconnected: wasConnected, email: data.email || existing.email || null };
+}
+
 // A valid access token, refreshing via the stored refresh token when needed.
 // Returns null if not connected.
 export async function getAccessToken(

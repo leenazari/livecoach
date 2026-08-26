@@ -171,6 +171,36 @@ export async function microsoftConnected(ownerId?: string): Promise<{
   };
 }
 
+export async function disconnectMicrosoftConnection(): Promise<{
+  disconnected: boolean;
+  email: string | null;
+}> {
+  const scope = getRequestScope();
+  if (!scope) throw new Error("A verified account is required to disconnect Microsoft");
+  const existing = await connectionForOwner(scope.userId);
+  if (!existing) return { disconnected: false, email: null };
+  const wasConnected = !!existing.refresh_token || !!existing.access_token;
+  const { data, error } = await supabaseService
+    .from("microsoft_oauth")
+    .update({
+      refresh_token: null,
+      access_token: null,
+      expiry: null,
+      scopes: [],
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", existing.id)
+    .eq("owner_id", scope.userId)
+    .eq("workspace_id", scope.workspaceId)
+    .select("owner_id,email,refresh_token,access_token")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Microsoft disconnect was not confirmed");
+  if (data.refresh_token || data.access_token)
+    throw new Error("Microsoft credentials were not cleared");
+  return { disconnected: wasConnected, email: data.email || existing.email || null };
+}
+
 export async function getMicrosoftAccessToken(
   forceRefresh = false,
   ownerId?: string
