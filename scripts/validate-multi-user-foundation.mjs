@@ -438,7 +438,7 @@ assert.match(teamRoute, /CRM access is provider-neutral/);
 assert.match(teamRoute, /publicAppOrigin\(req\.nextUrl\.origin\)/);
 assert.match(teamRoute, /workspace_invitation_replaced/);
 assert.match(publicAppUrl, /stale local development value/i);
-assert.match(publicAppUrl, /VERCEL_PROJECT_PRODUCTION_URL/);
+assert.match(publicAppUrl, /https:\/\/www\.livecoachcrm\.com/);
 assert.doesNotMatch(
   teamRoute,
   /This person must connect their own Google account before activation/

@@ -76,7 +76,7 @@ Core CRM access uses the invitation login and does not require Google. To let a
 user connect Outlook or Hotmail for their own email and calendar, register a
 Microsoft Entra web application that accepts personal and organisational
 accounts. Add the production callback URL
-`https://livecoach-alpha.vercel.app/api/auth/microsoft/callback`, grant delegated
+`https://www.livecoachcrm.com/api/auth/microsoft/callback`, grant delegated
 `User.Read`, `Mail.Read`, `Mail.Send` and `Calendars.ReadWrite` permissions, then
 set `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` and
 `MICROSOFT_REDIRECT_URI` in Vercel. Each OAuth connection remains scoped to the
