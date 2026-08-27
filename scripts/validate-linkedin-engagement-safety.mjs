@@ -23,8 +23,9 @@ assert.match(route, /no longer opens or scrapes LinkedIn links/);
 assert.match(route, /publicLinkLookup: false/);
 
 assert.match(page, /Manual safe mode/);
-assert.match(page, /No LinkedIn scraping or account connection/);
+assert.match(page, /No LinkedIn scraping\./);
 assert.match(page, /only reads the words you paste/);
+assert.match(page, /Messages, connection requests and this comment remain manual/);
 assert.match(page, /A link on its own is deliberately rejected/);
 assert.match(page, /signed-in salesperson's own saved voice/);
 

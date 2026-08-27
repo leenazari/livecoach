@@ -24,6 +24,17 @@ type GmailIssue =
   | "rate_limited"
   | "google_error";
 
+type LinkedInStatus = {
+  status: "ok" | "expired" | "disconnected";
+  connected: boolean;
+  email: string | null;
+  displayName: string | null;
+  pictureUrl: string | null;
+  socialAccess: boolean;
+  expiresAt: string | null;
+  configured: boolean;
+};
+
 function gmailIssueCopy(issue?: GmailIssue): string {
   if (issue === "scope_missing")
     return "The Google token does not contain Gmail read permission.";
@@ -88,6 +99,11 @@ export default function SettingsPage() {
     configured: boolean;
   } | null>(null);
   const [microsoftNote, setMicrosoftNote] = useState("");
+  const [linkedin, setLinkedin] = useState<LinkedInStatus | null>(null);
+  const [linkedinNote, setLinkedinNote] = useState("");
+  const [linkedinDisconnecting, setLinkedinDisconnecting] = useState(false);
+  const [linkedinDisconnectConfirm, setLinkedinDisconnectConfirm] = useState(false);
+  const [linkedinDisconnectError, setLinkedinDisconnectError] = useState("");
   const [disconnectConfirm, setDisconnectConfirm] = useState<
     "google" | "microsoft" | null
   >(null);
@@ -125,6 +141,9 @@ export default function SettingsPage() {
     }>("/api/auth/microsoft/status")
       .then((d) => setMicrosoft(d))
       .catch(() => {});
+    crmFetch<LinkedInStatus>("/api/auth/linkedin/status")
+      .then((d) => setLinkedin(d))
+      .catch(() => {});
     if (typeof window !== "undefined") {
       const g = new URLSearchParams(window.location.search).get("google");
       if (g === "connected") setGcalNote("Google Calendar connected.");
@@ -146,6 +165,21 @@ export default function SettingsPage() {
         );
       else if (m === "identity_missing")
         setMicrosoftNote("Microsoft did not return an account identity.");
+      const linkedInResult = new URLSearchParams(window.location.search).get("linkedin");
+      if (linkedInResult === "connected")
+        setLinkedinNote("LinkedIn connected to this LiveCoach account.");
+      else if (linkedInResult === "social_enabled")
+        setLinkedinNote("LinkedIn connected with approved posting and like permission.");
+      else if (linkedInResult === "denied")
+        setLinkedinNote("LinkedIn connection cancelled. Nothing changed.");
+      else if (linkedInResult === "account_in_use")
+        setLinkedinNote(
+          "That LinkedIn account is already connected to another LiveCoach user."
+        );
+      else if (linkedInResult === "identity_missing")
+        setLinkedinNote("LinkedIn did not return an account identity. Try again.");
+      else if (linkedInResult === "error")
+        setLinkedinNote("LinkedIn could not be connected. Check the app setup and try again.");
     }
   }, []);
 
@@ -225,6 +259,36 @@ export default function SettingsPage() {
       );
     } finally {
       setDisconnecting(null);
+    }
+  };
+
+  const disconnectLinkedIn = async () => {
+    setLinkedinDisconnecting(true);
+    setLinkedinDisconnectError("");
+    try {
+      const result = await crmFetch<{ ok: boolean }>(
+        "/api/auth/linkedin/disconnect",
+        { method: "DELETE" }
+      );
+      if (!result.ok) throw new Error("The database did not confirm the disconnect");
+      setLinkedin((current) => ({
+        status: "disconnected",
+        connected: false,
+        email: null,
+        displayName: null,
+        pictureUrl: null,
+        socialAccess: false,
+        expiresAt: null,
+        configured: current?.configured ?? true,
+      }));
+      setLinkedinNote("LinkedIn disconnected from this LiveCoach account.");
+      setLinkedinDisconnectConfirm(false);
+    } catch (error: any) {
+      setLinkedinDisconnectError(
+        error?.message || "The LinkedIn connection was not removed. Please try again."
+      );
+    } finally {
+      setLinkedinDisconnecting(false);
     }
   };
 
@@ -513,6 +577,126 @@ export default function SettingsPage() {
             <div className="mt-3 flex flex-wrap justify-end gap-2">
               <button type="button" onClick={() => setDisconnectConfirm(null)} disabled={!!disconnecting} className="min-h-10 rounded-full border border-edge px-4 font-mono text-[0.58rem] uppercase text-muted disabled:opacity-40">Cancel</button>
               <button type="button" onClick={() => disconnectConnector("microsoft")} disabled={!!disconnecting} className="min-h-10 rounded-full border border-rust/60 bg-rust/15 px-4 font-mono text-[0.58rem] uppercase text-rust disabled:opacity-40">{disconnecting === "microsoft" ? "Disconnecting…" : "Yes, disconnect Microsoft"}</button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div
+        className={`mb-5 rounded-xl border p-5 ${
+          linkedin === null
+            ? "border-edge bg-panel/40"
+            : linkedin.status === "ok"
+              ? "border-sky/45 bg-sky/[0.06]"
+              : linkedin.status === "expired"
+                ? "border-amber/45 bg-amber/[0.06]"
+                : "border-edge bg-panel/40"
+        }`}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="max-w-3xl">
+            <p
+              className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
+                linkedin?.status === "ok"
+                  ? "text-sky"
+                  : linkedin?.status === "expired"
+                    ? "text-amber"
+                    : "text-muted"
+              }`}
+            >
+              {linkedin === null
+                ? "◷"
+                : linkedin.status === "ok"
+                  ? "✓"
+                  : linkedin.status === "expired"
+                    ? "!"
+                    : "○"} LinkedIn connection
+            </p>
+            <p className="mt-1 text-sm leading-relaxed text-muted">
+              {linkedin === null
+                ? "Checking the live connection…"
+                : linkedin.status === "ok"
+                  ? `Connected${linkedin.displayName ? ` as ${linkedin.displayName}` : linkedin.email ? ` as ${linkedin.email}` : ""}. This LinkedIn identity belongs only to this LiveCoach account.${linkedin.socialAccess ? " LinkedIn has also approved posting and like permission." : " Posting and like permission has not been requested."}`
+                  : linkedin.status === "expired"
+                    ? "The saved LinkedIn permission has expired. Reconnect to renew it."
+                    : linkedin.configured
+                      ? "Optional. Connect this salesperson's own LinkedIn account without sharing it with another LiveCoach user."
+                      : "LinkedIn support is installed but needs the LinkedIn app credentials before accounts can connect."}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted">
+              LiveCoach does not scrape LinkedIn. Messages and connection requests remain manual. Connecting never gives another salesperson access to this account and never publishes anything automatically.
+            </p>
+            {linkedinNote ? (
+              <p aria-live="polite" className="mt-2 font-mono text-[0.58rem] text-sky">
+                {linkedinNote}
+              </p>
+            ) : null}
+          </div>
+          {linkedin?.status === "ok" ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {!linkedin.socialAccess ? (
+                <a
+                  href="/api/auth/linkedin/start?social=1"
+                  className="min-h-10 rounded-full border border-amber/55 bg-amber/10 px-4 py-2 text-center font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/20"
+                >
+                  allow posts and likes
+                </a>
+              ) : (
+                <span className="rounded-full border border-sky/55 bg-sky/10 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-sky">
+                  ● LinkedIn connected
+                </span>
+              )}
+              <button
+                type="button"
+                aria-label="Disconnect LinkedIn"
+                onClick={() => {
+                  setLinkedinDisconnectError("");
+                  setLinkedinDisconnectConfirm(true);
+                }}
+                className="min-h-10 rounded-full border border-rust/50 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust/10"
+              >
+                Disconnect
+              </button>
+            </div>
+          ) : linkedin?.configured ? (
+            <a
+              href="/api/auth/linkedin/start"
+              className="shrink-0 rounded-full border border-sky/60 bg-sky/10 px-4 py-2 text-center font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/20"
+            >
+              {linkedin.status === "expired" ? "reconnect LinkedIn" : "connect LinkedIn"}
+            </a>
+          ) : (
+            <span className="shrink-0 rounded-full border border-edge px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted">
+              administrator setup needed
+            </span>
+          )}
+        </div>
+        {linkedinDisconnectConfirm ? (
+          <div role="alert" className="mt-4 rounded-lg border border-rust/45 bg-rust/[0.07] p-3">
+            <p className="text-sm text-bone">Disconnect LinkedIn from this LiveCoach account?</p>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              The saved LinkedIn token and account identity will be removed. Reconnecting later starts LinkedIn authorization again.
+            </p>
+            {linkedinDisconnectError ? (
+              <p className="mt-2 text-xs text-rust">{linkedinDisconnectError}</p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setLinkedinDisconnectConfirm(false)}
+                disabled={linkedinDisconnecting}
+                className="min-h-10 rounded-full border border-edge px-4 font-mono text-[0.58rem] uppercase text-muted disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={disconnectLinkedIn}
+                disabled={linkedinDisconnecting}
+                className="min-h-10 rounded-full border border-rust/60 bg-rust/15 px-4 font-mono text-[0.58rem] uppercase text-rust disabled:opacity-40"
+              >
+                {linkedinDisconnecting ? "Disconnecting…" : "Yes, disconnect LinkedIn"}
+              </button>
             </div>
           </div>
         ) : null}
