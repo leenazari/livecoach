@@ -172,7 +172,7 @@ export default function NotificationsPage() {
         const popup = new Notification("LiveCoach notifications are on", {
           body: "New replies and leads assigned to you can now appear on this desktop.",
           tag: "livecoach-notifications-enabled",
-          icon: "/favicon.ico",
+          icon: "/brand/livecoach-mark-192.png",
         });
         window.setTimeout(() => popup.close(), 5_000);
       }

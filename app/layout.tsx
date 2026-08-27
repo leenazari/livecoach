@@ -2,8 +2,16 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Interview Coach — live whisper",
-  description: "Real-time interview coaching that suggests your next question.",
+  title: {
+    default: "LiveCoach CRM",
+    template: "%s | LiveCoach CRM",
+  },
+  description: "Live sales coaching, outreach and CRM intelligence in one place.",
+  applicationName: "LiveCoach CRM",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/brand/livecoach-mark-180.png", sizes: "180x180", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({

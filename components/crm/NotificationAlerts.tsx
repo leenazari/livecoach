@@ -132,7 +132,7 @@ export default function NotificationAlerts({
           const popup = new Notification(item.title, {
             body: item.body,
             tag: item.id,
-            icon: "/favicon.ico",
+            icon: "/brand/livecoach-mark-192.png",
           });
           popup.onclick = () => {
             window.focus();

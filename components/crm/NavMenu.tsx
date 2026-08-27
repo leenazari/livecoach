@@ -7,6 +7,7 @@ import { createSupabaseBrowser } from "@/lib/supabase-browser";
 import { clearCrmCache, crmFetch, getCached } from "@/lib/crm";
 import ThemeToggle from "@/components/ThemeToggle";
 import NotificationAlerts from "@/components/crm/NotificationAlerts";
+import LiveCoachLogo from "@/components/LiveCoachLogo";
 
 // Persistent left sidebar, OPEN by default. Minimise collapses it to a ☰ button;
 // the choice is remembered (localStorage). When open it pushes the page content
@@ -316,9 +317,7 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
   return (
     <aside className="fixed left-0 top-0 z-50 flex h-full w-60 flex-col border-r border-edge bg-panel">
       <div className="flex items-center justify-between px-5 py-4">
-        <span className="font-display text-[1.15rem] tracking-tight text-bone">
-          <span className="italic text-amber">Live</span>Coach
-        </span>
+        <LiveCoachLogo markClassName="h-8 w-8" wordmarkClassName="font-display text-[1.15rem] tracking-tight" />
         <button
           type="button"
           onClick={() => setMinimised(true)}

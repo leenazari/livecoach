@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase-browser";
 import ThemeToggle from "@/components/ThemeToggle";
 import { clearCrmCache } from "@/lib/crm";
+import LiveCoachLogo from "@/components/LiveCoachLogo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -65,8 +66,11 @@ export default function LoginPage() {
   return (
     <main className="relative z-10 mx-auto flex min-h-screen max-w-[440px] flex-col justify-center px-5 py-10">
       <ThemeToggle className="absolute right-5 top-5" />
-      <h1 className="font-display text-[2.4rem] leading-none tracking-tight text-bone">
-        <span className="italic text-amber">Live</span>Coach
+      <h1>
+        <LiveCoachLogo
+          markClassName="h-12 w-12"
+          wordmarkClassName="font-display text-[2.4rem] leading-none tracking-tight"
+        />
       </h1>
       <p className="mt-2 mb-8 font-mono text-xs uppercase tracking-[0.25em] text-muted">
         invite only access
