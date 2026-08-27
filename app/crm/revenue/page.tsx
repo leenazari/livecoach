@@ -130,6 +130,29 @@ export default function RevenuePage() {
     finally { setBusy(""); }
   };
 
+  const dismissOpportunity = async (row: Opportunity) => {
+    setBusy(`dismiss:${row.id}`); setError(""); setNotice("");
+    try {
+      const { opportunity } = await crmFetch<{ opportunity: Opportunity & { status: string } }>(`/api/crm/opportunities/${row.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: "dismissed",
+          sourceType: "human",
+          sourceChannel: "pipeline_dashboard",
+          rationale: "Removed from the active pipeline by the user",
+          evidence: { preservedHistory: true },
+        }),
+      });
+      if (opportunity?.status !== "dismissed") throw new Error("The database did not confirm the removal");
+      setNotice(`${row.title} was removed from the active pipeline. Its client and history are still saved.`);
+      await load();
+    } catch (e: any) {
+      setError(e.message || "That deal could not be removed from the pipeline");
+    } finally {
+      setBusy("");
+    }
+  };
+
   const saveTarget = async () => {
     setBusy("target"); setError(""); setNotice("");
     try {
@@ -262,6 +285,7 @@ export default function RevenuePage() {
           busy={busy}
           onChange={updateRow as any}
           onSave={saveOpportunity as any}
+          onDismiss={dismissOpportunity as any}
         />
 
         {excludedRows.length ? <section className="mt-4 rounded-xl border border-edge bg-panel p-4">

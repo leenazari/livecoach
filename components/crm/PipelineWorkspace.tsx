@@ -44,6 +44,7 @@ type Props = {
   busy: string;
   onChange: (id: string, patch: Partial<Row>) => void;
   onSave: (row: Row) => void;
+  onDismiss: (row: Row) => void;
 };
 
 const input = "min-h-10 w-full rounded-lg border border-edge bg-ink/70 px-2.5 py-2 text-sm text-bone outline-none focus:border-amber/60";
@@ -71,6 +72,7 @@ function DealDetails({
   busy,
   onChange,
   onSave,
+  onDismiss,
 }: Props & { row: Row }) {
   const reasons = Array.isArray(row.win_outlook_reasons) ? row.win_outlook_reasons : [];
   const questions = Array.isArray(row.outlookQuestions) ? row.outlookQuestions : [];
@@ -80,6 +82,7 @@ function DealDetails({
     row.assigned_to_user_id === currentUser;
   const [history, setHistory] = useState<Record<string, any>[] | null>(null);
   const [historyError, setHistoryError] = useState("");
+  const [confirmDismiss, setConfirmDismiss] = useState(false);
   const loadHistory = async () => {
     if (history) return;
     setHistoryError("");
@@ -185,9 +188,16 @@ function DealDetails({
           {row.win_outlook_override ? <span className="text-amber">Human override active</span> : "System outlook can update from new stored evidence"}
           {row.win_outlook_as_of ? ` · assessed ${dateTime(row.win_outlook_as_of)}` : ""}
         </div>
-        <button onClick={() => onSave(row)} disabled={!!busy || !canEdit} className="min-h-10 rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.57rem] uppercase text-amber disabled:opacity-40">
-          {busy === `opp:${row.id}` ? "Saving…" : "Save confirmed changes"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => onSave(row)} disabled={!!busy || !canEdit} className="min-h-10 rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.57rem] uppercase text-amber disabled:opacity-40">
+            {busy === `opp:${row.id}` ? "Saving…" : "Save confirmed changes"}
+          </button>
+          {!confirmDismiss ? (
+            <button type="button" onClick={() => setConfirmDismiss(true)} disabled={!!busy || !canEdit} className="min-h-10 rounded-lg border border-edge px-3 py-2 font-mono text-[0.55rem] uppercase text-muted hover:border-rust/50 hover:text-rust disabled:opacity-40">Remove from pipeline</button>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-rust/45 bg-rust/[0.07] px-2 py-1"><span className="text-xs text-bone">Keep the history, remove this active deal?</span><button type="button" onClick={() => setConfirmDismiss(false)} className="min-h-9 rounded-md border border-edge px-2 font-mono text-[0.5rem] uppercase text-muted">Keep</button><button type="button" onClick={() => { setConfirmDismiss(false); onDismiss(row); }} disabled={!!busy} className="min-h-9 rounded-md border border-rust/55 bg-rust/15 px-2 font-mono text-[0.5rem] uppercase text-rust disabled:opacity-40">{busy === `dismiss:${row.id}` ? "Removing…" : "Remove"}</button></div>
+          )}
+        </div>
       </div>
       <div className="mt-3 border-t border-edge pt-3">
         <button type="button" onClick={loadHistory} className="font-mono text-[0.53rem] uppercase text-muted hover:text-amber">
@@ -223,6 +233,21 @@ export default function PipelineWorkspace(props: Props) {
     () => rows.filter((row) => opportunityMatchesOwner(row, ownerFilter, currentUser)),
     [currentUser, ownerFilter, rows]
   );
+  const companyDealCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    visibleRows.forEach((row) =>
+      counts.set(row.company_id, (counts.get(row.company_id) || 0) + 1)
+    );
+    return counts;
+  }, [visibleRows]);
+  const dealThreadBadge = (row: Row) => {
+    const count = companyDealCounts.get(row.company_id) || 1;
+    return count > 1 ? (
+      <span className="ml-2 rounded-full border border-edge px-1.5 py-0.5 font-mono text-[0.43rem] uppercase text-muted">
+        {count} distinct deals
+      </span>
+    ) : null;
+  };
   const ownerViewLabel = ownerFilter === "all"
     ? "all team work"
     : ownerFilter === "mine"
@@ -279,13 +304,18 @@ export default function PipelineWorkspace(props: Props) {
         <>
           <div className="mt-3 space-y-2 md:hidden">
             {visibleRows.map((row) => <article key={row.id} className="rounded-xl border border-edge bg-ink/35 p-3">
-              <div className="flex items-start justify-between gap-2"><div><Link href={`/crm/${row.company_id}`} className="font-display text-lg text-bone hover:text-amber">{row.company}</Link><p className="text-sm text-muted">{row.title}</p></div><OutlookBadge row={row} /></div>
+              <div className="flex items-start justify-between gap-2"><div><Link href={`/crm/${row.company_id}`} className="font-display text-lg text-bone hover:text-amber">{row.company}</Link>{dealThreadBadge(row)}<p className="text-sm text-muted">{row.title}</p></div><OutlookBadge row={row} /></div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Stage</span><strong className="text-bone">{formatLabel(row.pipeline_stage)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Value</span><strong className="text-bone">{gbp(row.value)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Owner</span><strong className="text-bone">{ownerName(row)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Motion</span><strong className="text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Last activity</span><strong className="text-bone">{dateTime(row.lastMeaningfulActivityAt)}</strong></div></div>
               <p className="mt-3 rounded-lg border border-amber/25 bg-amber/[0.05] p-2 text-sm text-amber">{row.next_action || row.nextAction}</p>
               <DealDetails {...props} row={row} />
             </article>)}
           </div>
           <div className="mt-3 hidden overflow-x-auto md:block">
+            {companyDealCounts.size < visibleRows.length ? (
+              <p className="mb-2 rounded-lg border border-sky/30 bg-sky/[0.05] px-3 py-2 text-xs text-sky">
+                A repeated client name means that client has separate deal threads. The title underneath identifies each commercial outcome.
+              </p>
+            ) : null}
             <table className="w-full min-w-[1080px] border-separate border-spacing-y-2 text-left">
               <thead><tr className="font-mono text-[0.5rem] uppercase text-muted"><th className="px-2">Deal</th><th className="px-2">Owner</th><th className="px-2">Stage</th><th className="px-2">Win outlook</th><th className="px-2">Value</th><th className="px-2">Engagement</th><th className="px-2">Last activity</th><th className="px-2">Next action</th></tr></thead>
               <tbody>{visibleRows.map((row) => <tr key={row.id} className="align-top [&>td]:border-y [&>td]:border-edge [&>td]:bg-ink/35 [&>td]:p-2 first:[&>td]:rounded-l-lg last:[&>td]:rounded-r-lg"><td className="w-52 border-l"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><p className="max-w-52 text-xs text-muted">{row.title}</p>{row.priorityReasons?.length ? <p className="mt-1 text-[0.67rem] text-amber">{row.priorityReasons.slice(0, 2).join(" · ")}</p> : null}</td><td className="text-xs text-bone">{ownerName(row)}</td><td><span className="text-sm text-bone">{formatLabel(row.pipeline_stage)}</span></td><td><OutlookBadge row={row} /></td><td className="text-sm text-bone">{gbp(row.value)}</td><td className="max-w-36 text-xs text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}<span className="mt-1 block text-muted">{row.active_contact_method ? formatLabel(row.active_contact_method) : "Method not set"}</span></td><td className="text-xs text-bone">{dateTime(row.lastMeaningfulActivityAt)}{row.nextMeetingAt ? <span className="mt-1 block text-amber">Meeting {dateTime(row.nextMeetingAt)}</span> : null}</td><td className="w-72"><p className="text-sm text-amber">{row.next_action || row.nextAction}</p><p className="mt-1 text-xs text-muted">{row.next_action_due_at ? `Due ${dateTime(row.next_action_due_at)}` : "No due date"}</p><DealDetails {...props} row={row} /></td></tr>)}</tbody>

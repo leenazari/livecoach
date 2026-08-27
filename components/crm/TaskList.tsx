@@ -97,6 +97,7 @@ export default function TaskList({
   emptyText = "Nothing on your plate. Nice.",
   hideCommitments = false,
   clientlessOnly = false,
+  allowBulk = false,
 }: {
   companyId?: string;
   showCompany?: boolean;
@@ -107,6 +108,9 @@ export default function TaskList({
   // The dashboard groups client-linked to-dos under Opportunities, so its
   // "Do next" list shows ONLY the loose, client-less to-dos to avoid repeats.
   clientlessOnly?: boolean;
+  // Dashboard and full-list views can enter a selection mode and remove many
+  // stale tasks in one recoverable, owner-scoped save.
+  allowBulk?: boolean;
 }) {
   const router = useRouter();
   const url = `/api/crm/tasks${companyId ? `?companyId=${companyId}` : ""}`;
@@ -121,6 +125,8 @@ export default function TaskList({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   // A confirmed close must win over any list request that began before it.
   const loadSeq = useRef(0);
   const closedIds = useRef(new Set<string>());
@@ -136,6 +142,8 @@ export default function TaskList({
     if (seq !== loadSeq.current) return [];
     const next = (d.tasks || []).filter((task) => !closedIds.current.has(task.id));
     showTasks(next);
+    const nextIds = new Set(next.map((task) => task.id));
+    setSelectedIds((current) => current.filter((id) => nextIds.has(id)));
     return next;
   };
 
@@ -378,6 +386,46 @@ export default function TaskList({
   const later = shown.filter(isLaterPrep);
   const near = shown.filter((t) => !isLaterPrep(t));
   const visible = showLater ? [...near, ...later] : near;
+  const selectable = visible.filter(
+    (task) => !task.upcoming_id && task.status === "open"
+  );
+  const allSelectableSelected =
+    selectable.length > 0 && selectable.every((task) => selectedIds.includes(task.id));
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((current) =>
+      current.includes(id)
+        ? current.filter((selectedId) => selectedId !== id)
+        : [...current, id]
+    );
+  };
+
+  const dismissSelected = async () => {
+    if (!selectedIds.length || savingId) return;
+    const selected = [...selectedIds];
+    setSavingId("bulk");
+    setSaveError("");
+    try {
+      const result = await crmFetch<{ updatedIds: string[]; skippedIds: string[] }>(
+        "/api/crm/tasks/bulk",
+        { method: "POST", body: JSON.stringify({ taskIds: selected }) }
+      );
+      const updated = new Set(result.updatedIds || []);
+      if (!updated.size) throw new Error("No selected to-dos were removed");
+      updated.forEach((id) => closedIds.current.add(id));
+      showTasks(tasks.filter((task) => !updated.has(task.id)));
+      setSelectedIds([]);
+      setBulkMode(false);
+      savedEverywhere();
+      if (result.skippedIds?.length) {
+        setSaveError(`${result.skippedIds.length} item changed elsewhere and was left alone.`);
+      }
+    } catch (error: any) {
+      setSaveError(error?.message || "The selected to-dos did not save. Please try again.");
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   if (shown.length === 0) {
     return (
@@ -393,6 +441,24 @@ export default function TaskList({
       <p className="mb-2 rounded-md border border-rust/50 bg-rust/10 px-2 py-1.5 font-sans text-[0.76rem] text-rust">
         {saveError}
       </p>
+    ) : null}
+    {allowBulk && selectable.length ? (
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-edge bg-ink/30 px-2.5 py-2">
+        <p className="text-xs text-muted">
+          {bulkMode ? `${selectedIds.length} selected` : `${selectable.length} open to-dos`}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {!bulkMode ? (
+            <button type="button" onClick={() => setBulkMode(true)} className="min-h-9 rounded-md border border-edge px-3 font-mono text-[0.52rem] uppercase text-muted hover:text-bone">Select items</button>
+          ) : (
+            <>
+              <button type="button" onClick={() => setSelectedIds(allSelectableSelected ? [] : selectable.map((task) => task.id))} disabled={Boolean(savingId)} className="min-h-9 rounded-md border border-edge px-3 font-mono text-[0.52rem] uppercase text-muted disabled:opacity-40">{allSelectableSelected ? "Clear all" : "Select all"}</button>
+              <button type="button" onClick={() => { setBulkMode(false); setSelectedIds([]); }} disabled={Boolean(savingId)} className="min-h-9 rounded-md border border-edge px-3 font-mono text-[0.52rem] uppercase text-muted disabled:opacity-40">Cancel</button>
+              <button type="button" onClick={() => void dismissSelected()} disabled={Boolean(savingId) || !selectedIds.length} className="min-h-9 rounded-md border border-rust/50 bg-rust/10 px-3 font-mono text-[0.52rem] uppercase text-rust disabled:opacity-40">{savingId === "bulk" ? "Removing…" : `Remove ${selectedIds.length}`}</button>
+            </>
+          )}
+        </div>
+      </div>
     ) : null}
     <ul className="flex flex-col">
       {visible.map((t) => {
@@ -410,7 +476,7 @@ export default function TaskList({
             key={t.id}
             className="flex items-center gap-2.5 border-b border-edge/40 py-2 last:border-none"
           >
-            {!t.upcoming_id && (
+            {!bulkMode && !t.upcoming_id && (
               <button
                 type="button"
                 onClick={() => togglePin(t)}
@@ -424,15 +490,18 @@ export default function TaskList({
             )}
             <button
               type="button"
-              onClick={() => toggle(t)}
-              title={done ? "tick to un-complete" : "mark done"}
+              onClick={() => bulkMode && !t.upcoming_id ? toggleSelected(t.id) : toggle(t)}
+              disabled={bulkMode && Boolean(t.upcoming_id)}
+              title={bulkMode ? "select to remove" : done ? "tick to un-complete" : "mark done"}
               className={`flex h-4 w-4 flex-none items-center justify-center rounded border text-[0.6rem] transition ${
-                done
+                bulkMode && selectedIds.includes(t.id)
+                  ? "border-rust bg-rust text-ink"
+                  : done
                   ? "border-sage bg-sage text-ink"
                   : "border-muted hover:border-sage"
               }`}
             >
-              {done ? "✓" : ""}
+              {bulkMode && selectedIds.includes(t.id) ? "✓" : done ? "✓" : ""}
             </button>
 
             {editingId === t.id ? (
@@ -549,7 +618,7 @@ export default function TaskList({
             {/* Prep to-dos are derived from the call, so there's no row to
                 delete - you complete them by ticking (marks the call prepped)
                 or they roll off once the call has passed. */}
-            {!t.upcoming_id && (
+            {!bulkMode && !t.upcoming_id && (
               <button
                 type="button"
                 onClick={() => beginEdit(t)}
@@ -561,7 +630,7 @@ export default function TaskList({
                 edit
               </button>
             )}
-            {!t.upcoming_id && (
+            {!bulkMode && !t.upcoming_id && (
               <button
                 type="button"
                 onClick={() => remove(t)}

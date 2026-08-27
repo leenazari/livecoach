@@ -94,8 +94,11 @@ assert.match(migration, /call_interpreted/);
 assert.match(migration, /opportunity_events_quick_call_request_uidx/);
 assert.match(migration, /source_type = 'human' and changes \? 'pipeline_stage'/);
 
-assert.match(lane, /Log call/);
-assert.match(lane, /Save call and update deal/);
+assert.match(lane, /Log activity/);
+assert.match(lane, /Save activity and update deal/);
+assert.match(lane, /Face to face/);
+assert.match(route, /QUICK_ACTIVITY_METHODS/);
+assert.match(route, /active_contact_method: contactMethod/);
 assert.match(lane, /Human override protects/);
 assert.match(inbox, /quickCallRequestId/);
 assert.match(inbox, /\/quick-call/);

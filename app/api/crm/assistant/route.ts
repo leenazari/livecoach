@@ -424,7 +424,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
         ? await findCompanyById(defaultCompanyId)
         : null);
       if (!company) continue;
-      const patch: Record<string, string | null> = {};
+      const patch: Record<string, string | boolean | null> = {};
       if (typeof it.stage === "string") {
         const stage = RELATIONSHIP_STAGE_BY_KEY.get(it.stage.trim().toLowerCase());
         if (stage) patch.stage = stage;
@@ -442,6 +442,15 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
           typeof it.emailContext === "string"
             ? it.emailContext.trim().slice(0, 6000) || null
             : null;
+      if (it.removeFromPipeline === true) {
+        patch.removeFromPipeline = true;
+        patch.sourceType = "human";
+        patch.sourceChannel = "brain_confirmed_client_update";
+        patch.rationale =
+          typeof it.rationale === "string" && it.rationale.trim()
+            ? it.rationale.trim().slice(0, 1000)
+            : "User confirmed this relationship is not an active sales prospect";
+      }
       if (!Object.keys(patch).length) continue;
       out.push({
         key,
@@ -1303,7 +1312,7 @@ ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does th
 ---END ACTIONS---
 Additional supported actions are:
 {"type":"create_document","title":"<finished document title>","documentType":"plan|agreement|handbook|proposal|report|brief|other","instructions":"<grounded scope, intended reader, required outcome and useful structure>","client":"<optional exact client name>","sourceTask":"<optional exact open to-do text from DOCUMENT STUDIO ON DEMAND>"}
-{"type":"update_client","client":"<client name, omit on their profile>","name":"<optional corrected name>","stage":"New|Discovery|Qualified|Proposal|Negotiation|Partner|Customer|Product Trial|In House|Dormant","sector":"<optional>","website":"<optional>","domain":"<optional>","notes":"<optional, null to clear>","emailContext":"<optional, null to clear>"}
+{"type":"update_client","client":"<client name, omit on their profile>","name":"<optional corrected name>","stage":"New|Discovery|Qualified|Proposal|Negotiation|Partner|Customer|Product Trial|In House|Dormant","sector":"<optional>","website":"<optional>","domain":"<optional>","notes":"<optional, null to clear>","emailContext":"<optional, null to clear>","removeFromPipeline":true,"rationale":"<only when the user explicitly says this is not a prospect, client or buyer>"}
 {"type":"upsert_stakeholder","client":"<client name, omit on their profile>","person":"<contact name>","buyingRole":"decision_maker|champion|user|influencer|blocker|unknown","influence":"high|medium|low","engagement":"warm|neutral|cold","jobTitle":"<optional>","email":"<optional>"}
 {"type":"update_contact","client":"<client name, omit on their profile>","person":"<existing contact name>","newName":"<optional corrected name>","role":"<optional, null to clear>","email":"<optional, null to clear>","sector":"<optional, null to clear>","notes":"<optional, null to clear>"}
 {"type":"update_task","client":"<client name, omit on their profile>","item":"<existing to-do text>","status":"done|open","newText":"<optional replacement>","dueAt":"YYYY-MM-DD or null","pinned":true,"action":"email|call|task"}
@@ -1313,6 +1322,7 @@ Additional supported actions are:
 {"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","dealIntent":"<the commercial outcome this deal is pursuing>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","winOutlook":"not_assessed|at_risk|possible|likely|highly_likely|won","winOutlookConfidence":0,"winOutlookReasons":["<stored evidence only>"],"winOutlookQuestions":["<targeted next-call question>"],"engagementMotion":"cold_outreach_campaign|personal_relationship_led|existing_customer_expansion|inbound_enquiry|partner_referral","activeContactMethod":"automated_email|personal_email|phone|video_call|linkedin|event|in_person|other","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>","rationale":"<why this change is supported>"}
 For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Lifecycle stage and win outlook are separate. Never raise win outlook without concise stored evidence. If evidence is missing, keep it not_assessed and add targeted winOutlookQuestions for the next call. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
 Use update_client for the relationship-level client stage and core facts. Use update_opportunity for a real revenue deal stage. When "move this client to qualified" clearly refers to a deal, update the opportunity. When it refers to the overall relationship or there is no deal, update the client stage. Never update both unless the user explicitly asks.
+When the user explicitly says a company is a partner, supplier, internal organisation or other non-buyer and should not appear in prospecting or the sales pipeline, include removeFromPipeline:true with update_client. Do not include it merely because the relationship stage is Partner, because a partner can still have a genuine expansion deal. This action dismisses active revenue opportunities but preserves the client, calls, tasks and immutable deal history.
 Use update_contact to correct or clear an existing person's core details. Use upsert_stakeholder when the change is specifically about their buying role or when the named contact may need to be created.
 Use upsert_stakeholder when the user identifies a decision-maker, champion, influencer, user or blocker. It updates an existing contact or clearly proposes creating the named contact when none exists. Do not guess buying roles from a job title alone.
 Use update_task when the user explicitly asks to complete, rename, pin, unpin or reschedule an existing to-do. If several match, the interface will ask which one.

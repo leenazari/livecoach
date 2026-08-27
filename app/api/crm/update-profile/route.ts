@@ -4,6 +4,7 @@ import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { upsertTasks } from "@/lib/tasks";
 import { workspaceContextBlock } from "@/lib/workspace";
+import { activeCompanyPipelineExclusion } from "@/lib/company-pipeline-exclusion";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest) {
     if (!company) {
       return NextResponse.json({ error: "company not found" }, { status: 404 });
     }
+    const pipelineExclusion = activeCompanyPipelineExclusion(company.profile);
 
     const existingBriefRaw =
       company.profile && typeof company.profile === "object"
@@ -229,7 +231,7 @@ Return the JSON now.`;
       await supabaseAdmin.from("follow_ups").delete().eq("session_id", sessionId);
     }
 
-    if (opportunities.length) {
+    if (opportunities.length && !pipelineExclusion) {
       await supabaseAdmin.from("opportunities").insert(
         opportunities.map((o) => ({
           company_id: companyId,
@@ -303,7 +305,8 @@ Return the JSON now.`;
 
     return NextResponse.json({
       ok: true,
-      opportunities: opportunities.length,
+      opportunities: pipelineExclusion ? 0 : opportunities.length,
+      pipelineExcluded: !!pipelineExclusion,
       followUp: !!followUp,
     });
   } catch (err: any) {

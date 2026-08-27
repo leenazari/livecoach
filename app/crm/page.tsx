@@ -737,13 +737,14 @@ export default function DashboardPage() {
         <TaskList
           hideCommitments
           clientlessOnly
+          allowBulk
           emptyText="Nothing loose. Your client work is grouped below."
         />
       </div>
 
       {/* You promised: commitments YOU made (calls + emails), each with a draft
           to approve. Self-hides when empty. */}
-      <Commitments showCompany />
+      <Commitments showCompany allowBulk />
 
       {/* Weekly spend flag: only shows when this week's all-in spend is over the
           guide, names the biggest driver and the monthly pace. */}
