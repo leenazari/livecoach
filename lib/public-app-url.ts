@@ -1,4 +1,4 @@
-const CANONICAL_PRODUCTION_ORIGIN = "https://livecoach-alpha.vercel.app";
+const CANONICAL_PRODUCTION_ORIGIN = "https://www.livecoachcrm.com";
 
 function normalizedOrigin(value: string | undefined): string | null {
   const raw = String(value || "").trim();
@@ -53,15 +53,9 @@ export function publicAppOrigin(requestOrigin?: string): string {
   }
 
   if (deployed) {
-    const productionDomain = normalizedOrigin(
-      process.env.VERCEL_PROJECT_PRODUCTION_URL
-    );
-    if (
-      productionDomain?.startsWith("https://") &&
-      !isLocalOrPrivateOrigin(productionDomain)
-    ) {
-      return productionDomain;
-    }
+    // External links must remain on the official domain even if Vercel's
+    // project-owned production alias still points at the legacy vercel.app
+    // address. Internal preview-to-preview calls are handled separately below.
     return CANONICAL_PRODUCTION_ORIGIN;
   }
 

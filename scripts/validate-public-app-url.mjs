@@ -25,17 +25,17 @@ try {
   process.env.VERCEL_PROJECT_PRODUCTION_URL = "livecoach-alpha.vercel.app";
   assert.equal(
     publicAppOrigin("http://localhost:3000"),
-    "https://livecoach-alpha.vercel.app",
-    "production email links must reject localhost"
+    "https://www.livecoachcrm.com",
+    "production email links must reject localhost and legacy Vercel aliases"
   );
 
   reset();
   process.env.VERCEL = "1";
   process.env.VERCEL_ENV = "production";
-  process.env.NEXT_PUBLIC_APP_URL = "https://livecoach-alpha.vercel.app/settings";
+  process.env.NEXT_PUBLIC_APP_URL = "https://www.livecoachcrm.com/settings";
   assert.equal(
     publicAppOrigin(),
-    "https://livecoach-alpha.vercel.app",
+    "https://www.livecoachcrm.com",
     "configured production links must be reduced to their origin"
   );
 
@@ -51,7 +51,7 @@ try {
   process.env.VERCEL = "1";
   process.env.VERCEL_ENV = "preview";
   process.env.VERCEL_URL = "livecoach-example-preview.vercel.app";
-  process.env.NEXT_PUBLIC_APP_URL = "https://livecoach-alpha.vercel.app";
+  process.env.NEXT_PUBLIC_APP_URL = "https://www.livecoachcrm.com";
   assert.equal(
     internalAppOrigin("https://attacker.example"),
     "https://livecoach-example-preview.vercel.app",

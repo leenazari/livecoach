@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { buildTeamInvitationActionUrl } from "../lib/team-invitation-link.ts";
 
 const actionUrl = buildTeamInvitationActionUrl({
-  appOrigin: "https://livecoach-alpha.vercel.app",
+  appOrigin: "https://www.livecoachcrm.com",
   authTokenHash: "auth-token-hash",
   authVerificationType: "magiclink",
   workspaceInvitationToken: "workspace/token + value",
 });
 const parsed = new URL(actionUrl);
 
-assert.equal(parsed.origin, "https://livecoach-alpha.vercel.app");
+assert.equal(parsed.origin, "https://www.livecoachcrm.com");
 assert.equal(parsed.pathname, "/auth/callback");
 assert.equal(parsed.searchParams.get("token_hash"), "auth-token-hash");
 assert.equal(parsed.searchParams.get("type"), "magiclink");
