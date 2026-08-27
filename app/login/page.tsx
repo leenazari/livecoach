@@ -157,6 +157,12 @@ export default function LoginPage() {
             Accounts are created by invitation so private CRM information stays
             isolated.
           </p>
+          <Link
+            href="/privacy"
+            className="text-center font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:text-bone"
+          >
+            Privacy policy
+          </Link>
         </div>
       )}
     </main>
