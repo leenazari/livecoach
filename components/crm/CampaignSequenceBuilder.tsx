@@ -18,12 +18,17 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  createOutreachActionStep,
   createOutreachSequenceStep,
   moveOutreachSequenceStep,
+  OUTREACH_SEQUENCE_ACTION_TEMPLATES,
   OUTREACH_SEQUENCE_MAX_STEPS,
+  OUTREACH_SEQUENCE_PRESETS,
   OUTREACH_SEQUENCE_TEMPLATES,
+  outreachSequencePreset,
   outreachSequenceValidationError,
   renumberOutreachSequence,
+  type OutreachSequenceActionTemplate,
   type OutreachSequenceContentType,
   type OutreachSequenceStep,
 } from "@/lib/outreach-sequence";
@@ -44,9 +49,17 @@ const secondaryButton =
 const saveButton =
   "min-h-11 rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40";
 
-function templateFor(type?: OutreachSequenceContentType) {
+function templateFor(item: OutreachSequenceStep) {
+  if ((item.channel || "email") !== "email") {
+    const action = OUTREACH_SEQUENCE_ACTION_TEMPLATES.find(
+      (template) => template.actionType === item.actionType
+    );
+    if (action) return action;
+  }
   return (
-    OUTREACH_SEQUENCE_TEMPLATES.find((item) => item.contentType === type) ||
+    OUTREACH_SEQUENCE_TEMPLATES.find(
+      (template) => template.contentType === item.contentType
+    ) ||
     OUTREACH_SEQUENCE_TEMPLATES[0]
   );
 }
@@ -79,7 +92,8 @@ function SortableSequenceStep({
     transition,
     isDragging,
   } = useSortable({ id, disabled });
-  const template = templateFor(item.contentType);
+  const template = templateFor(item);
+  const manual = (item.channel || "email") !== "email";
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -121,13 +135,13 @@ function SortableSequenceStep({
             </span>
             <div className="min-w-0">
               <p className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">
-                Step {index + 1} · Email
+                Step {index + 1} · {item.channel || "email"}
               </p>
               <strong className="block truncate text-sm text-bone">
                 {item.purpose || template.label}
               </strong>
               <p className="mt-0.5 font-mono text-[0.48rem] uppercase text-amber">
-                {template.label}
+                {template.label}{manual ? " · manual" : ""}
               </p>
             </div>
           </div>
@@ -181,7 +195,12 @@ function SortableSequenceStep({
                 Move later
               </button>
             </div>
-            <div className="grid gap-3 sm:grid-cols-[8rem_12rem_minmax(0,1fr)]">
+            {manual ? (
+              <p className="mb-3 rounded-lg border border-sky/35 bg-sky/[0.06] px-3 py-2 text-xs leading-5 text-sky">
+                This is a human action. LiveCoach opens the right place and records your completion, but never clicks, likes, connects, calls or sends through LinkedIn for you.
+              </p>
+            ) : null}
+            <div className={`grid gap-3 ${manual ? "sm:grid-cols-[8rem_minmax(0,1fr)]" : "sm:grid-cols-[8rem_12rem_minmax(0,1fr)]"}`}>
               <label>
                 <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">
                   Wait days
@@ -209,7 +228,7 @@ function SortableSequenceStep({
                   }
                 />
               </label>
-              <label>
+              {!manual ? <label>
                 <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">
                   Email type
                 </span>
@@ -230,7 +249,7 @@ function SortableSequenceStep({
                     </option>
                   ))}
                 </select>
-              </label>
+              </label> : null}
               <label>
                 <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">
                   Purpose
@@ -240,26 +259,26 @@ function SortableSequenceStep({
                   value={item.purpose || ""}
                   disabled={disabled}
                   onChange={(event) => onPatch({ purpose: event.target.value })}
-                  placeholder="Why this email deserves a response"
+                  placeholder={manual ? "Why this action matters" : "Why this email deserves a response"}
                 />
               </label>
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <label>
                 <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">
-                  Writing guidance
+                  {manual ? "Completion guidance" : "Writing guidance"}
                 </span>
                 <textarea
                   className={`${field} min-h-24 resize-y`}
                   value={item.guidance || ""}
                   disabled={disabled}
                   onChange={(event) => onPatch({ guidance: event.target.value })}
-                  placeholder="What new angle or proof should this step add?"
+                  placeholder={manual ? "What should the salesperson check or do?" : "What new angle or proof should this step add?"}
                 />
               </label>
               <label>
                 <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">
-                  Approved asset link, optional
+                  {manual ? "Helpful link, optional" : "Approved asset link, optional"}
                 </span>
                 <input
                   type="url"
@@ -267,10 +286,12 @@ function SortableSequenceStep({
                   value={item.assetUrl || ""}
                   disabled={disabled}
                   onChange={(event) => onPatch({ assetUrl: event.target.value })}
-                  placeholder="https://… video, demo or case study"
+                  placeholder={manual ? "https://… supporting page" : "https://… video, demo or case study"}
                 />
                 <span className="mt-1 block text-xs leading-5 text-muted">
-                  The exact link may be used, but the draft still waits for approval.
+                  {manual
+                    ? "This link is only shown to the salesperson as guidance."
+                    : "The exact link may be used, but the draft still waits for approval."}
                 </span>
               </label>
             </div>
@@ -325,12 +346,23 @@ export default function CampaignSequenceBuilder({
     reorder(fromIndex, toIndex);
   };
 
-  const addStep = (contentType: OutreachSequenceContentType) => {
+  const addStep = (template: OutreachSequenceActionTemplate) => {
     if (disabled || sequence.length >= OUTREACH_SEQUENCE_MAX_STEPS) return;
+    const next = template.actionType === "email"
+      ? createOutreachSequenceStep(
+          template.contentType as OutreachSequenceContentType,
+          sequence.length
+        )
+      : createOutreachActionStep(template.actionType, sequence.length);
     onChange([
       ...sequence,
-      createOutreachSequenceStep(contentType, sequence.length),
+      next,
     ]);
+  };
+
+  const applyPreset = (presetId: string) => {
+    if (disabled || !presetId) return;
+    onChange(outreachSequencePreset(presetId));
   };
 
   const patchStep = (
@@ -365,7 +397,7 @@ export default function CampaignSequenceBuilder({
               Drag every campaign touch into order
             </h4>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
-              Each step creates a fresh email draft for approval. Replies stop the remaining sequence automatically.
+              Email steps create a fresh draft for approval. LinkedIn and phone steps stay manual. Replies stop the remaining sequence automatically.
             </p>
           </div>
           {!disabled ? (
@@ -386,15 +418,40 @@ export default function CampaignSequenceBuilder({
 
         {!disabled ? (
           <div className="mt-4">
+            <div className="mb-4 rounded-lg border border-edge bg-panel/55 p-3">
+              <label className="block">
+                <span className="mb-1 block font-mono text-[0.5rem] uppercase tracking-wider text-muted">
+                  Start from a proven structure
+                </span>
+                <select
+                  className={field}
+                  defaultValue=""
+                  onChange={(event) => {
+                    applyPreset(event.target.value);
+                    event.target.value = "";
+                  }}
+                >
+                  <option value="" disabled>Choose a reusable sequence</option>
+                  {OUTREACH_SEQUENCE_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.name} · {preset.description}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="mt-2 text-xs leading-5 text-muted">
+                A preset replaces the unsaved sequence shown below. Nothing changes in the campaign until you press Save sequence.
+              </p>
+            </div>
             <p className="mb-2 font-mono text-[0.5rem] uppercase tracking-wider text-muted">
               Add a step
             </p>
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {OUTREACH_SEQUENCE_TEMPLATES.map((template) => (
+              {OUTREACH_SEQUENCE_ACTION_TEMPLATES.map((template) => (
                 <button
                   type="button"
-                  key={template.contentType}
-                  onClick={() => addStep(template.contentType)}
+                  key={template.key}
+                  onClick={() => addStep(template)}
                   disabled={sequence.length >= OUTREACH_SEQUENCE_MAX_STEPS}
                   className="min-h-12 min-w-[8.5rem] shrink-0 rounded-lg border border-edge bg-panel/65 px-3 py-2 text-left transition hover:border-amber/55 hover:bg-amber/[0.07] disabled:cursor-not-allowed disabled:opacity-35"
                 >
@@ -402,11 +459,16 @@ export default function CampaignSequenceBuilder({
                   <span className="font-mono text-[0.52rem] uppercase text-bone">
                     {template.shortLabel}
                   </span>
+                  {template.channel !== "email" ? (
+                    <span className="mt-1 block font-mono text-[0.44rem] uppercase text-sky">
+                      Manual
+                    </span>
+                  ) : null}
                 </button>
               ))}
             </div>
             <p className="mt-2 text-xs text-muted">
-              Up to {OUTREACH_SEQUENCE_MAX_STEPS} approval-gated emails per campaign. LinkedIn actions will use the same builder after its provider connector is enabled.
+              Up to {OUTREACH_SEQUENCE_MAX_STEPS} touches per campaign. LiveCoach automates only approved email delivery. LinkedIn and phone actions require you to complete and confirm them.
             </p>
           </div>
         ) : null}
@@ -424,6 +486,8 @@ export default function CampaignSequenceBuilder({
             <span>✓ Human approval before every send</span>
             <span>·</span>
             <span>✓ Reply stops follow ups</span>
+            <span>·</span>
+            <span>✓ Manual social actions</span>
           </div>
         )}
 
@@ -453,7 +517,7 @@ export default function CampaignSequenceBuilder({
 
         {!sequence.length ? (
           <div className="rounded-xl border border-dashed border-edge p-6 text-center text-sm text-muted">
-            Add the first email above to begin this campaign sequence.
+            Add the first outreach step above to begin this campaign sequence.
           </div>
         ) : null}
 

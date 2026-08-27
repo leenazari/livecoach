@@ -9,6 +9,7 @@ import {
   nextProspectStatus,
   type ManualOutreachCallOutcome,
 } from "@/lib/outreach-manual-call";
+import { outreachSequenceStepAt } from "@/lib/outreach-sequence";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 import { capitaliseSentenceStarts } from "@/lib/text";
@@ -80,7 +81,7 @@ export async function POST(
 
     let enrolmentQuery = supabaseAdmin
       .from("outreach_enrolments")
-      .select("id,campaign_id,status")
+      .select("id,campaign_id,status,current_step,next_action_at")
       .eq("workspace_id", account.workspaceId)
       .eq("prospect_id", prospect.id)
       .order("updated_at", { ascending: false })
@@ -206,17 +207,63 @@ export async function POST(
       .single();
     if (updateError) throw updateError;
 
+    let sequenceAdvance: {
+      nextStep: number | null;
+      nextActionAt: string | null;
+    } | null = null;
+    if (enrolment && ["voicemail", "no_answer"].includes(outcome)) {
+      const { data: campaign } = await supabaseAdmin
+        .from("outreach_campaigns")
+        .select("status,sequence")
+        .eq("workspace_id", account.workspaceId)
+        .eq("id", enrolment.campaign_id)
+        .maybeSingle();
+      const currentStepNumber = Number(enrolment.current_step) || 1;
+      const currentStep = outreachSequenceStepAt(
+        campaign?.sequence,
+        currentStepNumber
+      );
+      if (
+        campaign?.status === "active" &&
+        currentStep?.channel === "phone" &&
+        currentStep.actionType === "manual_call"
+      ) {
+        const nextStepNumber = currentStepNumber + 1;
+        const nextStep = outreachSequenceStepAt(
+          campaign.sequence,
+          nextStepNumber
+        );
+        sequenceAdvance = {
+          nextStep: nextStep ? nextStepNumber : null,
+          nextActionAt: nextStep
+            ? new Date(
+                now.getTime() + Math.max(1, nextStep.delayDays || 1) * 86400000
+              ).toISOString()
+            : null,
+        };
+      }
+    }
+
     const writes: PromiseLike<any>[] = [];
     if (enrolment) {
       writes.push(
         supabaseAdmin
           .from("outreach_enrolments")
           .update({
-            status: enrolmentStatus(outcome),
-            next_action_at: nextActionAt,
+            status: sequenceAdvance
+              ? sequenceAdvance.nextStep
+                ? "contacted"
+                : "completed"
+              : enrolmentStatus(outcome),
+            current_step:
+              sequenceAdvance?.nextStep || enrolment.current_step,
+            next_action_at: sequenceAdvance
+              ? sequenceAdvance.nextActionAt
+              : nextActionAt,
             updated_at: now.toISOString(),
           })
           .eq("workspace_id", account.workspaceId)
+          .eq("owner_id", account.userId)
           .eq("id", enrolment.id)
       );
     }

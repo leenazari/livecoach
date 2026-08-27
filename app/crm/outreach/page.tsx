@@ -24,6 +24,16 @@ type Prospect = Record<string, any> & { id: string; email: string; company_name:
 type QueueRow = Record<string, any> & { id: string; prospect: Prospect; campaign: Record<string, any>; message: Record<string, any> | null; recommendation: Recommendation };
 type SequenceStep = OutreachSequenceStep;
 type Campaign = Record<string, any> & { id: string; name: string; goal: string; audience: string; offer_angle: string; status: string; daily_limit: number; sequence: SequenceStep[] };
+type CampaignStats = {
+  enrolled: number;
+  contacted: number;
+  emailsSent: number;
+  replies: number;
+  interested: number;
+  meetings: number;
+  replyRate: number;
+  meetingRate: number;
+};
 type EngagementDraft = {
   authorName: string;
   postSummary: string;
@@ -147,6 +157,28 @@ function formatActivityDate(value?: string | null) {
   }).format(new Date(value));
 }
 
+function sequenceActionLabel(actionType?: string | null) {
+  const labels: Record<string, string> = {
+    linkedin_view: "View profile",
+    linkedin_like: "Like relevant post",
+    linkedin_connect: "Send connection request",
+    linkedin_message: "Send LinkedIn message",
+    manual_call: "Make phone call",
+  };
+  return labels[actionType || ""] || "Complete manual step";
+}
+
+function linkedinTarget(prospect: Prospect) {
+  const saved = String(prospect.person_linkedin_url || "").trim();
+  if (/^https:\/\/(www\.)?linkedin\.com\//i.test(saved)) return saved;
+  const keywords = [
+    prospect.first_name,
+    prospect.last_name,
+    prospect.company_name,
+  ].filter(Boolean).join(" ");
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`;
+}
+
 function RecommendationCard({ recommendation, compact = false }: { recommendation: Recommendation; compact?: boolean }) {
   if (!recommendation) return null;
   return <div className="mt-3 rounded-lg border border-edge bg-ink/35 p-3">
@@ -158,6 +190,36 @@ function RecommendationCard({ recommendation, compact = false }: { recommendatio
       {recommendation.reasons.slice(0, compact ? 2 : 4).map((reason) => <li key={reason} className="flex gap-2"><span className="text-moss">+</span><span>{reason}</span></li>)}
       {recommendation.risks.slice(0, compact ? 1 : 3).map((risk) => <li key={risk} className="flex gap-2"><span className="text-amber">!</span><span>{risk}</span></li>)}
     </ul>
+  </div>;
+}
+
+function CampaignResultStrip({ stats }: { stats?: CampaignStats }) {
+  const values = stats || {
+    enrolled: 0,
+    contacted: 0,
+    emailsSent: 0,
+    replies: 0,
+    interested: 0,
+    meetings: 0,
+    replyRate: 0,
+    meetingRate: 0,
+  };
+  const items = [
+    ["Assigned", values.enrolled],
+    ["Contacted", values.contacted],
+    ["Emails", values.emailsSent],
+    ["Replies", values.replies],
+    ["Interested", values.interested],
+    ["Meetings", values.meetings],
+  ] as const;
+  return <div className="mb-4 rounded-xl border border-edge bg-ink/35 p-3">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="font-mono text-[0.54rem] uppercase tracking-wider text-sky">Your results only</p>
+      <p className="font-mono text-[0.5rem] uppercase text-muted">{values.replyRate}% reply rate · {values.meetingRate}% meeting rate</p>
+    </div>
+    <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
+      {items.map(([label, value]) => <div key={label} className="rounded-lg border border-edge/80 bg-panel/65 px-2 py-2 text-center"><strong className="block font-display text-lg text-bone">{value}</strong><span className="font-mono text-[0.44rem] uppercase text-muted">{label}</span></div>)}
+    </div>
   </div>;
 }
 
@@ -175,6 +237,7 @@ export default function OutreachPage() {
   const [currentUser, setCurrentUser] = useState("");
   const [canManageAssignments, setCanManageAssignments] = useState(false);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [campaignStats, setCampaignStats] = useState<Record<string, CampaignStats>>({});
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
   const [expandedCampaignId, setExpandedCampaignId] = useState("");
   const [canManageCampaigns, setCanManageCampaigns] = useState(false);
@@ -225,6 +288,7 @@ export default function OutreachPage() {
       setQueue(qd.queue || []);
       setSender(qd.sender || null);
       setCampaigns(c.campaigns || []);
+      if (c.campaignStats) setCampaignStats(c.campaignStats);
       setSelectedCampaignId(
         c.selectedCampaignId || qd.selectedCampaignId || ""
       );
@@ -232,6 +296,11 @@ export default function OutreachPage() {
       setMetrics(m.metrics || {});
     } catch (e: any) { setError(e.message || "Could not load outreach"); }
     finally { setLoading(false); }
+  }, []);
+
+  const loadCampaignStats = useCallback(async () => {
+    const data = await crmFetch<any>("/api/crm/outreach/campaigns?stats=1");
+    setCampaignStats(data.campaignStats || {});
   }, []);
 
   const loadProspects = useCallback(async () => {
@@ -362,6 +431,7 @@ export default function OutreachPage() {
     const requests: Promise<void>[] = [];
     if (tab === "prospects") requests.push(loadProspects());
     if (tab === "safety") requests.push(loadSuppressions());
+    if (tab === "campaign") requests.push(loadCampaignStats());
     if (tab === "campaign" || tab === "intelligence" || tab === "activity" || tab === "replies")
       requests.push(loadMetrics());
     if (!requests.length) return;
@@ -370,7 +440,7 @@ export default function OutreachPage() {
       .catch((e: any) => alive && setError(e.message || "Could not load this section"))
       .finally(() => alive && setTabLoading(false));
     return () => { alive = false; };
-  }, [tab, loadMetrics, loadProspects, loadSuppressions]);
+  }, [tab, loadCampaignStats, loadMetrics, loadProspects, loadSuppressions]);
   useEffect(() => {
     const next: Record<string, { subject: string; body_text: string }> = {};
     for (const row of queue) if (row.message) next[row.message.id] = { subject: row.message.subject || "", body_text: row.message.body_text || "" };
@@ -489,7 +559,13 @@ export default function OutreachPage() {
   };
   const prepareAllRemaining = () => {
     const ids = queue
-      .filter((row) => !row.message && row.status === "queued" && row.prospect?.id)
+      .filter(
+        (row) =>
+          !row.message &&
+          row.status === "queued" &&
+          (row.sequenceStep?.channel || "email") === "email" &&
+          row.prospect?.id
+      )
       .map((row) => row.prospect.id)
       .filter((id) => !["queued", "researching", "done"].includes(prepareJobsRef.current[id] || ""));
     if (!ids.length) {
@@ -498,6 +574,41 @@ export default function OutreachPage() {
     }
     for (const id of ids) enqueuePrepare(id);
     setNotice(`${ids.length} prospects added to the research queue. Two will prepare at a time while you keep reviewing.`);
+  };
+  const completeManualSequenceStep = async (row: QueueRow) => {
+    const step = row.sequenceStep;
+    if (!step || step.channel !== "linkedin" || !step.actionType) return;
+    const prospectId = row.prospect?.id;
+    setBusy(`sequence-action:${row.id}`);
+    setRowErrors((all) => ({ ...all, [prospectId]: "" }));
+    setNotice("");
+    try {
+      const result = await crmFetch<any>(
+        `/api/crm/outreach/${prospectId}/sequence-action`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            requestId: crypto.randomUUID(),
+            enrolmentId: row.id,
+            actionType: step.actionType,
+          }),
+        }
+      );
+      setNotice(
+        result.nextStep
+          ? `Manual ${step.channel} step saved. The next step is due ${formatActivityDate(result.enrolment?.next_action_at)}.`
+          : "Manual step saved. This sequence is complete."
+      );
+      await loadCore();
+    } catch (caught: any) {
+      setRowErrors((all) => ({
+        ...all,
+        [prospectId]: caught?.message || "The manual step did not save",
+      }));
+      await loadCore();
+    } finally {
+      setBusy("");
+    }
   };
   const approveAllPrepared = async () => {
     const drafts = queue.filter(
@@ -922,17 +1033,42 @@ export default function OutreachPage() {
       queue
         .map((row, originalIndex) => ({ row, originalIndex }))
         .sort((a, b) => {
-          const aSent =
-            a.row.message?.status === "sent" || Boolean(a.row.lastSentMessage);
-          const bSent =
-            b.row.message?.status === "sent" || Boolean(b.row.lastSentMessage);
-          return Number(aSent) - Number(bSent) || a.originalIndex - b.originalIndex;
+          const needsAction = (item: QueueRow) => {
+            if (item.sequenceStepDue === false) return false;
+            if (
+              item.message &&
+              ["draft", "failed"].includes(item.message.status)
+            ) return true;
+            return (
+              !item.message &&
+              item.status === "queued" &&
+              !["completed", "paused", "replied", "booked", "suppressed"].includes(
+                item.status
+              )
+            );
+          };
+          return (
+            Number(needsAction(b.row)) - Number(needsAction(a.row)) ||
+            a.originalIndex - b.originalIndex
+          );
         })
         .map(({ row }) => row),
     [queue]
   );
   const remainingToPrepare = queue.filter(
-    (row) => !row.message && row.status === "queued"
+    (row) =>
+      !row.message &&
+      row.status === "queued" &&
+      (row.sequenceStep?.channel || "email") === "email"
+  ).length;
+  const manualStepsDue = queue.filter(
+    (row) =>
+      !row.message &&
+      row.sequenceStepDue !== false &&
+      (row.sequenceStep?.channel || "email") !== "email" &&
+      !["completed", "paused", "replied", "booked", "suppressed"].includes(
+        row.status
+      )
   ).length;
   const preparedToApprove = queue.filter(
     (row) => row.message && ["draft", "failed"].includes(row.message.status)
@@ -966,9 +1102,23 @@ export default function OutreachPage() {
       {!loading && !tabLoading && tab === "queue" ? <section data-sales-tour="outreach-queue">
         <RevenueToday />
         <div className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.06] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase tracking-wider text-moss">Campaign to top up</p><h2 className="mt-1 font-display text-lg text-bone">{activeCampaign?.name || "No active campaign"}</h2><p className="mt-1 text-sm text-muted">This choice controls Rank + build only. The combined list below keeps queued work from every campaign together.</p></div>{selectableCampaigns.length ? <label className="w-full sm:w-72"><span className="sr-only">Choose your active campaign</span><select aria-label="Choose your active campaign" className={`${input} min-h-11`} value={activeCampaign?.id || ""} onChange={(event) => void selectActiveCampaign(event.target.value)} disabled={!!busy}>{selectableCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label> : <button type="button" onClick={() => selectTab("campaign")} className={button}>Review campaigns</button>}</div></div>
-        <div className="mb-4 rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s combined queue</h2><p className="mt-1 text-sm text-muted">Prepare in the background, approve the exact drafts you have reviewed, then LiveCoach sends one every five minutes. Each prospect keeps the correct campaign and sent people rotate to the bottom automatically.</p><p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{remainingToPrepare} to prepare · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p></div><button onClick={buildQueue} disabled={!!busy || activeCampaignQueueCount >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : activeCampaignQueueCount ? `Top up ${activeCampaign?.name || "campaign"} to ${activeCampaign?.daily_limit || 20}` : "Rank + build for this campaign"}</button></div><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare all remaining (${remainingToPrepare})` : "All research prepared"}</button><button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve all prepared & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button></div><p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact drafts already shown below. New research never sends without a separate approval.</p></div>
-        <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const canPrepare = !m && row.status === "queued"; const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><p className="font-mono text-[0.55rem] uppercase text-muted">#{index + 1} · step {row.current_step}</p><h3 className="mt-1 font-display text-lg text-bone">{p.first_name} {p.last_name}</h3><p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p><div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>{p.priority}</span><span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[displayStatus] || "border-edge text-muted"}`}>{displayStatus === "sent" ? "✓ sent" : displayStatus}</span></div>{!m && lastSent && row.next_action_at ? <p className="mt-2 text-xs text-muted">Next follow up becomes ready {formatActivityDate(row.next_action_at)}.</p> : null}</div>{canPrepare ? <button onClick={() => prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>{prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : Number(row.current_step) > 1 ? "Queue follow up draft" : "Queue research + draft"}</button> : !m && lastSent ? <button onClick={() => selectTab("activity")} className="min-h-11 w-full rounded-lg border border-moss bg-moss px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-ink transition hover:bg-moss/85 sm:w-auto">✓ Sent · view email</button> : null}</div>
+        <div className="mb-4 rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s combined queue</h2><p className="mt-1 text-sm text-muted">Work email, LinkedIn and phone steps in one order. LiveCoach automates only approved email delivery. Every social or phone action stays under your control.</p><p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{remainingToPrepare} emails to prepare · {manualStepsDue} manual actions · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p></div><button onClick={buildQueue} disabled={!!busy || activeCampaignQueueCount >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : activeCampaignQueueCount ? `Top up ${activeCampaign?.name || "campaign"} to ${activeCampaign?.daily_limit || 20}` : "Rank + build for this campaign"}</button></div><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare all email steps (${remainingToPrepare})` : "All email research prepared"}</button><button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve all prepared & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button></div><p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact email drafts already shown below. Manual actions must be confirmed one at a time.</p></div>
+        <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const sequenceStep = row.sequenceStep as SequenceStep | null; const channel = sequenceStep?.channel || "email"; const manual = channel !== "email"; const manualDue = manual && row.sequenceStepDue !== false && !["completed", "paused", "replied", "booked", "suppressed"].includes(row.status); const canPrepare = !manual && !m && row.status === "queued"; const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = manualDue ? channel : m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="font-mono text-[0.55rem] uppercase text-muted">#{index + 1} · step {row.current_step}{sequenceStep ? ` · ${sequenceStep.purpose}` : ""}</p>
+              <h3 className="mt-1 font-display text-lg text-bone">{p.first_name} {p.last_name}</h3>
+              <p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>{p.priority}</span>
+                <span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[displayStatus] || (manual ? "border-sky/50 bg-sky/10 text-sky" : "border-edge text-muted")}`}>{displayStatus === "sent" ? "✓ sent" : displayStatus}</span>
+              </div>
+              {!m && row.next_action_at && row.sequenceStepDue === false ? <p className="mt-2 text-xs text-muted">Next step becomes ready {formatActivityDate(row.next_action_at)}.</p> : null}
+            </div>
+            {canPrepare ? <button onClick={() => prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>{prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : Number(row.current_step) > 1 ? "Queue follow up draft" : "Queue research + draft"}</button> : manual && channel === "linkedin" ? <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-2"><a href={linkedinTarget(p)} target="_blank" rel="noreferrer" className={`${button} inline-flex items-center justify-center border-sky/45 text-sky`}>Open LinkedIn ↗</a><button type="button" onClick={() => completeManualSequenceStep(row)} disabled={!!busy || !manualDue} className={primary}>{busy === `sequence-action:${row.id}` ? "Saving…" : manualDue ? `Mark ${sequenceActionLabel(sequenceStep?.actionType)} done` : `Due ${formatActivityDate(row.next_action_at)}`}</button></div> : manual && channel === "phone" ? <button type="button" onClick={() => setManualCallProspectId(p.id)} disabled={!!busy || !manualDue} className={`${primary} w-full sm:w-auto`}>{manualDue ? "Call and log outcome" : `Due ${formatActivityDate(row.next_action_at)}`}</button> : !m && lastSent ? <button onClick={() => selectTab("activity")} className="min-h-11 w-full rounded-lg border border-moss bg-moss px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-ink transition hover:bg-moss/85 sm:w-auto">✓ Sent · view email</button> : null}
+          </div>
+          {manual && sequenceStep?.guidance ? <p className="mt-3 rounded-lg border border-sky/35 bg-sky/[0.05] px-3 py-2 text-xs leading-5 text-sky">{sequenceStep.guidance}</p> : null}
+          {manual && channel === "phone" && manualCallProspectId === p.id ? <div className="mt-3"><ProspectManualCall prospect={p} campaignId={row.campaign_id} onCancel={() => setManualCallProspectId("")} onSaved={async () => { setManualCallProspectId(""); setNotice("Call saved. The sequence now follows the outcome you logged."); await Promise.all([loadCore(), loadMetrics()]); }} /></div> : null}
           {rowErrors[p.id] ? <p className="mt-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm leading-5 text-rust">{rowErrors[p.id]}</p> : null}
           <RecommendationCard recommendation={row.recommendation || p.recommendation} compact />
           {row.research ? <details className="mt-4 rounded-lg border border-edge bg-ink/30 p-3"><summary className="cursor-pointer font-mono text-[0.6rem] uppercase tracking-wider text-amber">Why this message {m?.quality_score ? `· quality ${m.quality_score}/100` : ""}</summary><p className="mt-2 text-sm leading-6 text-bone/80">{m?.strategy?.reasoning || row.research.summary}</p><div className="mt-2 flex flex-wrap gap-1.5">{row.research.fitDecision ? <span className="rounded-full border border-moss/40 bg-moss/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-moss">{row.research.fitDecision}</span> : null}{row.research.commercialPath ? <span className="rounded-full border border-sky/40 bg-sky/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-sky">{row.research.commercialPath}</span> : null}{row.research.volumeAssessment ? <span className="rounded-full border border-amber/40 bg-amber/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-amber">{row.research.volumeAssessment} vacancy volume</span> : null}{row.research.freshness ? <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.5rem] uppercase text-muted">{row.research.freshness}</span> : null}</div><p className="mt-2 text-xs text-muted"><strong className="text-bone">Chosen angle:</strong> {m?.strategy?.angle || row.research.bestAngle}</p>{row.research.volumeReason ? <p className="mt-2 text-xs text-muted"><strong className="text-bone">Volume evidence:</strong> {row.research.volumeReason}</p> : null}{row.research.activeJobs?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Current jobs found</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{row.research.activeJobs.map((job: string) => <li key={job}>• {job}</li>)}</ul></div> : null}{m?.strategy?.evidenceUsed?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Evidence actually used</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{m.strategy.evidenceUsed.map((fact: string) => <li key={fact}>• {fact}</li>)}</ul></div> : null}{(row.research_sources || []).length ? <div className="mt-2 flex flex-wrap gap-2">{row.research_sources.slice(0, 4).map((source: any) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="text-xs text-amber hover:underline">{source.title || "Source"} ↗</a>)}</div> : null}</details> : null}
@@ -1110,6 +1260,7 @@ export default function OutreachPage() {
 
         {orderedCampaigns.map((campaign) => {
           const isCurrent = campaign.id === selectedCampaignId;
+          const personalStats = campaignStats[campaign.id];
           return <details key={campaign.id} open={expandedCampaignId === campaign.id} onToggle={(event) => {
             const isOpen = event.currentTarget.open;
             setExpandedCampaignId((current) => isOpen ? campaign.id : current === campaign.id ? "" : current);
@@ -1119,10 +1270,11 @@ export default function OutreachPage() {
                 <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-display text-lg text-bone">{campaign.name}</h3>{isCurrent ? <span className="rounded-full border border-moss/50 bg-moss/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-moss">Current</span> : null}<span className={`rounded-full border px-2 py-0.5 font-mono text-[0.5rem] uppercase ${campaign.status === "active" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{campaign.status}</span></div><p className="mt-1 truncate text-sm text-bone/70">{campaign.goal || "No goal saved yet"}</p></div>
                 <span className="shrink-0 font-mono text-[0.55rem] uppercase text-amber"><span className="group-open:hidden">Open ▾</span><span className="hidden group-open:inline">Close ▴</span></span>
               </div>
-              <p className="mt-2 font-mono text-[0.5rem] uppercase text-muted">Updated {formatActivityDate(campaign.updated_at || campaign.created_at)}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[0.5rem] uppercase text-muted"><span>Updated {formatActivityDate(campaign.updated_at || campaign.created_at)}</span><span>·</span><span>{personalStats?.contacted || 0} contacted</span><span>·</span><span>{personalStats?.replies || 0} replies</span><span>·</span><span>{personalStats?.meetings || 0} meetings</span></div>
             </summary>
 
             <div className="border-t border-edge p-4">
+              <CampaignResultStrip stats={personalStats} />
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted">Edit only this campaign. The collapsed campaigns remain untouched.</p>{canManageCampaigns ? <button onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign"}</button> : <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted">Shared · view only</span>}</div>
               <fieldset disabled={!canManageCampaigns} className="contents">
                 <div className="grid gap-3"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Goal</span><input className={input} value={campaign.goal} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, goal: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Audience</span><textarea className={`${input} min-h-20`} value={campaign.audience} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, audience: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Interviewa angle</span><textarea className={`${input} min-h-24`} value={campaign.offer_angle} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, offer_angle: e.target.value } : c))} /></label><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max="20" className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : Math.min(20, Number(e.target.value)) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active</option><option value="paused">Paused</option><option value="draft">Draft</option></select></label></div></div>
