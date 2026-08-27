@@ -55,7 +55,8 @@
     "validate:native-outreach-sequence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-native-outreach-sequence.mjs",
     "validate:calendar-primary-attendee": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-calendar-primary-attendee.mjs",
     "validate:account-readiness": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-account-readiness.mjs",
-    "validate:password-reset": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-password-reset.mjs"
+    "validate:password-reset": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-password-reset.mjs",
+    "validate:public-privacy": "node scripts/validate-public-privacy.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
