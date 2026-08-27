@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 64" fill="none">
   <g>
-    <path d="M14 10v42h39" stroke="#E0A458" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M49 27.5a13.5 13.5 0 1 0 0 15" stroke="#E0A458" stroke-width="5.5" stroke-linecap="round"/>
-    <path d="M36 36v1M41 33.5v4M46 31v6.5" stroke="#8BB89A" stroke-width="3" stroke-linecap="round"/>
+    <path d="M49 15.5a25 25 0 1 0 .7 32" stroke="#E0A458" stroke-width="7.5" stroke-linecap="round"/>
+    <path d="M25.5 21.5v21h17" stroke="#E0A458" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M35 34v2M41 30v6M47 26v10" stroke="#8BB89A" stroke-width="4" stroke-linecap="round"/>
   </g>
   <text x="75" y="42" fill="#E0A458" font-family="Fraunces, Georgia, serif" font-size="31" font-style="italic">Live</text>
   <text x="132" y="42" fill="#E9E5DB" font-family="Fraunces, Georgia, serif" font-size="31">Coach</text>
