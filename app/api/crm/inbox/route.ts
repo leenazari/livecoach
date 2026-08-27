@@ -126,7 +126,7 @@ export async function GET() {
         .limit(300),
       supabaseAdmin
         .from("outreach_prospects")
-        .select("id,first_name,last_name,job_title,email,company_name,reply_category,reply_summary,last_reply_text,last_reply_at,status,crm_company_id")
+        .select("id,first_name,last_name,job_title,email,company_name,reply_category,reply_summary,last_reply_text,last_reply_at,status,crm_company_id,last_contacted_at,next_action_at,source_metadata")
         .eq("workspace_id", account.workspaceId)
         .eq("assigned_to_user_id", account.userId)
         .order("updated_at", { ascending: false })
@@ -427,6 +427,43 @@ export async function GET() {
     }
 
     for (const prospect of outreachProspectsResult.data || []) {
+      const latestManualCall = prospect.source_metadata?.latest_manual_call;
+      const manualNextAction = text(latestManualCall?.nextAction, 360);
+      const manualDueAt = prospect.next_action_at || latestManualCall?.nextActionAt || null;
+      if (
+        latestManualCall &&
+        manualNextAction &&
+        !["not_interested", "do_not_contact"].includes(latestManualCall.outcome)
+      ) {
+        const person = [prospect.first_name, prospect.last_name].filter(Boolean).join(" ");
+        const dueMs = dateMs(manualDueAt);
+        const overdue = dueMs != null && dueMs < nowMs;
+        const dueToday = dueMs != null && dueMs < endTodayMs;
+        const priority = overdue ? 109 : dueToday ? 101 : 84;
+        items.push({
+          id: `manual-call-next:${prospect.id}:${latestManualCall.requestId || latestManualCall.eventId}`,
+          sourceId: prospect.id,
+          kind: "outreach",
+          title: manualNextAction,
+          detail: text(
+            latestManualCall.interpretation?.summary || latestManualCall.notePreview,
+            240
+          ) || `Manual call logged with ${person || prospect.company_name || "prospect"}`,
+          company: text(prospect.company_name, 160) || null,
+          companyId: prospect.crm_company_id || null,
+          href: "/crm/outreach?tab=prospects",
+          priority,
+          priorityLabel: priorityLabel(priority),
+          dueAt: manualDueAt,
+          createdAt: latestManualCall.occurredAt || prospect.last_contacted_at || null,
+          revenue: true,
+          approval: false,
+          waiting: false,
+          done: false,
+          editable: false,
+          dismissible: false,
+        });
+      }
       if (
         !prospect.last_reply_at ||
         prospect.reply_category !== "interested" ||

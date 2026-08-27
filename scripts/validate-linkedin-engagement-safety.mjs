@@ -18,10 +18,14 @@ assert.doesNotMatch(route, /for Lee Nazari, CEO of Interviewa/);
 assert.doesNotMatch(route, /Lee's work/);
 assert.doesNotMatch(route, /Building Interviewa has reinforced/);
 assert.match(route, /Never present this person as Lee/);
+assert.doesNotMatch(route, /web_search_20250305|needsPublicLookup/);
+assert.match(route, /no longer opens or scrapes LinkedIn links/);
+assert.match(route, /publicLinkLookup: false/);
 
 assert.match(page, /Manual safe mode/);
-assert.match(page, /No LinkedIn account connection/);
-assert.match(page, /never signs into, scrapes through or posts from your LinkedIn account/);
+assert.match(page, /No LinkedIn scraping or account connection/);
+assert.match(page, /only reads the words you paste/);
+assert.match(page, /A link on its own is deliberately rejected/);
 assert.match(page, /signed-in salesperson's own saved voice/);
 
 console.log("LinkedIn engagement safety checks passed");

@@ -71,6 +71,11 @@ function requestBody(body: LegacyRequest, stream: boolean) {
       : "medium";
 
   const usesWebSearch = Array.isArray(body.tools) && body.tools.length > 0;
+  const webSearchTool = usesWebSearch
+    ? body.tools?.find((tool: any) =>
+        String(tool?.type || tool?.name || "").includes("web_search")
+      ) || body.tools?.[0]
+    : null;
   const maxToolCalls = usesWebSearch
     ? Math.max(1, Math.min(10, Number(body.tools?.[0]?.max_uses) || 3))
     : 0;
@@ -97,7 +102,19 @@ function requestBody(body: LegacyRequest, stream: boolean) {
     prompt_cache_key: promptCacheKey,
     ...(usesWebSearch
       ? {
-          tools: [{ type: "web_search" }],
+          tools: [{
+            type: "web_search",
+            ...(webSearchTool?.filters?.allowed_domains?.length
+              ? {
+                  filters: {
+                    allowed_domains: webSearchTool.filters.allowed_domains,
+                  },
+                }
+              : {}),
+            ...(webSearchTool?.search_context_size
+              ? { search_context_size: webSearchTool.search_context_size }
+              : {}),
+          }],
           max_tool_calls: maxToolCalls,
           include: ["web_search_call.action.sources"],
         }
