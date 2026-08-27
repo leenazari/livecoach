@@ -152,11 +152,28 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const sequence = Array.isArray(campaign.sequence) ? campaign.sequence : [];
     const sequenceStep = sequence.find((row: any) => Number(row?.step) === step) || {
       step,
+      channel: "email",
+      actionType: "email",
       purpose: step === 1 ? "Relevant opening and one easy question" : "Useful follow-up that adds a new reason to respond",
       contentType: "plain",
       guidance: "",
       assetUrl: null,
     };
+    if ((sequenceStep.channel || "email") !== "email") {
+      return NextResponse.json(
+        {
+          error:
+            "Complete this manual sequence step from Today before preparing the next email",
+          manualStep: {
+            step,
+            channel: sequenceStep.channel,
+            actionType: sequenceStep.actionType,
+            purpose: sequenceStep.purpose,
+          },
+        },
+        { status: 409 }
+      );
+    }
     const lastStep = Math.max(1, ...sequence.map((row: any) => Number(row?.step) || 0));
     const includeBooking = !!campaign.booking_url && (campaign.booking_cta_mode === "always" || (campaign.booking_cta_mode === "final_step" && step >= lastStep));
     const jobSearchDomains = officialJobSearchDomains(prospect);

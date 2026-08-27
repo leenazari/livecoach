@@ -16,6 +16,7 @@ import {
   isInsideCrossCampaignCooldown,
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
+import { outreachSequenceStepAt } from "@/lib/outreach-sequence";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -122,6 +123,11 @@ async function loadQueue(
           new Date(b.sent_at || 0).getTime() - new Date(a.sent_at || 0).getTime()
       )[0];
     const research = compactSavedResearch(row.research || prospectMap.get(row.prospect_id)?.research);
+    const campaign = campaignMap.get(row.campaign_id);
+    const sequenceStep = outreachSequenceStepAt(
+      campaign?.sequence,
+      Number(row.current_step) || 1
+    );
     const messageHistory = rows
       .slice()
       .sort(
@@ -134,7 +140,11 @@ async function loadQueue(
     return {
       ...row,
       prospect: prospectMap.get(row.prospect_id),
-      campaign: campaignMap.get(row.campaign_id),
+      campaign,
+      sequenceStep,
+      sequenceStepDue:
+        !row.next_action_at ||
+        new Date(row.next_action_at).getTime() <= Date.now(),
       // Keep the completed send separate from the next draft. After step one
       // sends, current_step advances immediately. Treating the old sent email
       // as the current draft would hide when the follow-up is actually due.
