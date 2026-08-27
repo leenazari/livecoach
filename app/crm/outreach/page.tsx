@@ -3,12 +3,17 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
+import CampaignSequenceBuilder from "@/components/crm/CampaignSequenceBuilder";
 import ProspectManualCall from "@/components/crm/ProspectManualCall";
 import RevenueToday from "@/components/crm/RevenueToday";
 import OutreachReadiness from "@/components/crm/OutreachReadiness";
 import MatrixRain from "@/components/MatrixRain";
 import { crmFetch } from "@/lib/crm";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
+import {
+  outreachSequenceValidationError,
+  type OutreachSequenceStep,
+} from "@/lib/outreach-sequence";
 
 type Tab = "queue" | "prospects" | "signals" | "activity" | "replies" | "campaign" | "intelligence" | "safety";
 type Priority = "high" | "medium" | "low";
@@ -17,7 +22,7 @@ type RecommendationAction = "contact_today" | "hold" | "skip";
 type Recommendation = { action: RecommendationAction; label: string; score: number; confidence: "high" | "medium" | "low"; reasons: string[]; risks: string[] };
 type Prospect = Record<string, any> & { id: string; email: string; company_name: string; priority: Priority; priority_score: number; recommendation: Recommendation };
 type QueueRow = Record<string, any> & { id: string; prospect: Prospect; campaign: Record<string, any>; message: Record<string, any> | null; recommendation: Recommendation };
-type SequenceStep = { step: number; delayDays: number; purpose: string; contentType?: "plain" | "insight" | "case_study" | "video" | "close_loop"; guidance?: string; assetUrl?: string | null };
+type SequenceStep = OutreachSequenceStep;
 type Campaign = Record<string, any> & { id: string; name: string; goal: string; audience: string; offer_angle: string; status: string; daily_limit: number; sequence: SequenceStep[] };
 type EngagementDraft = {
   authorName: string;
@@ -630,7 +635,8 @@ export default function OutreachPage() {
     setBusy(`campaign:${campaign.id}`); setError("");
     try {
       if (!Number.isFinite(campaign.daily_limit) || campaign.daily_limit < 1 || campaign.daily_limit > 20) throw new Error("Daily maximum must be between 1 and 20");
-      if ((campaign.sequence || []).some((step, index) => index > 0 && (!Number.isFinite(step.delayDays) || step.delayDays < 1 || step.delayDays > 30))) throw new Error("Wait days must be between 1 and 30");
+      const sequenceError = outreachSequenceValidationError(campaign.sequence || []);
+      if (sequenceError) throw new Error(sequenceError);
       const { campaign: saved } = await crmFetch<{ campaign: Campaign }>(`/api/crm/outreach/campaigns/${campaign.id}`, { method: "PATCH", body: JSON.stringify(campaign) });
       if (!saved?.id) throw new Error("Campaign was not confirmed");
       setCampaigns((all) => all.map((item) => item.id === saved.id ? { ...item, ...saved } : item));
@@ -638,9 +644,6 @@ export default function OutreachPage() {
     }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
-  const updateSequence = (campaignId: string, index: number, patch: Partial<SequenceStep>) => setCampaigns((all) => all.map((campaign) => campaign.id === campaignId ? { ...campaign, sequence: (campaign.sequence || []).map((step, stepIndex) => stepIndex === index ? { ...step, ...patch } : step) } : campaign));
-  const addSequenceStep = (campaignId: string) => setCampaigns((all) => all.map((campaign) => campaign.id === campaignId ? { ...campaign, sequence: [...(campaign.sequence || []), { step: (campaign.sequence || []).length + 1, delayDays: 3, purpose: "Add a useful new reason to respond", contentType: "insight", guidance: "", assetUrl: null }] } : campaign));
-  const removeSequenceStep = (campaignId: string, index: number) => setCampaigns((all) => all.map((campaign) => campaign.id === campaignId ? { ...campaign, sequence: (campaign.sequence || []).filter((_, stepIndex) => stepIndex !== index).map((step, stepIndex) => ({ ...step, step: stepIndex + 1, delayDays: stepIndex === 0 ? 0 : step.delayDays })) } : campaign));
   const checkReplies = async () => {
     setBusy("replies"); setError("");
     try { const result = await crmFetch<any>("/api/crm/outreach/replies", { method: "POST", body: "{}" }); setNotice(`Checked ${result.checked} recent contacts and found ${result.replies} new replies.`); await loadMetrics(); }
@@ -1123,18 +1126,20 @@ export default function OutreachPage() {
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted">Edit only this campaign. The collapsed campaigns remain untouched.</p>{canManageCampaigns ? <button onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign"}</button> : <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted">Shared · view only</span>}</div>
               <fieldset disabled={!canManageCampaigns} className="contents">
                 <div className="grid gap-3"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Goal</span><input className={input} value={campaign.goal} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, goal: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Audience</span><textarea className={`${input} min-h-20`} value={campaign.audience} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, audience: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Interviewa angle</span><textarea className={`${input} min-h-24`} value={campaign.offer_angle} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, offer_angle: e.target.value } : c))} /></label><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max="20" className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : Math.min(20, Number(e.target.value)) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active</option><option value="paused">Paused</option><option value="draft">Draft</option></select></label></div></div>
-                <div className="mt-4 rounded-xl border border-amber/35 bg-ink/30 p-3">
-                  <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-mono text-[0.56rem] uppercase text-amber">Editable sequence</p><p className="mt-1 text-sm text-muted">Every step creates a fresh draft for approval. A reply stops all later steps.</p></div>{(campaign.sequence || []).length < 6 ? <button type="button" onClick={() => addSequenceStep(campaign.id)} className={button}>+ Add step</button> : null}</div>
-                  <ol className="mt-3 space-y-3">{(campaign.sequence || []).map((step, index) => <li key={`${campaign.id}:${index}`} className="rounded-lg border border-edge bg-panel/55 p-3">
-                    <div className="mb-2 flex items-center justify-between gap-2"><span className="font-mono text-[0.56rem] uppercase text-bone">Step {index + 1}{index === 0 ? " · first email" : ` · ${step.delayDays || 3} days later`}</span>{index > 0 ? <button type="button" onClick={() => removeSequenceStep(campaign.id, index)} className="min-h-9 px-2 font-mono text-[0.52rem] uppercase text-rust">Remove</button> : null}</div>
-                    <div className="grid gap-2 sm:grid-cols-[7rem_11rem_minmax(0,1fr)]">
-                      <label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Wait days</span><input type="number" min={index === 0 ? 0 : 1} max="30" disabled={index === 0} className={input} value={index === 0 ? 0 : Number.isNaN(step.delayDays) ? "" : step.delayDays ?? 3} onChange={(event) => updateSequence(campaign.id, index, { delayDays: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /></label>
-                      <label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Content</span><select className={input} value={step.contentType || "plain"} onChange={(event) => updateSequence(campaign.id, index, { contentType: event.target.value as SequenceStep["contentType"] })}><option value="plain">Plain follow-up</option><option value="insight">Useful insight</option><option value="case_study">Case study</option><option value="video">Video / demo</option><option value="close_loop">Close the loop</option></select></label>
-                      <label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Purpose</span><input className={input} value={step.purpose || ""} onChange={(event) => updateSequence(campaign.id, index, { purpose: event.target.value })} placeholder="Why this email deserves a response" /></label>
-                    </div>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Writing guidance</span><textarea className={`${input} min-h-20`} value={step.guidance || ""} onChange={(event) => updateSequence(campaign.id, index, { guidance: event.target.value })} placeholder="What new angle or proof should this step add?" /></label><label><span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Approved asset link, optional</span><input type="url" className={input} value={step.assetUrl || ""} onChange={(event) => updateSequence(campaign.id, index, { assetUrl: event.target.value })} placeholder="https://… video, demo or case study" /><span className="mt-1 block text-xs text-muted">The draft can use this exact link, but still cannot send until you approve it.</span></label></div>
-                  </li>)}</ol>
-                </div>
+                <CampaignSequenceBuilder
+                  campaignId={campaign.id}
+                  sequence={campaign.sequence || []}
+                  disabled={!canManageCampaigns}
+                  saving={busy === `campaign:${campaign.id}`}
+                  onChange={(sequence) =>
+                    setCampaigns((all) =>
+                      all.map((item) =>
+                        item.id === campaign.id ? { ...item, sequence } : item
+                      )
+                    )
+                  }
+                  onSave={() => saveCampaign(campaign)}
+                />
               </fieldset>
             </div>
           </details>;

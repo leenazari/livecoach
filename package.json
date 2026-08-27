@@ -49,7 +49,8 @@
     "validate:reply-to-meeting": "node scripts/validate-reply-to-meeting-flow.mjs",
     "validate:cross-campaign-outreach": "node scripts/validate-cross-campaign-outreach.mjs",
     "validate:manual-outreach-calls": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-manual-outreach-calls.mjs",
-    "validate:official-job-research": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-official-job-research.mjs"
+    "validate:official-job-research": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-official-job-research.mjs",
+    "validate:campaign-sequence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-campaign-sequence-builder.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

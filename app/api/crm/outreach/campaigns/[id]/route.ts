@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sanitizeOutreachSequence } from "@/lib/outreach-sequence";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -17,34 +18,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (["draft", "active", "paused", "completed"].includes(body.status)) patch.status = body.status;
     if (body.daily_limit != null) patch.daily_limit = Math.min(20, Math.max(1, Number(body.daily_limit) || 20));
     if (Array.isArray(body.sequence)) {
-      const contentTypes = ["plain", "insight", "case_study", "video", "close_loop"];
-      const invalidAssetIndex = body.sequence.slice(0, 6).findIndex(
-        (step: any) =>
-          typeof step?.assetUrl === "string" &&
-          step.assetUrl.trim() &&
-          !/^https:\/\//i.test(step.assetUrl.trim())
-      );
-      if (invalidAssetIndex >= 0) {
-        return NextResponse.json(
-          { error: `Sequence step ${invalidAssetIndex + 1} asset link must start with https://` },
-          { status: 400 }
-        );
+      const result = sanitizeOutreachSequence(body.sequence);
+      if (result.error) {
+        return NextResponse.json({ error: result.error }, { status: 400 });
       }
-      const sequence = body.sequence.slice(0, 6).map((step: any, index: number) => {
-        const assetUrl = typeof step?.assetUrl === "string" ? step.assetUrl.trim() : "";
-        return {
-          step: index + 1,
-          delayDays: index === 0 ? 0 : Math.min(30, Math.max(1, Math.round(Number(step?.delayDays) || 3))),
-          purpose: String(step?.purpose || "").trim().slice(0, 240),
-          contentType: contentTypes.includes(step?.contentType) ? step.contentType : "plain",
-          guidance: String(step?.guidance || "").trim().slice(0, 500),
-          assetUrl: assetUrl || null,
-        };
-      });
-      if (!sequence.length || sequence.some((step: any) => !step.purpose)) {
-        return NextResponse.json({ error: "Every sequence step needs a purpose" }, { status: 400 });
-      }
-      patch.sequence = sequence;
+      patch.sequence = result.sequence;
     }
     if (body.voice && typeof body.voice === "object") {
       patch.voice = {
