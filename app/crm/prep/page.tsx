@@ -345,6 +345,7 @@ function PrepInner() {
                 method: "POST",
                 body: JSON.stringify({
                   companyId,
+                  upcomingId: upcomingId || undefined,
                   name: d.subject.person || undefined,
                   email: d.subject.personEmail,
                 }),

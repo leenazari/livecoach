@@ -70,9 +70,15 @@ export async function loadAttendeeConfig(): Promise<AttendeeConfig> {
   const domainsRaw: any[] = Array.isArray((prof as any)?.internal_domains)
     ? (prof as any).internal_domains
     : [];
-  const internalDomains = new Set<string>(
-    domainsRaw.map((d: any) => String(d || "").toLowerCase().trim())
-  );
+  // These are the product's own operating domains. Keep them as a fail-safe in
+  // addition to the per-user setting, otherwise an internal salesperson on an
+  // invite can be mistaken for the client when a profile has not saved every
+  // house domain yet.
+  const internalDomains = new Set<string>([
+    "ai13.com",
+    "interviewa.com",
+    ...domainsRaw.map((d: any) => String(d || "").toLowerCase().trim()),
+  ]);
 
   const internalCompanyId =
     ((companies || []).find(

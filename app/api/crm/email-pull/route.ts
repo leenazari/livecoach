@@ -16,6 +16,7 @@ import {
   connectedMailProvider,
 } from "@/lib/mail";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
+import { loadPrimaryAttendeeForUpcoming } from "@/lib/call-subject";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,12 +63,14 @@ async function myAddresses(): Promise<Set<string>> {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const name = typeof body.name === "string" ? body.name.trim() : "";
+    let name = typeof body.name === "string" ? body.name.trim() : "";
     let email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const companyId =
       typeof body.companyId === "string" ? body.companyId.trim() : "";
     const requestedWorkstreamId =
       typeof body.workstreamId === "string" ? body.workstreamId.trim() : "";
+    const upcomingId =
+      typeof body.upcomingId === "string" ? body.upcomingId.trim() : "";
     const workstream = requestedWorkstreamId
       ? await getWorkstreamScope(requestedWorkstreamId)
       : null;
@@ -81,6 +84,50 @@ export async function POST(req: NextRequest) {
       );
     }
     let query = typeof body.query === "string" ? body.query.trim() : "";
+
+    // Automatic pre-call context is bound to one exact calendar event. The
+    // server independently resolves that event's lead attendee, so a browser,
+    // cron job or stale tab cannot write a supporting invitee's email history
+    // into the linked client merely because that invitee appeared first.
+    if (upcomingId) {
+      const resolved = await loadPrimaryAttendeeForUpcoming(upcomingId);
+      if (!resolved.call) {
+        return NextResponse.json(
+          { error: "The scheduled call could not be found." },
+          { status: 404 }
+        );
+      }
+      if (
+        !companyId ||
+        String(resolved.call.company_id || "") !== companyId
+      ) {
+        return NextResponse.json(
+          { error: "The scheduled call is not linked to this client." },
+          { status: 409 }
+        );
+      }
+      if (!resolved.primaryAttendee?.email) {
+        return NextResponse.json(
+          {
+            error:
+              "The meeting's lead person is ambiguous. Choose the person before loading email context.",
+          },
+          { status: 409 }
+        );
+      }
+      if (email && email !== resolved.primaryAttendee.email) {
+        return NextResponse.json(
+          {
+            error:
+              "The selected email belongs to another invitee, so no client context was changed.",
+          },
+          { status: 409 }
+        );
+      }
+      email = resolved.primaryAttendee.email;
+      if (!name) name = resolved.primaryAttendee.name;
+      query = "";
+    }
 
     // If we were handed a company, search its recorded contact / domain.
     if (!email && !name && !query && companyId) {

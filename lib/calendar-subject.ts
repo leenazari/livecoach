@@ -1,0 +1,243 @@
+export type CalendarAttendee = {
+  email?: string;
+  displayName?: string;
+  name?: string;
+  self?: boolean;
+  organizer?: boolean;
+  responseStatus?: string;
+};
+
+export type PrimaryAttendeeMatch = {
+  name: string;
+  email: string;
+  matchedBy:
+    | "meeting_title"
+    | "company_contact"
+    | "company_domain"
+    | "only_external_guest"
+    | "only_guest";
+};
+
+export type PrimaryAttendeeContext = {
+  title?: string | null;
+  companyDomain?: string | null;
+  contactEmails?: string[] | null;
+  internalDomains?: string[] | Set<string> | null;
+};
+
+const DEFAULT_INTERNAL_DOMAINS = new Set(["ai13.com", "interviewa.com"]);
+
+const GENERIC_TITLE_WORDS = new Set([
+  "a",
+  "about",
+  "and",
+  "brainstorm",
+  "brainstorming",
+  "business",
+  "call",
+  "catch",
+  "catchup",
+  "chat",
+  "check",
+  "client",
+  "conversation",
+  "demo",
+  "discovery",
+  "discussion",
+  "event",
+  "for",
+  "from",
+  "in",
+  "interview",
+  "interviewa",
+  "interviewer",
+  "intro",
+  "introduction",
+  "livecoach",
+  "meeting",
+  "of",
+  "on",
+  "onsite",
+  "planning",
+  "product",
+  "sales",
+  "session",
+  "sync",
+  "the",
+  "to",
+  "training",
+  "update",
+  "video",
+  "with",
+  "workshop",
+]);
+
+const normalise = (value: unknown) =>
+  String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const tokens = (value: unknown) => normalise(value).split(/\s+/).filter(Boolean);
+
+export const calendarEmailDomain = (email: string) => {
+  const match = String(email || "").toLowerCase().match(/@([^@\s]+)$/);
+  return match ? match[1] : "";
+};
+
+const nameFromEmail = (email: string) => {
+  const local = String(email || "").split("@")[0] || "";
+  return local
+    .replace(/[._+-]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+};
+
+const attendeeName = (attendee: CalendarAttendee) => {
+  const named = String(attendee.displayName || attendee.name || "").trim();
+  return named || nameFromEmail(String(attendee.email || ""));
+};
+
+const unique = <T,>(rows: T[]) => (rows.length === 1 ? rows[0] : null);
+
+const titleMatchScore = (attendee: CalendarAttendee, titleTokens: string[]) => {
+  const email = String(attendee.email || "").toLowerCase().trim();
+  const local = email.split("@")[0] || "";
+  const localTokens = new Set(tokens(local));
+  const nameTokens = new Set(tokens(attendeeName(attendee)));
+  const compactLocal = normalise(local).replace(/\s+/g, "");
+  const compactName = normalise(attendeeName(attendee)).replace(/\s+/g, "");
+  let score = 0;
+
+  for (const titleToken of titleTokens) {
+    if (nameTokens.has(titleToken)) score += 8;
+    if (localTokens.has(titleToken)) score += 7;
+    if (
+      titleToken.length >= 4 &&
+      (compactName.startsWith(titleToken) || compactLocal.startsWith(titleToken))
+    ) {
+      score += 4;
+    }
+  }
+  return score;
+};
+
+// Select the person the meeting is actually about. Calendar attendee ordering
+// is not meaningful, so the resolver must never use "first invited person" as
+// a tie breaker. A null result means the evidence is ambiguous and the caller
+// should ask for a person rather than loading another invitee's CRM context.
+export function pickPrimaryAttendee(
+  attendees: CalendarAttendee[] | null | undefined,
+  context: PrimaryAttendeeContext = {}
+): PrimaryAttendeeMatch | null {
+  const guests = (Array.isArray(attendees) ? attendees : [])
+    .filter(
+      (attendee) =>
+        attendee &&
+        attendee.self !== true &&
+        typeof attendee.email === "string" &&
+        attendee.email.trim()
+    )
+    .map((attendee) => ({
+      ...attendee,
+      email: String(attendee.email).toLowerCase().trim(),
+    }));
+  if (!guests.length) return null;
+
+  const meaningfulTitleTokens = tokens(context.title).filter(
+    (token) => token.length >= 3 && !GENERIC_TITLE_WORDS.has(token)
+  );
+  if (meaningfulTitleTokens.length) {
+    const scored = guests
+      .map((attendee) => ({
+        attendee,
+        score: titleMatchScore(attendee, meaningfulTitleTokens),
+      }))
+      .filter((row) => row.score > 0)
+      .sort((a, b) => b.score - a.score);
+    if (scored.length) {
+      const best = scored[0].score;
+      const winners = scored.filter((row) => row.score === best);
+      const winner = unique(winners);
+      if (winner) {
+        return {
+          name: attendeeName(winner.attendee),
+          email: String(winner.attendee.email),
+          matchedBy: "meeting_title",
+        };
+      }
+    }
+  }
+
+  const contactEmails = new Set(
+    (context.contactEmails || [])
+      .map((email) => String(email || "").toLowerCase().trim())
+      .filter(Boolean)
+  );
+  const contact = unique(
+    guests.filter((attendee) => contactEmails.has(String(attendee.email)))
+  );
+  if (contact) {
+    return {
+      name: attendeeName(contact),
+      email: String(contact.email),
+      matchedBy: "company_contact",
+    };
+  }
+
+  const companyDomain = String(context.companyDomain || "")
+    .toLowerCase()
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0];
+  if (companyDomain) {
+    const domainGuest = unique(
+      guests.filter(
+        (attendee) => calendarEmailDomain(String(attendee.email)) === companyDomain
+      )
+    );
+    if (domainGuest) {
+      return {
+        name: attendeeName(domainGuest),
+        email: String(domainGuest.email),
+        matchedBy: "company_domain",
+      };
+    }
+  }
+
+  const internalDomains = new Set(DEFAULT_INTERNAL_DOMAINS);
+  for (const domain of context.internalDomains || []) {
+    const clean = String(domain || "").toLowerCase().trim();
+    if (clean) internalDomains.add(clean);
+  }
+  const externalGuest = unique(
+    guests.filter(
+      (attendee) =>
+        !internalDomains.has(calendarEmailDomain(String(attendee.email)))
+    )
+  );
+  if (externalGuest) {
+    return {
+      name: attendeeName(externalGuest),
+      email: String(externalGuest.email),
+      matchedBy: "only_external_guest",
+    };
+  }
+
+  const onlyGuest = unique(guests);
+  if (onlyGuest) {
+    return {
+      name: attendeeName(onlyGuest),
+      email: String(onlyGuest.email),
+      matchedBy: "only_guest",
+    };
+  }
+
+  return null;
+}
