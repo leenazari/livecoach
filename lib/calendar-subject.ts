@@ -27,6 +27,17 @@ export type PrimaryAttendeeContext = {
 
 const DEFAULT_INTERNAL_DOMAINS = new Set(["ai13.com", "interviewa.com"]);
 
+// These addresses may legitimately appear as supporting invitees on other
+// client calls. They can identify the subject of a call only when the linked
+// company is their own organisation, or when the linked record is explicitly
+// marked as an internal company. This prevents a colleague or close partner
+// from replacing the real lead just because they were the only accepted guest.
+export const DEFAULT_PROTECTED_INTENT_DOMAINS = new Set([
+  "ai13.com",
+  "interviewa.com",
+  "schoolofcoding.co.uk",
+]);
+
 const GENERIC_TITLE_WORDS = new Set([
   "a",
   "about",
@@ -86,6 +97,41 @@ export const calendarEmailDomain = (email: string) => {
   const match = String(email || "").toLowerCase().match(/@([^@\s]+)$/);
   return match ? match[1] : "";
 };
+
+const cleanDomain = (value: unknown) =>
+  String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/^@/, "")
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]
+    .replace(/:\d+$/, "");
+
+export type CompanyIntentEmailContext = {
+  companyDomain?: string | null;
+  companyInternal?: boolean;
+  protectedDomains?: string[] | Set<string> | null;
+};
+
+export function emailMayInfluenceCompanyIntent(
+  email: string,
+  context: CompanyIntentEmailContext = {}
+): boolean {
+  const emailDomain = calendarEmailDomain(email);
+  if (!emailDomain) return false;
+
+  const protectedDomains = new Set(DEFAULT_PROTECTED_INTENT_DOMAINS);
+  for (const domain of context.protectedDomains || []) {
+    const clean = cleanDomain(domain);
+    if (clean) protectedDomains.add(clean);
+  }
+  if (!protectedDomains.has(emailDomain)) return true;
+  if (context.companyInternal === true) return true;
+
+  const companyDomain = cleanDomain(context.companyDomain);
+  return Boolean(companyDomain && companyDomain === emailDomain);
+}
 
 const nameFromEmail = (email: string) => {
   const local = String(email || "").split("@")[0] || "";

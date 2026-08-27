@@ -27,7 +27,11 @@ async function run(req: Request) {
     const origin = new URL(req.url).origin;
 
     // Skip the user's own orgs + any internal domains they have configured.
-    const internal = new Set<string>(["ai13.com", "interviewa.com"]);
+    const internal = new Set<string>([
+      "ai13.com",
+      "interviewa.com",
+      "schoolofcoding.co.uk",
+    ]);
     try {
       const { data } = await supabaseAdmin
         .from("workspace_profile")

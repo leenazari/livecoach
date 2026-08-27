@@ -1123,12 +1123,20 @@ export default function CallPage() {
             // The API resolves the meeting's lead person without trusting
             // attendee order. The local fallback applies the same conservative
             // rule for an older response during a rolling deployment.
-            const guest =
-              (call as any)?.primaryAttendee ||
-              pickPrimaryAttendee((call as any)?.attendees, {
-                title: (call as any)?.title,
-                internalDomains: ["ai13.com", "interviewa.com"],
-              });
+            const hasServerLeadDecision = Object.prototype.hasOwnProperty.call(
+              call || {},
+              "primaryAttendee"
+            );
+            const guest = hasServerLeadDecision
+              ? (call as any).primaryAttendee
+              : pickPrimaryAttendee((call as any)?.attendees, {
+                  title: (call as any)?.title,
+                  internalDomains: [
+                    "ai13.com",
+                    "interviewa.com",
+                    "schoolofcoding.co.uk",
+                  ],
+                });
             if (guest) {
               if (!candidateRef.current) {
                 candidateRef.current = guest.name;

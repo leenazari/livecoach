@@ -108,8 +108,16 @@ export async function resolveCallScope(opts: {
   upcomingId?: unknown;
   workstreamId?: unknown;
   attendees?: unknown;
+  leadEmail?: unknown;
 }): Promise<{ companyId: string | null; workstream: WorkstreamScope | null }> {
   let companyId = uuid(opts.companyId) ? opts.companyId : null;
+  const hasLeadDecision = Object.prototype.hasOwnProperty.call(
+    opts,
+    "leadEmail"
+  );
+  const leadEmail =
+    typeof opts.leadEmail === "string" ? opts.leadEmail.trim().toLowerCase() : "";
+  const leadOnlyAttendees = leadEmail ? [{ email: leadEmail }] : [];
 
   if (uuid(opts.upcomingId)) {
     const { data: upcoming, error } = await supabaseAdmin
@@ -126,7 +134,9 @@ export async function resolveCallScope(opts: {
     if (companyId) {
       const workstream = await resolveWorkstreamFromAttendees({
         companyId,
-        attendees: upcoming?.attendees || opts.attendees,
+        attendees: hasLeadDecision
+          ? leadOnlyAttendees
+          : upcoming?.attendees || opts.attendees,
       });
       if (workstream) {
         await supabaseAdmin
@@ -147,7 +157,7 @@ export async function resolveCallScope(opts: {
   if (companyId) {
     const workstream = await resolveWorkstreamFromAttendees({
       companyId,
-      attendees: opts.attendees,
+      attendees: hasLeadDecision ? leadOnlyAttendees : opts.attendees,
     });
     return { companyId, workstream };
   }
