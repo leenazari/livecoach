@@ -33,6 +33,12 @@ assert.match(forgot, /If that email belongs to a LiveCoach account/);
 assert.doesNotMatch(forgot, /admin\.|SERVICE_ROLE/);
 assert.match(browserClient, /flowType: "implicit"/);
 assert.match(browserClient, /persistSession: false/);
+assert.match(
+  browserClient,
+  /createSupabasePasswordRecoveryClient[\s\S]*flowType: "implicit"[\s\S]*persistSession: true[\s\S]*detectSessionInUrl: true[\s\S]*storageKey: "livecoach-password-recovery"/
+);
+assert.match(reset, /createSupabasePasswordRecoveryClient/);
+assert.doesNotMatch(reset, /createSupabaseBrowser/);
 assert.match(reset, /updateUser\(\{ password \}\)/);
 assert.match(reset, /signOut\(\{ scope: "global" \}\)/);
 assert.match(reset, /passwordValidationError/);

@@ -6,12 +6,12 @@ import ThemeToggle from "@/components/ThemeToggle";
 import LiveCoachLogo from "@/components/LiveCoachLogo";
 import { clearCrmCache } from "@/lib/crm";
 import { PASSWORD_MIN_LENGTH, passwordValidationError } from "@/lib/password-reset";
-import { createSupabaseBrowser } from "@/lib/supabase-browser";
+import { createSupabasePasswordRecoveryClient } from "@/lib/supabase-browser";
 
 type RecoveryStatus = "checking" | "ready" | "invalid";
 
 export default function ResetPasswordPage() {
-  const supabase = useMemo(() => createSupabaseBrowser(), []);
+  const supabase = useMemo(() => createSupabasePasswordRecoveryClient(), []);
   const [status, setStatus] = useState<RecoveryStatus>("checking");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

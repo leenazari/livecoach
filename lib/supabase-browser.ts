@@ -31,3 +31,28 @@ export function createSupabasePasswordResetClient() {
     }
   );
 }
+
+/**
+ * The reset page receives an implicit recovery session in the URL fragment.
+ * It must use an implicit client as well. The normal SSR browser client is
+ * intentionally PKCE-only and rejects that fragment as the wrong flow type.
+ *
+ * A separate storage key keeps this short-lived recovery session away from the
+ * normal application session. The reset page signs it out after the password
+ * has been changed.
+ */
+export function createSupabasePasswordRecoveryClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      auth: {
+        flowType: "implicit",
+        persistSession: true,
+        autoRefreshToken: false,
+        detectSessionInUrl: true,
+        storageKey: "livecoach-password-recovery",
+      },
+    }
+  );
+}
