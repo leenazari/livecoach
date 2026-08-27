@@ -51,7 +51,9 @@ export async function GET(req: NextRequest) {
         .eq("id", upcomingId)
         .maybeSingle();
       call = data || null;
-      if (call && call.company_id && !companyId) companyId = call.company_id;
+      // The exact calendar event is authoritative. A stale company id left in
+      // the browser URL must never make this event read another client's prep.
+      if (call?.company_id) companyId = call.company_id;
     }
 
     const company = await loadCompany(companyId || null);
