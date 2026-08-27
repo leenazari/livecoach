@@ -10,22 +10,22 @@ export function LiveCoachMark({ className = "h-8 w-8", ...props }: SVGProps<SVGS
       {...props}
     >
       <path
-        d="M49 15.5a25 25 0 1 0 .7 32"
+        d="M14 10v42h39"
         stroke="currentColor"
-        strokeWidth="7.5"
-        strokeLinecap="round"
-      />
-      <path
-        d="M25.5 21.5v21h17"
-        stroke="currentColor"
-        strokeWidth="6"
+        strokeWidth="8"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
       <path
-        d="M35 34v2M41 30v6M47 26v10"
+        d="M49 27.5a13.5 13.5 0 1 0 0 15"
+        stroke="currentColor"
+        strokeWidth="5.5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M36 36v1M41 33.5v4M46 31v6.5"
         stroke="rgb(var(--lc-sage))"
-        strokeWidth="4"
+        strokeWidth="3"
         strokeLinecap="round"
       />
     </svg>
