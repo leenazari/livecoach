@@ -50,6 +50,7 @@ const SALES_CORE_ITEMS: Item[] = [
 const MORE_ITEMS: Item[] = [
   { href: "/crm/call-coach", label: "Call coach", icon: "◎" },
   { href: "/crm/health", label: "Health", icon: "✓" },
+  { href: "/settings/readiness", label: "Account readiness", icon: "◌" },
   { href: "/settings/sales-profile", label: "My setup", icon: "◉" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
@@ -203,9 +204,12 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
       return pathname.startsWith("/crm/pitch-playbook");
     if (it.href === "/settings/sales-profile")
       return pathname.startsWith("/settings/sales-profile");
+    if (it.href === "/settings/readiness")
+      return pathname.startsWith("/settings/readiness");
     if (it.href === "/settings")
       return pathname.startsWith("/settings") &&
-        !pathname.startsWith("/settings/sales-profile");
+        !pathname.startsWith("/settings/sales-profile") &&
+        !pathname.startsWith("/settings/readiness");
     if (it.tab) return pathname.startsWith("/crm/board") && tab === it.tab;
     return false;
   };

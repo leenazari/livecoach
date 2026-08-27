@@ -244,6 +244,12 @@ export default function TeamAccessPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
+            href="/settings/readiness"
+            className="rounded-full border border-sky/45 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sky hover:bg-sky/10"
+          >
+            Account readiness
+          </Link>
+          <Link
             href="/settings/sales-profile"
             className="rounded-full border border-sage/45 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage hover:bg-sage/10"
           >
@@ -416,8 +422,10 @@ export default function TeamAccessPage() {
                       },
                       {
                         id: "email",
-                        label: "Test outreach email sent",
-                        detail: `${member.setup.sentMessages} sent from this account`,
+                        label: "Email rehearsal completed",
+                        detail: member.setup.sentMessages > 0
+                          ? "A safe rehearsal or successful outreach send is recorded for this account"
+                          : "Send one prepared draft to this person's own mailbox before contacting a prospect",
                         complete: member.setup.sentMessages > 0,
                       },
                       {
