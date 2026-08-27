@@ -36,6 +36,7 @@
     "validate:opportunity-privacy": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-opportunity-privacy.mjs",
     "validate:sales-pipeline-core": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sales-desk-pipeline-core.mjs",
     "validate:quick-call": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-quick-call-workflow.mjs",
+    "validate:pipeline-hygiene": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-pipeline-hygiene.mjs",
     "validate:call-silence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-call-silence-auto-end.mjs",
     "validate:transcript-navigation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-transcript-download-latest-call.mjs",
     "validate:shared-outreach-pool": "node scripts/validate-shared-outreach-pool.mjs",

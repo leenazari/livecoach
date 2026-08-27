@@ -5,6 +5,7 @@ import { logModelUsage } from "@/lib/usage";
 import { gatherClientContext } from "@/lib/crm-context";
 import { upsertTasks } from "@/lib/tasks";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
+import { activeCompanyPipelineExclusion } from "@/lib/company-pipeline-exclusion";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -39,6 +40,7 @@ export async function POST(
     }
 
     const existing = (company.profile || {}) as any;
+    const pipelineExclusion = activeCompanyPipelineExclusion(company.profile);
     const existingBriefStr = Array.isArray(existing.brief)
       ? existing.brief.join("\n")
       : String(existing.brief || "");
@@ -198,7 +200,7 @@ Return the JSON now.`;
       .eq("company_id", companyId)
       .eq("surfaced_by_ai", true)
       .is("session_id", null);
-    if (opportunities.length) {
+    if (opportunities.length && !pipelineExclusion) {
       await supabaseAdmin.from("opportunities").insert(
         opportunities.map((o) => ({
           company_id: companyId,
@@ -218,7 +220,8 @@ Return the JSON now.`;
       brief,
       playbook,
       nextSteps,
-      opportunities: opportunities.length,
+      opportunities: pipelineExclusion ? 0 : opportunities.length,
+      pipelineExcluded: !!pipelineExclusion,
     });
   } catch (err: any) {
     return NextResponse.json(

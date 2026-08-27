@@ -170,6 +170,9 @@ export default function WorkInboxPage() {
   const [quickCallRequestId, setQuickCallRequestId] = useState("");
   const [quickCallNote, setQuickCallNote] = useState("");
   const [quickCallOutcome, setQuickCallOutcome] = useState("connected");
+  const [quickCallMethod, setQuickCallMethod] = useState("phone");
+  const [workSelectionMode, setWorkSelectionMode] = useState(false);
+  const [selectedWorkTaskIds, setSelectedWorkTaskIds] = useState<string[]>([]);
   const [outreachQueueCount, setOutreachQueueCount] = useState<number | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -270,6 +273,11 @@ export default function WorkInboxPage() {
     [data?.items, filter]
   );
   const shown = filtered.slice(0, visible);
+  // "Select all" means every removable task in the chosen view, including
+  // rows behind "show more", not just the first ten currently painted.
+  const selectableWorkTasks = filtered.filter(
+    (item) => item.kind === "task" && item.dismissible && !item.done
+  );
   const attentionItems = useMemo(
     () =>
       (data?.items || [])
@@ -293,6 +301,8 @@ export default function WorkInboxPage() {
     setEditingId("");
     setDeferredIds([]);
     setNextActionId("");
+    setWorkSelectionMode(false);
+    setSelectedWorkTaskIds([]);
     setNotice("");
   };
 
@@ -474,6 +484,7 @@ export default function WorkInboxPage() {
     setQuickCallRequestId(crypto.randomUUID());
     setQuickCallNote("");
     setQuickCallOutcome("connected");
+    setQuickCallMethod("phone");
     setNotice("");
     setError("");
   };
@@ -483,6 +494,7 @@ export default function WorkInboxPage() {
     setQuickCallRequestId("");
     setQuickCallNote("");
     setQuickCallOutcome("connected");
+    setQuickCallMethod("phone");
   };
 
   const saveQuickCall = async (deal: WorkPipelineDeal) => {
@@ -506,6 +518,7 @@ export default function WorkInboxPage() {
         body: JSON.stringify({
           requestId: quickCallRequestId,
           outcome: quickCallOutcome,
+          contactMethod: quickCallMethod,
           note,
         }),
       });
@@ -521,6 +534,37 @@ export default function WorkInboxPage() {
       await load(true);
     } catch (err: any) {
       setError(err?.message || "The call note did not save");
+    } finally {
+      setSavingId("");
+    }
+  };
+
+  const dismissPipelineDeal = async (deal: WorkPipelineDeal) => {
+    if (savingId) return;
+    const busyKey = `dismiss:${deal.id}`;
+    setSavingId(busyKey);
+    setError("");
+    setNotice("");
+    try {
+      const result = await crmFetch<{
+        opportunity: { id: string; status: string };
+      }>(`/api/crm/opportunities/${deal.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: "dismissed",
+          sourceType: "human",
+          sourceChannel: "sales_desk_pipeline",
+          rationale: "Removed from the active pipeline by the salesperson",
+          evidence: { preservedHistory: true },
+        }),
+      });
+      if (result.opportunity?.status !== "dismissed") {
+        throw new Error("The database did not confirm the removal.");
+      }
+      setNotice(`${deal.title} was removed from the active pipeline. Its history is still saved.`);
+      await load(true);
+    } catch (err: any) {
+      setError(err?.message || "The deal could not be removed from the pipeline.");
     } finally {
       setSavingId("");
     }
@@ -570,6 +614,39 @@ export default function WorkInboxPage() {
     } catch (err: any) {
       setData(previous);
       setError(err?.message || "That draft did not stay removed. Please try again.");
+    } finally {
+      setSavingId("");
+    }
+  };
+
+  const dismissSelectedWork = async () => {
+    if (!selectedWorkTaskIds.length || savingId) return;
+    setSavingId("bulk-tasks");
+    setError("");
+    setNotice("");
+    try {
+      const result = await crmFetch<{ updatedIds: string[]; skippedIds: string[] }>(
+        "/api/crm/tasks/bulk",
+        {
+          method: "POST",
+          body: JSON.stringify({ taskIds: selectedWorkTaskIds }),
+        }
+      );
+      if (!result.updatedIds?.length) {
+        throw new Error("No selected to-dos were removed");
+      }
+      setNotice(
+        `${result.updatedIds.length} ${result.updatedIds.length === 1 ? "item was" : "items were"} removed. The records remain archived so they cannot pop back.`
+      );
+      setSelectedWorkTaskIds([]);
+      setWorkSelectionMode(false);
+      await load(true);
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated", { detail: { source: "work-inbox" } }));
+      if (result.skippedIds?.length) {
+        setError(`${result.skippedIds.length} item changed elsewhere and was left alone.`);
+      }
+    } catch (err: any) {
+      setError(err?.message || "The selected to-dos could not be removed.");
     } finally {
       setSavingId("");
     }
@@ -919,6 +996,7 @@ export default function WorkInboxPage() {
                 quickCallId={quickCallId}
                 quickCallNote={quickCallNote}
                 quickCallOutcome={quickCallOutcome}
+                quickCallMethod={quickCallMethod}
                 onBeginAction={(deal) =>
                   beginNextDealAction({ id: deal.itemId })
                 }
@@ -938,7 +1016,9 @@ export default function WorkInboxPage() {
                 onCancelQuickCall={cancelQuickCall}
                 onQuickCallNoteChange={setQuickCallNote}
                 onQuickCallOutcomeChange={setQuickCallOutcome}
+                onQuickCallMethodChange={setQuickCallMethod}
                 onSaveQuickCall={(deal) => void saveQuickCall(deal)}
+                onDismissDeal={(deal) => void dismissPipelineDeal(deal)}
                 onShowAll={() => chooseFilter("revenue")}
               />
             ) : null}
@@ -1320,6 +1400,23 @@ export default function WorkInboxPage() {
         ) : loading && !data ? (
           <MatrixRain size="panel" messages={["loading work inbox", "ranking what needs attention"]} />
         ) : shown.length ? (
+          <>
+          {selectableWorkTasks.length ? (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-edge bg-panel/45 p-3">
+              <p className="text-xs text-muted">{workSelectionMode ? `${selectedWorkTaskIds.length} selected` : `${selectableWorkTasks.length} removable to-dos in this view`}</p>
+              <div className="flex flex-wrap gap-2">
+                {!workSelectionMode ? (
+                  <button type="button" onClick={() => setWorkSelectionMode(true)} className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase text-muted hover:text-bone">Select items</button>
+                ) : (
+                  <>
+                    <button type="button" onClick={() => setSelectedWorkTaskIds(selectableWorkTasks.every((item) => selectedWorkTaskIds.includes(item.sourceId)) ? [] : selectableWorkTasks.map((item) => item.sourceId))} disabled={Boolean(savingId)} className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase text-muted disabled:opacity-40">{selectableWorkTasks.every((item) => selectedWorkTaskIds.includes(item.sourceId)) ? "Clear all" : "Select all"}</button>
+                    <button type="button" onClick={() => { setWorkSelectionMode(false); setSelectedWorkTaskIds([]); }} disabled={Boolean(savingId)} className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase text-muted disabled:opacity-40">Cancel</button>
+                    <button type="button" onClick={() => void dismissSelectedWork()} disabled={Boolean(savingId) || !selectedWorkTaskIds.length} className="min-h-10 rounded-lg border border-rust/50 bg-rust/10 px-3 font-mono text-[0.52rem] uppercase text-rust disabled:opacity-40">{savingId === "bulk-tasks" ? "Removing…" : `Remove ${selectedWorkTaskIds.length}`}</button>
+                  </>
+                )}
+              </div>
+            </div>
+          ) : null}
           <ol className="space-y-2">
             {shown.map((item) => {
               const copy = kindCopy[item.kind];
@@ -1342,6 +1439,16 @@ export default function WorkInboxPage() {
                   } ${item.done ? "opacity-65" : ""}`}
                 >
                   <div className="flex items-start gap-3">
+                    {workSelectionMode && item.kind === "task" && item.dismissible ? (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWorkTaskIds((current) => current.includes(item.sourceId) ? current.filter((id) => id !== item.sourceId) : [...current, item.sourceId])}
+                        aria-label={`Select ${item.title}`}
+                        className={`mt-2 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${selectedWorkTaskIds.includes(item.sourceId) ? "border-rust bg-rust text-ink" : "border-muted text-transparent"}`}
+                      >
+                        ✓
+                      </button>
+                    ) : null}
                     <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border font-mono text-sm ${priorityStyle[item.priorityLabel]}`}>
                       {copy.icon}
                     </span>
@@ -1445,6 +1552,7 @@ export default function WorkInboxPage() {
               );
             })}
           </ol>
+          </>
         ) : (
           <section className="rounded-xl border border-moss/35 bg-moss/[0.06] px-4 py-12 text-center">
             <p className="font-display text-xl text-bone">Nothing is waiting here.</p>

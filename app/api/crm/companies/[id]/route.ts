@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { loadSafeSharedCompany } from "@/lib/team-client-sharing";
+import { withCompanyPipelineExclusion } from "@/lib/company-pipeline-exclusion";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -179,8 +180,9 @@ export async function PATCH(
     const body = await req.json();
     const { data: current, error: currentError } = await supabaseAdmin
       .from("companies")
-      .select("id,owner_id,workspace_id")
+      .select("id,name,stage,profile,owner_id,workspace_id")
       .eq("id", params.id)
+      .eq("workspace_id", scope.workspaceId)
       .maybeSingle();
     if (currentError) throw currentError;
 
@@ -227,18 +229,39 @@ export async function PATCH(
     if (!sharedSalesAccess && body.attributes && typeof body.attributes === "object") {
       patch.attributes = body.attributes;
     }
+    const removeFromPipeline = body.removeFromPipeline === true;
+    const pipelineRemovalReason =
+      typeof body.rationale === "string" && body.rationale.trim()
+        ? body.rationale.trim().slice(0, 1000)
+        : "User confirmed this relationship is not an active sales prospect";
+    const pipelineRemovalSource =
+      typeof body.sourceChannel === "string" && body.sourceChannel.trim()
+        ? body.sourceChannel.trim().slice(0, 80)
+        : "client_relationship_update";
+    // This owner-level marker prevents later AI synthesis from quietly
+    // recreating a deal that the user explicitly removed. It does not prevent
+    // a deliberate human-created deal, so real partner expansion stays valid.
+    if (removeFromPipeline && current?.owner_id === scope.userId) {
+      patch.profile = withCompanyPipelineExclusion(current.profile, {
+        reason: pipelineRemovalReason,
+        sourceType: body.sourceType === "system" ? "system" : "human",
+        sourceChannel: pipelineRemovalSource,
+        updatedAt: new Date().toISOString(),
+        actorUserId: scope.userId,
+      });
+    }
     // Stamp when the email context last changed, so the UI can show "updated X".
     if ("email_context" in patch) {
       patch.email_context_updated_at = patch.email_context
         ? new Date().toISOString()
         : null;
     }
-    if (Object.keys(patch).length === 0) {
+    if (Object.keys(patch).length === 0 && !removeFromPipeline) {
       return NextResponse.json({ error: "nothing to update" }, { status: 400 });
     }
 
-    let data: any;
-    if (sharedSalesAccess) {
+    let data: any = current;
+    if (sharedSalesAccess && Object.keys(patch).length > 0) {
       const { data: updated, error: updateError } = await supabaseService
         .from("companies")
         .update(patch)
@@ -267,18 +290,68 @@ export async function PATCH(
           metadata: { fields: Object.keys(patch) },
         });
       if (auditError) throw auditError;
-    } else {
+    } else if (Object.keys(patch).length > 0) {
       const { data: updated, error: updateError } = await supabaseAdmin
         .from("companies")
         .update(patch)
+        .eq("workspace_id", scope.workspaceId)
         .eq("id", params.id)
         .select()
         .single();
       if (updateError) throw updateError;
       data = updated;
     }
+
+    // A relationship label and a revenue opportunity answer different
+    // questions. Changing a client to Partner must not silently erase a real
+    // expansion deal. When the user explicitly says this company is not a
+    // prospect, however, dismiss its active revenue opportunities in the same
+    // confirmed action. The rows and their immutable history remain available.
+    let dismissedOpportunityIds: string[] = [];
+    if (removeFromPipeline) {
+      const now = new Date().toISOString();
+      let dismissQuery = supabaseService
+        .from("opportunities")
+        .update({
+          status: "dismissed",
+          forecast_category: "omitted",
+          updated_at: now,
+          last_change_context: {
+            nonce: crypto.randomUUID(),
+            sourceType: body.sourceType === "system" ? "system" : "human",
+            sourceChannel:
+              pipelineRemovalSource,
+            rationale: pipelineRemovalReason,
+            evidence: {
+              companyId: params.id,
+              relationshipStage: patch.stage || data?.stage || null,
+              removeFromPipeline: true,
+            },
+          },
+        })
+        .eq("workspace_id", scope.workspaceId)
+        .eq("company_id", params.id)
+        .eq("status", "open")
+        .eq("opportunity_type", "revenue");
+
+      // Salespeople may clean up only deals assigned to them. Owners can make
+      // the workspace-level call for a company they own.
+      if (!(scope.role === "owner" && current?.owner_id === scope.userId)) {
+        dismissQuery = dismissQuery.eq("assigned_to_user_id", scope.userId);
+      }
+      const { data: dismissed, error: dismissError } = await dismissQuery.select("id");
+      if (dismissError) throw dismissError;
+      dismissedOpportunityIds = (dismissed || []).map((row: any) => row.id);
+    }
     return NextResponse.json(
-      { company: data },
+      {
+        company: data,
+        pipeline: {
+          removed: removeFromPipeline,
+          dismissedOpportunityIds,
+          dismissedCount: dismissedOpportunityIds.length,
+        },
+      },
       {
         headers: {
           "Cache-Control": "private, no-store, no-cache, max-age=0, must-revalidate",

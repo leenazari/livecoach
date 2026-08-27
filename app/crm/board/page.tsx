@@ -369,7 +369,7 @@ function BoardInner() {
       ) : tab === "tasks" ? (
         <div className="rounded-xl border border-edge bg-panel/40 p-4">
           {/* Tick to complete, click ticked to remove, click text to start. */}
-          <TaskList showCompany emptyText="Nothing on your plate. Nice." />
+          <TaskList showCompany allowBulk emptyText="Nothing on your plate. Nice." />
         </div>
       ) : tab === "drafts" ? (
         <div className="flex flex-col gap-3">

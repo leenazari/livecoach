@@ -31,9 +31,11 @@ type Task = {
 export default function Commitments({
   companyId,
   showCompany = false,
+  allowBulk = false,
 }: {
   companyId?: string;
   showCompany?: boolean;
+  allowBulk?: boolean;
 }) {
   const url = `/api/crm/tasks${companyId ? `?companyId=${companyId}` : ""}`;
   const seed = (getCached<{ tasks: Task[] }>(url)?.tasks || []).filter(
@@ -51,6 +53,8 @@ export default function Commitments({
   const [saveError, setSaveError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   // Every load gets a sequence number. A tick/delete invalidates requests that
   // started before the click, so a slow stale response cannot repaint the item
   // two seconds after it was successfully saved.
@@ -182,6 +186,36 @@ export default function Commitments({
     }
   };
 
+  const dismissSelected = async () => {
+    if (!selectedIds.length || saving) return;
+    const selected = [...selectedIds];
+    setSaving(true);
+    setSaveError("");
+    try {
+      const result = await crmFetch<{ updatedIds: string[]; skippedIds: string[] }>(
+        "/api/crm/tasks/bulk",
+        { method: "POST", body: JSON.stringify({ taskIds: selected }) }
+      );
+      const updated = new Set(result.updatedIds || []);
+      if (!updated.size) throw new Error("No selected commitments were removed");
+      updated.forEach((id) => {
+        closedIds.current.add(id);
+        removeFromCachedList(id);
+      });
+      setItems((current) => current.filter((item) => !updated.has(item.id)));
+      setSelectedIds([]);
+      setBulkMode(false);
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      if (result.skippedIds?.length) {
+        setSaveError(`${result.skippedIds.length} item changed elsewhere and was left alone.`);
+      }
+    } catch (error: any) {
+      setSaveError(error?.message || "The selected commitments did not save. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const beginEdit = (t: Task) => {
     setEditingId(t.id);
     setEditingText(t.text);
@@ -273,13 +307,26 @@ export default function Commitments({
 
   return (
     <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.05] p-4">
-      <div className="mb-2.5 flex items-center justify-between">
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
         <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sky">
           {"✓"} Commitments{" "}
           <span className="text-muted">
             - {mineCount} yours, {theirCount} theirs
           </span>
         </p>
+        {allowBulk ? (
+          <div className="flex flex-wrap gap-2">
+            {!bulkMode ? (
+              <button type="button" onClick={() => setBulkMode(true)} className="min-h-9 rounded-md border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted hover:text-bone">Select items</button>
+            ) : (
+              <>
+                <button type="button" onClick={() => setSelectedIds(selectedIds.length === items.length ? [] : items.map((item) => item.id))} disabled={saving} className="min-h-9 rounded-md border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted disabled:opacity-40">{selectedIds.length === items.length ? "Clear all" : "Select all"}</button>
+                <button type="button" onClick={() => { setBulkMode(false); setSelectedIds([]); }} disabled={saving} className="min-h-9 rounded-md border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted disabled:opacity-40">Cancel</button>
+                <button type="button" onClick={() => void dismissSelected()} disabled={saving || !selectedIds.length} className="min-h-9 rounded-md border border-rust/50 bg-rust/10 px-3 font-mono text-[0.5rem] uppercase text-rust disabled:opacity-40">{saving ? "Removing…" : `Remove ${selectedIds.length}`}</button>
+              </>
+            )}
+          </div>
+        ) : null}
       </div>
       {saveError ? (
         <p className="mb-2 rounded-md border border-rust/50 bg-rust/10 px-2 py-1.5 font-sans text-[0.76rem] text-rust">
@@ -302,10 +349,14 @@ export default function Commitments({
               <div className="flex items-center gap-2.5">
                 <button
                   type="button"
-                  onClick={() => complete(t)}
-                  title={theirs ? "mark received" : "mark done"}
-                  className="flex h-4 w-4 flex-none items-center justify-center rounded border border-muted text-[0.6rem] transition hover:border-sage"
-                />
+                  onClick={() => bulkMode
+                    ? setSelectedIds((current) => current.includes(t.id) ? current.filter((id) => id !== t.id) : [...current, t.id])
+                    : complete(t)}
+                  title={bulkMode ? "select to remove" : theirs ? "mark received" : "mark done"}
+                  className={`flex h-4 w-4 flex-none items-center justify-center rounded border text-[0.6rem] transition ${bulkMode && selectedIds.includes(t.id) ? "border-rust bg-rust text-ink" : "border-muted hover:border-sage"}`}
+                >
+                  {bulkMode && selectedIds.includes(t.id) ? "✓" : ""}
+                </button>
                 {editingId === t.id ? (
                   <input
                     autoFocus
@@ -359,7 +410,7 @@ export default function Commitments({
                     {t.company}
                   </Link>
                 )}
-                <button
+                {!bulkMode ? <button
                   type="button"
                   onClick={() => beginEdit(t)}
                   aria-label="edit commitment"
@@ -367,8 +418,8 @@ export default function Commitments({
                   className="flex-none font-mono text-[0.58rem] uppercase text-muted transition hover:text-amber"
                 >
                   edit
-                </button>
-                <button
+                </button> : null}
+                {!bulkMode ? <button
                   type="button"
                   onClick={() => remove(t)}
                   aria-label="dismiss"
@@ -376,7 +427,7 @@ export default function Commitments({
                   className="flex-none font-mono text-[0.7rem] text-muted transition hover:text-rust"
                 >
                   ✕
-                </button>
+                </button> : null}
               </div>
 
               {open && (

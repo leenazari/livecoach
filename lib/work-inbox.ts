@@ -107,6 +107,9 @@ export type WorkInboxOpportunity = {
   next_action_owner?: string | null;
   pipeline_stage_override?: boolean | null;
   next_action_override?: boolean | null;
+  engagement_motion?: string | null;
+  active_contact_method?: string | null;
+  last_meaningful_activity_at?: string | null;
   updated_at?: string | null;
 };
 
@@ -124,6 +127,9 @@ export type WorkPipelineDeal = {
   waitingForBuyer: boolean;
   stageProtected: boolean;
   nextActionProtected: boolean;
+  engagementMotion: string | null;
+  activeContactMethod: string | null;
+  lastMeaningfulActivityAt: string | null;
   priority: number;
 };
 
@@ -262,6 +268,16 @@ export function buildWorkPipeline(args: {
       waitingForBuyer: opportunity.next_action_owner === "buyer",
       stageProtected: opportunity.pipeline_stage_override === true,
       nextActionProtected: opportunity.next_action_override === true,
+      engagementMotion: opportunity.engagement_motion
+        ? String(opportunity.engagement_motion)
+        : null,
+      activeContactMethod: opportunity.active_contact_method
+        ? String(opportunity.active_contact_method)
+        : null,
+      lastMeaningfulActivityAt:
+        opportunity.last_meaningful_activity_at ||
+        opportunity.updated_at ||
+        null,
       priority: item.priority,
     });
   }

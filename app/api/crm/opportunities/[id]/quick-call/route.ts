@@ -22,6 +22,8 @@ export const dynamic = "force-dynamic";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const QUICK_ACTIVITY_METHODS = ["phone", "in_person", "video_call"] as const;
+type QuickActivityMethod = (typeof QUICK_ACTIVITY_METHODS)[number];
 
 const CALL_NOTE_FORMAT = {
   type: "json_schema",
@@ -77,6 +79,7 @@ export async function POST(
     const requestId = String(body.requestId || "").trim();
     const note = cleanNote(body.note);
     const outcome = String(body.outcome || "") as QuickCallOutcome;
+    const contactMethod = String(body.contactMethod || "phone") as QuickActivityMethod;
     if (!UUID.test(requestId)) {
       return NextResponse.json({ error: "A valid call log request is required" }, { status: 400 });
     }
@@ -85,6 +88,12 @@ export async function POST(
     }
     if (!QUICK_CALL_OUTCOMES.includes(outcome)) {
       return NextResponse.json({ error: "Choose the call outcome" }, { status: 400 });
+    }
+    if (!QUICK_ACTIVITY_METHODS.includes(contactMethod)) {
+      return NextResponse.json(
+        { error: "Choose phone, face to face or video call" },
+        { status: 400 }
+      );
     }
 
     const opportunity = await loadVisibleOpportunityById<any>(
@@ -139,12 +148,13 @@ export async function POST(
         company_id: opportunity.company_id,
         event_type: "call_logged",
         source_type: "human",
-        source_channel: "phone",
-        rationale: `Call note logged by the assigned salesperson`,
+        source_channel: contactMethod,
+        rationale: `${contactMethod === "in_person" ? "Face to face" : contactMethod === "video_call" ? "Video call" : "Phone call"} note logged by the assigned salesperson`,
         changes: {},
         evidence: {
           requestId,
           outcome,
+          contactMethod,
           note,
           actorUserId: account.userId,
         },
@@ -198,7 +208,7 @@ Rules
                   nextAction: String(opportunity.next_action || "").slice(0, 500),
                   nextActionOwner: opportunity.next_action_owner || "us",
                 },
-                newCall: { outcome, note },
+                newCall: { outcome, contactMethod, note },
               }),
             },
           ],
@@ -223,7 +233,7 @@ Rules
     const protectedFields: string[] = [];
     const appliedFields: string[] = [];
     const patch: Record<string, any> = {
-      active_contact_method: "phone",
+      active_contact_method: contactMethod,
       last_meaningful_activity_at: now,
       updated_at: now,
     };
@@ -246,7 +256,7 @@ Rules
     patch.last_change_context = {
       nonce: crypto.randomUUID(),
       sourceType: "system",
-      sourceChannel: "quick_call_log",
+      sourceChannel: `quick_${contactMethod}_log`,
       rationale: suggestion.rationale,
       evidence: {
         requestId,
@@ -268,6 +278,7 @@ Rules
     const interpretationEvidence = {
       requestId,
       outcome,
+      contactMethod,
       suggestion,
       applied: appliedFields,
       protected: protectedFields,
@@ -281,7 +292,7 @@ Rules
         company_id: opportunity.company_id,
         event_type: "call_interpreted",
         source_type: "system",
-        source_channel: "quick_call_log",
+        source_channel: `quick_${contactMethod}_log`,
         rationale: suggestion.rationale,
         changes: {},
         evidence: interpretationEvidence,
