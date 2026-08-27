@@ -57,6 +57,7 @@
     "validate:calendar-primary-attendee": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-calendar-primary-attendee.mjs",
     "validate:account-readiness": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-account-readiness.mjs",
     "validate:password-reset": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-password-reset.mjs",
+    "validate:email-otp": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-email-otp-login.mjs",
     "validate:public-privacy": "node scripts/validate-public-privacy.mjs"
   },
   "dependencies": {
