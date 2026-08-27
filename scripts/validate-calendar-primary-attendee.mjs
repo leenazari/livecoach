@@ -200,6 +200,7 @@ assert.match(prepIntent, /basedOnLeadEmail/);
 assert.match(prepIntent, /email_context_counterparty_email/);
 assert.match(prepSubject, /emailContextMatchesLead/);
 assert.match(prepSubject, /emailAllowedForCompany/);
+assert.match(prepSubject, /companyId = call\.company_id/);
 assert.match(workstreams, /leadOnlyAttendees/);
 assert.match(workstreams, /hasLeadDecision/);
 
