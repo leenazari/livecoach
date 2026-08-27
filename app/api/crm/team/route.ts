@@ -71,7 +71,7 @@ async function workspaceOwnerIdentities(workspaceId: string) {
 }
 
 async function memberSetupEvidence(workspaceId: string, userId: string) {
-  const [assignedResult, sentResult, transcriptResult] = await Promise.all([
+  const [assignedResult, sentResult, rehearsalResult, transcriptResult] = await Promise.all([
     supabaseService
       .from("outreach_prospects")
       .select("id", { count: "exact", head: true })
@@ -85,18 +85,32 @@ async function memberSetupEvidence(workspaceId: string, userId: string) {
       .eq("sender_user_id", userId)
       .eq("status", "sent"),
     supabaseService
+      .from("access_audit_events")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId)
+      .eq("target_id", userId)
+      .eq("action", "account_readiness_test_email_completed"),
+    supabaseService
       .from("interview_sessions")
       .select("session_id", { count: "exact", head: true })
       .eq("workspace_id", workspaceId)
       .eq("owner_id", userId)
       .not("transcript", "is", null),
   ]);
-  for (const result of [assignedResult, sentResult, transcriptResult]) {
+  for (const result of [
+    assignedResult,
+    sentResult,
+    rehearsalResult,
+    transcriptResult,
+  ]) {
     if (result.error) throw result.error;
   }
   return {
     assignedProspects: assignedResult.count || 0,
-    sentMessages: sentResult.count || 0,
+    // A rehearsal is safer onboarding evidence than contacting a real prospect.
+    // Keep the existing field name for the team page contract and use the
+    // greater count so one action cannot be counted twice.
+    sentMessages: Math.max(sentResult.count || 0, rehearsalResult.count || 0),
     transcribedCalls: transcriptResult.count || 0,
   };
 }

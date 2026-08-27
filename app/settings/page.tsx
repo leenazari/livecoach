@@ -318,6 +318,12 @@ export default function SettingsPage() {
         </h1>
         <div className="flex flex-wrap items-center gap-2">
           <Link
+            href="/settings/readiness"
+            className="rounded-full border border-sky/45 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/10"
+          >
+            Account readiness
+          </Link>
+          <Link
             href="/settings/sales-profile"
             className="rounded-full border border-sage/45 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage transition hover:bg-sage/10"
           >

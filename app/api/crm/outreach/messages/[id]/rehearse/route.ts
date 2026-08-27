@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { sendConnectedOutreachMail } from "@/lib/mail";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 
@@ -88,6 +88,29 @@ export async function POST(
       deliveryLocation,
       campaignChanged: false,
     }));
+
+    // Keep a small immutable receipt so Account Readiness can prove this user
+    // completed the safe rehearsal without storing another copy of the email.
+    // A failed receipt must not turn an already accepted email into a false
+    // failure, which could encourage the user to send it twice.
+    const { error: receiptError } = await supabaseService
+      .from("access_audit_events")
+      .insert({
+        workspace_id: sender.workspaceId,
+        actor_user_id: sender.userId,
+        source: "human",
+        action: "account_readiness_test_email_completed",
+        target_table: "workspace_members",
+        target_id: sender.userId,
+        metadata: {
+          provider: sender.provider,
+          message_id: message.id,
+          campaign_changed: false,
+        },
+      });
+    if (receiptError) {
+      console.error("Outreach rehearsal readiness receipt failed", receiptError.message);
+    }
 
     return NextResponse.json({
       ok: true,
