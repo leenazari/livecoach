@@ -9,6 +9,8 @@ import { createSupabasePasswordResetClient } from "@/lib/supabase-browser";
 
 const GENERIC_SENT_MESSAGE =
   "If that email belongs to a LiveCoach account, a secure reset link is on its way. Check the newest email and your junk folder.";
+const RATE_LIMIT_MESSAGE =
+  "Too many secure emails have been requested. Wait up to 60 minutes for the hourly limit to reset, then request one new link. Repeated presses will not send it sooner.";
 
 export default function ForgotPasswordPage() {
   const supabase = useMemo(() => createSupabasePasswordResetClient(), []);
@@ -40,8 +42,18 @@ export default function ForgotPasswordPage() {
       );
       if (resetError) throw resetError;
       setSent(true);
-    } catch {
-      setError("The reset email could not be sent right now. Wait a minute and try again.");
+    } catch (caught: any) {
+      const code = String(caught?.code || "");
+      const message = String(caught?.message || "").toLowerCase();
+      if (
+        caught?.status === 429 ||
+        code === "over_email_send_rate_limit" ||
+        message.includes("rate limit")
+      ) {
+        setError(RATE_LIMIT_MESSAGE);
+      } else {
+        setError("The reset email could not be sent right now. Please try again shortly.");
+      }
     } finally {
       setBusy(false);
     }

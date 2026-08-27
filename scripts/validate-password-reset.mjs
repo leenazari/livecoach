@@ -30,6 +30,8 @@ assert.match(login, /href="\/forgot-password"/);
 assert.match(login, /Password updated\. Sign in with your new password\./);
 assert.match(forgot, /resetPasswordForEmail/);
 assert.match(forgot, /If that email belongs to a LiveCoach account/);
+assert.match(forgot, /over_email_send_rate_limit/);
+assert.match(forgot, /Wait up to 60 minutes/);
 assert.doesNotMatch(forgot, /admin\.|SERVICE_ROLE/);
 assert.match(browserClient, /flowType: "implicit"/);
 assert.match(browserClient, /persistSession: false/);
