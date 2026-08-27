@@ -77,6 +77,7 @@ export async function loadAttendeeConfig(): Promise<AttendeeConfig> {
   const internalDomains = new Set<string>([
     "ai13.com",
     "interviewa.com",
+    "schoolofcoding.co.uk",
     ...domainsRaw.map((d: any) => String(d || "").toLowerCase().trim()),
   ]);
 

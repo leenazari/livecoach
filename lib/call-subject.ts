@@ -2,6 +2,8 @@ import "server-only";
 
 import { normaliseCompanyDomain } from "@/lib/company-identity";
 import {
+  DEFAULT_PROTECTED_INTENT_DOMAINS,
+  emailMayInfluenceCompanyIntent,
   pickPrimaryAttendee,
   type CalendarAttendee,
   type PrimaryAttendeeMatch,
@@ -16,7 +18,25 @@ export type UpcomingCallSubjectRecord = {
   attendees?: CalendarAttendee[] | null;
 };
 
-const FALLBACK_INTERNAL_DOMAINS = ["ai13.com", "interviewa.com"];
+const FALLBACK_INTERNAL_DOMAINS = [
+  ...DEFAULT_PROTECTED_INTENT_DOMAINS,
+];
+
+export async function loadProtectedIntentDomains(): Promise<string[]> {
+  const profileId = await ensureWorkspaceProfileId();
+  const { data: profile, error } = await supabaseAdmin
+    .from("workspace_profile")
+    .select("internal_domains")
+    .eq("id", profileId)
+    .maybeSingle();
+  if (error) throw error;
+  return [
+    ...FALLBACK_INTERNAL_DOMAINS,
+    ...(Array.isArray((profile as any)?.internal_domains)
+      ? (profile as any).internal_domains
+      : []),
+  ];
+}
 
 export async function resolvePrimaryAttendeeForCall(
   call: UpcomingCallSubjectRecord
@@ -33,7 +53,7 @@ export async function resolvePrimaryAttendeeForCall(
       companyId
         ? supabaseAdmin
             .from("companies")
-            .select("name,domain,website")
+            .select("name,domain,website,profile")
             .eq("id", companyId)
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
@@ -57,11 +77,30 @@ export async function resolvePrimaryAttendeeForCall(
       ? (profile as any).internal_domains
       : []),
   ];
-  const primary = pickPrimaryAttendee(call.attendees, {
+  const companyDomain = normaliseCompanyDomain(
+    (companyResult.data as any)?.domain || (companyResult.data as any)?.website
+  );
+  const companyInternal =
+    (companyResult.data as any)?.profile?.internal === true;
+  // When a call is already linked to a client, protected supporting attendees
+  // are not eligible lead candidates unless this is their own company or an
+  // explicit internal record. The real lead can still win by name, contact or
+  // company domain, regardless of calendar ordering or RSVP status.
+  const eligibleAttendees = companyResult.data
+    ? (call.attendees || []).filter(
+        (attendee) =>
+          attendee?.self === true ||
+          !attendee?.email ||
+          emailMayInfluenceCompanyIntent(attendee.email, {
+            companyDomain,
+            companyInternal,
+            protectedDomains: internalDomains,
+          })
+      )
+    : call.attendees;
+  const primary = pickPrimaryAttendee(eligibleAttendees, {
     title: call.title,
-    companyDomain: normaliseCompanyDomain(
-      (companyResult.data as any)?.domain || (companyResult.data as any)?.website
-    ),
+    companyDomain,
     contactEmails: contacts.map((contact: any) => contact.email),
     internalDomains,
   });

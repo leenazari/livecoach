@@ -82,15 +82,16 @@ export async function GET(
         .maybeSingle();
       company = co?.name || null;
     }
+    const primaryAttendee = await resolvePrimaryAttendeeForCall(data);
     const scope = await resolveCallScope({
       companyId: data.company_id,
       upcomingId: data.id,
       workstreamId: data.workstream_id,
       attendees: data.attendees,
+      leadEmail: primaryAttendee?.email || "",
     });
     if (scope.workstream && !data.workstream_id)
       data.workstream_id = scope.workstream.id;
-    const primaryAttendee = await resolvePrimaryAttendeeForCall(data);
     let workstreamChoices: {
       id: string;
       name: string;

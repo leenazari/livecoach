@@ -16,7 +16,14 @@ import {
   connectedMailProvider,
 } from "@/lib/mail";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
-import { loadPrimaryAttendeeForUpcoming } from "@/lib/call-subject";
+import {
+  loadPrimaryAttendeeForUpcoming,
+  loadProtectedIntentDomains,
+} from "@/lib/call-subject";
+import {
+  calendarEmailDomain,
+  emailMayInfluenceCompanyIntent,
+} from "@/lib/calendar-subject";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -133,7 +140,7 @@ export async function POST(req: NextRequest) {
     if (!email && !name && !query && companyId) {
       const { data: co } = await supabaseAdmin
         .from("companies")
-        .select("name, domain")
+        .select("name, domain, website")
         .eq("id", companyId)
         .maybeSingle();
       const { data: ct } = await supabaseAdmin
@@ -141,8 +148,19 @@ export async function POST(req: NextRequest) {
         .select("email")
         .eq("company_id", companyId)
         .not("email", "is", null)
-        .limit(1);
-      email = (ct && ct[0]?.email ? String(ct[0].email) : "").toLowerCase();
+        .limit(20);
+      const companyDomain = normaliseCompanyDomain(co?.domain || co?.website);
+      const matchingContact = (ct || []).find(
+        (row: any) =>
+          calendarEmailDomain(String(row.email || "")) === companyDomain
+      );
+      const onlyUnanchoredContact =
+        !companyDomain && ct?.length === 1 ? ct[0] : null;
+      email = String(
+        matchingContact?.email || onlyUnanchoredContact?.email || ""
+      )
+        .toLowerCase()
+        .trim();
       if (!email && co?.domain) query = `@${co.domain}`;
       else if (!email && co?.name) query = `"${co.name}"`;
     }
@@ -167,7 +185,9 @@ export async function POST(req: NextRequest) {
     const { data: cachedCompany } = companyId
       ? await supabaseAdmin
           .from("companies")
-          .select("name, profile, email_context, email_context_updated_at")
+          .select(
+            "name, domain, website, profile, email_context, email_context_updated_at"
+          )
           .eq("id", companyId)
           .maybeSingle()
       : { data: null };
@@ -178,6 +198,29 @@ export async function POST(req: NextRequest) {
           .eq("id", workstream.id)
           .maybeSingle()
       : { data: null };
+
+    const protectedIntentDomains = companyId
+      ? await loadProtectedIntentDomains()
+      : [];
+    const emailAllowedForTarget = (candidate: string) =>
+      !companyId ||
+      !cachedCompany ||
+      emailMayInfluenceCompanyIntent(candidate, {
+        companyDomain: normaliseCompanyDomain(
+          cachedCompany.domain || cachedCompany.website
+        ),
+        companyInternal: (cachedCompany.profile as any)?.internal === true,
+        protectedDomains: protectedIntentDomains,
+      });
+    if (email && !emailAllowedForTarget(email)) {
+      return NextResponse.json(
+        {
+          error:
+            "That address is a supporting internal or protected attendee, so it cannot change this client's email context or intent.",
+        },
+        { status: 409 }
+      );
+    }
 
     const msgs = await recentMessages(query, 25);
     if (!msgs.length) {
@@ -213,6 +256,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "couldn't work out who the other person is from those emails" },
         { status: 422 }
+      );
+    }
+    if (!emailAllowedForTarget(counterparty)) {
+      return NextResponse.json(
+        {
+          error:
+            "That address is a supporting internal or protected attendee, so it cannot change this client's email context or intent.",
+        },
+        { status: 409 }
       );
     }
     const domain = counterparty.split("@")[1] || "";
@@ -262,26 +314,26 @@ export async function POST(req: NextRequest) {
         // Keep the actual newest message time separately from the time we
         // refreshed its AI summary. The opportunity board uses this to spot a
         // quiet relationship without mistaking a refresh for a new email.
-        if (msgs[0]?.date) {
-          const emailMeta = {
-            ...(profile || {}),
-            email_last_message_id: msgs[0]?.id || null,
-            email_last_message_at: msgs[0].date,
-          };
-          if (workstream) {
-            await supabaseAdmin
-              .from("workstreams")
-              .update({
-                email_context_meta: emailMeta,
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", workstream.id);
-          } else {
-            await supabaseAdmin
-              .from("companies")
-              .update({ profile: emailMeta })
-              .eq("id", companyId);
-          }
+        const emailMeta = {
+          ...(profile || {}),
+          email_last_message_id: msgs[0]?.id || null,
+          email_last_message_at: msgs[0]?.date || null,
+          email_context_counterparty_email: counterparty,
+          email_context_counterparty_domain: domain || null,
+        };
+        if (workstream) {
+          await supabaseAdmin
+            .from("workstreams")
+            .update({
+              email_context_meta: emailMeta,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", workstream.id);
+        } else {
+          await supabaseAdmin
+            .from("companies")
+            .update({ profile: emailMeta })
+            .eq("id", companyId);
         }
         return NextResponse.json({
           ok: true,
@@ -407,6 +459,8 @@ export async function POST(req: NextRequest) {
         email_context_source_hash: sourceHash,
         email_last_message_id: msgs[0]?.id || null,
         email_last_message_at: msgs[0]?.date || null,
+        email_context_counterparty_email: counterparty,
+        email_context_counterparty_domain: domain || null,
       };
       const patch: Record<string, any> = workstream
         ? { updated_at: nowIso }
@@ -447,6 +501,8 @@ export async function POST(req: NextRequest) {
             email_context_source_hash: sourceHash,
             email_last_message_id: msgs[0]?.id || null,
             email_last_message_at: msgs[0]?.date || null,
+            email_context_counterparty_email: counterparty,
+            email_context_counterparty_domain: domain || null,
           },
         })
         .select("id")

@@ -12,7 +12,12 @@ import {
   websiteFromEmail,
 } from "@/lib/research-cache";
 import { resolveCallScope } from "@/lib/workstreams";
-import { resolvePrimaryAttendeeForCall } from "@/lib/call-subject";
+import {
+  loadProtectedIntentDomains,
+  resolvePrimaryAttendeeForCall,
+} from "@/lib/call-subject";
+import { emailMayInfluenceCompanyIntent } from "@/lib/calendar-subject";
+import { normaliseCompanyDomain } from "@/lib/company-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,11 +55,16 @@ export async function GET(req: NextRequest) {
     }
 
     const company = await loadCompany(companyId || null);
+    // Resolve the actual lead before selecting a department or workstream. A
+    // supporting internal attendee must not steer this call into their own
+    // thread merely because their contact record also exists in the client.
+    const guest = call ? await resolvePrimaryAttendeeForCall(call) : null;
     const scope = await resolveCallScope({
       companyId,
       upcomingId,
       workstreamId: call?.workstream_id,
       attendees: call?.attendees,
+      ...(call ? { leadEmail: guest?.email || "" } : {}),
     });
     const workstream = scope.workstream;
     if (call && workstream && !call.workstream_id)
@@ -65,12 +75,23 @@ export async function GET(req: NextRequest) {
     // title, linked contacts, company domain and unique external guest. If the
     // evidence is ambiguous we leave the person blank rather than borrowing
     // another invitee's relationship history.
-    const guest = call ? await resolvePrimaryAttendeeForCall(call) : null;
     const fromTitle = call ? guestFromTitle(call.title || "") : null;
 
     let person = (guest && guest.name) || (fromTitle && fromTitle.name) || "";
     let personEmail = (guest && guest.email) || "";
     let role = "";
+    const protectedDomains = companyId
+      ? await loadProtectedIntentDomains()
+      : [];
+    const emailAllowedForCompany = (email: string) =>
+      !company ||
+      emailMayInfluenceCompanyIntent(email, {
+        companyDomain: normaliseCompanyDomain(
+          company.domain || company.website
+        ),
+        companyInternal: (company.profile as any)?.internal === true,
+        protectedDomains,
+      });
 
     let contact: any = null;
     if (person || personEmail) {
@@ -80,6 +101,9 @@ export async function GET(req: NextRequest) {
         email: personEmail,
         create: false,
       });
+      if (contact?.email && !emailAllowedForCompany(contact.email)) {
+        contact = null;
+      }
     }
 
     // No guest and no title match: if the client has exactly one contact, that
@@ -91,8 +115,11 @@ export async function GET(req: NextRequest) {
         .select("id, name, role, email, company_id, attributes")
         .eq("company_id", companyId)
         .limit(3);
-      if (contacts && contacts.length === 1) {
-        contact = contacts[0];
+      const eligibleContacts = (contacts || []).filter(
+        (row: any) => !row.email || emailAllowedForCompany(row.email)
+      );
+      if (eligibleContacts.length === 1) {
+        contact = eligibleContacts[0];
       }
     }
 
@@ -138,24 +165,41 @@ export async function GET(req: NextRequest) {
     const co = company ? companyState(company) : { ...EMPTY_STATE };
     const pe = contact ? personState(contact) : { ...EMPTY_STATE };
 
-    // The internal team entity hosts many unrelated meetings, so its email
-    // thread must never be fed into a specific call's intent or plan.
+    // The internal team entity hosts many unrelated meetings. Its email
+    // context is allowed only for a direct event whose validated lead email
+    // matches the saved counterparty below.
     const internal = !!(
       company &&
       company.profile &&
       (company.profile as any).internal === true
     );
     let workstreamEmailContext = "";
+    let workstreamEmailMeta: any = {};
     if (workstream) {
       const { data: thread } = await supabaseAdmin
         .from("workstreams")
-        .select("email_context")
+        .select("email_context, email_context_meta")
         .eq("id", workstream.id)
         .maybeSingle();
       workstreamEmailContext =
         typeof thread?.email_context === "string" ? thread.email_context : "";
+      workstreamEmailMeta = (thread as any)?.email_context_meta || {};
     }
-    const emailContext = !internal
+    const savedEmailCounterparty = String(
+      (workstream ? workstreamEmailMeta : (company?.profile as any) || {})
+        ?.email_context_counterparty_email || ""
+    )
+      .toLowerCase()
+      .trim();
+    const emailContextMatchesLead = Boolean(
+      personEmail &&
+        savedEmailCounterparty &&
+        savedEmailCounterparty === personEmail.toLowerCase().trim()
+    );
+    const canUseSavedEmailContext = call
+      ? emailContextMatchesLead
+      : !internal;
+    const emailContext = canUseSavedEmailContext
       ? workstream
         ? workstreamEmailContext
         : company && typeof company.email_context === "string"

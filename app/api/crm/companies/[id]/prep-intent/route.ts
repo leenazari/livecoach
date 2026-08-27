@@ -5,6 +5,7 @@ import { logModelUsage } from "@/lib/usage";
 import { formatCommercialMemoryBlock, getCommercialMemory } from "@/lib/commercial-memory";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { resolveCallScope } from "@/lib/workstreams";
+import { loadPrimaryAttendeeForUpcoming } from "@/lib/call-subject";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,7 +32,34 @@ export async function POST(
       typeof (body as any)?.upcomingId === "string"
         ? (body as any).upcomingId
         : "";
-    const scope = await resolveCallScope({ companyId, upcomingId });
+    const leadResolution = upcomingId
+      ? await loadPrimaryAttendeeForUpcoming(upcomingId)
+      : null;
+    if (upcomingId && !leadResolution?.call) {
+      return NextResponse.json(
+        { error: "The scheduled call could not be found." },
+        { status: 404 }
+      );
+    }
+    if (
+      upcomingId &&
+      String(leadResolution?.call?.company_id || "") !== companyId
+    ) {
+      return NextResponse.json(
+        { error: "The scheduled call is not linked to this client." },
+        { status: 409 }
+      );
+    }
+    const validatedLeadEmail = String(
+      leadResolution?.primaryAttendee?.email || ""
+    )
+      .toLowerCase()
+      .trim();
+    const scope = await resolveCallScope({
+      companyId,
+      upcomingId,
+      ...(upcomingId ? { leadEmail: validatedLeadEmail } : {}),
+    });
     const workstream = scope.workstream;
     let summariesQuery = supabaseAdmin
       .from("interview_summaries")
@@ -51,7 +79,7 @@ export async function POST(
       tasksQuery = tasksQuery.eq("workstream_id", workstream.id);
     }
 
-    const [{ data: company }, { data: thread }, { data: summaryRows }, { data: taskRows }, commercialMemory] =
+    const [{ data: company }, { data: thread }, { data: summaryRows }, { data: taskRows }, commercialMemoryRaw] =
       await Promise.all([
         supabaseAdmin
           .from("companies")
@@ -61,7 +89,7 @@ export async function POST(
         workstream
           ? supabaseAdmin
               .from("workstreams")
-              .select("email_context_updated_at, next_call")
+              .select("email_context_updated_at, email_context_meta, next_call")
               .eq("id", workstream.id)
               .single()
           : Promise.resolve({ data: null, error: null }),
@@ -75,6 +103,25 @@ export async function POST(
     }
 
     const profile = (company.profile || {}) as any;
+    const emailContextMeta = workstream
+      ? ((thread as any)?.email_context_meta || {})
+      : profile;
+    const emailContextCounterparty = String(
+      emailContextMeta?.email_context_counterparty_email || ""
+    )
+      .toLowerCase()
+      .trim();
+    // Event-specific prep can use a saved email summary only when its recorded
+    // counterparty is the validated lead on this exact event. Older summaries
+    // without provenance remain stored, but stay out of this call's intent
+    // until the normal email refresh binds them to the correct address.
+    const commercialMemory =
+      upcomingId &&
+      commercialMemoryRaw?.email &&
+      (!validatedLeadEmail ||
+        emailContextCounterparty !== validatedLeadEmail)
+        ? { ...commercialMemoryRaw, email: null }
+        : commercialMemoryRaw;
     const playbook: string[] = !workstream && Array.isArray(profile.playbook)
       ? profile.playbook.filter((p: any) => typeof p === "string" && p.trim())
       : [];
@@ -88,6 +135,22 @@ export async function POST(
       ? (thread as any)?.email_context_updated_at || null
       : (company as any).email_context_updated_at || null;
     const cached = workstream ? (thread as any)?.next_call : profile.next_call;
+    const cacheHasLeadBinding = !!(
+      cached &&
+      Object.prototype.hasOwnProperty.call(cached, "basedOnLeadEmail") &&
+      Object.prototype.hasOwnProperty.call(
+        cached,
+        "basedOnEmailContextCounterparty"
+      )
+    );
+    const cacheMatchesLead =
+      !upcomingId ||
+      (cacheHasLeadBinding &&
+        String(cached.basedOnLeadEmail || "").toLowerCase().trim() ===
+          validatedLeadEmail &&
+        String(cached.basedOnEmailContextCounterparty || "")
+          .toLowerCase()
+          .trim() === emailContextCounterparty);
     const cacheIsCurrent = !!(
       cached &&
       typeof cached.intent === "string" &&
@@ -98,6 +161,7 @@ export async function POST(
           cached.basedOnSessionId === summaries[0]?.session_id)) &&
       cached.basedOnEmailAt === newestEmailAt
       && cached.basedOnMemoryHash === (commercialMemory?.sourceHash || null)
+      && cacheMatchesLead
     );
 
     const applyToUpcoming = async (
@@ -108,9 +172,12 @@ export async function POST(
       if (!upcomingId) return intent;
       const { data: call } = await supabaseAdmin
         .from("upcoming_calls")
-        .select("intent, prep")
+        .select("company_id, intent, prep")
         .eq("id", upcomingId)
         .maybeSingle();
+      if (!call || String(call.company_id || "") !== companyId) {
+        throw new Error("The scheduled call is not linked to this client.");
+      }
       const prep = call?.prep && typeof call.prep === "object" ? call.prep : {};
       const meta = (prep as any).intentMeta;
       // Once the user edits this occurrence, their words win.
@@ -124,6 +191,7 @@ export async function POST(
             intentMeta: {
               source,
               basedOnSummaryAt: newestSummaryAt,
+              leadEmail: validatedLeadEmail || null,
               rationale,
               savedAt: new Date().toISOString(),
             },
@@ -355,6 +423,8 @@ Return the JSON now.`;
       basedOnSummaryAt: newestSummaryAt,
       basedOnEmailAt: newestEmailAt,
       basedOnMemoryHash: commercialMemory?.sourceHash || null,
+      basedOnLeadEmail: validatedLeadEmail || null,
+      basedOnEmailContextCounterparty: emailContextCounterparty || null,
       generatedAt: new Date().toISOString(),
     };
     if (workstream) {
