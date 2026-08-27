@@ -10,6 +10,7 @@ export async function GET(req: NextRequest) {
   const code = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");
   const verificationType = url.searchParams.get("type");
+  const authenticationMethod = url.searchParams.get("method");
   const fallbackNext = verificationType === "recovery" ? "/reset-password" : "/login";
   const requestedNext = url.searchParams.get("next") || fallbackNext;
   const next =
@@ -67,6 +68,8 @@ export async function GET(req: NextRequest) {
   const errorDestination =
     verificationType === "recovery" || next === "/reset-password"
       ? "/forgot-password?reset=error"
+      : authenticationMethod === "email"
+        ? "/login?email=error"
       : "/login?invite=error";
 
   return NextResponse.redirect(new URL(error ? errorDestination : next, url.origin));

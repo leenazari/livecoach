@@ -74,6 +74,18 @@ export default function ForgotPasswordPage() {
 
       <section className="rounded-2xl border border-edge bg-panel/50 p-6">
         <h2 className="font-display text-2xl text-bone">Reset your password</h2>
+        <div className="mt-4 rounded-xl border border-sage/45 bg-sage/10 p-4">
+          <p className="text-sm leading-6 text-sage">
+            You do not need a password to get back in. Email login is the
+            quickest option and keeps your existing account and permissions.
+          </p>
+          <Link
+            href="/login"
+            className="mt-3 inline-flex rounded-full bg-sage px-5 py-2.5 font-mono text-[0.65rem] font-semibold uppercase tracking-wider text-ink"
+          >
+            Use email login
+          </Link>
+        </div>
         <p className="mt-2 text-sm leading-6 text-muted">
           Enter the email address you normally use to sign in. The newest reset link works once.
         </p>
