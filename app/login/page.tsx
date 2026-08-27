@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createSupabaseBrowser } from "@/lib/supabase-browser";
 import ThemeToggle from "@/components/ThemeToggle";
 import { clearCrmCache } from "@/lib/crm";
@@ -15,6 +16,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
 
@@ -30,6 +32,8 @@ export default function LoginPage() {
       );
     } else if (params.get("access") === "denied") {
       setError("This account has not been invited to an active workspace.");
+    } else if (params.get("password") === "updated") {
+      setNotice("Password updated. Sign in with your new password.");
     }
   }, [supabase]);
 
@@ -136,7 +140,19 @@ export default function LoginPage() {
             {busy ? "working..." : "Sign in"}
           </button>
 
+          <Link
+            href="/forgot-password"
+            className="text-center font-mono text-[0.65rem] uppercase tracking-wider text-amber transition hover:text-amberglow"
+          >
+            Forgot password
+          </Link>
+
           {error && <p className="font-mono text-xs text-rust">! {error}</p>}
+          {notice && (
+            <p role="status" className="rounded-lg border border-sage/40 bg-sage/10 px-3 py-2 text-sm text-sage">
+              {notice}
+            </p>
+          )}
           <p className="font-mono text-[0.65rem] leading-relaxed text-muted">
             Accounts are created by invitation so private CRM information stays
             isolated.

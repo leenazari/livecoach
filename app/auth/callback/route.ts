@@ -1,4 +1,5 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import type { EmailOtpType } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -9,7 +10,8 @@ export async function GET(req: NextRequest) {
   const code = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");
   const verificationType = url.searchParams.get("type");
-  const requestedNext = url.searchParams.get("next") || "/login";
+  const fallbackNext = verificationType === "recovery" ? "/reset-password" : "/login";
+  const requestedNext = url.searchParams.get("next") || fallbackNext;
   const next =
     requestedNext.startsWith("/") && !requestedNext.startsWith("//")
       ? requestedNext
@@ -49,18 +51,23 @@ export async function GET(req: NextRequest) {
     error = result.error;
   } else if (
     tokenHash &&
-    (verificationType === "invite" || verificationType === "magiclink")
+    (verificationType === "invite" ||
+      verificationType === "magiclink" ||
+      verificationType === "recovery")
   ) {
     const result = await supabase.auth.verifyOtp({
       token_hash: tokenHash,
-      type: verificationType,
+      type: verificationType as EmailOtpType,
     });
     error = result.error;
   } else {
     error = new Error("The authentication link is incomplete");
   }
 
-  return NextResponse.redirect(
-    new URL(error ? "/login?invite=error" : next, url.origin)
-  );
+  const errorDestination =
+    verificationType === "recovery" || next === "/reset-password"
+      ? "/forgot-password?reset=error"
+      : "/login?invite=error";
+
+  return NextResponse.redirect(new URL(error ? errorDestination : next, url.origin));
 }
