@@ -148,6 +148,8 @@ export async function GET(
       booking_link_shared: "Booking link shared",
       crm_created: "Outreach prospect became a CRM relationship",
       learning_promoted: "Campaign learning promoted",
+      manual_call: "Manual sales call logged",
+      manual_call_interpreted: "Manual call meaning captured",
       failed: "Outreach action failed",
     };
     for (const event of outreachEvents) {
@@ -155,7 +157,7 @@ export async function GET(
       const who = [prospect?.first_name, prospect?.last_name].filter(Boolean).join(" ");
       const metadata = event.metadata && typeof event.metadata === "object" ? event.metadata : {};
       const subject = subjectByMessageId.get(event.message_id) || metadata.subject || "";
-      const reply = metadata.reply_summary || metadata.summary || metadata.reply_text || "";
+      const reply = metadata.interpretation?.summary || metadata.note || metadata.reply_summary || metadata.summary || metadata.reply_text || "";
       items.push({
         id: `outreach:${event.id}`,
         type: "outreach",

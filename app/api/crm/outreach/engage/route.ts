@@ -85,12 +85,13 @@ export async function POST(req: NextRequest) {
       sourceText = "";
     }
     sourceUrl = normaliseSourceUrl(sourceUrl);
-    if (!sourceText && !sourceUrl)
-      return NextResponse.json({ error: "Paste a LinkedIn link or the post text." }, { status: 400 });
+    if (sourceText.length < 25)
+      return NextResponse.json(
+        { error: "Paste the words from the LinkedIn post. LiveCoach no longer opens or scrapes LinkedIn links." },
+        { status: 422 }
+      );
     if (!validUrl(sourceUrl))
       return NextResponse.json({ error: "That LinkedIn link is not valid." }, { status: 400 });
-    const needsPublicLookup = sourceText.length < 25 && !!sourceUrl;
-
     const system = `You write one excellent LinkedIn comment for ${writerName}, ${roleTitle}.
 
 Interviewa helps recruiters prepare candidates for interviews and improve the visibility of candidate readiness. ${writerName} focuses on ${customerFocus}. They want to build genuine commercial relationships and thoughtful visibility, not spam random posts with a product pitch.
@@ -100,21 +101,20 @@ Read the exact supplied post. Respond to what the author actually said. Add one 
 The comment must be 35 to 75 words, natural, specific and ready to paste. Avoid generic praise such as "great post", "spot on", "could not agree more" and "this is so true". Do not repeat the post back to the author. Do not ask for a call, include a link, use hashtags, pitch a free trial or claim a relationship. Never invent facts, results, customers, job titles or experience. Write in British English with a ${voice} voice. Never present this person as Lee, as Interviewa's CEO or as another teammate unless their own saved identity above explicitly says so. Do not use hyphens, dashes, em dashes or semicolons.
 
 If the exact post cannot be read, return an empty evidence list and an empty comment instead of guessing. Nothing will be posted automatically and nothing from this request will be saved to Brain memory.`;
-    const user = `LINKEDIN URL: ${sourceUrl || "not supplied"}
+    const user = `REFERENCE URL: ${sourceUrl || "not supplied"}
 
 POST TEXT:
-${sourceText || "No text was pasted. Open the exact public LinkedIn URL above. If it is inaccessible, do not guess."}`;
+${sourceText}`;
     const message = await openai.messages.create({
       model: OPENAI_MODEL_PRO,
       max_tokens: 700,
       response_format: COMMENT_FORMAT,
       system,
-      ...(needsPublicLookup ? { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }] as any } : {}),
       messages: [{ role: "user", content: user }],
     }, { timeout: 50_000 });
     await logModelUsage("linkedin_engagement", "pro", (message as any).usage, {
-      publicLinkLookup: needsPublicLookup,
-    });
+      publicLinkLookup: false,
+    }, { userId: scope.userId, workspaceId: scope.workspaceId });
     const parsed = parseObject(modelText(message));
     if (!parsed) throw new Error("The comment draft was incomplete. Try again.");
     const evidence = Array.isArray(parsed.evidence)
@@ -122,7 +122,7 @@ ${sourceText || "No text was pasted. Open the exact public LinkedIn URL above. I
       : [];
     const comment = clean(parsed.comment, 1400);
     if (!evidence.length || !comment)
-      return NextResponse.json({ error: "LinkedIn did not expose enough of that post. Copy the post text into the box and try again." }, { status: 422 });
+      return NextResponse.json({ error: "The pasted post did not contain enough clear content. Copy the full post text and try again." }, { status: 422 });
     return NextResponse.json({
       draft: {
         authorName: clean(parsed.authorName, 160),

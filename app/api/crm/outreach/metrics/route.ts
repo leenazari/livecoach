@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
     const account = requireRequestScope();
     const summaryOnly = req.nextUrl.searchParams.get("summary") === "1";
     const { start, end } = londonDayBounds();
-    const [sent, sentAll, approved, replies, positive, meetings, prospects] = await Promise.all([
+    const [sent, sentAll, approved, replies, positive, meetings, prospects, manualCalls] = await Promise.all([
       supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "sent").gte("sent_at", start).lt("sent_at", end),
       supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "sent"),
       supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "approved"),
@@ -18,10 +18,13 @@ export async function GET(req: NextRequest) {
       supabaseAdmin.from("outreach_events").select("id,message:outreach_messages!inner(sender_user_id)", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("message.sender_user_id", account.userId).eq("kind", "positive_reply"),
       supabaseAdmin.from("outreach_events").select("id,message:outreach_messages!inner(sender_user_id)", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("message.sender_user_id", account.userId).eq("kind", "meeting_booked"),
       supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("assigned_to_user_id", account.userId),
+      supabaseAdmin.from("outreach_events").select("id,prospect_id,metadata,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).eq("kind", "manual_call").order("created_at", { ascending: false }).limit(10000),
     ]);
-    for (const result of [sent, sentAll, approved, replies, positive, meetings, prospects]) {
+    for (const result of [sent, sentAll, approved, replies, positive, meetings, prospects, manualCalls]) {
       if (result.error) throw result.error;
     }
+    const personalCalls = manualCalls.data || [];
+    const connectedOutcomes = new Set(["connected", "meeting_booked", "callback_requested", "not_now"]);
     const metrics = {
       sentToday: sent.count || 0,
       sent: sentAll.count || 0,
@@ -30,6 +33,10 @@ export async function GET(req: NextRequest) {
       positiveReplies: positive.count || 0,
       meetings: meetings.count || 0,
       prospects: prospects.count || 0,
+      callsToday: personalCalls.filter((call: any) => call.created_at >= start && call.created_at < end).length,
+      calls: personalCalls.length,
+      connectedCalls: personalCalls.filter((call: any) => connectedOutcomes.has(call.metadata?.outcome)).length,
+      callMeetings: personalCalls.filter((call: any) => call.metadata?.outcome === "meeting_booked").length,
     };
     // The default Today queue needs only five small counts. Avoid loading every
     // historical message, reply and learning until a reporting tab is opened.
@@ -60,7 +67,8 @@ export async function GET(req: NextRequest) {
       return { variant, sent: sentCount, replies: replyCount, replyRate: sentCount ? Math.round((replyCount / sentCount) * 1000) / 10 : 0 };
     });
     const recentMessageProspectIds = (recentMessages || []).map((message: any) => message.prospect_id);
-    const messageProspectIds = Array.from(new Set(recentMessageProspectIds));
+    const recentManualCallProspectIds = personalCalls.slice(0, 100).map((call: any) => call.prospect_id);
+    const messageProspectIds = Array.from(new Set([...recentMessageProspectIds, ...recentManualCallProspectIds]));
     const { data: messageProspects } = messageProspectIds.length
       ? await supabaseAdmin
           .from("outreach_prospects")
@@ -72,6 +80,10 @@ export async function GET(req: NextRequest) {
     const sentHistory = (recentMessages || []).map((message: any) => ({
       ...message,
       prospect: messageProspectMap.get(message.prospect_id) || null,
+    }));
+    const manualCallHistory = personalCalls.slice(0, 100).map((call: any) => ({
+      ...call,
+      prospect: messageProspectMap.get(call.prospect_id) || null,
     }));
     const linkedCompanyIds = Array.from(
       new Set(
@@ -129,7 +141,7 @@ export async function GET(req: NextRequest) {
     }
     const performance = [...performanceMap.values()].map((row) => ({ ...row, positiveRate: row.sent ? Math.round((row.positive / row.sent) * 1000) / 10 : 0 })).sort((a, b) => b.meetings - a.meetings || b.positiveRate - a.positiveRate).slice(0, 30);
     return NextResponse.json(
-      { metrics, replies: replyRows, sentHistory, variants, performance, learnings: learnings || [], scope: "personal" },
+      { metrics, replies: replyRows, sentHistory, manualCalls: manualCallHistory, variants, performance, learnings: learnings || [], scope: "personal" },
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (error: any) {

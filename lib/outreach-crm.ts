@@ -421,6 +421,7 @@ export async function ensureOutreachCompany(
       }).eq("id", contactId);
     }
   }
+  const latestManualCall = prospect.source_metadata?.latest_manual_call;
   const outreachContext = [
     "OUTREACH ORIGIN, use this when preparing the first call:",
     research?.summary ? `Research: ${asText(research.summary, 800)}` : "",
@@ -436,6 +437,13 @@ export async function ensureOutreachCompany(
       : prospect.reply_summary
         ? `Their reply: ${asText(prospect.reply_summary, 300)}`
         : "",
+    latestManualCall
+      ? [
+          `Latest manual call: ${asText(latestManualCall.interpretation?.summary || latestManualCall.notePreview, 500)}`,
+          latestManualCall.nextAction ? `Agreed next action: ${asText(latestManualCall.nextAction, 300)}` : "",
+          latestManualCall.interpretation?.intentSummary ? `Next call intent: ${asText(latestManualCall.interpretation.intentSummary, 500)}` : "",
+        ].filter(Boolean).join("\n")
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n")
@@ -510,6 +518,16 @@ export async function ensureOutreachCompany(
       source: "Interviewa outreach",
       updatedAt: contextUpdatedAt,
       dealValueDeferred: true,
+      latestManualCall: latestManualCall
+        ? {
+            outcome: latestManualCall.outcome || null,
+            occurredAt: latestManualCall.occurredAt || null,
+            nextAction: latestManualCall.nextAction || null,
+            nextActionAt: latestManualCall.nextActionAt || null,
+            summary: latestManualCall.interpretation?.summary || latestManualCall.notePreview || null,
+            intentSummary: latestManualCall.interpretation?.intentSummary || null,
+          }
+        : existingOutreach.latestManualCall || null,
       relationships,
     },
   };
@@ -564,6 +582,8 @@ export function firstOutreachCallIntent(context: any): string {
   const research = context?.research || {};
   const person = [prospect.first_name, prospect.last_name].filter(Boolean).join(" ").trim() || "them";
   const response = prospect.reply_summary ? ` Their reply indicates: ${asText(prospect.reply_summary, 220)}` : "";
+  const manualIntent = prospect.source_metadata?.latest_manual_call?.interpretation?.intentSummary;
+  if (manualIntent) return asText(manualIntent, 700);
   const angle = research.bestAngle || research.summary || "the Interviewa use case raised in the outreach";
   return `I want to understand ${person}'s priorities at ${prospect.company_name} and test the real need behind ${asText(angle, 320)}.${response} I need to qualify the use case, urgency, decision process and success criteria, then agree the strongest next step for an Interviewa demonstration or pilot.`;
 }
