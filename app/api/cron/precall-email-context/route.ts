@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadAttendeeConfig, type Attendee } from "@/lib/attendees";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { setAppConfigValue } from "@/lib/app-config";
@@ -34,9 +33,10 @@ const scheduledRefreshWindow = (now = new Date()) => {
 type UpcomingCall = {
   id: string;
   company_id: string;
+  workstream_id: string | null;
   title: string | null;
   scheduled_at: string;
-  attendees: Attendee[] | null;
+  attendees: Record<string, any>[] | null;
   prep: Record<string, any> | null;
 };
 
@@ -46,9 +46,6 @@ type CompanyGroup = {
   earliestAt: number;
   oldestCheckAt: number;
 };
-
-const domainOf = (email: string) =>
-  String(email || "").toLowerCase().trim().split("@")[1] || "";
 
 const validMs = (value: unknown): number => {
   if (typeof value !== "string") return 0;
@@ -68,24 +65,6 @@ const minimumCheckGap = (scheduledAt: string, nowMs: number) => {
 const lastCheckAt = (call: UpcomingCall) =>
   validMs(call.prep?.emailContextSync?.checkedAt);
 
-const attendeeEmailFor = (
-  calls: UpcomingCall[],
-  companyId: string,
-  internalDomains: Set<string>,
-  contactEmailToCompany: Map<string, string>
-) => {
-  const emails = calls
-    .flatMap((call) => (Array.isArray(call.attendees) ? call.attendees : []))
-    .filter((attendee) => attendee?.email && !attendee.self)
-    .map((attendee) => String(attendee.email).toLowerCase().trim())
-    .filter(Boolean);
-  return (
-    emails.find((email) => contactEmailToCompany.get(email) === companyId) ||
-    emails.find((email) => !internalDomains.has(domainOf(email))) ||
-    ""
-  );
-};
-
 async function runAccount(req: NextRequest) {
   try {
     await resolveRecordScope();
@@ -94,7 +73,7 @@ async function runAccount(req: NextRequest) {
     const horizon = new Date(nowMs + LOOK_AHEAD_HOURS * HOUR).toISOString();
     const { data: rows, error: callsError } = await supabaseAdmin
       .from("upcoming_calls")
-      .select("id,company_id,title,scheduled_at,attendees,prep")
+      .select("id,company_id,workstream_id,title,scheduled_at,attendees,prep")
       .is("completed_at", null)
       .not("company_id", "is", null)
       .gte("scheduled_at", startedAt.toISOString())
@@ -143,9 +122,6 @@ async function runAccount(req: NextRequest) {
       (a, b) => a.oldestCheckAt - b.oldestCheckAt || a.earliestAt - b.earliestAt
     );
 
-    const attendeeConfig = await loadAttendeeConfig();
-    attendeeConfig.internalDomains.add("ai13.com");
-    attendeeConfig.internalDomains.add("interviewa.com");
     const selected = groups.slice(0, MAX_COMPANIES_PER_RUN);
     let checked = 0;
     let contextRefreshed = 0;
@@ -155,12 +131,12 @@ async function runAccount(req: NextRequest) {
     let failed = 0;
 
     const processGroup = async (group: CompanyGroup) => {
-      const email = attendeeEmailFor(
-        group.calls,
-        group.companyId,
-        attendeeConfig.internalDomains,
-        attendeeConfig.contactEmailToCompany
-      );
+      const sourceCall =
+        group.calls.find(
+          (call) =>
+            nowMs - lastCheckAt(call) >=
+            minimumCheckGap(call.scheduled_at, nowMs)
+        ) || group.calls[0];
       const checkedAt = new Date().toISOString();
       let status = "error";
       let messages = 0;
@@ -174,7 +150,10 @@ async function runAccount(req: NextRequest) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             companyId: group.companyId,
-            ...(email ? { email } : {}),
+            upcomingId: sourceCall.id,
+            ...(sourceCall.workstream_id
+              ? { workstreamId: sourceCall.workstream_id }
+              : {}),
           }),
         }));
         const result = await emailResponse.json().catch(() => ({}));
@@ -198,45 +177,41 @@ async function runAccount(req: NextRequest) {
 
       // Store a small operational marker on the scheduled call. This lets the
       // next cron skip work it has just done without introducing another table.
-      await Promise.all(
-        group.calls.map((call) =>
-          supabaseAdmin
-            .from("upcoming_calls")
-            .update({
-              prep: {
-                ...(call.prep && typeof call.prep === "object" ? call.prep : {}),
-                emailContextSync: {
-                  checkedAt,
-                  status,
-                  messages,
-                  ...(errorText ? { error: errorText } : {}),
-                },
-              },
-            })
-            .eq("id", call.id)
-        )
-      );
+      await supabaseAdmin
+        .from("upcoming_calls")
+        .update({
+          prep: {
+            ...(sourceCall.prep && typeof sourceCall.prep === "object"
+              ? sourceCall.prep
+              : {}),
+            emailContextSync: {
+              checkedAt,
+              status,
+              messages,
+              ...(errorText ? { error: errorText } : {}),
+            },
+          },
+        })
+        .eq("id", sourceCall.id);
 
       // A changed email summary invalidates the cached next-call intent. The
       // prep-intent endpoint regenerates it once per company, reuses that cache
       // for additional calls, and refuses to overwrite a manually edited intent.
       if (changed) {
-        for (const call of group.calls) {
-          try {
-            const intentResponse = await buildPrepIntent(
-              new NextRequest(new URL(`/api/crm/companies/${group.companyId}/prep-intent`, req.url), {
-                method: "POST",
-                cache: "no-store",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ concise: true, upcomingId: call.id }),
-              }),
-              { params: { id: group.companyId } }
-            );
-            if (intentResponse.ok) intentsRefreshed += 1;
-          } catch {
-            // The email summary remains safely stored. Opening Prep retries the
-            // intent pass immediately if this best-effort refresh times out.
-          }
+        try {
+          const intentResponse = await buildPrepIntent(
+            new NextRequest(new URL(`/api/crm/companies/${group.companyId}/prep-intent`, req.url), {
+              method: "POST",
+              cache: "no-store",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ concise: true, upcomingId: sourceCall.id }),
+            }),
+            { params: { id: group.companyId } }
+          );
+          if (intentResponse.ok) intentsRefreshed += 1;
+        } catch {
+          // The email summary remains safely stored. Opening Prep retries the
+          // intent pass immediately if this best-effort refresh times out.
         }
       }
       checked += 1;

@@ -147,25 +147,6 @@ export function nameFromEmail(email: string): string {
     .trim();
 }
 
-// The person being met, read off a calendar invite's attendee list: the first
-// guest who is not me, preferring one on a real work email so the domain gives
-// a site to research.
-export function pickGuest(
-  attendees: any
-): { name: string; email: string } | null {
-  const list = (Array.isArray(attendees) ? attendees : []).filter(
-    (a) => a && typeof a.email === "string" && a.email.trim() && a.self !== true
-  );
-  if (!list.length) return null;
-  const work = list.find((a: any) => websiteFromEmail(a.email));
-  const a = work || list[0];
-  const name =
-    typeof a.displayName === "string" && a.displayName.trim()
-      ? a.displayName.trim()
-      : nameFromEmail(a.email);
-  return { name, email: String(a.email).trim() };
-}
-
 // Fallback for invites with NO guest list: read the person and company off the
 // title. Handles "Interviewa - Tim Luft (Woote)" plus common intro titles.
 export function guestFromTitle(

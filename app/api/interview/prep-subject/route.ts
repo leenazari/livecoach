@@ -8,11 +8,11 @@ import {
   guestFromTitle,
   loadCompany,
   personState,
-  pickGuest,
   resolveContact,
   websiteFromEmail,
 } from "@/lib/research-cache";
 import { resolveCallScope } from "@/lib/workstreams";
+import { resolvePrimaryAttendeeForCall } from "@/lib/call-subject";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,9 +61,11 @@ export async function GET(req: NextRequest) {
       call.workstream_id = workstream.id;
 
     // ---- Who is on the call -------------------------------------------------
-    // The invite's guest list is the most reliable signal, then the title, then
-    // the client's own contact list.
-    const guest = call ? pickGuest(call.attendees) : null;
+    // Calendar ordering is not meaningful. Resolve the lead person from the
+    // title, linked contacts, company domain and unique external guest. If the
+    // evidence is ambiguous we leave the person blank rather than borrowing
+    // another invitee's relationship history.
+    const guest = call ? await resolvePrimaryAttendeeForCall(call) : null;
     const fromTitle = call ? guestFromTitle(call.title || "") : null;
 
     let person = (guest && guest.name) || (fromTitle && fromTitle.name) || "";

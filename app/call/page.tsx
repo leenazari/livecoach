@@ -16,6 +16,7 @@ import { consumeArmedCallLaunch } from "@/lib/call-launch";
 import { crmFetch } from "@/lib/crm";
 import { validMeetingUrl } from "@/lib/meeting-url";
 import { cleanResearchBackground } from "@/lib/research-format";
+import { pickPrimaryAttendee } from "@/lib/calendar-subject";
 import {
   estimateCost,
   usageCostUSD,
@@ -113,36 +114,6 @@ const websiteFromEmail = (email: string): string => {
   const d = emailDomain(email);
   return d && !PERSONAL_EMAIL_DOMAINS.has(d) ? `https://${d}` : "";
 };
-
-// A display name guessed from an email local part: "keith.fraser@x.com" ->
-// "Keith Fraser". Used when the invite carries no displayName for the guest.
-const nameFromEmail = (email: string): string => {
-  const local = String(email || "").split("@")[0] || "";
-  return local
-    .replace(/[._+-]+/g, " ")
-    .trim()
-    .split(" ")
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ")
-    .trim();
-};
-// The person being met, read off a calendar invite's attendee list: the first
-// guest who isn't me (self), preferring one on a real work email so the domain
-// gives a site to research. Returns their name and email.
-function pickGuest(attendees: any[]): { name: string; email: string } | null {
-  const list = (Array.isArray(attendees) ? attendees : []).filter(
-    (a) => a && typeof a.email === "string" && a.email.trim() && a.self !== true
-  );
-  if (!list.length) return null;
-  const work = list.find((a) => websiteFromEmail(a.email));
-  const a = work || list[0];
-  const name =
-    typeof a.displayName === "string" && a.displayName.trim()
-      ? a.displayName.trim()
-      : nameFromEmail(a.email);
-  return { name, email: String(a.email).trim() };
-}
 
 // Fallback for invites with NO guest list (Google often returns none when you
 // block the slot yourself): read the person and company straight off the title.
@@ -1149,12 +1120,15 @@ export default function CallPage() {
               setBackground(savedBackground);
               backgroundRef.current = savedBackground;
             }
-            // Fresh intro / first call with no saved prep: seed the screen from
-            // the invite itself so it is never blank. The guest on the invite
-            // becomes the name, their work email gives the contact and a site to
-            // research, and the call's intent seeds the brief. Each only fills
-            // when still empty, so saved prep or anything typed always wins.
-            const guest = pickGuest((call as any)?.attendees);
+            // The API resolves the meeting's lead person without trusting
+            // attendee order. The local fallback applies the same conservative
+            // rule for an older response during a rolling deployment.
+            const guest =
+              (call as any)?.primaryAttendee ||
+              pickPrimaryAttendee((call as any)?.attendees, {
+                title: (call as any)?.title,
+                internalDomains: ["ai13.com", "interviewa.com"],
+              });
             if (guest) {
               if (!candidateRef.current) {
                 candidateRef.current = guest.name;
@@ -1189,7 +1163,7 @@ export default function CallPage() {
                 // Pull the latest conversation with the actual calendar guest
                 // before drafting the intent. email-pull hashes the thread, so
                 // an unchanged inbox returns the cached digest without AI use.
-                const emailGuest = pickGuest((call as any)?.attendees);
+                const emailGuest = guest;
                 if (emailGuest?.email) {
                   try {
                     const mailRes = await fetch("/api/crm/email-pull", {
@@ -1198,6 +1172,7 @@ export default function CallPage() {
                       body: JSON.stringify({
                         companyId: call.company_id,
                         workstreamId: call.workstream_id || undefined,
+                        upcomingId: upcoming,
                         name: emailGuest.name || undefined,
                         email: emailGuest.email,
                       }),
@@ -1225,7 +1200,9 @@ export default function CallPage() {
                       );
                     } else if (mailRes.status === 409) {
                       setEmailPullNote(
-                        "Reconnect Google in Settings to include email conversations"
+                        typeof mail.error === "string" && mail.error.trim()
+                          ? mail.error
+                          : "The meeting's lead person could not be identified safely"
                       );
                     }
                   } catch {

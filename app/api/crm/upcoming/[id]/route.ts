@@ -3,6 +3,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 import { inferLink, loadAttendeeConfig } from "@/lib/attendees";
 import { getWorkstreamScope, resolveCallScope } from "@/lib/workstreams";
+import { resolvePrimaryAttendeeForCall } from "@/lib/call-subject";
+import { calendarEmailDomain } from "@/lib/calendar-subject";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -34,27 +36,23 @@ export async function GET(
       const config = await loadAttendeeConfig();
       const link = inferLink(data.attendees, config);
       let repairedCompanyId = link.companyId;
-      // Legacy calls did not always create a contact. In that case, a unique
-      // prior linked summary for the same named attendee is the next strongest
-      // signal. Never guess if that person appears under multiple clients.
+      // Legacy calls did not always create a contact. Resolve the one lead
+      // attendee first, then try their domain or prior history. Never scan every
+      // invitee in calendar order because internal supporting attendees are not
+      // the subject of the meeting.
       if (!repairedCompanyId) {
-        const names = data.attendees
-          .filter((a: any) => a && !a.self)
-          .map((a: any) => {
-            const display = String(a.displayName || "").trim();
-            if (display) return display;
-            return String(a.email || "")
-              .split("@")[0]
-              .replace(/[._+-]+/g, " ")
-              .trim();
-          })
-          .filter(Boolean)
-          .slice(0, 3);
-        for (const name of names) {
+        const primary = await resolvePrimaryAttendeeForCall(data);
+        if (primary?.email) {
+          repairedCompanyId =
+            config.contactEmailToCompany.get(primary.email) ||
+            config.companyByDomain.get(calendarEmailDomain(primary.email)) ||
+            null;
+        }
+        if (!repairedCompanyId && primary?.name) {
           const { data: history } = await supabaseAdmin
             .from("interview_summaries")
             .select("company_id")
-            .ilike("candidate", name)
+            .ilike("candidate", primary.name)
             .not("company_id", "is", null)
             .order("created_at", { ascending: false })
             .limit(10);
@@ -63,7 +61,6 @@ export async function GET(
           // several auto-created calendar-title records.
           if (history?.[0]?.company_id) {
             repairedCompanyId = history[0].company_id;
-            break;
           }
         }
       }
@@ -93,6 +90,7 @@ export async function GET(
     });
     if (scope.workstream && !data.workstream_id)
       data.workstream_id = scope.workstream.id;
+    const primaryAttendee = await resolvePrimaryAttendeeForCall(data);
     let workstreamChoices: {
       id: string;
       name: string;
@@ -131,6 +129,7 @@ export async function GET(
       call: {
         ...data,
         company,
+        primaryAttendee,
         workstream: scope.workstream,
         workstreamChoices,
       },
