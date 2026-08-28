@@ -1039,6 +1039,57 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       continue;
     }
 
+    if (it.type === "resolve_opportunity_clarification") {
+      const clarificationId =
+        typeof it.clarificationId === "string"
+          ? it.clarificationId.trim()
+          : "";
+      const decision =
+        typeof it.decision === "string" ? it.decision.trim() : "";
+      const allowed = new Set([
+        "same_deal",
+        "separate_workstream",
+        "not_an_opportunity",
+      ]);
+      if (!/^[0-9a-f-]{36}$/i.test(clarificationId) || !allowed.has(decision))
+        continue;
+      const requestScope = getRequestScope();
+      if (!requestScope) continue;
+      const { data: task } = await supabaseAdmin
+        .from("tasks")
+        .select("id,text,payload")
+        .eq("workspace_id", requestScope.workspaceId)
+        .eq("owner_id", requestScope.userId)
+        .eq("id", clarificationId)
+        .eq("kind", "opportunity_clarification")
+        .eq("status", "open")
+        .maybeSingle();
+      if (!task) continue;
+      const workstreamName =
+        typeof it.workstreamName === "string"
+          ? it.workstreamName.trim().slice(0, 180)
+          : "";
+      if (decision === "separate_workstream" && !workstreamName) continue;
+      const decisionLabel =
+        decision === "same_deal"
+          ? "the same deal"
+          : decision === "not_an_opportunity"
+            ? "not an opportunity"
+            : `a separate deal named \"${workstreamName}\"`;
+      out.push({
+        key,
+        type: it.type,
+        label: `Confirm ${task.payload?.proposedTitle || "the new evidence"} as ${decisionLabel}`,
+        endpoint: `/api/crm/opportunity-clarifications/${task.id}`,
+        method: "POST",
+        body: {
+          action: decision,
+          ...(workstreamName ? { workstreamName } : {}),
+        },
+      });
+      continue;
+    }
+
     if (it.type === "pull_emails") {
       // Pull the recent email thread with a person and build / refresh their
       // client from it. The client fires this endpoint on confirm; the route
@@ -1129,6 +1180,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
     "dismiss",
     "pull_emails",
     "send_email",
+    "resolve_opportunity_clarification",
   ]);
   return out.map((action) => ({
     ...action,
@@ -1550,7 +1602,9 @@ Additional supported actions are:
 {"type":"build_outreach_queue","limit":20}
 {"type":"send_email","recipientName":"<person name>","email":"<exact recipient email when known>","company":"<optional company>","subject":"<exact approved subject>","body":"<exact approved body including a simple do not follow up line>"}
 {"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","dealIntent":"<the commercial outcome this deal is pursuing>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","winOutlook":"not_assessed|at_risk|possible|likely|highly_likely|won","winOutlookConfidence":0,"winOutlookReasons":["<stored evidence only>"],"winOutlookQuestions":["<targeted next-call question>"],"engagementMotion":"cold_outreach_campaign|personal_relationship_led|existing_customer_expansion|inbound_enquiry|partner_referral","activeContactMethod":"automated_email|personal_email|phone|video_call|linkedin|event|in_person|other","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>","rationale":"<why this change is supported>"}
+{"type":"resolve_opportunity_clarification","clarificationId":"<exact id from PENDING PIPELINE CONFIRMATIONS>","decision":"same_deal|separate_workstream|not_an_opportunity","workstreamName":"<required only for a separate workstream>"}
 For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Lifecycle stage and win outlook are separate. Never raise win outlook without concise stored evidence. If evidence is missing, keep it not_assessed and add targeted winOutlookQuestions for the next call. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
+For a PENDING PIPELINE CONFIRMATION, ask the user the exact three-way question before emitting resolve_opportunity_clarification. Never infer the answer. Once they answer, use its exact clarification id. A separate deal also needs a clear workstream name. This decision is always confirmed on its own and is never folded into a batch.
 Use update_client for the relationship-level client stage and core facts. Use update_opportunity for a real revenue deal stage. When "move this client to qualified" clearly refers to a deal, update the opportunity. When it refers to the overall relationship or there is no deal, update the client stage. Never update both unless the user explicitly asks.
 When the user explicitly says a company is a partner, supplier, internal organisation or other non-buyer and should not appear in prospecting or the sales pipeline, include removeFromPipeline:true with update_client. Do not include it merely because the relationship stage is Partner, because a partner can still have a genuine expansion deal. This action dismisses active revenue opportunities but preserves the client, calls, tasks and immutable deal history.
 Use update_contact to correct or clear an existing person's core details. Use upsert_stakeholder when the change is specifically about their buying role or when the named contact may need to be created.

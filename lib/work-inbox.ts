@@ -5,7 +5,8 @@ export type WorkInboxKind =
   | "follow_up"
   | "outreach"
   | "reply"
-  | "client_update";
+  | "client_update"
+  | "opportunity_clarification";
 
 export type WorkInboxItem = {
   id: string;
@@ -26,6 +27,13 @@ export type WorkInboxItem = {
   done: boolean;
   editable: boolean;
   dismissible: boolean;
+  clarification?: {
+    existingOpportunityId: string;
+    existingTitle: string;
+    proposedTitle: string;
+    proposedDetail: string | null;
+    proposedValue: number | null;
+  };
   outreach?: {
     prospectId: string;
     person: string | null;

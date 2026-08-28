@@ -62,6 +62,7 @@ const kindCopy: Record<WorkInboxItem["kind"], { label: string; icon: string }> =
   outreach: { label: "Outreach", icon: "↗" },
   reply: { label: "Buyer reply", icon: "◆" },
   client_update: { label: "Client update", icon: "◴" },
+  opportunity_clarification: { label: "Deal check", icon: "?" },
 };
 
 const priorityStyle: Record<WorkInboxItem["priorityLabel"], string> = {
@@ -174,6 +175,8 @@ export default function WorkInboxPage() {
   const [workSelectionMode, setWorkSelectionMode] = useState(false);
   const [selectedWorkTaskIds, setSelectedWorkTaskIds] = useState<string[]>([]);
   const [outreachQueueCount, setOutreachQueueCount] = useState<number | null>(null);
+  const [separateClarificationId, setSeparateClarificationId] = useState("");
+  const [separateWorkstreamName, setSeparateWorkstreamName] = useState("");
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -385,6 +388,152 @@ export default function WorkInboxPage() {
     } finally {
       setSavingId("");
     }
+  };
+
+  const resolveOpportunityClarification = async (
+    item: WorkInboxItem,
+    action: "same_deal" | "separate_workstream" | "not_an_opportunity"
+  ) => {
+    if (savingId || !item.clarification) return;
+    if (action === "separate_workstream" && !separateWorkstreamName.trim()) {
+      setSeparateClarificationId(item.id);
+      setSeparateWorkstreamName(item.clarification.proposedTitle);
+      return;
+    }
+    setSavingId(item.id);
+    setError("");
+    setNotice("");
+    try {
+      const result = await crmFetch<{
+        resolution: string;
+        separateOpportunityId: string | null;
+      }>(`/api/crm/opportunity-clarifications/${item.sourceId}`, {
+        method: "POST",
+        body: JSON.stringify({
+          action,
+          ...(action === "separate_workstream"
+            ? { workstreamName: separateWorkstreamName.trim() }
+            : {}),
+        }),
+      });
+      if (result.resolution !== action)
+        throw new Error("The database did not confirm that decision.");
+      setSeparateClarificationId("");
+      setSeparateWorkstreamName("");
+      setNotice(
+        action === "same_deal"
+          ? "Confirmed as the same deal. No duplicate was created."
+          : action === "not_an_opportunity"
+            ? "Confirmed as not an opportunity. The pipeline was left unchanged."
+            : "Separate workstream and deal created from your confirmation."
+      );
+      setSessionCompleted((count) => count + 1);
+      await load(true);
+      window.dispatchEvent(
+        new CustomEvent("lc:tasks-updated", {
+          detail: { source: "opportunity-clarification" },
+        })
+      );
+    } catch (err: any) {
+      setError(err?.message || "That deal decision did not save. Please try again.");
+    } finally {
+      setSavingId("");
+    }
+  };
+
+  const clarificationControls = (item: WorkInboxItem) => {
+    if (!item.clarification || item.done) return null;
+    const separating = separateClarificationId === item.id;
+    return (
+      <div className="w-full rounded-xl border border-amber/40 bg-amber/[0.05] p-3">
+        <p className="text-xs leading-5 text-bone/85">
+          Saved deal <strong>{item.clarification.existingTitle}</strong>
+        </p>
+        <p className="mt-1 text-xs leading-5 text-bone/85">
+          New evidence <strong>{item.clarification.proposedTitle}</strong>
+        </p>
+        {item.clarification.proposedDetail ? (
+          <p className="mt-2 text-xs leading-5 text-muted">
+            {capitaliseSentenceStarts(item.clarification.proposedDetail)}
+          </p>
+        ) : null}
+        {separating ? (
+          <div className="mt-3 rounded-lg border border-edge bg-ink/45 p-3">
+            <label>
+              <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">
+                Separate workstream name
+              </span>
+              <input
+                autoFocus
+                value={separateWorkstreamName}
+                onChange={(event) => setSeparateWorkstreamName(event.target.value)}
+                className="min-h-11 w-full rounded-lg border border-edge bg-ink px-3 text-sm text-bone outline-none focus:border-amber/60"
+              />
+            </label>
+            <div className="mt-2 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSeparateClarificationId("");
+                  setSeparateWorkstreamName("");
+                }}
+                disabled={!!savingId}
+                className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase text-muted disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void resolveOpportunityClarification(
+                    item,
+                    "separate_workstream"
+                  )
+                }
+                disabled={!!savingId || !separateWorkstreamName.trim()}
+                className="min-h-10 rounded-lg border border-amber/55 bg-amber/10 px-3 font-mono text-[0.52rem] uppercase text-amber disabled:opacity-40"
+              >
+                {savingId === item.id ? "Saving…" : "Confirm separate deal"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <button
+              type="button"
+              onClick={() =>
+                void resolveOpportunityClarification(item, "same_deal")
+              }
+              disabled={!!savingId}
+              className="min-h-10 rounded-lg border border-moss/55 bg-moss/10 px-3 font-mono text-[0.52rem] uppercase text-moss disabled:opacity-40"
+            >
+              Same deal
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSeparateClarificationId(item.id);
+                setSeparateWorkstreamName(item.clarification!.proposedTitle);
+              }}
+              disabled={!!savingId}
+              className="min-h-10 rounded-lg border border-amber/55 bg-amber/10 px-3 font-mono text-[0.52rem] uppercase text-amber disabled:opacity-40"
+            >
+              Separate deal
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void resolveOpportunityClarification(item, "not_an_opportunity")
+              }
+              disabled={!!savingId}
+              className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase text-muted disabled:opacity-40"
+            >
+              Not a deal
+            </button>
+          </div>
+        )}
+      </div>
+    );
   };
 
   const beginNextDealAction = (item: Pick<WorkInboxItem, "id">) => {
@@ -1319,6 +1468,10 @@ export default function WorkInboxPage() {
                   </div>
                 ) : null}
 
+                {focusItem.kind === "opportunity_clarification"
+                  ? clarificationControls(focusItem)
+                  : null}
+
                 <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                   {focusItem.kind === "task" ? (
                     <button
@@ -1512,6 +1665,9 @@ export default function WorkInboxPage() {
 
                   {!item.done && editingId !== item.id ? (
                     <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-edge/70 pt-3">
+                      {item.kind === "opportunity_clarification"
+                        ? clarificationControls(item)
+                        : null}
                       {item.kind === "task" && item.editable ? (
                         <button
                           type="button"

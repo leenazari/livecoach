@@ -223,6 +223,23 @@ export async function GET() {
       const dueToday = !done && dueMs != null && dueMs < endTodayMs;
       const waiting = !done && task.kind === "counterparty_commitment";
       const revenue = revenueCompanies.has(task.company_id);
+      const clarification =
+        task.kind === "opportunity_clarification" &&
+        task.payload?.clarificationType === "opportunity_scope"
+          ? {
+              existingOpportunityId: text(
+                task.payload.existingOpportunityId,
+                80
+              ),
+              existingTitle: text(task.payload.existingTitle, 240),
+              proposedTitle: text(task.payload.proposedTitle, 240),
+              proposedDetail: text(task.payload.proposedDetail, 500) || null,
+              proposedValue:
+                typeof task.payload.proposedValue === "number"
+                  ? task.payload.proposedValue
+                  : null,
+            }
+          : null;
       const pinned = task.payload?.pinned === true;
       let priority = done ? 0 : waiting ? 38 : 56;
       if (task.kind === "commitment") priority += 10;
@@ -231,13 +248,16 @@ export async function GET() {
       if (dueToday) priority = Math.max(priority, 90);
       if (overdue) priority = Math.max(priority, 98);
       if (pinned) priority = Math.max(priority, 102);
+      if (clarification && !done) priority = 112;
       const company = task.company_id ? companyName.get(task.company_id) || null : null;
       items.push({
         id: `task:${task.id}`,
         sourceId: task.id,
-        kind: "task",
+        kind: clarification ? "opportunity_clarification" : "task",
         title: text(task.text),
-        detail: waiting
+        detail: clarification
+          ? `The pipeline was left unchanged. Confirm whether the new evidence belongs to the saved deal or needs its own workstream.`
+          : waiting
           ? "Waiting for someone else"
           : overdue
             ? "Deadline has passed"
@@ -251,12 +271,13 @@ export async function GET() {
         priorityLabel: priorityLabel(priority, waiting, done),
         dueAt: done ? task.done_at || null : task.due_at || null,
         createdAt: task.created_at || null,
-        revenue,
-        approval: false,
+        revenue: clarification ? true : revenue,
+        approval: !!clarification,
         waiting,
         done,
-        editable: !done,
-        dismissible: !done,
+        editable: !done && !clarification,
+        dismissible: !done && !clarification,
+        ...(clarification ? { clarification } : {}),
       });
     }
 

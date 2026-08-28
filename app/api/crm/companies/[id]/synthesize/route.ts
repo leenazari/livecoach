@@ -196,6 +196,7 @@ Return the JSON now.`;
     // Reuse the canonical active revenue opportunity. Never delete the old
     // evidence or create one deal row per product use case.
     let opportunityCreated = false;
+    let opportunityConfirmation = null;
     if (opportunities.length && !pipelineExclusion) {
       const suggestion = opportunities[0];
       const result = await createCanonicalOpenRevenueOpportunity(company as any, {
@@ -206,6 +207,7 @@ Return the JSON now.`;
         surfacedByAi: true,
       });
       opportunityCreated = result.created;
+      opportunityConfirmation = result.clarification;
     }
 
     return NextResponse.json({
@@ -214,6 +216,7 @@ Return the JSON now.`;
       playbook,
       nextSteps,
       opportunities: opportunityCreated ? 1 : 0,
+      opportunityConfirmation,
       pipelineExcluded: !!pipelineExclusion,
     });
   } catch (err: any) {

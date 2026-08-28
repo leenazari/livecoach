@@ -465,7 +465,7 @@ export async function gatherGlobalContext(
     .limit(500);
   let tasksQuery = supabaseAdmin
     .from("tasks")
-    .select("company_id")
+    .select("id, company_id, owner_id, text, kind, payload")
     .eq("status", "open")
     .limit(1000);
   let callsQuery = supabaseAdmin
@@ -572,6 +572,29 @@ export async function gatherGlobalContext(
     .slice(0, 100);
   if (!asksForSchedule)
     lines.push(`Showing ${digestClients.length} of ${companies.length} clients, ranked by open opportunity, action, draft and recent-call activity.`);
+  const companyNameById = new Map(
+    companies.map((company: any) => [String(company.id), String(company.name || "Client")])
+  );
+  const opportunityClarifications = (tasksRes.data || [])
+    .filter(
+      (task: any) =>
+        (!requestScope || task.owner_id === requestScope.userId) &&
+        task.kind === "opportunity_clarification" &&
+        task.payload?.clarificationType === "opportunity_scope"
+    )
+    .slice(0, 5);
+  if (!asksForSchedule && opportunityClarifications.length) {
+    lines.push(
+      "",
+      "PENDING PIPELINE CONFIRMATIONS. The pipeline was left unchanged. Ask the user whether each item is the same deal, a separate workstream, or not an opportunity. Never choose for them."
+    );
+    for (const task of opportunityClarifications) {
+      lines.push(
+        `• confirmation ${task.id} · ${companyNameById.get(String(task.company_id)) || "Client"} · saved deal: ${cut(task.payload.existingTitle, 100)} · new evidence: ${cut(task.payload.proposedTitle, 100)}`
+      );
+    }
+    lines.push("");
+  }
   for (const c of asksForSchedule ? [] : digestClients) {
     const head = `• ${c.name}${
       c.stage || c.sector

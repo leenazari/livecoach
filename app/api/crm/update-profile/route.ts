@@ -230,6 +230,7 @@ Return the JSON now.`;
     }
 
     let opportunityCreated = false;
+    let opportunityConfirmation = null;
     if (opportunities.length && !pipelineExclusion) {
       const suggestion = opportunities[0];
       const result = await createCanonicalOpenRevenueOpportunity(company as any, {
@@ -241,6 +242,7 @@ Return the JSON now.`;
         surfacedByAi: true,
       });
       opportunityCreated = result.created;
+      opportunityConfirmation = result.clarification;
     }
 
     // The host's own commitments from this call become trackable tasks
@@ -303,6 +305,7 @@ Return the JSON now.`;
     return NextResponse.json({
       ok: true,
       opportunities: opportunityCreated ? 1 : 0,
+      opportunityConfirmation,
       pipelineExcluded: !!pipelineExclusion,
       followUp: !!followUp,
     });
