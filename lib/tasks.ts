@@ -190,8 +190,10 @@ export function isNearDuplicateTask(aText: string, bText: string): boolean {
 // near-duplicate of an already-open task in the same scope, or of an earlier
 // candidate in this same batch (see isNearDuplicateTask) - this stops two
 // different generators logging the same intent in slightly different words.
-// Best-effort - never throws into the caller. Returns the rows that were
-// actually inserted (new ones only), so callers can confirm what was added.
+// Returns the rows that were actually inserted (new ones only), so callers can
+// confirm what was added. Database errors deliberately propagate. Returning an
+// empty array after a failed write makes an approved Brain action look like a
+// harmless duplicate and leaves the user without the task they confirmed.
 export async function upsertTasks(
   companyId: string | null,
   items: NewTask[],
@@ -262,19 +264,18 @@ export async function upsertTasks(
       ...privateRecordFields(accountScope),
     }));
   if (!rows.length) return [];
-  try {
-    const { data } = await supabaseAdmin
-      .from("tasks")
-      .upsert(rows, {
-        onConflict: "owner_id,fingerprint",
-        ignoreDuplicates: true,
-      })
-      .select(
-        "id, company_id, workstream_id, text, kind, link_kind, status, done_at, created_at, payload, due_at"
-      );
-    return data || [];
-  } catch (e) {
-    console.error("upsertTasks failed:", e);
-    return [];
+  const { data, error } = await supabaseAdmin
+    .from("tasks")
+    .upsert(rows, {
+      onConflict: "owner_id,fingerprint",
+      ignoreDuplicates: true,
+    })
+    .select(
+      "id, company_id, workstream_id, text, kind, link_kind, status, done_at, created_at, payload, due_at"
+    );
+  if (error) {
+    console.error("upsertTasks failed:", error);
+    throw error;
   }
+  return data || [];
 }

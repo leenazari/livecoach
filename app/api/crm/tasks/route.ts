@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { actionToLinkKind, upsertTasks } from "@/lib/tasks";
+import {
+  actionToLinkKind,
+  fingerprintTask,
+  isNearDuplicateTask,
+  upsertTasks,
+} from "@/lib/tasks";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { resolveRecordScope } from "@/lib/record-scope";
 
@@ -38,16 +43,56 @@ export async function POST(req: NextRequest) {
       typeof body.dueAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(body.dueAt)
         ? body.dueAt
         : null;
+    const taskText = text.slice(0, 500);
     const created = await upsertTasks(companyId, [
       {
-        text: text.slice(0, 500),
+        text: taskText,
         linkKind: actionToLinkKind(body.action),
         source: "assistant",
         dueAt,
         pinned: body.pinned === true,
       },
     ]);
-    return NextResponse.json({ task: created[0] || null, created: created.length > 0 });
+    let task = created[0] || null;
+
+    // A retry or a near-duplicate is not a failed save. Resolve the canonical
+    // stored task and return its id so Brain can prove exactly what exists.
+    if (!task) {
+      const account = await resolveRecordScope();
+      let existingQuery = supabaseAdmin
+        .from("tasks")
+        .select(
+          "id, company_id, workstream_id, text, kind, link_kind, status, done_at, created_at, payload, due_at, fingerprint"
+        )
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
+        .eq("status", "open")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      existingQuery = companyId
+        ? existingQuery.eq("company_id", companyId)
+        : existingQuery.is("company_id", null);
+      const { data: existing, error: existingError } = await existingQuery;
+      if (existingError) throw existingError;
+      const fingerprint = fingerprintTask(companyId, taskText);
+      task = (existing || []).find(
+        (row: any) =>
+          row.fingerprint === fingerprint ||
+          isNearDuplicateTask(taskText, String(row.text || ""))
+      );
+    }
+    if (!task?.id) {
+      return NextResponse.json(
+        { ok: false, error: "The task was not written or matched to an existing open task." },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({
+      ok: true,
+      task,
+      created: created.length > 0,
+      alreadyExists: created.length === 0,
+    });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to create task" },

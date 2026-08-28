@@ -20,6 +20,18 @@ function fullActionLabel(action: any): string {
   return String(action?.label || "CRM change");
 }
 
+function actionConfirmationError(action: any, result: any): string | null {
+  if (result?.ok === false)
+    return result?.reason || result?.error || "The server did not confirm that change.";
+  if (Array.isArray(result?.notCompleted) && result.notCompleted.length)
+    return `${result.notCompleted.length} part${
+      result.notCompleted.length === 1 ? " was" : "s were"
+    } not completed.`;
+  if (action?.type === "create_task" && !result?.task?.id)
+    return "The server did not return the saved to-do.";
+  return null;
+}
+
 const DEEP_HISTORY_REQUEST =
   /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|source documents?|uploaded documents?|detailed notes?|email thread|what did .* say)\b/i;
 const HANDS_FREE_SILENCE_MS = 3000;
@@ -338,6 +350,7 @@ export default function ClientAssistant({
     notCompleted: number;
   } | null>(null);
   const [receiptWarning, setReceiptWarning] = useState("");
+  const actionInFlightRef = useRef(new Set<string>());
   const [contextMode, setContextMode] = useState<"memory" | "extended">("memory");
   const recRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null); // ElevenLabs playback
@@ -996,6 +1009,9 @@ export default function ClientAssistant({
   ): Promise<ActionOutcome> => {
     if (!a || !a.endpoint)
       return { ok: false, error: "No safe CRM action was available." };
+    if (actionInFlightRef.current.has(a.key))
+      return { ok: false, error: "That change is already being saved." };
+    actionInFlightRef.current.add(a.key);
     setActionErrors((errors) => {
       const next = { ...errors };
       delete next[a.key];
@@ -1007,14 +1023,8 @@ export default function ClientAssistant({
         method: a.method || "PATCH",
         body: JSON.stringify(a.body || {}),
       });
-      if (result?.ok === false || result?.created === false)
-        throw new Error(
-          result?.reason || result?.error || "The server did not confirm that change."
-        );
-      if (Array.isArray(result?.notCompleted) && result.notCompleted.length)
-        throw new Error(
-          `${result.notCompleted.length} part${result.notCompleted.length === 1 ? " was" : "s were"} not completed.`
-        );
+      const confirmationError = actionConfirmationError(a, result);
+      if (confirmationError) throw new Error(confirmationError);
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       setActionResults((current) => ({ ...current, [a.key]: result }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
@@ -1048,6 +1058,8 @@ export default function ClientAssistant({
           },
         ]);
       return { ok: false, error: reason };
+    } finally {
+      actionInFlightRef.current.delete(a.key);
     }
   };
   const cancelAction = (a: any) =>
@@ -1056,6 +1068,8 @@ export default function ClientAssistant({
   // one to run the action against exactly that record.
   const confirmChoice = async (a: any, c: any) => {
     if (!c || !c.endpoint) return;
+    if (actionInFlightRef.current.has(a.key)) return;
+    actionInFlightRef.current.add(a.key);
     setActionErrors((errors) => {
       const next = { ...errors };
       delete next[a.key];
@@ -1067,14 +1081,8 @@ export default function ClientAssistant({
         method: c.method || "PATCH",
         body: JSON.stringify(c.body || {}),
       });
-      if (result?.ok === false || result?.created === false)
-        throw new Error(
-          result?.reason || result?.error || "The server did not confirm that change."
-        );
-      if (Array.isArray(result?.notCompleted) && result.notCompleted.length)
-        throw new Error(
-          `${result.notCompleted.length} part${result.notCompleted.length === 1 ? " was" : "s were"} not completed.`
-        );
+      const confirmationError = actionConfirmationError(a, result);
+      if (confirmationError) throw new Error(confirmationError);
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       setActionResults((current) => ({ ...current, [a.key]: result }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
@@ -1111,6 +1119,8 @@ export default function ClientAssistant({
           }),
         },
       ]);
+    } finally {
+      actionInFlightRef.current.delete(a.key);
     }
   };
 
