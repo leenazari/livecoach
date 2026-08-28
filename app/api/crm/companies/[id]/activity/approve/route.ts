@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { actionToLinkKind, upsertTasks } from "@/lib/tasks";
 import { getCommercialMemory } from "@/lib/commercial-memory";
 import type { ActivityIntelligence } from "@/lib/activity-intelligence";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 
@@ -16,7 +17,9 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
+    const action = body.action === "dismiss" ? "dismiss" : "apply";
     const contextId =
       typeof body.contextId === "string" ? body.contextId.trim() : "";
     if (!contextId) {
@@ -25,8 +28,10 @@ export async function POST(
 
     const { data: company, error: companyError } = await supabaseAdmin
       .from("companies")
-      .select("id, name, profile, stage")
+      .select("id, name, profile, stage, owner_id, workspace_id")
       .eq("id", params.id)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
       .maybeSingle();
     if (companyError) throw companyError;
     if (!company) {
@@ -47,6 +52,40 @@ export async function POST(
         { status: 409 }
       );
     }
+    if (action === "dismiss") {
+      const dismissedAt = new Date().toISOString();
+      const dismissedIntelligence: ActivityIntelligence = {
+        ...intelligence,
+        status: "dismissed",
+        appliedAt: dismissedAt,
+        applied: [],
+        warnings: [],
+      };
+      const { error: dismissError } = await supabaseAdmin
+        .from("companies")
+        .update({
+          profile: {
+            ...profile,
+            activity_intelligence: {
+              ...activityStore,
+              latest: dismissedIntelligence,
+            },
+            updated: dismissedAt,
+          },
+          updated_at: dismissedAt,
+        })
+        .eq("id", params.id)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId);
+      if (dismissError) throw dismissError;
+      await getCommercialMemory(params.id);
+      return NextResponse.json({
+        intelligence: dismissedIntelligence,
+        applied: [],
+        warnings: [],
+        dismissed: true,
+      });
+    }
     if (intelligence.status === "applied") {
       return NextResponse.json({
         intelligence,
@@ -54,6 +93,12 @@ export async function POST(
         warnings: intelligence.warnings || [],
         alreadyApplied: true,
       });
+    }
+    if (intelligence.status === "dismissed") {
+      return NextResponse.json(
+        { error: "That activity review has already been dismissed." },
+        { status: 409 }
+      );
     }
 
     const [{ data: opportunityRows }, { data: upcomingRows }, { data: contacts }] =

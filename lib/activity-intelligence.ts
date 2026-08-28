@@ -22,7 +22,7 @@ export type ActivityIntelligence = {
   contextId: string;
   createdAt: string;
   channel: ActivityChannel;
-  status: "pending" | "applied";
+  status: "pending" | "applied" | "dismissed";
   overview: string;
   buyingSignals: string[];
   risks: string[];

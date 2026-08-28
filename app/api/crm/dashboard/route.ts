@@ -289,6 +289,10 @@ export async function GET(req: Request) {
     // Deterministic Today control centre. This is deliberately model-free: it
     // should be instant, cheap and grounded in deadlines/calendar state.
     const next24h = now + 24 * 60 * 60 * 1000;
+    const taskClientHref = (companyId: string | null | undefined, taskId: string) =>
+      companyId
+        ? `/crm/${companyId}?completeTask=${encodeURIComponent(taskId)}#sec-quick-update`
+        : "/crm/board?tab=tasks";
     const callsToPrep = eligibleUpcoming
       .filter(
         (u: any) =>
@@ -318,7 +322,7 @@ export async function GET(req: Request) {
         text: t.text,
         company: t.company === "—" ? null : t.company,
         at: t.dueAt,
-        href: t.companyId ? `/crm/${t.companyId}` : "/crm/board?tab=tasks",
+        href: taskClientHref(t.companyId, t.id),
         entity: "task" as const,
       }));
     const awaitingReply = (draftsRes.data || []).slice(0, 5).map((d: any) => ({
@@ -341,7 +345,7 @@ export async function GET(req: Request) {
         text: t.text,
         company: t.company_id ? nameById.get(t.company_id) || null : null,
         at: t.due_at || t.created_at,
-        href: t.company_id ? `/crm/${t.company_id}` : "/crm/board?tab=tasks",
+        href: taskClientHref(t.company_id, t.id),
         entity: "task" as const,
       }));
     const outreachProspectById = new Map<string, any>();
@@ -496,7 +500,7 @@ export async function GET(req: Request) {
           text: task.text,
           company: task.company === "—" ? null : task.company,
           at: task.dueAt || task.createdAt,
-          href: task.companyId ? `/crm/${task.companyId}` : "/crm/board?tab=tasks",
+          href: taskClientHref(task.companyId, task.id),
           entity: "task" as const,
           reason,
           score,
@@ -515,6 +519,9 @@ export async function GET(req: Request) {
           company: company.name || null,
           at: latest.at || null,
           href: `/crm/${company.id}#sec-quick-update`,
+          companyId: company.id,
+          contextId: latest.contextId,
+          entity: "activity" as const,
           reason: "Review client update",
           score: 165,
         };

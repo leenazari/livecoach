@@ -32,6 +32,8 @@ export default function QuickClientUpdate({
   onApplied,
   initialIntelligence,
   sharedSalesAccess = false,
+  resolveTaskId = "",
+  onTaskResolved,
 }: {
   companyId: string;
   companyName: string;
@@ -39,6 +41,8 @@ export default function QuickClientUpdate({
   onApplied?: () => void | Promise<void>;
   initialIntelligence?: ActivityIntelligence | null;
   sharedSalesAccess?: boolean;
+  resolveTaskId?: string;
+  onTaskResolved?: () => void;
 }) {
   const [type, setType] = useState<(typeof UPDATE_TYPES)[number]["key"]>("phone");
   const [note, setNote] = useState("");
@@ -122,6 +126,9 @@ export default function QuickClientUpdate({
       const result = await crmFetch<{
         item: QuickUpdateItem;
         intelligence: ActivityIntelligence | null;
+        applied?: string[];
+        warnings?: string[];
+        completedTaskId?: string | null;
         warning?: string;
       }>(
         `/api/crm/companies/${companyId}/activity`,
@@ -130,16 +137,28 @@ export default function QuickClientUpdate({
           body: JSON.stringify({
             channel: type,
             content,
+            autoApply: true,
+            completeTaskId: resolveTaskId || undefined,
           }),
         }
       );
       setNote("");
       setIntelligence(result.intelligence || null);
+      const appliedCount = result.applied?.length || 0;
+      const taskCompleted = Boolean(result.completedTaskId);
       setNotice(
         result.warning ||
-          `${selected.label} saved and its commercial meaning is ready.`
+          `${selected.label} saved${
+            taskCompleted ? ", Today item completed" : ""
+          }${
+            appliedCount
+              ? `, ${appliedCount} CRM ${appliedCount === 1 ? "change" : "changes"} applied`
+              : ""
+          }.`
       );
       onSaved(result.item);
+      if (taskCompleted) onTaskResolved?.();
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
       window.dispatchEvent(new CustomEvent("lc:client-context-updated", { detail: { companyId } }));
     } catch (caught: any) {
@@ -281,10 +300,16 @@ export default function QuickClientUpdate({
               className={`rounded-full border px-2 py-0.5 font-mono text-[0.48rem] uppercase tracking-wider ${
                 intelligence.status === "applied"
                   ? "border-sage/40 bg-sage/10 text-sage"
-                  : "border-amber/40 bg-amber/10 text-amber"
+                  : intelligence.status === "dismissed"
+                    ? "border-edge bg-ink/40 text-muted"
+                    : "border-amber/40 bg-amber/10 text-amber"
               }`}
             >
-              {intelligence.status === "applied" ? "approved" : "review first"}
+              {intelligence.status === "applied"
+                ? "applied"
+                : intelligence.status === "dismissed"
+                  ? "dismissed"
+                  : "review first"}
             </span>
           </div>
           <p className="mt-1.5 font-sans text-[0.82rem] leading-relaxed text-bone/90">

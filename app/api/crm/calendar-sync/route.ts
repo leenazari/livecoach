@@ -94,6 +94,15 @@ async function runCalendarSync() {
     }
     const source = snapshot.source;
     const events = snapshot.events;
+    const { data: exclusionRows, error: exclusionError } = await supabaseAdmin
+      .from("calendar_event_exclusions")
+      .select("external_id")
+      .eq("source", source)
+      .limit(2000);
+    if (exclusionError) throw exclusionError;
+    const excludedEventIds = new Set(
+      (exclusionRows || []).map((row: any) => String(row.external_id || ""))
+    );
 
     type Row = {
       external_id: string;
@@ -117,10 +126,15 @@ async function runCalendarSync() {
       // CRM. A complete sync also removes any older matching CRM rows because
       // their event ids are deliberately absent from `liveId` below.
       if (isNonMeetingCalendarBlock(title)) continue;
+      // Preserve existing Google ids. Prefix Microsoft ids so two providers
+      // can never collide inside the shared upcoming_calls table.
+      const externalId = source === "microsoft" ? `microsoft:${ev.id}` : ev.id;
+      // A user crossing a personal reminder off Upcoming Calls is an explicit
+      // CRM preference. Keep it in the source calendar, but do not recreate it
+      // in LiveCoach on the next sync.
+      if (excludedEventIds.has(externalId)) continue;
       rows.push({
-        // Preserve existing Google ids. Prefix Microsoft ids so two providers
-        // can never collide inside the shared upcoming_calls table.
-        external_id: source === "microsoft" ? `microsoft:${ev.id}` : ev.id,
+        external_id: externalId,
         title,
         scheduled_at: startIso,
         meeting_url: ev.meeting_url || meetingUrlOf(ev),
