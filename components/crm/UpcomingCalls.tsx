@@ -85,6 +85,8 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
         removed?: number;
         relinked?: number;
         reconciled?: boolean;
+        calendarReconnectRequired?: boolean;
+        warning?: string | null;
       }>(
         "/api/crm/calendar-sync",
         { method: "POST" }
@@ -96,7 +98,10 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
       if (r.updated) bits.push(`${r.updated} updated`);
       if (r.removed) bits.push(`${r.removed} cancelled removed`);
       if (r.relinked) bits.push(`${r.relinked} relinked`);
-      if (r.reconciled === false) bits.push("partial sync - cancellations kept safely");
+      if (r.calendarReconnectRequired)
+        bits.push("reconnect Google once in Settings to include all calendars");
+      else if (r.reconciled === false)
+        bits.push("partial sync - cancellations kept safely");
       setSyncMsg(bits.length ? `synced - ${bits.join(", ")}` : "already up to date");
     } catch (e: any) {
       setSyncMsg(e?.message || "sync failed");
