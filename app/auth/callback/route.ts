@@ -53,6 +53,7 @@ export async function GET(req: NextRequest) {
   } else if (
     tokenHash &&
     (verificationType === "invite" ||
+      verificationType === "email" ||
       verificationType === "magiclink" ||
       verificationType === "recovery")
   ) {

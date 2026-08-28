@@ -27,6 +27,7 @@ assert.match(
 const login = read("app/login/page.tsx");
 const callback = read("app/auth/callback/route.ts");
 const forgot = read("app/forgot-password/page.tsx");
+const magicLinkTemplate = read("supabase/templates/magic-link.html");
 
 assert.match(login, /signInWithOtp/);
 assert.match(login, /shouldCreateUser: false/);
@@ -37,7 +38,15 @@ assert.match(login, /signInWithPassword/);
 assert.match(login, /EMAIL_RESEND_WAIT_SECONDS = 60/);
 assert.doesNotMatch(login, /SERVICE_ROLE|auth\.admin/);
 assert.match(callback, /authenticationMethod === "email"/);
+assert.match(callback, /verificationType === "email"/);
 assert.match(callback, /\/login\?email=error/);
 assert.match(forgot, /Use email login/);
+assert.match(magicLinkTemplate, /\{\{ \.TokenHash \}\}/);
+assert.match(magicLinkTemplate, /\{\{ \.Token \}\}/);
+assert.match(
+  magicLinkTemplate,
+  /\/auth\/callback\?token_hash=\{\{ \.TokenHash \}\}&amp;type=email&amp;next=\/crm&amp;method=email/
+);
+assert.doesNotMatch(magicLinkTemplate, /\.ConfirmationURL/);
 
 console.log("Email OTP login validation passed");
