@@ -72,7 +72,8 @@
     "validate:brain-direct-email": "node scripts/validate-brain-direct-email.mjs",
     "validate:deal-intent": "node scripts/validate-opportunity-deal-intent.mjs",
     "validate:today-state": "node scripts/validate-today-state-transitions.mjs",
-    "validate:brain-task-confirmation": "node scripts/validate-brain-task-confirmation.mjs"
+    "validate:brain-task-confirmation": "node scripts/validate-brain-task-confirmation.mjs",
+    "validate:outreach-voice-notes": "node scripts/validate-outreach-voice-notes.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

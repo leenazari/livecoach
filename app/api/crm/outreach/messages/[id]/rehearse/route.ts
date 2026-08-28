@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { sendConnectedOutreachMail } from "@/lib/mail";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
+import { outreachVoicePublicUrl } from "@/lib/outreach-voice-note";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +19,7 @@ export async function POST(
     const sender = await resolveOutreachIdentity();
     const { data: message, error: messageError } = await supabaseAdmin
       .from("outreach_messages")
-      .select("id,subject,body_text,from_email,sender_user_id,status,prospect_id")
+      .select("id,subject,body_text,from_email,sender_user_id,status,prospect_id,voice_status,voice_audio_path,voice_public_token,voice_estimated_seconds,voice_script")
       .eq("workspace_id", sender.workspaceId)
       .eq("sender_user_id", sender.userId)
       .eq("id", params.id)
@@ -64,6 +65,19 @@ export async function POST(
       ownerId: sender.userId,
       senderName: sender.senderName,
       fromEmail: sender.senderEmail,
+      ...(message.voice_status === "ready" &&
+      message.voice_audio_path &&
+      message.voice_public_token
+        ? {
+            voiceNote: {
+              url: outreachVoicePublicUrl(message.voice_public_token),
+              estimatedSeconds: message.voice_estimated_seconds,
+              previewText: String(message.voice_script || "")
+                .split(/(?<=[.!?])\s+/)[0]
+                .slice(0, 220),
+            },
+          }
+        : {}),
     });
     if (!sent.ok)
       return NextResponse.json(

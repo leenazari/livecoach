@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
+import {
+  estimatedVoiceSeconds,
+  normaliseOutreachVoiceScript,
+} from "@/lib/outreach-voice-note";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { outreachSafetyError } from "@/lib/outreach-team-safety";
 
@@ -28,11 +32,49 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const nextBody = typeof body.body_text === "string" && body.body_text.trim()
       ? removeDashesFromProse(body.body_text.trim()).slice(0, 4000)
       : removeDashesFromProse(existing.body_text);
-    const contentChanged = nextSubject !== existing.subject || nextBody !== existing.body_text;
+    const nextVoiceScript = typeof body.voice_script === "string"
+      ? normaliseOutreachVoiceScript(body.voice_script)
+      : normaliseOutreachVoiceScript(existing.voice_script);
+    const voiceChanged = nextVoiceScript !== normaliseOutreachVoiceScript(existing.voice_script);
+    const contentChanged =
+      nextSubject !== existing.subject ||
+      nextBody !== existing.body_text ||
+      voiceChanged;
     patch.subject = nextSubject;
     patch.body_text = nextBody;
+    patch.voice_script = nextVoiceScript || null;
+    if (voiceChanged) {
+      patch.voice_status = nextVoiceScript ? "script_ready" : "none";
+      patch.voice_audio_path = null;
+      patch.voice_audio_mime = null;
+      patch.voice_generated_at = null;
+      patch.voice_script_hash = null;
+      patch.voice_model_id = null;
+      patch.voice_provider_voice_id = null;
+      patch.voice_provider_request_id = null;
+      patch.voice_estimated_seconds = nextVoiceScript
+        ? estimatedVoiceSeconds(nextVoiceScript)
+        : null;
+      patch.voice_error = null;
+    }
     if (body.status === "approved") {
       if (!/(not|won't|will not|do not).{0,20}follow up/i.test(nextBody)) return NextResponse.json({ error: "Keep the simple opt-out line before approving" }, { status: 400 });
+      if (existing.voice_status === "generating")
+        return NextResponse.json(
+          { error: "Wait for the voice note to finish before approving" },
+          { status: 409 }
+        );
+      if (
+        nextVoiceScript &&
+        (voiceChanged || existing.voice_status !== "ready")
+      )
+        return NextResponse.json(
+          {
+            error:
+              "Generate and preview the personal voice note before approving this email",
+          },
+          { status: 409 }
+        );
       patch.status = "approved";
       patch.approved_at = new Date().toISOString();
       // Approval covers the exact visible words. If those words changed, any

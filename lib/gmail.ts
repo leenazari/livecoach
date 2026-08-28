@@ -499,6 +499,7 @@ export async function sendOutreachMail(opts: {
   to: string;
   subject: string;
   text: string;
+  html?: string;
   threadId?: string;
   ownerId: string;
   senderName: string;
@@ -513,7 +514,7 @@ export async function sendOutreachMail(opts: {
     to: opts.to,
     subject: opts.subject,
     text: safeText,
-    html: safeText
+    html: opts.html || safeText
       .split(/\n{2,}/)
       .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
       .join(""),
