@@ -7,6 +7,7 @@ import { workspaceContextBlock } from "@/lib/workspace";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { privateRecordFields } from "@/lib/record-scope";
 import { requireRequestScope } from "@/lib/request-scope";
+import { companyPipelineExclusionIds } from "@/lib/company-pipeline-exclusion";
 
 export const runtime = "nodejs";
 export const maxDuration = 25;
@@ -83,16 +84,24 @@ export async function GET(req: Request) {
       pendingActivityRes,
     ] =
       await Promise.all([
-        supabaseAdmin.from("companies").select("id, name, stage"),
+        supabaseAdmin
+          .from("companies")
+          .select("id, name, stage, profile")
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("owner_id", accountScope.userId),
         supabaseAdmin
           .from("follow_ups")
           .select("id, company_id, draft_subject, created_at")
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("owner_id", accountScope.userId)
           .eq("status", "draft")
           .order("created_at", { ascending: false })
           .limit(50),
         supabaseAdmin
           .from("opportunities")
           .select("id, company_id, title, value, status, created_at, opportunity_type, next_action, next_action_due_at, next_action_owner")
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("owner_id", accountScope.userId)
           .eq("status", "open")
           .eq("opportunity_type", "revenue")
           .limit(100),
@@ -100,6 +109,8 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from("tasks")
           .select("id, text, company_id, kind, due_at, created_at")
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("owner_id", accountScope.userId)
           .eq("status", "open")
           .order("created_at", { ascending: true })
           .limit(300),
@@ -112,6 +123,8 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from("upcoming_calls")
           .select("id, company_id, title, scheduled_at, intent, prepped")
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("owner_id", accountScope.userId)
           .is("completed_at", null)
           .gte("scheduled_at", new Date().toISOString())
           .order("scheduled_at", { ascending: true })
@@ -119,6 +132,8 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from("interview_summaries")
           .select("company_id, created_at")
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("owner_id", accountScope.userId)
           .not("company_id", "is", null)
           .order("created_at", { ascending: false })
           .limit(1000),
@@ -128,15 +143,20 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from("outreach_prospects")
           .select("id, first_name, last_name, company_name, reply_category, reply_summary, last_reply_at")
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("assigned_to_user_id", accountScope.userId)
           .limit(1000),
         supabaseAdmin
           .from("outreach_enrolments")
           .select("prospect_id, status, updated_at")
+          .eq("workspace_id", accountScope.workspaceId)
           .order("updated_at", { ascending: false })
           .limit(500),
         supabaseAdmin
           .from("outreach_messages")
           .select("id, prospect_id, subject, approved_at, updated_at")
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("sender_user_id", accountScope.userId)
           .eq("status", "approved")
           .order("approved_at", { ascending: true })
           .limit(20),
@@ -146,6 +166,8 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from("companies")
           .select("id, name, commercial_memory")
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("owner_id", accountScope.userId)
           .contains("commercial_memory", {
             latestActivity: { status: "pending" },
           })
@@ -184,7 +206,13 @@ export async function GET(req: Request) {
       createdAt: (t.created_at as string) || null,
       }));
 
-    const openOpps = oppsRes.data || [];
+    const pipelineExcludedCompanyIds = companyPipelineExclusionIds(
+      companiesRes.data || []
+    );
+    const openOpps = (oppsRes.data || []).filter(
+      (opportunity: any) =>
+        !pipelineExcludedCompanyIds.has(String(opportunity.company_id || ""))
+    );
     const eligibleUpcoming = (upcomingRes.data || []).filter((event: any) =>
       isPrepEligibleCalendarEvent(event)
     );

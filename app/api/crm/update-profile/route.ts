@@ -5,6 +5,7 @@ import { logModelUsage } from "@/lib/usage";
 import { upsertTasks } from "@/lib/tasks";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { activeCompanyPipelineExclusion } from "@/lib/company-pipeline-exclusion";
+import { createCanonicalOpenRevenueOpportunity } from "@/lib/canonical-opportunity";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
 
     const { data: company } = await supabaseAdmin
       .from("companies")
-      .select("name, profile, email_context_updated_at")
+      .select("id, name, profile, email_context_updated_at, workspace_id, owner_id, visibility")
       .eq("id", companyId)
       .single();
     if (!company) {
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
 
 Rules:
 - Ground everything ONLY in the inputs - never invent facts, names, numbers or promises.
-- opportunities: 0-4, ONLY genuine customer revenue deals clearly implied by the call. Do NOT return investment, fundraising, internal product work, vendor savings, general ideas, partnerships without a buyer, or future possibilities without a current commercial conversation. Empty array if none. value is a rough number or null - never a string.
+- opportunities: 0-1. Return at most ONE active buying decision for this company-wide relationship. Combine different product use cases into its detail instead of creating separate deals. Only return a genuine customer revenue deal clearly implied by the call. Do NOT return investment, fundraising, internal product work, vendor savings, general ideas, partnerships without a buyer, or future possibilities without a current commercial conversation. Empty array if none. value is a rough number or null - never a string.
 - nextCallIntent must move the existing relationship forward. Never reset to a first-meeting discovery objective unless this genuinely was the first interaction.
 - followUp: warm and human, not pushy; reference the actual discussion and any agreed next steps; sign off generically (the host reviews and sends it themselves). It is a DRAFT, never sent automatically.`;
 
@@ -160,7 +161,7 @@ Return the JSON now.`;
           if (Array.isArray(parsed.opportunities)) {
             opportunities = parsed.opportunities
               .filter((o: any) => o && typeof o.title === "string" && o.title.trim())
-              .slice(0, 4)
+              .slice(0, 1)
               .map((o: any) => ({
                 title: String(o.title).trim(),
                 detail: typeof o.detail === "string" ? o.detail.trim() : "",
@@ -221,29 +222,25 @@ Return the JSON now.`;
       })
       .eq("id", companyId);
 
-    // Idempotent per call: clear this session's prior AI rows, then re-insert.
+    // Idempotent per call. Follow-up drafts may be replaced, but opportunity
+    // history is never deleted. The canonical helper reuses the one active
+    // revenue opportunity for this company-wide relationship.
     if (sessionId) {
-      await supabaseAdmin
-        .from("opportunities")
-        .delete()
-        .eq("session_id", sessionId)
-        .eq("surfaced_by_ai", true);
       await supabaseAdmin.from("follow_ups").delete().eq("session_id", sessionId);
     }
 
+    let opportunityCreated = false;
     if (opportunities.length && !pipelineExclusion) {
-      await supabaseAdmin.from("opportunities").insert(
-        opportunities.map((o) => ({
-          company_id: companyId,
-          session_id: sessionId || null,
-          title: o.title,
-          detail: o.detail || null,
-          value: o.value,
-          status: "open",
-          surfaced_by_ai: true,
-          opportunity_type: "revenue",
-        }))
-      );
+      const suggestion = opportunities[0];
+      const result = await createCanonicalOpenRevenueOpportunity(company as any, {
+        title: suggestion.title,
+        detail: suggestion.detail || null,
+        value: suggestion.value,
+        sessionId: sessionId || null,
+        source: "call",
+        surfacedByAi: true,
+      });
+      opportunityCreated = result.created;
     }
 
     // The host's own commitments from this call become trackable tasks
@@ -305,7 +302,7 @@ Return the JSON now.`;
 
     return NextResponse.json({
       ok: true,
-      opportunities: pipelineExclusion ? 0 : opportunities.length,
+      opportunities: opportunityCreated ? 1 : 0,
       pipelineExcluded: !!pipelineExclusion,
       followUp: !!followUp,
     });
