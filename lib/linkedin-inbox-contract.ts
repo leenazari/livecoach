@@ -2,7 +2,7 @@ export const LINKEDIN_INBOX_MAX_CONVERSATIONS = 20;
 export const LINKEDIN_INBOX_MAX_MESSAGES = 200;
 export const LINKEDIN_INBOX_MAX_MESSAGES_PER_24_HOURS = 500;
 export const LINKEDIN_INBOX_MAX_BODY_LENGTH = 8_000;
-export const LINKEDIN_INBOX_MAX_LOOKBACK_DAYS = 30;
+export const LINKEDIN_INBOX_MAX_LOOKBACK_DAYS = 14;
 
 export type LinkedInInboxMessageInput = {
   direction: "inbound";

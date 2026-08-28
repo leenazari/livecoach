@@ -240,7 +240,7 @@ const captureInbound = async (request) => {
     Math.max(1, Math.trunc(Number(request.maxConversations) || 10))
   );
   const lookbackDays = Math.min(
-    30,
+    14,
     Math.max(1, Math.trunc(Number(request.lookbackDays) || 14))
   );
   const oldestAllowed = Date.now() - lookbackDays * 24 * 60 * 60 * 1_000;

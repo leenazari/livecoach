@@ -882,6 +882,10 @@ export default function SettingsPage() {
               Pull recent inbound LinkedIn messages into your private CRM without giving
               LiveCoach your LinkedIn password or session cookies.
             </p>
+            <p className="mt-2 text-xs leading-5 text-moss">
+              The first sync and every later sync are limited to the previous 14 days.
+              Anything older is rejected by LiveCoach.
+            </p>
             <p className="mt-2 text-xs leading-5 text-muted">
               This is separate from LinkedIn&apos;s approved API connection. It runs only when
               you press Sync in your own signed-in Chrome tab. It cannot send messages,
