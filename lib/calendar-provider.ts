@@ -19,6 +19,7 @@ export type CalendarSnapshot = {
   events: any[];
   complete: boolean;
   failedCalendars: string[];
+  calendarListAccessible?: boolean | null;
 };
 
 export async function connectedCalendarProvider(ownerId?: string): Promise<{
@@ -49,7 +50,6 @@ export async function listConnectedCalendarSnapshot(
       source: "google",
       email: connection.email,
       ...snapshot,
-      failedCalendars: [],
     };
   }
   if (connection.provider === "microsoft") {

@@ -10,11 +10,13 @@ type CalendarSyncResult = {
   removed?: number;
   relinked?: number;
   reconciled?: boolean;
+  calendarReconnectRequired?: boolean;
+  warning?: string | null;
 };
 
 type SyncState =
   | { status: "idle"; message: "" }
-  | { status: "syncing" | "success" | "error"; message: string };
+  | { status: "syncing" | "success" | "warning" | "error"; message: string };
 
 function successMessage(result: CalendarSyncResult): string {
   const provider =
@@ -29,8 +31,9 @@ function successMessage(result: CalendarSyncResult): string {
   if (result.removed) changes.push(`${result.removed} cancelled removed`);
   if (result.relinked) changes.push(`${result.relinked} relinked`);
   const outcome = changes.length ? changes.join(", ") : "already up to date";
-  const partial =
-    result.reconciled === false
+  const partial = result.calendarReconnectRequired
+    ? " Reconnect Google once in Settings to include secondary and shared calendars. The primary calendar was synced safely."
+    : result.reconciled === false
       ? " Cancellations were kept safely because the provider returned a partial result."
       : "";
   return `${provider} connected and synced. ${outcome}.${partial}`;
@@ -63,7 +66,10 @@ export default function InitialCalendarSync({
     })
       .then((result) => {
         window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-        setState({ status: "success", message: successMessage(result) });
+        setState({
+          status: result.calendarReconnectRequired ? "warning" : "success",
+          message: successMessage(result),
+        });
       })
       .catch((error: any) => {
         setState({
@@ -80,6 +86,8 @@ export default function InitialCalendarSync({
   const style =
     state.status === "success"
       ? "border-sage/40 bg-sage/[0.08] text-sage"
+      : state.status === "warning"
+        ? "border-amber/45 bg-amber/[0.08] text-amber"
       : state.status === "error"
         ? "border-rust/45 bg-rust/[0.08] text-rust"
         : "border-sky/40 bg-sky/[0.08] text-sky";

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   GMAIL_READ_SCOPE,
   GMAIL_SEND_SCOPE,
+  googleCanListCalendars,
   googleConnected,
   googleConfigured,
   googleGrantedScopes,
@@ -28,6 +29,11 @@ export async function GET() {
       scopes.has(GMAIL_READ_SCOPE) || gmailDiagnostic.status === "ok";
     const gmailSend = scopes.has(GMAIL_SEND_SCOPE);
     const gmail = connected ? (gmailRead ? "ok" : "missing") : "disconnected";
+    const calendarList = connected
+      ? googleCanListCalendars(scopes)
+        ? "ok"
+        : "missing"
+      : "disconnected";
     return NextResponse.json(
       {
         connected,
@@ -36,12 +42,22 @@ export async function GET() {
         gmail,
         gmailSend,
         gmailIssue: gmailRead ? "none" : gmailDiagnostic.issue,
+        calendarList,
+        calendarReconnectRequired: connected && calendarList !== "ok",
       },
       { headers: { "Cache-Control": "no-store, max-age=0" } }
     );
   } catch {
     return NextResponse.json(
-      { connected: false, email: null, configured: false, gmail: "disconnected", gmailSend: false },
+      {
+        connected: false,
+        email: null,
+        configured: false,
+        gmail: "disconnected",
+        gmailSend: false,
+        calendarList: "disconnected",
+        calendarReconnectRequired: false,
+      },
       { headers: { "Cache-Control": "no-store, max-age=0" } }
     );
   }

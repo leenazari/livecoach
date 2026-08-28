@@ -88,6 +88,8 @@ export default function SettingsPage() {
     gmail?: "ok" | "missing" | "disconnected";
     gmailSend?: boolean;
     gmailIssue?: GmailIssue;
+    calendarList?: "ok" | "missing" | "disconnected";
+    calendarReconnectRequired?: boolean;
   } | null>(null);
   const [gcalNote, setGcalNote] = useState("");
   const [microsoft, setMicrosoft] = useState<{
@@ -126,7 +128,7 @@ export default function SettingsPage() {
     crmFetch<{ lessons: Lesson[] }>("/api/crm/lessons")
       .then((d) => setLessons(d.lessons || []))
       .catch(() => {});
-    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected"; gmailSend?: boolean; gmailIssue?: GmailIssue }>(
+    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected"; gmailSend?: boolean; gmailIssue?: GmailIssue; calendarList?: "ok" | "missing" | "disconnected"; calendarReconnectRequired?: boolean }>(
       "/api/auth/google/status"
     )
       .then((d) => setGcal(d))
@@ -417,9 +419,11 @@ export default function SettingsPage() {
         className={`mb-5 rounded-xl border p-5 ${
           gcal === null
             ? "border-edge bg-panel/40"
-            : gcal.connected
+            : gcal.connected && !gcal.calendarReconnectRequired
               ? "border-sage/45 bg-sage/[0.06]"
-              : "border-rust/50 bg-rust/[0.07]"
+              : gcal.connected
+                ? "border-amber/50 bg-amber/[0.07]"
+                : "border-rust/50 bg-rust/[0.07]"
         }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -428,22 +432,28 @@ export default function SettingsPage() {
               className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
                 gcal === null
                   ? "text-muted"
-                  : gcal.connected
+                  : gcal.connected && !gcal.calendarReconnectRequired
                     ? "text-sage"
-                    : "text-rust"
+                    : gcal.connected
+                      ? "text-amber"
+                      : "text-rust"
               }`}
             >
               {gcal === null
                 ? "◷"
                 : gcal.connected
-                  ? "✓"
+                  ? gcal.calendarReconnectRequired
+                    ? "!"
+                    : "✓"
                   : "!"} Google connection
             </p>
             <p className="mt-1 font-mono text-[0.6rem] leading-relaxed text-muted">
               {gcal === null
                 ? "Checking the live connection…"
                 : gcal.connected
-                ? `Connected${
+                ? gcal.calendarReconnectRequired
+                  ? `Connected${gcal.email ? ` as ${gcal.email}` : ""}, but Google has not granted permission to discover secondary and shared calendars. Reconnect Google once below, then sync again.`
+                  : `Connected${
                     gcal.email ? ` as ${gcal.email}` : ""
                   }. Calendar is working${
                     gcal.gmail !== "ok"
@@ -466,8 +476,22 @@ export default function SettingsPage() {
           </div>
           {gcal?.connected ? (
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <span className="rounded-full border border-sage/55 bg-sage/10 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sage">
-                ● Google connected
+              {gcal.calendarReconnectRequired ? (
+                <a
+                  href="/api/auth/google/start"
+                  className="rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
+                >
+                  Grant calendar access
+                </a>
+              ) : null}
+              <span
+                className={`rounded-full border px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider ${
+                  gcal.calendarReconnectRequired
+                    ? "border-amber/55 bg-amber/10 text-amber"
+                    : "border-sage/55 bg-sage/10 text-sage"
+                }`}
+              >
+                {gcal.calendarReconnectRequired ? "● Google partly connected" : "● Google connected"}
               </span>
               <button
                 type="button"

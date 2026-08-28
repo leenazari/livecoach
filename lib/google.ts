@@ -24,9 +24,28 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 // digest silently doing nothing.
 export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 export const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+export const GOOGLE_CALENDAR_EVENTS_SCOPE =
+  "https://www.googleapis.com/auth/calendar.events";
+export const GOOGLE_CALENDAR_LIST_READ_SCOPE =
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
+
+const GOOGLE_CALENDAR_LIST_SCOPES = new Set([
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/calendar.calendarlist",
+  GOOGLE_CALENDAR_LIST_READ_SCOPE,
+]);
+
+export function googleCanListCalendars(scopes: Iterable<string>): boolean {
+  for (const scope of scopes) {
+    if (GOOGLE_CALENDAR_LIST_SCOPES.has(scope)) return true;
+  }
+  return false;
+}
 
 const SCOPE = [
-  "https://www.googleapis.com/auth/calendar.events",
+  GOOGLE_CALENDAR_EVENTS_SCOPE,
+  GOOGLE_CALENDAR_LIST_READ_SCOPE,
   "https://www.googleapis.com/auth/userinfo.email",
   GMAIL_READ_SCOPE,
   GMAIL_SEND_SCOPE,
@@ -309,18 +328,31 @@ export async function listAllEventsSnapshot(
   accessToken: string,
   timeMinIso: string,
   timeMaxIso: string
-): Promise<{ events: any[]; complete: boolean }> {
+): Promise<{
+  events: any[];
+  complete: boolean;
+  failedCalendars: string[];
+  calendarListAccessible: boolean | null;
+}> {
   let cals: any[] = [];
   let complete = true;
+  let calendarListAccessible: boolean | null = true;
+  const failedCalendars: string[] = [];
   try {
     cals = await listCalendars(accessToken);
   } catch (error: any) {
-    // calendar.events can read the connected account's primary calendar but
-    // does not always grant calendarList.list. In that case the primary
-    // calendar is still a complete authoritative snapshot of the calendar the
-    // app is connected to. Treat only an events read failure as incomplete.
+    // calendar.events can read the primary calendar, but it cannot enumerate
+    // secondary or shared calendars. Keep the usable primary events while
+    // marking this snapshot partial, so callers never report a false complete
+    // sync or delete rows that may still exist on a calendar we could not see.
     cals = [];
-    if (error?.status !== 403) complete = false;
+    complete = false;
+    calendarListAccessible = error?.status === 403 ? false : null;
+    failedCalendars.push(
+      calendarListAccessible === false
+        ? "calendar list permission"
+        : "calendar list"
+    );
   }
   const NOISE = /#(holiday|contacts|weather|birthday)/i;
   const eligible = cals.filter((c) => {
@@ -343,6 +375,7 @@ export async function listAllEventsSnapshot(
       // may safely add/update from it, but must not infer that absent events
       // were cancelled.
       complete = false;
+      failedCalendars.push(id === "primary" ? "primary calendar" : id);
     }
   }
   // Dedupe: the same meeting can sit on the primary (as an invitee) AND a shared
@@ -355,7 +388,7 @@ export async function listAllEventsSnapshot(
     seen.add(key);
     out.push(e);
   }
-  return { events: out, complete };
+  return { events: out, complete, failedCalendars, calendarListAccessible };
 }
 
 export async function listAllEvents(

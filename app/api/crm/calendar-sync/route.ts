@@ -485,6 +485,8 @@ async function runCalendarSync() {
     }
 
     const finishedAt = new Date().toISOString();
+    const calendarReconnectRequired =
+      source === "google" && snapshot.calendarListAccessible === false;
     await setAppConfigValue({
       key: "calendar_sync_last_success_at",
       value: finishedAt,
@@ -499,6 +501,10 @@ async function runCalendarSync() {
       removed,
       relinked,
       reconciled: snapshot.complete,
+      calendarReconnectRequired,
+      warning: calendarReconnectRequired
+        ? "Reconnect Google once to include secondary and shared calendars. The primary calendar was synced safely."
+        : null,
       outreachLinked,
       total: rows.length,
       finishedAt,

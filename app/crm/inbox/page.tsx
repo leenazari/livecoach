@@ -209,6 +209,8 @@ export default function WorkInboxPage() {
         removed?: number;
         relinked?: number;
         reconciled?: boolean;
+        calendarReconnectRequired?: boolean;
+        warning?: string | null;
       }>("/api/crm/calendar-sync", { method: "POST" });
       await load(true);
       window.dispatchEvent(
@@ -226,8 +228,9 @@ export default function WorkInboxPage() {
         ? `${capitaliseSentenceStarts(result.provider)} calendar`
         : "Calendar";
       const outcome = changes.length ? changes.join(", ") : "already up to date";
-      const partial =
-        result.reconciled === false
+      const partial = result.calendarReconnectRequired
+        ? " Reconnect Google once in Settings to include secondary and shared calendars. The primary calendar was synced safely."
+        : result.reconciled === false
           ? " Cancellations were kept safely because the provider returned a partial result."
           : "";
       setNotice(`${provider} synced. ${outcome}.${partial}`);
