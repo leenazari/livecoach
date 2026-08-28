@@ -17,6 +17,7 @@ import {
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
 import { outreachSequenceStepAt } from "@/lib/outreach-sequence";
+import { loadSendPilotOutreachContext } from "@/lib/sendpilot-outreach";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -100,13 +101,25 @@ async function loadQueue(
   const prospectIds = [...new Set((enrolments || []).map((row: any) => row.prospect_id))];
   const enrolmentIds = (enrolments || []).map((row: any) => row.id);
   const campaignIds = [...new Set((enrolments || []).map((row: any) => row.campaign_id))];
-  const [{ data: prospects }, { data: messages }, { data: campaigns }, { data: learnings }, { data: suppressions }, crmGuard] = await Promise.all([
+  const [
+    { data: prospects },
+    { data: messages },
+    { data: campaigns },
+    { data: learnings },
+    { data: suppressions },
+    crmGuard,
+    sendpilotContext,
+  ] = await Promise.all([
     prospectIds.length ? supabaseAdmin.from("outreach_prospects").select("*").in("id", prospectIds) : Promise.resolve({ data: [] }),
     enrolmentIds.length ? supabaseAdmin.from("outreach_messages").select("*").in("enrolment_id", enrolmentIds) : Promise.resolve({ data: [] }),
     campaignIds.length ? supabaseAdmin.from("outreach_campaigns").select("*").in("id", campaignIds) : Promise.resolve({ data: [] }),
     campaignIds.length ? supabaseAdmin.from("outreach_learnings").select("*").in("campaign_id", campaignIds).eq("status", "promoted") : Promise.resolve({ data: [] }),
     supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", workspaceId),
     outreachCrmGuard(),
+    loadSendPilotOutreachContext(
+      { userId, workspaceId },
+      { prospectIds, campaignIds }
+    ),
   ]);
   const prospectMap = new Map((prospects || []).map((row: any) => [row.id, row]));
   const campaignMap = new Map((campaigns || []).map((row: any) => [row.id, row]));
@@ -117,6 +130,22 @@ async function loadQueue(
     messagesByEnrolment.set(message.enrolment_id, rows);
   }
   const blockedTargets = new Set((suppressions || []).map((row: any) => String(row.target || "").toLowerCase()));
+  const sendpilotMappingByCampaign = new Map(
+    sendpilotContext.mappings.map((mapping) => [
+      mapping.livecoachCampaignId,
+      mapping,
+    ])
+  );
+  const sendpilotLinkByEnrolment = new Map<string, any>();
+  const sendpilotLinkByProspect = new Map<string, any>();
+  for (const link of sendpilotContext.links) {
+    if (link.outreach_enrolment_id && !sendpilotLinkByEnrolment.has(link.outreach_enrolment_id)) {
+      sendpilotLinkByEnrolment.set(link.outreach_enrolment_id, link);
+    }
+    if (!sendpilotLinkByProspect.has(link.outreach_prospect_id)) {
+      sendpilotLinkByProspect.set(link.outreach_prospect_id, link);
+    }
+  }
   return (enrolments || []).filter((row: any) =>
     prospectMap.get(row.prospect_id)?.assigned_to_user_id === userId
   ).map((row: any) => {
@@ -138,6 +167,11 @@ async function loadQueue(
       campaign?.sequence,
       Number(row.current_step) || 1
     );
+    const sendpilotMapping = sendpilotMappingByCampaign.get(row.campaign_id);
+    const sendpilotLink =
+      sendpilotLinkByEnrolment.get(row.id) ||
+      sendpilotLinkByProspect.get(row.prospect_id) ||
+      null;
     const messageHistory = rows
       .slice()
       .sort(
@@ -166,6 +200,25 @@ async function loadQueue(
         ? row.research_sources.length
         : 0,
       sentCount: rows.filter((message: any) => message.status === "sent").length,
+      sendpilot: {
+        connected: sendpilotContext.connected,
+        webhookConfigured: sendpilotContext.webhookConfigured,
+        mapped: sendpilotMapping?.active === true,
+        campaignName: sendpilotMapping?.sendpilotCampaignName || null,
+        execution: sendpilotLink
+          ? {
+              syncStatus: sendpilotLink.sync_status,
+              externalStatus: sendpilotLink.external_status,
+              campaignName: sendpilotLink.sendpilot_campaign_name,
+              enrolledAt: sendpilotLink.enrolled_at,
+              lastEventAt: sendpilotLink.last_event_at,
+              lastMessageAt: sendpilotLink.last_message_at,
+              lastReplyAt: sendpilotLink.last_reply_at,
+              lastConnectionAt: sendpilotLink.last_connection_at,
+              error: sendpilotLink.last_error,
+            }
+          : null,
+      },
       recommendation: scoreOutreachProspect(prospectMap.get(row.prospect_id), {
         campaign: campaignMap.get(row.campaign_id),
         learnings: (learnings || []).filter((learning: any) => learning.campaign_id === row.campaign_id),

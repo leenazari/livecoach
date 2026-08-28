@@ -294,7 +294,7 @@ assert.match(microsoftMigration, /microsoft_oauth_owner_uidx/);
 assert.match(microsoft, /Cross-account Microsoft access is not permitted/);
 assert.match(microsoft, /A Microsoft connector owner must be selected/);
 assert.match(microsoft, /freshReplyOnly\(raw, max\)/);
-assert.match(providerMail, /sendGmailOutreach\(opts\)/);
+assert.match(providerMail, /sendGmailOutreach\(\{ \.\.\.opts, text, html \}\)/);
 assert.match(providerMail, /Microsoft outreach must use the connected mailbox address/);
 
 assert.match(appConfig, /TEAM_CONFIG_KEYS\.has\(input\.key\)/);

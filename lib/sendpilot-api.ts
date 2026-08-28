@@ -37,7 +37,49 @@ export type SendPilotLead = {
   linkedinUrl: string;
   firstName?: string | null;
   lastName?: string | null;
+  company?: string | null;
+  title?: string | null;
+  status?: string | null;
+  customLeadStatus?: string | null;
   campaignId?: string;
+  createdAt?: string | null;
+};
+
+export type SendPilotCampaign = {
+  id: string;
+  name: string;
+  status: "started" | "paused" | "draft" | "finished";
+  totalLeads: number;
+  connectionsSent: number;
+  messagesSent: number;
+  repliesReceived: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type SendPilotLeadInput = {
+  linkedinUrl: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  company?: string;
+  title?: string;
+  livecoachProspectId?: string;
+  livecoachEnrolmentId?: string;
+  livecoachCampaignId?: string;
+  leadSource?: string;
+};
+
+export type SendPilotAddLeadsResult = {
+  success: boolean;
+  leadsAdded: number;
+  duplicatesSkipped: number;
+  invalidEntries: number;
+  errors: Array<{
+    index: number | null;
+    linkedinUrl: string | null;
+    reason: string;
+  }>;
 };
 
 export class SendPilotApiError extends Error {
@@ -55,18 +97,25 @@ export class SendPilotApiError extends Error {
 const string = (value: unknown, maximum = 1_000) =>
   typeof value === "string" ? value.trim().slice(0, maximum) : "";
 
-async function sendPilotGet(path: string, apiKey: string): Promise<any> {
+async function sendPilotRequest(
+  path: string,
+  apiKey: string,
+  input: { method?: "GET" | "POST"; body?: unknown } = {}
+): Promise<any> {
   if (!path.startsWith("/v1/")) throw new Error("SendPilot API path is invalid");
+  const method = input.method || "GET";
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SENDPILOT_API_TIMEOUT_MS);
   try {
     const response = await fetch(`${SENDPILOT_API_ORIGIN}${path}`, {
-      method: "GET",
+      method,
       headers: {
         "X-API-Key": apiKey,
         Accept: "application/json",
-        "User-Agent": "LiveCoach-SendPilot-Inbound/1.0",
+        ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+        "User-Agent": "LiveCoach-SendPilot-CRM/1.0",
       },
+      ...(method === "POST" ? { body: JSON.stringify(input.body || {}) } : {}),
       cache: "no-store",
       signal: controller.signal,
     });
@@ -104,6 +153,15 @@ async function sendPilotGet(path: string, apiKey: string): Promise<any> {
     clearTimeout(timer);
   }
 }
+
+async function sendPilotGet(path: string, apiKey: string): Promise<any> {
+  return sendPilotRequest(path, apiKey);
+}
+
+const wholeNumber = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+};
 
 export async function listSendPilotSenders(apiKey: string): Promise<SendPilotSender[]> {
   const body = await sendPilotGet("/v1/inbox/senders", apiKey);
@@ -244,6 +302,119 @@ export async function getSendPilotLead(
     linkedinUrl,
     firstName: string(body?.firstName, 120) || null,
     lastName: string(body?.lastName, 120) || null,
+    company: string(body?.company, 240) || null,
+    title: string(body?.title, 240) || null,
+    status: string(body?.status, 80) || null,
+    customLeadStatus: string(body?.customLeadStatus, 80) || null,
     campaignId: string(body?.campaignId, 240) || undefined,
+    createdAt: string(body?.createdAt, 80) || null,
+  };
+}
+
+function parseSendPilotCampaign(value: any): SendPilotCampaign | null {
+  const id = string(value?.id, 240);
+  const name = string(value?.name, 240);
+  const status = string(value?.status, 40);
+  if (!id || !name || !["started", "paused", "draft", "finished"].includes(status)) {
+    return null;
+  }
+  return {
+    id,
+    name,
+    status: status as SendPilotCampaign["status"],
+    totalLeads: wholeNumber(value?.totalLeads),
+    connectionsSent: wholeNumber(value?.connectionsSent),
+    messagesSent: wholeNumber(value?.messagesSent),
+    repliesReceived: wholeNumber(value?.repliesReceived),
+    createdAt: string(value?.createdAt, 80) || null,
+    updatedAt: string(value?.updatedAt, 80) || null,
+  };
+}
+
+export async function listSendPilotCampaigns(
+  apiKey: string
+): Promise<SendPilotCampaign[]> {
+  const campaigns: SendPilotCampaign[] = [];
+  for (let page = 1; page <= 20; page += 1) {
+    const body = await sendPilotGet(
+      `/v1/campaigns?status=all&page=${page}&limit=100`,
+      apiKey
+    );
+    if (!Array.isArray(body?.campaigns)) {
+      throw new SendPilotApiError("SendPilot campaign data is invalid", 502, null);
+    }
+    campaigns.push(
+      ...body.campaigns.flatMap((value: any) => {
+        const campaign = parseSendPilotCampaign(value);
+        return campaign ? [campaign] : [];
+      })
+    );
+    const totalPages = Math.max(1, wholeNumber(body?.pagination?.totalPages));
+    if (page >= totalPages) break;
+  }
+  return campaigns;
+}
+
+export async function addSendPilotLeads(
+  apiKey: string,
+  input: { campaignId: string; leads: SendPilotLeadInput[] }
+): Promise<SendPilotAddLeadsResult> {
+  const campaignId = string(input.campaignId, 240);
+  if (!campaignId || !Array.isArray(input.leads) || !input.leads.length || input.leads.length > 100) {
+    throw new SendPilotApiError("A valid SendPilot campaign and up to 100 leads are required", 400, null);
+  }
+  const body = await sendPilotRequest("/v1/leads", apiKey, {
+    method: "POST",
+    body: { campaignId, leads: input.leads },
+  });
+  const errors = Array.isArray(body?.errors)
+    ? body.errors.slice(0, 100).map((value: any) => ({
+        index: Number.isInteger(value?.index) ? value.index : null,
+        linkedinUrl: string(value?.linkedinUrl, 1_000) || null,
+        reason: string(value?.reason, 500) || "SendPilot rejected this lead",
+      }))
+    : [];
+  return {
+    success: body?.success === true,
+    leadsAdded: wholeNumber(body?.leadsAdded),
+    duplicatesSkipped: wholeNumber(body?.duplicatesSkipped),
+    invalidEntries: wholeNumber(body?.invalidEntries),
+    errors,
+  };
+}
+
+export async function listSendPilotLeads(
+  apiKey: string,
+  input: { campaignId: string; page?: number; limit?: number }
+): Promise<{ leads: SendPilotLead[]; totalPages: number }> {
+  const query = new URLSearchParams({
+    campaignId: input.campaignId,
+    page: String(Math.max(1, input.page || 1)),
+    limit: String(Math.min(100, Math.max(1, input.limit || 100))),
+  });
+  const body = await sendPilotGet(`/v1/leads?${query}`, apiKey);
+  if (!Array.isArray(body?.leads)) {
+    throw new SendPilotApiError("SendPilot lead data is invalid", 502, null);
+  }
+  const leads = body.leads.flatMap((value: any) => {
+    const id = string(value?.id, 240);
+    const linkedinUrl = string(value?.linkedinUrl, 1_000);
+    if (!id || !linkedinUrl) return [];
+    return [{
+      id,
+      linkedinUrl,
+      firstName: string(value?.firstName, 120) || null,
+      lastName: string(value?.lastName, 120) || null,
+      company: string(value?.company, 240) || null,
+      title: string(value?.title, 240) || null,
+      status: string(value?.status, 80) || null,
+      customLeadStatus: string(value?.customLeadStatus, 80) || null,
+      campaignId: string(value?.campaignId, 240) || undefined,
+      createdAt: string(value?.createdAt, 80) || null,
+    } satisfies SendPilotLead];
+  });
+  return {
+    leads,
+    totalPages: Math.max(1, wholeNumber(body?.pagination?.totalPages)),
   };
 }

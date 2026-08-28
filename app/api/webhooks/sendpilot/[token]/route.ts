@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   SENDPILOT_MAX_WEBHOOK_BYTES,
   SendPilotContractError,
-  parseSendPilotReplyEvent,
+  parseSendPilotWebhookEvent,
   verifySendPilotWebhookSignature,
 } from "@/lib/sendpilot-contract";
 import {
@@ -11,7 +11,7 @@ import {
   createSendPilotWebhookReceipt,
   decryptSendPilotWebhookSecret,
   loadSendPilotIntegrationByWebhookToken,
-  processSendPilotReplyEvent,
+  processSendPilotWebhookEvent,
 } from "@/lib/sendpilot";
 
 export const runtime = "nodejs";
@@ -74,7 +74,7 @@ export async function POST(
         { status: 400, headers: noStore }
       );
     }
-    const event = parseSendPilotReplyEvent(payload);
+    const event = parseSendPilotWebhookEvent(payload);
     if (!(await bindSendPilotWorkspace(integration, event.workspaceId))) {
       return NextResponse.json(
         { error: "SendPilot workspace does not match this integration" },
@@ -88,7 +88,7 @@ export async function POST(
         { status: 200, headers: noStore }
       );
     }
-    waitUntil(processSendPilotReplyEvent(integration, receipt.id!, event));
+    waitUntil(processSendPilotWebhookEvent(integration, receipt.id!, event));
     return NextResponse.json(
       { ok: true, accepted: true },
       { status: 202, headers: noStore }

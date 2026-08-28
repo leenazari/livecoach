@@ -6,6 +6,7 @@ import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
 import { isActiveOutreachEnrolmentStatus } from "@/lib/outreach-team-safety";
 import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
+import { loadSendPilotOutreachContext } from "@/lib/sendpilot-outreach";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,6 +64,21 @@ export async function GET(req: NextRequest) {
     const [{ data: messages }, { data: ownEnrolments }] = history;
     const campaigns = selection.campaigns;
     const campaign = selection.campaign;
+    const sendpilotContext = await loadSendPilotOutreachContext(
+      { userId: account.userId, workspaceId: account.workspaceId },
+      {
+        prospectIds: (data || [])
+          .filter((prospect: any) => prospect.assigned_to_user_id === account.userId)
+          .map((prospect: any) => prospect.id),
+        campaignIds: campaigns.map((row: any) => row.id),
+      }
+    );
+    const sendpilotByProspect = new Map<string, any>();
+    for (const link of sendpilotContext.links) {
+      if (!sendpilotByProspect.has(link.outreach_prospect_id)) {
+        sendpilotByProspect.set(link.outreach_prospect_id, link);
+      }
+    }
     let enrolments = ownEnrolments || [];
     if (!canManageAssignments && data?.length) {
       // Once a prospect is assigned, its campaign history follows the
@@ -176,6 +192,19 @@ export async function GET(req: NextRequest) {
             enrolment: latestEnrolment.get(prospect.id) || null,
             campaignIds,
             activeCampaignIds,
+            sendpilot: (() => {
+              const link = sendpilotByProspect.get(prospect.id);
+              return link
+                ? {
+                    syncStatus: link.sync_status,
+                    externalStatus: link.external_status,
+                    campaignName: link.sendpilot_campaign_name,
+                    enrolledAt: link.enrolled_at,
+                    lastEventAt: link.last_event_at,
+                    error: link.last_error,
+                  }
+                : null;
+            })(),
           },
           recommendation: scoreOutreachProspect(prospect, {
             campaign: scoringCampaign,

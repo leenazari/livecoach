@@ -57,7 +57,7 @@ assert.match(queueRoute, /sequenceStepDue/);
 assert.match(page, /Your results only/);
 assert.match(page, /Open LinkedIn/);
 assert.match(page, /Mark .* done/);
-assert.match(page, /Manual actions must be confirmed one at a time/);
+assert.match(page, /SendPilot handoffs and manual actions are confirmed one person at a time/);
 assert.match(page, /\(row\.sequenceStep\?\.channel \|\| "email"\) === "email"/);
 
 assert.match(manualCallRoute, /currentStep\.actionType === "manual_call"/);

@@ -19,6 +19,70 @@ export type SendPilotReplyEvent = {
   };
 };
 
+export type SendPilotMessageSentEvent = {
+  eventId: string;
+  eventType: "message.sent";
+  timestamp: string;
+  workspaceId: string;
+  data: {
+    leadId: string;
+    campaignId: string;
+    linkedinUrl: string;
+    senderId: string;
+    message: string;
+    sequenceStep: number | null;
+  };
+};
+
+export type SendPilotConnectionRequestSentEvent = {
+  eventId: string;
+  eventType: "connection_request.sent";
+  timestamp: string;
+  workspaceId: string;
+  data: {
+    leadId: string;
+    campaignId: string;
+    linkedinUrl: string;
+    senderId: string;
+    note: string | null;
+  };
+};
+
+export type SendPilotConnectionRequestAcceptedEvent = {
+  eventId: string;
+  eventType: "connection_request.accepted";
+  timestamp: string;
+  workspaceId: string;
+  data: {
+    leadId: string;
+    campaignId: string;
+    linkedinUrl: string;
+    senderId: string;
+    acceptedAt: string;
+  };
+};
+
+export type SendPilotLeadUpdatedEvent = {
+  eventId: string;
+  eventType: "lead.updated";
+  timestamp: string;
+  workspaceId: string;
+  data: {
+    leadId: string;
+    campaignId: string;
+    linkedinUrl: string;
+    previousStatus: string;
+    newStatus: string;
+  };
+};
+
+export type SendPilotWebhookEvent =
+  | SendPilotReplyEvent
+  | SendPilotMessageSentEvent
+  | SendPilotConnectionRequestSentEvent
+  | SendPilotConnectionRequestAcceptedEvent
+  | SendPilotLeadUpdatedEvent;
+
 export class SendPilotContractError extends Error {
   status: number;
 
@@ -68,7 +132,7 @@ export function verifySendPilotWebhookSignature(
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
-export function parseSendPilotReplyEvent(value: unknown): SendPilotReplyEvent {
+export function parseSendPilotWebhookEvent(value: unknown): SendPilotWebhookEvent {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new SendPilotContractError("A SendPilot webhook event is required");
   }
@@ -79,7 +143,17 @@ export function parseSendPilotReplyEvent(value: unknown): SendPilotReplyEvent {
   const timestampRaw = clean(input.timestamp, 80);
   const timestampMs = new Date(timestampRaw).getTime();
   const data = input.data;
-  if (!eventId || eventType !== "reply.received" || !workspaceId) {
+  if (
+    !eventId ||
+    !workspaceId ||
+    ![
+      "reply.received",
+      "message.sent",
+      "connection_request.sent",
+      "connection_request.accepted",
+      "lead.updated",
+    ].includes(eventType)
+  ) {
     throw new SendPilotContractError("Unsupported SendPilot webhook event");
   }
   if (!Number.isFinite(timestampMs)) {
@@ -90,20 +164,91 @@ export function parseSendPilotReplyEvent(value: unknown): SendPilotReplyEvent {
   }
   const details = data as Record<string, unknown>;
   const leadId = clean(details.leadId, 240);
-  const senderId = clean(details.senderId, 240);
   const linkedinUrl = clean(details.linkedinUrl, 1_000);
-  const reply = clean(details.reply, 8_000);
-  const campaignId = clean(details.campaignId, 240) || null;
-  if (!leadId || !senderId || !linkedinUrl || !reply) {
+  const campaignId = clean(details.campaignId, 240);
+  if (!leadId || !linkedinUrl || !campaignId) {
     throw new SendPilotContractError("SendPilot reply data is incomplete");
   }
-  return {
+  const base = {
     eventId,
-    eventType: "reply.received",
     timestamp: new Date(timestampMs).toISOString(),
     workspaceId,
-    data: { leadId, campaignId, linkedinUrl, senderId, reply },
   };
+  if (eventType === "lead.updated") {
+    const previousStatus = clean(details.previousStatus, 80);
+    const newStatus = clean(details.newStatus, 80);
+    if (!previousStatus || !newStatus) {
+      throw new SendPilotContractError("SendPilot lead status data is incomplete");
+    }
+    return {
+      ...base,
+      eventType,
+      data: { leadId, campaignId, linkedinUrl, previousStatus, newStatus },
+    };
+  }
+  const senderId = clean(details.senderId, 240);
+  if (!senderId) {
+    throw new SendPilotContractError("SendPilot sender data is incomplete");
+  }
+  if (eventType === "reply.received") {
+    const reply = clean(details.reply, 8_000);
+    if (!reply) throw new SendPilotContractError("SendPilot reply data is incomplete");
+    return {
+      ...base,
+      eventType,
+      data: { leadId, campaignId, linkedinUrl, senderId, reply },
+    };
+  }
+  if (eventType === "message.sent") {
+    const message = clean(details.message, 8_000);
+    const rawStep = Number(details.sequenceStep);
+    const sequenceStep = Number.isInteger(rawStep) && rawStep >= 0 && rawStep <= 100
+      ? rawStep
+      : null;
+    if (!message) throw new SendPilotContractError("SendPilot message data is incomplete");
+    return {
+      ...base,
+      eventType,
+      data: { leadId, campaignId, linkedinUrl, senderId, message, sequenceStep },
+    };
+  }
+  if (eventType === "connection_request.sent") {
+    return {
+      ...base,
+      eventType,
+      data: {
+        leadId,
+        campaignId,
+        linkedinUrl,
+        senderId,
+        note: clean(details.note, 3_000) || null,
+      },
+    };
+  }
+  const acceptedAtRaw = clean(details.acceptedAt, 80);
+  const acceptedAtMs = new Date(acceptedAtRaw).getTime();
+  if (!Number.isFinite(acceptedAtMs)) {
+    throw new SendPilotContractError("SendPilot connection timestamp is invalid");
+  }
+  return {
+    ...base,
+    eventType: "connection_request.accepted",
+    data: {
+      leadId,
+      campaignId,
+      linkedinUrl,
+      senderId,
+      acceptedAt: new Date(acceptedAtMs).toISOString(),
+    },
+  };
+}
+
+export function parseSendPilotReplyEvent(value: unknown): SendPilotReplyEvent {
+  const event = parseSendPilotWebhookEvent(value);
+  if (event.eventType !== "reply.received") {
+    throw new SendPilotContractError("Unsupported SendPilot webhook event");
+  }
+  return event;
 }
 
 export function sendPilotMessageFingerprint(input: {
