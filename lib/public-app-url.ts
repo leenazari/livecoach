@@ -1,4 +1,11 @@
 const CANONICAL_PRODUCTION_ORIGIN = "https://www.livecoachcrm.com";
+const LIVECOACH_PRODUCTION_HOSTS = new Set([
+  "www.livecoachcrm.com",
+  "livecoachcrm.com",
+  "livecoach-alpha.vercel.app",
+  "livecoach-leenazari-1116s-projects.vercel.app",
+  "livecoach-git-main-leenazari-1116s-projects.vercel.app",
+]);
 
 function normalizedOrigin(value: string | undefined): string | null {
   const raw = String(value || "").trim();
@@ -61,6 +68,51 @@ export function publicAppOrigin(requestOrigin?: string): string {
 
   const request = normalizedOrigin(requestOrigin);
   return request || CANONICAL_PRODUCTION_ORIGIN;
+}
+
+/**
+ * Return OAuth users to the same trusted LiveCoach origin where they began.
+ * Supabase SSR sessions use host-scoped cookies, so forcing an authenticated
+ * user from a legacy LiveCoach alias onto the canonical domain after consent
+ * makes the next private page appear signed out even though the connector was
+ * saved correctly.
+ *
+ * This resolver is intentionally narrower than a generic request-origin
+ * redirect. It accepts only official LiveCoach domains, deployment aliases
+ * owned by this Vercel project, exact Vercel origins supplied by the runtime,
+ * or localhost outside a deployment.
+ */
+export function connectorReturnOrigin(requestOrigin?: string): string {
+  const request = normalizedOrigin(requestOrigin);
+  if (!request) return publicAppOrigin();
+
+  const deployed =
+    process.env.VERCEL === "1" ||
+    process.env.VERCEL_ENV === "production" ||
+    process.env.VERCEL_ENV === "preview";
+  const url = new URL(request);
+  const hostname = url.hostname.toLowerCase();
+
+  if (!deployed && isLocalOrPrivateOrigin(request)) return request;
+  if (hostname === "livecoachcrm.com") return CANONICAL_PRODUCTION_ORIGIN;
+  if (LIVECOACH_PRODUCTION_HOSTS.has(hostname)) return request;
+  if (
+    hostname.startsWith("livecoach-") &&
+    hostname.endsWith("-leenazari-1116s-projects.vercel.app")
+  ) {
+    return request;
+  }
+
+  const runtimeOrigins = [
+    process.env.VERCEL_URL,
+    process.env.VERCEL_BRANCH_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+  ]
+    .map((value) => normalizedOrigin(value))
+    .filter((value): value is string => Boolean(value));
+  if (runtimeOrigins.includes(request)) return request;
+
+  return publicAppOrigin();
 }
 
 /**
