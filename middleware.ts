@@ -66,7 +66,8 @@ export async function middleware(request: NextRequest) {
   const isPrivateApi =
     path.startsWith("/api/crm") ||
     path === "/api/candidate/respond" ||
-    path.startsWith("/api/auth/google") ||
+    (path.startsWith("/api/auth/google") &&
+      path !== "/api/auth/google/callback") ||
     path.startsWith("/api/auth/microsoft") ||
     (path.startsWith("/api/auth/linkedin") &&
       path !== "/api/auth/linkedin/callback") ||

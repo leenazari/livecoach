@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeCode, saveGoogleConnection } from "@/lib/google";
-import { getRequestScope } from "@/lib/request-scope";
+import { exchangeCode, saveGoogleConnectionForOwner } from "@/lib/google";
+import { verifyGoogleOAuthState } from "@/lib/google-oauth-state";
 import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -10,22 +10,42 @@ export const runtime = "nodejs";
 // Settings with a status flag.
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
-  const base = `${url.protocol}//${url.host}`;
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
+  const oauthState = verifyGoogleOAuthState(state);
+  const fallbackOrigin = "https://www.livecoachcrm.com";
+  const returnOrigin = oauthState?.returnOrigin || fallbackOrigin;
   const cookieState = req.cookies.get("g_oauth_state")?.value;
-  const scope = getRequestScope();
-  const onboarding = scope?.status === "onboarding";
-  const destination = onboarding ? "/join-team" : "/settings";
+  const destination = oauthState?.onboarding ? "/join-team" : "/settings";
+  const resultUrl = (value: string) =>
+    `${returnOrigin}${destination}?google=${value}${
+      value === "connected" ? "&calendar=sync" : ""
+    }`;
+  const clearState = (response: NextResponse) => {
+    response.cookies.set("g_oauth_state", "", { maxAge: 0, path: "/" });
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
+  };
 
   if (url.searchParams.get("error")) {
-    return NextResponse.redirect(`${base}${destination}?google=denied`);
+    return clearState(NextResponse.redirect(resultUrl("denied")));
   }
-  if (!code || !state || !cookieState || state !== cookieState) {
-    return NextResponse.redirect(`${base}${destination}?google=error`);
+  if (!oauthState || !code || (cookieState && state !== cookieState)) {
+    return clearState(NextResponse.redirect(resultUrl("error")));
   }
 
   try {
+    const { data: membership, error: membershipError } = await supabaseService
+      .from("workspace_members")
+      .select("role,status")
+      .eq("workspace_id", oauthState.workspaceId)
+      .eq("user_id", oauthState.userId)
+      .maybeSingle();
+    if (membershipError) throw membershipError;
+    if (!membership || !["active", "onboarding"].includes(membership.status)) {
+      return clearState(NextResponse.redirect(resultUrl("access_denied")));
+    }
+
     const tok = await exchangeCode(code);
     const access = tok.access_token as string | undefined;
     const refresh = tok.refresh_token as string | undefined;
@@ -44,57 +64,59 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    if (scope?.role !== "owner" && !email) {
-      const res = NextResponse.redirect(
-        `${base}${destination}?google=identity_missing`
-      );
-      res.cookies.set("g_oauth_state", "", { maxAge: 0, path: "/" });
-      return res;
+    if (membership.role !== "owner" && !email) {
+      return clearState(NextResponse.redirect(resultUrl("identity_missing")));
     }
-    if (scope && email) {
-      const { data: otherMembers, error: membersError } = await supabaseService
-        .from("workspace_members")
-        .select("user_id")
-        .eq("workspace_id", scope.workspaceId)
-        .neq("user_id", scope.userId)
-        .neq("status", "removed");
-      if (membersError) throw membersError;
-      const otherMemberIds = (otherMembers || []).map((member) => member.user_id);
-      if (otherMemberIds.length) {
-        const { data: duplicate, error: duplicateError } = await supabaseService
-          .from("google_oauth")
-          .select("owner_id")
-          .in("owner_id", otherMemberIds)
-          .ilike("email", email.trim().toLowerCase())
-          .limit(1)
-          .maybeSingle();
-        if (duplicateError) throw duplicateError;
-        if (duplicate?.owner_id) {
-          const res = NextResponse.redirect(
-            `${base}${destination}?google=account_in_use`
-          );
-          res.cookies.set("g_oauth_state", "", { maxAge: 0, path: "/" });
-          return res;
-        }
+    if (email) {
+      const { data: duplicate, error: duplicateError } = await supabaseService
+        .from("google_oauth")
+        .select("owner_id")
+        .eq("workspace_id", oauthState.workspaceId)
+        .neq("owner_id", oauthState.userId)
+        .ilike("email", email.trim().toLowerCase())
+        .limit(1)
+        .maybeSingle();
+      if (duplicateError) throw duplicateError;
+      if (duplicate?.owner_id) {
+        return clearState(NextResponse.redirect(resultUrl("account_in_use")));
       }
     }
 
     // Credentials are stored only against the signed-in LiveCoach account.
     // A refresh token omitted by Google leaves that person's existing token in
     // place and can never overwrite another member's connection.
-    await saveGoogleConnection({
-      accessToken: access || null,
-      refreshToken: refresh || null,
-      expiry,
-      email,
-    });
-
-    const res = NextResponse.redirect(
-      `${base}${destination}?google=connected&calendar=sync`
+    await saveGoogleConnectionForOwner(
+      {
+        accessToken: access || null,
+        refreshToken: refresh || null,
+        expiry,
+        email,
+      },
+      {
+        userId: oauthState.userId,
+        workspaceId: oauthState.workspaceId,
+      }
     );
-    res.cookies.set("g_oauth_state", "", { maxAge: 0, path: "/" });
-    return res;
-  } catch {
-    return NextResponse.redirect(`${base}${destination}?google=error`);
+
+    const { error: auditError } = await supabaseService
+      .from("access_audit_events")
+      .insert({
+        workspace_id: oauthState.workspaceId,
+        actor_user_id: oauthState.userId,
+        source: "human",
+        action: "google_connector_connected",
+        target_table: "google_oauth",
+        target_id: oauthState.userId,
+        previous_scope: null,
+        next_scope: { connected: true },
+      });
+    if (auditError) {
+      console.error("Google connect audit failed", auditError.message);
+    }
+
+    return clearState(NextResponse.redirect(resultUrl("connected")));
+  } catch (error: any) {
+    console.error("Google OAuth callback failed", error?.message || error);
+    return clearState(NextResponse.redirect(resultUrl("error")));
   }
 }
