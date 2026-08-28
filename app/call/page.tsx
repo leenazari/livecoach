@@ -2650,7 +2650,16 @@ export default function CallPage() {
             candidate: candidateRef.current || null,
             role: roleRef.current || null,
           }),
-        }).catch(() => {});
+        })
+          .then((response) => {
+            if (!response.ok) return;
+            window.dispatchEvent(
+              new CustomEvent("lc:tasks-updated", {
+                detail: { source: "post-call-opportunity-check" },
+              })
+            );
+          })
+          .catch(() => {});
       }
       // Recap mode: turn what the user said happened into to-dos with actions,
       // so a bot-less call still feeds the to-do list. Fire-and-forget.

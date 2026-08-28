@@ -1,6 +1,9 @@
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase";
+import { fingerprintTask } from "@/lib/tasks";
+import { resolveRecordScope, type RecordScope } from "@/lib/record-scope";
+import { opportunityProposalNeedsConfirmation } from "@/lib/opportunity-scope-guard";
 
 type CompanyOpportunityScope = {
   id: string;
@@ -15,9 +18,121 @@ type RevenueOpportunityDraft = {
   value?: number | null;
   sessionId?: string | null;
   workstreamId?: string | null;
+  clarificationTaskId?: string | null;
   source?: string;
   surfacedByAi?: boolean;
+  assignedToUserId?: string | null;
 };
+
+export type OpportunityScopeClarification = {
+  taskId: string | null;
+  existingOpportunityId: string;
+  existingTitle: string;
+  proposedTitle: string;
+  proposedDetail: string | null;
+  proposedValue: number | null;
+  proposedSource: string;
+};
+
+export type CanonicalOpportunityResult = {
+  opportunity: Record<string, any>;
+  created: boolean;
+  confirmationRequired: boolean;
+  clarification: OpportunityScopeClarification | null;
+};
+
+async function createOpportunityClarificationTask(
+  company: CompanyOpportunityScope,
+  existing: Record<string, any>,
+  draft: RevenueOpportunityDraft,
+  actor: RecordScope
+): Promise<OpportunityScopeClarification | null> {
+  const proposedTitle = String(draft.title || "Proposed opportunity")
+    .trim()
+    .slice(0, 240);
+  const existingTitle = String(existing.title || "Existing opportunity")
+    .trim()
+    .slice(0, 240);
+  const text = `Confirm whether \"${proposedTitle}\" is part of \"${existingTitle}\" or a separate buying decision`;
+  const ownerId = actor.userId;
+  const fingerprint = fingerprintTask(
+    company.id,
+    `opportunity scope clarification ${existing.id} ${proposedTitle}`,
+    draft.sessionId || draft.workstreamId || null
+  );
+  const payload = {
+    clarificationType: "opportunity_scope",
+    existingOpportunityId: String(existing.id),
+    existingTitle,
+    proposedTitle,
+    proposedDetail:
+      typeof draft.detail === "string" && draft.detail.trim()
+        ? draft.detail.trim().slice(0, 1500)
+        : null,
+    proposedValue:
+      typeof draft.value === "number" && Number.isFinite(draft.value)
+        ? draft.value
+        : null,
+    proposedSource: draft.source || "ai",
+    proposedSessionId: draft.sessionId || null,
+    proposedWorkstreamId: draft.workstreamId || null,
+    pinned: true,
+  };
+  const row = {
+    company_id: company.id,
+    workstream_id: draft.workstreamId || null,
+    text,
+    kind: "opportunity_clarification",
+    link_kind: "client",
+    source: "canonical_opportunity_guard",
+    source_ref: draft.sessionId || String(existing.id),
+    payload,
+    due_at: null,
+    fingerprint,
+    status: "open",
+    owner_id: ownerId,
+    workspace_id: company.workspace_id,
+    visibility: "private",
+  };
+  const { data, error } = await supabaseAdmin
+    .from("tasks")
+    .upsert(row, {
+      onConflict: "owner_id,fingerprint",
+      ignoreDuplicates: true,
+    })
+    .select("id,status")
+    .maybeSingle();
+  if (error) throw error;
+
+  let taskId = data?.id ? String(data.id) : null;
+  let taskStatus = data?.status ? String(data.status) : null;
+  if (!taskId) {
+    const { data: saved, error: savedError } = await supabaseAdmin
+      .from("tasks")
+      .select("id,status")
+      .eq("workspace_id", company.workspace_id)
+      .eq("owner_id", ownerId)
+      .eq("fingerprint", fingerprint)
+      .maybeSingle();
+    if (savedError) throw savedError;
+    taskId = saved?.id ? String(saved.id) : null;
+    taskStatus = saved?.status ? String(saved.status) : null;
+  }
+
+  // The same stored source may be processed again by a browser retry or a
+  // manual refresh. Once its question has been answered, never resurrect it.
+  if (taskStatus && taskStatus !== "open") return null;
+
+  return {
+    taskId,
+    existingOpportunityId: String(existing.id),
+    existingTitle,
+    proposedTitle,
+    proposedDetail: payload.proposedDetail,
+    proposedValue: payload.proposedValue,
+    proposedSource: payload.proposedSource,
+  };
+}
 
 const changedAt = (row: any) =>
   new Date(row.updated_at || row.created_at || 0).getTime();
@@ -77,22 +192,50 @@ export async function loadCanonicalOpenRevenueOpportunity(
 export async function createCanonicalOpenRevenueOpportunity(
   company: CompanyOpportunityScope,
   draft: RevenueOpportunityDraft
-): Promise<{ opportunity: Record<string, any>; created: boolean }> {
+): Promise<CanonicalOpportunityResult> {
+  const actor = await resolveRecordScope();
+  if (actor.workspaceId !== company.workspace_id) {
+    throw new Error("Cross-workspace opportunity access is not permitted");
+  }
   const workstreamId = draft.workstreamId || null;
   const existing = await loadCanonicalOpenRevenueOpportunity(
     company.id,
     workstreamId
   );
-  if (existing) return { opportunity: existing, created: false };
+  if (existing) {
+    if (
+      draft.surfacedByAi !== false &&
+      opportunityProposalNeedsConfirmation(existing, draft)
+    ) {
+      const clarification = await createOpportunityClarificationTask(
+        company,
+        existing,
+        draft,
+        actor
+      );
+      return {
+        opportunity: existing,
+        created: false,
+        confirmationRequired: !!clarification,
+        clarification,
+      };
+    }
+    return {
+      opportunity: existing,
+      created: false,
+      confirmationRequired: false,
+      clarification: null,
+    };
+  }
 
   const { data, error } = await supabaseAdmin
     .from("opportunities")
     .insert({
       company_id: company.id,
       workspace_id: company.workspace_id,
-      owner_id: company.owner_id,
+      owner_id: draft.assignedToUserId || actor.userId,
       visibility: company.visibility || "private",
-      assigned_to_user_id: company.owner_id,
+      assigned_to_user_id: draft.assignedToUserId || actor.userId,
       workstream_id: workstreamId,
       session_id: draft.sessionId || null,
       title: draft.title,
@@ -110,19 +253,50 @@ export async function createCanonicalOpenRevenueOpportunity(
         evidence: {
           sessionId: draft.sessionId || null,
           workstreamId,
+          clarificationTaskId: draft.clarificationTaskId || null,
         },
       },
     })
     .select()
     .single();
 
-  if (!error && data) return { opportunity: data, created: true };
+  if (!error && data)
+    return {
+      opportunity: data,
+      created: true,
+      confirmationRequired: false,
+      clarification: null,
+    };
   if ((error as any)?.code === "23505") {
     const concurrent = await loadCanonicalOpenRevenueOpportunity(
       company.id,
       workstreamId
     );
-    if (concurrent) return { opportunity: concurrent, created: false };
+    if (concurrent) {
+      if (
+        draft.surfacedByAi !== false &&
+        opportunityProposalNeedsConfirmation(concurrent, draft)
+      ) {
+        const clarification = await createOpportunityClarificationTask(
+          company,
+          concurrent,
+          draft,
+          actor
+        );
+        return {
+          opportunity: concurrent,
+          created: false,
+          confirmationRequired: !!clarification,
+          clarification,
+        };
+      }
+      return {
+        opportunity: concurrent,
+        created: false,
+        confirmationRequired: false,
+        clarification: null,
+      };
+    }
   }
   throw error;
 }
