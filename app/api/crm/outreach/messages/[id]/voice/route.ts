@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import {
+  assertOutreachVoiceWithinBudget,
   configuredVoiceNoteCostGbp,
   estimatedVoiceSeconds,
   generateElevenLabsOutreachAudio,
@@ -10,6 +11,7 @@ import {
   outreachVoicePublicUrl,
   outreachVoiceScriptHash,
   outreachVoiceStoragePath,
+  OutreachVoiceBudgetError,
   resolveOutreachVoiceConfig,
 } from "@/lib/outreach-voice-note";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
@@ -61,6 +63,9 @@ export async function POST(
       );
     }
     const config = await resolveOutreachVoiceConfig(sender);
+    // This happens before the row is claimed and before ElevenLabs is called.
+    // An over-budget script therefore costs nothing and remains editable.
+    const budget = assertOutreachVoiceWithinBudget(script, config.modelId);
     const scriptHash = outreachVoiceScriptHash(
       script,
       config.voiceId,
@@ -78,6 +83,10 @@ export async function POST(
           publicUrl,
           reused: true,
           voiceName: config.voiceName,
+          estimatedCostGbp:
+            Number(message.voice_estimated_cost_gbp) ||
+            budget.estimatedCostGbp,
+          maximumCostGbp: budget.maximumCostGbp,
         },
         { headers: { "Cache-Control": "private, no-store" } }
       );
@@ -141,6 +150,8 @@ export async function POST(
         voice_provider_voice_id: config.voiceId,
         voice_provider_request_id: generated.requestId,
         voice_estimated_seconds: estimatedSeconds,
+        voice_character_count: generated.characters,
+        voice_estimated_cost_gbp: budget.estimatedCostGbp,
         voice_error: null,
         updated_at: generatedAt,
       })
@@ -172,21 +183,29 @@ export async function POST(
           voiceName: config.voiceName,
           characters: generated.characters,
           estimatedSeconds,
+          estimatedCostGbp: budget.estimatedCostGbp,
+          maximumCostGbp: budget.maximumCostGbp,
+          rateGbpPerThousandCharacters:
+            budget.rateGbpPerThousandCharacters,
           scriptHash,
         },
       }),
       logUsage(
         "outreach_voice_note",
-        configuredVoiceNoteCostGbp(generated.characters),
+        configuredVoiceNoteCostGbp(
+          generated.characters,
+          config.modelId
+        ),
         {
           provider: "elevenlabs",
           modelId: config.modelId,
           characters: generated.characters,
           estimatedSeconds,
+          maximumCostGbp: budget.maximumCostGbp,
+          rateGbpPerThousandCharacters:
+            budget.rateGbpPerThousandCharacters,
           providerBilledSeparately: true,
-          pricingConfigured: Boolean(
-            Number(process.env.ELEVENLABS_COST_GBP_PER_1000_CHARS || 0) > 0
-          ),
+          pricingConfigured: true,
         },
         { userId: sender.userId, workspaceId: sender.workspaceId }
       ),
@@ -198,6 +217,8 @@ export async function POST(
         publicUrl,
         reused: false,
         voiceName: config.voiceName,
+        estimatedCostGbp: budget.estimatedCostGbp,
+        maximumCostGbp: budget.maximumCostGbp,
       },
       { headers: { "Cache-Control": "private, no-store" } }
     );
@@ -219,6 +240,9 @@ export async function POST(
         .eq("id", messageId)
         .eq("voice_status", "generating");
     }
-    return NextResponse.json({ error: detail }, { status: 502 });
+    return NextResponse.json(
+      { error: detail },
+      { status: error instanceof OutreachVoiceBudgetError ? error.status : 502 }
+    );
   }
 }

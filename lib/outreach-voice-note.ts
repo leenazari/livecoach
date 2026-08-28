@@ -4,6 +4,13 @@ import { createHash } from "crypto";
 import { publicAppOrigin } from "@/lib/public-app-url";
 import { supabaseService } from "@/lib/supabase";
 import type { OutreachIdentity } from "@/lib/outreach-identity";
+import {
+  OUTREACH_VOICE_MAX_CHARACTERS,
+  OUTREACH_VOICE_MAX_COST_GBP,
+  OUTREACH_VOICE_MAX_WORDS,
+  OUTREACH_VOICE_MIN_WORDS,
+  outreachVoiceWordCount,
+} from "@/lib/outreach-voice-policy";
 
 export const OUTREACH_VOICE_BUCKET = "outreach-voice-notes";
 export const OUTREACH_VOICE_MIME = "audio/mpeg";
@@ -15,21 +22,39 @@ export type OutreachVoiceConfig = {
   usingOwnerDefault: boolean;
 };
 
+export type OutreachVoiceBudget = {
+  characters: number;
+  words: number;
+  rateGbpPerThousandCharacters: number;
+  estimatedCostGbp: number;
+  maximumCostGbp: number;
+};
+
+export class OutreachVoiceBudgetError extends Error {
+  status = 422;
+}
+
 const clean = (value: unknown, max: number) =>
   String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
 
+function safeOutreachVoiceModel(value: unknown): string {
+  const requested = clean(value, 120);
+  return /^eleven_(flash|turbo)_/i.test(requested)
+    ? requested
+    : "eleven_flash_v2_5";
+}
+
 export function normaliseOutreachVoiceScript(value: unknown): string {
-  const words = clean(value, 1800)
+  return clean(value, 1800)
     .replace(/[—–]/g, ", ")
     .replace(/;/g, ",")
     .split(/\s+/)
     .filter(Boolean)
-    .slice(0, 135);
-  return words.join(" ");
+    .join(" ");
 }
 
 export function estimatedVoiceSeconds(script: string): number {
-  const wordCount = script.split(/\s+/).filter(Boolean).length;
+  const wordCount = outreachVoiceWordCount(script);
   return Math.max(20, Math.min(90, Math.round((wordCount / 135) * 60)));
 }
 
@@ -100,9 +125,9 @@ export async function resolveOutreachVoiceConfig(
     voiceId,
     voiceName: clean(profile?.outreach_voice_name, 120) ||
       (personalVoiceId ? "My outreach voice" : "LiveCoach owner voice"),
-    modelId:
-      clean(process.env.ELEVENLABS_OUTREACH_MODEL_ID, 120) ||
-      "eleven_multilingual_v2",
+    modelId: safeOutreachVoiceModel(
+      process.env.ELEVENLABS_OUTREACH_MODEL_ID
+    ),
     usingOwnerDefault: !personalVoiceId && Boolean(ownerDefaultVoiceId),
   };
 }
@@ -116,9 +141,7 @@ export async function generateElevenLabsOutreachAudio(input: {
   characters: number;
 }> {
   const script = normaliseOutreachVoiceScript(input.script);
-  if (script.split(/\s+/).filter(Boolean).length < 90) {
-    throw new Error("The voice pitch is too short. Expand it before generating audio");
-  }
+  const budget = assertOutreachVoiceWithinBudget(script, input.config.modelId);
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(input.config.voiceId)}?output_format=mp3_44100_128`,
     {
@@ -156,14 +179,80 @@ export async function generateElevenLabsOutreachAudio(input: {
     requestId:
       response.headers.get("request-id") ||
       response.headers.get("x-request-id"),
-    characters: script.length,
+    characters: budget.characters,
   };
 }
 
-export function configuredVoiceNoteCostGbp(characters: number): number {
-  const perThousand = Number(
+function conservativeModelRateGbp(modelId: string): number {
+  // ElevenLabs currently prices Flash and Turbo at half the standard TTS
+  // character rate. These GBP floors deliberately include headroom above the
+  // published USD amount so the five pence limit fails closed rather than
+  // relying on a favourable exchange rate.
+  return /(flash|turbo)/i.test(modelId) ? 0.0625 : 0.125;
+}
+
+export function outreachVoiceRateGbpPerThousand(modelId: string): number {
+  const configured = Number(
     process.env.ELEVENLABS_COST_GBP_PER_1000_CHARS || 0
   );
-  if (!Number.isFinite(perThousand) || perThousand <= 0) return 0;
-  return Number(((characters / 1000) * perThousand).toFixed(6));
+  const conservativeFloor = conservativeModelRateGbp(modelId);
+  return Number.isFinite(configured) && configured > conservativeFloor
+    ? configured
+    : conservativeFloor;
+}
+
+export function outreachVoiceBudget(
+  script: string,
+  modelId: string
+): OutreachVoiceBudget {
+  const characters = script.length;
+  const words = outreachVoiceWordCount(script);
+  const rateGbpPerThousandCharacters =
+    outreachVoiceRateGbpPerThousand(modelId);
+  return {
+    characters,
+    words,
+    rateGbpPerThousandCharacters,
+    estimatedCostGbp: Number(
+      ((characters / 1000) * rateGbpPerThousandCharacters).toFixed(6)
+    ),
+    maximumCostGbp: OUTREACH_VOICE_MAX_COST_GBP,
+  };
+}
+
+export function assertOutreachVoiceWithinBudget(
+  script: string,
+  modelId: string
+): OutreachVoiceBudget {
+  const budget = outreachVoiceBudget(script, modelId);
+  if (budget.words < OUTREACH_VOICE_MIN_WORDS) {
+    throw new OutreachVoiceBudgetError(
+      `The voice pitch is too short. Use ${OUTREACH_VOICE_MIN_WORDS} to ${OUTREACH_VOICE_MAX_WORDS} words`
+    );
+  }
+  if (budget.words > OUTREACH_VOICE_MAX_WORDS) {
+    throw new OutreachVoiceBudgetError(
+      `The voice pitch is too long. Keep it to ${OUTREACH_VOICE_MAX_WORDS} words`
+    );
+  }
+  if (budget.characters > OUTREACH_VOICE_MAX_CHARACTERS) {
+    throw new OutreachVoiceBudgetError(
+      `The voice pitch is too long for the five pence limit. Keep it under ${OUTREACH_VOICE_MAX_CHARACTERS} characters`
+    );
+  }
+  if (budget.estimatedCostGbp > OUTREACH_VOICE_MAX_COST_GBP) {
+    throw new OutreachVoiceBudgetError(
+      "This voice pitch would exceed the five pence ElevenLabs limit. Shorten it or use the Flash voice model"
+    );
+  }
+  return budget;
+}
+
+export function configuredVoiceNoteCostGbp(
+  characters: number,
+  modelId = "eleven_flash_v2_5"
+): number {
+  return Number(
+    ((characters / 1000) * outreachVoiceRateGbpPerThousand(modelId)).toFixed(6)
+  );
 }

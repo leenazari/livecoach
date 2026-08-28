@@ -9,6 +9,11 @@ const read = (file) => readFileSync(path.join(root, file), "utf8");
 const migration = read(
   "supabase/migrations/20260828221810_outreach_personal_voice_notes.sql"
 );
+const costMigration = read(
+  "supabase/migrations/20260828223725_outreach_voice_cost_guard.sql"
+);
+const policy = read("lib/outreach-voice-policy.ts");
+const voice = read("lib/outreach-voice-note.ts");
 const prepare = read("app/api/crm/outreach/[id]/prepare/route.ts");
 const generate = read(
   "app/api/crm/outreach/messages/[id]/voice/route.ts"
@@ -31,9 +36,19 @@ assert.match(migration, /voice_public_token uuid not null default gen_random_uui
 assert.match(migration, /outreach_messages_voice_public_token_unique/);
 assert.match(migration, /'outreach-voice-notes'[\s\S]*?false/);
 assert.doesNotMatch(migration, /create policy[\s\S]*?storage\.objects/i);
+assert.match(costMigration, /voice_character_count between 1 and 800/);
+assert.match(costMigration, /voice_estimated_cost_gbp between 0 and 0\.05/);
+assert.match(policy, /OUTREACH_VOICE_MAX_COST_GBP = 0\.05/);
+assert.match(policy, /OUTREACH_VOICE_MAX_CHARACTERS = 800/);
+assert.match(voice, /"eleven_flash_v2_5"/);
+assert.match(voice, /\^eleven_\(flash\|turbo\)_/);
+assert.match(voice, /assertOutreachVoiceWithinBudget/);
+assert.match(voice, /conservativeModelRateGbp/);
+assert.doesNotMatch(voice, /slice\(0, OUTREACH_VOICE_MAX_WORDS\)/);
 
 assert.match(prepare, /required: \["research", "strategy", "email", "voiceNote"\]/);
-assert.match(prepare, /105 to 135 words/);
+assert.match(prepare, /OUTREACH_VOICE_MAX_CHARACTERS/);
+assert.match(prepare, /105 to 120 word personal spoken pitch under 800 characters/);
 assert.match(prepare, /voice_status: "script_ready"/);
 assert.match(prepare, /preserveReadyAudio/);
 
@@ -45,6 +60,13 @@ assert.match(generate, /voice_status === "ready"/);
 assert.match(generate, /reused: true/);
 assert.match(generate, /OUTREACH_VOICE_BUCKET/);
 assert.match(generate, /configuredVoiceNoteCostGbp/);
+assert.match(generate, /assertOutreachVoiceWithinBudget/);
+assert.ok(
+  generate.indexOf("assertOutreachVoiceWithinBudget") <
+    generate.indexOf('voice_status: "generating"'),
+  "the cost guard must run before the provider call is claimed"
+);
+assert.match(generate, /voice_estimated_cost_gbp: budget\.estimatedCostGbp/);
 assert.match(generate, /\.eq\("voice_script", script\)/);
 
 assert.match(patchRoute, /voiceChanged/);
@@ -65,7 +87,9 @@ assert.match(audio, /voice_public_token/);
 assert.match(played, /kind: "voice_played"/);
 
 assert.match(editor, /Create voice preview/);
-assert.match(editor, /Aim for 105 to 135 words/);
+assert.match(editor, /OUTREACH_VOICE_MAX_CHARACTERS/);
+assert.match(editor, /exceed 5p/);
+assert.match(editor, /voice_estimated_cost_gbp/);
 assert.match(outreachPage, /generateVoiceNote/);
 assert.match(outreachPage, /OutreachVoiceNoteEditor/);
 assert.match(today, /generateVoiceNote/);
