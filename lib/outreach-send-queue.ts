@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { sendConnectedOutreachMail } from "@/lib/mail";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
+import { outreachVoicePublicUrl } from "@/lib/outreach-voice-note";
 import {
   emailDomain,
   londonDate,
@@ -207,6 +208,17 @@ export async function dispatchDueOutreachMessage(messageId: string) {
 
   if (message.from_email !== sender.senderEmail)
     await stopClaim("Sender safety check failed", "failed");
+  if (
+    String(message.voice_script || "").trim() &&
+    (message.voice_status !== "ready" ||
+      !message.voice_audio_path ||
+      !message.voice_public_token)
+  ) {
+    await stopClaim(
+      "The personal voice note is not ready. Review and recreate its preview before sending.",
+      "failed"
+    );
+  }
   const isBrainDirect = message.message_source === "brain_direct";
   const [{ data: prospect }, enrolmentResult, campaignResult] = await Promise.all([
     supabaseAdmin
@@ -388,6 +400,19 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     ownerId: sender.userId,
     senderName: sender.senderName,
     fromEmail: sender.senderEmail,
+    ...(message.voice_status === "ready" &&
+    message.voice_audio_path &&
+    message.voice_public_token
+      ? {
+          voiceNote: {
+            url: outreachVoicePublicUrl(message.voice_public_token),
+            estimatedSeconds: message.voice_estimated_seconds,
+            previewText: String(message.voice_script || "")
+              .split(/(?<=[.!?])\s+/)[0]
+              .slice(0, 220),
+          },
+        }
+      : {}),
   });
   if (!sent.ok) {
     await Promise.all([

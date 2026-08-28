@@ -6,6 +6,10 @@ import { openai, OPENAI_MODEL_LIVE, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { londonDate, modelSources, modelText, parseObject } from "@/lib/outreach";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
+import {
+  estimatedVoiceSeconds,
+  normaliseOutreachVoiceScript,
+} from "@/lib/outreach-voice-note";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import {
   conciseJobSignal,
@@ -33,7 +37,7 @@ const OUTREACH_DRAFT_FORMAT = {
   schema: {
     type: "object",
     additionalProperties: false,
-    required: ["research", "strategy", "email"],
+    required: ["research", "strategy", "email", "voiceNote"],
     properties: {
       research: {
         type: "object",
@@ -81,6 +85,12 @@ const OUTREACH_DRAFT_FORMAT = {
         required: ["subject", "previewText", "bodyText"],
         properties: { subject: { type: "string" }, previewText: { type: "string" }, bodyText: { type: "string" } },
       },
+      voiceNote: {
+        type: "object",
+        additionalProperties: false,
+        required: ["script"],
+        properties: { script: { type: "string" } },
+      },
     },
   },
 } as const;
@@ -89,6 +99,7 @@ type CompleteOutreachDraft = {
   research: Record<string, any>;
   strategy: Record<string, any>;
   email: { subject: string; previewText?: string; bodyText: string };
+  voiceNote: { script: string };
 };
 
 const completeDraft = (value: any): value is CompleteOutreachDraft => !!(
@@ -96,7 +107,9 @@ const completeDraft = (value: any): value is CompleteOutreachDraft => !!(
   value?.strategy &&
   value?.email &&
   String(value.email.subject || "").trim() &&
-  String(value.email.bodyText || "").trim()
+  String(value.email.bodyText || "").trim() &&
+  value?.voiceNote &&
+  String(value.voiceNote.script || "").trim()
 );
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -192,6 +205,8 @@ BANNED PHRASES: ${banned.join(" | ") || "quick question | hope you are well | re
 
 The email must be plain text, 90 to 135 words, short mobile friendly paragraphs, one easy question as the CTA, and signed exactly "${emailSignoff}". End with a natural one line opt out such as "If this is not relevant, tell me and I will not follow up." It must sound individually written by ${sender.senderName}, not like a template or a faceless product message. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Write "better prepared", never "better-prepared". Subject under 45 characters. Use one or two verified current vacancies when available. Say that Interviewa specialises in preparing candidates for those exact types of roles, rather than making a generic recruitment claim. Explain that the prospect can try Interviewa free on a current vacancy, setup takes about 10 minutes, it adds no extra administration for their team, they control and can reuse the interview, and results appear in their dashboard. Where natural, state the approved proof that thousands of candidates already use Interviewa. Position better preparation as a credible way to improve candidate acceptance or client placement rates, but never guarantee a result. Say the sender will prove the value through the free trial, not that a placement outcome is guaranteed. Candidate training is the primary campaign angle. Mention screening only as a secondary possibility when verified vacancy volume makes it credible and product truth supports it. Be commercially vivid without hype. If no approved case study exists, use a concrete illustrative workflow such as practising for one live role, but never imply another customer achieved a result. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? `This is a follow up. Do not repeat ${sender.senderName}'s full introduction or the opening email, and make it easy to close the loop.` : `This is the first email. After the personalised opening, introduce the sender naturally with: I’m ${sender.senderName} from Interviewa. Then explain that Interviewa was built specifically to help recruiters prepare candidates for successful job placements.`} ${includeBooking ? `Include this booking link once, naturally, as the optional next step: ${campaign.booking_url}` : "Do not include a calendar or booking link. Earn interest first."}
 
+VOICE NOTE: also write a separate spoken pitch for ${sender.senderName} to record in their own voice. It must be 105 to 135 words so it lands at roughly 45 to 60 seconds, sound natural when spoken aloud, and use the same verified person, company and campaign context. Open with the recipient's first name and one precise reason this is relevant to them. Introduce ${sender.senderName} naturally, explain one useful outcome, offer the free trial or one easy next step supported by the campaign, and end with one simple invitation to reply. Do not read out a URL, email address, opt out line or subject. Do not copy the email word for word. Never invent urgency, familiarity, a customer result or a case study. Use British English, contractions where natural, short spoken sentences, and no hyphens, dashes or semicolons.
+
 APPROVED SEQUENCE BRIEF FOR THIS STEP:
 Purpose: ${clean(sequenceStep.purpose, 240)}
 Content type: ${clean(sequenceStep.contentType || "plain", 60)}
@@ -201,7 +216,7 @@ ${sequenceStep.assetUrl ? `Approved asset link: ${clean(sequenceStep.assetUrl, 6
 Before writing, choose ONE evidence-backed reason this person should care now and ONE Interviewa angle. The first sentence must be grounded in a verified fact or transparently framed hypothesis. Never mix several random use cases. Explain your evidence and choice in strategy so ${sender.senderName} can approve the thinking as well as the words.
 
 Output exactly:
-{"research":{"summary":"max 65 words, only decision useful facts","signals":["max 3 factual current signals"],"activeJobs":["max 4 verified current or recent roles with location and recency when available"],"jobSignals":[{"role":"verified role","location":"verified location or empty","recency":"verified date or current status","sourceUrl":"exact primary company or ATS vacancy URL"}],"volumeAssessment":"high|medium|low|unknown","volumeReason":"evidence based reason, max 35 words","likelyNeeds":["max 2 clearly labelled hypotheses"],"bestAngle":"one grounded Interviewa angle led by candidate training","commercialPath":"customer deal|relationship|partnership plus one short reason","fitDecision":"contact now|hold|skip plus one short reason","personalisationFact":"one verifiable fact or empty string","approvedProof":"verified Interviewa case study or result from product truth, otherwise empty string","freshness":"what was checked and how current it is, max 25 words","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 55 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."}}`;
+{"research":{"summary":"max 65 words, only decision useful facts","signals":["max 3 factual current signals"],"activeJobs":["max 4 verified current or recent roles with location and recency when available"],"jobSignals":[{"role":"verified role","location":"verified location or empty","recency":"verified date or current status","sourceUrl":"exact primary company or ATS vacancy URL"}],"volumeAssessment":"high|medium|low|unknown","volumeReason":"evidence based reason, max 35 words","likelyNeeds":["max 2 clearly labelled hypotheses"],"bestAngle":"one grounded Interviewa angle led by candidate training","commercialPath":"customer deal|relationship|partnership plus one short reason","fitDecision":"contact now|hold|skip plus one short reason","personalisationFact":"one verifiable fact or empty string","approvedProof":"verified Interviewa case study or result from product truth, otherwise empty string","freshness":"what was checked and how current it is, max 25 words","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 55 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."},"voiceNote":{"script":"105 to 135 word personal spoken pitch"}}`;
     const user = `PERSON
 Name: ${prospect.first_name || ""} ${prospect.last_name || ""}
 Role: ${prospect.job_title || ""}
@@ -257,9 +272,9 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `SENDER'S EXTRA GU
       console.warn(JSON.stringify({ level: "warning", msg: "outreach prepare needs format repair", prospectId, stopReason: message?.stop_reason || "unknown", outputChars: originalText.length, ms: Date.now() - startedAt }));
       const repair = await openai.messages.create({
         model: OPENAI_MODEL_LIVE,
-        max_tokens: 1800,
+        max_tokens: 2200,
         response_format: OUTREACH_DRAFT_FORMAT,
-        system: `Repair an incomplete structured outreach result and return ONLY the required JSON. Preserve every supplied research fact. Never invent facts about the person, company, vacancies, customers, savings or results. If a research field is missing, use an empty array, empty string, unknown volume, or low confidence as appropriate. jobSignals must be an empty array unless the incomplete result contains an exact primary company or applicant tracking system vacancy URL. Never use LinkedIn or a job aggregator. You may complete the email using only the supplied facts and approved Interviewa truth. Use British English, short mobile friendly paragraphs, one question, no semicolons, and no hyphens or dashes in prose. The first email must naturally introduce: I’m ${sender.senderName} from Interviewa. Include a natural opt out.`,
+        system: `Repair an incomplete structured outreach result and return ONLY the required JSON. Preserve every supplied research fact. Never invent facts about the person, company, vacancies, customers, savings or results. If a research field is missing, use an empty array, empty string, unknown volume, or low confidence as appropriate. jobSignals must be an empty array unless the incomplete result contains an exact primary company or applicant tracking system vacancy URL. Never use LinkedIn or a job aggregator. You may complete the email and voiceNote using only the supplied facts and approved Interviewa truth. Use British English, short mobile friendly email paragraphs, one email question, no semicolons, and no hyphens or dashes in prose. The first email must naturally introduce: I’m ${sender.senderName} from Interviewa. Include a natural opt out in the email. voiceNote.script must be a distinct natural spoken pitch of 105 to 135 words. It must open with the recipient's first name, introduce ${sender.senderName}, use one verified relevance signal, and end with one simple invitation to reply. It must not read out a URL or the opt out line.`,
         messages: [{ role: "user", content: `PERSON: ${prospect.first_name || ""} ${prospect.last_name || ""}, ${prospect.job_title || ""} at ${prospect.company_name || ""}
 CAMPAIGN GOAL: ${campaign.goal || ""}
 CAMPAIGN ANGLE: ${campaign.offer_angle || ""}
@@ -307,6 +322,8 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       preview_text: removeDashesFromProse(clean(parsed.email.previewText, 180)),
       body_text: removeDashesFromProse(clean(parsed.email.bodyText, 4000)),
     };
+    const voiceScript = normaliseOutreachVoiceScript(parsed.voiceNote.script);
+    const voiceWordCount = voiceScript.split(/\s+/).filter(Boolean).length;
     if (!/(not relevant|will not follow up|won't follow up|do not follow up)/i.test(email.body_text)) {
       email.body_text = `${email.body_text.trim()}\n\nIf this is not relevant, tell me and I will not follow up.`.slice(0, 4000);
     }
@@ -320,6 +337,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
     if (bannedHits.length) qualityScore -= Math.min(30, bannedHits.length * 15);
     if (!research.personalisationFact && research.confidence === "low") qualityScore -= 10;
     if (email.subject.length > 55) qualityScore -= 8;
+    if (voiceWordCount < 105 || voiceWordCount > 135) qualityScore -= 12;
     if (!/(not relevant|will not follow up|won't follow up|do not follow up)/i.test(email.body_text)) qualityScore -= 15;
     qualityScore = Math.max(0, Math.min(formatRepaired ? 85 : 100, Math.min(qualityScore, Number(parsed.strategy.qualityScore) || 100)));
     const needsExtraReview = qualityScore < 70 || formatRepaired;
@@ -330,7 +348,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       tone: clean(parsed.strategy.tone || voice.tone, 180),
       cta: clean(parsed.strategy.cta, 180),
       persona: clean(parsed.strategy.persona || prospect.job_title, 180),
-      qualityChecks: { wordCount, questionCount, bannedHits },
+      qualityChecks: { wordCount, questionCount, bannedHits, voiceWordCount },
     };
     const messageTags = {
       angle: strategy.angle,
@@ -342,12 +360,40 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       sequenceContentType: sequenceStep.contentType || "plain",
     };
 
+    const { data: previousDraft } = await supabaseAdmin
+      .from("outreach_messages")
+      .select("voice_script,voice_status")
+      .eq("workspace_id", sender.workspaceId)
+      .eq("sender_user_id", sender.userId)
+      .eq("enrolment_id", enrolment.id)
+      .eq("step_number", step)
+      .maybeSingle();
+    const preserveReadyAudio =
+      previousDraft?.voice_status === "ready" &&
+      previousDraft?.voice_script === voiceScript;
+    const voicePayload = preserveReadyAudio
+      ? { voice_script: voiceScript }
+      : {
+          voice_script: voiceScript,
+          voice_status: "script_ready",
+          voice_audio_path: null,
+          voice_audio_mime: null,
+          voice_generated_at: null,
+          voice_script_hash: null,
+          voice_model_id: null,
+          voice_provider_voice_id: null,
+          voice_provider_request_id: null,
+          voice_estimated_seconds: estimatedVoiceSeconds(voiceScript),
+          voice_error: null,
+        };
+
     const { data: draft, error: draftError } = await supabaseAdmin.from("outreach_messages").upsert({
       workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team",
       enrolment_id: enrolment.id, campaign_id: campaign.id, prospect_id: prospect.id,
       step_number: step, variant, from_email: sender.senderEmail, sender_user_id: sender.userId, subject: email.subject,
       preview_text: email.preview_text, body_text: email.body_text, status: "draft", updated_at: new Date().toISOString(),
       strategy, quality_score: qualityScore, message_tags: messageTags, booking_link_included: includeBooking,
+      ...voicePayload,
     }, { onConflict: "enrolment_id,step_number" }).select("*").single();
     if (draftError) throw draftError;
     await Promise.all([
@@ -359,7 +405,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       ]),
     ]);
     console.log(JSON.stringify({ level: "info", msg: "outreach prepare completed", prospectId, qualityScore, needsExtraReview, formatRepaired, ms: Date.now() - startedAt }));
-    return NextResponse.json({ research, sources, strategy, qualityScore, needsExtraReview, formatRepaired, checks: { wordCount, questionCount, bannedHits }, message: draft });
+    return NextResponse.json({ research, sources, strategy, qualityScore, needsExtraReview, formatRepaired, checks: { wordCount, questionCount, bannedHits, voiceWordCount }, message: draft });
   } catch (error: any) {
     console.error(JSON.stringify({ level: "error", msg: "outreach prepare failed", prospectId: params.id, error: error?.message || "unknown error", ms: Date.now() - startedAt }));
     return NextResponse.json({ error: error?.name === "AbortError" ? "Research timed out, try this person again" : error?.message || "failed to prepare outreach" }, { status: 500 });

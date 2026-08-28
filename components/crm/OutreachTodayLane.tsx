@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MatrixRain from "@/components/MatrixRain";
+import OutreachVoiceNoteEditor from "@/components/crm/OutreachVoiceNoteEditor";
 import { crmFetch } from "@/lib/crm";
 import type { WorkInboxItem } from "@/lib/work-inbox";
 
@@ -41,6 +42,13 @@ type OutreachMessage = {
   sent_at?: string | null;
   updated_at?: string | null;
   error?: string | null;
+  voice_script?: string | null;
+  voice_status?: string | null;
+  voice_audio_path?: string | null;
+  voice_public_token?: string | null;
+  voice_estimated_seconds?: number | null;
+  voice_generated_at?: string | null;
+  voice_error?: string | null;
 };
 
 type QueueRow = {
@@ -79,7 +87,7 @@ type QueueResponse = {
 const PREPARE_QUEUE_KEY = "livecoach:sales-today-prepare-queue:v1";
 const MAX_CONCURRENT_RESEARCH = 2;
 
-type DraftEdit = { subject: string; body: string };
+type DraftEdit = { subject: string; body: string; voiceScript: string };
 type ReplyAction = { text: string; dueAt: string };
 
 const button =
@@ -230,6 +238,7 @@ export default function OutreachTodayLane({
   const [draftEdits, setDraftEdits] = useState<Record<string, DraftEdit>>({});
   const [savingMessageId, setSavingMessageId] = useState("");
   const [rehearsingMessageId, setRehearsingMessageId] = useState("");
+  const [generatingVoiceMessageId, setGeneratingVoiceMessageId] = useState("");
   const [showFullQueue, setShowFullQueue] = useState(false);
   const [focusedRowId, setFocusedRowId] = useState("");
   const [deferredRowIds, setDeferredRowIds] = useState<string[]>([]);
@@ -377,6 +386,7 @@ export default function OutreachTodayLane({
               [message.id]: {
                 subject: message.subject || "",
                 body: message.body_text || "",
+                voiceScript: message.voice_script || "",
               },
             }
       );
@@ -395,6 +405,8 @@ export default function OutreachTodayLane({
       [messageId]: {
         subject: current[messageId]?.subject ?? fallback?.subject ?? "",
         body: current[messageId]?.body ?? fallback?.body_text ?? "",
+        voiceScript:
+          current[messageId]?.voiceScript ?? fallback?.voice_script ?? "",
         ...change,
       },
     }));
@@ -405,6 +417,7 @@ export default function OutreachTodayLane({
     const edit = draftEdits[message.id] || {
       subject: message.subject || "",
       body: message.body_text || "",
+      voiceScript: message.voice_script || "",
     };
     if (!edit.subject.trim() || !edit.body.trim()) {
       setError("Add both the subject and email before saving.");
@@ -421,6 +434,7 @@ export default function OutreachTodayLane({
           body: JSON.stringify({
             subject: edit.subject,
             body_text: edit.body,
+            voice_script: edit.voiceScript,
             ...(approveAndQueue ? { status: "approved" } : {}),
           }),
         }
@@ -451,11 +465,62 @@ export default function OutreachTodayLane({
     }
   };
 
+  const generateVoiceNote = async (message: OutreachMessage) => {
+    if (savingMessageId || generatingVoiceMessageId) return;
+    const edit = draftEdits[message.id] || {
+      subject: message.subject || "",
+      body: message.body_text || "",
+      voiceScript: message.voice_script || "",
+    };
+    if (!edit.subject.trim() || !edit.body.trim() || !edit.voiceScript.trim()) {
+      setError("Save the email and voice pitch before creating audio.");
+      return;
+    }
+    setGeneratingVoiceMessageId(message.id);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await crmFetch<{ message: OutreachMessage }>(
+        `/api/crm/outreach/messages/${message.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            subject: edit.subject,
+            body_text: edit.body,
+            voice_script: edit.voiceScript,
+          }),
+        }
+      );
+      if (!saved.message?.id) throw new Error("The voice pitch was not saved");
+      const generated = await crmFetch<{
+        message: OutreachMessage;
+        reused: boolean;
+      }>(`/api/crm/outreach/messages/${message.id}/voice`, {
+        method: "POST",
+        body: "{}",
+      });
+      if (generated.message?.voice_status !== "ready")
+        throw new Error("The voice preview was not confirmed");
+      setNotice(
+        generated.reused
+          ? "The existing personal voice note is ready to preview."
+          : "Personal voice note created once and ready to preview."
+      );
+      await load(true);
+    } catch (err: any) {
+      setError(err?.message || "The personal voice note could not be created.");
+      await load(true);
+    } finally {
+      setGeneratingVoiceMessageId("");
+    }
+  };
+
   const rehearseDraft = async (message: OutreachMessage) => {
     if (savingMessageId || rehearsingMessageId) return;
     const edit = draftEdits[message.id] || {
       subject: message.subject || "",
       body: message.body_text || "",
+      voiceScript: message.voice_script || "",
     };
     if (!edit.subject.trim() || !edit.body.trim()) {
       setError("Add both the subject and email before sending a rehearsal.");
@@ -472,6 +537,7 @@ export default function OutreachTodayLane({
           body: JSON.stringify({
             subject: edit.subject,
             body_text: edit.body,
+            voice_script: edit.voiceScript,
           }),
         }
       );
@@ -553,6 +619,7 @@ export default function OutreachTodayLane({
         [result.message.id]: {
           subject: result.message.subject || "",
           body: result.message.body_text || "",
+          voiceScript: result.message.voice_script || "",
         },
       }));
       setNotice("Booking reply prepared. Review the exact words before approving it.");
@@ -577,6 +644,7 @@ export default function OutreachTodayLane({
     const edit = draftEdits[message.id] || {
       subject: message.subject || "",
       body: message.body_text || "",
+      voiceScript: message.voice_script || "",
     };
     if (!edit.subject.trim() || !edit.body.trim()) {
       setError("Add both the subject and email before saving.");
@@ -889,6 +957,7 @@ export default function OutreachTodayLane({
               ? draftEdits[draft.id] || {
                   subject: draft.subject || "",
                   body: draft.body_text || "",
+                  voiceScript: draft.voice_script || "",
                 }
               : null;
             const age = replyAge(context?.lastReplyAt || item.createdAt);
@@ -1131,6 +1200,7 @@ export default function OutreachTodayLane({
               ? draftEdits[displayMessage.id] || {
                   subject: displayMessage.subject || "",
                   body: displayMessage.body_text || "",
+                  voiceScript: displayMessage.voice_script || "",
                 }
               : null;
             const editableMessage = Boolean(
@@ -1332,6 +1402,25 @@ export default function OutreachTodayLane({
                                 className="mt-1 w-full rounded-lg border border-edge bg-panel px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60"
                               />
                             </label>
+                            <OutreachVoiceNoteEditor
+                              message={displayMessage}
+                              script={edit.voiceScript}
+                              disabled={
+                                Boolean(displayMessage.scheduled_at) ||
+                                displayMessage.status === "approved"
+                              }
+                              generating={
+                                generatingVoiceMessageId === displayMessage.id
+                              }
+                              onScriptChange={(value) =>
+                                updateDraft(displayMessage.id, {
+                                  voiceScript: value,
+                                })
+                              }
+                              onGenerate={() =>
+                                void generateVoiceNote(displayMessage)
+                              }
+                            />
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
@@ -1360,7 +1449,11 @@ export default function OutreachTodayLane({
                                 onClick={() => void saveDraft(displayMessage, true)}
                                 disabled={
                                   savingMessageId === displayMessage.id ||
-                                  Boolean(displayMessage.scheduled_at)
+                                  Boolean(displayMessage.scheduled_at) ||
+                                  Boolean(edit.voiceScript) &&
+                                    (displayMessage.voice_status !== "ready" ||
+                                      edit.voiceScript.trim() !==
+                                        String(displayMessage.voice_script || "").trim())
                                 }
                                 className={primary}
                               >
@@ -1372,7 +1465,7 @@ export default function OutreachTodayLane({
                               </button>
                             </div>
                             <p className="text-[0.68rem] leading-5 text-muted">
-                              Approval covers the exact words above. Delivery uses the existing spaced send queue and daily limit.
+                              Approval covers the exact email and ready voice note above. Delivery uses the existing spaced send queue and daily limit.
                             </p>
                             {sender?.provider === "google" ? (
                               <p className="text-[0.68rem] leading-5 text-sky">

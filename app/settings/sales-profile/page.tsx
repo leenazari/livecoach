@@ -281,6 +281,35 @@ export default function SalesProfilePage() {
                 maxLength={160}
               />
             </label>
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-sm text-bone">Personal outreach voice ID</span>
+                <input
+                  value={profile.outreachVoiceId}
+                  onChange={(event) => update("outreachVoiceId", event.target.value)}
+                  className={input}
+                  placeholder="Your ElevenLabs voice ID"
+                  maxLength={120}
+                  autoComplete="off"
+                />
+                <span className="mt-1 block text-xs leading-5 text-muted">
+                  Optional. This is personal to your login. Never paste an API key here.
+                </span>
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-sm text-bone">Voice label</span>
+                <input
+                  value={profile.outreachVoiceName}
+                  onChange={(event) => update("outreachVoiceName", event.target.value)}
+                  className={input}
+                  placeholder="My outreach voice"
+                  maxLength={120}
+                />
+                <span className="mt-1 block text-xs leading-5 text-muted">
+                  Used only to help you recognise the selected voice.
+                </span>
+              </label>
+            </div>
           </section>
 
           <section className="rounded-2xl border border-edge bg-panel/45 p-5 sm:p-6">

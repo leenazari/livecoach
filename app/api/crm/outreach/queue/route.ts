@@ -67,6 +67,13 @@ function compactMessage(message: any) {
     sent_at: message.sent_at || null,
     updated_at: message.updated_at || null,
     error: message.error || null,
+    voice_script: message.voice_script || "",
+    voice_status: message.voice_status || "none",
+    voice_audio_path: message.voice_audio_path || null,
+    voice_public_token: message.voice_public_token || null,
+    voice_estimated_seconds: message.voice_estimated_seconds || null,
+    voice_generated_at: message.voice_generated_at || null,
+    voice_error: message.voice_error || null,
   };
 }
 

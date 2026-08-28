@@ -118,12 +118,50 @@ export async function sendConnectedOutreachMail(opts: {
   ownerId: string;
   senderName: string;
   fromEmail: string;
+  voiceNote?: {
+    url: string;
+    estimatedSeconds?: number | null;
+    previewText?: string | null;
+  };
 }): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
   const connection = await connectedMailProvider(opts.ownerId);
+  const escapeHtml = (value: string) =>
+    value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  const safeText = String(opts.text || "").trim();
+  const paragraphs = safeText
+    .split(/\n{2,}/)
+    .map(
+      (paragraph) =>
+        `<p style="margin:0 0 16px;line-height:1.6">${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`
+    )
+    .join("");
+  const firstName = String(opts.senderName || "").trim().split(/\s+/)[0] || "me";
+  const seconds = Math.max(
+    20,
+    Math.min(90, Number(opts.voiceNote?.estimatedSeconds) || 50)
+  );
+  const voiceUrl = String(opts.voiceNote?.url || "").trim();
+  const previewText = String(opts.voiceNote?.previewText || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 220);
+  const voiceHtml = voiceUrl
+    ? `<div style="margin:24px 0;padding:18px;border:1px solid #d9a34a;border-radius:12px;background:#fffaf0"><p style="margin:0 0 12px;font-size:15px;line-height:1.5"><strong>I recorded a short personal message for you.</strong></p><a href="${escapeHtml(voiceUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#b7791f;color:#ffffff;text-decoration:none;font-weight:600">Listen to ${escapeHtml(firstName)}’s ${seconds} second message</a>${previewText ? `<p style="margin:12px 0 0;color:#555;font-size:13px;line-height:1.5">In short, ${escapeHtml(previewText)}</p>` : ""}</div>`
+    : "";
+  const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#171717;max-width:640px">${paragraphs}${voiceHtml}</div>`;
+  const text = voiceUrl
+    ? `${safeText}\n\nI recorded a short personal message for you.\nListen to ${firstName}'s ${seconds} second message\n${voiceUrl}${previewText ? `\n\nIn short, ${previewText}` : ""}`
+    : safeText;
   // Gmail performs its own verified send-as alias check. Keep that path intact
   // so Lee can continue sending from lee@interviewa.com through his connected
   // Google account. Microsoft starts conservatively with the exact mailbox.
-  if (connection.provider === "google") return sendGmailOutreach(opts);
+  if (connection.provider === "google")
+    return sendGmailOutreach({ ...opts, text, html });
   if (connection.provider === "microsoft") {
     if (
       !connection.email ||
@@ -138,8 +176,8 @@ export async function sendConnectedOutreachMail(opts: {
       {
         to: opts.to,
         subject: opts.subject,
-        text: opts.text,
-        html: opts.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"),
+        text,
+        html,
         replyTo: opts.fromEmail,
       },
       opts.ownerId

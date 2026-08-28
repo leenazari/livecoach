@@ -86,6 +86,14 @@ export function normaliseSalesProfile(row: any): SalesProfile {
       DEFAULT_SALES_PROFILE.emailTone
     ),
     emailSignoff: text(row?.email_signoff ?? row?.emailSignoff, 160),
+    outreachVoiceId: text(
+      row?.outreach_voice_id ?? row?.outreachVoiceId,
+      120
+    ),
+    outreachVoiceName: text(
+      row?.outreach_voice_name ?? row?.outreachVoiceName,
+      120
+    ),
     coachingStyle: choice<CoachingStyle>(
       row?.coaching_style ?? row?.coachingStyle,
       COACHING_STYLES,
@@ -161,7 +169,7 @@ export async function getSalesProfile(scopeOverride?: Scope): Promise<SalesProfi
   const { data, error } = await client
     .from("salesperson_profiles")
     .select(
-      "role_title,sales_goal,email_tone,email_signoff,coaching_style,suggestion_frequency,product_focus,customer_focus,workday_start,workday_end,timezone,personal_context,completed_at,updated_at"
+      "role_title,sales_goal,email_tone,email_signoff,outreach_voice_id,outreach_voice_name,coaching_style,suggestion_frequency,product_focus,customer_focus,workday_start,workday_end,timezone,personal_context,completed_at,updated_at"
     )
     .eq("workspace_id", scope.workspaceId)
     .eq("user_id", scope.userId)
