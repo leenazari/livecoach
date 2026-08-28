@@ -62,8 +62,9 @@ assert.match(migration, /grant select, insert, update, delete on public\.linkedi
 assert.doesNotMatch(migration, /create policy/i);
 
 assert.match(settings, /belongs only to this LiveCoach account/);
-assert.match(settings, /Messages and connection requests remain manual/);
-assert.match(settings, /never publishes anything automatically/);
+assert.match(settings, /approved API connection does not read LinkedIn messages/);
+assert.match(settings, /separate local inbox capture below is optional and user-triggered/);
+assert.match(settings, /publishes anything automatically/);
 assert.match(settings, /href="\/api\/auth\/linkedin\/start\?social=1"/);
 assert.match(settings, /href="\/api\/auth\/linkedin\/start"/);
 
