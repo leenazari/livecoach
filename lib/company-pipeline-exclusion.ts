@@ -49,3 +49,15 @@ export function withCompanyPipelineExclusion(
     },
   };
 }
+
+export function companyPipelineExclusionIds(
+  companies: Iterable<{ id: string; profile?: unknown }>
+): Set<string> {
+  const ids = new Set<string>();
+  for (const company of companies) {
+    if (company?.id && activeCompanyPipelineExclusion(company.profile)) {
+      ids.add(company.id);
+    }
+  }
+  return ids;
+}

@@ -10,6 +10,7 @@ import {
   activeSharedClientIds,
   loadSafeSharedCompanies,
 } from "@/lib/team-client-sharing";
+import { companyPipelineExclusionIds } from "@/lib/company-pipeline-exclusion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -191,6 +192,7 @@ export async function GET() {
       account.workspaceId
     );
     const companies = [...(ownedCompanies || []), ...sharedCompanies];
+    const pipelineExcludedCompanyIds = companyPipelineExclusionIds(companies);
 
     const target = Math.max(1, Number((config || []).find((row: any) => row.key === "revenue_target_gbp")?.value) || 2_000_000);
     const nameByCompany = new Map<string, string>();
@@ -243,7 +245,11 @@ export async function GET() {
       signalsByOpportunity.set(receipt.opportunity_id, current);
     }
 
-    const openAll = (opportunities || []).filter((op: any) => op.status === "open");
+    const openAll = (opportunities || []).filter(
+      (op: any) =>
+        op.status === "open" &&
+        !pipelineExcludedCompanyIds.has(String(op.company_id || ""))
+    );
     const open = openAll.filter((op: any) => (op.opportunity_type || "revenue") === "revenue");
     const excluded = openAll.filter((op: any) => (op.opportunity_type || "revenue") !== "revenue");
     const wonYtd = (opportunities || []).filter((op: any) => op.status === "won" && (op.opportunity_type || "revenue") === "revenue" && new Date(op.won_at || op.updated_at || op.created_at).toISOString() >= yearStart);
@@ -368,7 +374,12 @@ export async function GET() {
     const replied = new Set((outreachEvents || []).filter((event: any) => replyKinds.has(event.kind)).map((event: any) => event.prospect_id).filter(Boolean));
     const positive = new Set((outreachEvents || []).filter((event: any) => event.kind === "positive_reply").map((event: any) => event.prospect_id).filter(Boolean));
     const booked = new Set((outreachEvents || []).filter((event: any) => event.kind === "meeting_booked").map((event: any) => event.prospect_id).filter(Boolean));
-    const outreachOpps = (opportunities || []).filter((op: any) => op.source === "outreach" && (op.opportunity_type || "revenue") === "revenue");
+    const outreachOpps = (opportunities || []).filter(
+      (op: any) =>
+        op.source === "outreach" &&
+        (op.opportunity_type || "revenue") === "revenue" &&
+        !pipelineExcludedCompanyIds.has(String(op.company_id || ""))
+    );
     const opportunityById = new Map((opportunities || []).map((op: any) => [op.id, op]));
     const signalCounts = {
       queued: 0,

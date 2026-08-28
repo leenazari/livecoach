@@ -13,6 +13,7 @@ import {
   loadSafeSharedCompanies,
   listVisibleClientGrants,
 } from "@/lib/team-client-sharing";
+import { companyPipelineExclusionIds } from "@/lib/company-pipeline-exclusion";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -175,24 +176,29 @@ export async function GET() {
       ...(ownedCompaniesResult.data || []),
       ...sharedCompanies.filter((company) => !ownedCompanyIds.has(company.id)),
     ];
+    const pipelineExcludedCompanyIds = companyPipelineExclusionIds(companies);
+    const activeOpportunities = opportunities.filter(
+      (opportunity: any) =>
+        !pipelineExcludedCompanyIds.has(String(opportunity.company_id || ""))
+    );
     const companyName = new Map(
       companies.map((company: any) => [company.id, text(company.name, 160)])
     );
     const revenueCompanies = new Set(
-      opportunities
+      activeOpportunities
         .map((opportunity: any) => opportunity.company_id)
         .filter(Boolean)
     );
     const items: WorkInboxItem[] = [];
     const canonicalOpportunityActions = new Set(
-      opportunities
+      activeOpportunities
         .map((opportunity: any) =>
           actionKey(opportunity.company_id, opportunity.next_action)
         )
         .filter(Boolean)
     );
     const pipelineBuild = buildWorkPipeline({
-      opportunities,
+      opportunities: activeOpportunities,
       companyName,
       nowMs,
       endTodayMs,

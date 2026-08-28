@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { upsertTasks } from "@/lib/tasks";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import {
+  createCanonicalOpenRevenueOpportunity,
+  loadCanonicalOpenRevenueOpportunity,
+} from "@/lib/canonical-opportunity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,12 +36,16 @@ const suggestedAction = (summary: any): string => {
 async function callContext(callId: string) {
   const { data: call, error } = await supabaseAdmin
     .from("interview_summaries")
-    .select("id, session_id, company_id, candidate, summary")
+    .select("id, session_id, company_id, workstream_id, candidate, summary")
     .eq("id", callId)
     .single();
   if (error || !call?.company_id) return null;
   const [{ data: company }, { data: opportunities }] = await Promise.all([
-    supabaseAdmin.from("companies").select("id, name").eq("id", call.company_id).single(),
+    supabaseAdmin
+      .from("companies")
+      .select("id, name, workspace_id, owner_id, visibility")
+      .eq("id", call.company_id)
+      .single(),
     supabaseAdmin
       .from("opportunities")
       .select("*")
@@ -130,36 +138,41 @@ export async function POST(
       lost_at: status === "lost" ? now : null,
     };
 
-    const opportunityId = typeof body.opportunityId === "string" ? body.opportunityId : "";
+    let opportunityId = typeof body.opportunityId === "string" ? body.opportunityId : "";
     let opportunity: any;
-    if (opportunityId) {
-      const { data, error } = await supabaseAdmin
-        .from("opportunities")
-        .update(patch)
-        .eq("id", opportunityId)
-        .eq("company_id", context.call.company_id)
-        .select()
-        .single();
-      if (error) throw error;
-      opportunity = data;
-    } else {
+    if (!opportunityId) {
+      const existing = await loadCanonicalOpenRevenueOpportunity(
+        context.call.company_id,
+        context.call.workstream_id || null
+      );
+      opportunityId = existing?.id || "";
+    }
+    if (!opportunityId) {
       const title = typeof body.title === "string" && body.title.trim()
         ? body.title.trim().slice(0, 180)
         : `${context.company?.name || "Client"} opportunity`;
-      const { data, error } = await supabaseAdmin
-        .from("opportunities")
-        .insert({
-          ...patch,
+      const created = await createCanonicalOpenRevenueOpportunity(
+        context.company as any,
+        {
           title,
+          value,
+          sessionId: context.call.session_id || null,
+          workstreamId: context.call.workstream_id || null,
           source: "post_call",
-          session_id: context.call.session_id || null,
-          surfaced_by_ai: false,
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      opportunity = data;
+          surfacedByAi: false,
+        }
+      );
+      opportunityId = String(created.opportunity.id);
     }
+    const { data, error } = await supabaseAdmin
+      .from("opportunities")
+      .update(patch)
+      .eq("id", opportunityId)
+      .eq("company_id", context.call.company_id)
+      .select()
+      .single();
+    if (error) throw error;
+    opportunity = data;
 
     if (nextAction && status === "open") {
       await upsertTasks(context.call.company_id, [{

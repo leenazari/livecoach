@@ -6,6 +6,7 @@ import { gatherClientContext } from "@/lib/crm-context";
 import { upsertTasks } from "@/lib/tasks";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { activeCompanyPipelineExclusion } from "@/lib/company-pipeline-exclusion";
+import { createCanonicalOpenRevenueOpportunity } from "@/lib/canonical-opportunity";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -24,7 +25,7 @@ export async function POST(
     const companyId = params.id;
     const { data: company } = await supabaseAdmin
       .from("companies")
-      .select("name, profile")
+      .select("id, name, profile, workspace_id, owner_id, visibility")
       .eq("id", companyId)
       .single();
     if (!company) {
@@ -59,7 +60,7 @@ export async function POST(
 Rules:
 - Ground EVERYTHING only in the context below. Never invent facts, names, numbers, dates or commitments. If something isn't there, leave it out.
 - Write in plain English. No markdown, no "#" headings, no "**bold**". No em-dashes or semicolons - use commas and full stops.
-- opportunities: 0-4, only genuine customer revenue deals clearly implied. Do NOT return investment, fundraising, internal product work, vendor savings, general ideas, partnerships without a buyer, or future possibilities without a current commercial conversation. Empty array if none. value is a rough number or null, never a string.
+- opportunities: 0-1. Return at most ONE active buying decision for this company-wide relationship. Combine product use cases into its detail instead of creating separate deals. Only return a genuine customer revenue deal clearly implied. Do NOT return investment, fundraising, internal product work, vendor savings, general ideas, partnerships without a buyer, or future possibilities without a current commercial conversation. Empty array if none. value is a rough number or null, never a string.
 - nextSteps: real and actionable, drawn from the open threads in the context. action must be exactly one of "email", "call", "task". If genuinely none, return an empty array.`;
 
     const userMsg = `CLIENT: ${company.name}
@@ -149,7 +150,7 @@ Return the JSON now.`;
           if (Array.isArray(parsed.opportunities)) {
             opportunities = parsed.opportunities
               .filter((o: any) => o && typeof o.title === "string" && o.title.trim())
-              .slice(0, 4)
+              .slice(0, 1)
               .map((o: any) => ({
                 title: String(o.title).trim(),
                 detail: typeof o.detail === "string" ? o.detail.trim() : "",
@@ -192,27 +193,19 @@ Return the JSON now.`;
       }))
     );
 
-    // Idempotent: replace only the context-synthesised opportunities (AI-
-    // surfaced, not tied to a specific call), leaving call-derived ones alone.
-    await supabaseAdmin
-      .from("opportunities")
-      .delete()
-      .eq("company_id", companyId)
-      .eq("surfaced_by_ai", true)
-      .is("session_id", null);
+    // Reuse the canonical active revenue opportunity. Never delete the old
+    // evidence or create one deal row per product use case.
+    let opportunityCreated = false;
     if (opportunities.length && !pipelineExclusion) {
-      await supabaseAdmin.from("opportunities").insert(
-        opportunities.map((o) => ({
-          company_id: companyId,
-          session_id: null,
-          title: o.title,
-          detail: o.detail || null,
-          value: o.value,
-          status: "open",
-          surfaced_by_ai: true,
-          opportunity_type: "revenue",
-        }))
-      );
+      const suggestion = opportunities[0];
+      const result = await createCanonicalOpenRevenueOpportunity(company as any, {
+        title: suggestion.title,
+        detail: suggestion.detail || null,
+        value: suggestion.value,
+        source: "synthesis",
+        surfacedByAi: true,
+      });
+      opportunityCreated = result.created;
     }
 
     return NextResponse.json({
@@ -220,7 +213,7 @@ Return the JSON now.`;
       brief,
       playbook,
       nextSteps,
-      opportunities: pipelineExclusion ? 0 : opportunities.length,
+      opportunities: opportunityCreated ? 1 : 0,
       pipelineExcluded: !!pipelineExclusion,
     });
   } catch (err: any) {
