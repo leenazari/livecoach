@@ -4,6 +4,7 @@ import {
   hashLinkedInInboxToken,
   loadLinkedInInboxConnectorForOwner,
 } from "@/lib/linkedin-inbox";
+import { LINKEDIN_INBOX_MAX_LOOKBACK_DAYS } from "@/lib/linkedin-inbox-contract";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
 
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
       Math.max(1, Math.trunc(Number(body.maxConversations) || 10))
     );
     const lookbackDays = Math.min(
-      30,
+      LINKEDIN_INBOX_MAX_LOOKBACK_DAYS,
       Math.max(1, Math.trunc(Number(body.lookbackDays) || 14))
     );
     const token = generateLinkedInInboxToken();

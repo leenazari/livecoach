@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import vm from "node:vm";
 import {
+  LINKEDIN_INBOX_MAX_LOOKBACK_DAYS,
   LinkedInInboxContractError,
   normaliseLinkedInProfileUrl,
   normaliseStoredLinkedInProfileUrl,
@@ -14,6 +15,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (relative) => readFile(path.join(root, relative), "utf8");
 
 const now = Date.parse("2026-08-28T18:00:00.000Z");
+assert.equal(
+  LINKEDIN_INBOX_MAX_LOOKBACK_DAYS,
+  14,
+  "The server must never import more than the previous two weeks"
+);
 assert.equal(
   normaliseLinkedInProfileUrl(
     "https://www.linkedin.com/in/Example-Person/?trk=messaging"
@@ -78,6 +84,32 @@ const batch = parseLinkedInInboxBatch(
 );
 assert.equal(batch.messages.length, 1, "Duplicate and out-of-window messages must be removed");
 assert.equal(batch.messages[0].direction, "inbound");
+
+const hardLookbackBatch = parseLinkedInInboxBatch(
+  {
+    runId: "run_20260828_two_week_cap",
+    capturedAt: "2026-08-28T18:00:00.000Z",
+    conversationCount: 1,
+    messages: [
+      {
+        direction: "inbound",
+        conversationId: "conversation-1",
+        messageId: "message-before-two-week-window",
+        senderName: "Example Person",
+        senderProfileUrl: "https://www.linkedin.com/in/example-person",
+        body: "This must remain outside the CRM.",
+        receivedAt: "2026-08-10T17:30:00.000Z",
+      },
+    ],
+  },
+  { maxConversations: 10, lookbackDays: 30 },
+  now
+);
+assert.equal(
+  hardLookbackBatch.messages.length,
+  0,
+  "Even a caller requesting 30 days must be clamped to the two-week maximum"
+);
 
 assert.throws(
   () =>
@@ -153,12 +185,23 @@ assert.deepEqual(manifest.host_permissions.sort(), [
   "https://www.livecoachcrm.com/*",
 ]);
 
-const [content, background, migration, importRoute, importer, privacy] = await Promise.all([
+const [
+  content,
+  background,
+  migration,
+  importRoute,
+  importer,
+  managementRoute,
+  twoWeekMigration,
+  privacy,
+] = await Promise.all([
   read("tools/linkedin-inbox-connector/content.js"),
   read("tools/linkedin-inbox-connector/background.js"),
   read("supabase/migrations/20260828180413_linkedin_inbox_connector.sql"),
   read("app/api/connectors/linkedin-inbox/import/route.ts"),
   read("lib/linkedin-inbox.ts"),
+  read("app/api/crm/linkedin-inbox/route.ts"),
+  read("supabase/migrations/20260828202426_linkedin_inbox_two_week_limit.sql"),
   read("app/privacy/page.tsx"),
 ]);
 assert(!content.includes("fetch("), "LinkedIn page capture must not transmit data itself");
@@ -176,6 +219,9 @@ assert(privacy.includes("optional local Chrome connector"));
 assert(!content.includes("messages: unique.slice"));
 assert(content.includes("More than 200 recent inbound messages were found"));
 assert(content.includes("storageKey: threadId"));
+assert(content.includes("Math.min(\n    14,"));
+assert(managementRoute.includes("LINKEDIN_INBOX_MAX_LOOKBACK_DAYS"));
+assert(twoWeekMigration.includes("lookback_days between 1 and 14"));
 
 const encodedTimestamp = Buffer.from(
   "1787938200000b00000-100&synthetic-message-id",

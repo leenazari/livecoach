@@ -43,6 +43,6 @@ the conversation, message, payload and lookback limits.
 - Default 10 conversations per run.
 - Maximum 200 inbound messages per request.
 - Maximum 500 new imported messages in any 24-hour period.
-- Default 14-day message lookback.
+- Maximum 14-day message lookback. Messages before that window are never imported.
 - Maximum 512 KiB request body.
 - Minimum 20 seconds between sync requests.
