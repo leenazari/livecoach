@@ -3,6 +3,7 @@ import "server-only";
 import { getRequestScope, isVerifiedServiceRequest } from "@/lib/request-scope";
 import { getServiceRecordScope } from "@/lib/service-scope";
 import { supabaseService } from "@/lib/supabase";
+import { microsoftUtcDateTime } from "@/lib/calendar-create";
 import {
   freshReplyOnly,
   type GmailInboxDelta,
@@ -363,6 +364,61 @@ const meetingUrlFromMicrosoftEvent = (event: any): string | null => {
   );
   return match?.[0] || null;
 };
+
+export type MicrosoftCalendarEventInput = {
+  requestId: string;
+  title: string;
+  startIso: string;
+  endIso: string;
+  attendeeEmails: string[];
+  meetingUrl: string | null;
+};
+
+export async function createMicrosoftCalendarEvent(
+  input: MicrosoftCalendarEventInput,
+  ownerId?: string
+): Promise<any> {
+  const response = await graphFetch(
+    "/me/calendar/events",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject: input.title,
+        start: {
+          dateTime: microsoftUtcDateTime(input.startIso),
+          timeZone: "UTC",
+        },
+        end: {
+          dateTime: microsoftUtcDateTime(input.endIso),
+          timeZone: "UTC",
+        },
+        attendees: input.attendeeEmails.map((email) => ({
+          emailAddress: { address: email, name: email },
+          type: "required",
+        })),
+        ...(input.meetingUrl
+          ? {
+              location: { displayName: input.meetingUrl },
+              body: {
+                contentType: "text",
+                content: `Join the meeting\n${input.meetingUrl}`,
+              },
+            }
+          : {}),
+        allowNewTimeProposals: true,
+        transactionId: input.requestId,
+      }),
+    },
+    ownerId
+  );
+  if (!response?.ok) {
+    throw new Error(
+      `Microsoft calendar event creation failed (${response?.status || 0})`
+    );
+  }
+  return response.json();
+}
 
 async function listCalendarEvents(
   calendarId: string | null,

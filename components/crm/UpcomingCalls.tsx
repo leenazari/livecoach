@@ -8,6 +8,7 @@ import { openAndArmCallLaunch } from "@/lib/call-launch";
 import { validMeetingUrl } from "@/lib/meeting-url";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
+import { CALENDAR_DURATION_OPTIONS } from "@/lib/calendar-create";
 
 type Upcoming = {
   id: string;
@@ -41,6 +42,24 @@ const fmtWhen = (iso: string | null) => {
   }
 };
 
+const newCalendarRequestId = () => {
+  const browserCrypto = globalThis.crypto;
+  if (!browserCrypto) {
+    throw new Error("Secure event creation is not available in this browser");
+  }
+  if (typeof browserCrypto.randomUUID === "function") {
+    return browserCrypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  browserCrypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex
+    .slice(6, 8)
+    .join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+};
+
 export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   const router = useRouter();
   const cached = getCached<UpcomingFeed>("/api/crm/upcoming");
@@ -55,6 +74,7 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   const [showAll, setShowAll] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
   const [restoringId, setRestoringId] = useState("");
+  const [saving, setSaving] = useState(false);
 
   // add-form state
   const [title, setTitle] = useState("");
@@ -64,6 +84,10 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   const [when, setWhen] = useState("");
   const [url, setUrl] = useState("");
   const [intent, setIntent] = useState("");
+  const [attendeeEmails, setAttendeeEmails] = useState("");
+  const [durationMinutes, setDurationMinutes] = useState("30");
+  const [addToCalendar, setAddToCalendar] = useState(true);
+  const [requestId, setRequestId] = useState("");
 
   const load = () =>
     crmFetch<UpcomingFeed>("/api/crm/upcoming")
@@ -132,8 +156,26 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
 
   const create = async () => {
     if (!title.trim() && !company) return;
+    if (addToCalendar && !when) {
+      setSyncMsg("choose a date and time for the calendar event");
+      return;
+    }
+    let stableRequestId = requestId;
     try {
-      await crmFetch("/api/crm/upcoming", {
+      stableRequestId ||= newCalendarRequestId();
+    } catch (error: any) {
+      setSyncMsg(error?.message || "Secure event creation is unavailable");
+      return;
+    }
+    if (!requestId) setRequestId(stableRequestId);
+    setSaving(true);
+    setSyncMsg("");
+    try {
+      const result = await crmFetch<{
+        provider?: "google" | "microsoft" | null;
+        calendarCreated?: boolean;
+        invitesSent?: number;
+      }>("/api/crm/upcoming", {
         method: "POST",
         body: JSON.stringify({
           title: title.trim(),
@@ -141,19 +183,39 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
           scheduledAt: when ? new Date(when).toISOString() : null,
           meetingUrl: url.trim(),
           intent: intent.trim(),
+          attendeeEmails,
+          durationMinutes: Number(durationMinutes),
+          addToCalendar,
+          requestId: stableRequestId,
         }),
       });
+      if (result.calendarCreated && result.provider) {
+        const provider = result.provider === "google" ? "Google" : "Microsoft";
+        const invites = result.invitesSent
+          ? ` ${result.invitesSent} guest invite${result.invitesSent === 1 ? "" : "s"} sent.`
+          : "";
+        setSyncMsg(`added to ${provider} Calendar and LiveCoach.${invites}`);
+      } else {
+        setSyncMsg("saved in LiveCoach only");
+      }
     } catch (e: any) {
       setSyncMsg(e?.message || "Call did not save. Please try again.");
       return;
+    } finally {
+      setSaving(false);
     }
     setTitle("");
     setCompany(null);
     setWhen("");
     setUrl("");
     setIntent("");
+    setAttendeeEmails("");
+    setDurationMinutes("30");
+    setAddToCalendar(true);
+    setRequestId("");
     setAdding(false);
-    load();
+    await load();
+    window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
   };
 
   const patch = async (id: string, body: any) => {
@@ -358,10 +420,16 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
           </button>
           <button
             type="button"
-            onClick={() => setAdding((v) => !v)}
+            onClick={() => {
+              setAdding((value) => {
+                const next = !value;
+                if (next && !requestId) setRequestId(newCalendarRequestId());
+                return next;
+              });
+            }}
             className="rounded-full border border-edge px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
           >
-            {adding ? "close" : "+ schedule"}
+            {adding ? "close" : "+ create event"}
           </button>
           {recentlyCompleted.length > 0 && (
             <button
@@ -419,28 +487,79 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
 
       {adding && (
         <div className="mb-3 flex flex-col gap-2 rounded-lg border border-amber/30 bg-amber/[0.04] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-edge bg-ink/35 p-3">
+            <div className="min-w-[12rem] flex-1">
+              <p className="font-mono text-[0.58rem] uppercase tracking-wider text-bone">
+                {addToCalendar ? "Calendar + LiveCoach" : "LiveCoach only"}
+              </p>
+              <p className="mt-1 font-mono text-[0.52rem] leading-relaxed text-muted">
+                {addToCalendar
+                  ? "Creates one event in your connected Google or Microsoft calendar. Guest emails below receive the invitation."
+                  : "Creates a private CRM reminder without changing your calendar or emailing guests."}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={addToCalendar}
+              onClick={() => setAddToCalendar((value) => !value)}
+              className={`rounded-full border px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider transition ${
+                addToCalendar
+                  ? "border-sage/60 bg-sage/15 text-sage"
+                  : "border-edge text-muted hover:border-amber/50 hover:text-amber"
+              }`}
+            >
+              {addToCalendar ? "calendar on" : "calendar off"}
+            </button>
+          </div>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Call title, e.g. Onboarding sync"
+            placeholder="Event title, e.g. Interviewa demo"
             className={inputCls}
           />
           <div className="flex flex-wrap items-center gap-2">
             <CompanyLinkPicker value={company} onChange={setCompany} />
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
             <input
               type="datetime-local"
               value={when}
               onChange={(e) => setWhen(e.target.value)}
               className={inputCls}
             />
+            <select
+              value={durationMinutes}
+              onChange={(e) => setDurationMinutes(e.target.value)}
+              className={inputCls}
+              aria-label="Event duration"
+            >
+              {CALENDAR_DURATION_OPTIONS.map((minutes) => (
+                <option key={minutes} value={minutes}>
+                  {minutes < 60
+                    ? `${minutes} minutes`
+                    : `${minutes / 60} hour${minutes === 60 ? "" : "s"}`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <input
+            value={attendeeEmails}
+            onChange={(e) => setAttendeeEmails(e.target.value)}
+            placeholder="Guest emails, separated by commas"
+            inputMode="email"
+            className={inputCls}
+          />
+          <div className="grid gap-2 sm:grid-cols-2">
             <input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="Meet / Teams / Zoom link (optional)"
               className={inputCls}
             />
+            <p className="self-center font-mono text-[0.52rem] leading-relaxed text-muted">
+              The call intent stays private in LiveCoach. It is never included in the guest invitation.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <span className="font-mono text-[0.54rem] uppercase tracking-wider text-muted">
@@ -464,10 +583,18 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
           <button
             type="button"
             onClick={create}
-            disabled={!title.trim() && !company}
+            disabled={
+              saving ||
+              (!title.trim() && !company) ||
+              (addToCalendar && !when)
+            }
             className="self-start rounded-full border border-amber/60 bg-amber/15 px-4 py-1.5 font-mono text-[0.6rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
           >
-            schedule call
+            {saving
+              ? "creating…"
+              : addToCalendar
+                ? "create calendar event"
+                : "save CRM reminder"}
           </button>
         </div>
       )}
@@ -475,7 +602,8 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
       {calls.length === 0 ? (
         <p className="font-mono text-[0.62rem] leading-relaxed text-muted">
           Nothing scheduled. Add an upcoming call to prep it in advance and jump
-          straight in when it's time. (Google Calendar sync comes next.)
+          straight in when it's time. Calendar events created here stay linked to
+          the same private CRM record.
         </p>
       ) : (
         <>

@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import {
+  calendarDurationMinutes,
+  parseCalendarAttendees,
+  validCalendarRequestId,
+} from "@/lib/calendar-create";
+import { createConnectedCalendarEvent } from "@/lib/calendar-provider";
+import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
+import { validMeetingUrl } from "@/lib/meeting-url";
 
 export const runtime = "nodejs";
 // Keep this a dynamic function: a no-arg GET would otherwise be statically
@@ -76,45 +84,182 @@ export async function GET() {
   }
 }
 
-// POST /api/crm/upcoming -> schedule a new call.
+// POST /api/crm/upcoming -> schedule a new call. When addToCalendar is true,
+// create the real event first and store its canonical provider identity on the
+// same private upcoming_calls row. A browser retry reuses requestId, so Google
+// and Microsoft can suppress duplicate events.
 export async function POST(req: NextRequest) {
   try {
+    const scope = await resolveRecordScope();
     const body = await req.json();
     const title = typeof body.title === "string" ? body.title.trim() : "";
-    if (!title && !body.companyId) {
+    const companyId =
+      typeof body.companyId === "string" && body.companyId.trim()
+        ? body.companyId.trim()
+        : null;
+    if (!title && !companyId) {
       return NextResponse.json(
         { error: "give the call a title or a client" },
         { status: 400 }
       );
     }
+
+    let companyName = "";
+    if (companyId) {
+      const { data: company, error: companyError } = await supabaseAdmin
+        .from("companies")
+        .select("id,name")
+        .eq("id", companyId)
+        .maybeSingle();
+      if (companyError) throw companyError;
+      if (!company?.id) {
+        return NextResponse.json(
+          { error: "That client is not available to this account" },
+          { status: 400 }
+        );
+      }
+      companyName = String(company.name || "").trim();
+    }
+
+    const addToCalendar = body.addToCalendar === true;
+    const requestId = typeof body.requestId === "string" ? body.requestId : "";
+    if (addToCalendar && !validCalendarRequestId(requestId)) {
+      return NextResponse.json(
+        { error: "Refresh the form and try creating the calendar event again" },
+        { status: 400 }
+      );
+    }
+
+    const scheduledAt =
+      typeof body.scheduledAt === "string" && body.scheduledAt
+        ? new Date(body.scheduledAt)
+        : null;
+    if (scheduledAt && Number.isNaN(scheduledAt.getTime())) {
+      return NextResponse.json(
+        { error: "Choose a valid date and time" },
+        { status: 400 }
+      );
+    }
+    if (addToCalendar && !scheduledAt) {
+      return NextResponse.json(
+        { error: "Choose a date and time before adding this to your calendar" },
+        { status: 400 }
+      );
+    }
+
+    const meetingUrl =
+      typeof body.meetingUrl === "string" ? body.meetingUrl.trim() : "";
+    if (meetingUrl && !validMeetingUrl(meetingUrl)) {
+      return NextResponse.json(
+        { error: "Use a valid Meet, Teams, Zoom or supported meeting link" },
+        { status: 400 }
+      );
+    }
+
+    const attendeeResult = parseCalendarAttendees(body.attendeeEmails);
+    if (attendeeResult.invalid.length) {
+      return NextResponse.json(
+        {
+          error: `Check these guest emails: ${attendeeResult.invalid
+            .slice(0, 3)
+            .join(", ")}`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const eventTitle = title || `Call with ${companyName || "client"}`;
+    const durationMinutes = calendarDurationMinutes(body.durationMinutes);
+    const startIso = scheduledAt?.toISOString() || null;
+    const endIso = startIso
+      ? new Date(new Date(startIso).getTime() + durationMinutes * 60_000).toISOString()
+      : null;
+    const calendarEvent =
+      addToCalendar && startIso && endIso
+        ? await createConnectedCalendarEvent({
+            requestId,
+            title: eventTitle,
+            startIso,
+            endIso,
+            attendeeEmails: attendeeResult.emails,
+            meetingUrl: meetingUrl || null,
+          })
+        : null;
+
     const { data, error } = await supabaseAdmin
       .from("upcoming_calls")
       .insert({
-        company_id:
-          typeof body.companyId === "string" && body.companyId
-            ? body.companyId
-            : null,
-        title: title || null,
-        scheduled_at: body.scheduledAt || null,
-        meeting_url:
-          typeof body.meetingUrl === "string" && body.meetingUrl.trim()
-            ? body.meetingUrl.trim()
-            : null,
+        ...privateRecordFields(scope),
+        company_id: companyId,
+        title: eventTitle,
+        scheduled_at: calendarEvent?.scheduledAt || startIso,
+        meeting_url: calendarEvent?.meetingUrl || meetingUrl || null,
         intent:
           typeof body.intent === "string" && body.intent.trim()
             ? body.intent.trim()
             : null,
         prepped: false,
-        source: "manual",
+        source: calendarEvent?.provider || "manual",
+        external_id: calendarEvent?.externalId || null,
+        attendees: calendarEvent?.attendees || attendeeResult.emails.map((email) => ({
+          email,
+          displayName: email,
+          self: false,
+          responseStatus: "needsAction",
+        })),
       })
-      .select("id")
+      .select(
+        "id,company_id,title,scheduled_at,meeting_url,intent,prepped,source,external_id,attendees"
+      )
       .single();
-    if (error) throw error;
-    return NextResponse.json({ ok: true, id: data?.id });
+    if (error) {
+      if (calendarEvent?.externalId) {
+        const { data: existing } = await supabaseAdmin
+          .from("upcoming_calls")
+          .select(
+            "id,company_id,title,scheduled_at,meeting_url,intent,prepped,source,external_id,attendees"
+          )
+          .eq("owner_id", scope.userId)
+          .eq("external_id", calendarEvent.externalId)
+          .maybeSingle();
+        if (existing?.id) {
+          return NextResponse.json({
+            ok: true,
+            id: existing.id,
+            call: existing,
+            provider: calendarEvent.provider,
+            calendarCreated: true,
+            invitesSent: attendeeResult.emails.length,
+            reused: true,
+          });
+        }
+        return NextResponse.json(
+          {
+            error:
+              "The calendar event was created, but LiveCoach could not save its CRM record. Press Sync to recover it.",
+            calendarCreated: true,
+            provider: calendarEvent.provider,
+          },
+          { status: 502 }
+        );
+      }
+      throw error;
+    }
+    return NextResponse.json({
+      ok: true,
+      id: data?.id,
+      call: data,
+      provider: calendarEvent?.provider || null,
+      calendarCreated: !!calendarEvent,
+      invitesSent: calendarEvent ? attendeeResult.emails.length : 0,
+      reused: false,
+    });
   } catch (err: any) {
+    const message = err?.message || "failed to schedule the call";
+    const reconnectOrInput = /connect|reconnect|valid|calendar request/i.test(message);
     return NextResponse.json(
-      { error: err?.message || "failed to schedule the call" },
-      { status: 500 }
+      { error: message },
+      { status: reconnectOrInput ? 400 : 500 }
     );
   }
 }

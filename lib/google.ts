@@ -1,6 +1,7 @@
 import { getRequestScope, isVerifiedServiceRequest } from "@/lib/request-scope";
 import { getServiceRecordScope } from "@/lib/service-scope";
 import { supabaseService } from "@/lib/supabase";
+import { googleEventIdForRequest } from "@/lib/calendar-create";
 
 // In-app Google Calendar connection. The deployed app reads/writes the user's
 // real calendar using OAuth tokens stored in a private, per-user google_oauth
@@ -298,6 +299,70 @@ export async function listEvents(
   if (!res.ok) throw new Error(`calendar list failed (${res.status})`);
   const d = await res.json();
   return Array.isArray(d.items) ? d.items : [];
+}
+
+export type GoogleCalendarEventInput = {
+  requestId: string;
+  title: string;
+  startIso: string;
+  endIso: string;
+  attendeeEmails: string[];
+  meetingUrl: string | null;
+};
+
+export async function createGoogleCalendarEvent(
+  accessToken: string,
+  input: GoogleCalendarEventInput
+): Promise<any> {
+  const eventId = googleEventIdForRequest(input.requestId);
+  const query = new URLSearchParams();
+  if (input.attendeeEmails.length) query.set("sendUpdates", "all");
+  const endpoint = `https://www.googleapis.com/calendar/v3/calendars/primary/events${
+    query.size ? `?${query.toString()}` : ""
+  }`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      id: eventId,
+      summary: input.title,
+      start: { dateTime: input.startIso },
+      end: { dateTime: input.endIso },
+      attendees: input.attendeeEmails.map((email) => ({ email })),
+      ...(input.meetingUrl ? { location: input.meetingUrl } : {}),
+      extendedProperties: {
+        private: { livecoachRequestId: input.requestId },
+      },
+    }),
+    cache: "no-store",
+  });
+
+  // The caller supplies a deterministic ID. If the browser retries after the
+  // first response was lost, Google returns 409. Read that exact event rather
+  // than creating a duplicate or telling the user nothing happened.
+  if (response.status === 409) {
+    const existing = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(
+        eventId
+      )}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      }
+    );
+    if (existing.ok) return existing.json();
+  }
+  if (!response.ok) {
+    const error = new Error(
+      `Google calendar event creation failed (${response.status})`
+    ) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
 }
 
 // The calendars this account can see (its calendar list). Used to read events

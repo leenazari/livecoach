@@ -55,6 +55,7 @@
     "validate:campaign-sequence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-campaign-sequence-builder.mjs",
     "validate:native-outreach-sequence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-native-outreach-sequence.mjs",
     "validate:calendar-primary-attendee": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-calendar-primary-attendee.mjs",
+    "validate:calendar-event-create": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-crm-calendar-event-create.mjs",
     "validate:google-calendar-list": "node scripts/validate-google-calendar-list-sync.mjs",
     "validate:account-readiness": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-account-readiness.mjs",
     "validate:password-reset": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-password-reset.mjs",
