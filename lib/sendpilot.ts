@@ -15,6 +15,7 @@ import {
   SENDPILOT_BACKFILL_MAX_CONVERSATIONS,
   sendPilotMessageFingerprint,
   type SendPilotReplyEvent,
+  type SendPilotWebhookEvent,
 } from "@/lib/sendpilot-contract";
 import {
   decryptSendPilotCredential,
@@ -154,6 +155,9 @@ export async function sendPilotIntegrationStatus(scope: OwnerScope) {
       importedMessageCount: 0,
       reviewCount: 0,
       lookbackDays: SENDPILOT_BACKFILL_DAYS,
+      mappedCampaignCount: 0,
+      activeLeadCount: 0,
+      outboundReady: false,
     };
   }
   const baseQuery = () => supabaseService
@@ -162,13 +166,40 @@ export async function sendPilotIntegrationStatus(scope: OwnerScope) {
     .eq("workspace_id", scope.workspaceId)
     .eq("owner_id", scope.userId)
     .contains("metadata", { provider: "sendpilot" });
-  const [{ count: importedMessageCount, error: countError }, reviewResult] =
+  const [
+    { count: importedMessageCount, error: countError },
+    reviewResult,
+    mappingResult,
+    activeLeadResult,
+  ] =
     await Promise.all([
       baseQuery(),
       baseQuery().eq("status", "review"),
+      supabaseService
+        .from("sendpilot_campaign_links")
+        .select("id", { count: "exact", head: true })
+        .eq("integration_id", integration.id)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("active", true),
+      supabaseService
+        .from("sendpilot_lead_links")
+        .select("id", { count: "exact", head: true })
+        .eq("integration_id", integration.id)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .in("sync_status", [
+          "submitting",
+          "pending_confirmation",
+          "queued",
+          "active",
+          "replied",
+        ]),
     ]);
   if (countError) throw countError;
   if (reviewResult.error) throw reviewResult.error;
+  if (mappingResult.error) throw mappingResult.error;
+  if (activeLeadResult.error) throw activeLeadResult.error;
   const connected = integration.status === "active" && !!integration.api_key_ciphertext;
   return {
     configured: isSendPilotCredentialEncryptionConfigured(),
@@ -186,6 +217,12 @@ export async function sendPilotIntegrationStatus(scope: OwnerScope) {
     importedMessageCount: importedMessageCount || 0,
     reviewCount: reviewResult.count || 0,
     lookbackDays: SENDPILOT_BACKFILL_DAYS,
+    mappedCampaignCount: mappingResult.count || 0,
+    activeLeadCount: activeLeadResult.count || 0,
+    outboundReady:
+      connected &&
+      !!integration.webhook_secret_ciphertext &&
+      (mappingResult.count || 0) > 0,
   };
 }
 
@@ -319,20 +356,29 @@ export async function disconnectSendPilot(scope: OwnerScope) {
   const integration = await loadSendPilotIntegrationForOwner(scope);
   if (!integration || integration.status === "disconnected") return;
   const now = new Date().toISOString();
-  const { error } = await supabaseService
-    .from("sendpilot_integrations")
-    .update({
-      status: "disconnected",
-      api_key_ciphertext: null,
-      api_key_last_four: null,
-      webhook_secret_ciphertext: null,
-      disconnected_at: now,
-      updated_at: now,
-    })
-    .eq("id", integration.id)
-    .eq("workspace_id", scope.workspaceId)
-    .eq("owner_id", scope.userId);
-  if (error) throw error;
+  const [integrationUpdate, mappingUpdate] = await Promise.all([
+    supabaseService
+      .from("sendpilot_integrations")
+      .update({
+        status: "disconnected",
+        api_key_ciphertext: null,
+        api_key_last_four: null,
+        webhook_secret_ciphertext: null,
+        disconnected_at: now,
+        updated_at: now,
+      })
+      .eq("id", integration.id)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId),
+    supabaseService
+      .from("sendpilot_campaign_links")
+      .update({ active: false, updated_at: now })
+      .eq("integration_id", integration.id)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId),
+  ]);
+  if (integrationUpdate.error) throw integrationUpdate.error;
+  if (mappingUpdate.error) throw mappingUpdate.error;
   await writeSendPilotAudit(scope, {
     action: "sendpilot_integration_disconnected",
     targetId: integration.id,
@@ -476,6 +522,10 @@ export async function runSendPilotBackfill(
       } while (true);
     }
 
+    incoming.sort(
+      (left, right) =>
+        new Date(left.receivedAt).getTime() - new Date(right.receivedAt).getTime()
+    );
     const total: LinkedInInboxImportResult = {
       runId: batchRunId("sendpilot_backfill"),
       accepted: 0,
@@ -513,6 +563,27 @@ export async function runSendPilotBackfill(
       total.linked += result.linked;
       total.review += result.review;
       total.contactsCreated += result.contactsCreated;
+      const providerMessageIds = chunk.map((message) => message.messageId);
+      const { data: linkedMessages, error: linkedMessagesError } = await supabaseService
+        .from("linkedin_inbox_messages")
+        .select("id,provider_message_id")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .in("provider_message_id", providerMessageIds);
+      if (linkedMessagesError) throw linkedMessagesError;
+      const inboxMessageByProviderId = new Map(
+        (linkedMessages || []).map((message: any) => [message.provider_message_id, message.id])
+      );
+      const { recordSendPilotBackfillReplyInCrm } = await import(
+        "@/lib/sendpilot-outreach"
+      );
+      for (const message of chunk) {
+        await recordSendPilotBackfillReplyInCrm(
+          integration,
+          message,
+          inboxMessageByProviderId.get(message.messageId) || null
+        );
+      }
     }
 
     const completedAt = new Date().toISOString();
@@ -608,13 +679,16 @@ async function knownLinkedInName(
   return names.length === 1 ? names[0] : null;
 }
 
-export async function processSendPilotReplyEvent(
+export async function processSendPilotWebhookEvent(
   integration: SendPilotIntegrationRow,
   receiptId: string,
-  event: SendPilotReplyEvent
+  event: SendPilotWebhookEvent
 ): Promise<void> {
   try {
-    if (event.data.senderId !== integration.sender_id) {
+    if (
+      event.eventType !== "lead.updated" &&
+      event.data.senderId !== integration.sender_id
+    ) {
       await finishWebhookReceipt(receiptId, integration, {
         status: "ignored",
         error: "The event belongs to a different LinkedIn sender",
@@ -622,65 +696,107 @@ export async function processSendPilotReplyEvent(
       return;
     }
     const profileUrl = normaliseLinkedInProfileUrl(event.data.linkedinUrl);
-    if (!profileUrl) throw new Error("SendPilot reply has an invalid LinkedIn identity");
-    const apiKey = decryptSendPilotApiKey(integration);
-    let senderName = "";
-    try {
-      const lead = await getSendPilotLead(apiKey, event.data.leadId);
-      const leadUrl = normaliseLinkedInProfileUrl(lead.linkedinUrl);
-      if (leadUrl === profileUrl) {
-        senderName = [lead.firstName, lead.lastName].filter(Boolean).join(" ").trim();
+    if (!profileUrl) throw new Error("SendPilot event has an invalid LinkedIn identity");
+    let linkedInboxMessageId: string | null = null;
+    let leadLinkId: string | null = null;
+    let outreachEventId: string | null = null;
+
+    if (event.eventType === "reply.received") {
+      const apiKey = decryptSendPilotApiKey(integration);
+      let senderName = "";
+      try {
+        const lead = await getSendPilotLead(apiKey, event.data.leadId);
+        const leadUrl = normaliseLinkedInProfileUrl(lead.linkedinUrl);
+        if (leadUrl === profileUrl) {
+          senderName = [lead.firstName, lead.lastName]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+        }
+      } catch (error) {
+        if (!(error instanceof SendPilotApiError)) throw error;
       }
-    } catch (error) {
-      if (!(error instanceof SendPilotApiError)) throw error;
+      if (!senderName) {
+        senderName = (await knownLinkedInName(integration, profileUrl)) || "";
+      }
+      const receivedAt = event.timestamp;
+      const messageId = sendPilotMessageFingerprint({
+        senderProfileUrl: profileUrl,
+        receivedAt,
+        body: event.data.reply,
+      });
+      const result = await importLinkedInInboxBatchForScope(
+        {
+          workspaceId: integration.workspace_id,
+          ownerId: integration.owner_id,
+          connectorId: null,
+          maxConversations: 1,
+          lookbackDays: SENDPILOT_BACKFILL_DAYS,
+          source: "sendpilot_webhook",
+          provider: "sendpilot",
+          contactSource: "sendpilot_inbox",
+          createContactWhenUnmatched: !!senderName,
+        },
+        {
+          runId: `sendpilot_${event.eventId.replace(/[^a-z0-9_-]/gi, "_")}`.slice(0, 120),
+          capturedAt: new Date().toISOString(),
+          conversationCount: 1,
+          messages: [{
+            direction: "inbound",
+            conversationId: `sendpilot:${event.data.senderId}:${event.data.leadId}`,
+            messageId,
+            senderName: senderName || "LinkedIn contact",
+            senderProfileUrl: profileUrl,
+            body: event.data.reply,
+            receivedAt,
+          }],
+        }
+      );
+      const { data: message, error: messageError } = await supabaseService
+        .from("linkedin_inbox_messages")
+        .select("id")
+        .eq("workspace_id", integration.workspace_id)
+        .eq("owner_id", integration.owner_id)
+        .eq("provider_message_id", messageId)
+        .maybeSingle();
+      if (messageError) throw messageError;
+      linkedInboxMessageId = message?.id || null;
+      if (result.accepted) {
+        const { recordSendPilotReplyInCrm } = await import(
+          "@/lib/sendpilot-outreach"
+        );
+        const crm = await recordSendPilotReplyInCrm(
+          integration,
+          event,
+          linkedInboxMessageId,
+          messageId
+        );
+        leadLinkId = crm.leadLinkId;
+        outreachEventId = crm.outreachEventId;
+      }
+      await finishWebhookReceipt(receiptId, integration, {
+        status: result.accepted ? "processed" : "ignored",
+        linkedInboxMessageId,
+        sendPilotLeadLinkId: leadLinkId,
+        linkedOutreachEventId: outreachEventId,
+        error: result.accepted ? null : "The reply is outside the 14-day import window",
+      });
+    } else {
+      const { recordSendPilotOperationalEvent } = await import(
+        "@/lib/sendpilot-outreach"
+      );
+      const crm = await recordSendPilotOperationalEvent(integration, event);
+      leadLinkId = crm.leadLinkId;
+      outreachEventId = crm.outreachEventId;
+      await finishWebhookReceipt(receiptId, integration, {
+        status: leadLinkId ? "processed" : "ignored",
+        sendPilotLeadLinkId: leadLinkId,
+        linkedOutreachEventId: outreachEventId,
+        error: leadLinkId
+          ? null
+          : "The event could not be matched to this salesperson's CRM lead",
+      });
     }
-    if (!senderName) senderName = (await knownLinkedInName(integration, profileUrl)) || "";
-    const receivedAt = event.timestamp;
-    const messageId = sendPilotMessageFingerprint({
-      senderProfileUrl: profileUrl,
-      receivedAt,
-      body: event.data.reply,
-    });
-    const result = await importLinkedInInboxBatchForScope(
-      {
-        workspaceId: integration.workspace_id,
-        ownerId: integration.owner_id,
-        connectorId: null,
-        maxConversations: 1,
-        lookbackDays: SENDPILOT_BACKFILL_DAYS,
-        source: "sendpilot_webhook",
-        provider: "sendpilot",
-        contactSource: "sendpilot_inbox",
-        createContactWhenUnmatched: !!senderName,
-      },
-      {
-        runId: `sendpilot_${event.eventId.replace(/[^a-z0-9_-]/gi, "_")}`.slice(0, 120),
-        capturedAt: new Date().toISOString(),
-        conversationCount: 1,
-        messages: [{
-          direction: "inbound",
-          conversationId: `sendpilot:${event.data.senderId}:${event.data.leadId}`,
-          messageId,
-          senderName: senderName || "LinkedIn contact",
-          senderProfileUrl: profileUrl,
-          body: event.data.reply,
-          receivedAt,
-        }],
-      }
-    );
-    const { data: message, error: messageError } = await supabaseService
-      .from("linkedin_inbox_messages")
-      .select("id")
-      .eq("workspace_id", integration.workspace_id)
-      .eq("owner_id", integration.owner_id)
-      .eq("provider_message_id", messageId)
-      .maybeSingle();
-    if (messageError) throw messageError;
-    await finishWebhookReceipt(receiptId, integration, {
-      status: result.accepted ? "processed" : "ignored",
-      linkedInboxMessageId: message?.id || null,
-      error: result.accepted ? null : "The reply is outside the 14-day import window",
-    });
     const now = new Date().toISOString();
     await supabaseService
       .from("sendpilot_integrations")
@@ -702,6 +818,14 @@ export async function processSendPilotReplyEvent(
       .eq("owner_id", integration.owner_id);
     console.error("SendPilot webhook processing failed", message);
   }
+}
+
+export async function processSendPilotReplyEvent(
+  integration: SendPilotIntegrationRow,
+  receiptId: string,
+  event: SendPilotReplyEvent
+): Promise<void> {
+  return processSendPilotWebhookEvent(integration, receiptId, event);
 }
 
 export async function bindSendPilotWorkspace(
@@ -731,7 +855,7 @@ export async function bindSendPilotWorkspace(
 
 export async function createSendPilotWebhookReceipt(
   integration: SendPilotIntegrationRow,
-  event: SendPilotReplyEvent,
+  event: SendPilotWebhookEvent,
   rawBody: string
 ): Promise<{ id: string | null; duplicate: boolean }> {
   const payloadDigest = createHash("sha256").update(rawBody).digest("hex");
@@ -786,6 +910,8 @@ async function finishWebhookReceipt(
   input: {
     status: "processed" | "ignored" | "failed";
     linkedInboxMessageId?: string | null;
+    sendPilotLeadLinkId?: string | null;
+    linkedOutreachEventId?: string | null;
     error?: string | null;
   }
 ) {
@@ -795,6 +921,8 @@ async function finishWebhookReceipt(
     .update({
       status: input.status,
       linked_inbox_message_id: input.linkedInboxMessageId || null,
+      sendpilot_lead_link_id: input.sendPilotLeadLinkId || null,
+      linked_outreach_event_id: input.linkedOutreachEventId || null,
       error: input.error || null,
       processed_at: now,
       updated_at: now,

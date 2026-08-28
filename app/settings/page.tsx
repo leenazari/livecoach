@@ -65,6 +65,38 @@ type SendPilotStatus = {
   importedMessageCount: number;
   reviewCount: number;
   lookbackDays: number;
+  mappedCampaignCount: number;
+  activeLeadCount: number;
+  outboundReady: boolean;
+};
+
+type SendPilotCampaignConfiguration = {
+  connected: boolean;
+  webhookConfigured: boolean;
+  campaigns: Array<{
+    id: string;
+    name: string;
+    status: "started" | "paused" | "draft" | "finished";
+    totalLeads: number;
+    connectionsSent: number;
+    messagesSent: number;
+    repliesReceived: number;
+  }>;
+  livecoachCampaigns: Array<{
+    id: string;
+    name: string;
+    status: string;
+    approval_mode: boolean;
+    daily_limit: number;
+  }>;
+  mappings: Array<{
+    id: string;
+    livecoach_campaign_id: string;
+    sendpilot_campaign_id: string;
+    sendpilot_campaign_name: string;
+    sendpilot_campaign_status: string;
+    active: boolean;
+  }>;
 };
 
 function gmailIssueCopy(issue?: GmailIssue): string {
@@ -145,6 +177,9 @@ export default function SettingsPage() {
   const [linkedinInboxNote, setLinkedinInboxNote] = useState("");
   const [linkedinInboxError, setLinkedinInboxError] = useState("");
   const [sendPilot, setSendPilot] = useState<SendPilotStatus | null>(null);
+  const [sendPilotCampaigns, setSendPilotCampaigns] =
+    useState<SendPilotCampaignConfiguration | null>(null);
+  const [sendPilotMappingBusy, setSendPilotMappingBusy] = useState("");
   const [sendPilotLoaded, setSendPilotLoaded] = useState(false);
   const [sendPilotApiKey, setSendPilotApiKey] = useState("");
   const [sendPilotWebhookSecret, setSendPilotWebhookSecret] = useState("");
@@ -201,6 +236,9 @@ export default function SettingsPage() {
       .then((d) => setSendPilot(d))
       .catch(() => setSendPilot(null))
       .finally(() => setSendPilotLoaded(true));
+    crmFetch<SendPilotCampaignConfiguration>("/api/crm/sendpilot/campaigns")
+      .then((d) => setSendPilotCampaigns(d))
+      .catch(() => setSendPilotCampaigns(null));
     if (typeof window !== "undefined") {
       const g = new URLSearchParams(window.location.search).get("google");
       if (g === "connected") setGcalNote("Google Calendar connected.");
@@ -480,8 +518,12 @@ export default function SettingsPage() {
       }
       setSendPilot(result);
       setSendPilotApiKey("");
+      const configuration = await crmFetch<SendPilotCampaignConfiguration>(
+        "/api/crm/sendpilot/campaigns"
+      );
+      setSendPilotCampaigns(configuration);
       setSendPilotNote(
-        "SendPilot connected. Add its reply webhook below, then run the one-time 14-day import."
+        "SendPilot connected. Add its CRM event webhook below, then map the campaigns this salesperson is allowed to use."
       );
     } catch (error: any) {
       setSendPilotError(error?.message || "SendPilot could not be connected.");
@@ -514,7 +556,7 @@ export default function SettingsPage() {
       setSendPilot(result);
       setSendPilotWebhookSecret("");
       setSendPilotNote(
-        "Automatic inbound reply capture is ready. LiveCoach still cannot send through SendPilot."
+        "Automatic SendPilot activity and reply capture is ready. Map a running campaign below before handing over approved leads."
       );
     } catch (error: any) {
       setSendPilotError(
@@ -583,13 +625,66 @@ export default function SettingsPage() {
         throw new Error("The server did not confirm the disconnect");
       }
       setSendPilot(result);
+      setSendPilotCampaigns(null);
       setSendPilotNote(
-        "SendPilot disconnected. Existing contacts and inbound messages remain in the CRM."
+        "SendPilot disconnected. Existing CRM contacts, replies and activity history remain available."
       );
     } catch (error: any) {
       setSendPilotError(error?.message || "SendPilot could not be disconnected.");
     } finally {
       setSendPilotBusy(null);
+    }
+  };
+
+  const saveSendPilotCampaignLink = async (
+    livecoachCampaignId: string,
+    sendpilotCampaignId: string
+  ) => {
+    setSendPilotMappingBusy(livecoachCampaignId);
+    setSendPilotError("");
+    setSendPilotNote("");
+    try {
+      const result = await crmFetch<{
+        ok: boolean;
+        configuration: SendPilotCampaignConfiguration;
+      }>("/api/crm/sendpilot/campaigns", {
+        method: "PATCH",
+        body: JSON.stringify({ livecoachCampaignId, sendpilotCampaignId }),
+      });
+      if (!result.ok) throw new Error("The campaign mapping was not confirmed");
+      setSendPilotCampaigns(result.configuration);
+      const activeMappings = result.configuration.mappings.filter(
+        (mapping) => mapping.active
+      ).length;
+      setSendPilot((current) =>
+        current
+          ? {
+              ...current,
+              mappedCampaignCount: activeMappings,
+              outboundReady:
+                current.connected &&
+                current.webhookConfigured &&
+                activeMappings > 0,
+            }
+          : current
+      );
+      const livecoachName = result.configuration.livecoachCampaigns.find(
+        (campaign) => campaign.id === livecoachCampaignId
+      )?.name;
+      const sendpilotName = result.configuration.campaigns.find(
+        (campaign) => campaign.id === sendpilotCampaignId
+      )?.name;
+      setSendPilotNote(
+        sendpilotCampaignId
+          ? `${livecoachName || "LiveCoach campaign"} now hands approved LinkedIn leads to ${sendpilotName || "SendPilot"}.`
+          : `${livecoachName || "LiveCoach campaign"} will no longer hand leads to SendPilot.`
+      );
+    } catch (error: any) {
+      setSendPilotError(
+        error?.message || "The SendPilot campaign mapping could not be saved."
+      );
+    } finally {
+      setSendPilotMappingBusy("");
     }
   };
 
@@ -1044,33 +1139,40 @@ export default function SettingsPage() {
               }`}
             >
               {sendPilot?.connected && sendPilot.webhookConfigured ? "✓" : "◇"}{" "}
-              SendPilot LinkedIn inbox
+              SendPilot LinkedIn CRM
             </p>
             <p className="mt-2 text-sm leading-6 text-bone">
-              Bring inbound LinkedIn replies into your private CRM automatically through
-              SendPilot. LiveCoach only uses read endpoints and the reply webhook. It does
-              not expose any SendPilot action that sends, connects, likes or starts a campaign.
+              Give each salesperson their own private SendPilot connection. LiveCoach keeps
+              the canonical lead, assignment, approval and history. SendPilot executes the
+              LinkedIn sequence and reports messages, connections, status changes and replies.
             </p>
             <p className="mt-2 text-xs leading-5 text-moss">
-              The first import is capped to the previous 14 days. After that, verified reply
-              webhooks add new inbound messages without a daily Chrome routine.
+              LiveCoach can add one explicitly approved prospect to an existing running
+              SendPilot campaign. It cannot start campaigns, change their sequence, send a
+              direct ad hoc message, connect, like or post through the API.
             </p>
             {sendPilotLoaded && sendPilot ? (
               <p className="mt-3 font-mono text-[0.56rem] uppercase leading-5 text-muted">
                 {sendPilot.connected
                   ? `${sendPilot.senderName || "LinkedIn account"} · key ending ${sendPilot.apiKeyLastFour || "unknown"}`
                   : "SendPilot is not connected"}
-                {sendPilot.webhookConfigured ? " · automatic replies active" : " · webhook not yet active"}
+                {sendPilot.webhookConfigured ? " · automatic CRM events active" : " · webhook not yet active"}
                 {sendPilot.lastBackfillAt
                   ? ` · last 14-day import ${new Date(sendPilot.lastBackfillAt).toLocaleString("en-GB")}`
                   : ""}
                 {sendPilot.lastWebhookAt
-                  ? ` · last automatic reply ${new Date(sendPilot.lastWebhookAt).toLocaleString("en-GB")}`
+                  ? ` · last CRM event ${new Date(sendPilot.lastWebhookAt).toLocaleString("en-GB")}`
                   : ""}
                 {sendPilot.importedMessageCount
                   ? ` · ${sendPilot.importedMessageCount} imported`
                   : ""}
                 {sendPilot.reviewCount ? ` · ${sendPilot.reviewCount} need review` : ""}
+                {sendPilot.mappedCampaignCount
+                  ? ` · ${sendPilot.mappedCampaignCount} campaign${sendPilot.mappedCampaignCount === 1 ? "" : "s"} mapped`
+                  : ""}
+                {sendPilot.activeLeadCount
+                  ? ` · ${sendPilot.activeLeadCount} LinkedIn leads tracked`
+                  : ""}
               </p>
             ) : !sendPilotLoaded ? (
               <p className="mt-3 font-mono text-[0.56rem] uppercase text-muted">
@@ -1157,10 +1259,10 @@ export default function SettingsPage() {
           </div>
         ) : !sendPilot.webhookConfigured ? (
           <div className="mt-4 rounded-lg border border-amber/45 bg-amber/[0.06] p-3">
-            <p className="text-xs font-semibold text-bone">Finish automatic reply capture</p>
+            <p className="text-xs font-semibold text-bone">Finish automatic CRM event capture</p>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-muted marker:text-amber">
               <li>In SendPilot, open Integrations and Webhooks, then add a webhook.</li>
-              <li>Use the HTTPS URL below and select only reply.received.</li>
+              <li>Use the HTTPS URL below and select reply.received, message.sent, connection_request.sent, connection_request.accepted and lead.updated.</li>
               <li>Create it, then paste the one-time webhook secret below.</li>
             </ol>
             <div className="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -1198,6 +1300,94 @@ export default function SettingsPage() {
                 {sendPilotBusy === "webhook" ? "Saving…" : "Save webhook secret"}
               </button>
             </div>
+          </div>
+        ) : null}
+
+        {sendPilot?.connected && sendPilot.webhookConfigured ? (
+          <div className="mt-4 rounded-lg border border-moss/40 bg-moss/[0.05] p-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold text-bone">Map LiveCoach campaigns to SendPilot</p>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-muted">
+                  This mapping is private to this salesperson. A prospect is added only after
+                  they confirm that exact LinkedIn handoff in Outreach. SendPilot then owns
+                  delivery while LiveCoach receives the resulting activity.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  void crmFetch<SendPilotCampaignConfiguration>(
+                    "/api/crm/sendpilot/campaigns"
+                  )
+                    .then((configuration) => {
+                      setSendPilotCampaigns(configuration);
+                      setSendPilotNote("SendPilot campaigns refreshed.");
+                    })
+                    .catch((error: any) =>
+                      setSendPilotError(
+                        error?.message || "SendPilot campaigns could not be refreshed."
+                      )
+                    )
+                }
+                disabled={!!sendPilotMappingBusy}
+                className="min-h-10 shrink-0 rounded-full border border-moss/50 bg-moss/10 px-4 font-mono text-[0.56rem] uppercase text-moss disabled:opacity-40"
+              >
+                Refresh campaigns
+              </button>
+            </div>
+            {sendPilotCampaigns?.livecoachCampaigns?.length ? (
+              <div className="mt-3 space-y-2">
+                {sendPilotCampaigns.livecoachCampaigns.map((campaign) => {
+                  const mapping = sendPilotCampaigns.mappings.find(
+                    (candidate) => candidate.livecoach_campaign_id === campaign.id
+                  );
+                  return (
+                    <label
+                      key={campaign.id}
+                      className="grid gap-2 rounded-lg border border-edge bg-ink/35 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(15rem,1fr)] sm:items-center"
+                    >
+                      <span className="min-w-0">
+                        <strong className="block truncate text-sm text-bone">{campaign.name}</strong>
+                        <span className="mt-0.5 block font-mono text-[0.5rem] uppercase text-muted">
+                          LiveCoach {campaign.status} · max {campaign.daily_limit} handoffs daily
+                        </span>
+                      </span>
+                      <select
+                        aria-label={`SendPilot campaign for ${campaign.name}`}
+                        value={mapping?.active ? mapping.sendpilot_campaign_id : ""}
+                        onChange={(event) =>
+                          void saveSendPilotCampaignLink(campaign.id, event.target.value)
+                        }
+                        disabled={!!sendPilotMappingBusy || campaign.status !== "active"}
+                        className="min-h-11 w-full rounded-lg border border-edge bg-ink px-3 text-xs text-bone outline-none disabled:opacity-45"
+                      >
+                        <option value="">Do not hand off to SendPilot</option>
+                        {(sendPilotCampaigns.campaigns || []).map((remote) => (
+                          <option
+                            key={remote.id}
+                            value={remote.id}
+                            disabled={remote.status !== "started"}
+                          >
+                            {remote.name} · {remote.status}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="mt-3 rounded-lg border border-edge bg-ink/30 p-3 text-xs leading-5 text-muted">
+                No LiveCoach campaigns are available to map. Refresh after creating or sharing
+                an outreach campaign.
+              </p>
+            )}
+            <p className="mt-3 text-xs leading-5 text-amber">
+              A paused or draft SendPilot campaign cannot receive LiveCoach leads. LiveCoach
+              also rechecks assignment, replies, suppressions, CRM relationship and the 30 day
+              campaign pause immediately before each handoff.
+            </p>
           </div>
         ) : null}
       </div>

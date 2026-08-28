@@ -10,6 +10,7 @@ type CampaignStats = {
   enrolled: number;
   contacted: number;
   emailsSent: number;
+  linkedinSent: number;
   replies: number;
   interested: number;
   meetings: number;
@@ -21,6 +22,7 @@ const emptyCampaignStats = (): CampaignStats => ({
   enrolled: 0,
   contacted: 0,
   emailsSent: 0,
+  linkedinSent: 0,
   replies: 0,
   interested: 0,
   meetings: 0,
@@ -52,13 +54,13 @@ async function loadPersonalCampaignStats(
       .in("campaign_id", campaignIds),
     supabaseAdmin
       .from("outreach_events")
-      .select(
-        "campaign_id,prospect_id,kind,message:outreach_messages!inner(sender_user_id)"
-      )
+      .select("campaign_id,prospect_id,kind")
       .eq("workspace_id", workspaceId)
-      .eq("message.sender_user_id", userId)
+      .eq("owner_id", userId)
       .in("campaign_id", campaignIds)
       .in("kind", [
+        "linkedin_connection_sent",
+        "linkedin_message_sent",
         "reply",
         "positive_reply",
         "objection",
@@ -87,9 +89,15 @@ async function loadPersonalCampaignStats(
     const campaignEvents = (events.data || []).filter(
       (row: any) => row.campaign_id === campaignId
     );
+    const linkedInEvents = campaignEvents.filter((row: any) =>
+      ["linkedin_connection_sent", "linkedin_message_sent"].includes(row.kind)
+    );
+    for (const row of linkedInEvents) contactedProspects.add(row.prospect_id);
     const replyProspects = new Set(
       campaignEvents
-        .filter((row: any) => row.kind !== "meeting_booked")
+        .filter((row: any) =>
+          ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe"].includes(row.kind)
+        )
         .map((row: any) => row.prospect_id)
     );
     const interestedProspects = new Set(
@@ -109,6 +117,7 @@ async function loadPersonalCampaignStats(
       enrolled: enrolledProspects.size,
       contacted,
       emailsSent: sentMessages.length,
+      linkedinSent: linkedInEvents.length,
       replies: replyProspects.size,
       interested: interestedProspects.size,
       meetings: meetingProspects.size,
