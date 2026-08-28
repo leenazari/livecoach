@@ -27,6 +27,10 @@ type Opportunity = Record<string, any> & {
   risks: { code: string; label: string; severity: "high" | "medium" }[];
   nextAction: string;
   deal_intent: string | null;
+  deal_intent_as_of: string | null;
+  deal_intent_source: "human" | "system";
+  deal_intent_override: boolean;
+  clearDealIntentOverride?: boolean;
   win_outlook: "not_assessed" | "at_risk" | "possible" | "likely" | "highly_likely" | "won";
   win_outlook_confidence: number | null;
   win_outlook_reasons: string[];
@@ -111,6 +115,7 @@ export default function RevenuePage() {
           nextActionDueAt: row.next_action_due_at ? row.next_action_due_at.slice(0, 10) : null,
           nextActionOwner: row.next_action_owner || "us",
           dealIntent: row.deal_intent || null,
+          clearDealIntentOverride: row.clearDealIntentOverride === true,
           winOutlook: row.win_outlook || "not_assessed",
           winOutlookConfidence: row.win_outlook_confidence,
           winOutlookReasons: row.win_outlook_reasons || [],

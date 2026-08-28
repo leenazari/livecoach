@@ -153,6 +153,7 @@ export function chooseCanonicalOpenRevenueOpportunity<T extends Record<string, a
       const leftOverride = [
         left.pipeline_stage_override,
         left.win_outlook_override,
+        left.deal_intent_override,
         left.next_action_override,
       ].some(Boolean)
         ? 1
@@ -160,6 +161,7 @@ export function chooseCanonicalOpenRevenueOpportunity<T extends Record<string, a
       const rightOverride = [
         right.pipeline_stage_override,
         right.win_outlook_override,
+        right.deal_intent_override,
         right.next_action_override,
       ].some(Boolean)
         ? 1
