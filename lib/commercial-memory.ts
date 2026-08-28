@@ -133,7 +133,7 @@ export async function getCommercialMemory(
       .limit(5);
     let contextQuery = supabaseAdmin
       .from("client_context")
-      .select("id, kind, title, content, url, created_at")
+      .select("id, kind, title, content, url, created_at, metadata")
       .eq("company_id", companyId)
       .order("created_at", { ascending: false })
       .limit(3);
@@ -228,7 +228,13 @@ export async function getCommercialMemory(
       call: call ? [call.id, call.created_at] : null,
       tasks: tasks.map((row) => [row.id, row.text, row.kind, row.due_at]),
       opportunity: opportunity ? [opportunity.id, opportunity.updated_at, opportunity.status, opportunity.next_action] : null,
-      context: contexts.map((row) => [row.id, row.created_at, cut(row.content || row.url, 400)]),
+      context: contexts.map((row) => [
+        row.id,
+        row.created_at,
+        cut(row.content || row.url, 400),
+        row.metadata?.replyType,
+        row.metadata?.returnDate,
+      ]),
       activity: rawActivity
         ? [
             rawActivity.contextId,
@@ -351,7 +357,14 @@ export async function getCommercialMemory(
         .filter((row) => row.id !== rawActivity?.contextId)
         .map((row) => ({
           title: cut(row.title || row.kind, 100),
-          content: cut(row.content || row.url, 400),
+          content: cut(
+            `${row.content || row.url || ""}${
+              row.kind === "email_reply" && row.metadata?.returnDate
+                ? ` [Out of office until ${row.metadata.returnDate}]`
+                : ""
+            }`,
+            400
+          ),
         })),
     };
     await supabaseAdmin

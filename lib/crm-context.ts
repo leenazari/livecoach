@@ -132,7 +132,7 @@ export async function gatherClientContext(
         .limit(10),
       supabaseAdmin
         .from("client_context")
-        .select("kind, title, url, content, created_at, workstream_id")
+        .select("kind, title, url, content, created_at, workstream_id, metadata")
         .eq("company_id", companyId)
         .order("created_at", { ascending: false })
         .limit(30),
@@ -413,7 +413,17 @@ export async function gatherClientContext(
     lines.push("", "EXTRA CONTEXT YOU ADDED (notes / links / documents):");
     for (const c of ctx as any[]) {
       const head = c.title || (c.kind === "link" ? c.url : c.kind);
-      lines.push(`- [${c.workstream_id ? `workstream: ${workstreamName.get(c.workstream_id) || "unknown"}` : "company-wide"}] [${c.kind}] ${head}: ${cut(c.content || c.url || "", 600)}`);
+      const replyFacts =
+        c.kind === "email_reply"
+          ? [
+              c.metadata?.receivedAt ? `received ${c.metadata.receivedAt}` : "",
+              c.metadata?.replyType === "out_of_office" ? "out of office" : "reply",
+              c.metadata?.returnDate ? `return date ${c.metadata.returnDate}` : "",
+            ]
+              .filter(Boolean)
+              .join(", ")
+          : "";
+      lines.push(`- [${c.workstream_id ? `workstream: ${workstreamName.get(c.workstream_id) || "unknown"}` : "company-wide"}] [${c.kind}] ${head}${replyFacts ? ` [${replyFacts}]` : ""}: ${cut(c.content || c.url || "", 600)}`);
     }
   } else {
     lines.push("Extra context (notes / links / documents): none added");
