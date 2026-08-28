@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
     ]);
     let messagesQuery = supabaseAdmin
         .from("outreach_messages")
-        .select("id,prospect_id,status,subject,step_number,scheduled_at,sent_at,updated_at")
+        .select("id,prospect_id,status,subject,step_number,scheduled_at,sent_at,updated_at,message_source")
         .eq("workspace_id", account.workspaceId)
         .order("updated_at", { ascending: false })
         .limit(5000);

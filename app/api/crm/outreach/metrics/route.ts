@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,campaign_id,message:outreach_messages!inner(sender_user_id)").eq("workspace_id", account.workspaceId).eq("message.sender_user_id", account.userId).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe", "meeting_booked"]),
       supabaseAdmin.from("outreach_messages").select("*").eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("step_number", 10).in("status", ["draft", "approved", "sent"]).order("updated_at", { ascending: false }),
       supabaseAdmin.from("outreach_learnings").select("*").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).order("meeting_count", { ascending: false }).order("positive_reply_count", { ascending: false }).limit(100),
-      supabaseAdmin.from("outreach_messages").select("id,prospect_id,subject,body_text,status,step_number,sent_at,from_email").eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "sent").order("sent_at", { ascending: false }).limit(100),
+      supabaseAdmin.from("outreach_messages").select("id,prospect_id,subject,body_text,status,step_number,scheduled_at,sent_at,updated_at,from_email,message_source").eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).in("status", ["approved", "sending", "sent"]).order("updated_at", { ascending: false }).limit(100),
     ]);
     for (const result of detailResults) if (result.error) throw result.error;
     const [

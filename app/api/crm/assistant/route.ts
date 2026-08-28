@@ -46,6 +46,7 @@ import {
   type BrainKnownIdentity,
   type BrainKnownNameResolution,
 } from "@/lib/brain-self-name";
+import { removeDashesFromProse } from "@/lib/outreach-voice";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -199,6 +200,68 @@ async function findCampaign(name: string) {
   else q = q.ilike("name", `%${term}%`);
   const { data } = await q;
   return data && data[0] ? data[0] : null;
+}
+async function findOutreachRecipients(name: string): Promise<any[]> {
+  const term = String(name || "").trim().toLowerCase();
+  if (!term) return [];
+  const requestScope = getRequestScope();
+  if (!requestScope) return [];
+  const fields =
+    "id,email,first_name,last_name,company_name,assigned_to_user_id,workspace_id";
+  const pattern = term.replace(/[\\%_]/g, (value) => `\\${value}`);
+  const available = (query: any) =>
+    query
+      .eq("workspace_id", requestScope.workspaceId)
+      .or(
+        `assigned_to_user_id.is.null,assigned_to_user_id.eq.${requestScope.userId}`
+      );
+  const parts = term.split(/\s+/).filter(Boolean);
+  let rows: any[] = [];
+  if (term.includes("@")) {
+    const { data } = await available(
+      supabaseAdmin.from("outreach_prospects").select(fields)
+    )
+      .ilike("email", pattern)
+      .limit(5);
+    rows = data || [];
+  } else if (parts.length > 1) {
+    const firstName = parts.shift() || "";
+    const lastName = parts.join(" ");
+    const { data } = await available(
+      supabaseAdmin.from("outreach_prospects").select(fields)
+    )
+      .ilike("first_name", firstName.replace(/[\\%_]/g, (value) => `\\${value}`))
+      .ilike("last_name", lastName.replace(/[\\%_]/g, (value) => `\\${value}`))
+      .limit(10);
+    rows = data || [];
+  } else {
+    const [firstResult, lastResult] = await Promise.all([
+      available(supabaseAdmin.from("outreach_prospects").select(fields))
+        .ilike("first_name", pattern)
+        .limit(10),
+      available(supabaseAdmin.from("outreach_prospects").select(fields))
+        .ilike("last_name", pattern)
+        .limit(10),
+    ]);
+    rows = [...(firstResult.data || []), ...(lastResult.data || [])].filter(
+      (prospect: any, index: number, all: any[]) =>
+        all.findIndex((candidate) => candidate.id === prospect.id) === index
+    );
+  }
+  return rows.filter((prospect: any) => {
+    const fullName = `${prospect.first_name || ""} ${prospect.last_name || ""}`
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    const firstName = String(prospect.first_name || "").trim().toLowerCase();
+    const lastName = String(prospect.last_name || "").trim().toLowerCase();
+    return (
+      fullName === term ||
+      firstName === term ||
+      lastName === term ||
+      String(prospect.email || "").toLowerCase() === term
+    );
+  });
 }
 async function findOpportunities(title: string, client: string): Promise<any[]> {
   const company = client ? await findCompany(client) : null;
@@ -856,6 +919,93 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       continue;
     }
 
+    if (it.type === "send_email") {
+      const recipientName = String(it.recipientName || it.person || it.name || "").trim();
+      const suppliedEmail = String(it.email || "").trim().toLowerCase();
+      const subject = removeDashesFromProse(String(it.subject || "").trim()).slice(0, 160);
+      const body = removeDashesFromProse(String(it.body || it.bodyText || "").trim()).slice(0, 4000);
+      const company = String(it.company || it.client || "").trim().slice(0, 240);
+      const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!subject || !body) continue;
+      if (!/(not|won't|will not|do not).{0,24}follow up/i.test(body)) continue;
+
+      const actionFor = (email: string, name = recipientName, companyName = company) => ({
+        endpoint: "/api/crm/assistant/email",
+        method: "POST",
+        body: {
+          email,
+          recipientName: name,
+          company: companyName,
+          subject,
+          body,
+          idempotencyKey: `brain-${key}`,
+        },
+      });
+      if (validEmail.test(suppliedEmail)) {
+        const exec = actionFor(suppliedEmail);
+        out.push({
+          key,
+          type: it.type,
+          label: `Send "${subject}" to ${recipientName || suppliedEmail} <${suppliedEmail}>`,
+          endpoint: exec.endpoint,
+          method: exec.method,
+          body: exec.body,
+          external: true,
+          emailPreview: { recipientName, email: suppliedEmail, subject, body },
+        });
+        continue;
+      }
+
+      const matches = await findOutreachRecipients(recipientName);
+      if (matches.length === 1) {
+        const prospect = matches[0];
+        const exactName = `${prospect.first_name || ""} ${prospect.last_name || ""}`.trim();
+        const exec = actionFor(
+          String(prospect.email || "").toLowerCase(),
+          exactName || recipientName,
+          company || prospect.company_name || ""
+        );
+        out.push({
+          key,
+          type: it.type,
+          label: `Send "${subject}" to ${exactName || recipientName} <${prospect.email}>`,
+          endpoint: exec.endpoint,
+          method: exec.method,
+          body: exec.body,
+          external: true,
+          emailPreview: {
+            recipientName: exactName || recipientName,
+            email: prospect.email,
+            subject,
+            body,
+          },
+        });
+      } else if (matches.length > 1) {
+        out.push({
+          key,
+          type: it.type,
+          label: `Which ${recipientName} should receive "${subject}"?`,
+          external: true,
+          emailPreview: { recipientName, subject, body },
+          choices: matches.slice(0, 4).map((prospect: any) => {
+            const exactName = `${prospect.first_name || ""} ${prospect.last_name || ""}`.trim();
+            const exec = actionFor(
+              String(prospect.email || "").toLowerCase(),
+              exactName || recipientName,
+              company || prospect.company_name || ""
+            );
+            return {
+              label: `${exactName || recipientName} at ${prospect.company_name || prospect.email}`,
+              endpoint: exec.endpoint,
+              method: exec.method,
+              body: exec.body,
+            };
+          }),
+        });
+      }
+      continue;
+    }
+
     if (it.type === "update_opportunity") {
       const opportunities = await findOpportunities(
         String(it.opportunity || it.title || ""),
@@ -974,7 +1124,12 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       }
     }
   }
-  const excludedFromBatch = new Set(["cancel_call", "dismiss", "pull_emails"]);
+  const excludedFromBatch = new Set([
+    "cancel_call",
+    "dismiss",
+    "pull_emails",
+    "send_email",
+  ]);
   return out.map((action) => ({
     ...action,
     batchSafe: !excludedFromBatch.has(action.type) && !action.choices,
@@ -995,6 +1150,8 @@ const requestedActionLabel = (item: any) => {
     item?.title,
     item?.sourceTask,
     item?.text,
+    item?.recipientName,
+    item?.email,
   ].find((value) => typeof value === "string" && value.trim());
   return target ? `${type}: ${String(target).trim().slice(0, 180)}` : type;
 };
@@ -1017,13 +1174,24 @@ function flagUnresolvedActions(requested: any[], resolved: any[]): any[] {
       remaining.set(type, count - 1);
       continue;
     }
+    const sendEmailFailure = type === "send_email"
+      ? !String(item?.email || item?.recipientName || item?.person || "").trim()
+        ? "Who should receive this email? Give me their name or exact email address."
+        : !String(item?.subject || "").trim() || !String(item?.body || item?.bodyText || "").trim()
+          ? "I need the exact subject and body you want approved before I can queue this email."
+          : !/(not|won't|will not|do not).{0,24}follow up/i.test(String(item?.body || item?.bodyText || ""))
+            ? "This outreach email needs a simple do not follow up line. Ask me to add one and I will show the exact final version for approval."
+            : "I could not safely match that recipient. Give me their exact email address and I will keep the campaign optional."
+      : "";
     unresolved.push({
       key: `not-done-${Math.random().toString(36).slice(2)}`,
       type: type || "unknown",
       label: requestedActionLabel(item),
       unavailable: true,
+      needsInput: type === "send_email",
       batchSafe: false,
       failureReason:
+        sendEmailFailure ||
         "Brain could not safely identify the exact record or a required edit value was missing. No change was made.",
     });
   }
@@ -1367,7 +1535,7 @@ CALENDAR AND SAVED PREP: the user's upcoming calls, synced from their calendar, 
 
 CALL TRANSCRIPTS ON DEMAND: when an ON-DEMAND CALL TRANSCRIPT block is present, it was fetched only because the user explicitly asked about a specific recorded conversation. Treat the matched transcript source as authoritative for that question. Never combine it with another call, never substitute a generic scorecard for missing words, and never imply that you checked a raw transcript when the block says it is unavailable. If the block reports several close matches, ask the user which exact call they mean. If it contains bounded excerpts and the answer is not present, say that plainly and ask for the topic or phrase to search rather than guessing.
 
-ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, client stages, stakeholders and to-dos, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles, update opportunities, pull email context, remember durable rules, correct records, and dismiss stale work. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
+ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, client stages, stakeholders and to-dos, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles, update opportunities, pull email context, remember durable rules, correct records, dismiss stale work, and queue one-off emails from the signed-in user's own connected mailbox. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
 [{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<call title>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
 ---END ACTIONS---
@@ -1380,6 +1548,7 @@ Additional supported actions are:
 {"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":20}
 {"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":20,"status":"draft|active|paused|completed"}
 {"type":"build_outreach_queue","limit":20}
+{"type":"send_email","recipientName":"<person name>","email":"<exact recipient email when known>","company":"<optional company>","subject":"<exact approved subject>","body":"<exact approved body including a simple do not follow up line>"}
 {"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","dealIntent":"<the commercial outcome this deal is pursuing>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","winOutlook":"not_assessed|at_risk|possible|likely|highly_likely|won","winOutlookConfidence":0,"winOutlookReasons":["<stored evidence only>"],"winOutlookQuestions":["<targeted next-call question>"],"engagementMotion":"cold_outreach_campaign|personal_relationship_led|existing_customer_expansion|inbound_enquiry|partner_referral","activeContactMethod":"automated_email|personal_email|phone|video_call|linkedin|event|in_person|other","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>","rationale":"<why this change is supported>"}
 For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Lifecycle stage and win outlook are separate. Never raise win outlook without concise stored evidence. If evidence is missing, keep it not_assessed and add targeted winOutlookQuestions for the next call. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
 Use update_client for the relationship-level client stage and core facts. Use update_opportunity for a real revenue deal stage. When "move this client to qualified" clearly refers to a deal, update the opportunity. When it refers to the overall relationship or there is no deal, update the client stage. Never update both unless the user explicitly asks.
@@ -1391,7 +1560,9 @@ Use create_document only for an explicit finished-document request. Do not emit 
 Use log_client_update when the user reports an off-system phone call, text message, voice note or relationship update. Keep the content factual and concise. It enters that client's timeline and commercial memory, updates any grounded next action, and refreshes future next-call intent after the user confirms it once. If the user names a client, use the exact known client name or saved alias. Never map a one-word first name to a different full-name client merely because part of the text matches.
 For update_campaign you may also include "voice":{"tone":"...","style":"...","rules":["..."],"signature":"Lee"}, "bannedPhrases":["..."], "bookingUrl":"https://...", "bookingCtaMode":"interested_reply|final_step|always|never", and "sequence":[{"step":1,"channel":"email|linkedin|phone","actionType":"email|linkedin_view|linkedin_like|linkedin_connect|linkedin_message|manual_call","delayDays":0,"purpose":"...","contentType":"plain|insight|case_study|video|close_loop","guidance":"...","assetUrl":null}]. LinkedIn and phone steps are always manual and must never be described as completed unless the salesperson confirms them. Only include settings the user asked for or approved in the conversation.
 
-CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Exact outreach drafts and external sends stay in the dedicated Outreach approval flow.
+ONE-OFF EMAILS: when the user explicitly asks to send an email you drafted in this conversation, use send_email in the same reply instead of sending them to another screen. A campaign is optional. The action card is the final approval and must visibly show the exact recipient, subject and body. Never invent an email address, choose a fuzzy name match or silently fill missing content. If the exact recipient cannot be matched, ask only for their email address and emit no send_email action. Company is optional and must not block the send. Include a simple do not follow up line for cold outreach. Every send_email is an external action, remains separate from batch approval and uses only the signed-in user's own connected mailbox. Never claim it sent until the action receipt confirms it was queued.
+
+CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Campaign sequence mail stays in the dedicated Outreach approval flow. One-off send_email actions use the same protected outreach ledger, suppression rules, pacing and per-user limits without inventing a campaign.
 
 BATCH APPROVAL: when the user asks for several safe internal changes, emit them together. The interface shows every exact change and offers one approval for the safe subset. Destructive changes, mailbox pulls and any future external send stay separately confirmed.
 NO SILENT FAILURES: if a requested edit cannot be matched or completed, the action panel will mark it Not completed. Never imply that an edit happened merely because you described it in prose.

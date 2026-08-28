@@ -11,7 +11,9 @@ import {
   stepDelay,
 } from "@/lib/outreach";
 import {
+  isActiveOutreachEnrolmentStatus,
   isDeliveryDayConflict,
+  isInsideCrossCampaignCooldown,
   isSenderSlotConflict,
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
@@ -139,6 +141,8 @@ export async function queueApprovedOutreachMessage(messageId: string) {
       scheduledAt,
       spacingMinutes: OUTREACH_SEND_SPACING_MINUTES,
       action: "approved_send",
+      messageType:
+        message.message_source === "brain_direct" ? "brain_direct" : "sequence",
     },
   });
   return { queued: true, scheduledAt };
@@ -183,11 +187,19 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         })
         .eq("id", message.id),
       supabaseAdmin.from("outreach_events").insert({
+        workspace_id: sender.workspaceId,
+        owner_id: sender.userId,
+        visibility: "team",
         campaign_id: message.campaign_id,
         prospect_id: message.prospect_id,
         message_id: message.id,
         kind: "failed",
-        metadata: { error: reason, stoppedBeforeSend: true },
+        metadata: {
+          error: reason,
+          stoppedBeforeSend: true,
+          messageType:
+            message.message_source === "brain_direct" ? "brain_direct" : "sequence",
+        },
       }),
     ]);
     throw new Error(reason);
@@ -195,25 +207,41 @@ export async function dispatchDueOutreachMessage(messageId: string) {
 
   if (message.from_email !== sender.senderEmail)
     await stopClaim("Sender safety check failed", "failed");
-  const [{ data: prospect }, { data: enrolment }, { data: campaign }] =
-    await Promise.all([
-      supabaseAdmin
-        .from("outreach_prospects")
-        .select("*")
-        .eq("id", message.prospect_id)
-        .single(),
-      supabaseAdmin
-        .from("outreach_enrolments")
-        .select("*")
-        .eq("id", message.enrolment_id)
-        .single(),
-      supabaseAdmin
-        .from("outreach_campaigns")
-        .select("*")
-        .eq("id", message.campaign_id)
-        .single(),
-    ]);
-  if (!prospect || !enrolment || !campaign || campaign.status !== "active")
+  const isBrainDirect = message.message_source === "brain_direct";
+  const [{ data: prospect }, enrolmentResult, campaignResult] = await Promise.all([
+    supabaseAdmin
+      .from("outreach_prospects")
+      .select("*")
+      .eq("workspace_id", sender.workspaceId)
+      .eq("id", message.prospect_id)
+      .single(),
+    isBrainDirect
+      ? Promise.resolve({ data: null })
+      : supabaseAdmin
+          .from("outreach_enrolments")
+          .select("*")
+          .eq("workspace_id", sender.workspaceId)
+          .eq("id", message.enrolment_id)
+          .single(),
+    isBrainDirect
+      ? Promise.resolve({ data: null })
+      : supabaseAdmin
+          .from("outreach_campaigns")
+          .select("*")
+          .eq("workspace_id", sender.workspaceId)
+          .eq("id", message.campaign_id)
+          .single(),
+  ]);
+  const enrolment = enrolmentResult.data;
+  const campaign = campaignResult.data;
+  if (!prospect)
+    await stopClaim("Prospect is unavailable", "failed");
+  if (
+    isBrainDirect &&
+    (message.campaign_id !== null || message.enrolment_id !== null)
+  )
+    await stopClaim("Direct Brain email has an invalid campaign link", "failed");
+  if (!isBrainDirect && (!enrolment || !campaign || campaign.status !== "active"))
     await stopClaim("Campaign or prospect is unavailable", "failed");
   const isReply = message.strategy?.messageType === "reply";
   if (
@@ -221,16 +249,16 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     (["replied", "qualified", "not_interested", "suppressed"].includes(
       prospect.status
     ) ||
-      ["replied", "booked", "completed", "suppressed"].includes(
+      (!isBrainDirect && ["replied", "booked", "completed", "suppressed"].includes(
         enrolment.status
-      ))
+      )))
   )
     await stopClaim("Follow up stopped because this person replied or is suppressed");
   if (isReply && prospect.reply_category !== "interested")
     await stopClaim("This booking reply is no longer appropriate");
   if (
     ["suppressed", "not_interested"].includes(prospect.status) ||
-    enrolment.status === "suppressed"
+    (!isBrainDirect && enrolment.status === "suppressed")
   )
     await stopClaim("This person is suppressed");
 
@@ -241,9 +269,46 @@ export async function dispatchDueOutreachMessage(messageId: string) {
   if (message.recipient_email !== email) {
     await stopClaim("Recipient safety identity changed before send", "failed");
   }
+  if (isBrainDirect) {
+    const [{ data: activeEnrolments, error: activeError }, { data: latestSent, error: sentError }] =
+      await Promise.all([
+        supabaseAdmin
+          .from("outreach_enrolments")
+          .select("id,status")
+          .eq("workspace_id", sender.workspaceId)
+          .eq("recipient_email", email),
+        supabaseAdmin
+          .from("outreach_messages")
+          .select("id,sent_at")
+          .eq("workspace_id", sender.workspaceId)
+          .eq("recipient_email", email)
+          .eq("status", "sent")
+          .neq("id", message.id)
+          .order("sent_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+    if (activeError) await stopClaim("Could not verify active campaign safety", "failed");
+    if (sentError) await stopClaim("Could not verify recent contact safety", "failed");
+    if (
+      (activeEnrolments || []).some((row: any) =>
+        isActiveOutreachEnrolmentStatus(row.status)
+      )
+    ) {
+      await stopClaim(
+        "This recipient now has an active outreach campaign. Review that campaign before sending separately."
+      );
+    }
+    if (latestSent?.sent_at && isInsideCrossCampaignCooldown(latestSent.sent_at)) {
+      await stopClaim(
+        "This recipient was emailed within the last 30 days, so the safety pause is still active."
+      );
+    }
+  }
   const { data: blocked } = await supabaseAdmin
     .from("outreach_suppressions")
     .select("target")
+    .eq("workspace_id", sender.workspaceId)
     .in("target", [email, domain]);
   if (blocked?.length)
     await stopClaim("This person or company is on the do not contact list");
@@ -286,7 +351,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     .lt("sent_at", end);
   const dailyLimit = Math.min(
     OUTREACH_DAILY_HARD_LIMIT,
-    Number(campaign.daily_limit) || 20
+    isBrainDirect ? OUTREACH_DAILY_HARD_LIMIT : Number(campaign.daily_limit) || 20
   );
   if ((count || 0) >= dailyLimit) {
     const retry = await reserveOutreachDelivery(
@@ -337,11 +402,17 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         })
         .eq("id", message.id),
       supabaseAdmin.from("outreach_events").insert({
-        campaign_id: campaign.id,
+        workspace_id: sender.workspaceId,
+        owner_id: sender.userId,
+        visibility: "team",
+        campaign_id: campaign?.id || null,
         prospect_id: prospect.id,
         message_id: message.id,
         kind: "failed",
-        metadata: { error: sent.error },
+        metadata: {
+          error: sent.error,
+          messageType: isBrainDirect ? "brain_direct" : isReply ? "reply" : "sequence",
+        },
       }),
     ]);
     throw new Error(sent.error || "The connected mailbox refused the send");
@@ -349,8 +420,9 @@ export async function dispatchDueOutreachMessage(messageId: string) {
 
   const sentAt = new Date();
   const nextStep = Number(message.step_number) + 1;
-  const sequence = Array.isArray(campaign.sequence) ? campaign.sequence : [];
+  const sequence = Array.isArray(campaign?.sequence) ? campaign.sequence : [];
   const hasNext =
+    !isBrainDirect &&
     !isReply &&
     sequence.some((row: any) => Number(row?.step) === nextStep);
   const nextAction = hasNext
@@ -372,20 +444,25 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         updated_at: sentAt.toISOString(),
       })
       .eq("id", message.id),
-    supabaseAdmin
-      .from("outreach_enrolments")
-      .update({
-        status: isReply ? "replied" : hasNext ? "contacted" : "completed",
-        current_step: isReply
-          ? enrolment.current_step
-          : hasNext
-            ? nextStep
-            : message.step_number,
-        last_sent_at: sentAt.toISOString(),
-        next_action_at: nextAction,
-        updated_at: sentAt.toISOString(),
-      })
-      .eq("id", enrolment.id),
+    ...(!isBrainDirect
+      ? [
+          supabaseAdmin
+            .from("outreach_enrolments")
+            .update({
+              status: isReply ? "replied" : hasNext ? "contacted" : "completed",
+              current_step: isReply
+                ? enrolment.current_step
+                : hasNext
+                  ? nextStep
+                  : message.step_number,
+              last_sent_at: sentAt.toISOString(),
+              next_action_at: nextAction,
+              updated_at: sentAt.toISOString(),
+            })
+            .eq("workspace_id", sender.workspaceId)
+            .eq("id", enrolment.id),
+        ]
+      : []),
     supabaseAdmin
       .from("outreach_prospects")
       .update({
@@ -395,7 +472,10 @@ export async function dispatchDueOutreachMessage(messageId: string) {
       })
       .eq("id", prospect.id),
     supabaseAdmin.from("outreach_events").insert({
-      campaign_id: campaign.id,
+      workspace_id: sender.workspaceId,
+      owner_id: sender.userId,
+      visibility: "team",
+      campaign_id: campaign?.id || null,
       prospect_id: prospect.id,
       message_id: message.id,
       kind: "sent",
@@ -403,13 +483,16 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         step: message.step_number,
         from: sender.senderEmail,
         senderUserId: sender.userId,
-        messageType: isReply ? "reply" : "sequence",
+        messageType: isBrainDirect ? "brain_direct" : isReply ? "reply" : "sequence",
         tags: message.message_tags || {},
       },
     }),
-    ...(message.booking_link_included
+    ...(!isBrainDirect && message.booking_link_included
       ? [
           supabaseAdmin.from("outreach_events").insert({
+            workspace_id: sender.workspaceId,
+            owner_id: sender.userId,
+            visibility: "team",
             campaign_id: campaign.id,
             prospect_id: prospect.id,
             message_id: message.id,

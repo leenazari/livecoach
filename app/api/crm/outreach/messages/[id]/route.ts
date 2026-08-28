@@ -55,19 +55,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       .select("*")
       .single();
     if (error) throw error;
-    const { data: enrolment, error: enrolmentError } = await supabaseAdmin
-      .from("outreach_enrolments")
-      .update({
-        status: data.status === "approved" ? "approved" : "drafted",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("workspace_id", sender.workspaceId)
-      .eq("id", data.enrolment_id)
-      .select("id, status")
-      .maybeSingle();
-    if (enrolmentError) throw enrolmentError;
-    if (!enrolment)
-      throw new Error("database did not confirm the campaign enrolment");
+    if (data.message_source !== "brain_direct") {
+      const { data: enrolment, error: enrolmentError } = await supabaseAdmin
+        .from("outreach_enrolments")
+        .update({
+          status: data.status === "approved" ? "approved" : "drafted",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("workspace_id", sender.workspaceId)
+        .eq("id", data.enrolment_id)
+        .select("id, status")
+        .maybeSingle();
+      if (enrolmentError) throw enrolmentError;
+      if (!enrolment)
+        throw new Error("database did not confirm the campaign enrolment");
+    }
     if (data.status === "approved") {
       const { error: eventError } = await supabaseAdmin
         .from("outreach_events")
