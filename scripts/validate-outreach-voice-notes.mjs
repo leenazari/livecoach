@@ -12,6 +12,9 @@ const migration = read(
 const costMigration = read(
   "supabase/migrations/20260828223725_outreach_voice_cost_guard.sql"
 );
+const benchmarkMigration = read(
+  "supabase/migrations/20260828233644_outreach_voice_cost_benchmark.sql"
+);
 const approvalMigration = read(
   "supabase/migrations/20260828230805_outreach_voice_script_approval_gate.sql"
 );
@@ -45,6 +48,11 @@ assert.match(migration, /'outreach-voice-notes'[\s\S]*?false/);
 assert.doesNotMatch(migration, /create policy[\s\S]*?storage\.objects/i);
 assert.match(costMigration, /voice_character_count between 1 and 800/);
 assert.match(costMigration, /voice_estimated_cost_gbp between 0 and 0\.05/);
+assert.match(benchmarkMigration, /voice_character_count between 1 and 1200/);
+assert.match(
+  benchmarkMigration,
+  /voice_estimated_cost_gbp between 0 and 0\.075/
+);
 assert.match(approvalMigration, /voice_script_approved_at timestamptz/);
 assert.match(approvalMigration, /voice_script_approved_by uuid/);
 assert.match(approvalMigration, /voice_script_approved_hash text/);
@@ -54,18 +62,28 @@ assert.match(
 );
 assert.match(approvalMigration, /where voice_status = 'generating'/);
 assert.match(approvalMigration, /'voice_script_approved'/);
-assert.match(policy, /OUTREACH_VOICE_MAX_COST_GBP = 0\.05/);
-assert.match(policy, /OUTREACH_VOICE_MAX_CHARACTERS = 800/);
+assert.match(policy, /OUTREACH_VOICE_TARGET_WORDS = 100/);
+assert.match(policy, /OUTREACH_VOICE_PREFERRED_MIN_WORDS = 80/);
+assert.match(policy, /OUTREACH_VOICE_PREFERRED_MAX_WORDS = 120/);
+assert.match(policy, /OUTREACH_VOICE_HARD_MAX_WORDS = 150/);
+assert.match(policy, /OUTREACH_VOICE_TARGET_COST_GBP = 0\.05/);
+assert.match(policy, /OUTREACH_VOICE_HARD_MAX_COST_GBP = 0\.075/);
+assert.match(policy, /OUTREACH_VOICE_HARD_MAX_CHARACTERS = 1200/);
 assert.match(voice, /"eleven_flash_v2_5"/);
 assert.match(voice, /\^eleven_\(flash\|turbo\)_/);
 assert.match(voice, /assertOutreachVoiceWithinBudget/);
 assert.match(voice, /outreachVoiceApprovalHash/);
 assert.match(voice, /conservativeModelRateGbp/);
 assert.doesNotMatch(voice, /slice\(0, OUTREACH_VOICE_MAX_WORDS\)/);
+assert.doesNotMatch(voice, /clean\(value, 1800\)/);
+assert.match(voice, /Never slice a spoken script/);
 
 assert.match(prepare, /required: \["research", "strategy", "email", "voiceNote"\]/);
-assert.match(prepare, /OUTREACH_VOICE_MAX_CHARACTERS/);
-assert.match(prepare, /105 to 120 word personal spoken pitch under 800 characters/);
+assert.match(prepare, /OUTREACH_VOICE_TARGET_WORDS/);
+assert.match(prepare, /Personalisation matters more than hitting an exact word count/);
+assert.match(prepare, /Always finish the final sentence cleanly/);
+assert.match(prepare, /their exact company/);
+assert.match(prepare, /strongest current verified fact/);
 assert.match(prepare, /CAMPAIGN CONTRACT, this is the only permitted message purpose/);
 assert.match(prepare, /Do not use an offer, use case or CTA from another campaign/);
 assert.match(prepare, /one grounded angle permitted by the campaign contract/);
@@ -103,6 +121,11 @@ assert.match(patchRoute, /body\.approve_voice_script === true/);
 assert.match(patchRoute, /voice_script_approved_at/);
 assert.match(patchRoute, /kind: "voice_script_approved"/);
 assert.match(patchRoute, /assertOutreachVoiceWithinBudget/);
+assert.match(patchRoute, /voice_character_count = voiceApprovalBudget\.characters/);
+assert.match(
+  patchRoute,
+  /voice_estimated_cost_gbp = voiceApprovalBudget\.estimatedCostGbp/
+);
 assert.match(patchRoute, /Generate and preview the personal voice note before approving/);
 assert.match(queue, /voice_public_token/);
 assert.match(queue, /voice_script_approved_at/);
@@ -120,9 +143,10 @@ assert.match(audio, /voice_public_token/);
 assert.match(played, /kind: "voice_played"/);
 
 assert.match(editor, /1 · Approve script/);
-assert.match(editor, /2 · Generate voice · max 5p/);
+assert.match(editor, /2 · Generate voice · est/);
 assert.match(editor, /Approving the words costs nothing/);
-assert.match(editor, /OUTREACH_VOICE_MAX_CHARACTERS/);
+assert.match(editor, /OUTREACH_VOICE_HARD_MAX_CHARACTERS/);
+assert.match(editor, /Complete sentences and useful personalisation take priority/);
 assert.match(editor, /voice_estimated_cost_gbp/);
 assert.match(outreachPage, /generateVoiceNote/);
 assert.match(outreachPage, /approveVoiceScript/);
@@ -145,5 +169,19 @@ assert.match(salesProfileRoute, /input\.outreachVoiceId !== previous\.outreachVo
 assert.match(salesProfilePage, /Listen free, choose one stock voice/);
 assert.match(salesProfilePage, /This choice belongs only to your login/);
 assert.match(salesProfilePage, /voice\.previewUrl/);
+
+const policyModule = await import("../lib/outreach-voice-policy.ts");
+assert.equal(policyModule.OUTREACH_VOICE_TARGET_WORDS, 100);
+assert.equal(policyModule.OUTREACH_VOICE_PREFERRED_MIN_WORDS, 80);
+assert.equal(policyModule.OUTREACH_VOICE_PREFERRED_MAX_WORDS, 120);
+assert.equal(policyModule.OUTREACH_VOICE_HARD_MAX_WORDS, 150);
+assert.equal(
+  policyModule.estimateOutreachVoiceCostGbp("x".repeat(800)),
+  0.05
+);
+assert.equal(
+  policyModule.estimateOutreachVoiceCostGbp("x".repeat(1200)),
+  0.075
+);
 
 console.log("Owner-scoped outreach voice note checks passed");

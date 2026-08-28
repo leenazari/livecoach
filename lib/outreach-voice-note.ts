@@ -5,10 +5,14 @@ import { publicAppOrigin } from "@/lib/public-app-url";
 import { supabaseService } from "@/lib/supabase";
 import type { OutreachIdentity } from "@/lib/outreach-identity";
 import {
-  OUTREACH_VOICE_MAX_CHARACTERS,
-  OUTREACH_VOICE_MAX_COST_GBP,
-  OUTREACH_VOICE_MAX_WORDS,
-  OUTREACH_VOICE_MIN_WORDS,
+  estimateOutreachVoiceCostGbp,
+  OUTREACH_VOICE_DEFAULT_RATE_GBP_PER_1000_CHARACTERS,
+  OUTREACH_VOICE_HARD_MAX_CHARACTERS,
+  OUTREACH_VOICE_HARD_MAX_COST_GBP,
+  OUTREACH_VOICE_HARD_MAX_WORDS,
+  OUTREACH_VOICE_PREFERRED_MAX_WORDS,
+  OUTREACH_VOICE_PREFERRED_MIN_WORDS,
+  OUTREACH_VOICE_TARGET_COST_GBP,
   outreachVoiceWordCount,
 } from "@/lib/outreach-voice-policy";
 
@@ -27,7 +31,10 @@ export type OutreachVoiceBudget = {
   words: number;
   rateGbpPerThousandCharacters: number;
   estimatedCostGbp: number;
+  targetCostGbp: number;
   maximumCostGbp: number;
+  withinPreferredWordRange: boolean;
+  overTargetCost: boolean;
 };
 
 export class OutreachVoiceBudgetError extends Error {
@@ -45,7 +52,11 @@ function safeOutreachVoiceModel(value: unknown): string {
 }
 
 export function normaliseOutreachVoiceScript(value: unknown): string {
-  return clean(value, 1800)
+  // Never slice a spoken script. Any genuinely excessive draft is rejected by
+  // the safety guard so a sentence can never be cut off silently.
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
     .replace(/[—–]/g, ", ")
     .replace(/;/g, ",")
     .split(/\s+/)
@@ -194,7 +205,9 @@ function conservativeModelRateGbp(modelId: string): number {
   // character rate. These GBP floors deliberately include headroom above the
   // published USD amount so the five pence limit fails closed rather than
   // relying on a favourable exchange rate.
-  return /(flash|turbo)/i.test(modelId) ? 0.0625 : 0.125;
+  return /(flash|turbo)/i.test(modelId)
+    ? OUTREACH_VOICE_DEFAULT_RATE_GBP_PER_1000_CHARACTERS
+    : OUTREACH_VOICE_DEFAULT_RATE_GBP_PER_1000_CHARACTERS * 2;
 }
 
 export function outreachVoiceRateGbpPerThousand(modelId: string): number {
@@ -219,10 +232,20 @@ export function outreachVoiceBudget(
     characters,
     words,
     rateGbpPerThousandCharacters,
-    estimatedCostGbp: Number(
-      ((characters / 1000) * rateGbpPerThousandCharacters).toFixed(6)
+    estimatedCostGbp: estimateOutreachVoiceCostGbp(
+      script,
+      rateGbpPerThousandCharacters
     ),
-    maximumCostGbp: OUTREACH_VOICE_MAX_COST_GBP,
+    targetCostGbp: OUTREACH_VOICE_TARGET_COST_GBP,
+    maximumCostGbp: OUTREACH_VOICE_HARD_MAX_COST_GBP,
+    withinPreferredWordRange:
+      words >= OUTREACH_VOICE_PREFERRED_MIN_WORDS &&
+      words <= OUTREACH_VOICE_PREFERRED_MAX_WORDS,
+    overTargetCost:
+      estimateOutreachVoiceCostGbp(
+        script,
+        rateGbpPerThousandCharacters
+      ) > OUTREACH_VOICE_TARGET_COST_GBP,
   };
 }
 
@@ -231,24 +254,19 @@ export function assertOutreachVoiceWithinBudget(
   modelId: string
 ): OutreachVoiceBudget {
   const budget = outreachVoiceBudget(script, modelId);
-  if (budget.words < OUTREACH_VOICE_MIN_WORDS) {
+  if (budget.words > OUTREACH_VOICE_HARD_MAX_WORDS) {
     throw new OutreachVoiceBudgetError(
-      `The voice pitch is too short. Use ${OUTREACH_VOICE_MIN_WORDS} to ${OUTREACH_VOICE_MAX_WORDS} words`
+      `This voice pitch is beyond the safety limit. Shorten it to ${OUTREACH_VOICE_HARD_MAX_WORDS} words or fewer while keeping the final sentence complete`
     );
   }
-  if (budget.words > OUTREACH_VOICE_MAX_WORDS) {
+  if (budget.characters > OUTREACH_VOICE_HARD_MAX_CHARACTERS) {
     throw new OutreachVoiceBudgetError(
-      `The voice pitch is too long. Keep it to ${OUTREACH_VOICE_MAX_WORDS} words`
+      `This voice pitch is beyond the safety limit. Shorten it to ${OUTREACH_VOICE_HARD_MAX_CHARACTERS} characters or fewer while keeping the final sentence complete`
     );
   }
-  if (budget.characters > OUTREACH_VOICE_MAX_CHARACTERS) {
+  if (budget.estimatedCostGbp > OUTREACH_VOICE_HARD_MAX_COST_GBP) {
     throw new OutreachVoiceBudgetError(
-      `The voice pitch is too long for the five pence limit. Keep it under ${OUTREACH_VOICE_MAX_CHARACTERS} characters`
-    );
-  }
-  if (budget.estimatedCostGbp > OUTREACH_VOICE_MAX_COST_GBP) {
-    throw new OutreachVoiceBudgetError(
-      "This voice pitch would exceed the five pence ElevenLabs limit. Shorten it or use the Flash voice model"
+      `This voice pitch is estimated above the ${(OUTREACH_VOICE_HARD_MAX_COST_GBP * 100).toFixed(1)} pence safety limit. Shorten it without cutting the final sentence, or use the Flash voice model`
     );
   }
   return budget;

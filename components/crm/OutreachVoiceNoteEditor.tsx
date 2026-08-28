@@ -1,9 +1,14 @@
 "use client";
 
 import {
-  OUTREACH_VOICE_MAX_CHARACTERS,
-  OUTREACH_VOICE_MAX_WORDS,
-  OUTREACH_VOICE_MIN_WORDS,
+  estimateOutreachVoiceCostGbp,
+  OUTREACH_VOICE_HARD_MAX_CHARACTERS,
+  OUTREACH_VOICE_HARD_MAX_COST_GBP,
+  OUTREACH_VOICE_HARD_MAX_WORDS,
+  OUTREACH_VOICE_PREFERRED_MAX_WORDS,
+  OUTREACH_VOICE_PREFERRED_MIN_WORDS,
+  OUTREACH_VOICE_TARGET_COST_GBP,
+  OUTREACH_VOICE_TARGET_WORDS,
 } from "@/lib/outreach-voice-policy";
 
 type VoiceMessage = {
@@ -50,10 +55,18 @@ export default function OutreachVoiceNoteEditor({
   const seconds = Math.max(20, Math.min(90, Math.round((words / 135) * 60)));
   const characters = script.length;
   const generatedCostPence = Number(message.voice_estimated_cost_gbp || 0) * 100;
-  const needsLengthReview = words > 0 && (
-    words < OUTREACH_VOICE_MIN_WORDS ||
-    words > OUTREACH_VOICE_MAX_WORDS ||
-    characters > OUTREACH_VOICE_MAX_CHARACTERS
+  const estimatedCostPence = generatedCostPence > 0
+    ? generatedCostPence
+    : estimateOutreachVoiceCostGbp(script) * 100;
+  const outsidePreferredRange = words > 0 && (
+    words < OUTREACH_VOICE_PREFERRED_MIN_WORDS ||
+    words > OUTREACH_VOICE_PREFERRED_MAX_WORDS
+  );
+  const overTargetCost = estimatedCostPence > OUTREACH_VOICE_TARGET_COST_GBP * 100;
+  const beyondSafetyLimit = words > 0 && (
+    words > OUTREACH_VOICE_HARD_MAX_WORDS ||
+    characters > OUTREACH_VOICE_HARD_MAX_CHARACTERS ||
+    estimatedCostPence > OUTREACH_VOICE_HARD_MAX_COST_GBP * 100
   );
   const locked = disabled || ["sending", "sent"].includes(message.status || "");
 
@@ -72,7 +85,7 @@ export default function OutreachVoiceNoteEditor({
           className={`rounded-full border px-2 py-1 font-mono text-[0.48rem] uppercase ${
             ready
               ? "border-moss/50 bg-moss/10 text-moss"
-              : needsLengthReview
+              : beyondSafetyLimit
                 ? "border-rust/50 bg-rust/10 text-rust"
                 : "border-amber/45 bg-amber/10 text-amber"
           }`}
@@ -99,8 +112,8 @@ export default function OutreachVoiceNoteEditor({
         />
       </label>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <p className={`text-xs ${needsLengthReview ? "text-rust" : "text-muted"}`}>
-          {words} words · {characters}/{OUTREACH_VOICE_MAX_CHARACTERS} characters · about {seconds} seconds. Aim for {OUTREACH_VOICE_MIN_WORDS} to {OUTREACH_VOICE_MAX_WORDS} words.
+        <p className={`text-xs ${beyondSafetyLimit ? "text-rust" : outsidePreferredRange || overTargetCost ? "text-amber" : "text-muted"}`}>
+          {words} words · about {seconds} seconds · estimated {estimatedCostPence.toFixed(1)}p. Aim for about {OUTREACH_VOICE_TARGET_WORDS} words, usually {OUTREACH_VOICE_PREFERRED_MIN_WORDS} to {OUTREACH_VOICE_PREFERRED_MAX_WORDS}.
         </p>
         {!locked ? (
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
@@ -112,7 +125,7 @@ export default function OutreachVoiceNoteEditor({
                 generating ||
                 ready ||
                 scriptApproved ||
-                needsLengthReview ||
+                beyondSafetyLimit ||
                 !script.trim()
               }
               className="inline-flex min-h-10 items-center justify-center rounded-lg border border-edge bg-ink/35 px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-bone disabled:cursor-not-allowed disabled:opacity-40"
@@ -131,7 +144,7 @@ export default function OutreachVoiceNoteEditor({
                 generating ||
                 ready ||
                 !scriptApproved ||
-                needsLengthReview ||
+                beyondSafetyLimit ||
                 !script.trim()
               }
               className="inline-flex min-h-10 items-center justify-center rounded-lg border border-amber/55 bg-amber/10 px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-amber disabled:cursor-not-allowed disabled:opacity-40"
@@ -140,11 +153,20 @@ export default function OutreachVoiceNoteEditor({
                 ? "Creating voice…"
                 : ready
                   ? "✓ Audio ready"
-                  : "2 · Generate voice · max 5p"}
+                  : `2 · Generate voice · est ${estimatedCostPence.toFixed(1)}p`}
             </button>
           </div>
         ) : null}
       </div>
+      {beyondSafetyLimit ? (
+        <p className="mt-2 text-xs leading-5 text-rust">
+          This is beyond the 7.5p safety limit. Shorten it without cutting the final sentence.
+        </p>
+      ) : outsidePreferredRange || overTargetCost ? (
+        <p className="mt-2 text-xs leading-5 text-amber">
+          This is outside the normal 45 second target, but it can still be approved. Complete sentences and useful personalisation take priority over the five pence benchmark.
+        </p>
+      ) : null}
       <p className="mt-2 text-xs leading-5 text-moss" role="status" aria-live="polite">
         {ready
           ? "This one approved voice note has been generated and can now be previewed."
