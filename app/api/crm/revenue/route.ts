@@ -133,7 +133,7 @@ export async function GET() {
       visibleProspectIds.length
         ? supabaseAdmin
             .from("outreach_messages")
-            .select("prospect_id,message_tags,step_number,variant")
+            .select("prospect_id,message_tags,step_number,variant,sent_at")
             .eq("workspace_id", account.workspaceId)
             .eq("status", "sent")
             .in("prospect_id", visibleProspectIds)
@@ -210,6 +210,18 @@ export async function GET() {
     for (const prospect of outreachCompanyRows || []) {
       if (prospect.crm_company_id && prospect.company_name && !outreachNameByCompany.has(prospect.crm_company_id))
         outreachNameByCompany.set(prospect.crm_company_id, prospect.company_name);
+    }
+    const companyByProspect = new Map<string, string>(
+      (outreachCompanyRows || [])
+        .filter((prospect: any) => prospect.crm_company_id)
+        .map((prospect: any) => [String(prospect.id), String(prospect.crm_company_id)])
+    );
+    for (const message of sentMessages || []) {
+      const companyId = companyByProspect.get(message.prospect_id);
+      const at = message.sent_at ? new Date(message.sent_at).getTime() : 0;
+      if (companyId && at > (lastTouchByCompany.get(companyId) || 0)) {
+        lastTouchByCompany.set(companyId, at);
+      }
     }
     for (const call of calls || []) {
       const at = new Date(call.created_at as string).getTime();
@@ -424,6 +436,40 @@ export async function GET() {
       name: (profileById.get(member.user_id) as any)?.display_name || "Team member",
     }));
 
+    // Show the signed-in salesperson's newest outreach beside the pipeline
+    // without turning an approved email into a made-up revenue opportunity.
+    const { data: recentOutreachMessages, error: recentOutreachError } =
+      await supabaseAdmin
+        .from("outreach_messages")
+        .select(
+          "id,prospect_id,campaign_id,message_source,subject,status,scheduled_at,sent_at,updated_at"
+        )
+        .eq("workspace_id", account.workspaceId)
+        .eq("sender_user_id", account.userId)
+        .in("status", ["approved", "sending", "sent"])
+        .order("updated_at", { ascending: false })
+        .limit(10);
+    if (recentOutreachError) throw recentOutreachError;
+    const recentProspectIds = Array.from(
+      new Set((recentOutreachMessages || []).map((message: any) => message.prospect_id))
+    );
+    const { data: recentOutreachProspects, error: recentProspectsError } =
+      recentProspectIds.length
+        ? await supabaseAdmin
+            .from("outreach_prospects")
+            .select("id,first_name,last_name,company_name,email,crm_company_id")
+            .eq("workspace_id", account.workspaceId)
+            .in("id", recentProspectIds)
+        : { data: [] as any[], error: null };
+    if (recentProspectsError) throw recentProspectsError;
+    const recentProspectById = new Map(
+      (recentOutreachProspects || []).map((prospect: any) => [prospect.id, prospect])
+    );
+    const recentOutreach = (recentOutreachMessages || []).map((message: any) => ({
+      ...message,
+      prospect: recentProspectById.get(message.prospect_id) || null,
+    }));
+
     return NextResponse.json({
       goal: { target, wonYtd: wonValue, gap, monthsRemaining, requiredPerMonth: gap / monthsRemaining },
       kpis: { rawPipeline, weightedPipeline, commit, bestCase, wonYtd: wonValue, coverage: gap ? rawPipeline / gap : 0 },
@@ -438,6 +484,7 @@ export async function GET() {
         strategic: excluded.filter((op: any) => op.opportunity_type === "strategic").length,
       },
       priorities: rows.slice(0, 8),
+      recentOutreach,
       funnel: [
         { key: "prospects", label: "Prospects", value: prospectCount || 0 },
         { key: "contacted", label: "Contacted", value: uniqueSent.size },

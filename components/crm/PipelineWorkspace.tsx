@@ -230,7 +230,9 @@ export default function PipelineWorkspace(props: Props) {
     ? "Mine"
     : team.find((member) => member.userId === row.assigned_to_user_id)?.name || "Unassigned";
   const [view, setView] = useState<"table" | "kanban">("table");
-  const [tableOrder, setTableOrder] = useState<"priority" | "newest" | "oldest">("priority");
+  const [tableOrder, setTableOrder] = useState<
+    "priority" | "newest" | "oldest" | "activity_newest" | "activity_oldest"
+  >("priority");
   const visibleRows = useMemo(
     () => rows.filter((row) => opportunityMatchesOwner(row, ownerFilter, currentUser)),
     [currentUser, ownerFilter, rows]
@@ -243,8 +245,16 @@ export default function PipelineWorkspace(props: Props) {
       return Number.isFinite(parsed) ? parsed : 0;
     };
     return [...visibleRows].sort((left, right) => {
-      const comparison = timestamp(left.created_at) - timestamp(right.created_at);
-      if (comparison) return tableOrder === "oldest" ? comparison : -comparison;
+      const activityOrder = tableOrder.startsWith("activity_");
+      const comparison = timestamp(
+        activityOrder ? left.lastMeaningfulActivityAt : left.created_at
+      ) - timestamp(
+        activityOrder ? right.lastMeaningfulActivityAt : right.created_at
+      );
+      if (comparison)
+        return tableOrder === "oldest" || tableOrder === "activity_oldest"
+          ? comparison
+          : -comparison;
       return left.company.localeCompare(right.company, "en-GB", { sensitivity: "base" });
     });
   }, [tableOrder, visibleRows]);
@@ -286,6 +296,18 @@ export default function PipelineWorkspace(props: Props) {
           <p className="mt-1 text-sm text-muted">Lifecycle shows where the deal is. Win outlook shows the evidence-led chance of winning it.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
+          <select
+            aria-label="Sort pipeline"
+            value={tableOrder}
+            onChange={(event) => setTableOrder(event.target.value as typeof tableOrder)}
+            className="min-h-11 rounded-lg border border-edge bg-ink px-3 font-mono text-[0.56rem] uppercase text-bone outline-none focus:border-amber/60"
+          >
+            <option value="priority">Priority</option>
+            <option value="activity_newest">Latest activity</option>
+            <option value="activity_oldest">Oldest activity</option>
+            <option value="newest">Newest deal</option>
+            <option value="oldest">Oldest deal</option>
+          </select>
           <select
             aria-label="Filter pipeline by deal owner"
             value={ownerFilter}
@@ -337,7 +359,7 @@ export default function PipelineWorkspace(props: Props) {
               </p>
             ) : null}
             <table className="w-full min-w-[1180px] border-separate border-spacing-y-2 text-left">
-              <thead><tr className="font-mono text-[0.5rem] uppercase text-muted"><th className="px-2">Deal</th><th className="px-2">Owner</th><th className="px-2">Stage</th><th className="px-2">Win outlook</th><th className="px-2">Value</th><th className="px-2">Engagement</th><th aria-sort={tableOrder === "priority" ? "none" : tableOrder === "newest" ? "descending" : "ascending"} className="px-2"><button type="button" onClick={() => setTableOrder((current) => current === "newest" ? "oldest" : "newest")} className="transition hover:text-amber">Date added{tableOrder === "newest" ? " ↓" : tableOrder === "oldest" ? " ↑" : " ↕"}</button></th><th className="px-2">Last activity</th><th className="px-2">Next action</th></tr></thead>
+              <thead><tr className="font-mono text-[0.5rem] uppercase text-muted"><th className="px-2">Deal</th><th className="px-2">Owner</th><th className="px-2">Stage</th><th className="px-2">Win outlook</th><th className="px-2">Value</th><th className="px-2">Engagement</th><th aria-sort={tableOrder === "newest" ? "descending" : tableOrder === "oldest" ? "ascending" : "none"} className="px-2"><button type="button" onClick={() => setTableOrder((current) => current === "newest" ? "oldest" : "newest")} className="transition hover:text-amber">Date added{tableOrder === "newest" ? " ↓" : tableOrder === "oldest" ? " ↑" : " ↕"}</button></th><th aria-sort={tableOrder === "activity_newest" ? "descending" : tableOrder === "activity_oldest" ? "ascending" : "none"} className="px-2"><button type="button" onClick={() => setTableOrder((current) => current === "activity_newest" ? "activity_oldest" : "activity_newest")} className="transition hover:text-amber">Last activity{tableOrder === "activity_newest" ? " ↓" : tableOrder === "activity_oldest" ? " ↑" : " ↕"}</button></th><th className="px-2">Next action</th></tr></thead>
               <tbody>{tableRows.map((row) => <tr key={row.id} className="align-top [&>td]:border-y [&>td]:border-edge [&>td]:bg-ink/35 [&>td]:p-2 first:[&>td]:rounded-l-lg last:[&>td]:rounded-r-lg"><td className="w-52 border-l"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><p className="max-w-52 text-xs text-muted">{row.title}</p>{row.priorityReasons?.length ? <p className="mt-1 text-[0.67rem] text-amber">{row.priorityReasons.slice(0, 2).join(" · ")}</p> : null}</td><td className="text-xs text-bone">{ownerName(row)}</td><td><span className="text-sm text-bone">{formatLabel(row.pipeline_stage)}</span></td><td><OutlookBadge row={row} /></td><td className="text-sm text-bone">{gbp(row.value)}</td><td className="max-w-36 text-xs text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}<span className="mt-1 block text-muted">{row.active_contact_method ? formatLabel(row.active_contact_method) : "Method not set"}</span></td><td className="whitespace-nowrap text-xs text-bone">{dateTime(row.created_at)}</td><td className="text-xs text-bone">{dateTime(row.lastMeaningfulActivityAt)}{row.nextMeetingAt ? <span className="mt-1 block text-amber">Meeting {dateTime(row.nextMeetingAt)}</span> : null}</td><td className="w-72"><p className="text-sm text-amber">{row.next_action || row.nextAction}</p><p className="mt-1 text-xs text-muted">{row.next_action_due_at ? `Due ${dateTime(row.next_action_due_at)}` : "No due date"}</p><DealDetails {...props} row={row} /></td></tr>)}</tbody>
             </table>
           </div>

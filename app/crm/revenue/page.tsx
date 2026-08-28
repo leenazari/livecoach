@@ -40,6 +40,16 @@ const input = "min-h-11 w-full rounded-lg border border-edge bg-ink/60 px-3 py-2
 const button = "min-h-11 rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.61rem] uppercase tracking-wider text-amber disabled:opacity-40";
 const gbp = (value: number) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0, notation: Math.abs(value) >= 1_000_000 ? "compact" : "standard" }).format(value || 0);
 const pct = (value: number) => `${Math.round((value || 0) * 10) / 10}%`;
+const dateTime = (value?: string | null) => value
+  ? new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Europe/London",
+    }).format(new Date(value))
+  : "Not recorded";
 const typeLabels: Record<Opportunity["opportunity_type"], string> = {
   revenue: "Customer revenue",
   investment: "Investment",
@@ -273,6 +283,48 @@ export default function RevenuePage() {
         </section>
 
         <OutlookIntelligencePanel health={data.signalHealth as SignalHealth} />
+
+        {data.recentOutreach?.length ? (
+          <section id="recent-outreach" className="mb-4 scroll-mt-24 rounded-xl border border-sky/35 bg-panel p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="font-mono text-[0.53rem] uppercase tracking-wider text-sky">Linked outreach activity</p>
+                <h2 className="mt-1 font-display text-lg text-bone">Your newest prospect emails</h2>
+                <p className="mt-1 text-sm leading-6 text-muted">These stay visible beside the pipeline without inflating the revenue forecast before a real opportunity exists.</p>
+              </div>
+              <Link href="/crm/outreach?tab=prospects&sort=activity" className={`${button} inline-flex items-center justify-center`}>
+                Open latest activity
+              </Link>
+            </div>
+            <div className="mt-3 divide-y divide-edge">
+              {data.recentOutreach.slice(0, 5).map((message: any) => {
+                const prospectName = `${message.prospect?.first_name || ""} ${message.prospect?.last_name || ""}`.trim();
+                const activityAt = message.sent_at || message.scheduled_at || message.updated_at;
+                const outreachHref = `/crm/outreach?tab=prospects&sort=activity&q=${encodeURIComponent(message.prospect?.email || "")}`;
+                return (
+                  <article key={message.id} className="grid gap-2 py-3 sm:grid-cols-[1fr_1.3fr_auto] sm:items-center">
+                    <div className="min-w-0">
+                      <Link href={outreachHref} className="block truncate text-sm font-semibold text-bone transition hover:text-amber">
+                        {prospectName || message.prospect?.email || "Prospect"}
+                      </Link>
+                      <span className="block truncate text-xs text-muted">{message.prospect?.company_name || "Company not recorded"}</span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-bone/85">{message.subject}</p>
+                      <span className="font-mono text-[0.48rem] uppercase text-muted">{message.message_source === "brain_direct" ? "Brain email" : "Campaign email"}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 sm:justify-end">
+                      <span className="font-mono text-[0.49rem] uppercase text-muted">{dateTime(activityAt)}</span>
+                      <span className={`rounded-full border px-2 py-1 font-mono text-[0.49rem] uppercase ${message.status === "sent" ? "border-moss/45 bg-moss/10 text-moss" : "border-sky/45 bg-sky/10 text-sky"}`}>
+                        {message.status === "sent" ? "Sent" : message.status === "sending" ? "Sending" : "Queued"}
+                      </span>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
 
         <PipelineWorkspace
           rows={revenueRows as any}

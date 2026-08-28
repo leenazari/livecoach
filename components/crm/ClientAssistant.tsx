@@ -331,6 +331,7 @@ export default function ClientAssistant({
   // Per-proposed-action state: pending | busy | done | cancelled.
   const [actionState, setActionState] = useState<Record<string, string>>({});
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
+  const [actionResults, setActionResults] = useState<Record<string, any>>({});
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchOutcome, setBatchOutcome] = useState<{
     completed: number;
@@ -976,6 +977,19 @@ export default function ClientAssistant({
     }
   };
 
+  const receiptAction = (action: any, result?: any) =>
+    action?.type === "send_email"
+      ? {
+          key: action.key,
+          type: action.type,
+          label: fullActionLabel(action),
+          external: true,
+          messageId: result?.messageId || null,
+          prospectId: result?.prospectId || null,
+          status: result?.status || null,
+        }
+      : action;
+
   const confirmAction = async (
     a: any,
     recordReceipt = true
@@ -1002,13 +1016,18 @@ export default function ClientAssistant({
           `${result.notCompleted.length} part${result.notCompleted.length === 1 ? " was" : "s were"} not completed.`
         );
       setActionState((s) => ({ ...s, [a.key]: "done" }));
+      setActionResults((current) => ({ ...current, [a.key]: result }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
       if (a.type === "create_document")
         window.dispatchEvent(new CustomEvent("lc:document-jobs-updated"));
       if (recordReceipt)
         await persistActionReceipt([
-          { label: fullActionLabel(a), status: "completed", action: a },
+          {
+            label: fullActionLabel(a),
+            status: "completed",
+            action: receiptAction(a, result),
+          },
         ]);
       return { ok: true };
     } catch (error: any) {
@@ -1021,7 +1040,12 @@ export default function ClientAssistant({
       }));
       if (recordReceipt)
         await persistActionReceipt([
-          { label: fullActionLabel(a), status: "not_completed", reason, action: a },
+          {
+            label: fullActionLabel(a),
+            status: "not_completed",
+            reason,
+            action: receiptAction(a),
+          },
         ]);
       return { ok: false, error: reason };
     }
@@ -1052,6 +1076,7 @@ export default function ClientAssistant({
           `${result.notCompleted.length} part${result.notCompleted.length === 1 ? " was" : "s were"} not completed.`
         );
       setActionState((s) => ({ ...s, [a.key]: "done" }));
+      setActionResults((current) => ({ ...current, [a.key]: result }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
       if (a.type === "create_document")
@@ -1060,7 +1085,10 @@ export default function ClientAssistant({
         {
           label: `${fullActionLabel(a)}: ${c.label}`,
           status: "completed",
-          action: { ...a, ...c, label: `${fullActionLabel(a)}: ${c.label}` },
+          action: receiptAction(
+            { ...a, ...c, label: `${fullActionLabel(a)}: ${c.label}` },
+            result
+          ),
         },
       ]);
     } catch (error: any) {
@@ -1076,7 +1104,11 @@ export default function ClientAssistant({
           label: `${fullActionLabel(a)}: ${c.label}`,
           status: "not_completed",
           reason,
-          action: { ...a, ...c, label: `${fullActionLabel(a)}: ${c.label}` },
+          action: receiptAction({
+            ...a,
+            ...c,
+            label: `${fullActionLabel(a)}: ${c.label}`,
+          }),
         },
       ]);
     }
@@ -1384,14 +1416,16 @@ export default function ClientAssistant({
                         <div
                           key={a.key}
                           className={`rounded-lg border p-2 ${
-                            a.unavailable
+                            a.needsInput
+                              ? "border-amber/45 bg-amber/[0.08]"
+                              : a.unavailable
                               ? "border-rust/45 bg-rust/[0.08]"
                               : "border-sky/40 bg-sky/[0.06]"
                           }`}
                         >
                           <div className="mb-1.5 flex items-center justify-between gap-2">
-                            <span className={`font-mono text-[0.5rem] uppercase tracking-wider ${a.unavailable ? "text-rust" : "text-sky/80"}`}>
-                              {a.unavailable ? "Not completed" : "proposed change"}
+                            <span className={`font-mono text-[0.5rem] uppercase tracking-wider ${a.needsInput ? "text-amber" : a.unavailable ? "text-rust" : "text-sky/80"}`}>
+                              {a.needsInput ? "Need one detail" : a.unavailable ? "Not completed" : a.external ? "External email" : "proposed change"}
                             </span>
                             {!a.unavailable ? <span
                               className={`rounded-full border px-2 py-0.5 font-mono text-[0.48rem] uppercase tracking-wider ${
@@ -1406,14 +1440,41 @@ export default function ClientAssistant({
                           <p className="mb-1.5 font-sans text-[0.78rem] leading-snug text-bone/90">
                             {"⚙"} {fullActionLabel(a)}
                           </p>
+                          {a.type === "send_email" && a.emailPreview ? (
+                            <div className="mb-2 rounded-md border border-edge bg-ink/45 p-2 text-left">
+                              <p className="font-mono text-[0.5rem] uppercase text-muted">
+                                To {a.emailPreview.recipientName ? `${a.emailPreview.recipientName} ` : ""}&lt;{a.emailPreview.email || "email needed"}&gt;
+                              </p>
+                              <p className="mt-1 text-sm text-bone">{a.emailPreview.subject}</p>
+                              <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-bone/75">{a.emailPreview.body}</p>
+                            </div>
+                          ) : null}
                           {a.unavailable ? (
-                            <p className="rounded-md border border-rust/30 bg-rust/[0.06] px-2 py-1.5 font-sans text-[0.68rem] leading-snug text-rust">
+                            <p className={`rounded-md border px-2 py-1.5 font-sans text-[0.68rem] leading-snug ${a.needsInput ? "border-amber/30 bg-amber/[0.06] text-amber" : "border-rust/30 bg-rust/[0.06] text-rust"}`}>
                               {a.failureReason || "No change was made."}
                             </p>
                           ) : st === "done" ? (
-                            <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
-                              ✓ done
-                            </span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
+                                {a.type === "send_email"
+                                  ? actionResults[a.key]?.status === "sent"
+                                    ? "✓ already sent"
+                                    : actionResults[a.key]?.status === "sending"
+                                      ? "✓ sending"
+                                      : "✓ approved and queued"
+                                  : "✓ done"}
+                              </span>
+                              {actionResults[a.key]?.links?.outreach ? (
+                                <Link href={actionResults[a.key].links.outreach} className="rounded-full border border-sky/45 px-2 py-1 font-mono text-[0.52rem] uppercase text-sky">
+                                  View recent outreach
+                                </Link>
+                              ) : null}
+                              {actionResults[a.key]?.links?.pipeline ? (
+                                <Link href={actionResults[a.key].links.pipeline} className="rounded-full border border-edge px-2 py-1 font-mono text-[0.52rem] uppercase text-muted">
+                                  View in pipeline
+                                </Link>
+                              ) : null}
+                            </div>
                           ) : Array.isArray(a.choices) && a.choices.length ? (
                             <div className="flex flex-col gap-1">
                               {a.choices.map((c: any, ci: number) => (
@@ -1444,7 +1505,7 @@ export default function ClientAssistant({
                                 onClick={() => confirmAction(a)}
                                 className="rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 disabled:opacity-50"
                               >
-                                {st === "busy" ? "doing…" : "confirm"}
+                                {st === "busy" ? "doing…" : a.type === "send_email" ? "approve & queue email" : "confirm"}
                               </button>
                               <button
                                 type="button"

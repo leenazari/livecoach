@@ -165,11 +165,15 @@ export async function processOutreachReplyMessage(input: {
       : classified.category === "irrelevant"
         ? "reply"
         : classified.category;
-  const { data: enrolments, error: enrolmentError } = await supabaseAdmin
-    .from("outreach_enrolments")
-    .select("id,campaign_id")
-    .eq("prospect_id", prospect.id)
-    .in("status", ["contacted", "queued", "drafted", "approved"]);
+  const { data: enrolments, error: enrolmentError } = lastSent.campaign_id
+    ? await supabaseAdmin
+        .from("outreach_enrolments")
+        .select("id,campaign_id")
+        .eq("workspace_id", input.sender.workspaceId)
+        .eq("prospect_id", prospect.id)
+        .eq("campaign_id", lastSent.campaign_id)
+        .in("status", ["contacted", "queued", "drafted", "approved"])
+    : { data: [] as any[], error: null };
   if (enrolmentError) throw enrolmentError;
 
   let update = supabaseAdmin
@@ -210,6 +214,9 @@ export async function processOutreachReplyMessage(input: {
     ...(suppress
       ? [
           supabaseAdmin.from("outreach_suppressions").upsert({
+            workspace_id: input.sender.workspaceId,
+            owner_id: input.sender.userId,
+            visibility: "team",
             target: String(prospect.email).toLowerCase(),
             kind: "email",
             reason: classified.summary,
@@ -221,9 +228,15 @@ export async function processOutreachReplyMessage(input: {
   const relatedError = results.find((result: any) => result.error)?.error;
   if (relatedError) throw relatedError;
 
-  for (const enrolment of enrolments || []) {
+  const replyCampaigns = lastSent.campaign_id
+    ? (enrolments || []).map((enrolment) => enrolment.campaign_id)
+    : [null];
+  for (const campaignId of replyCampaigns) {
     const { error: eventError } = await supabaseAdmin.from("outreach_events").insert({
-      campaign_id: enrolment.campaign_id,
+      workspace_id: input.sender.workspaceId,
+      owner_id: input.sender.userId,
+      visibility: "team",
+      campaign_id: campaignId,
       prospect_id: prospect.id,
       message_id: lastSent.id,
       kind: eventKind,
@@ -236,6 +249,8 @@ export async function processOutreachReplyMessage(input: {
         received_at: receivedAt,
         reply_type: outOfOffice.isOutOfOffice ? "out_of_office" : "reply",
         return_date: outOfOffice.returnDate,
+        message_type:
+          lastSent.message_source === "brain_direct" ? "brain_direct" : "sequence",
       },
       created_at: receivedAt,
     });

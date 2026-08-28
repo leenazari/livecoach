@@ -4,8 +4,8 @@ const DIMENSIONS = ["tone", "angle", "cta", "persona"] as const;
 
 export async function refreshOutreachLearnings() {
   const [{ data: messages }, { data: events }] = await Promise.all([
-    supabaseAdmin.from("outreach_messages").select("id,campaign_id,prospect_id,message_tags,sent_at").eq("status", "sent").order("sent_at", { ascending: true }).limit(10000),
-    supabaseAdmin.from("outreach_events").select("campaign_id,prospect_id,kind").in("kind", ["reply", "positive_reply", "objection", "later", "referral", "meeting_booked"]).limit(10000),
+    supabaseAdmin.from("outreach_messages").select("id,campaign_id,prospect_id,message_tags,sent_at").eq("status", "sent").eq("message_source", "campaign").not("campaign_id", "is", null).order("sent_at", { ascending: true }).limit(10000),
+    supabaseAdmin.from("outreach_events").select("campaign_id,prospect_id,kind").not("campaign_id", "is", null).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "meeting_booked"]).limit(10000),
   ]);
   const eventByCampaignProspect = new Map<string, Set<string>>();
   for (const event of events || []) {
