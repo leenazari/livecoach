@@ -46,6 +46,9 @@ export type CommercialMemory = {
     probability: number;
     value: number | null;
     intent: string;
+    intentAsOf: string | null;
+    intentSource: string;
+    intentOverride: boolean;
     winOutlook: string;
     winOutlookConfidence: number | null;
     winOutlookReasons: string[];
@@ -126,7 +129,7 @@ export async function getCommercialMemory(
       .limit(8);
     let opportunitiesQuery = supabaseAdmin
       .from("opportunities")
-      .select("id, title, value, status, pipeline_stage, probability, deal_intent, win_outlook, win_outlook_confidence, win_outlook_reasons, win_outlook_questions, win_outlook_override, engagement_motion, active_contact_method, next_action, next_action_due_at, next_action_owner, updated_at")
+      .select("id, title, value, status, pipeline_stage, probability, deal_intent, deal_intent_as_of, deal_intent_source, deal_intent_override, win_outlook, win_outlook_confidence, win_outlook_reasons, win_outlook_questions, win_outlook_override, engagement_motion, active_contact_method, next_action, next_action_due_at, next_action_owner, updated_at")
       .eq("company_id", companyId)
       .eq("opportunity_type", "revenue")
       .order("updated_at", { ascending: false })
@@ -312,6 +315,9 @@ export async function getCommercialMemory(
         stage: cut(opportunity.pipeline_stage || opportunity.status, 60),
         probability: Number(opportunity.probability) || 0,
         intent: cut(opportunity.deal_intent, 400),
+        intentAsOf: opportunity.deal_intent_as_of || null,
+        intentSource: cut(opportunity.deal_intent_source, 20) || "system",
+        intentOverride: opportunity.deal_intent_override === true,
         winOutlook: cut(opportunity.win_outlook, 40) || "not_assessed",
         winOutlookConfidence: opportunity.win_outlook_confidence == null ? null : Number(opportunity.win_outlook_confidence),
         winOutlookReasons: list(opportunity.win_outlook_reasons),
@@ -420,7 +426,8 @@ export function formatCommercialMemoryBlock(memory: CommercialMemory | null): st
   }
   if (memory.opportunity) {
     lines.push(`Revenue opportunity: ${memory.opportunity.title}. Stage ${memory.opportunity.stage}. Win outlook ${memory.opportunity.winOutlook}${memory.opportunity.winOutlookConfidence == null ? "" : ` at ${memory.opportunity.winOutlookConfidence}% confidence`}${memory.opportunity.winOutlookOverride ? " (human override)" : ""}. ${memory.opportunity.value == null ? "Value not set" : `Value £${memory.opportunity.value}`}. Next: ${memory.opportunity.nextAction || "not confirmed"}${memory.opportunity.nextActionDueAt ? `, due ${memory.opportunity.nextActionDueAt.slice(0, 10)}` : ""}, owner ${memory.opportunity.nextActionOwner}.`);
-    if (memory.opportunity.intent) lines.push(`Deal intent: ${memory.opportunity.intent}`);
+    if (memory.opportunity.intent)
+      lines.push(`Deal intent${memory.opportunity.intentOverride ? " (human override)" : ""}: ${memory.opportunity.intent}`);
     if (memory.opportunity.winOutlookReasons.length)
       lines.push(`Outlook evidence: ${memory.opportunity.winOutlookReasons.join(" | ")}`);
     if (memory.opportunity.winOutlookQuestions.length)

@@ -154,10 +154,33 @@ export async function PATCH(
       patch.expected_close_at = body.expectedCloseAt;
     }
     if (typeof body.outcomeReason === "string") patch.outcome_reason = body.outcomeReason.trim().slice(0, 1000) || null;
+    const sourceType = body.sourceType === "system" ? "system" : "human";
+    const dealIntentRequested = Object.prototype.hasOwnProperty.call(body, "dealIntent");
+    if (sourceType === "system" && current.deal_intent_override && dealIntentRequested) {
+      return NextResponse.json(
+        { error: "A human deal intent override is active. Clear it before applying a system intent." },
+        { status: 409 }
+      );
+    }
     if (body.dealIntent === null || body.dealIntent === "") {
       patch.deal_intent = null;
     } else if (typeof body.dealIntent === "string") {
       patch.deal_intent = capitaliseSentenceStarts(body.dealIntent.trim()).slice(0, 1500) || null;
+    }
+    const changingDealIntent =
+      dealIntentRequested &&
+      patch.deal_intent !== undefined &&
+      patch.deal_intent !== current.deal_intent;
+    if (changingDealIntent) {
+      patch.deal_intent_as_of = new Date().toISOString();
+      patch.deal_intent_source = sourceType;
+      if (sourceType === "human") {
+        patch.deal_intent_override = true;
+        patch.deal_intent_override_at = patch.deal_intent_as_of;
+      }
+    } else if (body.clearDealIntentOverride === true) {
+      patch.deal_intent_override = false;
+      patch.deal_intent_override_at = null;
     }
     if (body.engagementMotion === null || body.engagementMotion === "") {
       patch.engagement_motion = null;
@@ -176,7 +199,6 @@ export async function PATCH(
       patch.active_contact_method = body.activeContactMethod;
     }
 
-    const sourceType = body.sourceType === "system" ? "system" : "human";
     const outlookRequested =
       typeof body.winOutlook === "string" ||
       body.winOutlookConfidence !== undefined ||

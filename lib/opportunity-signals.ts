@@ -37,7 +37,7 @@ const ASSESSMENT_FORMAT = {
   schema: {
     type: "object",
     additionalProperties: false,
-    required: ["material", "outlook", "confidence", "reasons", "questions", "rationale"],
+    required: ["material", "outlook", "confidence", "reasons", "questions", "dealIntent", "rationale"],
     properties: {
       material: { type: "boolean" },
       outlook: {
@@ -47,6 +47,7 @@ const ASSESSMENT_FORMAT = {
       confidence: { type: "integer", minimum: 0, maximum: 100 },
       reasons: { type: "array", maxItems: 4, items: { type: "string" } },
       questions: { type: "array", maxItems: 4, items: { type: "string" } },
+      dealIntent: { type: "string", maxLength: 600 },
       rationale: { type: "string" },
     },
   },
@@ -220,7 +221,9 @@ async function assessReceipt(receipt: any) {
       return { status: "complete" };
     }
 
-    if (opportunity.win_outlook_override === true) {
+    const outlookProtected = opportunity.win_outlook_override === true;
+    const intentProtected = opportunity.deal_intent_override === true;
+    if (outlookProtected && intentProtected) {
       await Promise.all([
         supabaseAdmin.from("opportunities").update({
           last_meaningful_activity_at: newerIso(
@@ -232,7 +235,7 @@ async function assessReceipt(receipt: any) {
         }).eq("id", opportunity.id),
         supabaseAdmin.from("opportunity_signal_receipts").update({
           status: "protected",
-          result: { reason: "human_outlook_override_preserved" },
+          result: { reason: "human_outlook_and_intent_overrides_preserved" },
           updated_at: new Date().toISOString(),
         }).eq("id", claimed.id),
       ]);
@@ -256,6 +259,10 @@ Rules:
 - A human override is handled before this request and must never be inferred or cleared here.
 - Keep only up to four short evidence reasons. Preserve earlier reasons only when the current record still supports them.
 - If evidence is missing, ask precise questions for the next conversation. Do not invent a stronger score.
+- dealIntent is the concise forward-looking commercial purpose of this deal. Use no more than two plain sentences.
+- The first sentence must state the desired commercial outcome and the current evidence-led position.
+- The second sentence must state what the next conversation needs to confirm, resolve or secure.
+- Do not repeat the next action word for word, include unsupported claims, or turn the intent into a history summary.
 - Mark material false when the new signal does not affect commercial momentum. Use British English and plain sentences.`;
     const current = {
       title: opportunity.title,
@@ -274,7 +281,7 @@ Rules:
     };
     const message = await openai.messages.create({
       model: OPENAI_MODEL_LIVE,
-      max_tokens: 650,
+      max_tokens: 750,
       response_format: ASSESSMENT_FORMAT,
       system,
       messages: [{
@@ -298,6 +305,7 @@ Rules:
 
     const reasons = cleanStringList(assessment.reasons, 4, 240);
     const questions = cleanStringList(assessment.questions, 4, 300);
+    const dealIntent = text(assessment.dealIntent, 600);
     const material = assessment.material === true;
     const confidence = Math.min(100, Math.max(0, Math.round(Number(assessment.confidence) || 0)));
     const rationale = text(assessment.rationale, 500) || "Assessed from one new stored CRM signal";
@@ -307,6 +315,7 @@ Rules:
       confidence,
       reasons,
       questions,
+      dealIntent,
       rationale,
     };
     if (!material) {
@@ -318,41 +327,59 @@ Rules:
       return { status: "ignored" };
     }
 
+    if (!intentProtected && !dealIntent)
+      throw new Error("deal intent assessment was incomplete");
+
     const assessedAt = new Date().toISOString();
-    const { data: updated, error: updateError } = await supabaseAdmin
-      .from("opportunities")
-      .update({
+    const opportunityPatch: Record<string, unknown> = {
+      active_contact_method: claimed.source_channel,
+      last_meaningful_activity_at: newerIso(
+        opportunity.last_meaningful_activity_at,
+        claimed.occurred_at
+      ),
+      last_change_context: {
+        nonce: crypto.randomUUID(),
+        sourceType: "system",
+        sourceChannel: claimed.source_channel,
+        rationale,
+        evidence: {
+          receiptId: claimed.id,
+          sourceRecordType: claimed.source_record_type,
+          sourceRecordId: claimed.source_record_id,
+          occurredAt: claimed.occurred_at,
+          digest: claimed.evidence,
+        },
+      },
+      updated_at: assessedAt,
+    };
+    if (!outlookProtected) {
+      Object.assign(opportunityPatch, {
         win_outlook: assessment.outlook,
         win_outlook_confidence: confidence,
         win_outlook_reasons: reasons,
         win_outlook_questions: questions,
         win_outlook_as_of: assessedAt,
         win_outlook_source: "system",
-        active_contact_method: claimed.source_channel,
-        last_meaningful_activity_at: newerIso(
-          opportunity.last_meaningful_activity_at,
-          claimed.occurred_at
-        ),
-        last_change_context: {
-          nonce: crypto.randomUUID(),
-          sourceType: "system",
-          sourceChannel: claimed.source_channel,
-          rationale,
-          evidence: {
-            receiptId: claimed.id,
-            sourceRecordType: claimed.source_record_type,
-            sourceRecordId: claimed.source_record_id,
-            occurredAt: claimed.occurred_at,
-            digest: claimed.evidence,
-          },
-        },
-        updated_at: assessedAt,
-      })
+      });
+    }
+    if (!intentProtected) {
+      Object.assign(opportunityPatch, {
+        deal_intent: dealIntent,
+        deal_intent_as_of: assessedAt,
+        deal_intent_source: "system",
+      });
+    }
+
+    let updateQuery = supabaseAdmin
+      .from("opportunities")
+      .update(opportunityPatch)
       .eq("id", opportunity.id)
       .eq("owner_id", claimed.owner_id)
       .eq("workspace_id", claimed.workspace_id)
-      .eq("status", "open")
-      .eq("win_outlook_override", false)
+      .eq("status", "open");
+    if (!outlookProtected) updateQuery = updateQuery.eq("win_outlook_override", false);
+    if (!intentProtected) updateQuery = updateQuery.eq("deal_intent_override", false);
+    const { data: updated, error: updateError } = await updateQuery
       .select("id")
       .maybeSingle();
     if (updateError) throw updateError;

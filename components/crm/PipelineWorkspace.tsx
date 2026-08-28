@@ -31,6 +31,10 @@ type Row = Record<string, any> & {
   outlookQuestions: string[];
   priorityReasons: string[];
   assigned_to_user_id: string | null;
+  deal_intent_as_of: string | null;
+  deal_intent_source: "human" | "system";
+  deal_intent_override: boolean;
+  clearDealIntentOverride?: boolean;
 };
 
 type TeamMember = { userId: string; role: string; name: string };
@@ -108,6 +112,27 @@ function DealDetails({
         <label className="lg:col-span-2">
           <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Deal intent</span>
           <textarea className={`${input} min-h-20 resize-y`} value={row.deal_intent || ""} onChange={(event) => onChange(row.id, { deal_intent: event.target.value })} placeholder="The commercial outcome this deal is pursuing" />
+          <span className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[0.69rem] text-muted">
+            <span>
+              {row.deal_intent_override
+                ? "Your wording is locked against automatic changes"
+                : row.deal_intent
+                  ? row.deal_intent_source === "human"
+                    ? "Your wording remains until new material evidence refreshes it"
+                    : "Updated from the latest stored commercial evidence"
+                  : "Filled automatically when material evidence is saved"}
+              {row.deal_intent_as_of ? ` · ${dateTime(row.deal_intent_as_of)}` : ""}
+            </span>
+            {row.deal_intent_override ? (
+              <button
+                type="button"
+                onClick={() => onChange(row.id, { clearDealIntentOverride: true })}
+                className="font-mono text-[0.48rem] uppercase text-amber hover:text-bone"
+              >
+                {row.clearDealIntentOverride ? "Automatic updates resume after save" : "Allow automatic updates"}
+              </button>
+            ) : null}
+          </span>
         </label>
         <label>
           <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Lifecycle stage</span>
