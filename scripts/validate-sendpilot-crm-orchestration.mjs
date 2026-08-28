@@ -101,6 +101,7 @@ const [
   settings,
   outreachUi,
   migration,
+  indexMigration,
 ] = await Promise.all([
   read("lib/sendpilot-api.ts"),
   read("lib/sendpilot-outreach.ts"),
@@ -114,7 +115,8 @@ const [
   read("app/api/webhooks/sendpilot/[token]/route.ts"),
   read("app/settings/page.tsx"),
   read("app/crm/outreach/page.tsx"),
-  read("supabase/migrations/20260829002000_sendpilot_crm_orchestration.sql"),
+  read("supabase/migrations/20260828233431_sendpilot_crm_orchestration.sql"),
+  read("supabase/migrations/20260828233544_index_sendpilot_crm_scope.sql"),
 ]);
 
 assert(apiClient.includes('sendPilotRequest("/v1/leads"'));
@@ -186,6 +188,9 @@ assert(!migration.includes("grant select on public.sendpilot_lead_links to authe
 assert(migration.includes("linkedin_message_sent"));
 assert(migration.includes("linkedin_connection_accepted"));
 assert(migration.includes("voice_script_approved"));
+assert(indexMigration.includes("sendpilot_campaign_links_integration_scope_idx"));
+assert(indexMigration.includes("sendpilot_lead_links_integration_scope_idx"));
+assert(indexMigration.includes("sendpilot_lead_links_enrolment_fk_idx"));
 
 const privateRows = [
   { workspaceId: "workspace", ownerId: "lee", integrationId: "lee-sendpilot" },
