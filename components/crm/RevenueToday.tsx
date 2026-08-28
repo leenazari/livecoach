@@ -11,7 +11,9 @@ type TodayItem = {
   at?: string | number | null;
   href: string;
   reason?: string;
-  entity?: "task";
+  entity?: "task" | "activity";
+  companyId?: string;
+  contextId?: string;
 };
 
 type TodayData = {
@@ -45,7 +47,7 @@ const changeTask = (
   const today = { ...current.today };
   for (const key of taskGroups) {
     today[key] = (today[key] || [])
-      .map((item) => (item.id === id && item.entity === "task" ? change(item) : item))
+      .map((item) => (item.id === id ? change(item) : item))
       .filter(Boolean) as TodayItem[];
   }
   return { ...current, today };
@@ -125,6 +127,41 @@ export default function RevenueToday() {
       closedIds.current.delete(item.id);
       setData(previous);
       setError("That change did not save. Please try again.");
+    } finally {
+      setSavingId("");
+    }
+  };
+
+  const resolveActivity = async (
+    item: TodayItem,
+    action: "apply" | "dismiss"
+  ) => {
+    if (!item.companyId || !item.contextId) {
+      setError("That client update is missing its saved source. Open the client to review it.");
+      return;
+    }
+    const previous = data;
+    loadSeq.current += 1;
+    closedIds.current.add(item.id);
+    setData((current) => changeTask(current, item.id, () => null));
+    setSavingId(item.id);
+    setError("");
+    try {
+      const result = await crmFetch<{
+        intelligence: { status: "pending" | "applied" | "dismissed" };
+      }>(`/api/crm/companies/${item.companyId}/activity/approve`, {
+        method: "POST",
+        body: JSON.stringify({ contextId: item.contextId, action }),
+      });
+      const expected = action === "dismiss" ? "dismissed" : "applied";
+      if (result.intelligence?.status !== expected)
+        throw new Error("activity state was not confirmed");
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+    } catch {
+      closedIds.current.delete(item.id);
+      setData(previous);
+      setError("That client update did not save. Please try again.");
     } finally {
       setSavingId("");
     }
@@ -233,6 +270,12 @@ export default function RevenueToday() {
                       >
                         ✕
                       </button>
+                    </span>
+                  ) : item.entity === "activity" ? (
+                    <span className="flex items-center gap-1">
+                      <Link href={item.href} className="min-h-8 rounded px-2 font-mono text-[0.5rem] uppercase leading-8 text-muted hover:text-amber">review</Link>
+                      <button type="button" disabled={savingId === item.id} onClick={() => void resolveActivity(item, "apply")} aria-label={`Apply ${item.text}`} title="Apply the saved CRM changes" className="min-h-8 min-w-8 rounded text-muted hover:text-sage disabled:opacity-40">✓</button>
+                      <button type="button" disabled={savingId === item.id} onClick={() => void resolveActivity(item, "dismiss")} aria-label={`Dismiss ${item.text}`} title="Remove this review without applying changes" className="min-h-8 min-w-8 rounded text-muted hover:text-rust disabled:opacity-40">✕</button>
                     </span>
                   ) : null}
                 </div>

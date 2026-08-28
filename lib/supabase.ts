@@ -22,7 +22,7 @@ const publicKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 const SCOPED_RECORD_TABLES = new Set([
   "ai_cache", "app_config", "assistant_messages", "call_feedback",
-  "client_context", "coaching_points", "companies", "company_priority",
+  "calendar_event_exclusions", "client_context", "coaching_points", "companies", "company_priority",
   "contact_company_overrides", "contacts", "crm_company_redirects",
   "daily_briefs", "departments", "document_jobs", "external_refs",
   "field_definitions", "follow_ups", "google_oauth", "linkedin_oauth", "microsoft_oauth", "interview_sessions",

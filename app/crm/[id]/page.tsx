@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   crmFetch,
@@ -67,6 +67,8 @@ type ClientAccess = {
 export default function CompanyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const resolveTaskId = searchParams.get("completeTask") || "";
 
   const [company, setCompany] = useState<Company | null>(null);
   const [access, setAccess] = useState<ClientAccess | null>(null);
@@ -723,6 +725,10 @@ export default function CompanyDetailPage() {
             (company.profile as any)?.activity_intelligence?.latest || null
           }
           sharedSalesAccess={access?.mode === "shared_sales"}
+          resolveTaskId={resolveTaskId}
+          onTaskResolved={() =>
+            router.replace(`/crm/${id}#sec-quick-update`, { scroll: false })
+          }
         />
       </div> : null}
 

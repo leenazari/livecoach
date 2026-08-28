@@ -27,6 +27,9 @@ const CHANNEL_LABELS: Record<ActivityChannel, string> = {
   note: "General note",
 };
 
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const todayInLondon = () => {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/London",
@@ -52,6 +55,10 @@ export async function POST(
     const scope = requireRequestScope();
     const body = await req.json();
     const autoApply = body.autoApply === true;
+    const completeTaskId =
+      typeof body.completeTaskId === "string" && UUID.test(body.completeTaskId)
+        ? body.completeTaskId
+        : "";
     const channel: ActivityChannel = CHANNELS.has(body.channel)
       ? body.channel
       : "note";
@@ -105,11 +112,39 @@ export async function POST(
     if (itemError) throw itemError;
     savedItem = item;
 
+    // When Today opened this client from a concrete to-do, the saved phone,
+    // text or voice update is the evidence that the work happened. Complete
+    // only that exact, still-open task in this signed-in user's workspace.
+    // A mismatched or stale id is ignored and can never close another user's
+    // work or a task belonging to another client.
+    let completedTaskId: string | null = null;
+    let taskCompletionWarning = "";
+    if (completeTaskId) {
+      const { data: completedTask, error: completionError } = await supabaseAdmin
+        .from("tasks")
+        .update({ status: "done", done_at: new Date().toISOString() })
+        .eq("id", completeTaskId)
+        .eq("company_id", params.id)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("status", "open")
+        .select("id")
+        .maybeSingle();
+      if (completionError) {
+        taskCompletionWarning =
+          "The client update was saved, but the original Today item could not be completed.";
+      } else if (completedTask?.id) {
+        completedTaskId = completedTask.id;
+      }
+    }
+
     if (sharedCompany) {
       return NextResponse.json({
         item,
         intelligence: null,
+        completedTaskId,
         warning:
+          taskCompletionWarning ||
           "Your update is saved to your private Brain context. The original owner's private history was not opened or changed.",
       });
     }
@@ -187,7 +222,9 @@ ${memoryBlock || "No earlier commercial memory."}`;
       return NextResponse.json({
         item,
         intelligence: null,
+        completedTaskId,
         warning:
+          taskCompletionWarning ||
           "The update is safely logged, but its commercial suggestions could not be built this time.",
       });
     }
@@ -283,6 +320,8 @@ ${memoryBlock || "No earlier commercial memory."}`;
         intelligence: approval.intelligence,
         applied: approval.applied || [],
         warnings: approval.warnings || [],
+        completedTaskId,
+        warning: taskCompletionWarning || undefined,
       });
     }
 
@@ -290,7 +329,12 @@ ${memoryBlock || "No earlier commercial memory."}`;
     // new signal without loading the raw transcript again.
     await getCommercialMemory(params.id);
 
-    return NextResponse.json({ item, intelligence });
+    return NextResponse.json({
+      item,
+      intelligence,
+      completedTaskId,
+      warning: taskCompletionWarning || undefined,
+    });
   } catch (error: any) {
     // Once the source note exists, respond as a successful log even if a later
     // intelligence step fails. Otherwise retrying would create duplicate notes.

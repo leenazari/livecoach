@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 import { inferLink, loadAttendeeConfig } from "@/lib/attendees";
 import { getWorkstreamScope, resolveCallScope } from "@/lib/workstreams";
+import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { resolvePrimaryAttendeeForCall } from "@/lib/call-subject";
 import { calendarEmailDomain } from "@/lib/calendar-subject";
 
@@ -370,10 +371,45 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = await resolveRecordScope();
+    const { data: current, error: currentError } = await supabaseAdmin
+      .from("upcoming_calls")
+      .select("id, external_id, source, title")
+      .eq("id", params.id)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!current)
+      return NextResponse.json({ error: "call not found" }, { status: 404 });
+
+    if (
+      current.external_id &&
+      (current.source === "google" || current.source === "microsoft")
+    ) {
+      const { error: exclusionError } = await supabaseAdmin
+        .from("calendar_event_exclusions")
+        .upsert(
+          {
+            ...privateRecordFields(scope),
+            source: current.source,
+            external_id: current.external_id,
+            title: current.title || null,
+          },
+          {
+            onConflict: "workspace_id,owner_id,source,external_id",
+            ignoreDuplicates: true,
+          }
+        );
+      if (exclusionError) throw exclusionError;
+    }
+
     const { data, error } = await supabaseAdmin
       .from("upcoming_calls")
       .delete()
       .eq("id", params.id)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
       .select("id")
       .maybeSingle();
     if (error) throw error;

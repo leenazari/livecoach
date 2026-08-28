@@ -101,7 +101,9 @@ type TodayItem = {
   company?: string | null;
   at?: string | number | null;
   href: string;
-  entity?: "task";
+  entity?: "task" | "activity";
+  companyId?: string;
+  contextId?: string;
 };
 
 type AiMode = "economical" | "balanced" | "high";
@@ -124,7 +126,7 @@ const changeTodayTask = (
   const today = { ...current.today };
   for (const key of todayTaskGroups) {
     today[key] = (today[key] || [])
-      .map((item) => (item.id === id && item.entity === "task" ? change(item) : item))
+      .map((item) => (item.id === id ? change(item) : item))
       .filter(Boolean) as any;
   }
   return { ...current, today };
@@ -208,6 +210,44 @@ export default function DashboardPage() {
       closedTodayIds.current.delete(item.id);
       setDash(previous);
       setTodaySaveError("That change did not save. Please try again.");
+    } finally {
+      setTodaySavingId(null);
+    }
+  };
+
+  const resolveTodayActivity = async (
+    item: TodayItem,
+    action: "apply" | "dismiss"
+  ) => {
+    if (!item.companyId || !item.contextId) {
+      setTodaySaveError("That client update is missing its saved source. Open the client to review it.");
+      return;
+    }
+    const previous = dash;
+    dashboardSeq.current += 1;
+    closedTodayIds.current.add(item.id);
+    setDash((current) => changeTodayTask(current, item.id, () => null));
+    setTodaySaveError("");
+    setTodaySavingId(item.id);
+    try {
+      const result = await crmFetch<{
+        intelligence: { status: "pending" | "applied" | "dismissed" };
+      }>(`/api/crm/companies/${item.companyId}/activity/approve`, {
+        method: "POST",
+        body: JSON.stringify({
+          contextId: item.contextId,
+          action,
+        }),
+      });
+      const expected = action === "dismiss" ? "dismissed" : "applied";
+      if (result.intelligence?.status !== expected)
+        throw new Error("activity state was not confirmed");
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+    } catch {
+      closedTodayIds.current.delete(item.id);
+      setDash(previous);
+      setTodaySaveError("That client update did not save. Please try again.");
     } finally {
       setTodaySavingId(null);
     }
@@ -511,13 +551,19 @@ export default function DashboardPage() {
                       {item.company || "General"}
                       {item.at ? ` · ${shortDate(item.at)}` : ""}
                     </p>
-                    {item.entity === "task" && (
+                    {item.entity === "task" ? (
                       <span className="flex items-center gap-1">
                         <button type="button" disabled={todaySavingId === item.id} onClick={() => { setEditingTodayId(item.id); setEditingTodayText(item.text); }} className="rounded px-2 py-1 font-mono text-[0.52rem] uppercase text-muted hover:text-amber disabled:opacity-40">edit</button>
                         <button type="button" disabled={todaySavingId === item.id} onClick={() => saveTodayTask(item, { status: "done" })} aria-label="Mark done" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-sage disabled:opacity-40">✓</button>
                         <button type="button" disabled={todaySavingId === item.id} onClick={() => saveTodayTask(item, { status: "dismissed" })} aria-label="Delete point" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-rust disabled:opacity-40">✕</button>
                       </span>
-                    )}
+                    ) : item.entity === "activity" ? (
+                      <span className="flex items-center gap-1">
+                        <Link href={item.href} className="rounded px-2 py-1 font-mono text-[0.52rem] uppercase text-muted hover:text-amber">review</Link>
+                        <button type="button" disabled={todaySavingId === item.id} onClick={() => void resolveTodayActivity(item, "apply")} aria-label="Apply client update" title="Apply the saved CRM changes" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-sage disabled:opacity-40">✓</button>
+                        <button type="button" disabled={todaySavingId === item.id} onClick={() => void resolveTodayActivity(item, "dismiss")} aria-label="Dismiss client update" title="Remove this review without applying changes" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-rust disabled:opacity-40">✕</button>
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               </li>

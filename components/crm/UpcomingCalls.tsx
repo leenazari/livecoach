@@ -290,7 +290,12 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
     const previous = calls;
     setCalls((p) => p.filter((c) => c.id !== id));
     try {
-      await crmFetch(`/api/crm/upcoming/${id}`, { method: "DELETE" });
+      const result = await crmFetch<{ ok: boolean }>(`/api/crm/upcoming/${id}`, {
+        method: "DELETE",
+      });
+      if (!result.ok) throw new Error("database did not confirm removal");
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      window.dispatchEvent(new CustomEvent("lc:crm-updated"));
     } catch (e: any) {
       setCalls(previous);
       setSyncMsg(e?.message || "Call was not removed. Please try again.");
