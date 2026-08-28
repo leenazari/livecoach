@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
 import {
   emailFromHeader,
   freshMessageText,
@@ -16,6 +15,12 @@ import { enqueueOpportunitySignal } from "@/lib/opportunity-signals";
 import { listActiveAccountScopes } from "@/lib/automation-accounts";
 import { runWithServiceRecordScope } from "@/lib/service-scope";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
+import {
+  recordClientEmailActivity,
+  resolveClientEmailTarget,
+} from "@/lib/client-email-activity";
+import { detectOutOfOffice } from "@/lib/email-reply-signals";
+import { processOutreachReplyMessage } from "@/lib/outreach-replies";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,24 +53,6 @@ const scheduledMonitorWindow = (now = new Date()) => {
   const weekend = weekday === "Saturday" || weekday === "Sunday";
   return weekend ? hour === 10 : hour >= 9 && hour <= 21;
 };
-
-async function companyForSender(email: string): Promise<string | null> {
-  if (!email) return null;
-  const [{ data: contacts }, { data: prospects }] = await Promise.all([
-    supabaseAdmin
-      .from("contacts")
-      .select("company_id")
-      .ilike("email", email)
-      .limit(1),
-    supabaseAdmin
-      .from("outreach_prospects")
-      .select("crm_company_id")
-      .ilike("email", email)
-      .not("crm_company_id", "is", null)
-      .limit(1),
-  ]);
-  return contacts?.[0]?.company_id || prospects?.[0]?.crm_company_id || null;
-}
 
 const automatedMessage = (message: MailMessage) => {
   const sender = emailFromHeader(message.from);
@@ -143,6 +130,10 @@ async function runAccount() {
     let modelChecks = 0;
     let alerts = 0;
     let calendarSignals = 0;
+    let clientRepliesLogged = 0;
+    let outreachReplies = 0;
+    let outOfOfficeReplies = 0;
+    let ambiguousSenderMatches = 0;
     let failed = 0;
 
     for (const message of delta.messages) {
@@ -155,24 +146,83 @@ async function runAccount() {
 
       const automated = automatedMessage(message);
       if (
-        automated &&
-        !calendarSignal &&
+        (message.listUnsubscribe || LOW_VALUE_SIGNAL.test(metadataText)) &&
         !ACTION_SIGNAL.test(metadataText)
       ) continue;
-      if (LOW_VALUE_SIGNAL.test(metadataText) && !ACTION_SIGNAL.test(metadataText)) continue;
-
-      const companyId = await companyForSender(senderEmail);
-      if (!companyId && !ACTION_SIGNAL.test(metadataText) && !calendarSignal) continue;
 
       try {
+        const target = await resolveClientEmailTarget(senderEmail);
+        if (target.ambiguous) ambiguousSenderMatches += 1;
+        const knownSender =
+          !target.ambiguous &&
+          !!(target.companyId || target.outreachProspectId);
+        if (
+          !knownSender &&
+          !ACTION_SIGNAL.test(metadataText) &&
+          !calendarSignal
+        ) continue;
+        if (
+          automated &&
+          !knownSender &&
+          !calendarSignal &&
+          !ACTION_SIGNAL.test(metadataText)
+        ) continue;
+
         const freshText =
           (await freshMessageText(message.id, 5000)) || clean(message.snippet, 1200);
-        if (!freshText || ACK_ONLY.test(freshText.trim())) continue;
+        if (!freshText) continue;
+        const outOfOffice = detectOutOfOffice({
+          subject: message.subject,
+          freshText,
+          autoSubmitted: message.autoSubmitted,
+          receivedAt: message.date,
+        });
+
+        if (
+          target.companyId &&
+          !target.ambiguous &&
+          !message.listUnsubscribe &&
+          (!automated || outOfOffice.isOutOfOffice)
+        ) {
+          const activity = await recordClientEmailActivity({
+            provider: identity.provider,
+            message,
+            freshText,
+            target,
+            outOfOffice,
+          });
+          if (activity.inserted) clientRepliesLogged += 1;
+        }
+
+        if (target.outreachProspectId && !target.ambiguous) {
+          const outreach = await processOutreachReplyMessage({
+            message,
+            freshText,
+            sender: identity,
+            prospectId: target.outreachProspectId,
+            target,
+          });
+          if (outreach.processed) {
+            outreachReplies += 1;
+            if (outreach.outOfOffice) outOfOfficeReplies += 1;
+            // Outreach processing already classifies the reply, stops the
+            // sequence, records the event and emits the assignee notification.
+            // Do not pay for a second model pass over the same fresh message.
+            continue;
+          }
+        }
+
+        if (outOfOffice.isOutOfOffice) {
+          outOfOfficeReplies += 1;
+          continue;
+        }
+        if (automated && !calendarSignal && !ACTION_SIGNAL.test(metadataText)) continue;
+        if (ACK_ONLY.test(freshText.trim())) continue;
         modelChecks += 1;
         const result = await classifyFreshMessage({
           message,
           freshText,
-          knownContact: !!companyId,
+          knownContact: !!target.companyId,
         });
         if (result.calendarRelated && !calendarSignal) calendarSignals += 1;
         if (result.importance !== "high" && !result.actionRequired) continue;
@@ -181,7 +231,7 @@ async function runAccount() {
         const taskText = result.action
           ? `Email from ${senderName}: ${result.action}`
           : `Review important email from ${senderName}: ${result.summary || message.subject}`;
-        const created = await upsertTasks(companyId, [
+        const created = await upsertTasks(target.companyId, [
           {
             text: taskText,
             kind: "email_alert",
@@ -202,9 +252,9 @@ async function runAccount() {
           },
         ]);
         alerts += created.length;
-        if (companyId) {
+        if (target.companyId) {
           await enqueueOpportunitySignal({
-            companyId,
+            companyId: target.companyId,
             sourceRecordType: "important_email",
             sourceRecordId: message.id,
             sourceChannel: "personal_email",
@@ -240,6 +290,10 @@ async function runAccount() {
       alerts,
       calendarSignals,
       calendarRefreshed,
+      clientRepliesLogged,
+      outreachReplies,
+      outOfOfficeReplies,
+      ambiguousSenderMatches,
       failed,
       cursorAdvanced: failed === 0,
       finishedAt,

@@ -87,7 +87,7 @@ export async function GET(
         .limit(80),
       supabaseAdmin
         .from("client_context")
-        .select("id, kind, title, url, content, created_at")
+        .select("id, kind, title, url, content, created_at, source_ref, metadata")
         .eq("owner_id", scope.userId)
         .eq("company_id", params.id)
         .order("created_at", { ascending: false })
@@ -265,14 +265,41 @@ export async function GET(
     }
 
     for (const n of context || []) {
+      const emailReply = n.kind === "email_reply";
+      const metadata =
+        n.metadata && typeof n.metadata === "object" ? n.metadata : {};
+      const returnDate = metadata.returnDate
+        ? new Date(`${metadata.returnDate}T00:00:00Z`)
+        : null;
+      const validReturnDate =
+        returnDate && Number.isFinite(returnDate.getTime())
+          ? returnDate.toLocaleDateString("en-GB", {
+              timeZone: "UTC",
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            })
+          : "";
       items.push({
         id: `context:${n.id}`,
-        type: "note",
+        type: emailReply ? "email" : "note",
         at: n.created_at,
         title: text(n.title || n.kind || "Note", 160),
         detail: text(n.content || n.url, 280),
-        meta: text(n.kind, 40),
-        href: n.url || undefined,
+        status: emailReply
+          ? metadata.replyType === "out_of_office"
+            ? "out of office"
+            : "reply"
+          : undefined,
+        meta: emailReply
+          ? [
+              text(metadata.senderName || metadata.senderEmail, 80),
+              validReturnDate ? `back ${validReturnDate}` : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")
+          : text(n.kind, 40),
+        href: emailReply ? undefined : n.url || undefined,
       });
     }
 
