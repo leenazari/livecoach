@@ -100,8 +100,8 @@ const [
   read("app/api/webhooks/sendpilot/[token]/route.ts"),
   read("app/api/crm/sendpilot/route.ts"),
   read("app/api/crm/sendpilot/backfill/route.ts"),
-  read("supabase/migrations/20260828220402_sendpilot_inbound_integration.sql"),
-  read("supabase/migrations/20260828223224_index_sendpilot_webhook_owner.sql"),
+  read("supabase/migrations/20260828223135_sendpilot_inbound_integration.sql"),
+  read("supabase/migrations/20260828223238_index_sendpilot_webhook_owner.sql"),
   read("lib/linkedin-inbox.ts"),
   read("app/settings/page.tsx"),
 ]);
