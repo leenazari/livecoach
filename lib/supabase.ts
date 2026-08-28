@@ -32,7 +32,8 @@ const SCOPED_RECORD_TABLES = new Set([
   "meet_bots", "meet_utterances", "opportunities", "opportunity_events",
   "opportunity_signal_receipts", "outreach_campaigns", "outreach_enrolments",
   "outreach_events", "outreach_learnings", "outreach_messages",
-  "outreach_prospects", "outreach_signals", "outreach_suppressions", "tasks",
+  "outreach_prospects", "outreach_signals", "outreach_suppressions",
+  "sendpilot_integrations", "sendpilot_webhook_events", "tasks",
   "upcoming_calls", "usage_log", "workspace_profile", "workstream_contacts",
   "workstreams",
 ]);

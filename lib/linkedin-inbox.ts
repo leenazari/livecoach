@@ -29,6 +29,24 @@ export type LinkedInInboxConnectorRow = {
   updated_at: string;
 };
 
+export type LinkedInInboxImportScope = {
+  workspaceId: string;
+  ownerId: string;
+  connectorId?: string | null;
+  maxConversations: number;
+  lookbackDays: number;
+  source: "local_chrome_extension" | "sendpilot_api" | "sendpilot_webhook";
+  provider: "linkedin_local_connector" | "sendpilot";
+  contactSource: "linkedin_inbox_connector" | "sendpilot_inbox";
+  createContactWhenUnmatched: boolean;
+};
+
+type LinkedInInboxIdentityScope = {
+  workspace_id: string;
+  owner_id: string;
+  contactSource: LinkedInInboxImportScope["contactSource"];
+};
+
 type ImportIdentity = {
   contactId: string | null;
   companyId: string | null;
@@ -156,7 +174,7 @@ function normalisedStoredLinkedInUrl(value: unknown) {
 }
 
 async function loadExactOutreachProspect(
-  connector: LinkedInInboxConnectorRow,
+  connector: LinkedInInboxIdentityScope,
   profileUrl: string
 ): Promise<OutreachProspectMatch | null> {
   const profilePath = new URL(profileUrl).pathname;
@@ -196,7 +214,7 @@ async function loadExactOutreachProspect(
 }
 
 async function loadExactContactByEmail(
-  connector: LinkedInInboxConnectorRow,
+  connector: LinkedInInboxIdentityScope,
   email: string
 ): Promise<ContactMatch> {
   if (!email) return { contact: null, ambiguous: false };
@@ -219,7 +237,7 @@ async function loadExactContactByEmail(
 }
 
 async function loadOwnedCompanyId(
-  connector: LinkedInInboxConnectorRow,
+  connector: LinkedInInboxIdentityScope,
   companyId: unknown
 ): Promise<string | null> {
   const id = String(companyId || "");
@@ -236,9 +254,10 @@ async function loadOwnedCompanyId(
 }
 
 async function resolveLinkedInIdentity(
-  connector: LinkedInInboxConnectorRow,
+  connector: LinkedInInboxIdentityScope,
   profileUrl: string,
-  senderName: string
+  senderName: string,
+  createContactWhenUnmatched: boolean
 ): Promise<ImportIdentity> {
   const { data: existingLink, error: linkError } = await supabaseService
     .from("linkedin_contact_links")
@@ -307,6 +326,14 @@ async function resolveLinkedInIdentity(
   let contactId = existingContact?.id || null;
   let companyId = existingContact ? existingContactCompanyId : prospectCompanyId;
   let contactCreated = false;
+  if (!contactId && !createContactWhenUnmatched) {
+    return {
+      contactId: null,
+      companyId: null,
+      reviewReason: "sender_name_not_verified",
+      contactCreated: false,
+    };
+  }
   if (!contactId) {
     const { data: created, error: createError } = await supabaseService
       .from("contacts")
@@ -319,7 +346,7 @@ async function resolveLinkedInIdentity(
         email: prospectEmail || null,
         attributes: {
           linkedin_url: profileUrl,
-          source: "linkedin_inbox_connector",
+          source: connector.contactSource,
         },
         notes: companyId
           ? "Matched to an existing outreach lead by exact LinkedIn profile URL."
@@ -363,7 +390,7 @@ async function resolveLinkedInIdentity(
 }
 
 async function parseAndFilterBatch(
-  connector: LinkedInInboxConnectorRow,
+  scope: LinkedInInboxImportScope,
   input: unknown
 ): Promise<{
   batch: LinkedInInboxBatch;
@@ -371,25 +398,209 @@ async function parseAndFilterBatch(
   duplicates: number;
 }> {
   const batch = parseLinkedInInboxBatch(input, {
-    maxConversations: connector.max_conversations_per_run,
-    lookbackDays: connector.lookback_days,
+    maxConversations: scope.maxConversations,
+    lookbackDays: scope.lookbackDays,
   });
   if (!batch.messages.length) return { batch, messages: [], duplicates: 0 };
   const ids = batch.messages.map((message) => message.messageId);
   const { data, error } = await supabaseService
     .from("linkedin_inbox_messages")
-    .select("provider_message_id")
-    .eq("workspace_id", connector.workspace_id)
-    .eq("owner_id", connector.owner_id)
+    .select("provider_message_id,sender_profile_url,body,received_at,metadata")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("owner_id", scope.ownerId)
     .in("provider_message_id", ids);
   if (error) throw error;
   const existing = new Set(
     (data || []).map((row: any) => String(row.provider_message_id))
   );
+  const candidates = batch.messages.filter(
+    (message) => !existing.has(message.messageId)
+  );
+  if (!candidates.length) {
+    return { batch, messages: [], duplicates: existing.size };
+  }
+
+  const profiles = [...new Set(candidates.map((message) => message.senderProfileUrl))];
+  const timestamps = candidates.map((message) => new Date(message.receivedAt).getTime());
+  const earliest = new Date(Math.min(...timestamps) - 2 * 60 * 1_000).toISOString();
+  const latest = new Date(Math.max(...timestamps) + 2 * 60 * 1_000).toISOString();
+  const { data: possibleDuplicates, error: duplicateError } = await supabaseService
+    .from("linkedin_inbox_messages")
+    .select("provider_message_id,sender_profile_url,body,received_at,metadata")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("owner_id", scope.ownerId)
+    .in("sender_profile_url", profiles)
+    .gte("received_at", earliest)
+    .lte("received_at", latest)
+    .limit(1_000);
+  if (duplicateError) throw duplicateError;
+  let crossSourceDuplicates = 0;
+  const messages = candidates.filter((message) => {
+    const duplicate = (possibleDuplicates || []).some((row: any) => {
+      const existingSource = String(row?.metadata?.source || "");
+      if (!existingSource || existingSource === scope.source) return false;
+      return (
+        row.sender_profile_url === message.senderProfileUrl &&
+        String(row.body || "").trim() === message.body.trim() &&
+        Math.abs(
+          new Date(row.received_at).getTime() - new Date(message.receivedAt).getTime()
+        ) <= 2 * 60 * 1_000
+      );
+    });
+    if (duplicate) crossSourceDuplicates += 1;
+    return !duplicate;
+  });
   return {
     batch,
-    messages: batch.messages.filter((message) => !existing.has(message.messageId)),
-    duplicates: existing.size,
+    messages,
+    duplicates: existing.size + crossSourceDuplicates,
+  };
+}
+
+export async function importLinkedInInboxBatchForScope(
+  scope: LinkedInInboxImportScope,
+  input: unknown
+): Promise<LinkedInInboxImportResult> {
+  const { batch, messages, duplicates } = await parseAndFilterBatch(scope, input);
+  if (messages.length) {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
+    const { count, error: countError } = await supabaseService
+      .from("linkedin_inbox_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.ownerId)
+      .gte("created_at", cutoff);
+    if (countError) throw countError;
+    if ((count || 0) + messages.length > LINKEDIN_INBOX_MAX_MESSAGES_PER_24_HOURS) {
+      throw Object.assign(
+        new Error(
+          `The 24-hour safety limit of ${LINKEDIN_INBOX_MAX_MESSAGES_PER_24_HOURS} new messages would be exceeded`
+        ),
+        { status: 429 }
+      );
+    }
+  }
+
+  const identityScope: LinkedInInboxIdentityScope = {
+    workspace_id: scope.workspaceId,
+    owner_id: scope.ownerId,
+    contactSource: scope.contactSource,
+  };
+  const identityByProfile = new Map<string, ImportIdentity>();
+  for (const message of messages) {
+    if (identityByProfile.has(message.senderProfileUrl)) continue;
+    identityByProfile.set(
+      message.senderProfileUrl,
+      await resolveLinkedInIdentity(
+        identityScope,
+        message.senderProfileUrl,
+        message.senderName,
+        scope.createContactWhenUnmatched
+      )
+    );
+  }
+
+  const contextRows = messages.flatMap((message) => {
+    const identity = identityByProfile.get(message.senderProfileUrl);
+    if (!identity?.companyId) return [];
+    return [{
+      workspace_id: scope.workspaceId,
+      owner_id: scope.ownerId,
+      visibility: "private",
+      company_id: identity.companyId,
+      kind: "linkedin_message",
+      title: `LinkedIn message from ${message.senderName}`,
+      content: message.body,
+      created_at: message.receivedAt,
+      source_ref: `linkedin:${message.messageId}`,
+      metadata: {
+        provider: scope.provider,
+        source: scope.source,
+        conversationId: message.conversationId,
+        messageId: message.messageId,
+        senderName: message.senderName,
+        senderProfileUrl: message.senderProfileUrl,
+        receivedAt: message.receivedAt,
+        direction: "inbound",
+      },
+    }];
+  });
+  if (contextRows.length) {
+    const { error } = await supabaseService
+      .from("client_context")
+      .upsert(contextRows, {
+        onConflict: "owner_id,source_ref",
+        ignoreDuplicates: true,
+      });
+    if (error) throw error;
+  }
+
+  const sourceRefs = contextRows.map((row) => row.source_ref);
+  const contextBySourceRef = new Map<string, string>();
+  if (sourceRefs.length) {
+    const { data, error } = await supabaseService
+      .from("client_context")
+      .select("id,source_ref")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.ownerId)
+      .in("source_ref", sourceRefs);
+    if (error) throw error;
+    for (const row of data || []) {
+      if (row.source_ref) contextBySourceRef.set(row.source_ref, row.id);
+    }
+  }
+
+  const rows = messages.map((message) => {
+    const identity = identityByProfile.get(message.senderProfileUrl)!;
+    return {
+      workspace_id: scope.workspaceId,
+      owner_id: scope.ownerId,
+      visibility: "private",
+      connector_id: scope.connectorId || null,
+      provider_conversation_id: message.conversationId,
+      provider_message_id: message.messageId,
+      sender_name: message.senderName,
+      sender_profile_url: message.senderProfileUrl,
+      body: message.body,
+      received_at: message.receivedAt,
+      contact_id: identity.contactId,
+      company_id: identity.companyId,
+      context_id: contextBySourceRef.get(`linkedin:${message.messageId}`) || null,
+      status: identity.companyId ? "linked" : "review",
+      review_reason: identity.reviewReason,
+      metadata: {
+        runId: batch.runId,
+        capturedAt: batch.capturedAt,
+        provider: scope.provider,
+        source: scope.source,
+        direction: "inbound",
+      },
+    };
+  });
+  let importedRows: any[] = [];
+  if (rows.length) {
+    const { data, error } = await supabaseService
+      .from("linkedin_inbox_messages")
+      .upsert(rows, {
+        onConflict: "owner_id,provider_message_id",
+        ignoreDuplicates: true,
+      })
+      .select("id,status");
+    if (error) throw error;
+    importedRows = data || [];
+  }
+
+  const imported = importedRows.length;
+  return {
+    runId: batch.runId,
+    accepted: batch.messages.length,
+    imported,
+    duplicates: duplicates + Math.max(0, messages.length - imported),
+    linked: importedRows.filter((row) => row.status === "linked").length,
+    review: importedRows.filter((row) => row.status === "review").length,
+    contactsCreated: [...identityByProfile.values()].filter(
+      (identity) => identity.contactCreated
+    ).length,
   };
 }
 
@@ -424,171 +635,36 @@ export async function importLinkedInInboxBatch(
   }
 
   try {
-    const { batch, messages, duplicates } = await parseAndFilterBatch(
-      connector,
+    const result = await importLinkedInInboxBatchForScope(
+      {
+        workspaceId: connector.workspace_id,
+        ownerId: connector.owner_id,
+        connectorId: connector.id,
+        maxConversations: connector.max_conversations_per_run,
+        lookbackDays: connector.lookback_days,
+        source: "local_chrome_extension",
+        provider: "linkedin_local_connector",
+        contactSource: "linkedin_inbox_connector",
+        createContactWhenUnmatched: true,
+      },
       input
     );
-    if (messages.length) {
-      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
-      const { count, error: countError } = await supabaseService
-        .from("linkedin_inbox_messages")
-        .select("id", { count: "exact", head: true })
-        .eq("workspace_id", connector.workspace_id)
-        .eq("owner_id", connector.owner_id)
-        .gte("created_at", cutoff);
-      if (countError) throw countError;
-      if (
-        (count || 0) + messages.length >
-        LINKEDIN_INBOX_MAX_MESSAGES_PER_24_HOURS
-      ) {
-        throw Object.assign(
-          new Error(
-            `The 24-hour safety limit of ${LINKEDIN_INBOX_MAX_MESSAGES_PER_24_HOURS} new messages would be exceeded`
-          ),
-          { status: 429 }
-        );
-      }
-    }
-    const identityByProfile = new Map<string, ImportIdentity>();
-    for (const message of messages) {
-      if (identityByProfile.has(message.senderProfileUrl)) continue;
-      identityByProfile.set(
-        message.senderProfileUrl,
-        await resolveLinkedInIdentity(
-          connector,
-          message.senderProfileUrl,
-          message.senderName
-        )
-      );
-    }
-
-    const contextRows = messages.flatMap((message) => {
-      const identity = identityByProfile.get(message.senderProfileUrl);
-      if (!identity?.companyId) return [];
-      return [
-        {
-          workspace_id: connector.workspace_id,
-          owner_id: connector.owner_id,
-          visibility: "private",
-          company_id: identity.companyId,
-          kind: "linkedin_message",
-          title: `LinkedIn message from ${message.senderName}`,
-          content: message.body,
-          created_at: message.receivedAt,
-          source_ref: `linkedin:${message.messageId}`,
-          metadata: {
-            provider: "linkedin_local_connector",
-            conversationId: message.conversationId,
-            messageId: message.messageId,
-            senderName: message.senderName,
-            senderProfileUrl: message.senderProfileUrl,
-            receivedAt: message.receivedAt,
-            direction: "inbound",
-          },
-        },
-      ];
-    });
-    if (contextRows.length) {
-      const { error } = await supabaseService
-        .from("client_context")
-        .upsert(contextRows, {
-          onConflict: "owner_id,source_ref",
-          ignoreDuplicates: true,
-        });
-      if (error) throw error;
-    }
-
-    const sourceRefs = contextRows.map((row) => row.source_ref);
-    const contextBySourceRef = new Map<string, string>();
-    if (sourceRefs.length) {
-      const { data, error } = await supabaseService
-        .from("client_context")
-        .select("id,source_ref")
-        .eq("workspace_id", connector.workspace_id)
-        .eq("owner_id", connector.owner_id)
-        .in("source_ref", sourceRefs);
-      if (error) throw error;
-      for (const row of data || []) {
-        if (row.source_ref) contextBySourceRef.set(row.source_ref, row.id);
-      }
-    }
-
-    const rows = messages.map((message) => {
-      const identity = identityByProfile.get(message.senderProfileUrl)!;
-      const status = identity.companyId ? "linked" : "review";
-      return {
-        workspace_id: connector.workspace_id,
-        owner_id: connector.owner_id,
-        visibility: "private",
-        connector_id: connector.id,
-        provider_conversation_id: message.conversationId,
-        provider_message_id: message.messageId,
-        sender_name: message.senderName,
-        sender_profile_url: message.senderProfileUrl,
-        body: message.body,
-        received_at: message.receivedAt,
-        contact_id: identity.contactId,
-        company_id: identity.companyId,
-        context_id:
-          contextBySourceRef.get(`linkedin:${message.messageId}`) || null,
-        status,
-        review_reason: identity.reviewReason,
-        metadata: {
-          runId: batch.runId,
-          capturedAt: batch.capturedAt,
-          source: "local_chrome_extension",
-          direction: "inbound",
-        },
-      };
-    });
-    let importedRows: any[] = [];
-    if (rows.length) {
-      const { data, error } = await supabaseService
-        .from("linkedin_inbox_messages")
-        .upsert(rows, {
-          onConflict: "owner_id,provider_message_id",
-          ignoreDuplicates: true,
-        })
-        .select("id,status");
-      if (error) throw error;
-      importedRows = data || [];
-    }
-
-    const imported = importedRows.length;
-    const linked = importedRows.filter((row) => row.status === "linked").length;
-    const review = importedRows.filter((row) => row.status === "review").length;
-    const contactsCreated = [...identityByProfile.values()].filter(
-      (identity) => identity.contactCreated
-    ).length;
-    const totalImported = connector.imported_message_count + imported;
     const completedAt = new Date().toISOString();
     const { error: updateError } = await supabaseService
       .from("linkedin_inbox_connectors")
       .update({
         last_success_at: completedAt,
         last_error: null,
-        imported_message_count: totalImported,
+        imported_message_count: connector.imported_message_count + result.imported,
         updated_at: completedAt,
       })
       .eq("id", connector.id)
       .eq("owner_id", connector.owner_id)
       .eq("workspace_id", connector.workspace_id);
     if (updateError) throw updateError;
-
-    return {
-      runId: batch.runId,
-      accepted: batch.messages.length,
-      imported,
-      duplicates: duplicates + Math.max(0, messages.length - imported),
-      linked,
-      review,
-      contactsCreated,
-    };
+    return result;
   } catch (error: any) {
-    const message = String(error?.message || "LinkedIn inbox import failed").slice(
-      0,
-      500
-    );
+    const message = String(error?.message || "LinkedIn inbox import failed").slice(0, 500);
     await supabaseService
       .from("linkedin_inbox_connectors")
       .update({ last_error: message, updated_at: new Date().toISOString() })

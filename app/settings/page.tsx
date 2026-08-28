@@ -49,6 +49,24 @@ type LinkedInInboxStatus = {
   reviewCount: number;
 };
 
+type SendPilotStatus = {
+  configured: boolean;
+  connected: boolean;
+  status: "active" | "disconnected" | "not_connected";
+  apiKeyLastFour: string | null;
+  senderName: string | null;
+  senderLinkedInUrl: string | null;
+  senderStatus: string | null;
+  webhookConfigured: boolean;
+  webhookUrl: string | null;
+  lastBackfillAt: string | null;
+  lastWebhookAt: string | null;
+  lastError: string | null;
+  importedMessageCount: number;
+  reviewCount: number;
+  lookbackDays: number;
+};
+
 function gmailIssueCopy(issue?: GmailIssue): string {
   if (issue === "scope_missing")
     return "The Google token does not contain Gmail read permission.";
@@ -126,6 +144,15 @@ export default function SettingsPage() {
   const [linkedinInboxBusy, setLinkedinInboxBusy] = useState(false);
   const [linkedinInboxNote, setLinkedinInboxNote] = useState("");
   const [linkedinInboxError, setLinkedinInboxError] = useState("");
+  const [sendPilot, setSendPilot] = useState<SendPilotStatus | null>(null);
+  const [sendPilotLoaded, setSendPilotLoaded] = useState(false);
+  const [sendPilotApiKey, setSendPilotApiKey] = useState("");
+  const [sendPilotWebhookSecret, setSendPilotWebhookSecret] = useState("");
+  const [sendPilotBusy, setSendPilotBusy] = useState<
+    "connect" | "webhook" | "backfill" | "disconnect" | null
+  >(null);
+  const [sendPilotNote, setSendPilotNote] = useState("");
+  const [sendPilotError, setSendPilotError] = useState("");
   const [disconnectConfirm, setDisconnectConfirm] = useState<
     "google" | "microsoft" | null
   >(null);
@@ -170,6 +197,10 @@ export default function SettingsPage() {
       .then((d) => setLinkedinInbox(d))
       .catch(() => setLinkedinInbox(null))
       .finally(() => setLinkedinInboxLoaded(true));
+    crmFetch<SendPilotStatus>("/api/crm/sendpilot")
+      .then((d) => setSendPilot(d))
+      .catch(() => setSendPilot(null))
+      .finally(() => setSendPilotLoaded(true));
     if (typeof window !== "undefined") {
       const g = new URLSearchParams(window.location.search).get("google");
       if (g === "connected") setGcalNote("Google Calendar connected.");
@@ -425,6 +456,140 @@ export default function SettingsPage() {
       );
     } finally {
       setLinkedinInboxBusy(false);
+    }
+  };
+
+  const connectSendPilotAccount = async () => {
+    if (!sendPilotApiKey.trim()) {
+      setSendPilotError("Paste the SendPilot API key first.");
+      return;
+    }
+    setSendPilotBusy("connect");
+    setSendPilotError("");
+    setSendPilotNote("");
+    try {
+      const result = await crmFetch<SendPilotStatus & { ok: boolean }>(
+        "/api/crm/sendpilot",
+        {
+          method: "POST",
+          body: JSON.stringify({ apiKey: sendPilotApiKey.trim() }),
+        }
+      );
+      if (!result.ok || !result.connected) {
+        throw new Error("The server did not confirm the SendPilot connection");
+      }
+      setSendPilot(result);
+      setSendPilotApiKey("");
+      setSendPilotNote(
+        "SendPilot connected. Add its reply webhook below, then run the one-time 14-day import."
+      );
+    } catch (error: any) {
+      setSendPilotError(error?.message || "SendPilot could not be connected.");
+    } finally {
+      setSendPilotBusy(null);
+    }
+  };
+
+  const saveSendPilotWebhook = async () => {
+    if (!sendPilotWebhookSecret.trim()) {
+      setSendPilotError("Paste the webhook secret shown by SendPilot first.");
+      return;
+    }
+    setSendPilotBusy("webhook");
+    setSendPilotError("");
+    setSendPilotNote("");
+    try {
+      const result = await crmFetch<SendPilotStatus & { ok: boolean }>(
+        "/api/crm/sendpilot",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            webhookSecret: sendPilotWebhookSecret.trim(),
+          }),
+        }
+      );
+      if (!result.ok || !result.webhookConfigured) {
+        throw new Error("The server did not confirm the webhook secret");
+      }
+      setSendPilot(result);
+      setSendPilotWebhookSecret("");
+      setSendPilotNote(
+        "Automatic inbound reply capture is ready. LiveCoach still cannot send through SendPilot."
+      );
+    } catch (error: any) {
+      setSendPilotError(
+        error?.message || "The SendPilot webhook secret could not be saved."
+      );
+    } finally {
+      setSendPilotBusy(null);
+    }
+  };
+
+  const runSendPilotInitialBackfill = async () => {
+    setSendPilotBusy("backfill");
+    setSendPilotError("");
+    setSendPilotNote("");
+    try {
+      const result = await crmFetch<{
+        ok: boolean;
+        imported: number;
+        duplicates: number;
+        review: number;
+        conversations: number;
+        truncated: boolean;
+        integration: SendPilotStatus;
+      }>("/api/crm/sendpilot/backfill", { method: "POST" });
+      if (!result.ok) throw new Error("The 14-day import did not complete");
+      setSendPilot(result.integration);
+      setSendPilotNote(
+        `${result.imported} messages imported from ${result.conversations} recent conversations. ${result.duplicates} duplicates skipped. ${result.review} need company review.${result.truncated ? " The safety cap was reached, so the oldest conversations were not requested." : ""}`
+      );
+    } catch (error: any) {
+      setSendPilotError(
+        error?.message || "The SendPilot 14-day import did not complete."
+      );
+    } finally {
+      setSendPilotBusy(null);
+    }
+  };
+
+  const copySendPilotWebhookUrl = async () => {
+    if (!sendPilot?.webhookUrl) return;
+    try {
+      await navigator.clipboard.writeText(sendPilot.webhookUrl);
+      setSendPilotNote("Webhook URL copied.");
+    } catch {
+      setSendPilotError("Copy failed. Select the URL and copy it manually.");
+    }
+  };
+
+  const disconnectSendPilotAccount = async () => {
+    if (
+      !window.confirm(
+        "Disconnect SendPilot from LiveCoach? Existing CRM messages remain, but new replies stop importing."
+      )
+    ) {
+      return;
+    }
+    setSendPilotBusy("disconnect");
+    setSendPilotError("");
+    setSendPilotNote("");
+    try {
+      const result = await crmFetch<SendPilotStatus & { ok: boolean }>(
+        "/api/crm/sendpilot",
+        { method: "DELETE" }
+      );
+      if (!result.ok || result.connected) {
+        throw new Error("The server did not confirm the disconnect");
+      }
+      setSendPilot(result);
+      setSendPilotNote(
+        "SendPilot disconnected. Existing contacts and inbound messages remain in the CRM."
+      );
+    } catch (error: any) {
+      setSendPilotError(error?.message || "SendPilot could not be disconnected.");
+    } finally {
+      setSendPilotBusy(null);
     }
   };
 
@@ -862,6 +1027,182 @@ export default function SettingsPage() {
       </div>
 
       <div
+        id="sendpilot-inbox"
+        className={`mb-5 rounded-xl border p-5 ${
+          sendPilot?.connected && sendPilot.webhookConfigured
+            ? "border-moss/45 bg-moss/[0.06]"
+            : "border-sky/40 bg-sky/[0.05]"
+        }`}
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-3xl">
+            <p
+              className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
+                sendPilot?.connected && sendPilot.webhookConfigured
+                  ? "text-moss"
+                  : "text-sky"
+              }`}
+            >
+              {sendPilot?.connected && sendPilot.webhookConfigured ? "✓" : "◇"}{" "}
+              SendPilot LinkedIn inbox
+            </p>
+            <p className="mt-2 text-sm leading-6 text-bone">
+              Bring inbound LinkedIn replies into your private CRM automatically through
+              SendPilot. LiveCoach only uses read endpoints and the reply webhook. It does
+              not expose any SendPilot action that sends, connects, likes or starts a campaign.
+            </p>
+            <p className="mt-2 text-xs leading-5 text-moss">
+              The first import is capped to the previous 14 days. After that, verified reply
+              webhooks add new inbound messages without a daily Chrome routine.
+            </p>
+            {sendPilotLoaded && sendPilot ? (
+              <p className="mt-3 font-mono text-[0.56rem] uppercase leading-5 text-muted">
+                {sendPilot.connected
+                  ? `${sendPilot.senderName || "LinkedIn account"} · key ending ${sendPilot.apiKeyLastFour || "unknown"}`
+                  : "SendPilot is not connected"}
+                {sendPilot.webhookConfigured ? " · automatic replies active" : " · webhook not yet active"}
+                {sendPilot.lastBackfillAt
+                  ? ` · last 14-day import ${new Date(sendPilot.lastBackfillAt).toLocaleString("en-GB")}`
+                  : ""}
+                {sendPilot.lastWebhookAt
+                  ? ` · last automatic reply ${new Date(sendPilot.lastWebhookAt).toLocaleString("en-GB")}`
+                  : ""}
+                {sendPilot.importedMessageCount
+                  ? ` · ${sendPilot.importedMessageCount} imported`
+                  : ""}
+                {sendPilot.reviewCount ? ` · ${sendPilot.reviewCount} need review` : ""}
+              </p>
+            ) : !sendPilotLoaded ? (
+              <p className="mt-3 font-mono text-[0.56rem] uppercase text-muted">
+                Checking SendPilot status…
+              </p>
+            ) : null}
+            {sendPilot?.lastError ? (
+              <p className="mt-2 text-xs leading-5 text-rust">
+                Last SendPilot operation did not complete. {sendPilot.lastError}
+              </p>
+            ) : null}
+            {sendPilotNote ? (
+              <p aria-live="polite" className="mt-2 text-xs leading-5 text-moss">
+                {sendPilotNote}
+              </p>
+            ) : null}
+            {sendPilotError ? (
+              <p role="alert" className="mt-2 text-xs leading-5 text-rust">
+                {sendPilotError}
+              </p>
+            ) : null}
+          </div>
+
+          {sendPilot?.connected ? (
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void runSendPilotInitialBackfill()}
+                disabled={!!sendPilotBusy}
+                className="min-h-10 rounded-full border border-sky/55 bg-sky/10 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-sky disabled:opacity-40"
+              >
+                {sendPilotBusy === "backfill" ? "Importing…" : "Import previous 14 days"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void disconnectSendPilotAccount()}
+                disabled={!!sendPilotBusy}
+                className="min-h-10 rounded-full border border-rust/50 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-rust disabled:opacity-40"
+              >
+                {sendPilotBusy === "disconnect" ? "Disconnecting…" : "Disconnect"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        {sendPilotLoaded && !sendPilot ? (
+          <p className="mt-4 rounded-lg border border-rust/45 bg-rust/[0.07] p-3 text-xs leading-5 text-rust">
+            LiveCoach could not load the SendPilot connection status. Reload this page before
+            trying to connect it.
+          </p>
+        ) : sendPilot && !sendPilot.configured ? (
+          <p className="mt-4 rounded-lg border border-rust/45 bg-rust/[0.07] p-3 text-xs leading-5 text-rust">
+            The deployment encryption secret must be configured before a SendPilot API key
+            can be stored.
+          </p>
+        ) : !sendPilot?.connected ? (
+          <div className="mt-4 rounded-lg border border-edge bg-ink/35 p-3">
+            <label className="block text-xs font-semibold text-bone" htmlFor="sendpilot-api-key">
+              SendPilot API key
+            </label>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              Create a workspace key in SendPilot under Integrations and API Keys. It is
+              encrypted before storage and is never returned to this page.
+            </p>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <input
+                id="sendpilot-api-key"
+                type="password"
+                autoComplete="off"
+                value={sendPilotApiKey}
+                onChange={(event) => setSendPilotApiKey(event.target.value)}
+                placeholder="Paste API key"
+                className="min-h-11 min-w-0 flex-1 rounded-lg border border-edge bg-ink px-3 font-mono text-xs text-bone outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => void connectSendPilotAccount()}
+                disabled={!!sendPilotBusy || !sendPilot?.configured}
+                className="min-h-11 rounded-lg border border-sky/55 bg-sky/10 px-4 font-mono text-[0.56rem] uppercase text-sky disabled:opacity-40"
+              >
+                {sendPilotBusy === "connect" ? "Connecting…" : "Connect SendPilot"}
+              </button>
+            </div>
+          </div>
+        ) : !sendPilot.webhookConfigured ? (
+          <div className="mt-4 rounded-lg border border-amber/45 bg-amber/[0.06] p-3">
+            <p className="text-xs font-semibold text-bone">Finish automatic reply capture</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-muted marker:text-amber">
+              <li>In SendPilot, open Integrations and Webhooks, then add a webhook.</li>
+              <li>Use the HTTPS URL below and select only reply.received.</li>
+              <li>Create it, then paste the one-time webhook secret below.</li>
+            </ol>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <input
+                readOnly
+                value={sendPilot.webhookUrl || ""}
+                aria-label="SendPilot webhook URL"
+                onFocus={(event) => event.currentTarget.select()}
+                className="min-h-11 min-w-0 flex-1 rounded-lg border border-edge bg-ink px-3 font-mono text-xs text-bone outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => void copySendPilotWebhookUrl()}
+                className="min-h-11 rounded-lg border border-sky/50 bg-sky/10 px-4 font-mono text-[0.56rem] uppercase text-sky"
+              >
+                Copy URL
+              </button>
+            </div>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+              <input
+                type="password"
+                autoComplete="off"
+                value={sendPilotWebhookSecret}
+                onChange={(event) => setSendPilotWebhookSecret(event.target.value)}
+                placeholder="Paste webhook secret"
+                aria-label="SendPilot webhook secret"
+                className="min-h-11 min-w-0 flex-1 rounded-lg border border-edge bg-ink px-3 font-mono text-xs text-bone outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => void saveSendPilotWebhook()}
+                disabled={!!sendPilotBusy}
+                className="min-h-11 rounded-lg border border-moss/50 bg-moss/10 px-4 font-mono text-[0.56rem] uppercase text-moss disabled:opacity-40"
+              >
+                {sendPilotBusy === "webhook" ? "Saving…" : "Save webhook secret"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div
         id="linkedin-inbox"
         className={`mb-5 rounded-xl border p-5 ${
           linkedinInbox?.active
@@ -876,11 +1217,12 @@ export default function SettingsPage() {
                 linkedinInbox?.active ? "text-moss" : "text-amber"
               }`}
             >
-              {linkedinInbox?.active ? "✓" : "◇"} Local LinkedIn inbox capture
+              {linkedinInbox?.active ? "✓" : "◇"} Fallback local LinkedIn capture
             </p>
             <p className="mt-2 text-sm leading-6 text-bone">
-              Pull recent inbound LinkedIn messages into your private CRM without giving
-              LiveCoach your LinkedIn password or session cookies.
+              Keep this as a manual fallback if SendPilot is unavailable. It pulls recent
+              inbound messages without giving LiveCoach your LinkedIn password or session
+              cookies.
             </p>
             <p className="mt-2 text-xs leading-5 text-moss">
               The first sync and every later sync are limited to the previous 14 days.
