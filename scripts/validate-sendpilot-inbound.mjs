@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   SENDPILOT_BACKFILL_DAYS,
   parseSendPilotReplyEvent,
+  parseSendPilotWebhookEvent,
   sendPilotMessageFingerprint,
   verifySendPilotWebhookSignature,
 } from "../lib/sendpilot-contract.ts";
@@ -66,6 +67,39 @@ assert.equal(
 const event = parseSendPilotReplyEvent(JSON.parse(payload));
 assert.equal(event.eventType, "reply.received");
 assert.equal(event.data.senderId, "sender_test");
+assert.equal(
+  parseSendPilotWebhookEvent({
+    eventId: "evt_message_123",
+    eventType: "message.sent",
+    timestamp: "2026-08-28T21:31:00.000Z",
+    workspaceId: "ws_test",
+    data: {
+      leadId: "lead_test",
+      campaignId: "campaign_test",
+      linkedinUrl: "https://www.linkedin.com/in/example-person",
+      senderId: "sender_test",
+      message: "Hello",
+      sequenceStep: 2,
+    },
+  }).eventType,
+  "message.sent"
+);
+assert.equal(
+  parseSendPilotWebhookEvent({
+    eventId: "evt_status_123",
+    eventType: "lead.updated",
+    timestamp: "2026-08-28T21:32:00.000Z",
+    workspaceId: "ws_test",
+    data: {
+      leadId: "lead_test",
+      campaignId: "campaign_test",
+      linkedinUrl: "https://www.linkedin.com/in/example-person",
+      previousStatus: "PENDING",
+      newStatus: "REPLIED",
+    },
+  }).eventType,
+  "lead.updated"
+);
 
 const fingerprint = sendPilotMessageFingerprint({
   senderProfileUrl: event.data.linkedinUrl,
@@ -106,12 +140,15 @@ const [
   read("app/settings/page.tsx"),
 ]);
 
-assert(!apiClient.includes('method: "POST"'));
+assert(apiClient.includes('method: "POST"'));
 assert(!apiClient.includes('method: "PATCH"'));
+assert(!apiClient.includes('method: "PUT"'));
+assert(!apiClient.includes('method: "DELETE"'));
 assert(!apiClient.includes("/v1/inbox/messages"));
 assert(apiClient.includes('"/v1/inbox/senders"'));
 assert(apiClient.includes("/v1/inbox/conversations"));
 assert(apiClient.includes("/v1/leads/"));
+assert(apiClient.includes('sendPilotRequest("/v1/leads"'));
 assert(integration.includes("SENDPILOT_BACKFILL_DAYS"));
 assert(integration.includes('source: "sendpilot_webhook"'));
 assert(integration.includes('source: "sendpilot_api"'));
@@ -121,7 +158,7 @@ assert(integration.includes('.eq("status", "failed")'));
 assert(credentials.includes('createCipheriv("aes-256-gcm"'));
 assert(credentials.includes("cipher.setAAD"));
 assert(webhookRoute.includes("webhook-signature"));
-assert(webhookRoute.includes("waitUntil(processSendPilotReplyEvent"));
+assert(webhookRoute.includes("waitUntil(processSendPilotWebhookEvent"));
 assert(webhookRoute.includes("SENDPILOT_MAX_WEBHOOK_BYTES"));
 assert(managementRoute.includes("requireRequestScope"));
 assert(backfillRoute.includes("runSendPilotBackfill"));
@@ -131,7 +168,7 @@ assert(migration.includes("unique (integration_id, provider_event_id)"));
 assert(indexMigration.includes("sendpilot_webhook_events_owner_idx"));
 assert(importer.includes("crossSourceDuplicates"));
 assert(importer.includes("sender_name_not_verified"));
-assert(settings.includes("SendPilot LinkedIn inbox"));
-assert.match(settings, /does\s+not expose any SendPilot action/);
+assert(settings.includes("SendPilot LinkedIn CRM"));
+assert.match(settings, /cannot start campaigns, change their sequence/);
 
 console.log("SendPilot inbound integration validation passed");

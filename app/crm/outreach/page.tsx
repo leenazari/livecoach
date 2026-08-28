@@ -29,6 +29,7 @@ type CampaignStats = {
   enrolled: number;
   contacted: number;
   emailsSent: number;
+  linkedinSent: number;
   replies: number;
   interested: number;
   meetings: number;
@@ -108,6 +109,13 @@ function outreachStage(prospect: Prospect): { key: string; label: string } {
       key: prospect.reply_category === "interested" ? "interested" : "replied",
       label: prospect.reply_category === "interested" ? "Interested" : "Replied",
     };
+  const sendpilot = prospect.outreach?.sendpilot;
+  if (["submitting", "pending_confirmation", "queued"].includes(sendpilot?.syncStatus)) {
+    return { key: "queued", label: "SendPilot queued" };
+  }
+  if (sendpilot?.syncStatus === "active") {
+    return { key: "contacted", label: "SendPilot active" };
+  }
   const latest = prospect.outreach?.latestMessage;
   const sentCount = Number(prospect.outreach?.sentCount || 0);
   if (latest?.status === "sending")
@@ -169,6 +177,33 @@ function sequenceActionLabel(actionType?: string | null) {
   return labels[actionType || ""] || "Complete manual step";
 }
 
+function sendPilotExecutionLabel(execution: any) {
+  const labels: Record<string, string> = {
+    submitting: "Submitting to SendPilot",
+    pending_confirmation: "Awaiting SendPilot confirmation",
+    queued: "Queued in SendPilot",
+    active: "Running in SendPilot",
+    replied: "Reply captured",
+    completed: "SendPilot sequence completed",
+    suppressed: "Stopped in SendPilot",
+    failed: "Retry SendPilot handoff",
+  };
+  return labels[String(execution?.syncStatus || "")] || "Tracked in SendPilot";
+}
+
+function sendPilotActivityLabel(kind: string, metadata: any) {
+  const labels: Record<string, string> = {
+    linkedin_enrolled: "Added to SendPilot",
+    linkedin_connection_sent: "Connection request sent",
+    linkedin_connection_accepted: "Connection accepted",
+    linkedin_message_sent: "LinkedIn message sent",
+    meeting_booked: "Meeting booked through SendPilot",
+    sendpilot_status: `SendPilot ${String(metadata?.newStatus || "status").replace(/_/g, " ")}`,
+    failed: "SendPilot action failed",
+  };
+  return labels[kind] || "SendPilot activity";
+}
+
 function linkedinTarget(prospect: Prospect) {
   const saved = String(prospect.person_linkedin_url || "").trim();
   if (/^https:\/\/(www\.)?linkedin\.com\//i.test(saved)) return saved;
@@ -199,6 +234,7 @@ function CampaignResultStrip({ stats }: { stats?: CampaignStats }) {
     enrolled: 0,
     contacted: 0,
     emailsSent: 0,
+    linkedinSent: 0,
     replies: 0,
     interested: 0,
     meetings: 0,
@@ -209,6 +245,7 @@ function CampaignResultStrip({ stats }: { stats?: CampaignStats }) {
     ["Assigned", values.enrolled],
     ["Contacted", values.contacted],
     ["Emails", values.emailsSent],
+    ["LinkedIn", values.linkedinSent],
     ["Replies", values.replies],
     ["Interested", values.interested],
     ["Meetings", values.meetings],
@@ -218,7 +255,7 @@ function CampaignResultStrip({ stats }: { stats?: CampaignStats }) {
       <p className="font-mono text-[0.54rem] uppercase tracking-wider text-sky">Your results only</p>
       <p className="font-mono text-[0.5rem] uppercase text-muted">{values.replyRate}% reply rate · {values.meetingRate}% meeting rate</p>
     </div>
-    <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
+    <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-7">
       {items.map(([label, value]) => <div key={label} className="rounded-lg border border-edge/80 bg-panel/65 px-2 py-2 text-center"><strong className="block font-display text-lg text-bone">{value}</strong><span className="font-mono text-[0.44rem] uppercase text-muted">{label}</span></div>)}
     </div>
   </div>;
@@ -245,6 +282,7 @@ export default function OutreachPage() {
   const [metrics, setMetrics] = useState<any>({});
   const [replies, setReplies] = useState<any[]>([]);
   const [sentHistory, setSentHistory] = useState<any[]>([]);
+  const [sendPilotActivity, setSendPilotActivity] = useState<any[]>([]);
   const [manualCalls, setManualCalls] = useState<any[]>([]);
   const [variants, setVariants] = useState<any[]>([]);
   const [performance, setPerformance] = useState<any[]>([]);
@@ -324,6 +362,7 @@ export default function OutreachPage() {
     setMetrics(data.metrics || {});
     setReplies(data.replies || []);
     setSentHistory(data.sentHistory || []);
+    setSendPilotActivity(data.sendPilotActivity || []);
     setManualCalls(data.manualCalls || []);
     setVariants(data.variants || []);
     setPerformance(data.performance || []);
@@ -707,6 +746,50 @@ export default function OutreachPage() {
       setRowErrors((all) => ({
         ...all,
         [prospectId]: caught?.message || "The manual step did not save",
+      }));
+      await loadCore();
+    } finally {
+      setBusy("");
+    }
+  };
+  const sendToSendPilot = async (row: QueueRow) => {
+    const prospect = row.prospect;
+    const campaignName = row.sendpilot?.campaignName || "the mapped SendPilot campaign";
+    const personName = [prospect?.first_name, prospect?.last_name]
+      .filter(Boolean)
+      .join(" ") || prospect?.email || "this prospect";
+    if (
+      !window.confirm(
+        `Add ${personName} to ${campaignName}? SendPilot will begin that campaign's LinkedIn sequence. LiveCoach will keep the lead and activity history.`
+      )
+    ) {
+      return;
+    }
+    setBusy(`sendpilot:${row.id}`);
+    setRowErrors((all) => ({ ...all, [prospect.id]: "" }));
+    setNotice("");
+    try {
+      const result = await crmFetch<any>(
+        `/api/crm/outreach/${prospect.id}/sendpilot`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            requestId: crypto.randomUUID(),
+            enrolmentId: row.id,
+            confirmed: true,
+          }),
+        }
+      );
+      setNotice(
+        result.alreadySubmitted
+          ? `${personName} is already recorded in SendPilot. No duplicate was created.`
+          : `${personName} was approved and handed to ${campaignName}. LiveCoach will now track the LinkedIn sequence and any reply.`
+      );
+      await Promise.all([loadCore(), loadProspects()]);
+    } catch (caught: any) {
+      setRowErrors((all) => ({
+        ...all,
+        [prospect.id]: caught?.message || "The SendPilot handoff did not complete",
       }));
       await loadCore();
     } finally {
@@ -1212,7 +1295,21 @@ export default function OutreachPage() {
       {!loading && !tabLoading && tab === "queue" ? <section data-sales-tour="outreach-queue">
         <RevenueToday />
         <div className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.06] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase tracking-wider text-moss">Campaign to top up</p><h2 className="mt-1 font-display text-lg text-bone">{activeCampaign?.name || "No active campaign"}</h2><p className="mt-1 text-sm text-muted">This choice controls Rank + build only. The combined list below keeps queued work from every campaign together.</p></div>{selectableCampaigns.length ? <label className="w-full sm:w-72"><span className="sr-only">Choose your active campaign</span><select aria-label="Choose your active campaign" className={`${input} min-h-11`} value={activeCampaign?.id || ""} onChange={(event) => void selectActiveCampaign(event.target.value)} disabled={!!busy}>{selectableCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label> : <button type="button" onClick={() => selectTab("campaign")} className={button}>Review campaigns</button>}</div></div>
-        <div className="mb-4 rounded-xl border border-edge bg-panel p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Today’s combined queue</h2><p className="mt-1 text-sm text-muted">Work email, LinkedIn and phone steps in one order. LiveCoach automates only approved email delivery. Every social or phone action stays under your control.</p><p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{remainingToPrepare} emails to prepare · {manualStepsDue} manual actions · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p></div><button onClick={buildQueue} disabled={!!busy || activeCampaignQueueCount >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : activeCampaignQueueCount ? `Top up ${activeCampaign?.name || "campaign"} to ${activeCampaign?.daily_limit || 20}` : "Rank + build for this campaign"}</button></div><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare all email steps (${remainingToPrepare})` : "All email research prepared"}</button><button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve all prepared & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button></div><p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact email drafts already shown below. Manual actions must be confirmed one at a time.</p></div>
+        <div className="mb-4 rounded-xl border border-edge bg-panel p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="font-display text-lg text-bone">Today’s combined queue</h2>
+              <p className="mt-1 text-sm text-muted">Work email, LinkedIn and phone steps in one order. Email drafts require approval. A LinkedIn lead enters SendPilot only after you confirm that exact person and mapped campaign.</p>
+              <p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{remainingToPrepare} emails to prepare · {manualStepsDue} LinkedIn or phone actions · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p>
+            </div>
+            <button onClick={buildQueue} disabled={!!busy || activeCampaignQueueCount >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : activeCampaignQueueCount ? `Top up ${activeCampaign?.name || "campaign"} to ${activeCampaign?.daily_limit || 20}` : "Rank + build for this campaign"}</button>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare all email steps (${remainingToPrepare})` : "All email research prepared"}</button>
+            <button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve all prepared & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact email drafts already shown below. SendPilot handoffs and manual actions are confirmed one person at a time.</p>
+        </div>
         <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const sequenceStep = row.sequenceStep as SequenceStep | null; const channel = sequenceStep?.channel || "email"; const manual = channel !== "email"; const manualDue = manual && row.sequenceStepDue !== false && !["completed", "paused", "replied", "booked", "suppressed"].includes(row.status); const canPrepare = !manual && !m && row.status === "queued"; const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = manualDue ? channel : m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text, voice_script: m.voice_script || "" } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className="rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
@@ -1225,7 +1322,61 @@ export default function OutreachPage() {
               </div>
               {!m && row.next_action_at && row.sequenceStepDue === false ? <p className="mt-2 text-xs text-muted">Next step becomes ready {formatActivityDate(row.next_action_at)}.</p> : null}
             </div>
-            {canPrepare ? <button onClick={() => prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>{prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : Number(row.current_step) > 1 ? "Queue follow up draft" : "Queue research + draft"}</button> : manual && channel === "linkedin" ? <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-2"><a href={linkedinTarget(p)} target="_blank" rel="noreferrer" className={`${button} inline-flex items-center justify-center border-sky/45 text-sky`}>Open LinkedIn ↗</a><button type="button" onClick={() => completeManualSequenceStep(row)} disabled={!!busy || !manualDue} className={primary}>{busy === `sequence-action:${row.id}` ? "Saving…" : manualDue ? `Mark ${sequenceActionLabel(sequenceStep?.actionType)} done` : `Due ${formatActivityDate(row.next_action_at)}`}</button></div> : manual && channel === "phone" ? <button type="button" onClick={() => setManualCallProspectId(p.id)} disabled={!!busy || !manualDue} className={`${primary} w-full sm:w-auto`}>{manualDue ? "Call and log outcome" : `Due ${formatActivityDate(row.next_action_at)}`}</button> : !m && lastSent ? <button onClick={() => selectTab("activity")} className="min-h-11 w-full rounded-lg border border-moss bg-moss px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-ink transition hover:bg-moss/85 sm:w-auto">✓ Sent · view email</button> : null}
+            {canPrepare ? (
+              <button onClick={() => prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>
+                {prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : Number(row.current_step) > 1 ? "Queue follow up draft" : "Queue research + draft"}
+              </button>
+            ) : manual && channel === "linkedin" ? (
+              <div className="grid w-full gap-2 sm:w-auto sm:min-w-[25rem] sm:grid-cols-2">
+                <a href={linkedinTarget(p)} target="_blank" rel="noreferrer" className={`${button} inline-flex items-center justify-center border-sky/45 text-sky`}>
+                  Open LinkedIn ↗
+                </a>
+                {row.sendpilot?.execution && row.sendpilot.execution.syncStatus !== "failed" ? (
+                  <span className="inline-flex min-h-11 items-center justify-center rounded-lg border border-moss/50 bg-moss/10 px-4 text-center font-mono text-[0.58rem] uppercase text-moss">
+                    ✓ {sendPilotExecutionLabel(row.sendpilot.execution)}
+                  </span>
+                ) : row.sendpilot?.connected && row.sendpilot?.webhookConfigured && row.sendpilot?.mapped ? (
+                  <button
+                    type="button"
+                    onClick={() => sendToSendPilot(row)}
+                    disabled={!!busy || !manualDue}
+                    className={primary}
+                  >
+                    {busy === `sendpilot:${row.id}`
+                      ? "Handing to SendPilot…"
+                      : row.sendpilot?.execution?.syncStatus === "failed"
+                        ? "Retry SendPilot handoff"
+                        : `Approve for ${row.sendpilot.campaignName || "SendPilot"}`}
+                  </button>
+                ) : (
+                  <Link href="/settings#sendpilot-inbox" className={`${button} inline-flex items-center justify-center border-amber/50 text-amber`}>
+                    Set up SendPilot
+                  </Link>
+                )}
+                {!row.sendpilot?.execution ? (
+                  <button
+                    type="button"
+                    onClick={() => completeManualSequenceStep(row)}
+                    disabled={!!busy || !manualDue}
+                    className={`${button} sm:col-span-2`}
+                  >
+                    {busy === `sequence-action:${row.id}`
+                      ? "Saving…"
+                      : manualDue
+                        ? `Mark ${sequenceActionLabel(sequenceStep?.actionType)} done manually`
+                        : `Due ${formatActivityDate(row.next_action_at)}`}
+                  </button>
+                ) : null}
+              </div>
+            ) : manual && channel === "phone" ? (
+              <button type="button" onClick={() => setManualCallProspectId(p.id)} disabled={!!busy || !manualDue} className={`${primary} w-full sm:w-auto`}>
+                {manualDue ? "Call and log outcome" : `Due ${formatActivityDate(row.next_action_at)}`}
+              </button>
+            ) : !m && lastSent ? (
+              <button onClick={() => selectTab("activity")} className="min-h-11 w-full rounded-lg border border-moss bg-moss px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-ink transition hover:bg-moss/85 sm:w-auto">
+                ✓ Sent · view email
+              </button>
+            ) : null}
           </div>
           {manual && sequenceStep?.guidance ? <p className="mt-3 rounded-lg border border-sky/35 bg-sky/[0.05] px-3 py-2 text-xs leading-5 text-sky">{sequenceStep.guidance}</p> : null}
           {manual && channel === "phone" && manualCallProspectId === p.id ? <div className="mt-3"><ProspectManualCall prospect={p} campaignId={row.campaign_id} onCancel={() => setManualCallProspectId("")} onSaved={async () => { setManualCallProspectId(""); setNotice("Call saved. The sequence now follows the outcome you logged."); await Promise.all([loadCore(), loadMetrics()]); }} /></div> : null}
@@ -1353,13 +1504,36 @@ export default function OutreachPage() {
 
       {!loading && !tabLoading && tab === "activity" ? <section className="space-y-4">
         <div className="rounded-xl border border-edge bg-panel p-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="font-display text-lg text-bone">Your outreach progress</h2><p className="mt-1 text-sm text-muted">Only emails sent from your account, your replies and your meetings. Opens are deliberately not tracked.</p></div><button type="button" onClick={() => loadMetrics()} className={button}>Refresh progress</button></div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="font-display text-lg text-bone">Your outreach progress</h2><p className="mt-1 text-sm text-muted">Email and SendPilot LinkedIn activity from this signed in salesperson, including replies and meetings. Opens are deliberately not tracked.</p></div><button type="button" onClick={() => loadMetrics()} className={button}>Refresh progress</button></div>
           <div className="mt-4 space-y-3">{funnel.map((item, index) => {
             const previous = index === 0 ? item.value : funnel[index - 1].value;
             const percentage = index === 0 ? 100 : previous ? Math.round((item.value / previous) * 100) : 0;
             return <div key={item.label} className="grid grid-cols-[6.5rem_1fr_3rem] items-center gap-3"><span className="font-mono text-[0.52rem] uppercase text-muted">{item.label}</span><div className="h-2.5 overflow-hidden rounded-full bg-ink"><div className={`h-full rounded-full ${item.colour}`} style={{ width: `${item.value ? Math.max(4, percentage) : 0}%` }} /></div><strong className="text-right font-display text-lg text-bone">{item.value}</strong></div>;
           })}</div>
           <div className="mt-4 grid grid-cols-3 gap-2"><div className="rounded-lg border border-edge bg-ink/35 p-3"><strong className="block font-display text-xl text-bone">{metrics.sent ? Math.round(((metrics.replies || 0) / metrics.sent) * 100) : 0}%</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Reply rate</span></div><div className="rounded-lg border border-edge bg-ink/35 p-3"><strong className="block font-display text-xl text-bone">{metrics.replies ? Math.round(((metrics.positiveReplies || 0) / metrics.replies) * 100) : 0}%</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Positive replies</span></div><div className="rounded-lg border border-edge bg-ink/35 p-3"><strong className="block font-display text-xl text-bone">{metrics.sent ? Math.round(((metrics.meetings || 0) / metrics.sent) * 100) : 0}%</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Meeting rate</span></div></div>
+        </div>
+
+        <div className="rounded-xl border border-moss/35 bg-panel p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div><h2 className="font-display text-lg text-bone">SendPilot LinkedIn activity</h2><p className="mt-1 text-sm text-muted">Verified campaign handoffs, sent messages, connection milestones and status changes for your own SendPilot account.</p></div>
+            <span className="rounded-full border border-moss/50 bg-moss/10 px-3 py-1 font-mono text-[0.52rem] uppercase text-moss">{metrics.linkedinSent || 0} actions sent</span>
+          </div>
+          <div className="mt-3 divide-y divide-edge">
+            {sendPilotActivity.map((activity) => (
+              <details key={activity.id} className="py-3">
+                <summary className="grid cursor-pointer list-none gap-2 sm:grid-cols-[1.2fr_1fr_auto] sm:items-center">
+                  <div className="min-w-0"><strong className="block truncate text-sm text-bone">{activity.prospect ? `${activity.prospect.first_name || ""} ${activity.prospect.last_name || ""}`.trim() : "Unknown prospect"}</strong><span className="block truncate text-xs text-muted">{activity.prospect?.company_name || activity.prospect?.email || "Prospect record unavailable"}</span></div>
+                  <span className="font-mono text-[0.52rem] uppercase text-moss">{sendPilotActivityLabel(activity.kind, activity.metadata)}</span>
+                  <span className="font-mono text-[0.5rem] uppercase text-muted">{formatActivityDate(activity.created_at)}</span>
+                </summary>
+                <div className="mt-2 rounded-lg border border-edge bg-ink/40 p-3 text-sm leading-6 text-bone/80">
+                  {activity.metadata?.message ? <p className="whitespace-pre-wrap">{activity.metadata.message}</p> : activity.metadata?.note ? <p className="whitespace-pre-wrap">{activity.metadata.note}</p> : <p>{activity.metadata?.newStatus ? `SendPilot changed the lead from ${activity.metadata.previousStatus || "its previous state"} to ${activity.metadata.newStatus}.` : "The verified SendPilot event is stored in this prospect's CRM history."}</p>}
+                  <p className="mt-2 font-mono text-[0.5rem] uppercase text-muted">Campaign {activity.metadata?.sendpilotCampaignName || activity.metadata?.sendpilotCampaignId || "SendPilot"}</p>
+                </div>
+              </details>
+            ))}
+            {!sendPilotActivity.length ? <p className="py-6 text-center text-sm text-muted">No SendPilot campaign activity has reached LiveCoach yet.</p> : null}
+          </div>
         </div>
 
         <div className="rounded-xl border border-sky/35 bg-panel p-4">
@@ -1454,23 +1628,24 @@ export default function OutreachPage() {
       </section> : null}
 
       {!loading && !tabLoading && tab === "replies" ? <section data-sales-tour="reply-handover">
-        <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Every reply stops the sequence. Interested people are linked safely to the CRM, while deal value waits until a real conversation.</p></div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking email…" : "Check replies now"}</button></div>
+        <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Email and SendPilot replies meet here. Every reply stops the sequence. Deal value still waits until a real conversation.</p></div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking email…" : "Check email replies"}</button></div>
         <div className="space-y-2">{replies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; const handover = handoverReviews[reply.id]; return <article key={reply.id} className="rounded-xl border border-edge bg-panel p-4">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></div><span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${reply.reply_category === "interested" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{reply.reply_category}</span></div>
+          <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></div><div className="flex flex-wrap gap-2"><span className="rounded-full border border-sky/50 px-2 py-1 font-mono text-[0.55rem] uppercase text-sky">{reply.replyChannel === "linkedin" ? "LinkedIn" : "Email"}</span><span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${reply.reply_category === "interested" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{reply.reply_category}</span></div></div>
           <p className="mt-3 text-sm leading-6 text-bone/80">{reply.reply_summary}</p>
+          {reply.last_reply_text ? <div className="mt-3 rounded-lg border border-edge bg-ink/35 p-3"><p className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">Latest reply</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-bone/85">{reply.last_reply_text}</p></div> : null}
           {reply.reply_category === "interested" ? <div className="mt-3 rounded-lg border border-edge bg-ink/35 p-3">
             {reply.crmCompany ? <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase text-moss">✓ CRM handover complete</p><p className="mt-1 text-sm text-bone/80">Linked to {reply.crmCompany.name}{reply.bookedMeeting ? " · meeting booked" : " · sequence stopped"}</p></div><Link href={`/crm/${reply.crmCompany.id}`} className={`${button} inline-flex items-center justify-center`}>Open client</Link></div> : <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase text-amber">CRM match needs approval</p><p className="mt-1 text-sm text-muted">No client record will be guessed or duplicated.</p></div><button onClick={() => reviewHandover(reply.id)} disabled={!!busy} className={button}>{busy === `handover-check:${reply.id}` ? "Checking…" : handover ? "Refresh choices" : "Review match"}</button></div>
               {handover ? <div className="mt-3 border-t border-edge pt-3"><p className="text-sm text-bone/80">{handover.reason}</p>{handover.candidates.length ? <div className="mt-2 grid gap-2 sm:grid-cols-2">{handover.candidates.map((candidate) => <button key={candidate.id} onClick={() => completeHandover(reply.id, candidate.id)} disabled={!!busy} className={`${button} text-left normal-case tracking-normal`}><strong className="block text-bone">Link to {candidate.name}</strong><span className="text-xs text-muted">{candidate.domain || "No domain saved"}</span></button>)}</div> : null}<button onClick={() => completeHandover(reply.id)} disabled={!!busy} className={`${primary} mt-2 w-full sm:w-auto`}>{busy === `handover-save:${reply.id}` ? "Saving…" : `Create new ${reply.company_name} profile`}</button></div> : null}
             </div>}
           </div> : null}
-          {reply.reply_category === "interested" && !draft ? <button onClick={() => prepareBookingReply(reply.id)} disabled={!!busy} className={`${primary} mt-3 w-full sm:w-auto`}>{busy === `booking:${reply.id}` ? "Drafting…" : "Prepare booking reply"}</button> : null}
+          {reply.reply_category === "interested" && reply.replyChannel === "email" && !draft ? <button onClick={() => prepareBookingReply(reply.id)} disabled={!!busy} className={`${primary} mt-3 w-full sm:w-auto`}>{busy === `booking:${reply.id}` ? "Drafting…" : "Prepare booking reply"}</button> : null}
           {draft && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-moss/35 bg-moss/[0.06] px-3 py-2 text-sm text-moss">Review the exact words and calendar link. Once approved, the reply joins the same paced send queue.</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Reply subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(draft.id, { subject: e.target.value })} disabled={["sending", "sent"].includes(draft.status) || Boolean(draft.scheduled_at)} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Reply</span><textarea className={`${input} min-h-40 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(draft.id, { body_text: e.target.value })} disabled={["sending", "sent"].includes(draft.status) || Boolean(draft.scheduled_at)} /></label><div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => saveDraft(draft.id)} disabled={!!busy || ["sending", "sent"].includes(draft.status) || Boolean(draft.scheduled_at)} className={button}>Save changes</button>{draft.status === "draft" || draft.status === "failed" ? <button onClick={() => approveAndSend(draft.id)} disabled={!!busy} className={primary}>{busy === `approve-send:${draft.id}` ? "Approving and queueing…" : "Approve & queue reply"}</button> : null}{draft.status === "approved" && !draft.scheduled_at ? <button onClick={() => send(draft.id)} disabled={!!busy} className={primary}>{busy === `send:${draft.id}` ? "Queueing…" : "Queue booking reply"}</button> : null}{draft.status === "approved" && draft.scheduled_at ? <span className="self-center rounded-lg border border-sky bg-sky px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-ink">✓ Queued for {formatActivityDate(draft.scheduled_at)}</span> : null}{draft.status === "sending" ? <span className="self-center rounded-lg border border-sky/60 bg-sky/10 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-sky">Sending now</span> : null}{draft.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Booking link sent</span> : null}</div></div> : null}
-          <a href={`mailto:${reply.email}`} className="mt-3 inline-block font-mono text-xs text-amber">Open in email ↗</a>
+          {reply.replyChannel === "linkedin" ? <a href={linkedinTarget(reply)} target="_blank" rel="noreferrer" className="mt-3 inline-block font-mono text-xs text-sky">Reply in LinkedIn or SendPilot ↗</a> : <a href={`mailto:${reply.email}`} className="mt-3 inline-block font-mono text-xs text-amber">Open in email ↗</a>}
         </article>; })}{!replies.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">No replies detected yet.</div> : null}</div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "safety" ? <section className="space-y-4"><OutreachReadiness /><div className="rounded-xl border border-moss/40 bg-moss/10 p-4"><h2 className="font-display text-lg text-bone">Safety rules are active</h2><ul className="mt-3 space-y-2 text-sm text-bone/80"><li>• Nothing sends without approval of that exact draft.</li><li>• Every email uses the assigned sender’s own connected mailbox and verified sending address{sender?.senderEmail ? `, currently ${sender.senderEmail}` : ""}.</li><li>• Maximum 20 sends per sender per London calendar day.</li><li>• New CRM leads can enter outreach. Engaged, dormant and unclassified CRM relationships remain blocked.</li><li>• Replies and blocked addresses stop outreach.</li><li>• Exact email addresses are checked across the whole team, including duplicate CRM records.</li><li>• The same email address cannot be active in two campaigns or receive two messages on the same day.</li><li>• Different people at the same company remain available for outreach.</li><li>• A 30 day pause applies before moving a contacted email address to another campaign. Manager overrides require a saved reason.</li><li>• The database checks every send again immediately before it leaves.</li><li>• No tracking pixels or hidden open tracking.</li></ul></div><div className="rounded-xl border border-edge bg-panel p-4"><h2 className="font-display text-lg text-bone">Do not contact list</h2><p className="mt-1 text-sm text-muted">Block a person’s email or an entire company domain. You can restore access without losing history.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input className={input} value={blockTarget} onChange={(e) => setBlockTarget(e.target.value)} placeholder="person@company.com or company.com" /><button onClick={addSuppression} disabled={!!busy || !blockTarget.trim()} className={primary}>Block</button></div><div className="mt-4 space-y-2">{suppressions.map((item) => <div key={item.target} className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink/30 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm text-bone">{item.target}</p><p className="text-xs text-muted">{item.reason}</p></div><div className="flex items-center gap-2"><span className="font-mono text-[0.54rem] uppercase text-muted">{item.kind}</span><button type="button" onClick={() => restoreSuppression(item.target)} disabled={!!busy} className="min-h-9 rounded-lg border border-edge px-2 font-mono text-[0.5rem] uppercase text-bone hover:border-amber/60 hover:text-amber disabled:opacity-40">{busy === `restore:${item.target}` ? "Restoring…" : "Restore"}</button></div></div>)}</div></div></section> : null}
+      {!loading && !tabLoading && tab === "safety" ? <section className="space-y-4"><OutreachReadiness /><div className="rounded-xl border border-moss/40 bg-moss/10 p-4"><h2 className="font-display text-lg text-bone">Safety rules are active</h2><ul className="mt-3 space-y-2 text-sm text-bone/80"><li>• Email requires approval of the exact draft. SendPilot requires confirmation of the exact person and mapped campaign.</li><li>• Every email uses the assigned sender’s own connected mailbox and verified sending address{sender?.senderEmail ? `, currently ${sender.senderEmail}` : ""}.</li><li>• Maximum 20 sends or SendPilot handoffs per sender per London calendar day.</li><li>• New CRM leads can enter outreach. Engaged, dormant and unclassified CRM relationships remain blocked.</li><li>• Replies and blocked addresses stop outreach.</li><li>• Exact email addresses are checked across the whole team, including duplicate CRM records.</li><li>• The same email address cannot be active in two campaigns or receive two messages on the same day.</li><li>• Different people at the same company remain available for outreach.</li><li>• A 30 day pause applies before moving a contacted email address to another campaign. Manager overrides require a saved reason.</li><li>• The database checks every send or handoff again immediately before it leaves.</li><li>• No tracking pixels or hidden open tracking.</li></ul></div><div className="rounded-xl border border-edge bg-panel p-4"><h2 className="font-display text-lg text-bone">Do not contact list</h2><p className="mt-1 text-sm text-muted">Block a person’s email or an entire company domain. You can restore access without losing history.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input className={input} value={blockTarget} onChange={(e) => setBlockTarget(e.target.value)} placeholder="person@company.com or company.com" /><button onClick={addSuppression} disabled={!!busy || !blockTarget.trim()} className={primary}>Block</button></div><div className="mt-4 space-y-2">{suppressions.map((item) => <div key={item.target} className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink/30 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm text-bone">{item.target}</p><p className="text-xs text-muted">{item.reason}</p></div><div className="flex items-center gap-2"><span className="font-mono text-[0.54rem] uppercase text-muted">{item.kind}</span><button type="button" onClick={() => restoreSuppression(item.target)} disabled={!!busy} className="min-h-9 rounded-lg border border-edge px-2 font-mono text-[0.5rem] uppercase text-bone hover:border-amber/60 hover:text-amber disabled:opacity-40">{busy === `restore:${item.target}` ? "Restoring…" : "Restore"}</button></div></div>)}</div></div></section> : null}
     </main>
   );
 }

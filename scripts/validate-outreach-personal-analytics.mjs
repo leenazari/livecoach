@@ -23,8 +23,13 @@ assert.ok(
   "Every personal message count, draft and history query must use the signed-in sender"
 );
 assert.ok(
-  (metrics.match(/eq\("message\.sender_user_id", account\.userId\)/g) || []).length >= 4,
-  "Reply and meeting events must be attributed through the sending message"
+  (metrics.match(/eq\("owner_id", account\.userId\)/g) || []).length >= 8,
+  "Email and SendPilot events must be attributed to the signed-in owner"
+);
+assert.match(
+  metrics,
+  /message:outreach_messages!inner\(sender_user_id\)[\s\S]*?eq\("message\.sender_user_id", account\.userId\)/,
+  "Email A and B attribution must retain the sending-message join"
 );
 assert.match(
   metrics,
@@ -51,7 +56,7 @@ assert.match(replies, /sweepOutreachReplies\(20, account\.userId\)/);
 assert.match(page, />My prospects</);
 assert.match(page, /canManageAssignments \? <>\s*<option value="all">All owners<\/option>/);
 assert.match(page, /Your outreach progress/);
-assert.match(page, /Only emails sent from your account, your replies and your meetings/);
+assert.match(page, /Email and SendPilot LinkedIn activity from this signed in salesperson/);
 
 const activity = [
   { sender: "lee", sent: 63, replies: 2 },
