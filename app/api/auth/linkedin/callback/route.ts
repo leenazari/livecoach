@@ -3,9 +3,9 @@ import {
   exchangeLinkedInCode,
   fetchLinkedInUserInfo,
   LINKEDIN_IDENTITY_SCOPES,
-  saveLinkedInConnection,
+  saveLinkedInConnectionForOwner,
 } from "@/lib/linkedin";
-import { getRequestScope } from "@/lib/request-scope";
+import { verifyLinkedInOAuthState } from "@/lib/linkedin-oauth-state";
 import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -18,30 +18,38 @@ const clearOAuthCookies = (response: NextResponse) => {
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
-  const base = `${url.protocol}//${url.host}`;
-  const resultUrl = (value: string) => `${base}/settings?linkedin=${value}`;
-  const scope = getRequestScope();
-  if (!scope) {
+  const state = url.searchParams.get("state");
+  const oauthState = verifyLinkedInOAuthState(state);
+  const fallbackOrigin = "https://www.livecoachcrm.com";
+  const returnOrigin = oauthState?.returnOrigin || fallbackOrigin;
+  const resultUrl = (value: string) =>
+    `${returnOrigin}/settings?linkedin=${value}`;
+  if (!oauthState) {
     return clearOAuthCookies(NextResponse.redirect(resultUrl("error")));
   }
   if (url.searchParams.get("error")) {
     return clearOAuthCookies(NextResponse.redirect(resultUrl("denied")));
   }
   const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
   const cookieState = request.cookies.get("linkedin_oauth_state")?.value;
-  const cookieOwner = request.cookies.get("linkedin_oauth_owner")?.value;
-  if (
-    !code ||
-    !state ||
-    !cookieState ||
-    state !== cookieState ||
-    cookieOwner !== scope.userId
-  ) {
+  if (!code || (cookieState && state !== cookieState)) {
     return clearOAuthCookies(NextResponse.redirect(resultUrl("error")));
   }
 
   try {
+    const { data: membership, error: membershipError } = await supabaseService
+      .from("workspace_members")
+      .select("status")
+      .eq("workspace_id", oauthState.workspaceId)
+      .eq("user_id", oauthState.userId)
+      .maybeSingle();
+    if (membershipError) throw membershipError;
+    if (!membership || !["active", "onboarding"].includes(membership.status)) {
+      return clearOAuthCookies(
+        NextResponse.redirect(resultUrl("access_denied"))
+      );
+    }
+
     const token = await exchangeLinkedInCode(code);
     const accessToken = String(token.access_token || "").trim();
     if (!accessToken) throw new Error("LinkedIn did not return an access token");
@@ -56,9 +64,9 @@ export async function GET(request: NextRequest) {
     const { data: duplicate, error: duplicateError } = await supabaseService
       .from("linkedin_oauth")
       .select("owner_id")
-      .eq("workspace_id", scope.workspaceId)
+      .eq("workspace_id", oauthState.workspaceId)
       .eq("member_id", memberId)
-      .neq("owner_id", scope.userId)
+      .neq("owner_id", oauthState.userId)
       .limit(1)
       .maybeSingle();
     if (duplicateError) throw duplicateError;
@@ -74,28 +82,34 @@ export async function GET(request: NextRequest) {
       .split(/[\s,]+/)
       .map((value) => value.trim())
       .filter(Boolean);
-    await saveLinkedInConnection({
-      accessToken,
-      refreshToken: token.refresh_token ? String(token.refresh_token) : null,
-      expiry: new Date(
-        Date.now() + Number(token.expires_in || 5184000) * 1000
-      ).toISOString(),
-      memberId,
-      email: typeof profile.email === "string" ? profile.email : null,
-      displayName: typeof profile.name === "string" ? profile.name : null,
-      pictureUrl: typeof profile.picture === "string" ? profile.picture : null,
-      scopes: grantedScopes,
-    });
+    await saveLinkedInConnectionForOwner(
+      {
+        accessToken,
+        refreshToken: token.refresh_token ? String(token.refresh_token) : null,
+        expiry: new Date(
+          Date.now() + Number(token.expires_in || 5184000) * 1000
+        ).toISOString(),
+        memberId,
+        email: typeof profile.email === "string" ? profile.email : null,
+        displayName: typeof profile.name === "string" ? profile.name : null,
+        pictureUrl: typeof profile.picture === "string" ? profile.picture : null,
+        scopes: grantedScopes,
+      },
+      {
+        userId: oauthState.userId,
+        workspaceId: oauthState.workspaceId,
+      }
+    );
 
     const { error: auditError } = await supabaseService
       .from("access_audit_events")
       .insert({
-        workspace_id: scope.workspaceId,
-        actor_user_id: scope.userId,
+        workspace_id: oauthState.workspaceId,
+        actor_user_id: oauthState.userId,
         source: "human",
         action: "linkedin_connector_connected",
         target_table: "linkedin_oauth",
-        target_id: scope.userId,
+        target_id: oauthState.userId,
         previous_scope: null,
         next_scope: {
           connected: true,

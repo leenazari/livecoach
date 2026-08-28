@@ -68,7 +68,8 @@ export async function middleware(request: NextRequest) {
     path === "/api/candidate/respond" ||
     path.startsWith("/api/auth/google") ||
     path.startsWith("/api/auth/microsoft") ||
-    path.startsWith("/api/auth/linkedin") ||
+    (path.startsWith("/api/auth/linkedin") &&
+      path !== "/api/auth/linkedin/callback") ||
     path === "/api/auth/team/status" ||
     path.startsWith("/api/meet") ||
     path.startsWith("/api/knowledge") ||

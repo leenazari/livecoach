@@ -178,6 +178,8 @@ export default function SettingsPage() {
         );
       else if (linkedInResult === "identity_missing")
         setLinkedinNote("LinkedIn did not return an account identity. Try again.");
+      else if (linkedInResult === "access_denied")
+        setLinkedinNote("This LiveCoach account no longer has active workspace access.");
       else if (linkedInResult === "error")
         setLinkedinNote("LinkedIn could not be connected. Check the app setup and try again.");
     }
