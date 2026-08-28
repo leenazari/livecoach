@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CONTACT_METHODS,
   ENGAGEMENT_MOTIONS,
@@ -95,12 +95,7 @@ function DealDetails({
     }
   };
   return (
-    <details className="mt-2 rounded-lg border border-edge bg-ink/35 p-2">
-      <summary className="cursor-pointer font-mono text-[0.56rem] uppercase tracking-wider text-amber">
-        {canEdit ? "Evidence and edit" : "Evidence · view only"}
-        {row.pendingSignalCount ? ` · ${row.pendingSignalCount} new signal${row.pendingSignalCount === 1 ? "" : "s"} queued` : ""}
-        {row.failedSignalCount ? ` · ${row.failedSignalCount} retry needed` : ""}
-      </summary>
+    <div className="space-y-4">
       {row.pendingSignalCount ? <p className="mt-2 rounded-lg border border-amber/30 bg-amber/[0.06] px-3 py-2 text-xs text-amber">New evidence is queued for one low cost assessment. This does not reread the transcript or email thread.</p> : null}
       {row.failedSignalCount ? <p className="mt-2 rounded-lg border border-rust/40 bg-rust/[0.07] px-3 py-2 text-xs text-rust">A saved evidence assessment failed and will retry automatically, up to three attempts.</p> : null}
       {!canEdit ? (
@@ -108,7 +103,7 @@ function DealDetails({
           This deal belongs to another salesperson. You can see the shared sales position, but only its owner or a manager can change it.
         </p>
       ) : null}
-      <fieldset disabled={!canEdit} className="mt-3 grid gap-2 disabled:opacity-65 sm:grid-cols-2 lg:grid-cols-4">
+      <fieldset disabled={!canEdit} className="grid gap-4 rounded-xl border border-edge bg-ink/30 p-3 disabled:opacity-65 sm:grid-cols-2 sm:p-4 lg:grid-cols-4">
         <label className="lg:col-span-2">
           <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Deal intent</span>
           <textarea className={`${input} min-h-20 resize-y`} value={row.deal_intent || ""} onChange={(event) => onChange(row.id, { deal_intent: event.target.value })} placeholder="The commercial outcome this deal is pursuing" />
@@ -173,7 +168,7 @@ function DealDetails({
         </label>
       </fieldset>
 
-      <div className="mt-3 grid gap-2 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-lg border border-edge bg-panel/60 p-3">
           <p className="font-mono text-[0.52rem] uppercase text-muted">Evidence retained</p>
           {reasons.length ? <ul className="mt-2 space-y-1 text-sm text-bone">{reasons.map((reason: string) => <li key={reason}>• {reason}</li>)}</ul> : <p className="mt-2 text-sm text-muted">No evidence has been recorded yet.</p>}
@@ -184,7 +179,7 @@ function DealDetails({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge bg-ink/30 p-3">
         <div className="text-xs text-muted">
           {row.win_outlook_override ? <span className="text-amber">Human override active</span> : "System outlook can update from new stored evidence"}
           {row.win_outlook_as_of ? ` · assessed ${dateTime(row.win_outlook_as_of)}` : ""}
@@ -200,14 +195,14 @@ function DealDetails({
           )}
         </div>
       </div>
-      <div className="mt-3 border-t border-edge pt-3">
+      <div className="border-t border-edge pt-3">
         <button type="button" onClick={loadHistory} className="font-mono text-[0.53rem] uppercase text-muted hover:text-amber">
           {history ? "Change history" : "Load change history"}
         </button>
         {historyError ? <p className="mt-2 text-xs text-rust">{historyError}</p> : null}
         {history ? <div className="mt-2 space-y-2">{history.length ? history.slice(0, 8).map((event) => <div key={event.id} className="rounded-lg border border-edge bg-panel/50 p-2 text-xs"><div className="flex flex-wrap justify-between gap-2"><strong className="text-bone">{formatLabel(event.event_type)}</strong><span className="text-muted">{dateTime(event.created_at)} · {event.source_type === "human" ? "Human" : "System"} · {formatLabel(event.source_channel || "database")}</span></div>{event.rationale ? <p className="mt-1 text-muted">{event.rationale}</p> : null}</div>) : <p className="text-xs text-muted">No changes have been recorded since history tracking began.</p>}</div> : null}
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -233,6 +228,27 @@ export default function PipelineWorkspace(props: Props) {
   const [tableOrder, setTableOrder] = useState<
     "priority" | "newest" | "oldest" | "activity_newest" | "activity_oldest"
   >("priority");
+  const [editorRowId, setEditorRowId] = useState("");
+  const editorRow = useMemo(
+    () => rows.find((row) => row.id === editorRowId) || null,
+    [editorRowId, rows]
+  );
+  useEffect(() => {
+    if (editorRowId && !editorRow) setEditorRowId("");
+  }, [editorRow, editorRowId]);
+  useEffect(() => {
+    if (!editorRowId) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setEditorRowId("");
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [editorRowId]);
   const visibleRows = useMemo(
     () => rows.filter((row) => opportunityMatchesOwner(row, ownerFilter, currentUser)),
     [currentUser, ownerFilter, rows]
@@ -286,6 +302,27 @@ export default function PipelineWorkspace(props: Props) {
     atRisk: visibleRows.filter((row) => row.win_outlook === "at_risk").length,
     stalled: visibleRows.filter((row) => Number(row.daysQuiet) >= 14).length,
   }), [visibleRows]);
+  const canEditDeal = (row: Row) =>
+    canManageAssignments ||
+    !row.assigned_to_user_id ||
+    row.assigned_to_user_id === currentUser;
+  const editorButton = (row: Row) => (
+    <button
+      type="button"
+      onClick={() => setEditorRowId(row.id)}
+      aria-haspopup="dialog"
+      className="mt-2 flex min-h-10 w-full items-center justify-between gap-3 rounded-lg border border-edge bg-panel/60 px-3 py-2 text-left font-mono text-[0.52rem] uppercase tracking-wider text-amber transition hover:border-amber/55 hover:bg-amber/[0.08]"
+    >
+      <span>{canEditDeal(row) ? "Evidence and edit" : "Evidence · view only"}</span>
+      <span className="shrink-0 text-muted">
+        {row.pendingSignalCount
+          ? `${row.pendingSignalCount} new · open`
+          : row.failedSignalCount
+            ? "Retry needed · open"
+            : "Open"}
+      </span>
+    </button>
+  );
 
   return (
     <section data-sales-tour="pipeline-assignment" className="mb-4 rounded-xl border border-amber/30 bg-panel p-3 sm:p-4">
@@ -344,7 +381,7 @@ export default function PipelineWorkspace(props: Props) {
               <div className="flex items-start justify-between gap-2"><div><Link href={`/crm/${row.company_id}`} className="font-display text-lg text-bone hover:text-amber">{row.company}</Link>{dealThreadBadge(row)}<p className="text-sm text-muted">{row.title}</p></div><OutlookBadge row={row} /></div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Stage</span><strong className="text-bone">{formatLabel(row.pipeline_stage)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Value</span><strong className="text-bone">{gbp(row.value)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Owner</span><strong className="text-bone">{ownerName(row)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Motion</span><strong className="text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Date added</span><strong className="text-bone">{dateTime(row.created_at)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Last activity</span><strong className="text-bone">{dateTime(row.lastMeaningfulActivityAt)}</strong></div></div>
               <p className="mt-3 rounded-lg border border-amber/25 bg-amber/[0.05] p-2 text-sm text-amber">{row.next_action || row.nextAction}</p>
-              <DealDetails {...props} row={row} />
+              {editorButton(row)}
             </article>)}
           </div>
           <div className="mt-3 hidden overflow-x-auto md:block">
@@ -360,7 +397,7 @@ export default function PipelineWorkspace(props: Props) {
             ) : null}
             <table className="w-full min-w-[1180px] border-separate border-spacing-y-2 text-left">
               <thead><tr className="font-mono text-[0.5rem] uppercase text-muted"><th className="px-2">Deal</th><th className="px-2">Owner</th><th className="px-2">Stage</th><th className="px-2">Win outlook</th><th className="px-2">Value</th><th className="px-2">Engagement</th><th aria-sort={tableOrder === "newest" ? "descending" : tableOrder === "oldest" ? "ascending" : "none"} className="px-2"><button type="button" onClick={() => setTableOrder((current) => current === "newest" ? "oldest" : "newest")} className="transition hover:text-amber">Date added{tableOrder === "newest" ? " ↓" : tableOrder === "oldest" ? " ↑" : " ↕"}</button></th><th aria-sort={tableOrder === "activity_newest" ? "descending" : tableOrder === "activity_oldest" ? "ascending" : "none"} className="px-2"><button type="button" onClick={() => setTableOrder((current) => current === "activity_newest" ? "activity_oldest" : "activity_newest")} className="transition hover:text-amber">Last activity{tableOrder === "activity_newest" ? " ↓" : tableOrder === "activity_oldest" ? " ↑" : " ↕"}</button></th><th className="px-2">Next action</th></tr></thead>
-              <tbody>{tableRows.map((row) => <tr key={row.id} className="align-top [&>td]:border-y [&>td]:border-edge [&>td]:bg-ink/35 [&>td]:p-2 first:[&>td]:rounded-l-lg last:[&>td]:rounded-r-lg"><td className="w-52 border-l"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><p className="max-w-52 text-xs text-muted">{row.title}</p>{row.priorityReasons?.length ? <p className="mt-1 text-[0.67rem] text-amber">{row.priorityReasons.slice(0, 2).join(" · ")}</p> : null}</td><td className="text-xs text-bone">{ownerName(row)}</td><td><span className="text-sm text-bone">{formatLabel(row.pipeline_stage)}</span></td><td><OutlookBadge row={row} /></td><td className="text-sm text-bone">{gbp(row.value)}</td><td className="max-w-36 text-xs text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}<span className="mt-1 block text-muted">{row.active_contact_method ? formatLabel(row.active_contact_method) : "Method not set"}</span></td><td className="whitespace-nowrap text-xs text-bone">{dateTime(row.created_at)}</td><td className="text-xs text-bone">{dateTime(row.lastMeaningfulActivityAt)}{row.nextMeetingAt ? <span className="mt-1 block text-amber">Meeting {dateTime(row.nextMeetingAt)}</span> : null}</td><td className="w-72"><p className="text-sm text-amber">{row.next_action || row.nextAction}</p><p className="mt-1 text-xs text-muted">{row.next_action_due_at ? `Due ${dateTime(row.next_action_due_at)}` : "No due date"}</p><DealDetails {...props} row={row} /></td></tr>)}</tbody>
+              <tbody>{tableRows.map((row) => <tr key={row.id} className="align-top [&>td]:border-y [&>td]:border-edge [&>td]:bg-ink/35 [&>td]:p-2 first:[&>td]:rounded-l-lg last:[&>td]:rounded-r-lg"><td className="w-52 border-l"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><p className="max-w-52 text-xs text-muted">{row.title}</p>{row.priorityReasons?.length ? <p className="mt-1 text-[0.67rem] text-amber">{row.priorityReasons.slice(0, 2).join(" · ")}</p> : null}</td><td className="text-xs text-bone">{ownerName(row)}</td><td><span className="text-sm text-bone">{formatLabel(row.pipeline_stage)}</span></td><td><OutlookBadge row={row} /></td><td className="text-sm text-bone">{gbp(row.value)}</td><td className="max-w-36 text-xs text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}<span className="mt-1 block text-muted">{row.active_contact_method ? formatLabel(row.active_contact_method) : "Method not set"}</span></td><td className="whitespace-nowrap text-xs text-bone">{dateTime(row.created_at)}</td><td className="text-xs text-bone">{dateTime(row.lastMeaningfulActivityAt)}{row.nextMeetingAt ? <span className="mt-1 block text-amber">Meeting {dateTime(row.nextMeetingAt)}</span> : null}</td><td className="w-72"><p className="text-sm text-amber">{row.next_action || row.nextAction}</p><p className="mt-1 text-xs text-muted">{row.next_action_due_at ? `Due ${dateTime(row.next_action_due_at)}` : "No due date"}</p>{editorButton(row)}</td></tr>)}</tbody>
             </table>
           </div>
         </>
@@ -368,7 +405,7 @@ export default function PipelineWorkspace(props: Props) {
         <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
           {stageDefinitions.filter((stage) => !["won", "lost"].includes(stage.key)).map((stage) => {
             const members = visibleRows.filter((row) => row.pipeline_stage === stage.key);
-            return <section key={stage.key} className="w-[280px] shrink-0 rounded-xl border border-edge bg-ink/30 p-2.5"><div className="mb-2 flex items-center justify-between"><h3 className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</h3><span className="rounded-full bg-panel px-2 py-1 text-xs text-muted">{members.length}</span></div><div className="space-y-2">{members.length ? members.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-panel p-3"><div className="flex items-start justify-between gap-2"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><span className="text-xs text-muted">{gbp(row.value)}</span></div><p className="mt-1 text-xs text-muted">{row.title}</p><p className="mt-1 font-mono text-[0.48rem] uppercase text-sky">{ownerName(row)}</p><p className="mt-1 font-mono text-[0.46rem] uppercase text-muted">Added {dateTime(row.created_at)}</p><div className="mt-2"><OutlookBadge row={row} /></div><p className="mt-2 text-sm text-amber">{row.next_action || row.nextAction}</p>{row.next_action_due_at ? <p className="mt-1 text-xs text-muted">Due {dateTime(row.next_action_due_at)}</p> : null}<DealDetails {...props} row={row} /></article>) : <p className="rounded-lg border border-dashed border-edge p-3 text-center text-xs text-muted">No deals</p>}</div></section>;
+            return <section key={stage.key} className="w-[280px] shrink-0 rounded-xl border border-edge bg-ink/30 p-2.5"><div className="mb-2 flex items-center justify-between"><h3 className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</h3><span className="rounded-full bg-panel px-2 py-1 text-xs text-muted">{members.length}</span></div><div className="space-y-2">{members.length ? members.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-panel p-3"><div className="flex items-start justify-between gap-2"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><span className="text-xs text-muted">{gbp(row.value)}</span></div><p className="mt-1 text-xs text-muted">{row.title}</p><p className="mt-1 font-mono text-[0.48rem] uppercase text-sky">{ownerName(row)}</p><p className="mt-1 font-mono text-[0.46rem] uppercase text-muted">Added {dateTime(row.created_at)}</p><div className="mt-2"><OutlookBadge row={row} /></div><p className="mt-2 text-sm text-amber">{row.next_action || row.nextAction}</p>{row.next_action_due_at ? <p className="mt-1 text-xs text-muted">Due {dateTime(row.next_action_due_at)}</p> : null}{editorButton(row)}</article>) : <p className="rounded-lg border border-dashed border-edge p-3 text-center text-xs text-muted">No deals</p>}</div></section>;
           })}
         </div>
       )}
@@ -378,6 +415,66 @@ export default function PipelineWorkspace(props: Props) {
             ? "No deals match this owner view. Choose All team work to see the shared pipeline."
             : "No revenue deals are assigned to this view."}
         </p>
+      ) : null}
+      {editorRow ? (
+        <div className="fixed inset-0 z-[90]" role="presentation">
+          <button
+            type="button"
+            aria-label="Close deal workspace"
+            onClick={() => setEditorRowId("")}
+            className="absolute inset-0 h-full w-full bg-black/70 backdrop-blur-sm"
+          />
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`deal-workspace-${editorRow.id}`}
+            className="relative ml-auto flex h-full w-full flex-col border-l border-edge bg-panel shadow-2xl sm:w-[min(960px,calc(100vw-2rem))]"
+          >
+            <header className="flex shrink-0 items-start justify-between gap-3 border-b border-edge bg-panel/95 px-4 py-3 backdrop-blur sm:px-6 sm:py-4">
+              <div className="min-w-0">
+                <p className="font-mono text-[0.52rem] uppercase tracking-widest text-amber">
+                  Deal workspace
+                </p>
+                <h3
+                  id={`deal-workspace-${editorRow.id}`}
+                  className="mt-1 truncate font-display text-xl text-bone sm:text-2xl"
+                >
+                  {editorRow.company}
+                </h3>
+                <p className="truncate text-sm text-muted">{editorRow.title}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                  <span>{formatLabel(editorRow.pipeline_stage)}</span>
+                  <OutlookBadge row={editorRow} />
+                  <strong className="text-bone">{gbp(editorRow.value)}</strong>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {canEditDeal(editorRow) ? (
+                  <button
+                    type="button"
+                    onClick={() => props.onSave(editorRow)}
+                    disabled={!!props.busy}
+                    className="hidden min-h-10 rounded-lg border border-amber/60 bg-amber/15 px-4 font-mono text-[0.54rem] uppercase text-amber disabled:opacity-40 sm:block"
+                  >
+                    {props.busy === `opp:${editorRow.id}` ? "Saving…" : "Save changes"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  autoFocus
+                  onClick={() => setEditorRowId("")}
+                  className="flex h-10 w-10 items-center justify-center rounded-lg border border-edge font-mono text-lg text-muted transition hover:border-amber/55 hover:text-amber"
+                  aria-label="Close deal workspace"
+                >
+                  ×
+                </button>
+              </div>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 pb-8 sm:p-6">
+              <DealDetails key={editorRow.id} {...props} row={editorRow} />
+            </div>
+          </section>
+        </div>
       ) : null}
     </section>
   );

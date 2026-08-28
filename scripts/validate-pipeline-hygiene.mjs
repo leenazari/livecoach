@@ -55,6 +55,18 @@ assert.match(salesLane, /const companyGroups = useMemo/);
 assert.match(salesLane, /distinct deal threads/);
 assert.match(pipeline, /repeated client name means that client has separate deal threads/i);
 
+// Evidence editing opens in one responsive workspace instead of expanding
+// inside a narrow table cell or Kanban card.
+assert.match(pipeline, /aria-haspopup="dialog"/);
+assert.match(pipeline, /role="dialog"/);
+assert.match(pipeline, /Deal workspace/);
+assert.match(pipeline, /sm:w-\[min\(960px,calc\(100vw-2rem\)\)\]/);
+assert.equal(
+  (pipeline.match(/<DealDetails/g) || []).length,
+  1,
+  "The full evidence editor must render only in the responsive deal workspace"
+);
+
 // Bulk cleanup stays bounded to the current workspace and owner, and archives
 // rather than hard-deleting rows.
 assert.match(taskBulkRoute, /slice\(0, 300\)/);
