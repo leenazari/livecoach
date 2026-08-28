@@ -5,6 +5,7 @@ export type WorkInboxKind =
   | "follow_up"
   | "outreach"
   | "reply"
+  | "linkedin_message"
   | "client_update"
   | "opportunity_clarification";
 
@@ -17,6 +18,7 @@ export type WorkInboxItem = {
   company: string | null;
   companyId: string | null;
   href: string;
+  external?: boolean;
   priority: number;
   priorityLabel: "urgent" | "high" | "normal" | "waiting" | "done";
   dueAt: string | null;

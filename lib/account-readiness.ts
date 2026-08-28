@@ -245,7 +245,7 @@ export function buildAccountReadiness(
           "LinkedIn connected",
           facts.linkedinSocialAccess
             ? "Your own LinkedIn identity is connected, including approved posting and like permission."
-            : "Your own LinkedIn identity is connected. LinkedIn messages and connection requests remain manual."
+            : "Your own LinkedIn identity is connected. Inbox capture remains a separate, optional local control in Settings."
         )
       : action(
           "linkedin",

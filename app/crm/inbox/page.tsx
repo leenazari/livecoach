@@ -61,6 +61,7 @@ const kindCopy: Record<WorkInboxItem["kind"], { label: string; icon: string }> =
   follow_up: { label: "Email draft", icon: "✉" },
   outreach: { label: "Outreach", icon: "↗" },
   reply: { label: "Buyer reply", icon: "◆" },
+  linkedin_message: { label: "LinkedIn lead", icon: "in" },
   client_update: { label: "Client update", icon: "◴" },
   opportunity_clarification: { label: "Deal check", icon: "?" },
 };
@@ -128,7 +129,10 @@ const belongsTo = (item: WorkInboxItem, filter: Filter) => {
   if (filter === "now")
     return !item.done && !item.waiting && item.priority >= 78;
   if (filter === "outreach")
-    return !item.done && ["outreach", "reply", "follow_up"].includes(item.kind);
+    return (
+      !item.done &&
+      ["outreach", "reply", "follow_up", "linkedin_message"].includes(item.kind)
+    );
   if (filter === "calls") return !item.done && item.kind === "prep";
   if (filter === "revenue") return !item.done && item.kind === "opportunity";
   if (filter === "approvals") return !item.done && item.approval;
@@ -292,7 +296,9 @@ export default function WorkInboxPage() {
             !item.done &&
             !item.waiting &&
             item.priority >= 78 &&
-            !["outreach", "reply", "opportunity"].includes(item.kind)
+            !["outreach", "reply", "linkedin_message", "opportunity"].includes(
+              item.kind
+            )
         )
         .slice(0, 4),
     [data?.items]
@@ -441,6 +447,38 @@ export default function WorkInboxPage() {
     }
   };
 
+  const reviewLinkedInMessage = async (item: WorkInboxItem) => {
+    if (savingId || item.kind !== "linkedin_message") return;
+    const previous = data;
+    setSavingId(item.id);
+    setError("");
+    setNotice("");
+    setData((current) =>
+      current
+        ? { ...current, items: current.items.filter((row) => row.id !== item.id) }
+        : current
+    );
+    try {
+      const result = await crmFetch<{
+        message: { id: string; status: string; reviewed_at: string };
+      }>(`/api/crm/linkedin-inbox/messages/${item.sourceId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "reviewed" }),
+      });
+      if (result.message?.status !== "reviewed") {
+        throw new Error("The database did not confirm that review");
+      }
+      setSessionCompleted((count) => count + 1);
+      setNotice("LinkedIn lead marked reviewed. The CRM record remains saved.");
+      await load(true);
+    } catch (err: any) {
+      setData(previous);
+      setError(err?.message || "That LinkedIn lead could not be marked reviewed.");
+    } finally {
+      setSavingId("");
+    }
+  };
+
   const clarificationControls = (item: WorkInboxItem) => {
     if (!item.clarification || item.done) return null;
     const separating = separateClarificationId === item.id;
@@ -535,7 +573,6 @@ export default function WorkInboxPage() {
       </div>
     );
   };
-
   const beginNextDealAction = (item: Pick<WorkInboxItem, "id">) => {
     setNextActionId(item.id);
     setNextActionText("");
@@ -1491,11 +1528,20 @@ export default function WorkInboxPage() {
                     >
                       Complete and set next move
                     </button>
+                  ) : focusItem.kind === "linkedin_message" ? (
+                    <button
+                      type="button"
+                      onClick={() => void reviewLinkedInMessage(focusItem)}
+                      disabled={!!savingId}
+                      className="min-h-12 rounded-lg border border-moss/55 bg-moss/15 px-5 font-mono text-[0.58rem] uppercase tracking-wider text-moss disabled:opacity-40"
+                    >
+                      {savingId === focusItem.id ? "Saving…" : "Mark reviewed"}
+                    </button>
                   ) : null}
                   <Link
                     href={focusItem.href}
-                    target="_blank"
-                    rel="noreferrer"
+                    target={focusItem.external ? "_blank" : undefined}
+                    rel={focusItem.external ? "noreferrer" : undefined}
                     className="inline-flex min-h-12 items-center justify-center rounded-lg border border-amber/55 bg-amber/10 px-5 font-mono text-[0.58rem] uppercase tracking-wider text-amber"
                   >
                     {focusItem.approval ? "Review safely" : focusItem.kind === "prep" ? "Prepare call" : "Open action"} ↗
@@ -1580,7 +1626,7 @@ export default function WorkInboxPage() {
               const when = formatWhen(item.dueAt || item.createdAt);
               const whenLabel = item.done
                 ? "Completed"
-                : item.kind === "reply"
+                : item.kind === "reply" || item.kind === "linkedin_message"
                   ? "Received"
                   : item.waiting
                     ? "Since"
@@ -1644,7 +1690,12 @@ export default function WorkInboxPage() {
                           </div>
                         </div>
                       ) : (
-                        <Link href={item.href} className={`mt-1 block text-[0.92rem] leading-snug hover:text-amber ${item.done ? "text-muted line-through" : "text-bone"}`}>
+                        <Link
+                          href={item.href}
+                          target={item.external ? "_blank" : undefined}
+                          rel={item.external ? "noreferrer" : undefined}
+                          className={`mt-1 block text-[0.92rem] leading-snug hover:text-amber ${item.done ? "text-muted line-through" : "text-bone"}`}
+                        >
                           {capitaliseSentenceStarts(item.title)}
                         </Link>
                       )}
@@ -1688,6 +1739,16 @@ export default function WorkInboxPage() {
                           ✓ Done
                         </button>
                       ) : null}
+                      {item.kind === "linkedin_message" ? (
+                        <button
+                          type="button"
+                          onClick={() => void reviewLinkedInMessage(item)}
+                          disabled={!!savingId}
+                          className="min-h-10 rounded-lg border border-sage/45 bg-sage/10 px-3 font-mono text-[0.52rem] uppercase tracking-wider text-sage disabled:opacity-40"
+                        >
+                          {savingId === item.id ? "Saving…" : "Mark reviewed"}
+                        </button>
+                      ) : null}
                       {item.dismissible ? (
                         <button
                           type="button"
@@ -1701,6 +1762,8 @@ export default function WorkInboxPage() {
                       ) : null}
                       <Link
                         href={item.href}
+                        target={item.external ? "_blank" : undefined}
+                        rel={item.external ? "noreferrer" : undefined}
                         className="inline-flex min-h-10 items-center rounded-lg border border-amber/50 bg-amber/10 px-4 font-mono text-[0.52rem] uppercase tracking-wider text-amber transition hover:bg-amber/20"
                       >
                         {item.approval ? "Review safely" : item.kind === "prep" ? "Prepare" : "Open"} ↗
