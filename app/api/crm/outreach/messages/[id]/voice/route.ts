@@ -8,6 +8,7 @@ import {
   normaliseOutreachVoiceScript,
   OUTREACH_VOICE_BUCKET,
   OUTREACH_VOICE_MIME,
+  outreachVoiceApprovalHash,
   outreachVoicePublicUrl,
   outreachVoiceScriptHash,
   outreachVoiceStoragePath,
@@ -91,11 +92,71 @@ export async function POST(
         { headers: { "Cache-Control": "private, no-store" } }
       );
     }
+    const approvedHash = outreachVoiceApprovalHash(script);
+    if (
+      !message.voice_script_approved_at ||
+      message.voice_script_approved_by !== sender.userId ||
+      message.voice_script_approved_hash !== approvedHash
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Approve this exact voice script before creating the paid audio. Nothing has been charged.",
+        },
+        { status: 409 }
+      );
+    }
     if (message.voice_status === "generating") {
       return NextResponse.json(
         { error: "This voice note is already being generated" },
         { status: 409 }
       );
+    }
+
+    const { data: activeGeneration, error: activeGenerationError } =
+      await supabaseAdmin
+        .from("outreach_messages")
+        .select("id,updated_at")
+        .eq("workspace_id", sender.workspaceId)
+        .eq("sender_user_id", sender.userId)
+        .eq("voice_status", "generating")
+        .neq("id", message.id)
+        .limit(1)
+        .maybeSingle();
+    if (activeGenerationError) throw activeGenerationError;
+    if (activeGeneration) {
+      // A serverless request can be interrupted after it claims the row. The
+      // provider timeout is 45 seconds and this route is capped at 60 seconds,
+      // so a three-minute generating row is conclusively stale and safe to
+      // release. This prevents one failed request blocking all future previews.
+      const staleBefore = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+      const generationIsStale =
+        Boolean(activeGeneration.updated_at) &&
+        activeGeneration.updated_at < staleBefore;
+      if (generationIsStale) {
+        const { error: releaseError } = await supabaseAdmin
+          .from("outreach_messages")
+          .update({
+            voice_status: "failed",
+            voice_error:
+              "A previous interrupted voice generation was released safely. No reusable audio was saved.",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("workspace_id", sender.workspaceId)
+          .eq("sender_user_id", sender.userId)
+          .eq("id", activeGeneration.id)
+          .eq("voice_status", "generating")
+          .lte("updated_at", staleBefore);
+        if (releaseError) throw releaseError;
+      } else {
+        return NextResponse.json(
+          {
+            error:
+              "One personal voice note is already being created. Review the next script while it finishes.",
+          },
+          { status: 409 }
+        );
+      }
     }
 
     const { data: claimed, error: claimError } = await supabaseAdmin
@@ -223,10 +284,16 @@ export async function POST(
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (error: any) {
-    const detail = String(error?.message || "Voice note generation failed").slice(
-      0,
-      500
-    );
+    const concurrentGeneration =
+      error?.code === "23505" &&
+      String(error?.message || "").includes(
+        "outreach_messages_one_voice_generation_per_sender_idx"
+      );
+    const detail = String(
+      concurrentGeneration
+        ? "One personal voice note is already being created. Review the next script while it finishes."
+        : error?.message || "Voice note generation failed"
+    ).slice(0, 500);
     if (messageId && sender) {
       await supabaseAdmin
         .from("outreach_messages")
@@ -242,7 +309,13 @@ export async function POST(
     }
     return NextResponse.json(
       { error: detail },
-      { status: error instanceof OutreachVoiceBudgetError ? error.status : 502 }
+      {
+        status: concurrentGeneration
+          ? 409
+          : error instanceof OutreachVoiceBudgetError
+            ? error.status
+            : 502,
+      }
     );
   }
 }

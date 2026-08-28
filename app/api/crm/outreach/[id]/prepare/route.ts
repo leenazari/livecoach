@@ -416,6 +416,9 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
           voice_character_count: null,
           voice_estimated_cost_gbp: null,
           voice_error: null,
+          voice_script_approved_at: null,
+          voice_script_approved_by: null,
+          voice_script_approved_hash: null,
         };
 
     const { data: draft, error: draftError } = await supabaseAdmin.from("outreach_messages").upsert({

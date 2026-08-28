@@ -68,6 +68,12 @@ export function outreachVoiceScriptHash(
     .digest("hex");
 }
 
+export function outreachVoiceApprovalHash(script: string): string {
+  return createHash("sha256")
+    .update(normaliseOutreachVoiceScript(script))
+    .digest("hex");
+}
+
 export function outreachVoiceStoragePath(input: {
   workspaceId: string;
   senderUserId: string;

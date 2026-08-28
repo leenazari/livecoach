@@ -2,8 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import {
+  assertOutreachVoiceWithinBudget,
   estimatedVoiceSeconds,
   normaliseOutreachVoiceScript,
+  outreachVoiceApprovalHash,
+  OutreachVoiceBudgetError,
+  resolveOutreachVoiceConfig,
 } from "@/lib/outreach-voice-note";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { outreachSafetyError } from "@/lib/outreach-team-safety";
@@ -40,6 +44,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       nextSubject !== existing.subject ||
       nextBody !== existing.body_text ||
       voiceChanged;
+    const voiceApprovalRequested = body.approve_voice_script === true;
+    let voiceApprovalRecorded = false;
+    let voiceApprovalBudget: ReturnType<typeof assertOutreachVoiceWithinBudget> | null = null;
     patch.subject = nextSubject;
     patch.body_text = nextBody;
     patch.voice_script = nextVoiceScript || null;
@@ -57,6 +64,42 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         : null;
       patch.voice_character_count = null;
       patch.voice_estimated_cost_gbp = null;
+      patch.voice_error = null;
+      patch.voice_script_approved_at = null;
+      patch.voice_script_approved_by = null;
+      patch.voice_script_approved_hash = null;
+    }
+    if (voiceApprovalRequested) {
+      if (!nextVoiceScript)
+        return NextResponse.json(
+          { error: "Write the personal voice script before approving it" },
+          { status: 400 }
+        );
+      if (existing.voice_status === "generating")
+        return NextResponse.json(
+          { error: "Wait for the current voice note to finish" },
+          { status: 409 }
+        );
+      const config = await resolveOutreachVoiceConfig(sender);
+      voiceApprovalBudget = assertOutreachVoiceWithinBudget(
+        nextVoiceScript,
+        config.modelId
+      );
+      const approvalHash = outreachVoiceApprovalHash(nextVoiceScript);
+      const approvalAlreadyCurrent =
+        !voiceChanged &&
+        existing.voice_script_approved_by === sender.userId &&
+        existing.voice_script_approved_hash === approvalHash &&
+        Boolean(existing.voice_script_approved_at);
+      if (!approvalAlreadyCurrent) {
+        patch.voice_script_approved_at = new Date().toISOString();
+        patch.voice_script_approved_by = sender.userId;
+        patch.voice_script_approved_hash = approvalHash;
+        voiceApprovalRecorded = true;
+      }
+      if (existing.voice_status !== "ready" || voiceChanged)
+        patch.voice_status = "script_ready";
+      patch.voice_estimated_seconds = estimatedVoiceSeconds(nextVoiceScript);
       patch.voice_error = null;
     }
     if (body.status === "approved") {
@@ -114,26 +157,63 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (!enrolment)
         throw new Error("database did not confirm the campaign enrolment");
     }
+    const events: Record<string, any>[] = [];
+    if (voiceApprovalRecorded) {
+      events.push({
+        workspace_id: sender.workspaceId,
+        owner_id: sender.userId,
+        visibility: "team",
+        campaign_id: data.campaign_id,
+        prospect_id: data.prospect_id,
+        message_id: data.id,
+        kind: "voice_script_approved",
+        metadata: {
+          scriptHash: data.voice_script_approved_hash,
+          estimatedSeconds: data.voice_estimated_seconds,
+          estimatedCostGbp: voiceApprovalBudget?.estimatedCostGbp,
+          maximumCostGbp: voiceApprovalBudget?.maximumCostGbp,
+        },
+      });
+    }
     if (data.status === "approved") {
+      events.push({
+        workspace_id: sender.workspaceId,
+        owner_id: sender.userId,
+        visibility: "team",
+        campaign_id: data.campaign_id,
+        prospect_id: data.prospect_id,
+        message_id: data.id,
+        kind: "approved",
+      });
+    }
+    if (events.length) {
       const { error: eventError } = await supabaseAdmin
         .from("outreach_events")
-        .insert({
-          workspace_id: sender.workspaceId,
-          owner_id: sender.userId,
-          visibility: "team",
-          campaign_id: data.campaign_id,
-          prospect_id: data.prospect_id,
-          message_id: data.id,
-          kind: "approved",
-        });
+        .insert(events);
       if (eventError) throw eventError;
     }
-    return NextResponse.json({ message: data });
+    return NextResponse.json({
+      message: data,
+      ...(voiceApprovalBudget
+        ? {
+            voiceApproval: {
+              estimatedCostGbp: voiceApprovalBudget.estimatedCostGbp,
+              maximumCostGbp: voiceApprovalBudget.maximumCostGbp,
+            },
+          }
+        : {}),
+    });
   } catch (error: any) {
     const safetyMessage = outreachSafetyError(error);
     return NextResponse.json(
       { error: safetyMessage || error?.message || "failed to save draft" },
-      { status: safetyMessage ? 409 : 500 }
+      {
+        status: safetyMessage
+          ? 409
+          : error instanceof OutreachVoiceBudgetError
+            ? error.status
+            : 500,
+      }
     );
   }
 }

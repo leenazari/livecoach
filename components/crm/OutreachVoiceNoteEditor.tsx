@@ -15,26 +15,38 @@ type VoiceMessage = {
   voice_estimated_seconds?: number | null;
   voice_estimated_cost_gbp?: number | null;
   voice_error?: string | null;
+  voice_script_approved_at?: string | null;
+  voice_script_approved_by?: string | null;
+  voice_script_approved_hash?: string | null;
 };
 
 export default function OutreachVoiceNoteEditor({
   message,
   script,
   disabled,
+  approving,
   generating,
   onScriptChange,
+  onApprove,
   onGenerate,
 }: {
   message: VoiceMessage;
   script: string;
   disabled?: boolean;
+  approving?: boolean;
   generating?: boolean;
   onScriptChange: (value: string) => void;
+  onApprove: () => void;
   onGenerate: () => void;
 }) {
   const words = script.trim().split(/\s+/).filter(Boolean).length;
   const scriptChanged = script.trim() !== String(message.voice_script || "").trim();
   const ready = message.voice_status === "ready" && !scriptChanged;
+  const scriptApproved =
+    !scriptChanged &&
+    Boolean(message.voice_script_approved_at) &&
+    Boolean(message.voice_script_approved_by) &&
+    Boolean(message.voice_script_approved_hash);
   const seconds = Math.max(20, Math.min(90, Math.round((words / 135) * 60)));
   const characters = script.length;
   const generatedCostPence = Number(message.voice_estimated_cost_gbp || 0) * 100;
@@ -53,7 +65,7 @@ export default function OutreachVoiceNoteEditor({
             Personal voice note
           </p>
           <p className="mt-1 text-xs leading-5 text-bone/75">
-            This spoken pitch is generated once in your own ElevenLabs voice and appears as a listen button in the email.
+            Review and edit the free script first. Approving the words costs nothing. ElevenLabs is called only after you separately create the voice.
           </p>
         </div>
         <span
@@ -68,10 +80,12 @@ export default function OutreachVoiceNoteEditor({
           {ready
             ? `Ready · ${message.voice_estimated_seconds || seconds}s${generatedCostPence > 0 ? ` · est ${generatedCostPence.toFixed(1)}p` : ""}`
             : scriptChanged && message.voice_status === "ready"
-              ? "Edited · regenerate"
+              ? "Edited · approve again"
+              : scriptApproved
+                ? "Script approved · no cost yet"
               : message.voice_status === "failed"
                 ? "Needs retry"
-                : "Audio not created"}
+                : "Review script"}
         </span>
       </div>
       <label className="mt-3 block">
@@ -89,22 +103,54 @@ export default function OutreachVoiceNoteEditor({
           {words} words · {characters}/{OUTREACH_VOICE_MAX_CHARACTERS} characters · about {seconds} seconds. Aim for {OUTREACH_VOICE_MIN_WORDS} to {OUTREACH_VOICE_MAX_WORDS} words.
         </p>
         {!locked ? (
-          <button
-            type="button"
-            onClick={onGenerate}
-            disabled={generating || ready || needsLengthReview || !script.trim()}
-            className="inline-flex min-h-10 items-center justify-center rounded-lg border border-amber/55 bg-amber/10 px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-amber disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {generating
-              ? "Creating voice…"
-              : ready
-                ? "Audio ready"
-                : "Create voice preview"}
-          </button>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+            <button
+              type="button"
+              onClick={onApprove}
+              disabled={
+                approving ||
+                generating ||
+                ready ||
+                scriptApproved ||
+                needsLengthReview ||
+                !script.trim()
+              }
+              className="inline-flex min-h-10 items-center justify-center rounded-lg border border-edge bg-ink/35 px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-bone disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {approving
+                ? "Approving script…"
+                : scriptApproved || ready
+                  ? "✓ Script approved"
+                  : "1 · Approve script"}
+            </button>
+            <button
+              type="button"
+              onClick={onGenerate}
+              disabled={
+                approving ||
+                generating ||
+                ready ||
+                !scriptApproved ||
+                needsLengthReview ||
+                !script.trim()
+              }
+              className="inline-flex min-h-10 items-center justify-center rounded-lg border border-amber/55 bg-amber/10 px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-amber disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {generating
+                ? "Creating voice…"
+                : ready
+                  ? "✓ Audio ready"
+                  : "2 · Generate voice · max 5p"}
+            </button>
+          </div>
         ) : null}
       </div>
-      <p className="mt-2 text-xs leading-5 text-moss">
-        ElevenLabs generation is blocked before charging if this voice note could exceed 5p.
+      <p className="mt-2 text-xs leading-5 text-moss" role="status" aria-live="polite">
+        {ready
+          ? "This one approved voice note has been generated and can now be previewed."
+          : scriptApproved
+            ? "The exact script is approved. Generation still has not started and no voice cost has been incurred."
+            : "Nothing is generated or charged until you approve this exact script and then press Generate voice."}
       </p>
       {message.voice_error && message.voice_status === "failed" ? (
         <p className="mt-2 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-xs leading-5 text-rust">

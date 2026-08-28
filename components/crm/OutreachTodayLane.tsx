@@ -49,6 +49,9 @@ type OutreachMessage = {
   voice_estimated_seconds?: number | null;
   voice_generated_at?: string | null;
   voice_error?: string | null;
+  voice_script_approved_at?: string | null;
+  voice_script_approved_by?: string | null;
+  voice_script_approved_hash?: string | null;
 };
 
 type QueueRow = {
@@ -238,6 +241,7 @@ export default function OutreachTodayLane({
   const [draftEdits, setDraftEdits] = useState<Record<string, DraftEdit>>({});
   const [savingMessageId, setSavingMessageId] = useState("");
   const [rehearsingMessageId, setRehearsingMessageId] = useState("");
+  const [approvingVoiceMessageId, setApprovingVoiceMessageId] = useState("");
   const [generatingVoiceMessageId, setGeneratingVoiceMessageId] = useState("");
   const [showFullQueue, setShowFullQueue] = useState(false);
   const [focusedRowId, setFocusedRowId] = useState("");
@@ -465,33 +469,79 @@ export default function OutreachTodayLane({
     }
   };
 
-  const generateVoiceNote = async (message: OutreachMessage) => {
-    if (savingMessageId || generatingVoiceMessageId) return;
+  const approveVoiceScript = async (message: OutreachMessage) => {
+    if (
+      savingMessageId ||
+      approvingVoiceMessageId ||
+      generatingVoiceMessageId
+    ) return;
     const edit = draftEdits[message.id] || {
       subject: message.subject || "",
       body: message.body_text || "",
       voiceScript: message.voice_script || "",
     };
     if (!edit.subject.trim() || !edit.body.trim() || !edit.voiceScript.trim()) {
-      setError("Save the email and voice pitch before creating audio.");
+      setError("Review the email and voice script before approving it.");
+      return;
+    }
+    setApprovingVoiceMessageId(message.id);
+    setError("");
+    setNotice("");
+    try {
+      const approved = await crmFetch<{
+        message: OutreachMessage;
+        voiceApproval?: { estimatedCostGbp?: number; maximumCostGbp?: number };
+      }>(`/api/crm/outreach/messages/${message.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          subject: edit.subject,
+          body_text: edit.body,
+          voice_script: edit.voiceScript,
+          approve_voice_script: true,
+        }),
+      });
+      if (!approved.message?.voice_script_approved_at)
+        throw new Error("The exact voice script was not confirmed as approved");
+      setNotice(
+        "Exact voice script approved. No audio has been generated and no voice cost has been incurred."
+      );
+      await load(true);
+    } catch (err: any) {
+      setError(err?.message || "The voice script could not be approved.");
+      await load(true);
+    } finally {
+      setApprovingVoiceMessageId("");
+    }
+  };
+
+  const generateVoiceNote = async (message: OutreachMessage) => {
+    if (
+      savingMessageId ||
+      approvingVoiceMessageId ||
+      generatingVoiceMessageId
+    ) return;
+    const edit = draftEdits[message.id] || {
+      subject: message.subject || "",
+      body: message.body_text || "",
+      voiceScript: message.voice_script || "",
+    };
+    if (!edit.subject.trim() || !edit.body.trim() || !edit.voiceScript.trim()) {
+      setError("Approve the personal voice script before creating audio.");
+      return;
+    }
+    if (
+      !message.voice_script_approved_at ||
+      edit.voiceScript.trim() !== String(message.voice_script || "").trim()
+    ) {
+      setError(
+        "Approve this exact script first. Nothing has been generated or charged."
+      );
       return;
     }
     setGeneratingVoiceMessageId(message.id);
     setError("");
     setNotice("");
     try {
-      const saved = await crmFetch<{ message: OutreachMessage }>(
-        `/api/crm/outreach/messages/${message.id}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            subject: edit.subject,
-            body_text: edit.body,
-            voice_script: edit.voiceScript,
-          }),
-        }
-      );
-      if (!saved.message?.id) throw new Error("The voice pitch was not saved");
       const generated = await crmFetch<{
         message: OutreachMessage;
         reused: boolean;
@@ -1412,10 +1462,16 @@ export default function OutreachTodayLane({
                               generating={
                                 generatingVoiceMessageId === displayMessage.id
                               }
+                              approving={
+                                approvingVoiceMessageId === displayMessage.id
+                              }
                               onScriptChange={(value) =>
                                 updateDraft(displayMessage.id, {
                                   voiceScript: value,
                                 })
+                              }
+                              onApprove={() =>
+                                void approveVoiceScript(displayMessage)
                               }
                               onGenerate={() =>
                                 void generateVoiceNote(displayMessage)
