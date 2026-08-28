@@ -157,11 +157,33 @@ export async function saveGoogleConnection(input: {
 }): Promise<void> {
   const scope = getRequestScope();
   if (!scope) throw new Error("A verified account is required to connect Google");
-  const existing = await connectionForOwner(scope.userId);
+  return saveGoogleConnectionForOwner(input, {
+    userId: scope.userId,
+    workspaceId: scope.workspaceId,
+  });
+}
+
+export async function saveGoogleConnectionForOwner(
+  input: {
+    accessToken?: string | null;
+    refreshToken?: string | null;
+    expiry: string;
+    email?: string | null;
+  },
+  owner: { userId: string; workspaceId: string }
+): Promise<void> {
+  const { data: existing, error: existingError } = await supabaseService
+    .from("google_oauth")
+    .select("id")
+    .eq("workspace_id", owner.workspaceId)
+    .eq("owner_id", owner.userId)
+    .limit(1)
+    .maybeSingle();
+  if (existingError) throw existingError;
   const row: Record<string, unknown> = {
-    id: existing?.id || `user:${scope.userId}`,
-    owner_id: scope.userId,
-    workspace_id: scope.workspaceId,
+    id: existing?.id || `user:${owner.userId}`,
+    owner_id: owner.userId,
+    workspace_id: owner.workspaceId,
     visibility: "private",
     access_token: input.accessToken || null,
     expiry: input.expiry,

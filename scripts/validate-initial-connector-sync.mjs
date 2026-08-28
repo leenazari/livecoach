@@ -12,7 +12,7 @@ const initialSync = read("components/InitialCalendarSync.tsx");
 const settings = read("app/settings/page.tsx");
 const joinTeam = read("app/join-team/page.tsx");
 
-assert.match(googleCallback, /google=connected&calendar=sync/);
+assert.match(googleCallback, /value === "connected" \? "&calendar=sync"/);
 assert.match(microsoftCallback, /value === "connected" \? "&calendar=sync"/);
 assert.match(initialSync, /params\.get\("calendar"\) !== "sync"/);
 assert.match(initialSync, /cleanUrl\.searchParams\.delete\("calendar"\)/);
