@@ -30,6 +30,7 @@
     "validate:initial-connector-sync": "node scripts/validate-initial-connector-sync.mjs",
     "validate:brain-dictation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-live-dictation.mjs",
     "validate:brain-sales-scope": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-sales-scope.mjs",
+    "validate:brain-self-name": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-self-name.mjs",
     "validate:crm-notifications": "node scripts/validate-crm-notifications.mjs",
     "validate:user-scoped-digest": "node scripts/validate-user-scoped-digest.mjs",
     "validate:upcoming-recovery": "node scripts/validate-upcoming-call-recovery.mjs",
