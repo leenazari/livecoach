@@ -7,6 +7,7 @@ export type AccountReadinessCheck = {
     | "sales_profile"
     | "email"
     | "calendar"
+    | "linkedin"
     | "transcriber"
     | "leads"
     | "privacy"
@@ -47,6 +48,8 @@ export type AccountReadinessFacts = {
   senderVerified: boolean;
   calendarConnected: boolean;
   lastCalendarSyncAt: string | null;
+  linkedinConnected: boolean;
+  linkedinSocialAccess: boolean;
   transcriberName: string;
   transcriberPlatformReady: boolean;
   assignedProspects: number;
@@ -234,6 +237,24 @@ export function buildAccountReadiness(
       )
     );
   }
+
+  checks.push(
+    facts.linkedinConnected
+      ? ready(
+          "linkedin",
+          "LinkedIn connected",
+          facts.linkedinSocialAccess
+            ? "Your own LinkedIn identity is connected, including approved posting and like permission."
+            : "Your own LinkedIn identity is connected. LinkedIn messages and connection requests remain manual."
+        )
+      : action(
+          "linkedin",
+          "Connect LinkedIn",
+          "Connect your own LinkedIn identity so LiveCoach can keep each salesperson's LinkedIn activity separate.",
+          "/settings#linkedin",
+          "Connect LinkedIn"
+        )
+  );
 
   checks.push(
     facts.transcriberPlatformReady && !!facts.transcriberName

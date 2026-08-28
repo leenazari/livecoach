@@ -411,6 +411,7 @@ export default function SettingsPage() {
       <InitialCalendarSync />
 
       <div
+        id="linkedin"
         className={`mb-5 rounded-xl border p-5 ${
           gcal === null
             ? "border-edge bg-panel/40"
