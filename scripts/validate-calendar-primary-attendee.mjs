@@ -153,7 +153,6 @@ const [
   emailPull,
   upcomingRoute,
   callPage,
-  prepPage,
   cronRoute,
   researchCache,
   attendeeResolver,
@@ -166,7 +165,6 @@ const [
     read("app/api/crm/email-pull/route.ts"),
     read("app/api/crm/upcoming/[id]/route.ts"),
     read("app/call/page.tsx"),
-    read("app/crm/prep/page.tsx"),
     read("app/api/cron/precall-email-context/route.ts"),
     read("lib/research-cache.ts"),
     read("lib/attendees.ts"),
@@ -187,7 +185,6 @@ assert.doesNotMatch(upcomingRoute, /const names = data\.attendees/);
 assert.match(callPage, /\(call as any\)\.primaryAttendee/);
 assert.match(callPage, /upcomingId: upcoming/);
 assert.match(callPage, /hasServerLeadDecision/);
-assert.match(prepPage, /upcomingId: upcomingId \|\| undefined/);
 assert.match(cronRoute, /upcomingId: sourceCall\.id/);
 assert.doesNotMatch(callPage, /function pickGuest/);
 assert.doesNotMatch(researchCache, /export function pickGuest/);

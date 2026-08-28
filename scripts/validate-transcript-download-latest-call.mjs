@@ -45,7 +45,7 @@ const companyCallsRoute = read("app/api/crm/companies/[id]/calls/route.ts");
 const callsPage = read("app/crm/calls/page.tsx");
 const callPage = read("app/crm/calls/[id]/page.tsx");
 const companyPage = read("app/crm/[id]/page.tsx");
-const prepPage = read("app/crm/prep/page.tsx");
+const prepRedirect = read("app/crm/prep/page.tsx");
 const portfolioRoute = read("app/api/crm/clients/portfolio/route.ts");
 const portfolio = read("components/crm/ClientPortfolio.tsx");
 
@@ -61,10 +61,11 @@ assert.doesNotMatch(downloadRoute, /supabaseService|openai|anthropic/i);
 assert.match(callsRoute, /hasTranscript/);
 assert.match(companyCallsRoute, /hasTranscript/);
 assert.match(companyCallsRoute, /\.eq\("owner_id", scope\.userId\)/);
-for (const page of [callsPage, callPage, companyPage, prepPage]) {
+for (const page of [callsPage, callPage, companyPage]) {
   assert.match(page, /\/transcript/);
   assert.match(page, /download/i);
 }
+assert.match(prepRedirect, /redirect\(`\/call/);
 
 assert.match(portfolioRoute, /select\("id,company_id,candidate,created_at"\)/);
 assert.match(portfolioRoute, /lastCallId/);

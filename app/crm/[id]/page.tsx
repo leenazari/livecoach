@@ -535,13 +535,13 @@ export default function CompanyDetailPage() {
                 ＋ log a call
               </Link>
               <Link
-                href={`/crm/prep?company=${id}&companyName=${encodeURIComponent(
+                href={`/call?company=${id}&companyName=${encodeURIComponent(
                   company.name
                 )}`}
-                title="See past call summaries and get a fresh, suggested intent for your next call with this client"
+                title="Open the call workspace to review intent, research, build focus and start the next call"
                 className="min-h-10 flex-1 rounded-full border border-amber/60 bg-amber/15 px-3 py-2 text-center font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 sm:flex-none sm:px-4 sm:text-[0.62rem]"
               >
-                ✶ prep next call
+                ✶ prepare next call
               </Link>
             </>
           ) : null}

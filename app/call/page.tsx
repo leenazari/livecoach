@@ -503,7 +503,8 @@ export default function CallPage() {
   const goLiveRef = useRef<() => void>(() => {});
   const sourceRef = useRef<"inapp" | "meet">("inapp");
   const backgroundRef = useRef("");
-  // Guard so the first-meeting auto research + intent draft fires at most once.
+  // Guard so the first-meeting intent draft fires at most once. Research is a
+  // deliberate user action because it has a cost and may need identity review.
   const autoHelpedRef = useRef(false);
   const intentEditedRef = useRef(false);
   const callTypeRef = useRef("general");
@@ -1250,16 +1251,11 @@ export default function CallPage() {
               setSource("meet");
             }
 
-            // FIRST-MEETING AUTO HELP. A fresh external invite (a work-email
-            // domain, no intent yet, no saved prep) is a first meeting with a new
-            // client. There is no call history to build from, but there IS a
-            // company (the email domain) worth researching. So automatically
-            // research the company from its site (this fills the background the
-            // planner folds into the focus) and draft a starting intent, so the
-            // screen is never blank and there is something to build a plan from.
-            // Fires once, best-effort, and only fills what is still empty.
+            // FIRST-MEETING INTENT HELP. Draft a useful starting intent from the
+            // saved meeting identity and any already-cached background. Public
+            // research stays manual so opening Prep never spends research tokens
+            // or trusts an unconfirmed person match.
             const ft = guestFromTitle((call as any)?.title);
-            const autoSite = guest ? websiteFromEmail(guest.email) : "";
             const autoCompany = String(
               (call as any)?.company || titleCompanyRef.current || ft?.company || ""
             ).trim();
@@ -1273,27 +1269,10 @@ export default function CallPage() {
               !autoHelpedRef.current &&
               !hasIntent &&
               !call?.prep &&
-              autoSite &&
               (autoCompany || autoPerson)
             ) {
               autoHelpedRef.current = true;
               await (async () => {
-                let bg = "";
-                try {
-                  const r = await fetch("/api/interview/research", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ url: autoSite }),
-                  });
-                  const d = await r.json();
-                  if (r.ok && d.background) {
-                    bg = String(d.background);
-                    setBackground((prev) => (prev.trim() ? prev : bg));
-                    if (!backgroundRef.current) backgroundRef.current = bg;
-                  }
-                } catch {
-                  /* best-effort research */
-                }
                 try {
                   const r2 = await fetch("/api/interview/first-meeting-intent", {
                     method: "POST",
@@ -1302,7 +1281,7 @@ export default function CallPage() {
                       company: autoCompany || undefined,
                       person: autoPerson || undefined,
                       title: (call as any)?.title || undefined,
-                      background: bg || backgroundRef.current || undefined,
+                      background: backgroundRef.current || undefined,
                     }),
                   });
                   const d2 = await r2.json();
@@ -3282,13 +3261,13 @@ export default function CallPage() {
         <div className="ml-auto flex items-center gap-3">
           {linkedCompany && (
             <a
-              href={`/crm/prep?company=${linkedCompany.id}&companyName=${encodeURIComponent(
-                linkedCompany.name
-              )}`}
-              title="See past call summaries and a suggested, up-to-date intent for this client"
+              href={`/crm/${linkedCompany.id}`}
+              target="_blank"
+              rel="noreferrer"
+              title="Open the linked client profile"
               className="font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:text-bone"
             >
-              ✶ prep
+              client context ↗
             </a>
           )}
           <a
@@ -3404,18 +3383,21 @@ export default function CallPage() {
                       </div>
                     )}
                 </div>
-                <a
-                  href={
-                    linkedCompany
-                      ? `/crm/prep?company=${linkedCompany.id}&companyName=${encodeURIComponent(
-                          linkedCompany.name
-                        )}`
-                      : "/crm"
-                  }
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandSetup(true);
+                    setBriefSetupOpen(true);
+                    requestAnimationFrame(() =>
+                      document
+                        .getElementById("call-setup")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                    );
+                  }}
                   className="font-mono text-[0.56rem] uppercase tracking-wider text-rust/80 transition hover:text-amber"
                 >
-                  edit in prep ↗
-                </a>
+                  edit call setup ↑
+                </button>
               </div>
             )}
           </div>
@@ -3441,7 +3423,7 @@ export default function CallPage() {
           </span>
         </button>
       ) : (
-        <div className="mx-auto mb-6 w-full max-w-5xl overflow-hidden rounded-2xl border border-edge bg-panel/60">
+        <div id="call-setup" className="mx-auto mb-6 w-full max-w-5xl scroll-mt-4 overflow-hidden rounded-2xl border border-edge bg-panel/60">
           {callLive && (
             <button
               type="button"

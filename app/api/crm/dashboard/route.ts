@@ -275,7 +275,7 @@ export async function GET(req: Request) {
         text: u.title || "Upcoming call",
         company: u.company_id ? nameById.get(u.company_id) || null : null,
         at: u.scheduled_at,
-        href: `/crm/prep?upcoming=${u.id}`,
+        href: `/call?upcoming=${u.id}`,
       }));
     const allOverduePromises = tasks.filter(
         (t: any) =>

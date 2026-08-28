@@ -34,16 +34,17 @@ assert.match(launch, /pending\.upcomingId === upcomingId\.trim\(\)/);
 assert.match(launch, /pending\.meetingUrl === meetingUrl\.trim\(\)/);
 assert.match(launch, /window\.open\(cleanUrl, "_blank", "noopener,noreferrer"\)/);
 
-// Dashboard and Prep both open the meeting inside the direct click and carry
-// the one-use launch marker into the same scheduled call.
-for (const surface of [upcoming, prep]) {
-  assert.match(surface, /openAndArmCallLaunch/);
-  assert.match(surface, /qs\.set\("launch", "1"\)/);
-  assert.match(surface, /qs\.set\("upcoming"/);
-}
+// The dashboard opens the meeting inside the direct click and carries the
+// one-use launch marker into the same scheduled call.
+assert.match(upcoming, /openAndArmCallLaunch/);
+assert.match(upcoming, /qs\.set\("launch", "1"\)/);
+assert.match(upcoming, /qs\.set\("upcoming"/);
 assert.match(upcoming, /Add a supported Teams, Meet or Zoom link before starting/);
-assert.match(prep, /d\.call\?\.meetingUrl/);
-assert.match(prep, /open meeting \+ start/);
+
+// Old prep links remain safe, but preparation itself now lives in /call.
+assert.match(prep, /redirect\(`\/call/);
+assert.match(prep, /Object\.entries\(searchParams \|\| \{\}\)/);
+assert.doesNotMatch(prep, /openAndArmCallLaunch|\/api\/interview\/plan/);
 
 // /call consumes and removes the one-use flag, then starts the session and bot.
 // Manual starts open the provider directly before goLive.

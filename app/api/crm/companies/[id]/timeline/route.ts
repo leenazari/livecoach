@@ -306,7 +306,7 @@ export async function GET(
         detail: text(u.intent, 260),
         status: u.prepped ? "prepared" : "prep needed",
         meta: u.prepped ? "prepared" : "prep needed",
-        href: `/crm/prep?upcoming=${u.id}`,
+        href: `/call?upcoming=${u.id}`,
         future: true,
       });
     }

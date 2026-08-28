@@ -663,7 +663,7 @@ export async function gatherGlobalContext(
         : "no time set";
       const who = u.company_id ? nameById.get(u.company_id) || "" : "";
       const prepUrl = u.company_id
-        ? `/crm/prep?company=${encodeURIComponent(u.company_id)}&upcoming=${encodeURIComponent(u.id)}`
+        ? `/call?company=${encodeURIComponent(u.company_id)}&upcoming=${encodeURIComponent(u.id)}`
         : `/call?upcoming=${encodeURIComponent(u.id)}`;
       lines.push(
         `• ${when}${past ? " [ALREADY PASSED]" : ""}: ${u.title || "call"}${
