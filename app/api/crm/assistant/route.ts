@@ -37,6 +37,15 @@ import { documentBrainContext } from "@/lib/document-context";
 import { getSalesProfileContextBlock } from "@/lib/sales-profile";
 import { getRequestScope } from "@/lib/request-scope";
 import { loadVisibleOpportunities } from "@/lib/opportunity-access";
+import {
+  exactVisibleContactNamesIn,
+  loadBrainIdentityDirectory,
+} from "@/lib/brain-self-identity";
+import {
+  resolveBrainKnownNames,
+  type BrainKnownIdentity,
+  type BrainKnownNameResolution,
+} from "@/lib/brain-self-name";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -1027,6 +1036,34 @@ export async function POST(req: NextRequest) {
     if (typeof message !== "string" || !message.trim()) {
       return NextResponse.json({ error: "message is required" }, { status: 400 });
     }
+    const rawMessage = message.trim();
+    let knownIdentities: BrainKnownIdentity[] = [];
+    let nameResolution: BrainKnownNameResolution = {
+      resolvedMessage: rawMessage,
+      matches: [],
+    };
+    try {
+      knownIdentities = await loadBrainIdentityDirectory();
+      const preliminary = resolveBrainKnownNames(rawMessage, knownIdentities);
+      if (preliminary.matches.length) {
+        // A real, accessible contact with that exact name always wins. If the
+        // protection lookup fails, fail closed and leave the request untouched.
+        const protectedNames = await exactVisibleContactNamesIn(rawMessage);
+        nameResolution = resolveBrainKnownNames(
+          rawMessage,
+          knownIdentities,
+          protectedNames
+        );
+      } else {
+        nameResolution = preliminary;
+      }
+    } catch (error: any) {
+      console.warn(
+        "Brain self-name resolution unavailable",
+        error?.message || error
+      );
+    }
+    const contextMessage = nameResolution.resolvedMessage;
     const allowedSections = new Set([
       "dashboard",
       "client",
@@ -1055,11 +1092,11 @@ export async function POST(req: NextRequest) {
           ? rawScreen.path.slice(0, 100)
           : "/crm",
     };
-    const wantsTranscript = callTranscriptRequested(message);
+    const wantsTranscript = callTranscriptRequested(contextMessage);
     const wantsDeepHistory =
       !wantsTranscript &&
       /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|source documents?|uploaded documents?|detailed notes?|email thread|what did .* say)\b/i.test(
-        message
+        contextMessage
       );
     // Lightweight timing so we can SEE where a reply spends its time (context
     // gather vs model) and whether prompt caching is hitting, before optimising
@@ -1096,8 +1133,8 @@ export async function POST(req: NextRequest) {
       // digest for everyone else. Keeps the prompt small as the book of clients
       // grows, without losing depth on whoever the question is actually about.
       const [named, namedWorkstreams] = await Promise.all([
-        findCompaniesNamedIn(message),
-        findWorkstreamsNamedIn(message),
+        findCompaniesNamedIn(contextMessage),
+        findWorkstreamsNamedIn(contextMessage),
       ]);
       const scopedCompanyIds = new Set(
         namedWorkstreams.map((thread) => thread.companyId)
@@ -1113,16 +1150,16 @@ export async function POST(req: NextRequest) {
           detailIds.push(n.id);
       }
       const wantsOutreachDetail =
-        /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(message);
+        /\b(outreach|prospect|campaign|cold email|sequence|reply|replies|linkedin|send today|approved|priority|priorities|what.*next)\b/i.test(contextMessage);
       const [digest, outreach, callPrep, callTranscript, documentContext, ...details] = await Promise.all([
-        gatherGlobalContext(message),
-        gatherOutreachContext(message, { detailed: wantsOutreachDetail }),
-        gatherUpcomingCallPrepContext(message),
-        gatherCallTranscriptContext(message, {
+        gatherGlobalContext(contextMessage),
+        gatherOutreachContext(contextMessage, { detailed: wantsOutreachDetail }),
+        gatherUpcomingCallPrepContext(contextMessage),
+        gatherCallTranscriptContext(contextMessage, {
           screenPath: screenContext.path,
           focusCompanyId: focus,
         }),
-        documentBrainContext(message),
+        documentBrainContext(contextMessage),
         ...namedWorkstreams.map(async (thread) => {
           const memory = await getCommercialMemoryBlock(
             thread.companyId,
@@ -1160,7 +1197,7 @@ export async function POST(req: NextRequest) {
     // Everything the model needs, fetched in PARALLEL instead of one-after-
     // another. These were sequential DB round-trips that slowed every reply.
     const wantsPitchLessons =
-      /\b(pitch|pitching|playbook|sales script|sell|selling|demo|discovery question|objection|closing question|buyer language)\b/i.test(message);
+      /\b(pitch|pitching|playbook|sales script|sell|selling|demo|discovery question|objection|closing question|buyer language)\b/i.test(contextMessage);
     // Save the turn before model generation starts. Previously both messages
     // were inserted only after the full streamed reply completed, so closing
     // or navigating away from the Brain could lose the user's request and the
@@ -1171,7 +1208,7 @@ export async function POST(req: NextRequest) {
         {
           company_id: isGlobal ? null : companyId,
           role: "user",
-          content: message.trim(),
+          content: rawMessage,
         },
         {
           company_id: isGlobal ? null : companyId,
@@ -1196,7 +1233,9 @@ export async function POST(req: NextRequest) {
       workspaceContextBlock(),
       getSalesProfileContextBlock(),
       getLessonsBlock(["negotiation", "strategy", "psychology"]),
-      wantsPitchLessons ? getRelevantPitchingLessons(message) : Promise.resolve(""),
+      wantsPitchLessons
+        ? getRelevantPitchingLessons(contextMessage)
+        : Promise.resolve(""),
       getBrainQuestions(),
       persistedTurn,
     ]);
@@ -1255,10 +1294,32 @@ export async function POST(req: NextRequest) {
     const qBlock = brainQuestions
       ? `\n\nTHINGS YOU ARE TRYING TO LEARN (open questions about the user's business that would make you sharper). When it fits naturally, when the user asks what you need, or when you are brainstorming, raise one or two of these - never the whole list and never force them. When the user answers, weave it into your reply and treat it as fact from then on:\n${brainQuestions}`
       : "";
+    const signedInIdentity = knownIdentities.find(
+      (identity) => identity.relationship === "signed_in_user"
+    );
+    const ownerIdentity = knownIdentities.find(
+      (identity) => identity.relationship === "workspace_owner"
+    );
+    const identityBlock = signedInIdentity?.canonicalName
+      ? `\n\nKNOWN ACCOUNT IDENTITIES\n- Signed-in user: ${signedInIdentity.canonicalName}. First-person references such as I, me and my mean this signed-in user only.${
+          ownerIdentity?.canonicalName
+            ? `\n- Workspace owner: ${ownerIdentity.canonicalName}. This identity does not grant access to the owner's private records.`
+            : ""
+        }${
+          nameResolution.matches.length
+            ? `\n- Voice recognition rendered ${nameResolution.matches
+                .map(
+                  (match) =>
+                    `"${match.heard}" as ${match.canonicalName}`
+                )
+                .join(", ")}. Retrieval used the canonical name or names. Use those canonical names in the answer.`
+            : ""
+        }\nIdentity correction changes no access rights and never opens another account's private records.`
+      : "";
     const system: any[] = [
       {
         type: "text",
-        text: `${biz}${salesProfile}${lessons}${pitchLessons}${scope}${qBlock}
+        text: `${biz}${salesProfile}${lessons}${pitchLessons}${scope}${qBlock}${identityBlock}
 
 GROUND EVERYTHING in the context provided below. This is the hardest rule and it overrides being helpful.
 - Never state a specific number, money amount, budget, deal value, date, deadline, percentage, stage, name or commitment unless it appears literally in the context. Do not estimate, assume, or infer a figure that isn't written there. If you catch yourself about to put a number in a sentence, check it is actually in the context first.
@@ -1372,14 +1433,14 @@ ALWAYS end the spoken version with your closing question whenever your reply has
 
     const messages = [
       ...priorTurns,
-      { role: "user" as const, content: message.trim() },
+      { role: "user" as const, content: rawMessage },
     ];
 
     // Route obvious data lookups (your to-do list, what's on the calendar) to the
     // FAST model - it is only reading the context that is already here. Anything
     // that creates, judges, plans, drafts, advises, compares or summarises stays
     // on the smart model, since that is the part that matters.
-    const ml = message.toLowerCase();
+    const ml = contextMessage.toLowerCase();
     const LOOKUP =
       /(to.?do|task list|my tasks|what.?s on|what.?s next|what is next|upcoming|my calls?|my schedule|my calendar|show me|^list\b|list (my|the)|my drafts|my commitments|what do i owe|outstanding|who have i)/;
     const SMART =
