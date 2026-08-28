@@ -32,6 +32,10 @@ const editor = read("components/crm/OutreachVoiceNoteEditor.tsx");
 const outreachPage = read("app/crm/outreach/page.tsx");
 const today = read("components/crm/OutreachTodayLane.tsx");
 const profile = read("lib/sales-profile.ts");
+const voiceLibrary = read("lib/outreach-voice-library.ts");
+const voiceLibraryRoute = read("app/api/crm/sales-profile/voices/route.ts");
+const salesProfileRoute = read("app/api/crm/sales-profile/route.ts");
+const salesProfilePage = read("app/settings/sales-profile/page.tsx");
 
 assert.match(migration, /add column if not exists outreach_voice_id text/);
 assert.match(migration, /add column if not exists voice_script text/);
@@ -129,5 +133,17 @@ assert.match(today, /OutreachVoiceNoteEditor/);
 
 assert.match(profile, /outreach_voice_id/);
 assert.match(profile, /\.eq\("user_id", scope\.userId\)/);
+assert.match(voiceLibrary, /\/v2\/voices/);
+assert.match(voiceLibrary, /voice_type: "default"/);
+assert.match(voiceLibrary, /preview_url/);
+assert.match(voiceLibrary, /\/v1\/voices\/\$\{encodeURIComponent\(id\)\}/);
+assert.match(voiceLibraryRoute, /requireRequestScope\(\)/);
+assert.match(voiceLibraryRoute, /Sign in to choose your voice/);
+assert.match(voiceLibraryRoute, /Cache-Control": "private/);
+assert.match(salesProfileRoute, /validateOutreachVoiceSelection/);
+assert.match(salesProfileRoute, /input\.outreachVoiceId !== previous\.outreachVoiceId/);
+assert.match(salesProfilePage, /Listen free, choose one stock voice/);
+assert.match(salesProfilePage, /This choice belongs only to your login/);
+assert.match(salesProfilePage, /voice\.previewUrl/);
 
 console.log("Owner-scoped outreach voice note checks passed");

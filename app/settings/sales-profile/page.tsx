@@ -16,8 +16,13 @@ import {
   type SalesProfile,
   type SalesProfileResponse,
 } from "@/lib/sales-profile-types";
+import type {
+  OutreachVoiceChoice,
+  OutreachVoiceLibraryResponse,
+} from "@/lib/outreach-voice-library-types";
 
 const PROFILE_URL = "/api/crm/sales-profile";
+const VOICES_URL = "/api/crm/sales-profile/voices";
 
 const lines = (value: string): string[] =>
   value
@@ -46,6 +51,12 @@ export default function SalesProfilePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const [voices, setVoices] = useState<OutreachVoiceChoice[]>([]);
+  const [voicesLoading, setVoicesLoading] = useState(true);
+  const [voicesError, setVoicesError] = useState("");
+  const [playingVoiceId, setPlayingVoiceId] = useState("");
+  const [showAllVoices, setShowAllVoices] = useState(false);
+  const voiceAudio = useRef<HTMLAudioElement | null>(null);
   const touched = useRef(false);
 
   const load = useCallback(async () => {
@@ -65,6 +76,29 @@ export default function SalesProfilePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let active = true;
+    const loadVoices = async () => {
+      setVoicesLoading(true);
+      setVoicesError("");
+      try {
+        const result = await crmFetch<OutreachVoiceLibraryResponse>(VOICES_URL);
+        if (active) setVoices(result.voices || []);
+      } catch (err: any) {
+        if (active)
+          setVoicesError(err?.message || "The stock voice library could not be loaded");
+      } finally {
+        if (active) setVoicesLoading(false);
+      }
+    };
+    void loadVoices();
+    return () => {
+      active = false;
+      voiceAudio.current?.pause();
+      voiceAudio.current = null;
+    };
+  }, []);
 
   const draft = useMemo(
     () => ({
@@ -87,6 +121,44 @@ export default function SalesProfilePage() {
   ) => {
     markTouched();
     setProfile((current) => ({ ...current, [key]: value }));
+  };
+
+  const previewVoice = async (voice: OutreachVoiceChoice) => {
+    if (!voice.previewUrl) {
+      setVoicesError("This stock voice does not include a preview");
+      return;
+    }
+    if (playingVoiceId === voice.id) {
+      voiceAudio.current?.pause();
+      voiceAudio.current = null;
+      setPlayingVoiceId("");
+      return;
+    }
+    voiceAudio.current?.pause();
+    const audio = new Audio(voice.previewUrl);
+    voiceAudio.current = audio;
+    setVoicesError("");
+    setPlayingVoiceId(voice.id);
+    audio.onended = () => setPlayingVoiceId("");
+    audio.onerror = () => {
+      setPlayingVoiceId("");
+      setVoicesError("That voice preview could not be played");
+    };
+    try {
+      await audio.play();
+    } catch {
+      setPlayingVoiceId("");
+      setVoicesError("Your browser blocked that voice preview. Press Listen again.");
+    }
+  };
+
+  const chooseVoice = (voice: OutreachVoiceChoice) => {
+    markTouched();
+    setProfile((current) => ({
+      ...current,
+      outreachVoiceId: voice.id,
+      outreachVoiceName: voice.name,
+    }));
   };
 
   const save = async () => {
@@ -281,34 +353,73 @@ export default function SalesProfilePage() {
                 maxLength={160}
               />
             </label>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-2 block text-sm text-bone">Personal outreach voice ID</span>
-                <input
-                  value={profile.outreachVoiceId}
-                  onChange={(event) => update("outreachVoiceId", event.target.value)}
-                  className={input}
-                  placeholder="Your ElevenLabs voice ID"
-                  maxLength={120}
-                  autoComplete="off"
-                />
-                <span className="mt-1 block text-xs leading-5 text-muted">
-                  Optional. This is personal to your login. Never paste an API key here.
+            <div className="mt-5 rounded-2xl border border-edge bg-ink/25 p-4 sm:p-5">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-sm text-bone">Your personal outreach voice</p>
+                  <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">
+                    Listen free, choose one stock voice, then save. Voice-note generation remains a separate approved action and can cost up to 5p.
+                  </p>
+                </div>
+                <span className={`w-fit rounded-full border px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider ${profile.outreachVoiceId ? "border-sage/45 bg-sage/10 text-sage" : "border-amber/45 bg-amber/10 text-amber"}`}>
+                  {profile.outreachVoiceId
+                    ? `Selected · ${profile.outreachVoiceName || "Personal voice"}`
+                    : "Choose a voice"}
                 </span>
-              </label>
-              <label className="block">
-                <span className="mb-2 block text-sm text-bone">Voice label</span>
-                <input
-                  value={profile.outreachVoiceName}
-                  onChange={(event) => update("outreachVoiceName", event.target.value)}
-                  className={input}
-                  placeholder="My outreach voice"
-                  maxLength={120}
-                />
-                <span className="mt-1 block text-xs leading-5 text-muted">
-                  Used only to help you recognise the selected voice.
-                </span>
-              </label>
+              </div>
+
+              {voicesLoading ? (
+                <div className="mt-4">
+                  <MatrixRain size="compact" messages={["loading stock voices", "previews cost nothing"]} />
+                </div>
+              ) : null}
+              {voicesError ? (
+                <p role="alert" className="mt-4 rounded-xl border border-rust/45 bg-rust/10 px-3 py-2 text-xs leading-5 text-rust">
+                  {voicesError}
+                </p>
+              ) : null}
+              {!voicesLoading && voices.length ? (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {(showAllVoices ? voices : voices.slice(0, 8)).map((voice) => {
+                    const selected = profile.outreachVoiceId === voice.id;
+                    const detail = [voice.accent, voice.gender, voice.age, voice.useCase]
+                      .filter(Boolean)
+                      .join(" · ");
+                    return (
+                      <article key={voice.id} className={`rounded-xl border p-3 transition ${selected ? "border-amber/70 bg-amber/10" : "border-edge bg-panel/35 hover:border-bone/35"}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-bone">{voice.name}</p>
+                            <p className="mt-1 truncate font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                              {detail || "ElevenLabs stock voice"}
+                            </p>
+                          </div>
+                          {selected ? <span className="shrink-0 text-xs text-amber">✓ Selected</span> : null}
+                        </div>
+                        {voice.description ? (
+                          <p className="mt-2 line-clamp-2 text-xs leading-5 text-bone/70">{voice.description}</p>
+                        ) : null}
+                        <div className="mt-3 flex gap-2">
+                          <button type="button" onClick={() => void previewVoice(voice)} disabled={!voice.previewUrl} className="min-h-10 flex-1 rounded-lg border border-edge px-3 font-mono text-[0.55rem] uppercase tracking-wider text-bone disabled:opacity-35">
+                            {playingVoiceId === voice.id ? "Stop" : "Listen"}
+                          </button>
+                          <button type="button" onClick={() => chooseVoice(voice)} disabled={selected} className="min-h-10 flex-1 rounded-lg border border-amber/55 bg-amber/10 px-3 font-mono text-[0.55rem] uppercase tracking-wider text-amber disabled:opacity-45">
+                            {selected ? "Chosen" : "Choose"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {voices.length > 8 ? (
+                <button type="button" onClick={() => setShowAllVoices((value) => !value)} className="mt-3 text-xs text-amber hover:underline">
+                  {showAllVoices ? "Show fewer voices" : `Show all ${voices.length} stock voices`}
+                </button>
+              ) : null}
+              <p className="mt-3 text-xs leading-5 text-muted">
+                This choice belongs only to your login. Staff voice clones and per-campaign overrides will be added later without changing this default.
+              </p>
             </div>
           </section>
 

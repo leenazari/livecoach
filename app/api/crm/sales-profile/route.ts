@@ -9,6 +9,7 @@ import {
 } from "@/lib/sales-profile";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { deriveTranscriberName } from "@/lib/transcriber";
+import { validateOutreachVoiceSelection } from "@/lib/outreach-voice-library";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,6 +64,10 @@ export async function PUT(req: NextRequest) {
     const input = validateSalesProfileInput(await req.json());
     const now = new Date().toISOString();
     const previous = await getSalesProfile(scope);
+    const selectedVoice =
+      input.outreachVoiceId && input.outreachVoiceId !== previous.outreachVoiceId
+        ? await validateOutreachVoiceSelection(input.outreachVoiceId)
+        : null;
     const payload = {
       workspace_id: scope.workspaceId,
       user_id: scope.userId,
@@ -70,8 +75,9 @@ export async function PUT(req: NextRequest) {
       sales_goal: input.salesGoal || null,
       email_tone: input.emailTone,
       email_signoff: input.emailSignoff || null,
-      outreach_voice_id: input.outreachVoiceId || null,
-      outreach_voice_name: input.outreachVoiceName || null,
+      outreach_voice_id: selectedVoice?.id || input.outreachVoiceId || null,
+      outreach_voice_name:
+        selectedVoice?.name || input.outreachVoiceName || null,
       coaching_style: input.coachingStyle,
       suggestion_frequency: input.suggestionFrequency,
       product_focus: input.productFocus,
@@ -99,7 +105,11 @@ export async function PUT(req: NextRequest) {
     );
   } catch (error: any) {
     const message = error?.message || "Your sales setup was not saved";
-    const status = /add |choose |finish time/i.test(message) ? 400 : 403;
+    const status = /not configured|temporarily unavailable|could not be verified right now/i.test(message)
+      ? 503
+      : /add |choose |finish time|voice is not available|selected ElevenLabs voice/i.test(message)
+        ? 400
+        : 403;
     return NextResponse.json({ error: message }, { status });
   }
 }
