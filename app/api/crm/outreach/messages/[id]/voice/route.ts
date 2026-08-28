@@ -87,6 +87,7 @@ export async function POST(
           estimatedCostGbp:
             Number(message.voice_estimated_cost_gbp) ||
             budget.estimatedCostGbp,
+          targetCostGbp: budget.targetCostGbp,
           maximumCostGbp: budget.maximumCostGbp,
         },
         { headers: { "Cache-Control": "private, no-store" } }
@@ -245,7 +246,10 @@ export async function POST(
           characters: generated.characters,
           estimatedSeconds,
           estimatedCostGbp: budget.estimatedCostGbp,
+          targetCostGbp: budget.targetCostGbp,
           maximumCostGbp: budget.maximumCostGbp,
+          overTargetCost: budget.overTargetCost,
+          withinPreferredWordRange: budget.withinPreferredWordRange,
           rateGbpPerThousandCharacters:
             budget.rateGbpPerThousandCharacters,
           scriptHash,
@@ -262,7 +266,10 @@ export async function POST(
           modelId: config.modelId,
           characters: generated.characters,
           estimatedSeconds,
+          targetCostGbp: budget.targetCostGbp,
           maximumCostGbp: budget.maximumCostGbp,
+          overTargetCost: budget.overTargetCost,
+          withinPreferredWordRange: budget.withinPreferredWordRange,
           rateGbpPerThousandCharacters:
             budget.rateGbpPerThousandCharacters,
           providerBilledSeparately: true,
@@ -279,7 +286,10 @@ export async function POST(
         reused: false,
         voiceName: config.voiceName,
         estimatedCostGbp: budget.estimatedCostGbp,
+        targetCostGbp: budget.targetCostGbp,
         maximumCostGbp: budget.maximumCostGbp,
+        overTargetCost: budget.overTargetCost,
+        withinPreferredWordRange: budget.withinPreferredWordRange,
       },
       { headers: { "Cache-Control": "private, no-store" } }
     );

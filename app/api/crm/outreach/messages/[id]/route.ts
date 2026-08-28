@@ -100,6 +100,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (existing.voice_status !== "ready" || voiceChanged)
         patch.voice_status = "script_ready";
       patch.voice_estimated_seconds = estimatedVoiceSeconds(nextVoiceScript);
+      patch.voice_character_count = voiceApprovalBudget.characters;
+      patch.voice_estimated_cost_gbp = voiceApprovalBudget.estimatedCostGbp;
       patch.voice_error = null;
     }
     if (body.status === "approved") {
@@ -171,7 +173,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           scriptHash: data.voice_script_approved_hash,
           estimatedSeconds: data.voice_estimated_seconds,
           estimatedCostGbp: voiceApprovalBudget?.estimatedCostGbp,
+          targetCostGbp: voiceApprovalBudget?.targetCostGbp,
           maximumCostGbp: voiceApprovalBudget?.maximumCostGbp,
+          withinPreferredWordRange:
+            voiceApprovalBudget?.withinPreferredWordRange,
+          overTargetCost: voiceApprovalBudget?.overTargetCost,
         },
       });
     }
@@ -198,7 +204,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         ? {
             voiceApproval: {
               estimatedCostGbp: voiceApprovalBudget.estimatedCostGbp,
+              targetCostGbp: voiceApprovalBudget.targetCostGbp,
               maximumCostGbp: voiceApprovalBudget.maximumCostGbp,
+              withinPreferredWordRange:
+                voiceApprovalBudget.withinPreferredWordRange,
+              overTargetCost: voiceApprovalBudget.overTargetCost,
             },
           }
         : {}),
