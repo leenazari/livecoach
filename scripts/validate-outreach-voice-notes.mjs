@@ -49,6 +49,10 @@ assert.doesNotMatch(voice, /slice\(0, OUTREACH_VOICE_MAX_WORDS\)/);
 assert.match(prepare, /required: \["research", "strategy", "email", "voiceNote"\]/);
 assert.match(prepare, /OUTREACH_VOICE_MAX_CHARACTERS/);
 assert.match(prepare, /105 to 120 word personal spoken pitch under 800 characters/);
+assert.match(prepare, /CAMPAIGN CONTRACT, this is the only permitted message purpose/);
+assert.match(prepare, /Do not use an offer, use case or CTA from another campaign/);
+assert.match(prepare, /one grounded angle permitted by the campaign contract/);
+assert.doesNotMatch(prepare, /Candidate training is the primary campaign angle/);
 assert.match(prepare, /voice_status: "script_ready"/);
 assert.match(prepare, /preserveReadyAudio/);
 
