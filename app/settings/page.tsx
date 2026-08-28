@@ -35,6 +35,20 @@ type LinkedInStatus = {
   configured: boolean;
 };
 
+type LinkedInInboxStatus = {
+  active: boolean;
+  status: "active" | "revoked" | "not_created";
+  tokenLastFour: string | null;
+  browserBound: boolean;
+  maxConversations: number;
+  lookbackDays: number;
+  lastRunAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  importedMessageCount: number;
+  reviewCount: number;
+};
+
 function gmailIssueCopy(issue?: GmailIssue): string {
   if (issue === "scope_missing")
     return "The Google token does not contain Gmail read permission.";
@@ -106,6 +120,12 @@ export default function SettingsPage() {
   const [linkedinDisconnecting, setLinkedinDisconnecting] = useState(false);
   const [linkedinDisconnectConfirm, setLinkedinDisconnectConfirm] = useState(false);
   const [linkedinDisconnectError, setLinkedinDisconnectError] = useState("");
+  const [linkedinInbox, setLinkedinInbox] = useState<LinkedInInboxStatus | null>(null);
+  const [linkedinInboxLoaded, setLinkedinInboxLoaded] = useState(false);
+  const [linkedinInboxToken, setLinkedinInboxToken] = useState("");
+  const [linkedinInboxBusy, setLinkedinInboxBusy] = useState(false);
+  const [linkedinInboxNote, setLinkedinInboxNote] = useState("");
+  const [linkedinInboxError, setLinkedinInboxError] = useState("");
   const [disconnectConfirm, setDisconnectConfirm] = useState<
     "google" | "microsoft" | null
   >(null);
@@ -146,6 +166,10 @@ export default function SettingsPage() {
     crmFetch<LinkedInStatus>("/api/auth/linkedin/status")
       .then((d) => setLinkedin(d))
       .catch(() => {});
+    crmFetch<LinkedInInboxStatus>("/api/crm/linkedin-inbox")
+      .then((d) => setLinkedinInbox(d))
+      .catch(() => setLinkedinInbox(null))
+      .finally(() => setLinkedinInboxLoaded(true));
     if (typeof window !== "undefined") {
       const g = new URLSearchParams(window.location.search).get("google");
       if (g === "connected") setGcalNote("Google Calendar connected.");
@@ -293,6 +317,114 @@ export default function SettingsPage() {
       );
     } finally {
       setLinkedinDisconnecting(false);
+    }
+  };
+
+  const createLinkedInInboxKey = async (rotate: boolean) => {
+    if (
+      rotate &&
+      !window.confirm(
+        "Replace the current inbox key? The key already saved in Chrome will stop working."
+      )
+    ) {
+      return;
+    }
+    setLinkedinInboxBusy(true);
+    setLinkedinInboxError("");
+    setLinkedinInboxNote("");
+    try {
+      const result = await crmFetch<{
+        ok: boolean;
+        token: string;
+        tokenLastFour: string;
+        active: boolean;
+        shownOnce: boolean;
+      }>("/api/crm/linkedin-inbox", {
+        method: "POST",
+        body: JSON.stringify({
+          rotate,
+          maxConversations: linkedinInbox?.maxConversations || 10,
+          lookbackDays: linkedinInbox?.lookbackDays || 14,
+        }),
+      });
+      if (!result.ok || !result.token || !result.shownOnce) {
+        throw new Error("The server did not confirm the new connector key");
+      }
+      setLinkedinInboxToken(result.token);
+      setLinkedinInbox((current) => ({
+        active: true,
+        status: "active",
+        tokenLastFour: result.tokenLastFour,
+        browserBound: false,
+        maxConversations: current?.maxConversations || 10,
+        lookbackDays: current?.lookbackDays || 14,
+        lastRunAt: current?.lastRunAt || null,
+        lastSuccessAt: current?.lastSuccessAt || null,
+        lastError: null,
+        importedMessageCount: current?.importedMessageCount || 0,
+        reviewCount: current?.reviewCount || 0,
+      }));
+      setLinkedinInboxNote(
+        "Connector key created. Copy it into the Chrome connector now. It will not be shown again."
+      );
+    } catch (error: any) {
+      setLinkedinInboxError(
+        error?.message || "The LinkedIn inbox connector key could not be created."
+      );
+    } finally {
+      setLinkedinInboxBusy(false);
+    }
+  };
+
+  const copyLinkedInInboxKey = async () => {
+    if (!linkedinInboxToken) return;
+    try {
+      await navigator.clipboard.writeText(linkedinInboxToken);
+      setLinkedinInboxNote("Connector key copied.");
+    } catch {
+      setLinkedinInboxError("Copy failed. Select the key and copy it manually.");
+    }
+  };
+
+  const revokeLinkedInInboxKey = async () => {
+    if (
+      !window.confirm(
+        "Revoke the local inbox connector? Existing imported CRM records will remain."
+      )
+    ) {
+      return;
+    }
+    setLinkedinInboxBusy(true);
+    setLinkedinInboxError("");
+    setLinkedinInboxNote("");
+    try {
+      const result = await crmFetch<{ ok: boolean; active: boolean }>(
+        "/api/crm/linkedin-inbox",
+        { method: "DELETE" }
+      );
+      if (!result.ok || result.active) {
+        throw new Error("The server did not confirm that revocation");
+      }
+      setLinkedinInboxToken("");
+      setLinkedinInbox((current) =>
+        current
+          ? {
+              ...current,
+              active: false,
+              status: "revoked",
+              browserBound: false,
+            }
+          : current
+      );
+      setLinkedinInboxNote(
+        "Local inbox access revoked. Imported contacts and messages remain in the CRM."
+      );
+    } catch (error: any) {
+      setLinkedinInboxError(
+        error?.message || "The LinkedIn inbox connector could not be revoked."
+      );
+    } finally {
+      setLinkedinInboxBusy(false);
     }
   };
 
@@ -651,7 +783,7 @@ export default function SettingsPage() {
                       : "LinkedIn support is installed but needs the LinkedIn app credentials before accounts can connect."}
             </p>
             <p className="mt-2 text-xs leading-5 text-muted">
-              LiveCoach does not scrape LinkedIn. Messages and connection requests remain manual. Connecting never gives another salesperson access to this account and never publishes anything automatically.
+              This approved API connection does not read LinkedIn messages. The separate local inbox capture below is optional and user-triggered. Neither connection gives another salesperson access to this account or publishes anything automatically.
             </p>
             {linkedinNote ? (
               <p aria-live="polite" className="mt-2 font-mono text-[0.58rem] text-sky">
@@ -727,6 +859,159 @@ export default function SettingsPage() {
             </div>
           </div>
         ) : null}
+      </div>
+
+      <div
+        id="linkedin-inbox"
+        className={`mb-5 rounded-xl border p-5 ${
+          linkedinInbox?.active
+            ? "border-moss/45 bg-moss/[0.06]"
+            : "border-amber/40 bg-amber/[0.05]"
+        }`}
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-3xl">
+            <p
+              className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
+                linkedinInbox?.active ? "text-moss" : "text-amber"
+              }`}
+            >
+              {linkedinInbox?.active ? "✓" : "◇"} Local LinkedIn inbox capture
+            </p>
+            <p className="mt-2 text-sm leading-6 text-bone">
+              Pull recent inbound LinkedIn messages into your private CRM without giving
+              LiveCoach your LinkedIn password or session cookies.
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted">
+              This is separate from LinkedIn&apos;s approved API connection. It runs only when
+              you press Sync in your own signed-in Chrome tab. It cannot send messages,
+              connect, like or post. LinkedIn explicitly says browser extensions that scrape
+              or automate its website violate its User Agreement and can lead to account
+              restriction. Opening a conversation can also mark it as read. Read LinkedIn&apos;s{" "}
+              <a
+                href="https://www.linkedin.com/help/linkedin/answer/a1341387"
+                target="_blank"
+                rel="noreferrer"
+                className="text-rust underline decoration-rust/50 underline-offset-2"
+              >
+                prohibited software guidance
+              </a>
+              .
+            </p>
+            <div className="mt-3 grid gap-2 text-xs leading-5 text-muted sm:grid-cols-3">
+              <div className="rounded-lg border border-edge bg-ink/35 p-3">
+                <strong className="block text-bone">Hard limit</strong>
+                Up to {linkedinInbox?.maxConversations || 10} recent conversations per run
+                and 500 new messages per 24 hours.
+              </div>
+              <div className="rounded-lg border border-edge bg-ink/35 p-3">
+                <strong className="block text-bone">Clean matching</strong>
+                Exact LinkedIn identity matches only. No fuzzy company creation.
+              </div>
+              <div className="rounded-lg border border-edge bg-ink/35 p-3">
+                <strong className="block text-bone">Fail closed</strong>
+                The capture stops if LinkedIn shows a challenge or changes the expected layout.
+              </div>
+            </div>
+            {linkedinInboxLoaded && linkedinInbox ? (
+              <p className="mt-3 font-mono text-[0.56rem] uppercase leading-5 text-muted">
+                {linkedinInbox.active
+                  ? `Active key ending ${linkedinInbox.tokenLastFour || "unknown"} · ${linkedinInbox.browserBound ? "bound to this Chrome connector" : "not yet used"}`
+                  : "No active local connector key"}
+                {linkedinInbox.lastSuccessAt
+                  ? ` · last sync ${new Date(linkedinInbox.lastSuccessAt).toLocaleString("en-GB")}`
+                  : ""}
+                {linkedinInbox.importedMessageCount
+                  ? ` · ${linkedinInbox.importedMessageCount} imported`
+                  : ""}
+                {linkedinInbox.reviewCount
+                  ? ` · ${linkedinInbox.reviewCount} need review`
+                  : ""}
+              </p>
+            ) : !linkedinInboxLoaded ? (
+              <p className="mt-3 font-mono text-[0.56rem] uppercase text-muted">
+                Checking connector status…
+              </p>
+            ) : null}
+            {linkedinInbox?.lastError ? (
+              <p className="mt-2 text-xs leading-5 text-rust">
+                Last sync did not complete. {linkedinInbox.lastError}
+              </p>
+            ) : null}
+            {linkedinInboxNote ? (
+              <p aria-live="polite" className="mt-2 text-xs leading-5 text-moss">
+                {linkedinInboxNote}
+              </p>
+            ) : null}
+            {linkedinInboxError ? (
+              <p role="alert" className="mt-2 text-xs leading-5 text-rust">
+                {linkedinInboxError}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <a
+              href="/downloads/livecoach-linkedin-inbox-connector.zip"
+              download
+              className="inline-flex min-h-10 items-center rounded-full border border-sky/55 bg-sky/10 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-sky transition hover:bg-sky/20"
+            >
+              Download connector
+            </a>
+            <button
+              type="button"
+              onClick={() => void createLinkedInInboxKey(!!linkedinInbox?.active)}
+              disabled={linkedinInboxBusy || !linkedinInboxLoaded}
+              className="min-h-10 rounded-full border border-amber/60 bg-amber/15 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40"
+            >
+              {linkedinInboxBusy
+                ? "Saving…"
+                : linkedinInbox?.active
+                  ? "Replace key"
+                  : "Create inbox key"}
+            </button>
+            {linkedinInbox?.active ? (
+              <button
+                type="button"
+                onClick={() => void revokeLinkedInInboxKey()}
+                disabled={linkedinInboxBusy}
+                className="min-h-10 rounded-full border border-rust/50 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust/10 disabled:opacity-40"
+              >
+                Revoke
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {linkedinInboxToken ? (
+          <div className="mt-4 rounded-lg border border-amber/45 bg-ink/50 p-3">
+            <p className="text-xs leading-5 text-amber">
+              Copy this key now. LiveCoach stores only its hash and cannot show it again.
+            </p>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+              <input
+                readOnly
+                value={linkedinInboxToken}
+                aria-label="LinkedIn inbox connector key"
+                onFocus={(event) => event.currentTarget.select()}
+                className="min-h-11 min-w-0 flex-1 rounded-lg border border-edge bg-ink px-3 font-mono text-xs text-bone outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => void copyLinkedInInboxKey()}
+                className="min-h-11 rounded-lg border border-moss/50 bg-moss/10 px-4 font-mono text-[0.56rem] uppercase text-moss"
+              >
+                Copy key
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <ol className="mt-4 list-decimal space-y-1 pl-5 text-xs leading-5 text-muted marker:text-amber">
+          <li>Download and unzip the connector, then load the folder in Chrome extensions.</li>
+          <li>Create a one-time inbox key here and paste it into the connector.</li>
+          <li>Open your main LinkedIn Messaging inbox, then press Sync recent messages.</li>
+          <li>Review unmatched people in Sales Desk. Their contact is saved without inventing a company.</li>
+        </ol>
       </div>
 
       <div className="rounded-xl border border-amber/40 bg-amber/[0.05] p-5">

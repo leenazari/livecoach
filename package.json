@@ -50,6 +50,7 @@
     "validate:outreach-campaign-selection": "node scripts/validate-per-user-outreach-campaign.mjs",
     "validate:linkedin-engagement-safety": "node scripts/validate-linkedin-engagement-safety.mjs",
     "validate:linkedin-connection": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-linkedin-connection.mjs",
+    "validate:linkedin-inbox": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-linkedin-inbox-connector.mjs",
     "validate:provider-disconnect": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-provider-disconnect.mjs",
     "validate:outreach-rehearsal": "node scripts/validate-outreach-rehearsal-receipt.mjs",
     "validate:focused-outreach": "node scripts/validate-focused-outreach-sales-desk.mjs",

@@ -69,6 +69,7 @@ export async function GET() {
       outreachMessagesResult,
       outreachProspectsResult,
       outreachMeetingsResult,
+      linkedinMessagesResult,
       visibleClientGrants,
     ] = await Promise.all([
       supabaseAdmin
@@ -138,6 +139,18 @@ export async function GET() {
         .eq("workspace_id", account.workspaceId)
         .eq("kind", "meeting_booked")
         .limit(5000),
+      supabaseAdmin
+        .from("linkedin_inbox_messages")
+        .select("id,sender_name,sender_profile_url,body,received_at,company_id,contact_id,status,review_reason")
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
+        .eq("status", "review")
+        .gte(
+          "received_at",
+          new Date(nowMs - 30 * DAY_MS).toISOString()
+        )
+        .order("received_at", { ascending: false })
+        .limit(100),
       listVisibleClientGrants(account.workspaceId),
     ]);
 
@@ -149,6 +162,7 @@ export async function GET() {
       outreachMessagesResult.error,
       outreachProspectsResult.error,
       outreachMeetingsResult.error,
+      linkedinMessagesResult.error,
     ].find(Boolean);
     if (firstError) throw firstError;
 
@@ -527,6 +541,34 @@ export async function GET() {
         editable: false,
         dismissible: false,
         outreach: replyContext(prospect),
+      });
+    }
+
+    for (const message of linkedinMessagesResult.data || []) {
+      const companyId = message.company_id || null;
+      const company = companyId ? companyName.get(companyId) || null : null;
+      items.push({
+        id: `linkedin_message:${message.id}`,
+        sourceId: message.id,
+        kind: "linkedin_message",
+        title: `Review LinkedIn lead from ${text(message.sender_name, 160) || "a new contact"}`,
+        detail:
+          text(message.body, 220) ||
+          "The contact is saved, but their company has not been verified.",
+        company,
+        companyId,
+        href: companyId ? `/crm/${companyId}` : message.sender_profile_url,
+        external: !companyId,
+        priority: 104,
+        priorityLabel: "urgent",
+        dueAt: message.received_at || null,
+        createdAt: message.received_at || null,
+        revenue: true,
+        approval: true,
+        waiting: false,
+        done: false,
+        editable: false,
+        dismissible: false,
       });
     }
 

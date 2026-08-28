@@ -78,6 +78,7 @@ export default function PrivacyPolicyPage() {
             <li>Meeting details, live transcription, call transcripts, summaries and coaching output.</li>
             <li>Outreach drafts, approvals, sent messages, replies, suppressions and campaign activity.</li>
             <li>Connected-service identifiers, permissions and security tokens needed to maintain a connection.</li>
+            <li>Inbound LinkedIn message content and sender profile links when a user runs the optional local inbox capture.</li>
             <li>Technical logs used for authentication, security, reliability, usage control and troubleshooting.</li>
           </ul>
           <p>
@@ -96,8 +97,15 @@ export default function PrivacyPolicyPage() {
           <p>
             If LinkedIn access is enabled, LiveCoach CRM will use LinkedIn information only within the
             permissions LinkedIn has approved and for functions the connected user has requested. It will not
-            sell LinkedIn data, use it for hidden scraping, or publish an action without the user-facing control
-            required for that feature.
+            sell LinkedIn data or publish an action without the user-facing control required for that feature.
+          </p>
+          <p>
+            LinkedIn&apos;s approved API connection does not provide inbox access. LiveCoach CRM also offers an
+            optional local Chrome connector that a user must start manually from their signed-in LinkedIn
+            Messaging tab. It reads recent visible inbound messages and sends only the selected message fields
+            to that user&apos;s private CRM. The connector does not send LinkedIn passwords, session cookies or
+            outgoing actions to LiveCoach CRM. It cannot send messages, connection requests, likes or posts.
+            Opening conversations during capture may mark them as read.
           </p>
           <p>
             A user can disconnect a provider in LiveCoach CRM settings and can also revoke access in the

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LiveCoach LinkedIn Inbox</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">LiveCoach CRM</p>
+      <h1>LinkedIn inbox capture</h1>
+      <p class="intro">
+        Pull recent inbound messages from the LinkedIn inbox currently open in Chrome.
+      </p>
+
+      <label for="connector-key">LiveCoach inbox key</label>
+      <input
+        id="connector-key"
+        type="password"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="lci_…"
+      />
+
+      <label for="conversation-limit">Recent conversations per sync</label>
+      <select id="conversation-limit">
+        <option value="5">5</option>
+        <option value="10" selected>10</option>
+        <option value="15">15</option>
+        <option value="20">20</option>
+      </select>
+
+      <label class="consent" for="read-warning">
+        <input id="read-warning" type="checkbox" />
+        <span>
+          I understand LinkedIn says browser automation can violate its User Agreement and
+          that opening conversations can mark them as read.
+        </span>
+      </label>
+
+      <button id="sync" type="button">Sync recent inbound messages</button>
+      <button id="forget" class="secondary" type="button">Forget saved key</button>
+
+      <p id="status" role="status" aria-live="polite"></p>
+
+      <ul>
+        <li>No LinkedIn password or cookie leaves this browser.</li>
+        <li>No sending, connection, like or post capability.</li>
+        <li>The sync stops on a challenge or unexpected page layout.</li>
+      </ul>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
