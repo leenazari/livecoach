@@ -90,6 +90,7 @@ const [
   managementRoute,
   backfillRoute,
   migration,
+  indexMigration,
   importer,
   settings,
 ] = await Promise.all([
@@ -100,6 +101,7 @@ const [
   read("app/api/crm/sendpilot/route.ts"),
   read("app/api/crm/sendpilot/backfill/route.ts"),
   read("supabase/migrations/20260828220402_sendpilot_inbound_integration.sql"),
+  read("supabase/migrations/20260828223224_index_sendpilot_webhook_owner.sql"),
   read("lib/linkedin-inbox.ts"),
   read("app/settings/page.tsx"),
 ]);
@@ -126,6 +128,7 @@ assert(backfillRoute.includes("runSendPilotBackfill"));
 assert(migration.includes("alter table public.sendpilot_integrations enable row level security"));
 assert(migration.includes("revoke all on public.sendpilot_integrations from public, anon, authenticated"));
 assert(migration.includes("unique (integration_id, provider_event_id)"));
+assert(indexMigration.includes("sendpilot_webhook_events_owner_idx"));
 assert(importer.includes("crossSourceDuplicates"));
 assert(importer.includes("sender_name_not_verified"));
 assert(settings.includes("SendPilot LinkedIn inbox"));
