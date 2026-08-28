@@ -74,6 +74,9 @@ function compactMessage(message: any) {
     voice_estimated_seconds: message.voice_estimated_seconds || null,
     voice_generated_at: message.voice_generated_at || null,
     voice_error: message.voice_error || null,
+    voice_script_approved_at: message.voice_script_approved_at || null,
+    voice_script_approved_by: message.voice_script_approved_by || null,
+    voice_script_approved_hash: message.voice_script_approved_hash || null,
   };
 }
 
