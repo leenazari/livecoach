@@ -19,6 +19,7 @@ export const dynamic = "force-dynamic";
 // company name. Powers the dashboard's Upcoming Calls card.
 export async function GET() {
   try {
+    const scope = await resolveRecordScope();
     // Hide calls whose time has passed by more than a short grace window (3h),
     // so a just-finished call sticks around long enough to open/recap, then
     // drops off on its own. Calls with no set time are always kept.
@@ -35,12 +36,18 @@ export async function GET() {
       { data: calls },
       { data: recentlyCompleted },
     ] = await Promise.all([
-      supabaseAdmin.from("companies").select("id, name"),
+      supabaseAdmin
+        .from("companies")
+        .select("id, name")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId),
       supabaseAdmin
         .from("upcoming_calls")
         .select(
           "id, company_id, title, scheduled_at, meeting_url, intent, prepped, source, created_at"
         )
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         // A finished call (completed_at set on end) drops off here at once.
         .is("completed_at", null)
         .or(`scheduled_at.is.null,scheduled_at.gte.${pastCutoff}`)
@@ -51,6 +58,8 @@ export async function GET() {
         .select(
           "id, company_id, title, scheduled_at, meeting_url, intent, prepped, source, created_at, completed_at"
         )
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .not("completed_at", "is", null)
         // Always include a future call, even if it was hidden more than two
         // weeks ago. Otherwise keep the recovery list deliberately short.

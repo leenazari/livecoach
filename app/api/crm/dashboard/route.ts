@@ -308,6 +308,7 @@ export async function GET(req: Request) {
         company: u.company_id ? nameById.get(u.company_id) || null : null,
         at: u.scheduled_at,
         href: `/call?upcoming=${u.id}`,
+        entity: "upcoming" as const,
       }));
     const allOverduePromises = tasks.filter(
         (t: any) =>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
@@ -88,14 +88,25 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   const [durationMinutes, setDurationMinutes] = useState("30");
   const [addToCalendar, setAddToCalendar] = useState(true);
   const [requestId, setRequestId] = useState("");
+  // A dismissal must beat any read that started before the user pressed X.
+  // Without this guard, a slower in-flight GET can repaint the removed event
+  // for a moment even though the database write has already succeeded.
+  const loadSeq = useRef(0);
+  const dismissedIds = useRef(new Set<string>());
 
-  const load = () =>
-    crmFetch<UpcomingFeed>("/api/crm/upcoming")
-      .then((d) => {
-        setCalls(d.calls || []);
-        setRecentlyCompleted(d.recentlyCompleted || []);
-      })
-      .catch(() => {});
+  const load = async () => {
+    const seq = ++loadSeq.current;
+    try {
+      const d = await crmFetch<UpcomingFeed>("/api/crm/upcoming");
+      if (seq !== loadSeq.current) return;
+      setCalls(
+        (d.calls || []).filter((call) => !dismissedIds.current.has(call.id))
+      );
+      setRecentlyCompleted(d.recentlyCompleted || []);
+    } catch {
+      /* Keep the last confirmed list if a background refresh fails. */
+    }
+  };
 
   // Pull the latest from Google now (catches reschedules between the automatic
   // syncs). Needs Google connected in Settings.
@@ -288,6 +299,8 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
 
   const remove = async (id: string) => {
     const previous = calls;
+    loadSeq.current += 1;
+    dismissedIds.current.add(id);
     setCalls((p) => p.filter((c) => c.id !== id));
     try {
       const result = await crmFetch<{ ok: boolean }>(`/api/crm/upcoming/${id}`, {
@@ -297,6 +310,7 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
     } catch (e: any) {
+      dismissedIds.current.delete(id);
       setCalls(previous);
       setSyncMsg(e?.message || "Call was not removed. Please try again.");
     }
@@ -690,8 +704,9 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => remove(c.id)}
-                  title="delete"
+                  onClick={() => void remove(c.id)}
+                  title="Hide this from LiveCoach. It stays in your calendar."
+                  aria-label={`Hide ${c.title || "calendar event"} from LiveCoach`}
                   className="font-mono text-[0.7rem] text-muted transition hover:text-rust"
                 >
                   ✕

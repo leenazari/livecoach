@@ -168,7 +168,7 @@ export default function TaskList({
   const toggle = async (t: Task) => {
     const previous = tasks;
     loadSeq.current += 1;
-    if (!t.upcoming_id) closedIds.current.add(t.id);
+    closedIds.current.add(t.id);
     setSaveError("");
     showTasks(tasks.filter((x) => x.id !== t.id));
     // A prep to-do is derived from an upcoming call: ticking it marks that call
@@ -182,6 +182,7 @@ export default function TaskList({
         });
         savedEverywhere();
       } catch {
+        closedIds.current.delete(t.id);
         showTasks(previous);
         setSaveError("That change did not save. Please try again.");
       } finally {
@@ -211,16 +212,21 @@ export default function TaskList({
     // background jobs don't re-create it from the same email/call.
     const previous = tasks;
     loadSeq.current += 1;
-    if (!t.upcoming_id) closedIds.current.add(t.id);
+    closedIds.current.add(t.id);
     setSaveError("");
     showTasks(tasks.filter((x) => x.id !== t.id));
     try {
       setSavingId(t.id);
       if (t.upcoming_id) {
-        await crmFetch(`/api/crm/upcoming/${t.upcoming_id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ prepped: true }),
-        });
+        const result = await crmFetch<{ ok: boolean }>(
+          `/api/crm/upcoming/${t.upcoming_id}`,
+          {
+            method: "DELETE",
+          }
+        );
+        if (!result.ok) {
+          throw new Error("calendar exclusion was not confirmed");
+        }
       } else {
         const result = await crmFetch<{ task: Task }>(`/api/crm/tasks/${t.id}`, {
           method: "PATCH",

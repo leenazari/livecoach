@@ -101,7 +101,7 @@ type TodayItem = {
   company?: string | null;
   at?: string | number | null;
   href: string;
-  entity?: "task" | "activity";
+  entity?: "task" | "activity" | "upcoming";
   companyId?: string;
   contextId?: string;
 };
@@ -248,6 +248,30 @@ export default function DashboardPage() {
       closedTodayIds.current.delete(item.id);
       setDash(previous);
       setTodaySaveError("That client update did not save. Please try again.");
+    } finally {
+      setTodaySavingId(null);
+    }
+  };
+
+  const dismissTodayUpcoming = async (item: TodayItem) => {
+    const previous = dash;
+    dashboardSeq.current += 1;
+    closedTodayIds.current.add(item.id);
+    setDash((current) => changeTodayTask(current, item.id, () => null));
+    setTodaySaveError("");
+    setTodaySavingId(item.id);
+    try {
+      const result = await crmFetch<{ ok: boolean }>(
+        `/api/crm/upcoming/${item.id}`,
+        { method: "DELETE" }
+      );
+      if (!result.ok) throw new Error("calendar exclusion was not confirmed");
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+    } catch {
+      closedTodayIds.current.delete(item.id);
+      setDash(previous);
+      setTodaySaveError("That calendar item was not hidden. Please try again.");
     } finally {
       setTodaySavingId(null);
     }
@@ -563,6 +587,17 @@ export default function DashboardPage() {
                         <button type="button" disabled={todaySavingId === item.id} onClick={() => void resolveTodayActivity(item, "apply")} aria-label="Apply client update" title="Apply the saved CRM changes" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-sage disabled:opacity-40">✓</button>
                         <button type="button" disabled={todaySavingId === item.id} onClick={() => void resolveTodayActivity(item, "dismiss")} aria-label="Dismiss client update" title="Remove this review without applying changes" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-rust disabled:opacity-40">✕</button>
                       </span>
+                    ) : item.entity === "upcoming" ? (
+                      <button
+                        type="button"
+                        disabled={todaySavingId === item.id}
+                        onClick={() => void dismissTodayUpcoming(item)}
+                        aria-label={`Hide ${item.text} from LiveCoach`}
+                        title="Hide this from LiveCoach. It stays in your calendar."
+                        className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-rust disabled:opacity-40"
+                      >
+                        ✕
+                      </button>
                     ) : null}
                   </div>
                 </div>

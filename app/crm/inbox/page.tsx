@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
@@ -181,11 +181,20 @@ export default function WorkInboxPage() {
   const [outreachQueueCount, setOutreachQueueCount] = useState<number | null>(null);
   const [separateClarificationId, setSeparateClarificationId] = useState("");
   const [separateWorkstreamName, setSeparateWorkstreamName] = useState("");
+  // A completed dismissal must beat any Inbox request that started before the
+  // user pressed Hide. Otherwise that older response can repaint the event.
+  const loadSeq = useRef(0);
+  const dismissedItemIds = useRef(new Set<string>());
 
   const load = useCallback(async (quiet = false) => {
+    const seq = ++loadSeq.current;
     if (!quiet) setLoading(true);
     try {
       const next = await crmFetch<WorkInboxResponse>("/api/crm/inbox");
+      if (seq !== loadSeq.current) return null;
+      next.items = (next.items || []).filter(
+        (item) => !dismissedItemIds.current.has(item.id)
+      );
       setData(next);
       const currentSuggestionIds = new Set(
         next.cleanup?.suggestions?.map((suggestion) => suggestion.id) || []
@@ -391,6 +400,41 @@ export default function WorkInboxPage() {
     } catch (err: any) {
       setData(previous);
       setError(err?.message || "That change did not save. Please try again.");
+    } finally {
+      setSavingId("");
+    }
+  };
+
+  const dismissUpcoming = async (item: WorkInboxItem) => {
+    if (savingId || item.kind !== "prep") return;
+    const previous = data;
+    loadSeq.current += 1;
+    dismissedItemIds.current.add(item.id);
+    setSavingId(item.id);
+    setError("");
+    setNotice("");
+    setData((current) =>
+      current
+        ? { ...current, items: current.items.filter((row) => row.id !== item.id) }
+        : current
+    );
+    try {
+      const result = await crmFetch<{ ok: boolean }>(
+        `/api/crm/upcoming/${item.sourceId}`,
+        { method: "DELETE" }
+      );
+      if (!result.ok) throw new Error("The database did not confirm that dismissal.");
+      setNotice("Hidden from LiveCoach. The event is still in your calendar.");
+      await load(true);
+      window.dispatchEvent(
+        new CustomEvent("lc:tasks-updated", {
+          detail: { source: "work-inbox" },
+        })
+      );
+    } catch (err: any) {
+      dismissedItemIds.current.delete(item.id);
+      setData(previous);
+      setError(err?.message || "That calendar item was not hidden. Please try again.");
     } finally {
       setSavingId("");
     }
@@ -1158,6 +1202,16 @@ export default function WorkInboxPage() {
                               {savingId === item.id ? "Saving…" : "✓ Done"}
                             </button>
                           ) : null}
+                          {item.kind === "prep" ? (
+                            <button
+                              type="button"
+                              onClick={() => void dismissUpcoming(item)}
+                              disabled={!!savingId}
+                              className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase text-muted hover:border-rust/45 hover:text-rust disabled:opacity-40"
+                            >
+                              Hide
+                            </button>
+                          ) : null}
                           <Link
                             href={item.href}
                             target="_blank"
@@ -1752,7 +1806,7 @@ export default function WorkInboxPage() {
                       {item.dismissible ? (
                         <button
                           type="button"
-                          onClick={() => item.kind === "follow_up" ? void dismissDraft(item) : void updateTask(item, { status: "dismissed" })}
+                          onClick={() => item.kind === "follow_up" ? void dismissDraft(item) : item.kind === "prep" ? void dismissUpcoming(item) : void updateTask(item, { status: "dismissed" })}
                           disabled={!!savingId}
                           aria-label={`Dismiss ${item.title}`}
                           className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase tracking-wider text-muted hover:border-rust/45 hover:text-rust disabled:opacity-40"
