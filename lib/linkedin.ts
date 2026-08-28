@@ -129,11 +129,37 @@ export async function saveLinkedInConnection(input: {
 }): Promise<void> {
   const scope = getRequestScope();
   if (!scope) throw new Error("A verified account is required to connect LinkedIn");
-  const existing = await connectionForOwner(scope.userId);
+  return saveLinkedInConnectionForOwner(input, {
+    userId: scope.userId,
+    workspaceId: scope.workspaceId,
+  });
+}
+
+export async function saveLinkedInConnectionForOwner(
+  input: {
+    accessToken: string;
+    refreshToken?: string | null;
+    expiry: string;
+    memberId: string;
+    email?: string | null;
+    displayName?: string | null;
+    pictureUrl?: string | null;
+    scopes: string[];
+  },
+  owner: { userId: string; workspaceId: string }
+): Promise<void> {
+  const { data: existing, error: existingError } = await supabaseService
+    .from("linkedin_oauth")
+    .select("id")
+    .eq("workspace_id", owner.workspaceId)
+    .eq("owner_id", owner.userId)
+    .limit(1)
+    .maybeSingle();
+  if (existingError) throw existingError;
   const row: Record<string, unknown> = {
-    id: existing?.id || `user:${scope.userId}`,
-    workspace_id: scope.workspaceId,
-    owner_id: scope.userId,
+    id: existing?.id || `user:${owner.userId}`,
+    workspace_id: owner.workspaceId,
+    owner_id: owner.userId,
     visibility: "private",
     member_id: input.memberId,
     email: input.email?.trim().toLowerCase() || null,
