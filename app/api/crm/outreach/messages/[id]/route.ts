@@ -55,6 +55,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       patch.voice_estimated_seconds = nextVoiceScript
         ? estimatedVoiceSeconds(nextVoiceScript)
         : null;
+      patch.voice_character_count = null;
+      patch.voice_estimated_cost_gbp = null;
       patch.voice_error = null;
     }
     if (body.status === "approved") {

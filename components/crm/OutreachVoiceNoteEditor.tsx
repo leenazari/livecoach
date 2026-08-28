@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  OUTREACH_VOICE_MAX_CHARACTERS,
+  OUTREACH_VOICE_MAX_WORDS,
+  OUTREACH_VOICE_MIN_WORDS,
+} from "@/lib/outreach-voice-policy";
+
 type VoiceMessage = {
   id?: string;
   status?: string;
@@ -7,6 +13,7 @@ type VoiceMessage = {
   voice_status?: string | null;
   voice_public_token?: string | null;
   voice_estimated_seconds?: number | null;
+  voice_estimated_cost_gbp?: number | null;
   voice_error?: string | null;
 };
 
@@ -29,7 +36,13 @@ export default function OutreachVoiceNoteEditor({
   const scriptChanged = script.trim() !== String(message.voice_script || "").trim();
   const ready = message.voice_status === "ready" && !scriptChanged;
   const seconds = Math.max(20, Math.min(90, Math.round((words / 135) * 60)));
-  const needsLengthReview = words > 0 && (words < 105 || words > 135);
+  const characters = script.length;
+  const generatedCostPence = Number(message.voice_estimated_cost_gbp || 0) * 100;
+  const needsLengthReview = words > 0 && (
+    words < OUTREACH_VOICE_MIN_WORDS ||
+    words > OUTREACH_VOICE_MAX_WORDS ||
+    characters > OUTREACH_VOICE_MAX_CHARACTERS
+  );
   const locked = disabled || ["sending", "sent"].includes(message.status || "");
 
   return (
@@ -53,7 +66,7 @@ export default function OutreachVoiceNoteEditor({
           }`}
         >
           {ready
-            ? `Ready · ${message.voice_estimated_seconds || seconds}s`
+            ? `Ready · ${message.voice_estimated_seconds || seconds}s${generatedCostPence > 0 ? ` · est ${generatedCostPence.toFixed(1)}p` : ""}`
             : scriptChanged && message.voice_status === "ready"
               ? "Edited · regenerate"
               : message.voice_status === "failed"
@@ -73,7 +86,7 @@ export default function OutreachVoiceNoteEditor({
       </label>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
         <p className={`text-xs ${needsLengthReview ? "text-rust" : "text-muted"}`}>
-          {words} words · about {seconds} seconds. Aim for 105 to 135 words.
+          {words} words · {characters}/{OUTREACH_VOICE_MAX_CHARACTERS} characters · about {seconds} seconds. Aim for {OUTREACH_VOICE_MIN_WORDS} to {OUTREACH_VOICE_MAX_WORDS} words.
         </p>
         {!locked ? (
           <button
@@ -90,6 +103,9 @@ export default function OutreachVoiceNoteEditor({
           </button>
         ) : null}
       </div>
+      <p className="mt-2 text-xs leading-5 text-moss">
+        ElevenLabs generation is blocked before charging if this voice note could exceed 5p.
+      </p>
       {message.voice_error && message.voice_status === "failed" ? (
         <p className="mt-2 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-xs leading-5 text-rust">
           {message.voice_error}
