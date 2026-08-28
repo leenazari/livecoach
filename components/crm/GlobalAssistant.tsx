@@ -45,7 +45,7 @@ function clampPanelPosition(
 
 function describeScreen(pathname: string | null, hasClient: boolean, tab: string) {
   const path = pathname || "/crm";
-  if (path === "/call") return { section: "live_call", label: "Live call", path };
+  if (path === "/call") return { section: "live_call", label: "Call workspace", path };
   if (hasClient) return { section: "client", label: "Client profile", path };
   if (path.startsWith("/crm/outreach"))
     return { section: "outreach", label: "Outreach", path };

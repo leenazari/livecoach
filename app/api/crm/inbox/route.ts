@@ -285,7 +285,7 @@ export async function GET() {
         company,
         companyId: call.company_id || null,
         href: call.company_id
-          ? `/crm/prep?upcoming=${call.id}`
+          ? `/call?upcoming=${call.id}`
           : `/call?upcoming=${call.id}`,
         priority,
         priorityLabel: priorityLabel(priority),

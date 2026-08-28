@@ -221,7 +221,7 @@ function LinkedText({
 }
 
 // The Brain uses one tightly controlled Markdown shape for schedule items:
-// [time, call title](/crm/prep?...). Render only internal CRM/call targets as
+// [time, call title](/call?...). Render only internal CRM/call targets as
 // links. For any external or malformed target, keep the useful label and drop
 // the raw URL so old meeting-link replies stop cluttering the conversation.
 function BrainLinkedText({

@@ -356,7 +356,7 @@ async function runDigestForAccount(
       const prep = call.prepped
         ? "Ready — focus and plan are saved; review them before joining."
         : "Needs preparation — build the focus and plan before the call.";
-      const prepHref = `${appUrl}/crm/prep?upcoming=${encodeURIComponent(call.id)}`;
+      const prepHref = `${appUrl}/call?upcoming=${encodeURIComponent(call.id)}`;
       return `<a href="${esc(prepHref)}" style="color:#1c1b19;text-decoration:none;"><strong>${esc(time)} · ${esc(call.title || company || "Call")}</strong>${company && call.title !== company ? ` <span style="color:#858078;">(${esc(company)})</span>` : ""}</a>${detailList([
         { label: "Purpose", text: intent || "No call intent is saved yet." },
         { label: "Relationship context", text: relationship },

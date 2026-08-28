@@ -376,16 +376,11 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
     router.push(callHref(c, armed));
   };
 
-  // Open the dedicated prep screen for this call: past call summaries plus a
-  // suggested, up-to-date intent. Needs a linked client (that's what the history
-  // and suggestion read from), so fall back to opening the call screen if none.
+  // Preparation and the live call now share one canonical workspace. This keeps
+  // the correct scheduled-call identity, saved intent, research, focus and plan
+  // together instead of making the user cross a duplicate prep page.
   const openPrep = (c: Upcoming) => {
-    if (!c.company_id) return openCall(c);
-    const qs = new URLSearchParams();
-    qs.set("company", c.company_id);
-    if (c.company) qs.set("companyName", c.company);
-    qs.set("upcoming", c.id);
-    router.push(`/crm/prep?${qs.toString()}`);
+    openCall(c);
   };
 
   const inputCls =

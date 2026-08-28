@@ -23,6 +23,7 @@ export type ClientPortfolioRow = {
   triageReviewedAt: string | null;
   archived: boolean;
   category: string;
+  createdAt: string | null;
   primaryContact: null | { name: string; role: string | null; email: string | null };
   health: ClientHealth;
   healthReason: string;
@@ -252,6 +253,12 @@ function MobileClientCard({
           </p>
         </Link>
         <Link href={`/crm/${row.id}`} className="min-w-0 rounded-md hover:bg-bone/[0.035]">
+          <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Date added</p>
+          <p className="truncate font-sans text-[0.76rem] text-bone/80">
+            {activityDate(row.createdAt)}
+          </p>
+        </Link>
+        <Link href={`/crm/${row.id}`} className="min-w-0 rounded-md hover:bg-bone/[0.035]">
           <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">Commercial</p>
           <p className="truncate font-sans text-[0.76rem] text-bone/80">
             {row.opportunity ? `${row.opportunity.probability}% · ${gbp(row.opportunity.value)}` : "No open deal"}
@@ -342,7 +349,7 @@ export default function ClientPortfolio({
   );
   const [showAdd, setShowAdd] = useState(false);
   const [sort, setSort] = useState<{
-    key: "priority" | "health" | "name" | "owner" | "contact" | "stage" | "lastActivity" | "nextMeeting" | "commercial" | "nextMove";
+    key: "priority" | "health" | "name" | "owner" | "contact" | "stage" | "added" | "lastActivity" | "nextMeeting" | "commercial" | "nextMove";
     direction: "asc" | "desc";
   }>({ key: "priority", direction: "asc" });
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
@@ -395,6 +402,7 @@ export default function ClientPortfolio({
           row.nextAction,
           row.buyingSignal,
           row.lastCallTitle,
+          activityDate(row.createdAt),
           activityDate(row.lastTouchAt),
           meetingDate(row.nextMeetingAt),
         ]
@@ -425,6 +433,8 @@ export default function ClientPortfolio({
           comparison = textValue(a).localeCompare(textValue(b), "en-GB", { sensitivity: "base" });
         } else if (sort.key === "lastActivity") {
           comparison = timestamp(a.lastTouchAt, -Infinity) - timestamp(b.lastTouchAt, -Infinity);
+        } else if (sort.key === "added") {
+          comparison = timestamp(a.createdAt, -Infinity) - timestamp(b.createdAt, -Infinity);
         } else if (sort.key === "nextMeeting") {
           comparison = timestamp(a.nextMeetingAt, Infinity) - timestamp(b.nextMeetingAt, Infinity);
         } else if (sort.key === "commercial") {
@@ -444,7 +454,7 @@ export default function ClientPortfolio({
       }
       return {
         key,
-        direction: key === "lastActivity" || key === "commercial" ? "desc" : "asc",
+        direction: key === "added" || key === "lastActivity" || key === "commercial" ? "desc" : "asc",
       };
     });
   };
@@ -600,7 +610,7 @@ export default function ClientPortfolio({
       </div>
 
       <div className="hidden overflow-x-auto rounded-xl border border-edge md:block">
-        <table className="w-full min-w-[1040px] border-collapse text-left">
+        <table className="w-full min-w-[1140px] border-collapse text-left">
           <thead className="sticky top-0 z-10 bg-ink">
             <tr className="border-b border-edge">
               {[
@@ -609,6 +619,7 @@ export default function ClientPortfolio({
                 ["owner", "Sales owner"],
                 ["contact", "Main contact"],
                 ["stage", "Stage"],
+                ["added", "Date added"],
                 ["lastActivity", "Last activity"],
                 ["nextMeeting", "Next meeting"],
                 ["commercial", "Commercial position"],
@@ -666,6 +677,11 @@ export default function ClientPortfolio({
                       editable={canManageAssignments || row.assignedToUserId === currentUser}
                       onChange={onStageChange}
                     />
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3">
+                    <Link href={`/crm/${row.id}`} className="block hover:text-amber">
+                      <p className="font-sans text-[0.74rem] text-bone/80">{activityDate(row.createdAt)}</p>
+                    </Link>
                   </td>
                   <td className="whitespace-nowrap px-3 py-3">
                     <div>

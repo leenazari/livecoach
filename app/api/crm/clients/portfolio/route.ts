@@ -357,6 +357,8 @@ export async function GET() {
           typeof triage.reviewedAt === "string" ? triage.reviewedAt : null,
         archived,
         category,
+        createdAt:
+          typeof company.created_at === "string" ? company.created_at : null,
         primaryContact: primaryContact
           ? {
               name: primaryContact.name,
