@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  connectorReturnOrigin,
   internalAppOrigin,
   publicAppOrigin,
 } from "../lib/public-app-url.ts";
@@ -8,6 +9,7 @@ const keys = [
   "VERCEL",
   "VERCEL_ENV",
   "VERCEL_URL",
+  "VERCEL_BRANCH_URL",
   "VERCEL_PROJECT_PRODUCTION_URL",
   "NEXT_PUBLIC_APP_URL",
 ];
@@ -27,6 +29,28 @@ try {
     publicAppOrigin("http://localhost:3000"),
     "https://www.livecoachcrm.com",
     "production email links must reject localhost and legacy Vercel aliases"
+  );
+  assert.equal(
+    connectorReturnOrigin("https://livecoach-alpha.vercel.app"),
+    "https://livecoach-alpha.vercel.app",
+    "OAuth must return to the trusted alias that owns the user's session cookie"
+  );
+  assert.equal(
+    connectorReturnOrigin(
+      "https://livecoach-example-leenazari-1116s-projects.vercel.app"
+    ),
+    "https://livecoach-example-leenazari-1116s-projects.vercel.app",
+    "project-owned preview aliases must preserve their own session cookie"
+  );
+  assert.equal(
+    connectorReturnOrigin("https://attacker.example"),
+    "https://www.livecoachcrm.com",
+    "an untrusted OAuth return origin must fail closed to the official domain"
+  );
+  assert.equal(
+    connectorReturnOrigin("https://livecoachcrm.com"),
+    "https://www.livecoachcrm.com",
+    "the redirecting apex domain must resolve to the canonical session origin"
   );
 
   reset();

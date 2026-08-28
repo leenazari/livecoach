@@ -13,7 +13,7 @@ const middleware = read("middleware.ts");
 
 assert.match(start, /requireRequestScope/);
 assert.match(start, /createGoogleOAuthState/);
-assert.match(start, /publicAppOrigin\(request\.nextUrl\.origin\)/);
+assert.match(start, /connectorReturnOrigin\(request\.nextUrl\.origin\)/);
 assert.doesNotMatch(start, /Math\.random/);
 
 assert.match(callback, /verifyGoogleOAuthState/);

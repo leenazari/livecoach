@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildAuthUrl, googleConfigured } from "@/lib/google";
 import { createGoogleOAuthState } from "@/lib/google-oauth-state";
-import { publicAppOrigin } from "@/lib/public-app-url";
+import { connectorReturnOrigin } from "@/lib/public-app-url";
 import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     const state = createGoogleOAuthState({
       userId: scope.userId,
       workspaceId: scope.workspaceId,
-      returnOrigin: publicAppOrigin(request.nextUrl.origin),
+      returnOrigin: connectorReturnOrigin(request.nextUrl.origin),
       onboarding: scope.status === "onboarding",
     });
     const response = NextResponse.redirect(buildAuthUrl(state));
