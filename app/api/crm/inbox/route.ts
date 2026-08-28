@@ -337,7 +337,7 @@ export async function GET() {
         waiting: false,
         done: false,
         editable: false,
-        dismissible: false,
+        dismissible: true,
       });
     }
 

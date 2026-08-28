@@ -79,7 +79,7 @@ async function deriveClientsFromTitles(
 // intent or prep on an existing row. Supports Google and Microsoft accounts.
 async function runCalendarSync() {
   try {
-    await resolveRecordScope();
+    const scope = await resolveRecordScope();
     const now = Date.now();
     const timeMin = new Date(now - 3 * 60 * 60 * 1000).toISOString();
     const timeMax = new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -97,6 +97,8 @@ async function runCalendarSync() {
     const { data: exclusionRows, error: exclusionError } = await supabaseAdmin
       .from("calendar_event_exclusions")
       .select("external_id")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
       .eq("source", source)
       .limit(2000);
     if (exclusionError) throw exclusionError;
