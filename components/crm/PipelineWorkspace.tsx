@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   CONTACT_METHODS,
   ENGAGEMENT_MOTIONS,
@@ -416,7 +417,7 @@ export default function PipelineWorkspace(props: Props) {
             : "No revenue deals are assigned to this view."}
         </p>
       ) : null}
-      {editorRow ? (
+      {editorRow ? createPortal(
         <div className="fixed inset-0 z-[90]" role="presentation">
           <button
             type="button"
@@ -474,7 +475,8 @@ export default function PipelineWorkspace(props: Props) {
               <DealDetails key={editorRow.id} {...props} row={editorRow} />
             </div>
           </section>
-        </div>
+        </div>,
+        document.body
       ) : null}
     </section>
   );

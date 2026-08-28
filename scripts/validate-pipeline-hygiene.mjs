@@ -61,6 +61,7 @@ assert.match(pipeline, /aria-haspopup="dialog"/);
 assert.match(pipeline, /role="dialog"/);
 assert.match(pipeline, /Deal workspace/);
 assert.match(pipeline, /sm:w-\[min\(960px,calc\(100vw-2rem\)\)\]/);
+assert.match(pipeline, /createPortal/);
 assert.equal(
   (pipeline.match(/<DealDetails/g) || []).length,
   1,
