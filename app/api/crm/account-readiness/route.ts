@@ -71,6 +71,7 @@ export async function GET() {
       profilesResult,
       googleResult,
       microsoftResult,
+      linkedinResult,
       salesProfilesResult,
       calendarSyncResult,
       prospectsResult,
@@ -93,6 +94,11 @@ export async function GET() {
       supabaseService
         .from("microsoft_oauth")
         .select("owner_id,email,refresh_token,scopes,updated_at")
+        .eq("workspace_id", scope.workspaceId)
+        .in("owner_id", memberIds),
+      supabaseService
+        .from("linkedin_oauth")
+        .select("owner_id,email,display_name,expiry,scopes")
         .eq("workspace_id", scope.workspaceId)
         .in("owner_id", memberIds),
       supabaseService
@@ -154,6 +160,7 @@ export async function GET() {
       profilesResult,
       googleResult,
       microsoftResult,
+      linkedinResult,
       salesProfilesResult,
       calendarSyncResult,
       prospectsResult,
@@ -173,6 +180,9 @@ export async function GET() {
     );
     const microsoftByUser = new Map(
       (microsoftResult.data || []).map((row: any) => [row.owner_id, row])
+    );
+    const linkedinByUser = new Map(
+      (linkedinResult.data || []).map((row: any) => [row.owner_id, row])
     );
     const salesProfileComplete = new Set(
       (salesProfilesResult.data || [])
@@ -271,6 +281,7 @@ export async function GET() {
       const profile = profileByUser.get(userId) as any;
       const google = googleByUser.get(userId) as any;
       const microsoft = microsoftByUser.get(userId) as any;
+      const linkedin = linkedinByUser.get(userId) as any;
       const googleStored = !!google?.refresh_token;
       const microsoftStored = !!microsoft?.refresh_token;
       const connectedProviderCount = Number(googleStored) + Number(microsoftStored);
@@ -310,6 +321,17 @@ export async function GET() {
         "Calendars.Read",
         "Calendars.ReadWrite"
       );
+      const linkedinExpiry = linkedin?.expiry
+        ? Date.parse(linkedin.expiry)
+        : Number.NaN;
+      const linkedinConnected =
+        Number.isFinite(linkedinExpiry) && linkedinExpiry > Date.now();
+      const linkedinSocialAccess = (Array.isArray(linkedin?.scopes)
+        ? linkedin.scopes
+        : []
+      )
+        .map((value: unknown) => String(value || "").toLowerCase())
+        .includes("w_member_social");
       const isCurrent = userId === scope.userId;
       const currentGoogleRead =
         liveGoogleScopes.has(GMAIL_READ_SCOPE) || liveGmail.status === "ok";
@@ -356,6 +378,8 @@ export async function GET() {
               ? googleStored
               : microsoftCalendar,
         lastCalendarSyncAt: calendarSyncByUser.get(userId) || null,
+        linkedinConnected,
+        linkedinSocialAccess,
         transcriberName:
           profile?.transcriber_name ||
           deriveTranscriberName(profile?.display_name || null),

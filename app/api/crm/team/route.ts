@@ -168,6 +168,7 @@ export async function GET() {
       { data: profiles, error: profilesError },
       { data: googleRows, error: googleError },
       { data: microsoftRows, error: microsoftError },
+      { data: linkedinRows, error: linkedinError },
       { data: botRows, error: botRowsError },
       { data: salesProfileRows, error: salesProfilesError },
     ] =
@@ -184,6 +185,11 @@ export async function GET() {
             supabaseService
               .from("microsoft_oauth")
               .select("owner_id,email,refresh_token")
+              .in("owner_id", memberIds),
+            supabaseService
+              .from("linkedin_oauth")
+              .select("owner_id,email,display_name,expiry,scopes")
+              .eq("workspace_id", scope.workspaceId)
               .in("owner_id", memberIds),
             supabaseService
               .from("meet_bots")
@@ -204,10 +210,12 @@ export async function GET() {
             { data: [], error: null },
             { data: [], error: null },
             { data: [], error: null },
+            { data: [], error: null },
           ];
     if (profilesError) throw profilesError;
     if (googleError) throw googleError;
     if (microsoftError) throw microsoftError;
+    if (linkedinError) throw linkedinError;
     if (botRowsError) throw botRowsError;
     if (salesProfilesError) throw salesProfilesError;
 
@@ -247,6 +255,9 @@ export async function GET() {
     const microsoftByUser = new Map(
       (microsoftRows || []).map((row: any) => [row.owner_id, row])
     );
+    const linkedinByUser = new Map(
+      (linkedinRows || []).map((row: any) => [row.owner_id, row])
+    );
     const setupByUser = new Map(setupEntries);
     const completedSalesProfiles = new Set(
       (salesProfileRows || [])
@@ -263,6 +274,7 @@ export async function GET() {
       const profile = profileByUser.get(member.user_id) as any;
       const google = googleByUser.get(member.user_id) as any;
       const microsoft = microsoftByUser.get(member.user_id) as any;
+      const linkedin = linkedinByUser.get(member.user_id) as any;
       const memberEmail = normalizeEmail(profile?.email);
       const googleEmail = normalizeEmail(google?.email);
       const microsoftEmail = normalizeEmail(microsoft?.email);
@@ -288,6 +300,11 @@ export async function GET() {
         separateIdentity &&
         !!normalizeEmail(profile?.outreach_sender_email) &&
         !!String(profile?.outreach_sender_name || "").trim();
+      const linkedinExpiry = linkedin?.expiry
+        ? Date.parse(linkedin.expiry)
+        : Number.NaN;
+      const linkedinConnected =
+        Number.isFinite(linkedinExpiry) && linkedinExpiry > Date.now();
       const transcriberUsage = calculateTranscriberUsage(
         botRows || [],
         member.user_id,
@@ -308,6 +325,8 @@ export async function GET() {
             ? "microsoft"
             : null,
         mailboxConnected: !!google?.refresh_token || !!microsoft?.refresh_token,
+        linkedinConnected,
+        linkedinDisplayName: linkedin?.display_name || linkedin?.email || null,
         outreachSenderName: profile?.outreach_sender_name || profile?.display_name || null,
         outreachSenderEmail: profile?.outreach_sender_email || mailboxEmail || null,
         canActivate:

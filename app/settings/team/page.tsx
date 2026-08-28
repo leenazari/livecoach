@@ -18,6 +18,8 @@ type Member = {
   microsoftEmail: string | null;
   mailboxProvider: "google" | "microsoft" | null;
   mailboxConnected: boolean;
+  linkedinConnected: boolean;
+  linkedinDisplayName: string | null;
   transcriberName: string;
   outreachSenderName: string | null;
   outreachSenderEmail: string | null;
@@ -397,6 +399,14 @@ export default function TeamAccessPage() {
                           ? "Brain, outreach and live coaching now use this person's own working preferences"
                           : "This person completes their own role, products, customers, tone and coaching preferences in My Sales Setup",
                         complete: member.setup.salesProfileComplete,
+                      },
+                      {
+                        id: "linkedin",
+                        label: "Own LinkedIn account connected",
+                        detail: member.linkedinConnected
+                          ? `Connected${member.linkedinDisplayName ? ` as ${member.linkedinDisplayName}` : ""}`
+                          : "This person connects their own LinkedIn identity in Settings. It is never shared with another salesperson",
+                        complete: member.linkedinConnected,
                       },
                       {
                         id: "sender",

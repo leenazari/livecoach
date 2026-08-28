@@ -19,6 +19,8 @@ assert.match(helperSource, /type AccountReadinessFacts/);
 assert.match(helperSource, /connectedProviderCount > 1/);
 assert.match(helperSource, /privacyTestConfirmedAt/);
 assert.match(helperSource, /Each user receives a separate call bot/);
+assert.match(helperSource, /"linkedin"/);
+assert.match(helperSource, /Connect your own LinkedIn identity/);
 
 assert.match(api, /requireRequestScope\(\)/);
 assert.match(api, /if \(scope\.role !== "owner"\)/);
@@ -26,6 +28,8 @@ assert.match(api, /membershipQuery\.eq\("user_id", scope\.userId\)/);
 assert.match(api, /scope\.role === "owner"\s*\? \{ team \}/);
 assert.match(api, /Cache-Control": "private, no-store"/);
 assert.match(api, /aiUsed: false/);
+assert.match(api, /\.from\("linkedin_oauth"\)/);
+assert.doesNotMatch(api, /linkedin_oauth[\s\S]{0,180}access_token/);
 assert.match(api, /\.select\("owner_id,created_at"\)/);
 assert.doesNotMatch(api, /\.select\([^)]*body_text/);
 assert.doesNotMatch(api, /\.select\([^)]*email_context/);
@@ -72,6 +76,8 @@ const base = {
   senderVerified: true,
   calendarConnected: true,
   lastCalendarSyncAt: "2026-08-27T08:00:00.000Z",
+  linkedinConnected: true,
+  linkedinSocialAccess: false,
   transcriberName: "Test Seller's LiveCoach Notetaker",
   transcriberPlatformReady: true,
   assignedProspects: 2,
@@ -85,7 +91,20 @@ const base = {
 
 const ready = buildAccountReadiness(base, new Date("2026-08-27T12:00:00.000Z"));
 assert.equal(ready.isReady, true);
-assert.equal(ready.readyCount, 9);
+assert.equal(ready.readyCount, 10);
+
+const linkedinMissing = buildAccountReadiness({
+  ...base,
+  linkedinConnected: false,
+});
+assert.equal(
+  linkedinMissing.checks.find((check) => check.id === "linkedin")?.state,
+  "action"
+);
+assert.equal(
+  linkedinMissing.checks.find((check) => check.id === "linkedin")?.href,
+  "/settings#linkedin"
+);
 
 const duplicateMailbox = buildAccountReadiness({
   ...base,
