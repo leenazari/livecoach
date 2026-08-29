@@ -140,6 +140,10 @@ assert.doesNotMatch(alerts, /openai|anthropic|messages\.create/i);
 
 assert.match(page, /Notification\.requestPermission\(\)/);
 assert.match(page, /onClick=\{\(\) => void enableDesktop\(\)\}/);
+assert.match(page, /Browsers will not show the permission prompt again/);
+assert.match(page, /I allowed it, check again/);
+assert.match(page, /notificationPermissionHelp/);
+assert.match(page, /window\.addEventListener\("focus", refresh\)/);
 assert.match(page, /Changes save immediately/);
 assert.match(page, /useDeferredValue/);
 assert.match(page, /Snooze 1 day/);

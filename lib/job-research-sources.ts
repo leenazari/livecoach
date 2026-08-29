@@ -6,6 +6,11 @@ export type JobResearchSignal = {
   sourceUrl: string;
 };
 
+export type VerifiedJobResearchEvidence = {
+  jobBoardUrl: string;
+  jobSignals: JobResearchSignal[];
+};
+
 type CampaignResearchContract = {
   name?: unknown;
   audience?: unknown;
@@ -72,6 +77,13 @@ export function isOfficialJobResearchUrl(
   value: unknown,
   prospect: { website?: unknown; company_domain?: unknown }
 ): boolean {
+  const raw = String(value || "").trim();
+  try {
+    const parsed = new URL(raw);
+    if (!/^https?:$/.test(parsed.protocol)) return false;
+  } catch {
+    return false;
+  }
   const hostname = researchHostname(value);
   if (!hostname || isLinkedInResearchUrl(value)) return false;
   return officialJobSearchDomains(prospect).some((domain) =>
@@ -168,6 +180,112 @@ export function officialResearchSources<T extends { url?: unknown }>(
   return (Array.isArray(sources) ? sources : [])
     .filter((source) => isOfficialJobResearchUrl(source?.url, prospect))
     .slice(0, 8);
+}
+
+const JOB_BOARD_PATH_PARTS = new Set([
+  "career",
+  "careers",
+  "job",
+  "jobs",
+  "join-us",
+  "opportunities",
+  "roles",
+  "vacancies",
+  "work-with-us",
+]);
+
+function jobBoardSourceScore(source: { url?: unknown; title?: unknown }): number {
+  const raw = clean(source?.url, 1200);
+  if (!raw) return -1;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return -1;
+  }
+  const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  const parts = parsed.pathname
+    .toLowerCase()
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const title = clean(source?.title, 240).toLowerCase();
+  let score = /\b(?:careers|jobs|open roles|opportunities|vacancies)\b/.test(title)
+    ? 35
+    : 0;
+
+  if (parts.length === 1 && JOB_BOARD_PATH_PARTS.has(parts[0])) score += 120;
+  if (parts.length === 2 && JOB_BOARD_PATH_PARTS.has(parts[1])) score += 110;
+  if (
+    parts.length === 2 &&
+    JOB_BOARD_PATH_PARTS.has(parts[0]) &&
+    /^(?:all|open|search)$/.test(parts[1])
+  ) {
+    score += 105;
+  }
+
+  const publicAts = PUBLIC_JOB_SOURCE_DOMAINS.some((domain) =>
+    isSameOrSubdomain(hostname, domain)
+  );
+  if (publicAts) {
+    const obviousVacancy =
+      parts.includes("j") ||
+      (parts.includes("jobs") && parts.length > 2) ||
+      (parts.includes("job") && parts.length > 1);
+    if (obviousVacancy) return -1;
+    if (parts.length === 1) score += 95;
+    else if (parts.length === 2) score += 75;
+  }
+
+  // A company URL such as /job/head-of-product is a vacancy, not its jobs
+  // index. We never manufacture the parent URL because the exact source may
+  // not exist or may use different routing.
+  if (
+    parts.length > 1 &&
+    (parts[0] === "job" ||
+      (parts[0] === "jobs" && !/^(?:all|open|search)$/.test(parts[1])))
+  ) {
+    return -1;
+  }
+  return score;
+}
+
+export function officialJobBoardUrl<T extends { url?: unknown; title?: unknown }>(
+  sources: T[],
+  prospect: { website?: unknown; company_domain?: unknown }
+): string {
+  return officialResearchSources(sources, prospect)
+    .map((source, index) => ({
+      index,
+      score: jobBoardSourceScore(source),
+      url: clean(source?.url, 1200),
+    }))
+    .filter((source) => source.score >= 70)
+    .sort((left, right) => right.score - left.score || left.index - right.index)[0]
+    ?.url || "";
+}
+
+export function verifiedJobResearchEvidence(
+  research: unknown,
+  sources: Array<{ url?: unknown; title?: unknown }>,
+  prospect: { website?: unknown; company_domain?: unknown }
+): VerifiedJobResearchEvidence {
+  const record = research && typeof research === "object"
+    ? research as Record<string, any>
+    : {};
+  const jobBoardUrl = officialJobBoardUrl(
+    [
+      ...(record.jobBoardUrl
+        ? [{ url: record.jobBoardUrl, title: "Official company jobs" }]
+        : []),
+      ...(Array.isArray(sources) ? sources : []),
+    ],
+    prospect
+  );
+  return {
+    jobBoardUrl,
+    jobSignals: sanitiseJobResearchSignals(record.jobSignals, prospect),
+  };
 }
 
 export const VERIFIED_PUBLIC_JOB_SOURCE_DOMAINS = [

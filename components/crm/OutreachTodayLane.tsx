@@ -23,6 +23,14 @@ type SavedResearch = {
   summary?: string;
   signals?: string[];
   activeJobs?: string[];
+  jobBoardUrl?: string | null;
+  jobSignals?: Array<{
+    role: string;
+    location?: string;
+    compensation?: string;
+    recency?: string;
+    sourceUrl: string;
+  }>;
   likelyNeeds?: string[];
   bestAngle?: string;
   personalisationFact?: string;
@@ -66,6 +74,8 @@ type QueueRow = {
     last_name?: string;
     job_title?: string;
     company_name?: string;
+    company_domain?: string;
+    website?: string;
     email?: string;
   };
   campaign?: { name?: string; daily_limit?: number };
@@ -97,6 +107,11 @@ type QueueResponse = {
 const PREPARE_QUEUE_KEY = "livecoach:sales-today-prepare-queue:v1";
 const MAX_CONCURRENT_RESEARCH = 2;
 const DAILY_QUEUE_TARGET = 20;
+
+const safeExternalUrl = (value: unknown) => {
+  const url = String(value || "").trim();
+  return /^https?:\/\//i.test(url) ? url : "";
+};
 
 type DraftEdit = { subject: string; body: string; voiceScript: string };
 type ReplyAction = { text: string; dueAt: string };
@@ -1272,8 +1287,15 @@ export default function OutreachTodayLane({
                 research.personalisationFact ||
                 research.signals?.length ||
                 research.activeJobs?.length ||
+                research.jobBoardUrl ||
+                research.jobSignals?.length ||
                 research.likelyNeeds?.length
             );
+            const researchPoints = [
+              ...(research.signals || []),
+              ...(research.jobSignals?.length ? [] : research.activeJobs || []),
+              ...(research.likelyNeeds || []),
+            ];
 
             return (
               <li
@@ -1563,9 +1585,42 @@ export default function OutreachTodayLane({
                             {research.bestAngle ? (
                               <p><strong className="text-bone">Best angle. </strong>{research.bestAngle}</p>
                             ) : null}
-                            {[...(research.signals || []), ...(research.activeJobs || []), ...(research.likelyNeeds || [])].length ? (
+                            {safeExternalUrl(research.jobBoardUrl) ? (
+                              <a
+                                href={safeExternalUrl(research.jobBoardUrl)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex min-h-9 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 py-2 font-mono text-[0.5rem] uppercase tracking-wider text-amber hover:bg-amber/20"
+                              >
+                                Open company job board ↗
+                              </a>
+                            ) : null}
+                            {research.jobSignals?.length ? (
+                              <div>
+                                <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">
+                                  Verified vacancies
+                                </p>
+                                <ul className="mt-2 space-y-2">
+                                  {research.jobSignals.map((job) => {
+                                    const href = safeExternalUrl(job.sourceUrl);
+                                    const detail = [job.location, job.compensation, job.recency]
+                                      .filter(Boolean)
+                                      .join(" · ");
+                                    return href ? (
+                                      <li key={`${job.role}:${href}`} className="rounded-lg border border-edge bg-ink/35 px-3 py-2">
+                                        <a href={href} target="_blank" rel="noreferrer" className="font-medium text-amber hover:underline">
+                                          {job.role} ↗
+                                        </a>
+                                        {detail ? <p className="mt-1 text-[0.68rem] text-muted">{detail}</p> : null}
+                                      </li>
+                                    ) : null;
+                                  })}
+                                </ul>
+                              </div>
+                            ) : null}
+                            {researchPoints.length ? (
                               <ul className="space-y-1 border-l border-sky/25 pl-3 text-muted">
-                                {[...(research.signals || []), ...(research.activeJobs || []), ...(research.likelyNeeds || [])]
+                                {researchPoints
                                   .slice(0, 6)
                                   .map((point, pointIndex) => (
                                     <li key={`${pointIndex}:${point}`}>• {point}</li>

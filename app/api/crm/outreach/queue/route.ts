@@ -18,6 +18,7 @@ import {
 } from "@/lib/outreach-team-safety";
 import { outreachSequenceStepAt } from "@/lib/outreach-sequence";
 import { loadSendPilotOutreachContext } from "@/lib/sendpilot-outreach";
+import { verifiedJobResearchEvidence } from "@/lib/job-research-sources";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -32,8 +33,17 @@ function safetyResponse(error: any) {
 const asText = (value: unknown, max = 800) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
 
-function compactSavedResearch(value: unknown) {
+function compactSavedResearch(
+  value: unknown,
+  researchSources: unknown,
+  prospect: { website?: unknown; company_domain?: unknown }
+) {
   const source = value && typeof value === "object" ? (value as Record<string, any>) : {};
+  const jobEvidence = verifiedJobResearchEvidence(
+    source,
+    Array.isArray(researchSources) ? researchSources : [],
+    prospect
+  );
   const list = (items: unknown, maxItems: number, maxLength = 220) =>
     Array.isArray(items)
       ? items
@@ -45,6 +55,8 @@ function compactSavedResearch(value: unknown) {
     summary: asText(source.summary, 600),
     signals: list(source.signals, 3),
     activeJobs: list(source.activeJobs, 4),
+    jobBoardUrl: jobEvidence.jobBoardUrl || null,
+    jobSignals: jobEvidence.jobSignals,
     likelyNeeds: list(source.likelyNeeds, 2),
     bestAngle: asText(source.bestAngle, 400),
     personalisationFact: asText(source.personalisationFact, 300),
@@ -161,7 +173,12 @@ async function loadQueue(
         (a: any, b: any) =>
           new Date(b.sent_at || 0).getTime() - new Date(a.sent_at || 0).getTime()
       )[0];
-    const research = compactSavedResearch(row.research || prospectMap.get(row.prospect_id)?.research);
+    const prospect = prospectMap.get(row.prospect_id);
+    const research = compactSavedResearch(
+      row.research || prospect?.research,
+      row.research_sources,
+      prospect || {}
+    );
     const campaign = campaignMap.get(row.campaign_id);
     const sequenceStep = outreachSequenceStepAt(
       campaign?.sequence,
@@ -187,7 +204,7 @@ async function loadQueue(
     const isFollowUp = sentCount > 0;
     return {
       ...row,
-      prospect: prospectMap.get(row.prospect_id),
+      prospect,
       campaign,
       sequenceStep,
       sequenceStepDue:
