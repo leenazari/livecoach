@@ -23,6 +23,14 @@ type VoiceMessage = {
   voice_script_approved_at?: string | null;
   voice_script_approved_by?: string | null;
   voice_script_approved_hash?: string | null;
+  strategy?: {
+    voiceUrgency?: {
+      type?: "verified_trigger" | "natural_next_moment" | string;
+      whyNow?: string | null;
+      evidence?: string | null;
+      includedInScript?: boolean;
+    } | null;
+  } | null;
 };
 
 export default function OutreachVoiceNoteEditor({
@@ -65,6 +73,11 @@ export default function OutreachVoiceNoteEditor({
     words > OUTREACH_VOICE_PREFERRED_MAX_WORDS
   );
   const overTargetCost = estimatedCostPence > OUTREACH_VOICE_TARGET_COST_GBP * 100;
+  const whyNow = String(message.strategy?.voiceUrgency?.whyNow || "").trim();
+  const whyNowIncluded = Boolean(
+    whyNow && script.toLocaleLowerCase("en-GB").includes(whyNow.toLocaleLowerCase("en-GB"))
+  );
+  const verifiedUrgency = message.strategy?.voiceUrgency?.type === "verified_trigger";
   const beyondSafetyLimit = words > 0 && (
     words > OUTREACH_VOICE_HARD_MAX_WORDS ||
     characters > OUTREACH_VOICE_HARD_MAX_CHARACTERS ||
@@ -113,6 +126,17 @@ export default function OutreachVoiceNoteEditor({
           className="w-full rounded-lg border border-edge bg-ink/55 px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60 disabled:opacity-60"
         />
       </label>
+      {whyNow ? (
+        <div className={`mt-2 rounded-lg border px-3 py-2 ${whyNowIncluded ? "border-moss/35 bg-moss/[0.06]" : "border-amber/45 bg-amber/[0.07]"}`}>
+          <p className={`font-mono text-[0.52rem] uppercase tracking-wider ${whyNowIncluded ? "text-moss" : "text-amber"}`}>
+            Why act now · {verifiedUrgency ? "verified current trigger" : "natural next moment"}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-bone/80">{whyNow}</p>
+          {!whyNowIncluded ? (
+            <p className="mt-1 text-xs leading-5 text-amber">Keep this gentle urgency in the script or prepare the draft again.</p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
         <p className={`text-xs ${beyondSafetyLimit ? "text-rust" : outsidePreferredRange || overTargetCost ? "text-amber" : "text-muted"}`}>
           {words} words · about {seconds} seconds · estimated {estimatedCostPence.toFixed(1)}p. Aim for about {OUTREACH_VOICE_TARGET_WORDS} words, usually {OUTREACH_VOICE_PREFERRED_MIN_WORDS} to {OUTREACH_VOICE_PREFERRED_MAX_WORDS}.
@@ -127,6 +151,7 @@ export default function OutreachVoiceNoteEditor({
                 generating ||
                 ready ||
                 scriptApproved ||
+                Boolean(whyNow && !whyNowIncluded) ||
                 beyondSafetyLimit ||
                 !script.trim()
               }
@@ -175,6 +200,9 @@ export default function OutreachVoiceNoteEditor({
           : scriptApproved
             ? "The exact script is approved. Generation still has not started and no voice cost has been incurred."
             : "Nothing is generated or charged until you approve this exact script and then press Generate voice."}
+      </p>
+      <p className="mt-1 text-xs leading-5 text-muted">
+        Urgency must come from a verified current trigger or the prospect&apos;s next natural business moment. Never from fake scarcity or an invented deadline.
       </p>
       {message.voice_error && message.voice_status === "failed" ? (
         <p className="mt-2 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-xs leading-5 text-rust">

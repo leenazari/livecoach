@@ -95,8 +95,16 @@ const OUTREACH_DRAFT_FORMAT = {
       voiceNote: {
         type: "object",
         additionalProperties: false,
-        required: ["script"],
-        properties: { script: { type: "string" } },
+        required: ["script", "whyNow", "urgencyType", "urgencyEvidence"],
+        properties: {
+          script: { type: "string" },
+          whyNow: { type: "string" },
+          urgencyType: {
+            type: "string",
+            enum: ["verified_trigger", "natural_next_moment"],
+          },
+          urgencyEvidence: { type: "string" },
+        },
       },
     },
   },
@@ -106,7 +114,12 @@ type CompleteOutreachDraft = {
   research: Record<string, any>;
   strategy: Record<string, any>;
   email: { subject: string; previewText?: string; bodyText: string };
-  voiceNote: { script: string };
+  voiceNote: {
+    script: string;
+    whyNow: string;
+    urgencyType: "verified_trigger" | "natural_next_moment";
+    urgencyEvidence: string;
+  };
 };
 
 const completeDraft = (value: any): value is CompleteOutreachDraft => !!(
@@ -225,7 +238,9 @@ BANNED PHRASES: ${banned.join(" | ") || "quick question | hope you are well | re
 
 The email must be plain text, 90 to 135 words, use short mobile friendly paragraphs, ask one easy question, and be signed exactly "${emailSignoff}". End with a natural one line opt out such as "If this is not relevant, tell me and I will not follow up." It must sound individually written by ${sender.senderName}, not like a template or a faceless product message. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Subject under 45 characters. Select one supported benefit and one approved next step from the campaign contract. Do not list unrelated Interviewa capabilities. Use a verified current vacancy only when it is relevant to this campaign. Use approved proof only when it appears in product truth and directly supports the selected angle. Be commercially vivid without hype. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? `This is a follow up. Do not repeat ${sender.senderName}'s full introduction or the opening email, and make it easy to close the loop.` : `This is the first email. After the personalised opening, introduce the sender naturally with: I’m ${sender.senderName} from Interviewa. Then explain Interviewa only through the selected campaign angle.`} ${includeBooking ? `Include this booking link once, naturally, as the optional next step: ${campaign.booking_url}` : "Do not include a calendar or booking link. Earn interest first."}
 
-VOICE NOTE: also write a separate spoken pitch for ${sender.senderName} to deliver in their own voice. Aim for about ${OUTREACH_VOICE_TARGET_WORDS} words and normally stay between ${OUTREACH_VOICE_PREFERRED_MIN_WORDS} and ${OUTREACH_VOICE_PREFERRED_MAX_WORDS} words so it lands at roughly 45 seconds. This is a naturalness target, not permission to cut a sentence. Always finish the final sentence cleanly. Personalisation matters more than hitting an exact word count. Use the recipient's first name, their exact company, and the single strongest current verified fact from the research, such as a relevant live vacancy or recent hiring signal. If no current fact is verified, use a clearly framed role and company specific hypothesis rather than inventing one. It must use the same campaign contract, sequence purpose, approved offer and verified prospect evidence as the email. Open with the recipient's first name and the precise campaign relevant reason this matters to them. Introduce ${sender.senderName} naturally, explain one campaign approved outcome, state one supported next step, and end with one simple invitation to reply. Do not use an offer, use case or CTA from another campaign. Do not read out a URL, email address, opt out line or subject. Do not copy the email word for word. Never invent urgency, familiarity, a customer result or a case study. Use British English, contractions where natural, short spoken sentences, and no hyphens, dashes or semicolons.
+VOICE NOTE: also write a separate spoken pitch for ${sender.senderName} to deliver in their own voice. Aim for about ${OUTREACH_VOICE_TARGET_WORDS} words and normally stay between ${OUTREACH_VOICE_PREFERRED_MIN_WORDS} and ${OUTREACH_VOICE_PREFERRED_MAX_WORDS} words so it lands at roughly 45 seconds. This is a naturalness target, not permission to cut a sentence. Always finish the final sentence cleanly. Personalisation matters more than hitting an exact word count. Use the recipient's first name, their exact company, and the single strongest current verified fact from the research, such as a relevant live vacancy or recent hiring signal. If no current fact is verified, use a clearly framed role and company specific hypothesis rather than inventing one. It must use the same campaign contract, sequence purpose, approved offer and verified prospect evidence as the email. Open with the recipient's first name and the precise campaign relevant reason this matters to them. Introduce ${sender.senderName} naturally, explain one campaign approved outcome, state one supported next step, and end with one simple invitation to reply. Do not use an offer, use case or CTA from another campaign. Do not read out a URL, email address, opt out line or subject. Do not copy the email word for word. Use British English, contractions where natural, short spoken sentences, and no hyphens, dashes or semicolons.
+
+TRUTHFUL MOMENTUM RULE: the voice note must create gentle urgency without sounding pushy. Include one short, complete why now sentence in the script and return that exact sentence as voiceNote.whyNow. Use urgencyType verified_trigger only when a current primary source or saved current interaction proves a real time sensitive trigger, such as a live vacancy, active hiring round, dated event, current candidate cohort or agreed follow up. Put that supporting fact in urgencyEvidence. Otherwise use urgencyType natural_next_moment and connect the invitation to the prospect's next natural operating moment, such as their next live role, interview round or candidate group, without claiming it is scheduled. The preferred pattern is "With those roles open now, this is a good point to test it on one live vacancy" or "The easiest way to judge it is on your next live role". Keep the action small and low risk. Never invent urgency, deadlines, scarcity, availability, business pressure, familiarity, a customer result or a case study. Never use "act now", "today only", "last chance", "limited availability", "slots are filling" or "do not miss out".
 
 APPROVED SEQUENCE BRIEF FOR THIS STEP:
 Purpose: ${clean(sequenceStep.purpose, 240)}
@@ -233,10 +248,10 @@ Content type: ${clean(sequenceStep.contentType || "plain", 60)}
 Extra guidance: ${clean(sequenceStep.guidance, 500) || "none"}
 ${sequenceStep.assetUrl ? `Approved asset link: ${clean(sequenceStep.assetUrl, 600)}. Include it once only if it directly supports this step, never invent what the asset contains.` : "No asset link is approved for this step."}
 
-Before writing, choose ONE evidence-backed reason this person should care now and ONE angle permitted by the campaign contract. The first sentence must be grounded in a verified fact or transparently framed hypothesis. Never mix several random use cases. Explain your evidence and choice in strategy so ${sender.senderName} can approve the thinking as well as the words.
+Before writing, choose ONE evidence-backed reason this person should care now and ONE angle permitted by the campaign contract. The first sentence must be grounded in a verified fact or transparently framed hypothesis. Never mix several random use cases. The voice note must include the exact why now sentence returned in voiceNote.whyNow. Explain the urgency basis and choice in strategy so ${sender.senderName} can approve the thinking as well as the words.
 
 Output exactly:
-{"research":{"summary":"max 65 words, only decision useful facts","signals":["max 3 factual current signals"],"activeJobs":["max 4 verified current or recent roles with location and recency when relevant to the campaign"],"jobSignals":[{"role":"verified role","location":"verified location or empty","recency":"verified date or current status","sourceUrl":"exact primary company or ATS vacancy URL"}],"volumeAssessment":"high|medium|low|unknown","volumeReason":"evidence based reason, max 35 words","likelyNeeds":["max 2 clearly labelled hypotheses"],"bestAngle":"one grounded angle permitted by the campaign contract","commercialPath":"customer deal|relationship|partnership plus one short reason","fitDecision":"contact now|hold|skip plus one short reason","personalisationFact":"one verifiable fact or empty string","approvedProof":"verified Interviewa case study or result from product truth, otherwise empty string","freshness":"what was checked and how current it is, max 25 words","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 55 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."},"voiceNote":{"script":"about 100 words, normally 80 to 120, fully personalised and ending with a complete sentence"}}`;
+{"research":{"summary":"max 65 words, only decision useful facts","signals":["max 3 factual current signals"],"activeJobs":["max 4 verified current or recent roles with location and recency when relevant to the campaign"],"jobSignals":[{"role":"verified role","location":"verified location or empty","recency":"verified date or current status","sourceUrl":"exact primary company or ATS vacancy URL"}],"volumeAssessment":"high|medium|low|unknown","volumeReason":"evidence based reason, max 35 words","likelyNeeds":["max 2 clearly labelled hypotheses"],"bestAngle":"one grounded angle permitted by the campaign contract","commercialPath":"customer deal|relationship|partnership plus one short reason","fitDecision":"contact now|hold|skip plus one short reason","personalisationFact":"one verifiable fact or empty string","approvedProof":"verified Interviewa case study or result from product truth, otherwise empty string","freshness":"what was checked and how current it is, max 25 words","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 55 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."},"voiceNote":{"script":"about 100 words, normally 80 to 120, fully personalised, gently urgent and ending with a complete sentence","whyNow":"one exact complete sentence copied from the script","urgencyType":"verified_trigger|natural_next_moment","urgencyEvidence":"verified current fact or honest next natural moment, max 30 words"}}`;
     const user = `PERSON
 Name: ${prospect.first_name || ""} ${prospect.last_name || ""}
 Role: ${prospect.job_title || ""}
@@ -343,8 +358,19 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       body_text: removeDashesFromProse(clean(parsed.email.bodyText, 4000)),
     };
     const voiceScript = normaliseOutreachVoiceScript(parsed.voiceNote.script);
+    const voiceWhyNow = normaliseOutreachVoiceScript(parsed.voiceNote.whyNow);
+    const voiceUrgencyType = parsed.voiceNote.urgencyType === "verified_trigger"
+      ? "verified_trigger"
+      : "natural_next_moment";
+    const voiceUrgencyEvidence = clean(parsed.voiceNote.urgencyEvidence, 300);
     const voiceWordCount = voiceScript.split(/\s+/).filter(Boolean).length;
     const voiceCharacterCount = voiceScript.length;
+    const voiceIncludesWhyNow = Boolean(
+      voiceWhyNow &&
+      voiceScript.toLocaleLowerCase("en-GB").includes(
+        voiceWhyNow.toLocaleLowerCase("en-GB")
+      )
+    );
     if (!/(not relevant|will not follow up|won't follow up|do not follow up)/i.test(email.body_text)) {
       email.body_text = `${email.body_text.trim()}\n\nIf this is not relevant, tell me and I will not follow up.`.slice(0, 4000);
     }
@@ -366,13 +392,15 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       voiceCharacterCount > OUTREACH_VOICE_HARD_MAX_CHARACTERS;
     if (voiceOutsidePreferredRange) qualityScore -= 8;
     if (voiceBeyondSafetyLimit) qualityScore -= 20;
+    if (!voiceIncludesWhyNow) qualityScore -= 15;
     if (!/(not relevant|will not follow up|won't follow up|do not follow up)/i.test(email.body_text)) qualityScore -= 15;
     qualityScore = Math.max(0, Math.min(formatRepaired ? 85 : 100, Math.min(qualityScore, Number(parsed.strategy.qualityScore) || 100)));
     const needsExtraReview =
       qualityScore < 70 ||
       formatRepaired ||
       voiceOutsidePreferredRange ||
-      voiceBeyondSafetyLimit;
+      voiceBeyondSafetyLimit ||
+      !voiceIncludesWhyNow;
     const strategy = {
       reasoning: clean(parsed.strategy.reasoning, 700),
       evidenceUsed: Array.isArray(parsed.strategy.evidenceUsed) ? parsed.strategy.evidenceUsed.map((item: any) => clean(item, 240)).filter(Boolean).slice(0, 3) : [],
@@ -380,12 +408,19 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       tone: clean(parsed.strategy.tone || voice.tone, 180),
       cta: clean(parsed.strategy.cta, 180),
       persona: clean(parsed.strategy.persona || prospect.job_title, 180),
+      voiceUrgency: {
+        type: voiceUrgencyType,
+        whyNow: voiceWhyNow,
+        evidence: voiceUrgencyEvidence,
+        includedInScript: voiceIncludesWhyNow,
+      },
       qualityChecks: {
         wordCount,
         questionCount,
         bannedHits,
         voiceWordCount,
         voiceCharacterCount,
+        voiceIncludesWhyNow,
       },
     };
     const messageTags = {
@@ -396,6 +431,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       step,
       variant,
       sequenceContentType: sequenceStep.contentType || "plain",
+      voiceUrgencyType,
     };
 
     const { data: previousDraft } = await supabaseAdmin
