@@ -370,9 +370,9 @@ export default function SalesProfilePage() {
             <div className="mt-5 rounded-2xl border border-edge bg-ink/25 p-4 sm:p-5">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <p className="text-sm text-bone">Your personal outreach voice</p>
+                  <p className="text-sm text-bone">Your sales outreach voice</p>
                   <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">
-                    Listen free, choose one stock voice, then save. Voice-note generation remains a separate approved action and can cost up to 5p.
+                    Listen free, choose one stock voice, then save. This is separate from Brain&apos;s voice. LiveCoach never uses Brain&apos;s voice for sales outreach. Voice-note generation remains a separate approved action and can cost up to 5p.
                   </p>
                 </div>
                 <span className={`w-fit rounded-full border px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider ${profile.outreachVoiceId ? "border-sage/45 bg-sage/10 text-sage" : "border-amber/45 bg-amber/10 text-amber"}`}>
@@ -432,7 +432,7 @@ export default function SalesProfilePage() {
                 </button>
               ) : null}
               <p className="mt-3 text-xs leading-5 text-muted">
-                The voice saved here belongs only to your login and follows you across every campaign. Campaigns can change the wording and guardrails, never the audio voice.
+                The voice saved here belongs only to your login and follows you across every campaign. Until you choose one, voice-note generation stops safely. Campaigns can change the wording and guardrails, never the audio voice.
               </p>
             </div>
           </section>
