@@ -295,11 +295,10 @@ export async function POST(req: NextRequest) {
     }
     const limit = Math.min(OUTREACH_DAILY_HARD_LIMIT, Math.max(1, Number(body.limit) || campaign.daily_limit || 20));
     const today = londonDate();
-    const existing = await loadQueue(
-      account.userId,
-      account.workspaceId,
-      campaign.id
-    );
+    // The hard limit applies to the salesperson's entire day, not separately
+    // to every campaign. The selected campaign controls where new work comes
+    // from, while already queued work from any campaign consumes capacity.
+    const existing = await loadQueue(account.userId, account.workspaceId);
     let selection = {
       contactToday: 0,
       firstTouches: 0,
@@ -505,7 +504,7 @@ export async function POST(req: NextRequest) {
       const [{ data: enrolments }, { data: suppressions }, { data: prospects }, { data: learnings }, crmGuard] = await Promise.all([
         supabaseAdmin.from("outreach_enrolments").select("id,campaign_id,prospect_id,status,queued_for,last_sent_at,recipient_email").eq("workspace_id", account.workspaceId).limit(5000),
         supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", account.workspaceId),
-        supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", account.workspaceId).or(`assigned_to_user_id.is.null,assigned_to_user_id.eq.${account.userId}`).in("status", ["imported", "queued"]).order("priority_score", { ascending: false }).limit(1000),
+        supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", account.workspaceId).or(`assigned_to_user_id.is.null,assigned_to_user_id.eq.${account.userId}`).in("status", ["imported", "queued", "ready"]).order("priority_score", { ascending: false }).limit(1000),
         supabaseAdmin.from("outreach_learnings").select("*").eq("workspace_id", account.workspaceId).eq("campaign_id", campaign.id).eq("status", "promoted").limit(100),
         outreachCrmGuard(),
       ]);
@@ -561,7 +560,13 @@ export async function POST(req: NextRequest) {
         const email = String(prospect.email || "").trim().toLowerCase();
         const domain = String(prospect.company_domain || "").trim().toLowerCase();
         const existingEnrolment = enrolmentByProspect.get(prospect.id);
-        const canResume = existingEnrolment && ["paused", "queued"].includes(existingEnrolment.status) && !existingEnrolment.queued_for;
+        // Prepared first-touch work must return to today's queue without
+        // spending research tokens again or losing the exact saved draft.
+        const canResume = existingEnrolment &&
+          ["paused", "queued", "researched", "drafted", "approved"].includes(existingEnrolment.status) &&
+          Number(existingEnrolment.current_step || 1) === 1 &&
+          !existingEnrolment.last_sent_at &&
+          !existingEnrolment.queued_for;
         if (!email || reservedEmailsForAnotherCampaign.has(email) || (existingEnrolment && !canResume) || blocked.has(email) || blocked.has(domain) || prospectHasBlockedCrmRelationship(prospect, crmGuard)) continue;
         if (recommendation.action !== "contact_today") {
           if (recommendation.action === "hold") held += 1;
@@ -597,7 +602,12 @@ export async function POST(req: NextRequest) {
         const existingEnrolment = enrolmentByProspect.get(prospect.id);
         let enrolmentId = existingEnrolment?.id;
         if (existingEnrolment) {
-          const { error } = await supabaseAdmin.from("outreach_enrolments").update({ queued_for: today, status: "queued", updated_at: new Date().toISOString() }).eq("id", existingEnrolment.id);
+          const resumedStatus = ["researched", "drafted", "approved"].includes(
+            existingEnrolment.status
+          )
+            ? existingEnrolment.status
+            : "queued";
+          const { error } = await supabaseAdmin.from("outreach_enrolments").update({ queued_for: today, status: resumedStatus, updated_at: new Date().toISOString() }).eq("id", existingEnrolment.id);
           if (error) {
             if (outreachSafetyError(error)) {
               held += 1;

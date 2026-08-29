@@ -13,6 +13,7 @@ const prospectRoute = read("app/api/crm/outreach/[id]/route.ts");
 const queueRoute = read("app/api/crm/outreach/queue/route.ts");
 const safety = read("lib/outreach-team-safety.ts");
 const outreachPage = read("app/crm/outreach/page.tsx");
+const todayLane = read("components/crm/OutreachTodayLane.tsx");
 
 assert.match(migration, /tg_table_name = 'outreach_prospects'[\s\S]*return new/);
 assert.match(migration, /tg_table_name = 'outreach_messages'[\s\S]*raise exception 'an outreach sender is required'/);
@@ -28,6 +29,20 @@ assert.match(prospectRoute, /Another teammate claimed this prospect first/);
 
 assert.match(queueRoute, /\.is\("assigned_to_user_id", null\)/);
 assert.match(queueRoute, /Another teammate claimed this prospect first/);
+assert.match(
+  queueRoute,
+  /const existing = await loadQueue\(account\.userId, account\.workspaceId\)/,
+  "The daily hard limit counts queued work from every campaign"
+);
+assert.match(
+  queueRoute,
+  /\.in\("status", \["imported", "queued", "ready"\]\)/,
+  "Prepared first-touch work can return to today's queue"
+);
+assert.match(
+  queueRoute,
+  /\["paused", "queued", "researched", "drafted", "approved"\]\.includes\(existingEnrolment\.status\)/
+);
 assert.match(safety, /"paused"/);
 
 // Salespeople land on a useful but still isolated view. They see their own
@@ -36,5 +51,9 @@ assert.match(safety, /"paused"/);
 assert.match(outreachPage, /setOwnerFilter\(data\.canManageAssignments === true \? "all" : "available"\)/);
 assert.match(outreachPage, /ownerFilter === "available"[\s\S]*?!prospect\.assigned_to_user_id[\s\S]*?prospect\.assigned_to_user_id === currentUser/);
 assert.match(outreachPage, /<option value="available">Mine and available<\/option>/);
+assert.match(outreachPage, /initialQueueFillAttemptedRef/);
+assert.match(outreachPage, /Fill today's remaining/);
+assert.match(todayLane, /initialQueueFillAttemptedRef/);
+assert.match(todayLane, /Entering Sales Today should supply the full free-to-rank worklist/);
 
 console.log("Shared outreach pool checks passed");
