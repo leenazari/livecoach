@@ -181,6 +181,10 @@ async function loadQueue(
       )
       .slice(0, 5)
       .map(compactMessage);
+    const sentCount = rows.filter(
+      (message: any) => message.status === "sent"
+    ).length;
+    const isFollowUp = sentCount > 0;
     return {
       ...row,
       prospect: prospectMap.get(row.prospect_id),
@@ -195,11 +199,20 @@ async function loadQueue(
       message: compactMessage(currentMessage),
       lastSentMessage: compactMessage(lastSentMessage),
       messageHistory,
+      queueKind: isFollowUp ? "follow_up" : "new_contact",
+      previousContact: lastSentMessage
+        ? {
+            sentAt: lastSentMessage.sent_at || null,
+            subject: lastSentMessage.subject || "",
+            stepNumber: Number(lastSentMessage.step_number) || 1,
+            fromEmail: lastSentMessage.from_email || "",
+          }
+        : null,
       savedResearch: research,
       researchSourceCount: Array.isArray(row.research_sources)
         ? row.research_sources.length
         : 0,
-      sentCount: rows.filter((message: any) => message.status === "sent").length,
+      sentCount,
       sendpilot: {
         connected: sendpilotContext.connected,
         webhookConfigured: sendpilotContext.webhookConfigured,
