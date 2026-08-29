@@ -128,23 +128,47 @@ export async function createConnectedMailDraft(
     text: string;
     threadId?: string;
     sourceMessageId?: string;
+    voiceNote?: {
+      url: string;
+      estimatedSeconds?: number | null;
+      previewText?: string | null;
+    };
   },
   ownerId?: string
 ): Promise<ConnectedMailDraftResult> {
   const connection = await connectedMailProvider(ownerId);
-  if (connection.provider === "google") {
-    const html = `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#171717">${String(
-      opts.text || ""
-    )
+  const safeText = String(opts.text || "").trim();
+  const voiceUrl = String(opts.voiceNote?.url || "").trim();
+  const seconds = Math.max(
+    20,
+    Math.min(90, Number(opts.voiceNote?.estimatedSeconds) || 50)
+  );
+  const previewText = String(opts.voiceNote?.previewText || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 220);
+  const escapeHtml = (value: string) =>
+    value
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
-      .replace(/\n/g, "<br>")}</div>`;
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  const providerText = voiceUrl
+    ? `${safeText}\n\nI recorded a short personal voice note for you.\nListen here\n${voiceUrl}${previewText ? `\n\nIn short, ${previewText}` : ""}`
+    : safeText;
+  if (connection.provider === "google") {
+    const voiceHtml = voiceUrl
+      ? `<div style="margin:24px 0;padding:18px;border:1px solid #d9a34a;border-radius:12px;background:#fffaf0"><p style="margin:0 0 12px"><strong>I recorded a short personal voice note for you.</strong></p><a href="${escapeHtml(voiceUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#b7791f;color:#ffffff;text-decoration:none;font-weight:600">Listen to the ${seconds} second message</a>${previewText ? `<p style="margin:12px 0 0;color:#555;font-size:13px;line-height:1.5">In short, ${escapeHtml(previewText)}</p>` : ""}</div>`
+      : "";
+    const html = `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#171717">${escapeHtml(
+      safeText
+    ).replace(/\n/g, "<br>")}${voiceHtml}</div>`;
     return createGmailDraft(
       {
         to: opts.to,
         subject: opts.subject,
-        text: opts.text,
+        text: providerText,
         html,
         threadId: opts.threadId,
         sourceMessageId: opts.sourceMessageId,
@@ -157,7 +181,7 @@ export async function createConnectedMailDraft(
       {
         to: opts.to,
         subject: opts.subject,
-        text: opts.text,
+        text: providerText,
         sourceMessageId: opts.sourceMessageId,
       },
       ownerId

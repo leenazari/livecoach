@@ -17,6 +17,7 @@ export type SalesProfile = {
   salesGoal: string;
   emailTone: EmailTone;
   emailSignoff: string;
+  bookingUrl: string;
   outreachVoiceId: string;
   outreachVoiceName: string;
   coachingStyle: CoachingStyle;
@@ -51,6 +52,7 @@ export const DEFAULT_SALES_PROFILE: SalesProfile = {
   salesGoal: "",
   emailTone: "warm_direct",
   emailSignoff: "",
+  bookingUrl: "",
   outreachVoiceId: "",
   outreachVoiceName: "",
   coachingStyle: "balanced",

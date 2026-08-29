@@ -42,6 +42,10 @@ const ClientTriage = dynamic(
   () => import("@/components/crm/ClientTriage"),
   { ssr: false, loading: tabLoading }
 );
+const OutreachVoiceNoteEditor = dynamic(
+  () => import("@/components/crm/OutreachVoiceNoteEditor"),
+  { ssr: false, loading: tabLoading }
+);
 
 type Tab = "tasks" | "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
@@ -211,7 +215,11 @@ function BoardInner() {
       setSaveError("That task was not removed. Please try again.");
     }
   };
-  const editNextMove = (id: string, field: "draft_subject" | "draft_body", value: string) => {
+  const editNextMove = (
+    id: string,
+    field: "draft_subject" | "draft_body" | "voice_script",
+    value: string
+  ) => {
     setNextMoveDrafts((items) =>
       items.map((item) => (item.id === id ? { ...item, [field]: value } : item))
     );
@@ -224,6 +232,7 @@ function BoardInner() {
         body: JSON.stringify({
           subject: draft.draft_subject,
           body: draft.draft_body,
+          voice_script: draft.voice_script || "",
         }),
       }
     );
@@ -266,6 +275,63 @@ function BoardInner() {
       setSaveNotice("Next-move draft saved in LiveCoach. It has not been sent.");
     } catch (error: any) {
       setSaveError(error?.message || "That draft did not save.");
+    } finally {
+      setNextMoveBusy("");
+    }
+  };
+  const approveNextMoveVoiceScript = async (draft: any) => {
+    setNextMoveBusy(`voice-approve:${draft.id}`);
+    setSaveError("");
+    setSaveNotice("");
+    try {
+      const result = await crmFetch<{ draft: any }>(
+        `/api/crm/email-assistant/drafts/${draft.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            subject: draft.draft_subject,
+            body: draft.draft_body,
+            voice_script: draft.voice_script || "",
+            approve_voice_script: true,
+          }),
+        }
+      );
+      setNextMoveDrafts((items) =>
+        items.map((item) =>
+          item.id === draft.id ? { ...item, ...result.draft } : item
+        )
+      );
+      setSaveNotice(
+        "The exact voice script is approved. No audio has been generated and no voice cost has been incurred."
+      );
+    } catch (error: any) {
+      setSaveError(error?.message || "That voice script was not approved.");
+    } finally {
+      setNextMoveBusy("");
+    }
+  };
+  const generateNextMoveVoice = async (draft: any) => {
+    setNextMoveBusy(`voice:${draft.id}`);
+    setSaveError("");
+    setSaveNotice("");
+    try {
+      const result = await crmFetch<{ draft: any; reused: boolean }>(
+        `/api/crm/email-assistant/drafts/${draft.id}/voice`,
+        { method: "POST" }
+      );
+      setNextMoveDrafts((items) =>
+        items.map((item) =>
+          item.id === draft.id ? { ...item, ...result.draft } : item
+        )
+      );
+      setSaveNotice(
+        result.reused
+          ? "The existing personal voice note is ready to preview."
+          : "The personal voice note is ready. It will be included if you approve this email into your provider drafts."
+      );
+    } catch (error: any) {
+      setSaveError(error?.message || "That personal voice note was not created.");
+      await load("drafts");
     } finally {
       setNextMoveBusy("");
     }
@@ -462,15 +528,19 @@ function BoardInner() {
                     <span className="text-muted">({nextMoveDrafts.length})</span>
                   </p>
                   <p className="mt-1 text-xs leading-5 text-muted">
-                    Edit here, then approve a copy into Gmail or Outlook. LiveCoach never
-                    sends these automatically.
+                    Edit the email and free voice script here. Audio is generated only after
+                    two explicit presses, then an approved copy goes into Gmail or Outlook.
+                    LiveCoach never sends these automatically.
                   </p>
                 </div>
               </div>
               <div className="space-y-3">
                 {nextMoveDrafts.map((draft) => {
                   const editable = draft.status === "draft" || draft.status === "blocked";
-                  const busy = nextMoveBusy === draft.id;
+                  const busy =
+                    nextMoveBusy === draft.id ||
+                    nextMoveBusy === `voice-approve:${draft.id}` ||
+                    nextMoveBusy === `voice:${draft.id}`;
                   const providerName =
                     draft.mail_provider === "google" ? "Gmail" : "Outlook";
                   return (
@@ -551,6 +621,37 @@ function BoardInner() {
                         />
                       </label>
 
+                      {draft.meeting_cta_recommended ? (
+                        draft.booking_url ? (
+                          <p className="mt-2 rounded-lg border border-sage/35 bg-sage/[0.06] px-3 py-2 text-xs leading-5 text-sage">
+                            Your personal booking link is included once. The voice page also
+                            gives this person a button to book directly with you.
+                          </p>
+                        ) : (
+                          <p className="mt-2 rounded-lg border border-amber/40 bg-amber/[0.06] px-3 py-2 text-xs leading-5 text-amber">
+                            A meeting is the suggested next step, but your own booking link is
+                            not saved. This reply asks for suitable times instead. Add your link
+                            in <Link href="/settings/sales-profile" className="underline">My Sales Setup</Link> for future drafts.
+                          </p>
+                        )
+                      ) : null}
+
+                      <div className="mt-3">
+                        <OutreachVoiceNoteEditor
+                          message={draft}
+                          script={draft.voice_script || ""}
+                          disabled={!editable}
+                          approving={nextMoveBusy === `voice-approve:${draft.id}`}
+                          generating={nextMoveBusy === `voice:${draft.id}`}
+                          kind="next-move"
+                          onScriptChange={(value) =>
+                            editNextMove(draft.id, "voice_script", value)
+                          }
+                          onApprove={() => void approveNextMoveVoiceScript(draft)}
+                          onGenerate={() => void generateNextMoveVoice(draft)}
+                        />
+                      </div>
+
                       {draft.last_error ? (
                         <p className="mt-2 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-xs leading-5 text-rust">
                           {draft.last_error}
@@ -580,7 +681,11 @@ function BoardInner() {
                               disabled={busy}
                               className="rounded-full border border-sage/55 bg-sage/10 px-3 py-1.5 font-mono text-[0.54rem] uppercase tracking-wider text-sage hover:bg-sage/20 disabled:opacity-40"
                             >
-                              {busy ? "Creating…" : `Approve to ${providerName} drafts`}
+                              {busy
+                                ? "Creating…"
+                                : draft.voice_status === "ready"
+                                  ? `Approve email + voice to ${providerName}`
+                                  : `Approve email to ${providerName} drafts`}
                             </button>
                           </>
                         ) : null}
@@ -607,7 +712,12 @@ function BoardInner() {
                       </div>
                       {draft.status === "handed_off" ? (
                         <p className="mt-2 text-xs leading-5 text-sage">
-                          Approved into {providerName}. It has not been sent by LiveCoach.
+                          Approved into {providerName}. {draft.voice_status === "ready" ? "The personal voice-note link is included. " : ""}It has not been sent by LiveCoach.
+                        </p>
+                      ) : editable && draft.voice_status !== "ready" ? (
+                        <p className="mt-2 text-xs leading-5 text-muted">
+                          You can approve the email without audio. Generate the voice first if
+                          you want its private listening link included in the provider draft.
                         </p>
                       ) : null}
                     </article>

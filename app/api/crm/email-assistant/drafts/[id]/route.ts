@@ -20,12 +20,14 @@ export async function PATCH(
     const draft = await updateEmailAssistantDraft(params.id, {
       subject: body?.subject,
       body: body?.body,
+      voiceScript: body?.voice_script,
+      approveVoiceScript: body?.approve_voice_script,
       action: body?.action,
     });
     return NextResponse.json({ ok: true, draft }, { headers: noStore });
   } catch (error: any) {
     const requested = Number(error?.status) || 500;
-    const status = [400, 404, 409].includes(requested) ? requested : 500;
+    const status = [400, 404, 409, 422].includes(requested) ? requested : 500;
     return NextResponse.json(
       {
         error:

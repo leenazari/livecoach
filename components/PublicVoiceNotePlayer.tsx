@@ -5,12 +5,15 @@ import { useRef } from "react";
 export default function PublicVoiceNotePlayer({
   token,
   senderName,
+  kind = "outreach",
 }: {
   token: string;
   senderName: string;
+  kind?: "outreach" | "next-move";
 }) {
   const recorded = useRef(false);
   const recordPlay = () => {
+    if (kind !== "outreach") return;
     if (recorded.current) return;
     recorded.current = true;
     void fetch(`/api/listen/${encodeURIComponent(token)}/played`, {
@@ -26,7 +29,11 @@ export default function PublicVoiceNotePlayer({
       preload="metadata"
       aria-label={`Personal voice message from ${senderName}`}
       onPlay={recordPlay}
-      src={`/api/listen/${encodeURIComponent(token)}/audio`}
+      src={
+        kind === "next-move"
+          ? `/api/listen/next-move/${encodeURIComponent(token)}/audio`
+          : `/api/listen/${encodeURIComponent(token)}/audio`
+      }
     >
       Your browser cannot play this audio message.
     </audio>

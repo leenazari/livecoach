@@ -99,12 +99,31 @@ export function outreachVoiceStoragePath(input: {
   ].join("/");
 }
 
+export function emailAssistantVoiceStoragePath(input: {
+  workspaceId: string;
+  ownerId: string;
+  draftId: string;
+  scriptHash: string;
+}): string {
+  return [
+    input.workspaceId,
+    input.ownerId,
+    "email-assistant",
+    input.draftId,
+    `${input.scriptHash}.mp3`,
+  ].join("/");
+}
+
 export function outreachVoicePublicUrl(token: string): string {
   return `${publicAppOrigin()}/listen/${encodeURIComponent(token)}`;
 }
 
+export function emailAssistantVoicePublicUrl(token: string): string {
+  return `${publicAppOrigin()}/listen/next-move/${encodeURIComponent(token)}`;
+}
+
 export async function resolveOutreachVoiceConfig(
-  sender: OutreachIdentity
+  sender: Pick<OutreachIdentity, "userId" | "workspaceId">
 ): Promise<OutreachVoiceConfig> {
   const [{ data: profile, error: profileError }, { data: member, error: memberError }] =
     await Promise.all([
