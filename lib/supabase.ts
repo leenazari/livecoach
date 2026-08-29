@@ -33,8 +33,8 @@ const SCOPED_RECORD_TABLES = new Set([
   "opportunity_signal_receipts", "outreach_campaigns", "outreach_enrolments",
   "outreach_events", "outreach_learnings", "outreach_messages",
   "outreach_prospects", "outreach_signals", "outreach_suppressions",
-  "sendpilot_campaign_links", "sendpilot_integrations", "sendpilot_lead_links",
-  "sendpilot_webhook_events", "tasks",
+  "email_assistant_drafts", "sendpilot_campaign_links", "sendpilot_integrations",
+  "sendpilot_lead_links", "sendpilot_lead_reviews", "sendpilot_webhook_events", "tasks",
   "upcoming_calls", "usage_log", "workspace_profile", "workstream_contacts",
   "workstreams",
 ]);

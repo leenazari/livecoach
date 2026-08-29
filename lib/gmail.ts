@@ -408,14 +408,7 @@ export function nameFromHeader(h: string): string {
 // SENDING
 // ---------------------------------------------------------------------------
 
-// Send an email AS the connected Google account. Needs the gmail.send scope
-// (see SCOPE in lib/google.ts), which is separate from gmail.readonly - if you
-// added the scope but did not reconnect Google in Settings, the stored token
-// still lacks it and this returns a 403 rather than throwing.
-//
-// Returns { ok } plus a plain-English reason when it could not send, so the
-// caller can log something useful instead of a silent failure.
-export async function sendMail(opts: {
+type GmailComposedMessage = {
   to: string;
   subject: string;
   html: string;
@@ -423,28 +416,33 @@ export async function sendMail(opts: {
   from?: string;
   replyTo?: string;
   threadId?: string;
-}, ownerId?: string): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
-  const token = await getAccessToken(false, ownerId);
-  if (!token) {
-    return { ok: false, error: "Google is not connected, connect it in Settings" };
-  }
+  sourceMessageId?: string;
+  inReplyTo?: string;
+  references?: string;
+};
 
-  const to = String(opts.to || "").trim();
-  if (!to) return { ok: false, error: "no recipient" };
+const oneLineHeader = (value: unknown, maximum = 1_500) =>
+  String(value || "").replace(/[\r\n]+/g, " ").trim().slice(0, maximum);
 
-  // RFC 2822. The subject is base64 encoded so non-ASCII (curly quotes, names
-  // with accents) survives instead of arriving as mojibake.
+function gmailRawMessage(opts: GmailComposedMessage): string {
+  const to = oneLineHeader(opts.to, 500);
+  if (!to) throw new Error("A recipient is required");
   const subject = `=?UTF-8?B?${Buffer.from(
     String(opts.subject || "").slice(0, 200),
     "utf8"
   ).toString("base64")}?=`;
-
   const boundary = "lc_boundary_a7f3d2";
   const raw = [
     `To: ${to}`,
-    ...(opts.from ? [`From: ${opts.from}`] : []),
-    ...(opts.replyTo ? [`Reply-To: ${opts.replyTo}`] : []),
+    ...(opts.from ? [`From: ${oneLineHeader(opts.from, 500)}`] : []),
+    ...(opts.replyTo ? [`Reply-To: ${oneLineHeader(opts.replyTo, 500)}`] : []),
     `Subject: ${subject}`,
+    ...(opts.inReplyTo
+      ? [`In-Reply-To: ${oneLineHeader(opts.inReplyTo, 500)}`]
+      : []),
+    ...(opts.references
+      ? [`References: ${oneLineHeader(opts.references)}`]
+      : []),
     "MIME-Version: 1.0",
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
     "",
@@ -460,13 +458,38 @@ export async function sendMail(opts: {
     "",
     `--${boundary}--`,
   ].join("\r\n");
-
-  // Gmail wants base64url, not plain base64.
-  const encoded = Buffer.from(raw, "utf8")
+  return Buffer.from(raw, "utf8")
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
+}
+
+// Send an email AS the connected Google account. Needs the gmail.send scope
+// (see SCOPE in lib/google.ts), which is separate from gmail.readonly - if you
+// added the scope but did not reconnect Google in Settings, the stored token
+// still lacks it and this returns a 403 rather than throwing.
+//
+// Returns { ok } plus a plain-English reason when it could not send, so the
+// caller can log something useful instead of a silent failure.
+export async function sendMail(
+  opts: GmailComposedMessage,
+  ownerId?: string
+): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
+  const token = await getAccessToken(false, ownerId);
+  if (!token) {
+    return { ok: false, error: "Google is not connected, connect it in Settings" };
+  }
+
+  const to = String(opts.to || "").trim();
+  if (!to) return { ok: false, error: "no recipient" };
+
+  let encoded = "";
+  try {
+    encoded = gmailRawMessage(opts);
+  } catch (error: any) {
+    return { ok: false, error: error?.message || "The email is invalid" };
+  }
 
   try {
     const res = await gmailFetch("/messages/send", token, {
@@ -492,6 +515,84 @@ export async function sendMail(opts: {
     return { ok: true, id: data?.id, threadId: data?.threadId };
   } catch (e: any) {
     return { ok: false, error: e?.message || "send failed" };
+  }
+}
+
+export async function createGmailDraft(
+  opts: GmailComposedMessage,
+  ownerId?: string
+): Promise<{ ok: boolean; id?: string; threadId?: string; url?: string; error?: string }> {
+  const token = await getAccessToken(false, ownerId);
+  if (!token) {
+    return { ok: false, error: "Google is not connected, connect it in Settings" };
+  }
+  let raw = "";
+  try {
+    let replyHeaders: Pick<GmailComposedMessage, "inReplyTo" | "references"> = {};
+    if (opts.sourceMessageId) {
+      const source = await api(
+        `/messages/${encodeURIComponent(
+          opts.sourceMessageId
+        )}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`,
+        token,
+        ownerId
+      );
+      const headers = source?.payload?.headers || [];
+      const messageId = oneLineHeader(header(headers, "Message-ID"), 500);
+      const references = oneLineHeader(header(headers, "References"));
+      if (messageId) {
+        replyHeaders = {
+          inReplyTo: messageId,
+          references: `${references ? `${references} ` : ""}${messageId}`,
+        };
+      }
+    }
+    raw = gmailRawMessage({ ...opts, ...replyHeaders });
+  } catch (error: any) {
+    return { ok: false, error: error?.message || "The email draft is invalid" };
+  }
+  try {
+    const response = await gmailFetch(
+      "/drafts",
+      token,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: {
+            raw,
+            ...(opts.threadId ? { threadId: opts.threadId } : {}),
+          },
+        }),
+      },
+      ownerId
+    );
+    if (!response) return { ok: false, error: "Gmail could not be reached" };
+    if (!response.ok) {
+      if (response.status === 403) {
+        return {
+          ok: false,
+          error:
+            "Gmail draft access is missing. Reconnect Google in Settings to approve this permission.",
+        };
+      }
+      const detail = await response.text().catch(() => "");
+      return {
+        ok: false,
+        error: `Gmail could not create the draft (${response.status})${
+          detail ? ` ${detail.slice(0, 180)}` : ""
+        }`,
+      };
+    }
+    const data = await response.json().catch(() => ({}));
+    return {
+      ok: true,
+      id: data?.id,
+      threadId: data?.message?.threadId,
+      url: "https://mail.google.com/mail/u/0/#drafts",
+    };
+  } catch (error: any) {
+    return { ok: false, error: error?.message || "Gmail draft creation failed" };
   }
 }
 

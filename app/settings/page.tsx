@@ -64,6 +64,22 @@ type SendPilotStatus = {
   lastError: string | null;
   importedMessageCount: number;
   reviewCount: number;
+  messageReviewCount: number;
+  leadReviewCount: number;
+  leadReviews: Array<{
+    id: string;
+    sendpilot_lead_id: string;
+    sendpilot_campaign_name: string | null;
+    linkedin_url: string;
+    email: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    company_name: string | null;
+    job_title: string | null;
+    external_status: string | null;
+    review_reason: string;
+    last_seen_at: string;
+  }>;
   lookbackDays: number;
   mappedCampaignCount: number;
   activeLeadCount: number;
@@ -151,6 +167,7 @@ export default function SettingsPage() {
     configured: boolean;
     gmail?: "ok" | "missing" | "disconnected";
     gmailSend?: boolean;
+    gmailDraft?: boolean;
     gmailIssue?: GmailIssue;
     calendarList?: "ok" | "missing" | "disconnected";
     calendarReconnectRequired?: boolean;
@@ -161,6 +178,7 @@ export default function SettingsPage() {
     email: string | null;
     mailRead: boolean;
     mailSend: boolean;
+    mailDraft: boolean;
     calendar: boolean;
     configured: boolean;
   } | null>(null);
@@ -210,7 +228,7 @@ export default function SettingsPage() {
     crmFetch<{ lessons: Lesson[] }>("/api/crm/lessons")
       .then((d) => setLessons(d.lessons || []))
       .catch(() => {});
-    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected"; gmailSend?: boolean; gmailIssue?: GmailIssue; calendarList?: "ok" | "missing" | "disconnected"; calendarReconnectRequired?: boolean }>(
+    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected"; gmailSend?: boolean; gmailDraft?: boolean; gmailIssue?: GmailIssue; calendarList?: "ok" | "missing" | "disconnected"; calendarReconnectRequired?: boolean }>(
       "/api/auth/google/status"
     )
       .then((d) => setGcal(d))
@@ -220,6 +238,7 @@ export default function SettingsPage() {
       email: string | null;
       mailRead: boolean;
       mailSend: boolean;
+      mailDraft: boolean;
       calendar: boolean;
       configured: boolean;
     }>("/api/auth/microsoft/status")
@@ -327,6 +346,7 @@ export default function SettingsPage() {
           configured: current?.configured ?? true,
           gmail: "disconnected",
           gmailSend: false,
+          gmailDraft: false,
           gmailIssue: "disconnected",
         }));
         setGcalNote(
@@ -340,6 +360,7 @@ export default function SettingsPage() {
           email: null,
           mailRead: false,
           mailSend: false,
+          mailDraft: false,
           calendar: false,
           configured: current?.configured ?? true,
         }));
@@ -579,12 +600,23 @@ export default function SettingsPage() {
         review: number;
         conversations: number;
         truncated: boolean;
+        leadReconciliation: {
+          campaigns: number;
+          scanned: number;
+          matched: number;
+          updated: number;
+          review: number;
+          duplicatesBlocked: number;
+          emailOutreachPaused: number;
+          truncated: boolean;
+        };
         integration: SendPilotStatus;
       }>("/api/crm/sendpilot/backfill", { method: "POST" });
       if (!result.ok) throw new Error("The 14-day import did not complete");
       setSendPilot(result.integration);
+      const leads = result.leadReconciliation;
       setSendPilotNote(
-        `${result.imported} messages imported from ${result.conversations} recent conversations. ${result.duplicates} duplicates skipped. ${result.review} need company review.${result.truncated ? " The safety cap was reached, so the oldest conversations were not requested." : ""}`
+        `${leads.scanned} SendPilot leads checked. ${leads.matched} matched exactly to the CRM. ${leads.duplicatesBlocked} workspace duplicates blocked. ${leads.review} leads need review. ${leads.emailOutreachPaused} competing LiveCoach email items paused. ${result.imported} recent messages imported and ${result.duplicates} message duplicates skipped.${result.truncated ? " The safety cap was reached, so the remaining oldest records were not requested." : ""}`
       );
     } catch (error: any) {
       setSendPilotError(
@@ -592,6 +624,34 @@ export default function SettingsPage() {
       );
     } finally {
       setSendPilotBusy(null);
+    }
+  };
+
+  const dismissSendPilotReview = async (reviewId: string) => {
+    setSendPilotMappingBusy(reviewId);
+    setSendPilotError("");
+    try {
+      await crmFetch("/api/crm/sendpilot/reviews", {
+        method: "PATCH",
+        body: JSON.stringify({ id: reviewId, action: "dismiss" }),
+      });
+      setSendPilot((current) =>
+        current
+          ? {
+              ...current,
+              reviewCount: Math.max(0, current.reviewCount - 1),
+              leadReviewCount: Math.max(0, current.leadReviewCount - 1),
+              leadReviews: current.leadReviews.filter(
+                (review) => review.id !== reviewId
+              ),
+            }
+          : current
+      );
+      setSendPilotNote("SendPilot review item dismissed. No CRM lead was created.");
+    } catch (error: any) {
+      setSendPilotError(error?.message || "The SendPilot review item did not update.");
+    } finally {
+      setSendPilotMappingBusy("");
     }
   };
 
@@ -811,7 +871,7 @@ export default function SettingsPage() {
         className={`mb-5 rounded-xl border p-5 ${
           gcal === null
             ? "border-edge bg-panel/40"
-            : gcal.connected && !gcal.calendarReconnectRequired
+            : gcal.connected && !gcal.calendarReconnectRequired && gcal.gmailDraft !== false
               ? "border-sage/45 bg-sage/[0.06]"
               : gcal.connected
                 ? "border-amber/50 bg-amber/[0.07]"
@@ -824,7 +884,7 @@ export default function SettingsPage() {
               className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
                 gcal === null
                   ? "text-muted"
-                  : gcal.connected && !gcal.calendarReconnectRequired
+                  : gcal.connected && !gcal.calendarReconnectRequired && gcal.gmailDraft !== false
                     ? "text-sage"
                     : gcal.connected
                       ? "text-amber"
@@ -834,7 +894,7 @@ export default function SettingsPage() {
               {gcal === null
                 ? "◷"
                 : gcal.connected
-                  ? gcal.calendarReconnectRequired
+                  ? gcal.calendarReconnectRequired || gcal.gmailDraft === false
                     ? "!"
                     : "✓"
                   : "!"} Google connection
@@ -845,7 +905,9 @@ export default function SettingsPage() {
                 : gcal.connected
                 ? gcal.calendarReconnectRequired
                   ? `Connected${gcal.email ? ` as ${gcal.email}` : ""}, but Google has not granted permission to discover secondary and shared calendars. Reconnect Google once below, then sync again.`
-                  : `Connected${
+                  : gcal.gmailDraft === false
+                    ? `Connected${gcal.email ? ` as ${gcal.email}` : ""}, but Google has not granted permission to create approval-only Gmail drafts. Reconnect once below. LiveCoach will still never send those drafts automatically.`
+                    : `Connected${
                     gcal.email ? ` as ${gcal.email}` : ""
                   }. Calendar is working${
                     gcal.gmail !== "ok"
@@ -868,22 +930,26 @@ export default function SettingsPage() {
           </div>
           {gcal?.connected ? (
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              {gcal.calendarReconnectRequired ? (
+              {gcal.calendarReconnectRequired || gcal.gmailDraft === false ? (
                 <a
                   href="/api/auth/google/start"
                   className="rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
                 >
-                  Grant calendar access
+                  {gcal.calendarReconnectRequired
+                    ? "Grant calendar access"
+                    : "Grant email draft access"}
                 </a>
               ) : null}
               <span
                 className={`rounded-full border px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider ${
-                  gcal.calendarReconnectRequired
+                  gcal.calendarReconnectRequired || gcal.gmailDraft === false
                     ? "border-amber/55 bg-amber/10 text-amber"
                     : "border-sage/55 bg-sage/10 text-sage"
                 }`}
               >
-                {gcal.calendarReconnectRequired ? "● Google partly connected" : "● Google connected"}
+                {gcal.calendarReconnectRequired || gcal.gmailDraft === false
+                  ? "● Google partly connected"
+                  : "● Google connected"}
               </span>
               <button
                 type="button"
@@ -929,23 +995,25 @@ export default function SettingsPage() {
         className={`mb-5 rounded-xl border p-5 ${
           microsoft === null
             ? "border-edge bg-panel/40"
-            : microsoft.status === "ok"
+            : microsoft.status === "ok" && microsoft.mailDraft
               ? "border-sky/45 bg-sky/[0.06]"
-              : microsoft.status === "missing"
+              : microsoft.status === "missing" || microsoft.status === "ok"
                 ? "border-amber/45 bg-amber/[0.06]"
                 : "border-edge bg-panel/40"
         }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${microsoft?.status === "ok" ? "text-sky" : microsoft?.status === "missing" ? "text-amber" : "text-muted"}`}>
-              {microsoft === null ? "◷" : microsoft.status === "ok" ? "✓" : microsoft.status === "missing" ? "!" : "○"} Microsoft connection
+            <p className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${microsoft?.status === "ok" && microsoft.mailDraft ? "text-sky" : microsoft?.status === "missing" || microsoft?.status === "ok" ? "text-amber" : "text-muted"}`}>
+              {microsoft === null ? "◷" : microsoft.status === "ok" && microsoft.mailDraft ? "✓" : microsoft.status === "missing" || microsoft.status === "ok" ? "!" : "○"} Microsoft connection
             </p>
             <p className="mt-1 text-sm leading-relaxed text-muted">
               {microsoft === null
                 ? "Checking the live connection…"
                 : microsoft.status === "ok"
-                  ? `Connected${microsoft.email ? ` as ${microsoft.email}` : ""}. Outlook email and Microsoft Calendar belong only to this LiveCoach account.`
+                  ? microsoft.mailDraft
+                    ? `Connected${microsoft.email ? ` as ${microsoft.email}` : ""}. Outlook email and Microsoft Calendar belong only to this LiveCoach account.`
+                    : `Connected${microsoft.email ? ` as ${microsoft.email}` : ""}, but Microsoft has not granted permission to create approval-only Outlook drafts. Reconnect once below. LiveCoach will still never send those drafts automatically.`
                   : microsoft.status === "missing"
                     ? `A Microsoft connection is saved${microsoft.email ? ` for ${microsoft.email}` : ""}, but Microsoft is not granting access. Reconnect it or disconnect it below.`
                   : microsoft.configured
@@ -958,8 +1026,16 @@ export default function SettingsPage() {
           </div>
           {microsoft && microsoft.status !== "disconnected" ? (
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <span className={`rounded-full border px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider ${microsoft.status === "ok" ? "border-sky/55 bg-sky/10 text-sky" : "border-amber/55 bg-amber/10 text-amber"}`}>
-                {microsoft.status === "ok" ? "● Microsoft connected" : "! Microsoft needs attention"}
+              {microsoft.status === "ok" && !microsoft.mailDraft ? (
+                <a
+                  href="/api/auth/microsoft/start"
+                  className="rounded-full border border-amber/60 bg-amber/15 px-4 py-2 text-center font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
+                >
+                  Grant email draft access
+                </a>
+              ) : null}
+              <span className={`rounded-full border px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider ${microsoft.status === "ok" && microsoft.mailDraft ? "border-sky/55 bg-sky/10 text-sky" : "border-amber/55 bg-amber/10 text-amber"}`}>
+                {microsoft.status === "ok" && microsoft.mailDraft ? "● Microsoft connected" : "! Microsoft needs attention"}
               </span>
               <button
                 type="button"
@@ -1300,6 +1376,76 @@ export default function SettingsPage() {
                 {sendPilotBusy === "webhook" ? "Saving…" : "Save webhook secret"}
               </button>
             </div>
+          </div>
+        ) : null}
+
+        {sendPilot?.leadReviews?.length ? (
+          <div className="mt-4 rounded-lg border border-amber/45 bg-amber/[0.06] p-3">
+            <p className="text-xs font-semibold text-bone">
+              SendPilot leads waiting for an exact CRM match
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              These were not imported as new people. Correct the email, LinkedIn URL or
+              salesperson assignment in the CRM, then run the 14 day import again. Dismiss
+              only when the lead should stay outside LiveCoach.
+            </p>
+            <ul className="mt-3 space-y-2">
+              {sendPilot.leadReviews.map((review) => {
+                const name = [review.first_name, review.last_name]
+                  .filter(Boolean)
+                  .join(" ") || "Unnamed SendPilot lead";
+                return (
+                  <li
+                    key={review.id}
+                    className="flex flex-col gap-2 rounded-lg border border-edge bg-ink/40 p-3 sm:flex-row sm:items-start sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm text-bone">
+                        {name}
+                        {review.job_title ? `, ${review.job_title}` : ""}
+                        {review.company_name ? ` at ${review.company_name}` : ""}
+                      </p>
+                      <p className="mt-1 font-mono text-[0.52rem] uppercase leading-5 text-amber">
+                        {review.review_reason.replace(/_/g, " ")}
+                        {review.sendpilot_campaign_name
+                          ? ` · ${review.sendpilot_campaign_name}`
+                          : ""}
+                        {review.external_status ? ` · ${review.external_status}` : ""}
+                      </p>
+                      <p className="mt-1 break-all text-xs leading-5 text-muted">
+                        {review.email || "No email in SendPilot"}
+                        {review.linkedin_url ? (
+                          <>
+                            {" · "}
+                            <a
+                              href={review.linkedin_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-sky hover:text-amber hover:underline"
+                            >
+                              LinkedIn profile ↗
+                            </a>
+                          </>
+                        ) : null}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void dismissSendPilotReview(review.id)}
+                      disabled={!!sendPilotMappingBusy}
+                      className="min-h-9 shrink-0 rounded-full border border-edge px-3 font-mono text-[0.52rem] uppercase text-muted hover:text-rust disabled:opacity-40"
+                    >
+                      {sendPilotMappingBusy === review.id ? "Dismissing…" : "Dismiss"}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {sendPilot.leadReviewCount > sendPilot.leadReviews.length ? (
+              <p className="mt-2 text-xs text-muted">
+                Showing the newest {sendPilot.leadReviews.length} of {sendPilot.leadReviewCount}.
+              </p>
+            ) : null}
           </div>
         ) : null}
 

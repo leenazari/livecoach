@@ -35,6 +35,7 @@ export type SendPilotMessage = {
 export type SendPilotLead = {
   id: string;
   linkedinUrl: string;
+  email?: string | null;
   firstName?: string | null;
   lastName?: string | null;
   company?: string | null;
@@ -43,6 +44,7 @@ export type SendPilotLead = {
   customLeadStatus?: string | null;
   campaignId?: string;
   createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 export type SendPilotCampaign = {
@@ -300,6 +302,7 @@ export async function getSendPilotLead(
   return {
     id,
     linkedinUrl,
+    email: string(body?.email, 320).toLowerCase() || null,
     firstName: string(body?.firstName, 120) || null,
     lastName: string(body?.lastName, 120) || null,
     company: string(body?.company, 240) || null,
@@ -308,6 +311,7 @@ export async function getSendPilotLead(
     customLeadStatus: string(body?.customLeadStatus, 80) || null,
     campaignId: string(body?.campaignId, 240) || undefined,
     createdAt: string(body?.createdAt, 80) || null,
+    updatedAt: string(body?.updatedAt, 80) || null,
   };
 }
 
@@ -385,13 +389,14 @@ export async function addSendPilotLeads(
 
 export async function listSendPilotLeads(
   apiKey: string,
-  input: { campaignId: string; page?: number; limit?: number }
+  input: { campaignId: string; page?: number; limit?: number; full?: boolean }
 ): Promise<{ leads: SendPilotLead[]; totalPages: number }> {
   const query = new URLSearchParams({
     campaignId: input.campaignId,
     page: String(Math.max(1, input.page || 1)),
     limit: String(Math.min(100, Math.max(1, input.limit || 100))),
   });
+  if (input.full) query.set("full", "true");
   const body = await sendPilotGet(`/v1/leads?${query}`, apiKey);
   if (!Array.isArray(body?.leads)) {
     throw new SendPilotApiError("SendPilot lead data is invalid", 502, null);
@@ -403,6 +408,7 @@ export async function listSendPilotLeads(
     return [{
       id,
       linkedinUrl,
+      email: string(value?.email, 320).toLowerCase() || null,
       firstName: string(value?.firstName, 120) || null,
       lastName: string(value?.lastName, 120) || null,
       company: string(value?.company, 240) || null,
@@ -411,6 +417,7 @@ export async function listSendPilotLeads(
       customLeadStatus: string(value?.customLeadStatus, 80) || null,
       campaignId: string(value?.campaignId, 240) || undefined,
       createdAt: string(value?.createdAt, 80) || null,
+      updatedAt: string(value?.updatedAt, 80) || null,
     } satisfies SendPilotLead];
   });
   return {

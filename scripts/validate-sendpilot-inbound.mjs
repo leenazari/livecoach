@@ -152,7 +152,12 @@ assert(apiClient.includes('sendPilotRequest("/v1/leads"'));
 assert(integration.includes("SENDPILOT_BACKFILL_DAYS"));
 assert(integration.includes('source: "sendpilot_webhook"'));
 assert(integration.includes('source: "sendpilot_api"'));
-assert(integration.includes("createContactWhenUnmatched: !!senderName"));
+assert.equal(
+  integration.match(/createContactWhenUnmatched: false/g)?.length,
+  2,
+  "Webhook and backfill imports must route unmatched SendPilot people to review"
+);
+assert(!integration.includes("createContactWhenUnmatched: !!senderName"));
 assert(integration.includes('.eq("payload_digest", payloadDigest)'));
 assert(integration.includes('.eq("status", "failed")'));
 assert(credentials.includes('createCipheriv("aes-256-gcm"'));

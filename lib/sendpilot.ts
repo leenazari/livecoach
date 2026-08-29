@@ -154,6 +154,9 @@ export async function sendPilotIntegrationStatus(scope: OwnerScope) {
       lastError: null,
       importedMessageCount: 0,
       reviewCount: 0,
+      messageReviewCount: 0,
+      leadReviewCount: 0,
+      leadReviews: [] as any[],
       lookbackDays: SENDPILOT_BACKFILL_DAYS,
       mappedCampaignCount: 0,
       activeLeadCount: 0,
@@ -171,6 +174,8 @@ export async function sendPilotIntegrationStatus(scope: OwnerScope) {
     reviewResult,
     mappingResult,
     activeLeadResult,
+    leadReviewResult,
+    leadReviewRowsResult,
   ] =
     await Promise.all([
       baseQuery(),
@@ -195,11 +200,31 @@ export async function sendPilotIntegrationStatus(scope: OwnerScope) {
           "active",
           "replied",
         ]),
+      supabaseService
+        .from("sendpilot_lead_reviews")
+        .select("id", { count: "exact", head: true })
+        .eq("integration_id", integration.id)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("status", "pending"),
+      supabaseService
+        .from("sendpilot_lead_reviews")
+        .select(
+          "id,sendpilot_lead_id,sendpilot_campaign_name,linkedin_url,email,first_name,last_name,company_name,job_title,external_status,review_reason,last_seen_at"
+        )
+        .eq("integration_id", integration.id)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("status", "pending")
+        .order("last_seen_at", { ascending: false })
+        .limit(25),
     ]);
   if (countError) throw countError;
   if (reviewResult.error) throw reviewResult.error;
   if (mappingResult.error) throw mappingResult.error;
   if (activeLeadResult.error) throw activeLeadResult.error;
+  if (leadReviewResult.error) throw leadReviewResult.error;
+  if (leadReviewRowsResult.error) throw leadReviewRowsResult.error;
   const connected = integration.status === "active" && !!integration.api_key_ciphertext;
   return {
     configured: isSendPilotCredentialEncryptionConfigured(),
@@ -215,7 +240,10 @@ export async function sendPilotIntegrationStatus(scope: OwnerScope) {
     lastWebhookAt: integration.last_webhook_at,
     lastError: integration.last_error,
     importedMessageCount: importedMessageCount || 0,
-    reviewCount: reviewResult.count || 0,
+    reviewCount: (reviewResult.count || 0) + (leadReviewResult.count || 0),
+    messageReviewCount: reviewResult.count || 0,
+    leadReviewCount: leadReviewResult.count || 0,
+    leadReviews: leadReviewRowsResult.data || [],
     lookbackDays: SENDPILOT_BACKFILL_DAYS,
     mappedCampaignCount: mappingResult.count || 0,
     activeLeadCount: activeLeadResult.count || 0,
@@ -433,13 +461,19 @@ function chunkSendPilotMessages(
 
 export async function runSendPilotBackfill(
   scope: OwnerScope
-): Promise<LinkedInInboxImportResult & { conversations: number; truncated: boolean }> {
+): Promise<
+  LinkedInInboxImportResult & {
+    conversations: number;
+    truncated: boolean;
+    leadReconciliation: import("@/lib/sendpilot-reconciliation").SendPilotReconciliationResult;
+  }
+> {
   const integration = await loadSendPilotIntegrationForOwner(scope);
   if (!integration || integration.status !== "active") {
     throw Object.assign(new Error("SendPilot is not connected"), { status: 409 });
   }
   const startedAt = new Date().toISOString();
-  const claimCutoff = new Date(Date.now() - 60_000).toISOString();
+  const claimCutoff = new Date(Date.now() - 10 * 60_000).toISOString();
   const { data: claimed, error: claimError } = await supabaseService
     .from("sendpilot_integrations")
     .update({ last_backfill_started_at: startedAt, last_error: null, updated_at: startedAt })
@@ -459,6 +493,14 @@ export async function runSendPilotBackfill(
 
   try {
     const apiKey = decryptSendPilotApiKey(integration);
+    const { reconcileSendPilotLeads } = await import(
+      "@/lib/sendpilot-reconciliation"
+    );
+    const leadReconciliation = await reconcileSendPilotLeads(
+      scope,
+      integration,
+      apiKey
+    );
     const cutoffMs = Date.now() - SENDPILOT_BACKFILL_DAYS * 24 * 60 * 60 * 1_000;
     const conversations: SendPilotConversation[] = [];
     let continuationToken: string | null = null;
@@ -548,7 +590,7 @@ export async function runSendPilotBackfill(
           source: "sendpilot_api",
           provider: "sendpilot",
           contactSource: "sendpilot_inbox",
-          createContactWhenUnmatched: true,
+          createContactWhenUnmatched: false,
         },
         {
           runId: `${total.runId}_${index}`,
@@ -589,7 +631,12 @@ export async function runSendPilotBackfill(
     const completedAt = new Date().toISOString();
     const { error: updateError } = await supabaseService
       .from("sendpilot_integrations")
-      .update({ last_backfill_at: completedAt, last_error: null, updated_at: completedAt })
+      .update({
+        last_backfill_started_at: null,
+        last_backfill_at: completedAt,
+        last_error: null,
+        updated_at: completedAt,
+      })
       .eq("id", integration.id)
       .eq("workspace_id", scope.workspaceId)
       .eq("owner_id", scope.userId);
@@ -605,19 +652,26 @@ export async function runSendPilotBackfill(
         imported: total.imported,
         duplicates: total.duplicates,
         review: total.review,
+        lead_reconciliation: leadReconciliation,
       },
     });
     return {
       ...total,
       conversations: conversations.length,
       truncated:
-        hasMore && conversations.length >= SENDPILOT_BACKFILL_MAX_CONVERSATIONS,
+        (hasMore && conversations.length >= SENDPILOT_BACKFILL_MAX_CONVERSATIONS) ||
+        leadReconciliation.truncated,
+      leadReconciliation,
     };
   } catch (error: any) {
     const message = safeError(error);
     await supabaseService
       .from("sendpilot_integrations")
-      .update({ last_error: message, updated_at: new Date().toISOString() })
+      .update({
+        last_backfill_started_at: null,
+        last_error: message,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", integration.id)
       .eq("workspace_id", scope.workspaceId)
       .eq("owner_id", scope.userId);
@@ -735,7 +789,7 @@ export async function processSendPilotWebhookEvent(
           source: "sendpilot_webhook",
           provider: "sendpilot",
           contactSource: "sendpilot_inbox",
-          createContactWhenUnmatched: !!senderName,
+          createContactWhenUnmatched: false,
         },
         {
           runId: `sendpilot_${event.eventId.replace(/[^a-z0-9_-]/gi, "_")}`.slice(0, 120),
