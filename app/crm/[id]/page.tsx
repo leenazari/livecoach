@@ -525,6 +525,17 @@ export default function CompanyDetailPage() {
               saved {savedAt}
             </span>
           )}
+          {!company.is_confidential ? (
+            <Link
+              href={`/crm/chat?shareType=company&shareId=${id}&shareLabel=${encodeURIComponent(
+                company.name
+              )}`}
+              title="Share a safe client card into a private team conversation. Calls, notes, transcripts, mailbox context and Brain memory stay private."
+              className="min-h-10 flex-1 rounded-full border border-sky/55 bg-sky/10 px-3 py-2 text-center font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:bg-sky/20 sm:flex-none sm:px-4 sm:text-[0.62rem]"
+            >
+              ◫ share in chat
+            </Link>
+          ) : null}
           {access?.canEdit ? (
             <>
               <Link
@@ -1176,6 +1187,15 @@ export default function CompanyDetailPage() {
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
+                    <Link
+                      href={`/crm/chat?shareType=contact&shareId=${c.id}&shareLabel=${encodeURIComponent(
+                        c.name
+                      )}`}
+                      title="Share this contact's safe card into a private team conversation"
+                      className="rounded px-2 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:text-amber"
+                    >
+                      ◫ chat
+                    </Link>
                     <button
                       type="button"
                       onClick={() => breakOutContact(c.id)}

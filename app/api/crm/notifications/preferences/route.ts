@@ -17,6 +17,8 @@ export async function PATCH(req: NextRequest) {
     const booleanKeys = [
       "replyAlerts",
       "assignmentAlerts",
+      "chatAlerts",
+      "chatEmailEnabled",
       "inAppEnabled",
       "desktopEnabled",
       "quietHoursEnabled",
@@ -42,6 +44,8 @@ export async function PATCH(req: NextRequest) {
           user_id: account.userId,
           reply_alerts: body.replyAlerts,
           assignment_alerts: body.assignmentAlerts,
+          chat_alerts: body.chatAlerts,
+          chat_email_enabled: body.chatEmailEnabled,
           in_app_enabled: body.inAppEnabled,
           desktop_enabled: body.desktopEnabled,
           quiet_hours_enabled: body.quietHoursEnabled,
@@ -53,7 +57,7 @@ export async function PATCH(req: NextRequest) {
         { onConflict: "workspace_id,user_id" }
       )
       .select(
-        "reply_alerts,assignment_alerts,in_app_enabled,desktop_enabled,quiet_hours_enabled,quiet_start,quiet_end,timezone"
+        "reply_alerts,assignment_alerts,chat_alerts,chat_email_enabled,in_app_enabled,desktop_enabled,quiet_hours_enabled,quiet_start,quiet_end,timezone"
       )
       .single();
     if (error) throw error;

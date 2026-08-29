@@ -25,6 +25,7 @@ type CrmNotification = {
 type NotificationFeed = {
   notifications: CrmNotification[];
   unreadCount: number;
+  chatUnreadCount: number;
   preferences: NotificationPreferences;
   currentUser: string;
   serverTime: string;
@@ -35,8 +36,10 @@ const LAST_POPUP_KEY = "livecoach:notifications:last-popup:v2";
 
 export default function NotificationAlerts({
   onUnreadCount,
+  onChatUnreadCount,
 }: {
   onUnreadCount: (count: number) => void;
+  onChatUnreadCount?: (count: number) => void;
 }) {
   const [toasts, setToasts] = useState<CrmNotification[]>([]);
   const [currentUser, setCurrentUser] = useState("");
@@ -65,6 +68,7 @@ export default function NotificationAlerts({
         "/api/crm/notifications?unread=1&limit=100"
       );
       onUnreadCount(feed.unreadCount || 0);
+      onChatUnreadCount?.(feed.chatUnreadCount || 0);
       setCurrentUser(feed.currentUser);
 
       const storageKey = `${LAST_POPUP_KEY}:${feed.currentUser}`;
@@ -146,7 +150,7 @@ export default function NotificationAlerts({
     } finally {
       loading.current = false;
     }
-  }, [onUnreadCount, openNotification]);
+  }, [onChatUnreadCount, onUnreadCount, openNotification]);
 
   useEffect(() => {
     void load();
@@ -225,7 +229,9 @@ export default function NotificationAlerts({
             <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-amber shadow-[0_0_12px_currentColor]" />
             <div className="min-w-0 flex-1">
               <p className="font-mono text-[0.52rem] uppercase tracking-wider text-amber">
-                New CRM notification
+                {notification.kind === "chat_message"
+                  ? "New team message"
+                  : "New CRM notification"}
               </p>
               <p className="mt-1 text-sm font-medium text-bone">{notification.title}</p>
               <p className="mt-1 line-clamp-3 text-xs leading-5 text-muted">

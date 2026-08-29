@@ -51,7 +51,13 @@ export async function GET(req: NextRequest) {
     if (unreadOnly)
       listQuery = listQuery.is("read_at", null).or(activeSnoozeFilter);
 
-    const [listResult, countResult, snoozedResult, preferencesResult] =
+    const [
+      listResult,
+      countResult,
+      chatCountResult,
+      snoozedResult,
+      preferencesResult,
+    ] =
       await Promise.all([
         listQuery,
         supabaseAdmin
@@ -67,13 +73,22 @@ export async function GET(req: NextRequest) {
           .select("id", { count: "exact", head: true })
           .eq("workspace_id", account.workspaceId)
           .eq("user_id", account.userId)
+          .eq("kind", "chat_message")
+          .is("dismissed_at", null)
+          .is("read_at", null)
+          .or(activeSnoozeFilter),
+        supabaseAdmin
+          .from("crm_notifications")
+          .select("id", { count: "exact", head: true })
+          .eq("workspace_id", account.workspaceId)
+          .eq("user_id", account.userId)
           .is("dismissed_at", null)
           .is("read_at", null)
           .gt("snoozed_until", snapshotAt),
         supabaseAdmin
           .from("crm_notification_preferences")
           .select(
-            "reply_alerts,assignment_alerts,in_app_enabled,desktop_enabled,quiet_hours_enabled,quiet_start,quiet_end,timezone"
+            "reply_alerts,assignment_alerts,chat_alerts,chat_email_enabled,in_app_enabled,desktop_enabled,quiet_hours_enabled,quiet_start,quiet_end,timezone"
           )
           .eq("workspace_id", account.workspaceId)
           .eq("user_id", account.userId)
@@ -81,6 +96,7 @@ export async function GET(req: NextRequest) {
       ]);
     if (listResult.error) throw listResult.error;
     if (countResult.error) throw countResult.error;
+    if (chatCountResult.error) throw chatCountResult.error;
     if (snoozedResult.error) throw snoozedResult.error;
     if (preferencesResult.error) throw preferencesResult.error;
 
@@ -88,6 +104,7 @@ export async function GET(req: NextRequest) {
       {
         notifications: (listResult.data || []).map(mapNotification),
         unreadCount: countResult.count || 0,
+        chatUnreadCount: chatCountResult.count || 0,
         snoozedCount: snoozedResult.count || 0,
         preferences: mapNotificationPreferences(preferencesResult.data),
         currentUser: account.userId,

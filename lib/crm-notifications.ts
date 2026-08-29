@@ -1,8 +1,13 @@
-export type CrmNotificationKind = "outreach_reply" | "lead_assigned";
+export type CrmNotificationKind =
+  | "outreach_reply"
+  | "lead_assigned"
+  | "chat_message";
 
 export type NotificationPreferences = {
   replyAlerts: boolean;
   assignmentAlerts: boolean;
+  chatAlerts: boolean;
+  chatEmailEnabled: boolean;
   inAppEnabled: boolean;
   desktopEnabled: boolean;
   quietHoursEnabled: boolean;
@@ -14,6 +19,8 @@ export type NotificationPreferences = {
 export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   replyAlerts: true,
   assignmentAlerts: true,
+  chatAlerts: true,
+  chatEmailEnabled: true,
   inAppEnabled: true,
   desktopEnabled: true,
   quietHoursEnabled: false,
@@ -28,6 +35,10 @@ export const mapNotificationPreferences = (
   replyAlerts: row?.reply_alerts ?? DEFAULT_NOTIFICATION_PREFERENCES.replyAlerts,
   assignmentAlerts:
     row?.assignment_alerts ?? DEFAULT_NOTIFICATION_PREFERENCES.assignmentAlerts,
+  chatAlerts:
+    row?.chat_alerts ?? DEFAULT_NOTIFICATION_PREFERENCES.chatAlerts,
+  chatEmailEnabled:
+    row?.chat_email_enabled ?? DEFAULT_NOTIFICATION_PREFERENCES.chatEmailEnabled,
   inAppEnabled:
     row?.in_app_enabled ?? DEFAULT_NOTIFICATION_PREFERENCES.inAppEnabled,
   desktopEnabled:
@@ -49,10 +60,11 @@ export const mapNotificationPreferences = (
 export const notificationKindEnabled = (
   preferences: NotificationPreferences,
   kind: CrmNotificationKind
-) =>
-  kind === "outreach_reply"
-    ? preferences.replyAlerts
-    : preferences.assignmentAlerts;
+) => {
+  if (kind === "outreach_reply") return preferences.replyAlerts;
+  if (kind === "chat_message") return preferences.chatAlerts;
+  return preferences.assignmentAlerts;
+};
 
 const clockMinutes = (value: string) => {
   const [hour, minute] = value.split(":").map(Number);
