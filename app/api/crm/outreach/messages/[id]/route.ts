@@ -12,6 +12,10 @@ import {
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { outreachSafetyError } from "@/lib/outreach-team-safety";
 import { outreachVoiceHasFalseSenderIdentity } from "@/lib/outreach-voice-policy";
+import {
+  outreachEmailEndsWithDemoReplyCta,
+  outreachVoiceEndsWithDemoReplyCta,
+} from "@/lib/outreach-demo-reply-cta";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -30,6 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ error: "An email being delivered or already sent cannot be changed" }, { status: 400 });
     if (existing.from_email !== sender.senderEmail)
       return NextResponse.json({ error: "Sender safety check failed" }, { status: 403 });
+    const isReply = existing.strategy?.messageType === "reply";
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     const nextSubject = typeof body.subject === "string" && body.subject.trim()
       ? removeDashesFromProse(body.subject.trim()).slice(0, 120)
@@ -89,6 +94,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           },
           { status: 400 }
         );
+      if (!isReply && !outreachVoiceEndsWithDemoReplyCta(nextVoiceScript))
+        return NextResponse.json(
+          {
+            error:
+              "End the voice pitch by asking them to book a quick demo by replying to this email",
+          },
+          { status: 400 }
+        );
       const requiredWhyNow = normaliseOutreachVoiceScript(
         existing.strategy?.voiceUrgency?.whyNow
       );
@@ -131,6 +144,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
     if (body.status === "approved") {
       if (!/(not|won't|will not|do not).{0,20}follow up/i.test(nextBody)) return NextResponse.json({ error: "Keep the simple opt-out line before approving" }, { status: 400 });
+      if (!isReply && !outreachEmailEndsWithDemoReplyCta(nextBody))
+        return NextResponse.json(
+          {
+            error:
+              "End this outreach email by asking them to book a quick demo by replying to this email",
+          },
+          { status: 400 }
+        );
       if (existing.voice_status === "generating")
         return NextResponse.json(
           { error: "Wait for the voice note to finish before approving" },

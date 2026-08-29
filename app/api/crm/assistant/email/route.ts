@@ -9,6 +9,7 @@ import {
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
 import { supabaseAdmin } from "@/lib/supabase";
+import { outreachEmailEndsWithDemoReplyCta } from "@/lib/outreach-demo-reply-cta";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,6 +88,15 @@ export async function POST(req: NextRequest) {
     if (!SIMPLE_OPT_OUT.test(bodyText)) {
       return NextResponse.json(
         { error: "Add a simple do not follow up line before approving this outreach email" },
+        { status: 400 }
+      );
+    }
+    if (!outreachEmailEndsWithDemoReplyCta(bodyText)) {
+      return NextResponse.json(
+        {
+          error:
+            "End this outreach email by asking them to book a quick demo by replying to this email",
+        },
         { status: 400 }
       );
     }
