@@ -432,7 +432,7 @@ export default function SalesProfilePage() {
                 </button>
               ) : null}
               <p className="mt-3 text-xs leading-5 text-muted">
-                This choice belongs only to your login. Staff voice clones and per-campaign overrides will be added later without changing this default.
+                The voice saved here belongs only to your login and follows you across every campaign. Campaigns can change the wording and guardrails, never the audio voice.
               </p>
             </div>
           </section>

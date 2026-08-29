@@ -39,6 +39,8 @@ const voiceLibrary = read("lib/outreach-voice-library.ts");
 const voiceLibraryRoute = read("app/api/crm/sales-profile/voices/route.ts");
 const salesProfileRoute = read("app/api/crm/sales-profile/route.ts");
 const salesProfilePage = read("app/settings/sales-profile/page.tsx");
+const campaignRoute = read("app/api/crm/outreach/campaigns/[id]/route.ts");
+const assistantRoute = read("app/api/crm/assistant/route.ts");
 
 assert.match(migration, /add column if not exists outreach_voice_id text/);
 assert.match(migration, /add column if not exists voice_script text/);
@@ -157,6 +159,10 @@ assert.match(today, /OutreachVoiceNoteEditor/);
 
 assert.match(profile, /outreach_voice_id/);
 assert.match(profile, /\.eq\("user_id", scope\.userId\)/);
+assert.match(voice, /\.from\("salesperson_profiles"\)/);
+assert.match(voice, /\.eq\("workspace_id", sender\.workspaceId\)/);
+assert.match(voice, /\.eq\("user_id", sender\.userId\)/);
+assert.match(generate, /resolveOutreachVoiceConfig\(sender\)/);
 assert.match(voiceLibrary, /\/v2\/voices/);
 assert.match(voiceLibrary, /voice_type: "default"/);
 assert.match(voiceLibrary, /preview_url/);
@@ -167,8 +173,18 @@ assert.match(voiceLibraryRoute, /Cache-Control": "private/);
 assert.match(salesProfileRoute, /validateOutreachVoiceSelection/);
 assert.match(salesProfileRoute, /input\.outreachVoiceId !== previous\.outreachVoiceId/);
 assert.match(salesProfilePage, /Listen free, choose one stock voice/);
-assert.match(salesProfilePage, /This choice belongs only to your login/);
+assert.match(salesProfilePage, /belongs only to your login/);
+assert.match(salesProfilePage, /follows you across every campaign/);
+assert.match(salesProfilePage, /never the audio voice/);
 assert.match(salesProfilePage, /voice\.previewUrl/);
+assert.match(campaignRoute, /legacy field describes campaign writing only/);
+assert.match(campaignRoute, /tone:[\s\S]*style:[\s\S]*rules:[\s\S]*signature:/);
+assert.doesNotMatch(
+  campaignRoute,
+  /(?:outreach_voice_id|voice_provider_voice_id|providerVoiceId|elevenlabsVoiceId)/
+);
+assert.match(assistantRoute, /campaign voice object controls writing tone only/);
+assert.match(assistantRoute, /never select or override the salesperson's audio voice/);
 
 const policyModule = await import("../lib/outreach-voice-policy.ts");
 assert.equal(policyModule.OUTREACH_VOICE_TARGET_WORDS, 100);
