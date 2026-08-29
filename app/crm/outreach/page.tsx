@@ -3,6 +3,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
+import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import CampaignSequenceBuilder from "@/components/crm/CampaignSequenceBuilder";
 import ProspectManualCall from "@/components/crm/ProspectManualCall";
 import RevenueToday from "@/components/crm/RevenueToday";
@@ -12,6 +13,7 @@ import MatrixRain from "@/components/MatrixRain";
 import { crmFetch } from "@/lib/crm";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import { prepareOutreachVoiceScriptForReview } from "@/lib/outreach-voice-policy";
+import { outreachProspectHref } from "@/lib/crm-navigation";
 import {
   officialResearchSources,
   verifiedCompanyResearchEvidence,
@@ -29,6 +31,7 @@ type RecommendationAction = "contact_today" | "hold" | "skip";
 type Recommendation = { action: RecommendationAction; label: string; score: number; confidence: "high" | "medium" | "low"; reasons: string[]; risks: string[] };
 type Prospect = Record<string, any> & {
   id: string;
+  crm_company_id?: string | null;
   email: string;
   company_name: string;
   company_domain?: string;
@@ -422,6 +425,7 @@ export default function OutreachPage() {
   const ownerFilterInitialisedRef = useRef(false);
   const initialQueueFillAttemptedRef = useRef(false);
   const [q, setQ] = useState("");
+  const [focusedProspectId, setFocusedProspectId] = useState("");
   const [priority, setPriority] = useState<"all" | Priority>("all");
   const [stageFilter, setStageFilter] = useState("active");
   const [prospectSort, setProspectSort] = useState<ProspectSort>("priority");
@@ -606,15 +610,22 @@ export default function OutreachPage() {
 
   useEffect(() => { loadCore(); }, [loadCore]);
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const requested = params.get("tab");
-    if (tabs.some((item) => item.key === requested)) setTab(requested as Tab);
-    const requestedSearch = params.get("q");
-    if (requestedSearch) setQ(requestedSearch);
-    if (params.get("sort") === "activity") {
-      setProspectSort("activity");
-      setSortDirection("desc");
-    }
+    const syncFromLocation = () => {
+      const params = new URLSearchParams(window.location.search);
+      const requested = params.get("tab");
+      setTab(tabs.some((item) => item.key === requested) ? requested as Tab : "queue");
+      setQ(params.get("q") || "");
+      const requestedProspect = params.get("prospect") || "";
+      setFocusedProspectId(requestedProspect);
+      if (requestedProspect) setTab("prospects");
+      if (params.get("sort") === "activity") {
+        setProspectSort("activity");
+        setSortDirection("desc");
+      }
+    };
+    syncFromLocation();
+    window.addEventListener("popstate", syncFromLocation);
+    return () => window.removeEventListener("popstate", syncFromLocation);
   }, []);
   useEffect(() => {
     let alive = true;
@@ -674,11 +685,43 @@ export default function OutreachPage() {
   );
   const selectTab = (next: Tab) => {
     setTab(next);
+    setFocusedProspectId("");
     const url = new URL(window.location.href);
+    url.searchParams.delete("prospect");
     if (next === "queue") url.searchParams.delete("tab");
     else url.searchParams.set("tab", next);
     window.history.replaceState({}, "", `${url.pathname}${url.search}`);
   };
+  const clearProspectFocus = () => {
+    setFocusedProspectId("");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("prospect");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+  };
+  const openProspectFromThisPage = (
+    prospect: Prospect | null | undefined,
+    event: { preventDefault: () => void }
+  ) => {
+    if (!prospect?.id || prospect.crm_company_id) return;
+    event.preventDefault();
+    if (focusedProspectId === prospect.id && tab === "prospects") return;
+    setFocusedProspectId(prospect.id);
+    setTab("prospects");
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", "prospects");
+    url.searchParams.set("prospect", prospect.id);
+    window.history.pushState({}, "", `${url.pathname}${url.search}`);
+  };
+  useEffect(() => {
+    if (tab !== "prospects" || !focusedProspectId) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`prospect-${focusedProspectId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedProspectId, prospects.length, tab]);
   const setMessage = (id: string, patch: Partial<{ subject: string; body_text: string; voice_script: string }>) => {
     const styled = Object.fromEntries(
       Object.entries(patch).map(([key, value]) => [key, removeDashesFromProse(value)])
@@ -1309,6 +1352,7 @@ export default function OutreachPage() {
       0
     ).getTime();
     const rows = prospects.filter((prospect) => {
+      if (focusedProspectId) return prospect.id === focusedProspectId;
       const stage = outreachStage(prospect).key;
       const stageMatches = stageFilter === "all" || (stageFilter === "active" ? stage !== "suppressed" : stage === stageFilter);
       return stageMatches &&
@@ -1337,7 +1381,7 @@ export default function OutreachPage() {
       return sortDirection === "asc" ? compared : -compared;
     });
     return rows;
-  }, [currentUser, needle, ownerFilter, priority, prospectCampaignId, prospectSort, prospects, recommendationFilter, sortDirection, stageFilter]);
+  }, [currentUser, focusedProspectId, needle, ownerFilter, priority, prospectCampaignId, prospectSort, prospects, recommendationFilter, sortDirection, stageFilter]);
 
   const bulkEligible = useMemo(
     () => shown.filter(
@@ -1486,8 +1530,10 @@ export default function OutreachPage() {
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
               <p className={`font-mono text-[0.55rem] uppercase ${isFollowUp ? "text-amber" : "text-sky"}`}>#{index + 1} · {followUpDue ? "follow up due" : isFollowUp ? "previously contacted" : "new contact"} · step {row.current_step}{sequenceStep ? ` · ${sequenceStep.purpose}` : ""}</p>
-              <h3 className="mt-1 font-display text-lg text-bone">{p.first_name} {p.last_name}</h3>
-              <p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p>
+              <CanonicalRecordLink href={outreachProspectHref(p)} onNavigate={(event) => openProspectFromThisPage(p, event)} className="mt-1 block min-h-11 min-w-0 py-1" ariaLabel={`Open ${`${p.first_name || ""} ${p.last_name || ""}`.trim() || p.email || "prospect"}`}>
+                <h3 className="font-display text-lg text-bone">{p.first_name} {p.last_name}</h3>
+                <p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p>
+              </CanonicalRecordLink>
               <div className="mt-2 flex flex-wrap gap-2">
                 <span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>manual priority {p.priority}</span>
                 <span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[displayStatus] || (manual ? "border-sky/50 bg-sky/10 text-sky" : "border-edge text-muted")}`}>{displayStatusLabel}</span>
@@ -1561,6 +1607,7 @@ export default function OutreachPage() {
       </section> : null}
 
       {!loading && !tabLoading && tab === "prospects" ? <section data-sales-tour="prospect-pool">
+        {focusedProspectId ? <div className="mb-3 flex flex-col gap-2 rounded-xl border border-sky/45 bg-sky/[0.07] p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.54rem] uppercase tracking-wider text-sky">Opened from linked activity</p><p className="mt-1 text-sm text-bone/80">Showing the exact prospect record. Its email, history and actions remain together here.</p></div><button type="button" onClick={clearProspectFocus} className={`${button} shrink-0`}>Back to all prospects</button></div> : null}
         <div className="mb-3 rounded-xl border border-edge bg-panel p-3">
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_repeat(6,minmax(0,9rem))]">
             <input className={input} value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search person, company, role or email…" />
@@ -1630,9 +1677,9 @@ export default function OutreachPage() {
             const canClaim = !prospect.assigned_to_user_id && !canManageAssignments;
             const canPrepare = isMine && campaignReady && (stage.key === "not_started" || stage.key === "queued");
             const assignedMember = team.find((member) => member.userId === prospect.assigned_to_user_id);
-            return <article key={prospect.id} style={{ contentVisibility: "auto" }} className="grid gap-3 p-3 sm:grid-cols-[1.1fr_1.2fr_.65fr_.8fr_.85fr_.9fr_auto] sm:items-center">
-              <div className="min-w-0"><h3 className="truncate font-display text-base text-bone">{prospect.first_name} {prospect.last_name}</h3><p className="truncate text-xs text-amber">{prospect.email}</p></div>
-              <div className="min-w-0"><p className="truncate text-sm text-bone/85">{prospect.company_name}</p><p className="truncate text-xs text-muted">{prospect.job_title || "Role not saved"}</p><div className="mt-1 flex flex-wrap gap-1">{isBrainDirect ? <span className="rounded-full border border-amber/45 bg-amber/10 px-2 py-0.5 font-mono text-[0.46rem] uppercase text-amber">Brain email</span> : null}{membershipCampaigns.map((campaign) => <span key={campaign.id} className="rounded-full border border-sky/45 bg-sky/10 px-2 py-0.5 font-mono text-[0.46rem] uppercase text-sky">{campaign.name}</span>)}</div></div>
+            return <article id={`prospect-${prospect.id}`} key={prospect.id} style={{ contentVisibility: "auto" }} className={`grid gap-3 p-3 sm:grid-cols-[1.1fr_1.2fr_.65fr_.8fr_.85fr_.9fr_auto] sm:items-center ${focusedProspectId === prospect.id ? "bg-sky/[0.06] shadow-[inset_3px_0_0_rgba(126,190,211,0.75)]" : ""}`}>
+              <CanonicalRecordLink href={outreachProspectHref(prospect)} onNavigate={(event) => openProspectFromThisPage(prospect, event)} className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${`${prospect.first_name || ""} ${prospect.last_name || ""}`.trim() || prospect.email || "prospect"}`}><h3 className="truncate font-display text-base text-bone">{prospect.first_name} {prospect.last_name}</h3><p className="truncate text-xs text-amber">{prospect.email}</p></CanonicalRecordLink>
+              <div className="min-w-0"><CanonicalRecordLink href={outreachProspectHref(prospect)} onNavigate={(event) => openProspectFromThisPage(prospect, event)} className="block min-h-10 min-w-0 py-1" ariaLabel={`Open ${prospect.company_name || "prospect company"}`}><p className="truncate text-sm text-bone/85">{prospect.company_name}</p><p className="truncate text-xs text-muted">{prospect.job_title || "Role not saved"}</p></CanonicalRecordLink><div className="mt-1 flex flex-wrap gap-1">{isBrainDirect ? <span className="rounded-full border border-amber/45 bg-amber/10 px-2 py-0.5 font-mono text-[0.46rem] uppercase text-amber">Brain email</span> : null}{membershipCampaigns.map((campaign) => <span key={campaign.id} className="rounded-full border border-sky/45 bg-sky/10 px-2 py-0.5 font-mono text-[0.46rem] uppercase text-sky">{campaign.name}</span>)}</div></div>
               <label><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Priority</span><select aria-label={`Priority for ${prospect.first_name} ${prospect.last_name}`} value={prospect.priority} onChange={(event) => updatePriority(prospect.id, event.target.value as Priority)} className="min-h-10 w-full rounded-lg border border-edge bg-ink px-2 text-xs text-bone"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
               <div><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Outreach</span><div className="flex flex-wrap gap-1"><span className={`inline-flex rounded-full border px-2 py-1 font-mono text-[0.5rem] uppercase ${pill[stage.key] || "border-edge text-muted"}`}>{stage.key === "sent" || stage.key === "interested" ? "✓ " : ""}{stage.label}</span>{prospect.outreach?.sentCount && stage.key !== "sent" ? <span className="inline-flex rounded-full border border-moss/50 bg-moss/10 px-2 py-1 font-mono text-[0.5rem] uppercase text-moss">✓ {prospect.outreach.sentCount} sent</span> : null}</div>{prospect.outreach?.latestSentMessage?.subject ? <p className="mt-1 line-clamp-1 text-[0.68rem] text-muted">{prospect.outreach.latestSentMessage.subject}</p> : null}</div>
               <div><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Last activity</span><p className="text-xs text-bone/80">{formatActivityDate(lastActivity)}</p>{latestManualCall ? <p className="mt-1 line-clamp-2 text-[0.65rem] text-sky">☎ {latestManualCall.interpretation?.summary || latestManualCall.notePreview || "Manual call logged"}</p> : null}{prospect.next_action_at || prospect.outreach?.enrolment?.next_action_at ? <p className="mt-1 text-[0.65rem] text-amber">Next {formatActivityDate(prospect.next_action_at || prospect.outreach.enrolment.next_action_at)}</p> : null}</div>
@@ -1695,7 +1742,10 @@ export default function OutreachPage() {
             {sendPilotActivity.map((activity) => (
               <details key={activity.id} className="py-3">
                 <summary className="grid cursor-pointer list-none gap-2 sm:grid-cols-[1.2fr_1fr_auto] sm:items-center">
-                  <div className="min-w-0"><strong className="block truncate text-sm text-bone">{activity.prospect ? `${activity.prospect.first_name || ""} ${activity.prospect.last_name || ""}`.trim() : "Unknown prospect"}</strong><span className="block truncate text-xs text-muted">{activity.prospect?.company_name || activity.prospect?.email || "Prospect record unavailable"}</span></div>
+                  <CanonicalRecordLink href={outreachProspectHref(activity.prospect)} onNavigate={(event) => openProspectFromThisPage(activity.prospect, event)} stopPropagation className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${activity.prospect ? `${activity.prospect.first_name || ""} ${activity.prospect.last_name || ""}`.trim() : "prospect"}`}>
+                    <strong className="block truncate text-sm text-bone">{activity.prospect ? `${activity.prospect.first_name || ""} ${activity.prospect.last_name || ""}`.trim() : "Unknown prospect"}</strong>
+                    <span className="block truncate text-xs text-muted">{activity.prospect?.company_name || activity.prospect?.email || "Prospect record unavailable"}</span>
+                  </CanonicalRecordLink>
                   <span className="font-mono text-[0.52rem] uppercase text-moss">{sendPilotActivityLabel(activity.kind, activity.metadata)}</span>
                   <span className="font-mono text-[0.5rem] uppercase text-muted">{formatActivityDate(activity.created_at)}</span>
                 </summary>
@@ -1712,11 +1762,11 @@ export default function OutreachPage() {
         <div className="rounded-xl border border-sky/35 bg-panel p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="font-display text-lg text-bone">Manual call activity</h2><p className="mt-1 text-sm text-muted">Calls logged by this signed in salesperson only. Notes stay attached to the assigned prospect and feed the next action.</p></div><span className="rounded-full border border-sky/45 bg-sky/10 px-3 py-1 font-mono text-[0.52rem] uppercase text-sky">{metrics.callsToday || 0} today</span></div>
           <div className="mt-3 grid grid-cols-3 gap-2"><div className="rounded-lg border border-edge bg-ink/35 p-3"><strong className="block font-display text-xl text-bone">{metrics.calls || 0}</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Calls logged</span></div><div className="rounded-lg border border-edge bg-ink/35 p-3"><strong className="block font-display text-xl text-bone">{metrics.calls ? Math.round(((metrics.connectedCalls || 0) / metrics.calls) * 100) : 0}%</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Connected</span></div><div className="rounded-lg border border-edge bg-ink/35 p-3"><strong className="block font-display text-xl text-bone">{metrics.callMeetings || 0}</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Meetings booked</span></div></div>
-          <div className="mt-3 divide-y divide-edge">{manualCalls.map((call) => <details key={call.id} className="py-3"><summary className="grid cursor-pointer list-none gap-2 sm:grid-cols-[1.2fr_1fr_auto] sm:items-center"><div className="min-w-0"><strong className="block truncate text-sm text-bone">{call.prospect ? `${call.prospect.first_name || ""} ${call.prospect.last_name || ""}`.trim() : "Unknown prospect"}</strong><span className="block truncate text-xs text-muted">{call.prospect?.company_name || call.prospect?.email || "Prospect record unavailable"}</span></div><span className="font-mono text-[0.52rem] uppercase text-sky">{String(call.metadata?.outcome || "call").replace(/_/g, " ")}</span><span className="font-mono text-[0.5rem] uppercase text-muted">{formatActivityDate(call.created_at)}</span></summary><div className="mt-2 rounded-lg border border-edge bg-ink/40 p-3"><p className="text-sm leading-6 text-bone/80">{call.metadata?.note || "No call note was saved"}</p>{call.metadata?.humanNextAction ? <p className="mt-2 text-sm text-amber">Next · {call.metadata.humanNextAction}</p> : null}</div></details>)}{!manualCalls.length ? <p className="py-6 text-center text-sm text-muted">No manual calls logged yet.</p> : null}</div>
+          <div className="mt-3 divide-y divide-edge">{manualCalls.map((call) => <details key={call.id} className="py-3"><summary className="grid cursor-pointer list-none gap-2 sm:grid-cols-[1.2fr_1fr_auto] sm:items-center"><CanonicalRecordLink href={outreachProspectHref(call.prospect)} onNavigate={(event) => openProspectFromThisPage(call.prospect, event)} stopPropagation className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${call.prospect ? `${call.prospect.first_name || ""} ${call.prospect.last_name || ""}`.trim() : "prospect"}`}><strong className="block truncate text-sm text-bone">{call.prospect ? `${call.prospect.first_name || ""} ${call.prospect.last_name || ""}`.trim() : "Unknown prospect"}</strong><span className="block truncate text-xs text-muted">{call.prospect?.company_name || call.prospect?.email || "Prospect record unavailable"}</span></CanonicalRecordLink><span className="font-mono text-[0.52rem] uppercase text-sky">{String(call.metadata?.outcome || "call").replace(/_/g, " ")}</span><span className="font-mono text-[0.5rem] uppercase text-muted">{formatActivityDate(call.created_at)}</span></summary><div className="mt-2 rounded-lg border border-edge bg-ink/40 p-3"><p className="text-sm leading-6 text-bone/80">{call.metadata?.note || "No call note was saved"}</p>{call.metadata?.humanNextAction ? <p className="mt-2 text-sm text-amber">Next · {call.metadata.humanNextAction}</p> : null}</div></details>)}{!manualCalls.length ? <p className="py-6 text-center text-sm text-muted">No manual calls logged yet.</p> : null}</div>
         </div>
 
         <div className="rounded-xl border border-edge bg-panel p-4"><div className="flex items-end justify-between gap-3"><div><h2 className="font-display text-lg text-bone">Recent email activity</h2><p className="mt-1 text-sm text-muted">Approved, queued and sent emails from this signed in account, newest activity first.</p></div><span className="rounded-full border border-moss/50 bg-moss/10 px-2 py-1 font-mono text-[0.52rem] uppercase text-moss">{metrics.sent || 0} sent</span></div>
-          <div className="mt-3 divide-y divide-edge">{sentHistory.map((message) => { const statusLabel = message.status === "sent" ? "Sent" : message.status === "sending" ? "Sending" : "Queued"; const statusTone = message.status === "sent" ? "border-moss/50 bg-moss/10 text-moss" : "border-sky/50 bg-sky/10 text-sky"; const activityAt = message.sent_at || message.scheduled_at || message.updated_at; return <details key={message.id} className="group py-3"><summary className="grid cursor-pointer list-none gap-2 sm:grid-cols-[1.1fr_1.2fr_auto] sm:items-center"><div className="min-w-0"><strong className="block truncate text-sm text-bone">{message.prospect ? `${message.prospect.first_name || ""} ${message.prospect.last_name || ""}`.trim() : "Unknown prospect"}</strong><span className="block truncate text-xs text-muted">{message.prospect?.company_name || message.prospect?.email || "Prospect record unavailable"}</span></div><span className="truncate text-sm text-bone/80">{message.subject}</span><div className="flex items-center justify-between gap-3 sm:justify-end"><span className="font-mono text-[0.5rem] uppercase text-muted">{formatActivityDate(activityAt)}</span><span className={`rounded-full border px-2 py-1 font-mono text-[0.49rem] uppercase ${statusTone}`}>{message.status === "sent" ? "✓ " : ""}{statusLabel}</span></div></summary><div className="mt-3 rounded-lg border border-edge bg-ink/40 p-3"><p className="font-mono text-[0.52rem] uppercase text-muted">From {message.from_email || "connected mailbox"} · {message.message_source === "brain_direct" ? "Brain email" : `step ${message.step_number}`}</p><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-bone/80">{message.body_text}</p>{message.prospect?.last_reply_at ? <button type="button" onClick={() => selectTab("replies")} className={`${button} mt-3 border-moss/45 text-moss`}>View reply</button> : null}</div></details>; })}{!sentHistory.length ? <div className="py-8 text-center text-sm text-muted">No approved or sent prospect emails yet.</div> : null}</div>
+          <div className="mt-3 divide-y divide-edge">{sentHistory.map((message) => { const statusLabel = message.status === "sent" ? "Sent" : message.status === "sending" ? "Sending" : "Queued"; const statusTone = message.status === "sent" ? "border-moss/50 bg-moss/10 text-moss" : "border-sky/50 bg-sky/10 text-sky"; const activityAt = message.sent_at || message.scheduled_at || message.updated_at; return <details key={message.id} className="group py-3"><summary className="grid cursor-pointer list-none gap-2 sm:grid-cols-[1.1fr_1.2fr_auto] sm:items-center"><CanonicalRecordLink href={outreachProspectHref(message.prospect)} onNavigate={(event) => openProspectFromThisPage(message.prospect, event)} stopPropagation className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${message.prospect ? `${message.prospect.first_name || ""} ${message.prospect.last_name || ""}`.trim() : "prospect"}`}><strong className="block truncate text-sm text-bone">{message.prospect ? `${message.prospect.first_name || ""} ${message.prospect.last_name || ""}`.trim() : "Unknown prospect"}</strong><span className="block truncate text-xs text-muted">{message.prospect?.company_name || message.prospect?.email || "Prospect record unavailable"}</span></CanonicalRecordLink><span className="truncate text-sm text-bone/80">{message.subject}</span><div className="flex items-center justify-between gap-3 sm:justify-end"><span className="font-mono text-[0.5rem] uppercase text-muted">{formatActivityDate(activityAt)}</span><span className={`rounded-full border px-2 py-1 font-mono text-[0.49rem] uppercase ${statusTone}`}>{message.status === "sent" ? "✓ " : ""}{statusLabel}</span></div></summary><div className="mt-3 rounded-lg border border-edge bg-ink/40 p-3"><p className="font-mono text-[0.52rem] uppercase text-muted">From {message.from_email || "connected mailbox"} · {message.message_source === "brain_direct" ? "Brain email" : `step ${message.step_number}`}</p><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-bone/80">{message.body_text}</p>{message.prospect?.last_reply_at ? <button type="button" onClick={() => selectTab("replies")} className={`${button} mt-3 border-moss/45 text-moss`}>View reply</button> : null}</div></details>; })}{!sentHistory.length ? <div className="py-8 text-center text-sm text-muted">No approved or sent prospect emails yet.</div> : null}</div>
         </div>
       </section> : null}
 
@@ -1803,7 +1853,7 @@ export default function OutreachPage() {
       {!loading && !tabLoading && tab === "replies" ? <section data-sales-tour="reply-handover">
         <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Email and SendPilot replies meet here. Every reply stops the sequence. Deal value still waits until a real conversation.</p></div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking email…" : "Check email replies"}</button></div>
         <div className="space-y-2">{replies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; const handover = handoverReviews[reply.id]; return <article key={reply.id} className="rounded-xl border border-edge bg-panel p-4">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></div><div className="flex flex-wrap gap-2"><span className="rounded-full border border-sky/50 px-2 py-1 font-mono text-[0.55rem] uppercase text-sky">{reply.replyChannel === "linkedin" ? "LinkedIn" : "Email"}</span><span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${reply.reply_category === "interested" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{reply.reply_category}</span></div></div>
+          <div className="flex flex-wrap items-start justify-between gap-2"><CanonicalRecordLink href={outreachProspectHref(reply)} onNavigate={(event) => openProspectFromThisPage(reply, event)} className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${`${reply.first_name || ""} ${reply.last_name || ""}`.trim() || reply.email || "prospect"}`}><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></CanonicalRecordLink><div className="flex flex-wrap gap-2"><span className="rounded-full border border-sky/50 px-2 py-1 font-mono text-[0.55rem] uppercase text-sky">{reply.replyChannel === "linkedin" ? "LinkedIn" : "Email"}</span><span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${reply.reply_category === "interested" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{reply.reply_category}</span></div></div>
           <p className="mt-3 text-sm leading-6 text-bone/80">{reply.reply_summary}</p>
           {reply.last_reply_text ? <div className="mt-3 rounded-lg border border-edge bg-ink/35 p-3"><p className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">Latest reply</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-bone/85">{reply.last_reply_text}</p></div> : null}
           {reply.reply_category === "interested" ? <div className="mt-3 rounded-lg border border-edge bg-ink/35 p-3">

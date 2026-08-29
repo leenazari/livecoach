@@ -5,7 +5,9 @@ import Link from "next/link";
 import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
+import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import MatrixRain from "@/components/MatrixRain";
+import { crmCompanyHref } from "@/lib/crm-navigation";
 
 type CallState = "scored" | "summarising" | "failed" | "unrecorded";
 
@@ -204,17 +206,19 @@ export default function CallsPage() {
                 key={c.id}
                 className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-2 border-b border-edge/40 px-4 py-3 last:border-none hover:bg-bone/[0.03] sm:grid-cols-[1.4fr_1.2fr_1fr_0.6fr_auto]"
               >
-                <span className="truncate font-sans text-[0.9rem] text-bone sm:text-[0.84rem]">
+                <CanonicalRecordLink href={href} className="inline-flex min-h-11 min-w-0 items-center truncate font-sans text-[0.9rem] text-bone sm:text-[0.84rem]" ariaLabel={`Open ${c.candidate || "call"}`}>
                   {c.ref && (
                     <span className="mr-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-muted">
                       {c.ref}
                     </span>
                   )}
                   {c.candidate || "Untitled call"}
-                </span>
+                </CanonicalRecordLink>
                 <span className="col-start-1 row-start-2 truncate font-mono text-[0.66rem] text-sky sm:col-auto sm:row-auto">
                   {c.company ? (
-                    c.company
+                    <CanonicalRecordLink href={crmCompanyHref(c.company_id)} className="inline-flex min-h-10 items-center" ariaLabel={`Open ${c.company}`}>
+                      {c.company}
+                    </CanonicalRecordLink>
                   ) : assigningId === c.id ? (
                     <CompanyLinkPicker
                       value={null}

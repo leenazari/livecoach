@@ -411,6 +411,7 @@ export async function GET() {
       const opportunity = opportunityById.get(receipt.opportunity_id) as any;
       return {
         id: receipt.id,
+        companyId: receipt.company_id || null,
         company: nameByCompany.get(receipt.company_id) || "Unlinked company",
         opportunity: opportunity?.title || "No single open revenue opportunity",
         sourceRecordType: receipt.source_record_type,

@@ -8,6 +8,7 @@ import MatrixRain from "@/components/MatrixRain";
 import PipelineWorkspace from "@/components/crm/PipelineWorkspace";
 import OutlookIntelligencePanel, { type SignalHealth } from "@/components/crm/OutlookIntelligencePanel";
 import { opportunityMatchesOwner } from "@/lib/opportunity-owner-filter";
+import { outreachProspectHref } from "@/lib/crm-navigation";
 
 type Pipeline = Record<string, any>;
 type Opportunity = Record<string, any> & {
@@ -305,7 +306,7 @@ export default function RevenuePage() {
               {data.recentOutreach.slice(0, 5).map((message: any) => {
                 const prospectName = `${message.prospect?.first_name || ""} ${message.prospect?.last_name || ""}`.trim();
                 const activityAt = message.sent_at || message.scheduled_at || message.updated_at;
-                const outreachHref = `/crm/outreach?tab=prospects&sort=activity&q=${encodeURIComponent(message.prospect?.email || "")}`;
+                const outreachHref = outreachProspectHref(message.prospect) || "/crm/outreach?tab=prospects&sort=activity";
                 return (
                   <article key={message.id} className="grid gap-2 py-3 sm:grid-cols-[1fr_1.3fr_auto] sm:items-center">
                     <div className="min-w-0">

@@ -740,9 +740,15 @@ export default function NotificationsPage() {
                             </span>
                           ) : null}
                         </div>
-                        <h2 className="mt-1 text-base font-medium text-bone">
+                        <button
+                          type="button"
+                          onClick={() => void openSource(notification)}
+                          disabled={busy === notification.id}
+                          className="mt-1 min-h-10 rounded-md text-left text-base font-medium text-bone transition hover:text-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/70"
+                          aria-label={`Open ${notification.title} in CRM`}
+                        >
                           {notification.title}
-                        </h2>
+                        </button>
                       </div>
                       <time className="font-mono text-[0.5rem] uppercase text-muted">
                         {formatWhen(
