@@ -1,16 +1,13 @@
 "use client";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
-import CampaignSequenceBuilder from "@/components/crm/CampaignSequenceBuilder";
-import ProspectManualCall from "@/components/crm/ProspectManualCall";
 import RevenueToday from "@/components/crm/RevenueToday";
-import OutreachReadiness from "@/components/crm/OutreachReadiness";
-import OutreachVoiceNoteEditor from "@/components/crm/OutreachVoiceNoteEditor";
 import MatrixRain from "@/components/MatrixRain";
-import { crmFetch } from "@/lib/crm";
+import { crmFetch, getCached } from "@/lib/crm";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import { prepareOutreachVoiceScriptForReview } from "@/lib/outreach-voice-policy";
 import { outreachProspectHref } from "@/lib/crm-navigation";
@@ -23,6 +20,23 @@ import {
   outreachSequenceValidationError,
   type OutreachSequenceStep,
 } from "@/lib/outreach-sequence";
+
+const CampaignSequenceBuilder = dynamic(
+  () => import("@/components/crm/CampaignSequenceBuilder"),
+  { ssr: false, loading: () => <MatrixRain size="inline" messages={["loading sequence builder"]} /> }
+);
+const ProspectManualCall = dynamic(
+  () => import("@/components/crm/ProspectManualCall"),
+  { ssr: false, loading: () => <MatrixRain size="inline" messages={["loading call logger"]} /> }
+);
+const OutreachReadiness = dynamic(
+  () => import("@/components/crm/OutreachReadiness"),
+  { ssr: false, loading: () => <MatrixRain size="inline" messages={["loading safety checks"]} /> }
+);
+const OutreachVoiceNoteEditor = dynamic(
+  () => import("@/components/crm/OutreachVoiceNoteEditor"),
+  { ssr: false, loading: () => <MatrixRain size="inline" messages={["loading voice note"]} /> }
+);
 
 type Tab = "queue" | "prospects" | "signals" | "activity" | "replies" | "campaign" | "intelligence" | "safety";
 type Priority = "high" | "medium" | "low";
@@ -38,6 +52,7 @@ type Prospect = Record<string, any> & {
   website?: string;
   priority: Priority;
   priority_score: number;
+  has_research?: boolean;
   recommendation: Recommendation;
 };
 type QueueRow = Record<string, any> & { id: string; prospect: Prospect; campaign: Record<string, any>; message: Record<string, any> | null; recommendation: Recommendation };
@@ -121,6 +136,16 @@ const primary = "min-h-11 rounded-lg border border-amber/60 bg-amber/15 px-4 py-
 const input = "w-full rounded-lg border border-edge bg-ink/50 px-3 py-2.5 text-sm text-bone placeholder:text-muted focus:border-amber/60 focus:outline-none";
 const PREPARE_QUEUE_KEY = "livecoach:outreach-prepare-queue:v1";
 const MAX_CONCURRENT_RESEARCH = 2;
+const PROSPECT_PAGE_SIZE = 60;
+const OUTREACH_URLS = {
+  queue: "/api/crm/outreach/queue",
+  campaigns: "/api/crm/outreach/campaigns",
+  campaignStats: "/api/crm/outreach/campaigns?stats=1",
+  metricsSummary: "/api/crm/outreach/metrics?summary=1",
+  metrics: "/api/crm/outreach/metrics",
+  prospects: "/api/crm/outreach",
+  suppressions: "/api/crm/outreach/suppressions",
+} as const;
 
 function outreachStage(prospect: Prospect): { key: string; label: string } {
   if (prospect.status === "suppressed") return { key: "suppressed", label: "Removed" };
@@ -156,20 +181,12 @@ function outreachStage(prospect: Prospect): { key: string; label: string } {
 }
 
 function isUntouchedProspect(prospect: Prospect): boolean {
-  const research = prospect.research;
-  const hasResearch = research != null && (
-    Array.isArray(research)
-      ? research.length > 0
-      : typeof research === "object"
-        ? Object.keys(research).length > 0
-        : String(research).trim().length > 0
-  );
   return prospect.status === "imported" &&
     outreachStage(prospect).key === "not_started" &&
     !prospect.last_researched_at &&
     !prospect.last_contacted_at &&
     !prospect.last_reply_at &&
-    !hasResearch &&
+    !prospect.has_research &&
     !prospect.outreach?.latestMessage &&
     !prospect.outreach?.enrolment;
 }
@@ -382,36 +399,57 @@ function CampaignResultStrip({ stats }: { stats?: CampaignStats }) {
 }
 
 export default function OutreachPage() {
+  const {
+    queue: cachedQueue,
+    campaigns: cachedCampaigns,
+    campaignStats: cachedCampaignStats,
+    summary: cachedSummary,
+    metrics: cachedMetrics,
+    prospects: cachedProspects,
+    suppressions: cachedSuppressions,
+  } = useMemo(() => ({
+    queue: getCached<any>(OUTREACH_URLS.queue),
+    campaigns: getCached<any>(OUTREACH_URLS.campaigns),
+    campaignStats: getCached<any>(OUTREACH_URLS.campaignStats),
+    summary: getCached<any>(OUTREACH_URLS.metricsSummary),
+    metrics: getCached<any>(OUTREACH_URLS.metrics),
+    prospects: getCached<any>(OUTREACH_URLS.prospects),
+    suppressions: getCached<any>(OUTREACH_URLS.suppressions),
+  }), []);
   const [tab, setTab] = useState<Tab>("queue");
-  const [prospects, setProspects] = useState<Prospect[]>([]);
-  const [queue, setQueue] = useState<QueueRow[]>([]);
+  const [prospects, setProspects] = useState<Prospect[]>(cachedProspects?.prospects || []);
+  const [queue, setQueue] = useState<QueueRow[]>(cachedQueue?.queue || []);
   const [sender, setSender] = useState<{
     senderName: string;
     senderEmail: string;
     provider: "google" | "microsoft";
     mailboxEmail: string;
-  } | null>(null);
-  const [team, setTeam] = useState<TeamMember[]>([]);
-  const [currentUser, setCurrentUser] = useState("");
-  const [canManageAssignments, setCanManageAssignments] = useState(false);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [campaignStats, setCampaignStats] = useState<Record<string, CampaignStats>>({});
-  const [selectedCampaignId, setSelectedCampaignId] = useState("");
+  } | null>(cachedQueue?.sender || null);
+  const [team, setTeam] = useState<TeamMember[]>(cachedProspects?.team || []);
+  const [currentUser, setCurrentUser] = useState(cachedProspects?.currentUser || "");
+  const [canManageAssignments, setCanManageAssignments] = useState(cachedProspects?.canManageAssignments === true);
+  const [campaigns, setCampaigns] = useState<Campaign[]>(cachedCampaigns?.campaigns || []);
+  const [campaignStats, setCampaignStats] = useState<Record<string, CampaignStats>>(
+    cachedCampaignStats?.campaignStats || cachedCampaigns?.campaignStats || {}
+  );
+  const [selectedCampaignId, setSelectedCampaignId] = useState(
+    cachedCampaigns?.selectedCampaignId || cachedQueue?.selectedCampaignId || ""
+  );
   const [expandedCampaignId, setExpandedCampaignId] = useState("");
-  const [canManageCampaigns, setCanManageCampaigns] = useState(false);
-  const [metrics, setMetrics] = useState<any>({});
-  const [replies, setReplies] = useState<any[]>([]);
-  const [sentHistory, setSentHistory] = useState<any[]>([]);
-  const [sendPilotActivity, setSendPilotActivity] = useState<any[]>([]);
-  const [manualCalls, setManualCalls] = useState<any[]>([]);
-  const [variants, setVariants] = useState<any[]>([]);
-  const [performance, setPerformance] = useState<any[]>([]);
-  const [learnings, setLearnings] = useState<any[]>([]);
-  const [suppressions, setSuppressions] = useState<any[]>([]);
+  const [canManageCampaigns, setCanManageCampaigns] = useState(cachedCampaigns?.canManageCampaigns === true);
+  const [metrics, setMetrics] = useState<any>(cachedMetrics?.metrics || cachedSummary?.metrics || {});
+  const [replies, setReplies] = useState<any[]>(cachedMetrics?.replies || []);
+  const [sentHistory, setSentHistory] = useState<any[]>(cachedMetrics?.sentHistory || []);
+  const [sendPilotActivity, setSendPilotActivity] = useState<any[]>(cachedMetrics?.sendPilotActivity || []);
+  const [manualCalls, setManualCalls] = useState<any[]>(cachedMetrics?.manualCalls || []);
+  const [variants, setVariants] = useState<any[]>(cachedMetrics?.variants || []);
+  const [performance, setPerformance] = useState<any[]>(cachedMetrics?.performance || []);
+  const [learnings, setLearnings] = useState<any[]>(cachedMetrics?.learnings || []);
+  const [suppressions, setSuppressions] = useState<any[]>(cachedSuppressions?.suppressions || []);
   const [engagementInput, setEngagementInput] = useState("");
   const [engagementDraft, setEngagementDraft] = useState<EngagementDraft | null>(null);
   const [engagementComment, setEngagementComment] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!(cachedQueue && cachedCampaigns));
   const [tabLoading, setTabLoading] = useState(false);
   const [busy, setBusy] = useState("");
   const [generatingVoiceMessageId, setGeneratingVoiceMessageId] = useState("");
@@ -422,7 +460,7 @@ export default function OutreachPage() {
   const prepareJobsRef = useRef<Record<string, PrepareStatus>>({});
   const prepareQueueRef = useRef<string[]>([]);
   const activePrepareRef = useRef<Set<string>>(new Set());
-  const ownerFilterInitialisedRef = useRef(false);
+  const ownerFilterInitialisedRef = useRef(Boolean(cachedProspects));
   const initialQueueFillAttemptedRef = useRef(false);
   const [q, setQ] = useState("");
   const [focusedProspectId, setFocusedProspectId] = useState("");
@@ -432,20 +470,38 @@ export default function OutreachPage() {
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [recommendationFilter, setRecommendationFilter] = useState<"all" | RecommendationAction>("all");
   const [prospectCampaignId, setProspectCampaignId] = useState("all");
-  const [ownerFilter, setOwnerFilter] = useState("all");
+  const [ownerFilter, setOwnerFilter] = useState(
+    cachedProspects
+      ? cachedProspects.canManageAssignments === true
+        ? "all"
+        : "available"
+      : "all"
+  );
   const [bulkAssignee, setBulkAssignee] = useState("");
   const [blockTarget, setBlockTarget] = useState("");
   const [removalProspectId, setRemovalProspectId] = useState("");
   const [manualCallProspectId, setManualCallProspectId] = useState("");
   const [draftEdits, setDraftEdits] = useState<Record<string, { subject: string; body_text: string; voice_script: string }>>({});
   const [handoverReviews, setHandoverReviews] = useState<Record<string, HandoverPreview>>({});
+  const [visibleProspectLimit, setVisibleProspectLimit] = useState(PROSPECT_PAGE_SIZE);
+  const loadedResourcesRef = useRef({
+    prospects: Boolean(cachedProspects),
+    metrics: Boolean(cachedMetrics),
+    campaignStats: Boolean(cachedCampaignStats || cachedCampaigns?.campaignStats),
+    suppressions: Boolean(cachedSuppressions),
+  });
 
   const loadCore = useCallback(async () => {
+    const metricsRequest = crmFetch<any>(OUTREACH_URLS.metricsSummary)
+      .then((data) => setMetrics(data.metrics || {}))
+      .catch(() => {
+        // The working queue is still useful if the small count strip cannot
+        // refresh. A later tab or manual refresh will retry it.
+      });
     try {
-      const [qd, c, m] = await Promise.all([
-        crmFetch<any>("/api/crm/outreach/queue"),
-        crmFetch<any>("/api/crm/outreach/campaigns"),
-        crmFetch<any>("/api/crm/outreach/metrics?summary=1"),
+      const [qd, c] = await Promise.all([
+        crmFetch<any>(OUTREACH_URLS.queue),
+        crmFetch<any>(OUTREACH_URLS.campaigns),
       ]);
       const selectedId = c.selectedCampaignId || qd.selectedCampaignId || "";
       const selectedCampaign = (c.campaigns || []).find(
@@ -454,6 +510,13 @@ export default function OutreachPage() {
         (campaign: Campaign) => campaign.status === "active"
       );
       let nextQueue = qd.queue || [];
+      setQueue(nextQueue);
+      setSender(qd.sender || null);
+      setCampaigns(c.campaigns || []);
+      if (c.campaignStats) setCampaignStats(c.campaignStats);
+      setSelectedCampaignId(selectedId);
+      setCanManageCampaigns(c.canManageCampaigns === true);
+      setLoading(false);
       // Queue selection is free. Fill the user's working day on first entry so
       // they do not have to understand or find a separate top-up control.
       if (
@@ -462,35 +525,29 @@ export default function OutreachPage() {
         nextQueue.length < Math.min(20, selectedCampaign.daily_limit || 20)
       ) {
         initialQueueFillAttemptedRef.current = true;
-        try {
-          const filled = await crmFetch<any>("/api/crm/outreach/queue", {
+        void crmFetch<any>(OUTREACH_URLS.queue, {
             method: "POST",
             body: JSON.stringify({ limit: selectedCampaign.daily_limit || 20 }),
+          })
+          .then((filled) => setQueue(filled.queue || nextQueue))
+          .catch(() => {
+            // Keep the valid existing queue visible. The manual top-up control
+            // remains available with the precise server error if it is needed.
           });
-          nextQueue = filled.queue || nextQueue;
-        } catch {
-          // Keep the valid existing queue visible. The manual top-up control
-          // remains available with the precise server error if it is needed.
-        }
       }
-      setQueue(nextQueue);
-      setSender(qd.sender || null);
-      setCampaigns(c.campaigns || []);
-      if (c.campaignStats) setCampaignStats(c.campaignStats);
-      setSelectedCampaignId(selectedId);
-      setCanManageCampaigns(c.canManageCampaigns === true);
-      setMetrics(m.metrics || {});
+      await metricsRequest;
     } catch (e: any) { setError(e.message || "Could not load outreach"); }
     finally { setLoading(false); }
   }, []);
 
   const loadCampaignStats = useCallback(async () => {
-    const data = await crmFetch<any>("/api/crm/outreach/campaigns?stats=1");
+    const data = await crmFetch<any>(OUTREACH_URLS.campaignStats);
     setCampaignStats(data.campaignStats || {});
+    loadedResourcesRef.current.campaignStats = true;
   }, []);
 
   const loadProspects = useCallback(async () => {
-    const data = await crmFetch<any>("/api/crm/outreach");
+    const data = await crmFetch<any>(OUTREACH_URLS.prospects);
     setProspects(data.prospects || []);
     setTeam(data.team || []);
     setCurrentUser(data.currentUser || "");
@@ -502,10 +559,11 @@ export default function OutreachPage() {
       setOwnerFilter(data.canManageAssignments === true ? "all" : "available");
       ownerFilterInitialisedRef.current = true;
     }
+    loadedResourcesRef.current.prospects = true;
   }, []);
 
   const loadMetrics = useCallback(async () => {
-    const data = await crmFetch<any>("/api/crm/outreach/metrics");
+    const data = await crmFetch<any>(OUTREACH_URLS.metrics);
     setMetrics(data.metrics || {});
     setReplies(data.replies || []);
     setSentHistory(data.sentHistory || []);
@@ -514,11 +572,13 @@ export default function OutreachPage() {
     setVariants(data.variants || []);
     setPerformance(data.performance || []);
     setLearnings(data.learnings || []);
+    loadedResourcesRef.current.metrics = true;
   }, []);
 
   const loadSuppressions = useCallback(async () => {
-    const data = await crmFetch<any>("/api/crm/outreach/suppressions");
+    const data = await crmFetch<any>(OUTREACH_URLS.suppressions);
     setSuppressions(data.suppressions || []);
+    loadedResourcesRef.current.suppressions = true;
   }, []);
 
   const updatePrepareJob = useCallback((prospectId: string, status: PrepareStatus) => {
@@ -630,18 +690,68 @@ export default function OutreachPage() {
   useEffect(() => {
     let alive = true;
     const requests: Promise<void>[] = [];
-    if (tab === "prospects") requests.push(loadProspects());
-    if (tab === "safety") requests.push(loadSuppressions());
-    if (tab === "campaign") requests.push(loadCampaignStats());
-    if (tab === "campaign" || tab === "intelligence" || tab === "activity" || tab === "replies")
+    let requiresBlockingLoader = false;
+    if (
+      tab === "prospects" &&
+      (!loadedResourcesRef.current.prospects || !getCached(OUTREACH_URLS.prospects))
+    ) {
+      requiresBlockingLoader ||= !loadedResourcesRef.current.prospects;
+      requests.push(loadProspects());
+    }
+    if (
+      tab === "safety" &&
+      (!loadedResourcesRef.current.suppressions || !getCached(OUTREACH_URLS.suppressions))
+    ) {
+      requiresBlockingLoader ||= !loadedResourcesRef.current.suppressions;
+      requests.push(loadSuppressions());
+    }
+    if (
+      tab === "campaign" &&
+      (!loadedResourcesRef.current.campaignStats || !getCached(OUTREACH_URLS.campaignStats))
+    ) {
+      requiresBlockingLoader ||= !loadedResourcesRef.current.campaignStats;
+      requests.push(loadCampaignStats());
+    }
+    if (
+      (tab === "campaign" || tab === "intelligence" || tab === "activity" || tab === "replies") &&
+      (!loadedResourcesRef.current.metrics || !getCached(OUTREACH_URLS.metrics))
+    ) {
+      requiresBlockingLoader ||= !loadedResourcesRef.current.metrics;
       requests.push(loadMetrics());
-    if (!requests.length) return;
-    setTabLoading(true);
+    }
+    if (!requests.length) {
+      setTabLoading(false);
+      return;
+    }
+    setTabLoading(requiresBlockingLoader);
     Promise.all(requests)
       .catch((e: any) => alive && setError(e.message || "Could not load this section"))
       .finally(() => alive && setTabLoading(false));
     return () => { alive = false; };
   }, [tab, loadCampaignStats, loadMetrics, loadProspects, loadSuppressions]);
+  useEffect(() => {
+    if (loading) return;
+    const prefetch = () => {
+      const requests: Promise<void>[] = [];
+      if (!loadedResourcesRef.current.prospects || !getCached(OUTREACH_URLS.prospects))
+        requests.push(loadProspects());
+      if (!loadedResourcesRef.current.metrics || !getCached(OUTREACH_URLS.metrics))
+        requests.push(loadMetrics());
+      if (!loadedResourcesRef.current.campaignStats || !getCached(OUTREACH_URLS.campaignStats))
+        requests.push(loadCampaignStats());
+      void Promise.allSettled(requests);
+    };
+    const idleWindow = window as typeof window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (idleWindow.requestIdleCallback) {
+      const handle = idleWindow.requestIdleCallback(prefetch, { timeout: 1800 });
+      return () => idleWindow.cancelIdleCallback?.(handle);
+    }
+    const handle = window.setTimeout(prefetch, 700);
+    return () => window.clearTimeout(handle);
+  }, [loadCampaignStats, loadMetrics, loadProspects, loading]);
   useEffect(() => {
     const next: Record<string, { subject: string; body_text: string; voice_script: string }> = {};
     for (const row of queue) if (row.message) {
@@ -691,6 +801,16 @@ export default function OutreachPage() {
     if (next === "queue") url.searchParams.delete("tab");
     else url.searchParams.set("tab", next);
     window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+  };
+  const openOutreachMetric = (next: Tab, sectionId?: string) => {
+    selectTab(next);
+    if (!sectionId) return;
+    window.setTimeout(() => {
+      document.getElementById(sectionId)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 0);
   };
   const clearProspectFocus = () => {
     setFocusedProspectId("");
@@ -1382,6 +1502,13 @@ export default function OutreachPage() {
     });
     return rows;
   }, [currentUser, focusedProspectId, needle, ownerFilter, priority, prospectCampaignId, prospectSort, prospects, recommendationFilter, sortDirection, stageFilter]);
+  useEffect(() => {
+    setVisibleProspectLimit(PROSPECT_PAGE_SIZE);
+  }, [focusedProspectId, needle, ownerFilter, priority, prospectCampaignId, prospectSort, recommendationFilter, sortDirection, stageFilter]);
+  const shownPage = useMemo(
+    () => focusedProspectId ? shown : shown.slice(0, visibleProspectLimit),
+    [focusedProspectId, shown, visibleProspectLimit]
+  );
 
   const bulkEligible = useMemo(
     () => shown.filter(
@@ -1396,11 +1523,11 @@ export default function OutreachPage() {
   const engagementReady = engagementSource.length >= 25 && !/^https?:\/\/\S+$/i.test(engagementSource);
 
   const funnel = [
-    { label: "My prospects", value: metrics.prospects || 0, colour: "bg-sky" },
-    { label: "Emails sent", value: metrics.sent || 0, colour: "bg-amber" },
-    { label: "Replies", value: metrics.replies || 0, colour: "bg-bone" },
-    { label: "Interested", value: metrics.positiveReplies || 0, colour: "bg-moss" },
-    { label: "Meetings", value: metrics.meetings || 0, colour: "bg-moss" },
+    { label: "My prospects", value: metrics.prospects || 0, colour: "bg-sky", tab: "prospects" as Tab },
+    { label: "Emails sent", value: metrics.sent || 0, colour: "bg-amber", tab: "activity" as Tab, sectionId: "recent-email-activity" },
+    { label: "Replies", value: metrics.replies || 0, colour: "bg-bone", tab: "replies" as Tab },
+    { label: "Interested", value: metrics.positiveReplies || 0, colour: "bg-moss", tab: "replies" as Tab },
+    { label: "Meetings", value: metrics.meetings || 0, colour: "bg-moss", tab: "replies" as Tab },
   ];
   const researchingCount = Object.values(prepareJobs).filter(
     (status) => status === "researching"
@@ -1637,7 +1764,7 @@ export default function OutreachPage() {
               <option value="status:asc">Outreach status</option>
             </select>
           </div>
-          <p className="mt-2 text-xs text-muted">Showing {shown.length} of {prospects.length}. All campaigns is the combined priority list and every prospect keeps the campaign badge shown on their row. Fit scoring uses no AI tokens. Research only starts when you press Prepare draft.</p>
+          <p className="mt-2 text-xs text-muted">Displaying {shownPage.length} of {shown.length} matching prospects, from {prospects.length} loaded. All campaigns is the combined priority list and every prospect keeps the campaign badge shown on its row. Fit scoring uses no AI tokens. Research only starts when you press Prepare draft.</p>
         </div>
 
         {canManageAssignments ? <div className="mb-3 rounded-xl border border-sky/40 bg-sky/[0.06] p-3">
@@ -1659,7 +1786,7 @@ export default function OutreachPage() {
             <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">Owner</span>
             <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">Action</span>
           </div>
-          <div className="divide-y divide-edge">{shown.map((prospect) => {
+          <div className="divide-y divide-edge">{shownPage.map((prospect) => {
             const stage = outreachStage(prospect);
             const isBrainDirect = prospect.outreach?.latestMessage?.message_source === "brain_direct";
             const latestManualCall = prospect.source_metadata?.latest_manual_call;
@@ -1693,6 +1820,7 @@ export default function OutreachPage() {
               <details className="sm:col-span-7"><summary className="cursor-pointer font-mono text-[0.5rem] uppercase tracking-wider text-muted">Why this fit score · {prospect.recommendation?.score || 0}/100</summary><RecommendationCard recommendation={prospect.recommendation} compact /></details>
             </article>;
           })}{!shown.length ? <div className="p-8 text-center text-sm text-muted">No prospects match these filters.</div> : null}</div>
+          {!focusedProspectId && shownPage.length < shown.length ? <div className="border-t border-edge p-3 text-center"><button type="button" onClick={() => setVisibleProspectLimit((current) => current + PROSPECT_PAGE_SIZE)} className={button}>Load next {Math.min(PROSPECT_PAGE_SIZE, shown.length - shownPage.length)} · {shown.length - shownPage.length} remaining</button></div> : null}
         </div>
       </section> : null}
 
@@ -1728,9 +1856,9 @@ export default function OutreachPage() {
           <div className="mt-4 space-y-3">{funnel.map((item, index) => {
             const previous = index === 0 ? item.value : funnel[index - 1].value;
             const percentage = index === 0 ? 100 : previous ? Math.round((item.value / previous) * 100) : 0;
-            return <div key={item.label} className="grid grid-cols-[6.5rem_1fr_3rem] items-center gap-3"><span className="font-mono text-[0.52rem] uppercase text-muted">{item.label}</span><div className="h-2.5 overflow-hidden rounded-full bg-ink"><div className={`h-full rounded-full ${item.colour}`} style={{ width: `${item.value ? Math.max(4, percentage) : 0}%` }} /></div><strong className="text-right font-display text-lg text-bone">{item.value}</strong></div>;
+            return <button type="button" key={item.label} onClick={() => openOutreachMetric(item.tab, item.sectionId)} className="grid min-h-11 w-full grid-cols-[6.5rem_1fr_3rem] items-center gap-3 rounded-lg px-2 text-left transition hover:bg-ink/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/70"><span className="font-mono text-[0.52rem] uppercase text-muted">{item.label} ↘</span><div className="h-2.5 overflow-hidden rounded-full bg-ink"><div className={`h-full rounded-full ${item.colour}`} style={{ width: `${item.value ? Math.max(4, percentage) : 0}%` }} /></div><strong className="text-right font-display text-lg text-bone">{item.value}</strong></button>;
           })}</div>
-          <div className="mt-4 grid grid-cols-3 gap-2"><div className="rounded-lg border border-edge bg-ink/35 p-3"><strong className="block font-display text-xl text-bone">{metrics.sent ? Math.round(((metrics.replies || 0) / metrics.sent) * 100) : 0}%</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Reply rate</span></div><div className="rounded-lg border border-edge bg-ink/35 p-3"><strong className="block font-display text-xl text-bone">{metrics.replies ? Math.round(((metrics.positiveReplies || 0) / metrics.replies) * 100) : 0}%</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Positive replies</span></div><div className="rounded-lg border border-edge bg-ink/35 p-3"><strong className="block font-display text-xl text-bone">{metrics.sent ? Math.round(((metrics.meetings || 0) / metrics.sent) * 100) : 0}%</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Meeting rate</span></div></div>
+          <div className="mt-4 grid grid-cols-3 gap-2"><button type="button" onClick={() => openOutreachMetric("replies")} className="rounded-lg border border-edge bg-ink/35 p-3 text-left transition hover:border-amber/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/70"><strong className="block font-display text-xl text-bone">{metrics.sent ? Math.round(((metrics.replies || 0) / metrics.sent) * 100) : 0}%</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Reply rate ↘</span></button><button type="button" onClick={() => openOutreachMetric("replies")} className="rounded-lg border border-edge bg-ink/35 p-3 text-left transition hover:border-amber/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/70"><strong className="block font-display text-xl text-bone">{metrics.replies ? Math.round(((metrics.positiveReplies || 0) / metrics.replies) * 100) : 0}%</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Positive replies ↘</span></button><button type="button" onClick={() => openOutreachMetric("replies")} className="rounded-lg border border-edge bg-ink/35 p-3 text-left transition hover:border-amber/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/70"><strong className="block font-display text-xl text-bone">{metrics.sent ? Math.round(((metrics.meetings || 0) / metrics.sent) * 100) : 0}%</strong><span className="font-mono text-[0.48rem] uppercase text-muted">Meeting rate ↘</span></button></div>
         </div>
 
         <div className="rounded-xl border border-moss/35 bg-panel p-4">
@@ -1765,7 +1893,7 @@ export default function OutreachPage() {
           <div className="mt-3 divide-y divide-edge">{manualCalls.map((call) => <details key={call.id} className="py-3"><summary className="grid cursor-pointer list-none gap-2 sm:grid-cols-[1.2fr_1fr_auto] sm:items-center"><CanonicalRecordLink href={outreachProspectHref(call.prospect)} onNavigate={(event) => openProspectFromThisPage(call.prospect, event)} stopPropagation className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${call.prospect ? `${call.prospect.first_name || ""} ${call.prospect.last_name || ""}`.trim() : "prospect"}`}><strong className="block truncate text-sm text-bone">{call.prospect ? `${call.prospect.first_name || ""} ${call.prospect.last_name || ""}`.trim() : "Unknown prospect"}</strong><span className="block truncate text-xs text-muted">{call.prospect?.company_name || call.prospect?.email || "Prospect record unavailable"}</span></CanonicalRecordLink><span className="font-mono text-[0.52rem] uppercase text-sky">{String(call.metadata?.outcome || "call").replace(/_/g, " ")}</span><span className="font-mono text-[0.5rem] uppercase text-muted">{formatActivityDate(call.created_at)}</span></summary><div className="mt-2 rounded-lg border border-edge bg-ink/40 p-3"><p className="text-sm leading-6 text-bone/80">{call.metadata?.note || "No call note was saved"}</p>{call.metadata?.humanNextAction ? <p className="mt-2 text-sm text-amber">Next · {call.metadata.humanNextAction}</p> : null}</div></details>)}{!manualCalls.length ? <p className="py-6 text-center text-sm text-muted">No manual calls logged yet.</p> : null}</div>
         </div>
 
-        <div className="rounded-xl border border-edge bg-panel p-4"><div className="flex items-end justify-between gap-3"><div><h2 className="font-display text-lg text-bone">Recent email activity</h2><p className="mt-1 text-sm text-muted">Approved, queued and sent emails from this signed in account, newest activity first.</p></div><span className="rounded-full border border-moss/50 bg-moss/10 px-2 py-1 font-mono text-[0.52rem] uppercase text-moss">{metrics.sent || 0} sent</span></div>
+        <div id="recent-email-activity" className="scroll-mt-24 rounded-xl border border-edge bg-panel p-4"><div className="flex items-end justify-between gap-3"><div><h2 className="font-display text-lg text-bone">Recent email activity</h2><p className="mt-1 text-sm text-muted">Approved, queued and sent emails from this signed in account, newest activity first.</p></div><span className="rounded-full border border-moss/50 bg-moss/10 px-2 py-1 font-mono text-[0.52rem] uppercase text-moss">{metrics.sent || 0} sent</span></div>
           <div className="mt-3 divide-y divide-edge">{sentHistory.map((message) => { const statusLabel = message.status === "sent" ? "Sent" : message.status === "sending" ? "Sending" : "Queued"; const statusTone = message.status === "sent" ? "border-moss/50 bg-moss/10 text-moss" : "border-sky/50 bg-sky/10 text-sky"; const activityAt = message.sent_at || message.scheduled_at || message.updated_at; return <details key={message.id} className="group py-3"><summary className="grid cursor-pointer list-none gap-2 sm:grid-cols-[1.1fr_1.2fr_auto] sm:items-center"><CanonicalRecordLink href={outreachProspectHref(message.prospect)} onNavigate={(event) => openProspectFromThisPage(message.prospect, event)} stopPropagation className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${message.prospect ? `${message.prospect.first_name || ""} ${message.prospect.last_name || ""}`.trim() : "prospect"}`}><strong className="block truncate text-sm text-bone">{message.prospect ? `${message.prospect.first_name || ""} ${message.prospect.last_name || ""}`.trim() : "Unknown prospect"}</strong><span className="block truncate text-xs text-muted">{message.prospect?.company_name || message.prospect?.email || "Prospect record unavailable"}</span></CanonicalRecordLink><span className="truncate text-sm text-bone/80">{message.subject}</span><div className="flex items-center justify-between gap-3 sm:justify-end"><span className="font-mono text-[0.5rem] uppercase text-muted">{formatActivityDate(activityAt)}</span><span className={`rounded-full border px-2 py-1 font-mono text-[0.49rem] uppercase ${statusTone}`}>{message.status === "sent" ? "✓ " : ""}{statusLabel}</span></div></summary><div className="mt-3 rounded-lg border border-edge bg-ink/40 p-3"><p className="font-mono text-[0.52rem] uppercase text-muted">From {message.from_email || "connected mailbox"} · {message.message_source === "brain_direct" ? "Brain email" : `step ${message.step_number}`}</p><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-bone/80">{message.body_text}</p>{message.prospect?.last_reply_at ? <button type="button" onClick={() => selectTab("replies")} className={`${button} mt-3 border-moss/45 text-moss`}>View reply</button> : null}</div></details>; })}{!sentHistory.length ? <div className="py-8 text-center text-sm text-muted">No approved or sent prospect emails yet.</div> : null}</div>
         </div>
       </section> : null}

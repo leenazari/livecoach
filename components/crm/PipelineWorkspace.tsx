@@ -12,6 +12,7 @@ import {
 } from "@/lib/opportunity-fields";
 import { crmFetch } from "@/lib/crm";
 import { opportunityMatchesOwner } from "@/lib/opportunity-owner-filter";
+import MetricDrilldown from "@/components/crm/MetricDrilldown";
 
 type Row = Record<string, any> & {
   id: string;
@@ -51,6 +52,8 @@ type Props = {
   onChange: (id: string, patch: Partial<Row>) => void;
   onSave: (row: Row) => void;
   onDismiss: (row: Row) => void;
+  focus?: string;
+  onFocusChange?: (value: string) => void;
 };
 
 const input = "min-h-10 w-full rounded-lg border border-edge bg-ink/70 px-2.5 py-2 text-sm text-bone outline-none focus:border-amber/60";
@@ -59,6 +62,38 @@ const gbp = (value: number) => new Intl.NumberFormat("en-GB", { style: "currency
 const dateTime = (value: string | null) => value
   ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Europe/London" }).format(new Date(value))
   : "Not recorded";
+
+function matchesPipelineFocus(row: Row, focus: string): boolean {
+  if (["", "all", "revenue", "raw", "weighted", "coverage"].includes(focus))
+    return true;
+  if (focus === "best_case")
+    return ["best_case", "commit"].includes(row.forecast_category);
+  if (focus === "commit") return row.forecast_category === "commit";
+  if (focus === "overdue")
+    return row.risks.some((risk) =>
+      ["next_action_overdue", "overdue_actions"].includes(risk.code)
+    );
+  if (focus === "meetings")
+    return !!row.nextMeetingAt &&
+      new Date(row.nextMeetingAt).getTime() <= Date.now() + 3 * 86400000;
+  if (focus === "at_risk") return row.win_outlook === "at_risk";
+  if (focus === "stalled") return Number(row.daysQuiet) >= 14;
+  if (focus.startsWith("stage:")) return row.pipeline_stage === focus.slice(6);
+  return true;
+}
+
+function pipelineFocusLabel(focus: string): string {
+  if (focus === "best_case") return "Best case and commit deals";
+  if (focus === "commit") return "Commit deals";
+  if (focus === "overdue") return "Deals with overdue actions";
+  if (focus === "meetings") return "Deals with meetings in the next three days";
+  if (focus === "at_risk") return "At risk deals";
+  if (focus === "stalled") return "Deals quiet for 14 days or longer";
+  if (focus.startsWith("stage:")) return `${formatLabel(focus.slice(6))} deals`;
+  if (focus === "weighted") return "Deals behind the weighted forecast";
+  if (focus === "coverage") return "Deals behind pipeline coverage";
+  return "All open revenue deals";
+}
 
 const outlookTone: Record<WinOutlook, string> = {
   not_assessed: "border-edge bg-ink text-muted",
@@ -247,6 +282,9 @@ export default function PipelineWorkspace(props: Props) {
     ownerFilter,
     onOwnerFilterChange,
   } = props;
+  const [localFocus, setLocalFocus] = useState("all");
+  const activeFocus = props.focus ?? localFocus;
+  const changeFocus = props.onFocusChange ?? setLocalFocus;
   const ownerName = (row: Row) => row.assigned_to_user_id === currentUser
     ? "Mine"
     : team.find((member) => member.userId === row.assigned_to_user_id)?.name || "Unassigned";
@@ -275,9 +313,13 @@ export default function PipelineWorkspace(props: Props) {
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [editorRowId]);
-  const visibleRows = useMemo(
+  const ownerVisibleRows = useMemo(
     () => rows.filter((row) => opportunityMatchesOwner(row, ownerFilter, currentUser)),
     [currentUser, ownerFilter, rows]
+  );
+  const visibleRows = useMemo(
+    () => ownerVisibleRows.filter((row) => matchesPipelineFocus(row, activeFocus)),
+    [activeFocus, ownerVisibleRows]
   );
   const tableRows = useMemo(() => {
     if (tableOrder === "priority") return visibleRows;
@@ -302,11 +344,11 @@ export default function PipelineWorkspace(props: Props) {
   }, [tableOrder, visibleRows]);
   const companyDealCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    visibleRows.forEach((row) =>
+    ownerVisibleRows.forEach((row) =>
       counts.set(row.company_id, (counts.get(row.company_id) || 0) + 1)
     );
     return counts;
-  }, [visibleRows]);
+  }, [ownerVisibleRows]);
   const dealThreadBadge = (row: Row) => {
     const count = companyDealCounts.get(row.company_id) || 1;
     return count > 1 ? (
@@ -323,11 +365,11 @@ export default function PipelineWorkspace(props: Props) {
         ? "unassigned work"
         : `${team.find((member) => member.userId === ownerFilter)?.name || "selected owner"}'s work`;
   const stats = useMemo(() => ({
-    overdue: visibleRows.filter((row) => row.risks.some((risk) => risk.code === "next_action_overdue" || risk.code === "overdue_actions")).length,
-    meetings: visibleRows.filter((row) => row.nextMeetingAt && new Date(row.nextMeetingAt).getTime() <= Date.now() + 3 * 86400000).length,
-    atRisk: visibleRows.filter((row) => row.win_outlook === "at_risk").length,
-    stalled: visibleRows.filter((row) => Number(row.daysQuiet) >= 14).length,
-  }), [visibleRows]);
+    overdue: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "overdue")).length,
+    meetings: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "meetings")).length,
+    atRisk: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "at_risk")).length,
+    stalled: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "stalled")).length,
+  }), [ownerVisibleRows]);
   const canEditDeal = (row: Row) =>
     canManageAssignments ||
     !row.assigned_to_user_id ||
@@ -393,12 +435,34 @@ export default function PipelineWorkspace(props: Props) {
       </div>
 
       <p className="mt-3 font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-        Showing {visibleRows.length} of {rows.length} open revenue deals · {ownerViewLabel}
+        Showing {visibleRows.length} of {ownerVisibleRows.length} open revenue deals · {ownerViewLabel}
       </p>
 
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {[["Overdue", stats.overdue, "text-rust"], ["Meetings soon", stats.meetings, "text-amber"], ["At risk", stats.atRisk, "text-rust"], ["Stalled", stats.stalled, "text-muted"]].map(([label, value, tone]) => <div key={String(label)} className="rounded-lg border border-edge bg-ink/40 p-2.5"><strong className={`block font-display text-xl ${tone}`}>{value}</strong><span className="font-mono text-[0.49rem] uppercase text-muted">{label}</span></div>)}
+        {[
+          ["Overdue", stats.overdue, "text-rust", "overdue"],
+          ["Meetings soon", stats.meetings, "text-amber", "meetings"],
+          ["At risk", stats.atRisk, "text-rust", "at_risk"],
+          ["Stalled", stats.stalled, "text-muted", "stalled"],
+        ].map(([label, value, tone, focus]) => (
+          <MetricDrilldown
+            key={String(label)}
+            label={String(label)}
+            value={value}
+            valueClassName={String(tone)}
+            compact
+            active={activeFocus === focus}
+            onClick={() => changeFocus(String(focus))}
+          />
+        ))}
       </div>
+
+      {activeFocus !== "all" && activeFocus !== "revenue" ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber/35 bg-amber/[0.06] px-3 py-2">
+          <p className="text-sm text-bone">{pipelineFocusLabel(activeFocus)} · {visibleRows.length} records</p>
+          <button type="button" onClick={() => changeFocus("all")} className="min-h-9 rounded-lg border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted hover:border-amber/50 hover:text-amber">Show every deal</button>
+        </div>
+      ) : null}
 
       {view === "table" ? (
         <>

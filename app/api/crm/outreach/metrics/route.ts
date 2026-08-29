@@ -20,7 +20,10 @@ export async function GET(req: NextRequest) {
       positive,
       meetings,
       prospects,
-      manualCalls,
+      manualCallsToday,
+      manualCallsAll,
+      connectedManualCalls,
+      manualCallMeetings,
     ] = await Promise.all([
       supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "sent").gte("sent_at", start).lt("sent_at", end),
       supabaseAdmin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("status", "sent"),
@@ -31,13 +34,14 @@ export async function GET(req: NextRequest) {
       supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).eq("kind", "positive_reply"),
       supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).eq("kind", "meeting_booked"),
       supabaseAdmin.from("outreach_prospects").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("assigned_to_user_id", account.userId),
-      supabaseAdmin.from("outreach_events").select("id,prospect_id,metadata,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).eq("kind", "manual_call").order("created_at", { ascending: false }).limit(10000),
+      supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).eq("kind", "manual_call").gte("created_at", start).lt("created_at", end),
+      supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).eq("kind", "manual_call"),
+      supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).eq("kind", "manual_call").in("metadata->>outcome", ["connected", "meeting_booked", "callback_requested", "not_now"]),
+      supabaseAdmin.from("outreach_events").select("id", { count: "exact", head: true }).eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).eq("kind", "manual_call").eq("metadata->>outcome", "meeting_booked"),
     ]);
-    for (const result of [sent, sentAll, sendpilotSentToday, sendpilotSentAll, approved, replies, positive, meetings, prospects, manualCalls]) {
+    for (const result of [sent, sentAll, sendpilotSentToday, sendpilotSentAll, approved, replies, positive, meetings, prospects, manualCallsToday, manualCallsAll, connectedManualCalls, manualCallMeetings]) {
       if (result.error) throw result.error;
     }
-    const personalCalls = manualCalls.data || [];
-    const connectedOutcomes = new Set(["connected", "meeting_booked", "callback_requested", "not_now"]);
     const metrics = {
       sentToday: (sent.count || 0) + (sendpilotSentToday.count || 0),
       sent: (sentAll.count || 0) + (sendpilotSentAll.count || 0),
@@ -48,10 +52,10 @@ export async function GET(req: NextRequest) {
       positiveReplies: positive.count || 0,
       meetings: meetings.count || 0,
       prospects: prospects.count || 0,
-      callsToday: personalCalls.filter((call: any) => call.created_at >= start && call.created_at < end).length,
-      calls: personalCalls.length,
-      connectedCalls: personalCalls.filter((call: any) => connectedOutcomes.has(call.metadata?.outcome)).length,
-      callMeetings: personalCalls.filter((call: any) => call.metadata?.outcome === "meeting_booked").length,
+      callsToday: manualCallsToday.count || 0,
+      calls: manualCallsAll.count || 0,
+      connectedCalls: connectedManualCalls.count || 0,
+      callMeetings: manualCallMeetings.count || 0,
     };
     // The default Today queue needs only five small counts. Avoid loading every
     // historical message, reply and learning until a reporting tab is opened.
@@ -69,6 +73,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,campaign_id,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe", "meeting_booked"]),
       supabaseAdmin.from("outreach_events").select("id,prospect_id,campaign_id,kind,metadata,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).in("kind", ["linkedin_enrolled", "linkedin_connection_sent", "linkedin_connection_accepted", "linkedin_message_sent", "sendpilot_status", "meeting_booked"]).order("created_at", { ascending: false }).limit(100),
       supabaseAdmin.from("outreach_events").select("prospect_id,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).contains("metadata", { provider: "sendpilot" }).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe"]).order("created_at", { ascending: false }).limit(500),
+      supabaseAdmin.from("outreach_events").select("id,prospect_id,metadata,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).eq("kind", "manual_call").order("created_at", { ascending: false }).limit(100),
     ]);
     for (const result of detailResults) if (result.error) throw result.error;
     const [
@@ -81,6 +86,7 @@ export async function GET(req: NextRequest) {
       { data: personalOutcomeEvents },
       { data: sendpilotEvents },
       { data: sendpilotReplyEvents },
+      { data: recentManualCalls },
     ] = detailResults;
     const variants = ["A", "B"].map((variant) => {
       const sentCount = (variantMessages || []).filter((row: any) => (row.variant || "A") === variant).length;
@@ -88,7 +94,7 @@ export async function GET(req: NextRequest) {
       return { variant, sent: sentCount, replies: replyCount, replyRate: sentCount ? Math.round((replyCount / sentCount) * 1000) / 10 : 0 };
     });
     const recentMessageProspectIds = (recentMessages || []).map((message: any) => message.prospect_id);
-    const recentManualCallProspectIds = personalCalls.slice(0, 100).map((call: any) => call.prospect_id);
+    const recentManualCallProspectIds = (recentManualCalls || []).map((call: any) => call.prospect_id);
     const sendpilotProspectIds = (sendpilotEvents || []).map((event: any) => event.prospect_id);
     const messageProspectIds = Array.from(new Set([...recentMessageProspectIds, ...recentManualCallProspectIds, ...sendpilotProspectIds]));
     const { data: messageProspects } = messageProspectIds.length
@@ -103,7 +109,7 @@ export async function GET(req: NextRequest) {
       ...message,
       prospect: messageProspectMap.get(message.prospect_id) || null,
     }));
-    const manualCallHistory = personalCalls.slice(0, 100).map((call: any) => ({
+    const manualCallHistory = (recentManualCalls || []).map((call: any) => ({
       ...call,
       prospect: messageProspectMap.get(call.prospect_id) || null,
     }));
