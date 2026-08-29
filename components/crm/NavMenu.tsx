@@ -28,6 +28,11 @@ const NOTIFICATIONS_ITEM: Item = {
   label: "Notifications",
   icon: "●",
 };
+const CHAT_ITEM: Item = {
+  href: "/crm/chat",
+  label: "Team chat",
+  icon: "◫",
+};
 const PIPELINE_ITEM: Item = { href: "/crm/revenue", label: "Pipeline", icon: "◆" };
 const CLIENTS_ITEM: Item = { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" };
 const CALLS_ITEM: Item = { href: "/crm/calls", label: "Calls", icon: "☎" };
@@ -58,7 +63,13 @@ const START_ITEM: Item = { href: "/call", label: "Start new call", icon: "▸" }
 
 const SIDEBAR_W = "15rem";
 
-function NavMenuInner({ notificationCount }: { notificationCount: number }) {
+function NavMenuInner({
+  notificationCount,
+  chatUnreadCount,
+}: {
+  notificationCount: number;
+  chatUnreadCount: number;
+}) {
   const pathname = usePathname() || "";
   const router = useRouter();
   // useSearchParams updates on query-only navigation (e.g. switching board
@@ -103,9 +114,10 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
     ? { href: "/crm/inbox", label: "Today", icon: "▣" }
     : { href: "/crm", label: "Today", icon: "▣" };
   const coreItems: Item[] = salesHome
-    ? [homeItem, ...SALES_CORE_ITEMS, NOTIFICATIONS_ITEM]
+    ? [homeItem, CHAT_ITEM, ...SALES_CORE_ITEMS, NOTIFICATIONS_ITEM]
     : [
         homeItem,
+        CHAT_ITEM,
         NOTIFICATIONS_ITEM,
         { href: "/crm/inbox", label: "Sales Today", icon: "✓" },
         OUTREACH_ITEM,
@@ -185,6 +197,7 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
     if (it.href === "/crm/inbox") return pathname.startsWith("/crm/inbox");
     if (it.href === "/crm/notifications")
       return pathname.startsWith("/crm/notifications");
+    if (it.href === "/crm/chat") return pathname.startsWith("/crm/chat");
     if (it.href === "/crm/documents")
       return pathname.startsWith("/crm/documents");
     if (it.href === "/crm/revenue")
@@ -245,6 +258,11 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
                     {item.href === NOTIFICATIONS_ITEM.href && notificationCount > 0 ? (
                       <span className="rounded-full bg-rust px-2 py-0.5 text-[0.5rem] text-bone">
                         {notificationCount > 99 ? "99+" : notificationCount}
+                      </span>
+                    ) : null}
+                    {item.href === CHAT_ITEM.href && chatUnreadCount > 0 ? (
+                      <span className="rounded-full bg-amber px-2 py-0.5 text-[0.5rem] text-ink">
+                        {chatUnreadCount > 99 ? "99+" : chatUnreadCount}
                       </span>
                     ) : null}
                   </Link>
@@ -374,6 +392,11 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
                   {notificationCount > 99 ? "99+" : notificationCount}
                 </span>
               ) : null}
+              {it.href === CHAT_ITEM.href && chatUnreadCount > 0 ? (
+                <span className="rounded-full bg-amber px-2 py-0.5 text-[0.5rem] text-ink">
+                  {chatUnreadCount > 99 ? "99+" : chatUnreadCount}
+                </span>
+              ) : null}
             </Link>
           ))}
         </div>
@@ -436,11 +459,18 @@ function NavMenuInner({ notificationCount }: { notificationCount: number }) {
 // useSearchParams needs a Suspense boundary in the App Router.
 export default function NavMenu() {
   const [notificationCount, setNotificationCount] = useState(0);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
   return (
     <>
-      <NotificationAlerts onUnreadCount={setNotificationCount} />
+      <NotificationAlerts
+        onUnreadCount={setNotificationCount}
+        onChatUnreadCount={setChatUnreadCount}
+      />
       <Suspense fallback={null}>
-        <NavMenuInner notificationCount={notificationCount} />
+        <NavMenuInner
+          notificationCount={notificationCount}
+          chatUnreadCount={chatUnreadCount}
+        />
       </Suspense>
     </>
   );

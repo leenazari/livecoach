@@ -34,13 +34,20 @@ type CrmNotification = {
 type NotificationFeed = {
   notifications: CrmNotification[];
   unreadCount: number;
+  chatUnreadCount: number;
   snoozedCount: number;
   preferences: NotificationPreferences;
   currentUser: string;
   serverTime: string;
 };
 
-type Filter = "unread" | "all" | "replies" | "assignments" | "snoozed";
+type Filter =
+  | "unread"
+  | "all"
+  | "chats"
+  | "replies"
+  | "assignments"
+  | "snoozed";
 type BrowserPermission = NotificationPermission | "unsupported";
 type ItemAction = "read" | "unread" | "dismiss" | "snooze";
 type SnoozePreset = "hour" | "day" | "week";
@@ -144,6 +151,7 @@ export default function NotificationsPage() {
       assignments: notifications.filter(
         (item) => item.kind === "lead_assigned"
       ).length,
+      chats: notifications.filter((item) => item.kind === "chat_message").length,
     };
   }, [feed?.notifications]);
 
@@ -154,6 +162,7 @@ export default function NotificationsPage() {
       const matchesFilter =
         filter === "all" ||
         (filter === "unread" && !item.readAt && !snoozed) ||
+        (filter === "chats" && item.kind === "chat_message") ||
         (filter === "replies" && item.kind === "outreach_reply") ||
         (filter === "assignments" && item.kind === "lead_assigned") ||
         (filter === "snoozed" && snoozed);
@@ -170,7 +179,7 @@ export default function NotificationsPage() {
       setPermission(next);
       if (next === "granted") {
         const popup = new Notification("LiveCoach notifications are on", {
-          body: "New replies and leads assigned to you can now appear on this desktop.",
+          body: "New team messages, replies and assigned leads can now appear on this desktop.",
           tag: "livecoach-notifications-enabled",
           icon: "/brand/livecoach-mark-192.png",
         });
@@ -321,6 +330,7 @@ export default function NotificationsPage() {
   const filters: Array<{ key: Filter; label: string; count: number }> = [
     { key: "unread", label: "Unread", count: feed?.unreadCount || 0 },
     { key: "all", label: "All", count: counts.all },
+    { key: "chats", label: "Chat", count: counts.chats },
     { key: "replies", label: "Replies", count: counts.replies },
     { key: "assignments", label: "Assigned", count: counts.assignments },
     { key: "snoozed", label: "Snoozed", count: feed?.snoozedCount || 0 },
@@ -338,7 +348,7 @@ export default function NotificationsPage() {
             Your <span className="italic text-amber">notifications</span>
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-            Instant replies and assignments, organised around what needs your attention.
+            Team messages, replies and assignments, organised around what needs your attention.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -387,6 +397,8 @@ export default function NotificationsPage() {
             {[
               ["replyAlerts", "New replies", "Alert when a prospect replies"],
               ["assignmentAlerts", "Lead assignments", "Alert when work is assigned to you"],
+              ["chatAlerts", "Team messages", "Show popups when a teammate messages you"],
+              ["chatEmailEnabled", "Chat email alerts", "Email a secure link without copying the message body"],
               ["inAppEnabled", "In-app popups", "Show a small LiveCoach alert"],
               ["desktopEnabled", "Desktop popups", "Use browser notifications when allowed"],
             ].map(([key, label, help]) => {
@@ -509,7 +521,7 @@ export default function NotificationsPage() {
                   ? "Blocked in this browser. Allow notifications for LiveCoach in your browser site settings."
                   : permission === "unsupported"
                     ? "This browser does not support desktop notifications."
-                    : "Optional. Enable popups for new replies and newly assigned leads."}
+                    : "Optional. Enable popups for team messages, replies and newly assigned leads."}
             </p>
             <p className="mt-1 text-xs opacity-80">
               Popups work while your browser is running. Your in-app history remains here either way.
@@ -666,7 +678,9 @@ export default function NotificationsPage() {
                           <p className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
                             {notification.kind === "outreach_reply"
                               ? "Outreach reply"
-                              : "Lead assignment"}
+                              : notification.kind === "chat_message"
+                                ? "Team message"
+                                : "Lead assignment"}
                           </p>
                           {snoozed ? (
                             <span className="rounded-full border border-sky/40 bg-sky/10 px-2 py-0.5 font-mono text-[0.48rem] uppercase text-sky">
@@ -762,7 +776,7 @@ export default function NotificationsPage() {
                   : "No notifications here yet."}
           </p>
           <p className="mt-2 text-sm text-muted">
-            New replies and newly assigned leads will appear automatically.
+            Team messages, new replies and newly assigned leads will appear automatically.
           </p>
         </section>
       )}

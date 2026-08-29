@@ -155,6 +155,6 @@ assert.doesNotMatch(page, /openai|anthropic|messages\.create/i);
 
 assert.match(nav, /href: "\/crm\/notifications"/);
 assert.match(nav, /notificationCount > 0/);
-assert.match(nav, /<NotificationAlerts onUnreadCount=\{setNotificationCount\}/);
+assert.match(nav, /<NotificationAlerts[\s\S]*onUnreadCount=\{setNotificationCount\}/);
 
 console.log("CRM notification checks passed");
