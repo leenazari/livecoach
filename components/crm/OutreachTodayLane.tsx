@@ -58,6 +58,7 @@ type QueueRow = {
   id: string;
   status: string;
   current_step?: number;
+  queueKind?: "new_contact" | "follow_up";
   prospect: {
     id: string;
     first_name?: string;
@@ -78,7 +79,12 @@ type QueueRow = {
 type QueueResponse = {
   queue?: QueueRow[];
   added?: number;
-  selection?: { held?: number; skipped?: number };
+  selection?: {
+    held?: number;
+    skipped?: number;
+    firstTouches?: number;
+    followUps?: number;
+  };
   sender?: {
     senderName?: string;
     senderEmail?: string;
@@ -135,6 +141,9 @@ const queueActionRank = (row: QueueRow) => {
   if (hasBeenSent(row)) return 5;
   return 4;
 };
+
+const queueWaveRank = (row: QueueRow) =>
+  row.queueKind === "follow_up" || hasBeenSent(row) ? 1 : 0;
 
 const displayMessageFor = (row: QueueRow) =>
   row.message && row.message.status !== "cancelled"
@@ -365,9 +374,16 @@ export default function OutreachTodayLane({
       onQueueCount?.(nextQueue.length);
       const added = result.added || 0;
       const held = result.selection?.held || 0;
+      const firstTouches = result.selection?.firstTouches || 0;
+      const followUps = result.selection?.followUps || 0;
+      const addedSummary = firstTouches
+        ? `${firstTouches} new ${firstTouches === 1 ? "contact" : "contacts"} added first${followUps ? `, then ${followUps} follow ${followUps === 1 ? "up" : "ups"} from spare capacity` : ""}`
+        : followUps
+          ? `${followUps} follow ${followUps === 1 ? "up" : "ups"} added because no eligible step one contacts remained`
+          : `${added} suitable ${added === 1 ? "person was" : "people were"} added`;
       setNotice(
         added
-          ? `${added} suitable ${added === 1 ? "person was" : "people were"} added. No research or email was sent.`
+          ? `${addedSummary}. No research or email was sent.`
           : held
             ? "No one new was added. Lower confidence or protected contacts remain safely held."
             : "Today's queue is already filled with the strongest eligible contacts."
@@ -776,6 +792,7 @@ export default function OutreachTodayLane({
         .map((row, index) => ({ row, index }))
         .sort(
           (a, b) =>
+            queueWaveRank(a.row) - queueWaveRank(b.row) ||
             queueActionRank(a.row) - queueActionRank(b.row) ||
             a.index - b.index
         )
@@ -807,9 +824,15 @@ export default function OutreachTodayLane({
     ? actionableQueue.filter((row) => row.id !== focusedRow.id).slice(0, 5)
     : [];
 
-  const unprepared = queue.filter(
+  const allUnprepared = queue.filter(
     (row) => !row.message && row.status === "queued"
   );
+  const firstTouchUnprepared = allUnprepared.filter(
+    (row) => queueWaveRank(row) === 0
+  );
+  const unprepared = firstTouchUnprepared.length
+    ? firstTouchUnprepared
+    : allUnprepared;
   const drafts = queue.filter(
     (row) => row.message && ["draft", "failed"].includes(row.message.status)
   ).length;
@@ -861,12 +884,12 @@ export default function OutreachTodayLane({
       <div className="rounded-xl border border-amber/35 bg-amber/[0.06] p-3 sm:p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="max-w-xl">
-            <p className="font-mono text-[0.52rem] uppercase tracking-[0.18em] text-amber">One prospect at a time</p>
+            <p className="font-mono text-[0.52rem] uppercase tracking-[0.18em] text-amber">Step one first</p>
             <h2 className="mt-1 font-display text-xl text-bone">
               Your outreach Sales Desk
             </h2>
             <p className="mt-1 text-xs leading-5 text-muted">
-              Complete the one action shown below. As soon as it is queued, the next prospect opens while delivery continues safely in the background.
+              Work through every eligible new contact before returning to scheduled follow ups. As soon as one action is queued, the next prospect opens while delivery continues safely in the background.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
