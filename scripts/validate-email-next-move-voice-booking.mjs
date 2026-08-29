@@ -87,7 +87,7 @@ assert.match(profilePage, /Outreach campaign voice/);
 assert.match(profilePage, /Choose only the Email Assistant reply voice/);
 assert.match(profilePage, /Use for Email Assistant/);
 assert.match(profilePage, /Use for Outreach/);
-assert.match(profilePage, /each saves and uses its own voice/);
+assert.match(profilePage, /Outreach uses the shared Sam Elliott default/);
 
 assert.match(assistant, /"voiceScript":"\.\.\."/);
 assert.match(assistant, /Audio is not generated automatically/);
