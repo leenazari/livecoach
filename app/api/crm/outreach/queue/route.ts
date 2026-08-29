@@ -18,7 +18,10 @@ import {
 } from "@/lib/outreach-team-safety";
 import { outreachSequenceStepAt } from "@/lib/outreach-sequence";
 import { loadSendPilotOutreachContext } from "@/lib/sendpilot-outreach";
-import { verifiedJobResearchEvidence } from "@/lib/job-research-sources";
+import {
+  verifiedCompanyResearchEvidence,
+  verifiedJobResearchEvidence,
+} from "@/lib/job-research-sources";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -44,6 +47,11 @@ function compactSavedResearch(
     Array.isArray(researchSources) ? researchSources : [],
     prospect
   );
+  const companyEvidence = verifiedCompanyResearchEvidence(
+    source,
+    Array.isArray(researchSources) ? researchSources : [],
+    prospect
+  );
   const list = (items: unknown, maxItems: number, maxLength = 220) =>
     Array.isArray(items)
       ? items
@@ -53,6 +61,8 @@ function compactSavedResearch(
       : [];
   return {
     summary: asText(source.summary, 600),
+    companyOverview: companyEvidence.companyOverview,
+    companyOverviewUrl: companyEvidence.companyOverviewUrl || null,
     signals: list(source.signals, 3),
     activeJobs: list(source.activeJobs, 4),
     jobBoardUrl: jobEvidence.jobBoardUrl || null,

@@ -3,7 +3,10 @@ import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { loadSafeSharedCompany } from "@/lib/team-client-sharing";
 import { withCompanyPipelineExclusion } from "@/lib/company-pipeline-exclusion";
-import { verifiedJobResearchEvidence } from "@/lib/job-research-sources";
+import {
+  verifiedCompanyResearchEvidence,
+  verifiedJobResearchEvidence,
+} from "@/lib/job-research-sources";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -29,7 +32,7 @@ const PATCHABLE = [
   "email_context",
 ] as const;
 
-async function loadVerifiedCompanyJobEvidence(
+async function loadVerifiedCompanySalesResearch(
   companyId: string,
   workspaceId: string
 ) {
@@ -42,7 +45,14 @@ async function loadVerifiedCompanyJobEvidence(
     .limit(1);
   if (prospectError) throw prospectError;
   const prospect = prospects?.[0];
-  if (!prospect) return { jobBoardUrl: "", jobSignals: [] };
+  if (!prospect) {
+    return {
+      companyOverview: "",
+      companyOverviewUrl: "",
+      jobBoardUrl: "",
+      jobSignals: [],
+    };
+  }
 
   const { data: enrolments, error: enrolmentError } = await supabaseAdmin
     .from("outreach_enrolments")
@@ -53,11 +63,14 @@ async function loadVerifiedCompanyJobEvidence(
     .limit(1);
   if (enrolmentError) throw enrolmentError;
   const enrolment = enrolments?.[0];
-  return verifiedJobResearchEvidence(
-    enrolment?.research || prospect.research,
-    Array.isArray(enrolment?.research_sources) ? enrolment.research_sources : [],
-    prospect
-  );
+  const research = enrolment?.research || prospect.research;
+  const sources = Array.isArray(enrolment?.research_sources)
+    ? enrolment.research_sources
+    : [];
+  return {
+    ...verifiedCompanyResearchEvidence(research, sources, prospect),
+    ...verifiedJobResearchEvidence(research, sources, prospect),
+  };
 }
 
 export async function GET(
@@ -130,7 +143,7 @@ export async function GET(
       return NextResponse.json({ error: "company not found" }, { status: 404 });
     }
 
-    const salesResearchPromise = loadVerifiedCompanyJobEvidence(
+    const salesResearchPromise = loadVerifiedCompanySalesResearch(
       params.id,
       scope.workspaceId
     );

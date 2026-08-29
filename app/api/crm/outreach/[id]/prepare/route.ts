@@ -30,6 +30,7 @@ import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import {
   conciseJobSignal,
   isCandidatePreparationCampaign,
+  officialCompanyOverviewUrl,
   officialJobBoardUrl,
   officialJobSearchDomains,
   officialResearchSources,
@@ -61,9 +62,11 @@ const OUTREACH_DRAFT_FORMAT = {
       research: {
         type: "object",
         additionalProperties: false,
-        required: ["summary", "signals", "activeJobs", "jobSignals", "volumeAssessment", "volumeReason", "likelyNeeds", "bestAngle", "commercialPath", "fitDecision", "personalisationFact", "approvedProof", "freshness", "confidence"],
+        required: ["summary", "companyOverview", "signals", "activeJobs", "jobSignals", "volumeAssessment", "volumeReason", "likelyNeeds", "bestAngle", "commercialPath", "fitDecision", "personalisationFact", "approvedProof", "freshness", "confidence"],
         properties: {
-          summary: { type: "string" }, signals: { type: "array", items: { type: "string" } },
+          summary: { type: "string" },
+          companyOverview: { type: "string" },
+          signals: { type: "array", items: { type: "string" } },
           activeJobs: { type: "array", items: { type: "string" } },
           jobSignals: {
             type: "array",
@@ -248,7 +251,7 @@ CAMPAIGN VALUE TRANSLATION: turn the selected campaign offer into one concrete b
 
 Do not invent personal facts, clients, results, savings, case studies, product capabilities or problems. Never present an illustrative scenario as a real customer result. Use a verified case study only when it appears in INTERVIEWA PRODUCT TRUTH. Otherwise approvedProof must be empty. A weak or absent signal must be stated as such. Do not use information from people with similar names. Do not mention that AI researched them. Use British English, no jargon, flattery, em dashes or semicolons.
 
-RESEARCH DISCIPLINE: bring back only information that changes the decision or message for the campaign contract. Use the company's own website and other approved primary company or applicant tracking system pages only. Never search, open, scrape or cite LinkedIn. Do not use job aggregators, social networks or copied vacancy listings. Research current vacancies only when hiring evidence directly supports this campaign goal or offer angle. When it does, find up to four current or very recent vacancies and retain only roles with an exact primary source URL. Otherwise activeJobs and jobSignals must be empty and volumeAssessment must be unknown. Never invent a job count or use a generic industry applicant average as if it belongs to this company. Ignore generic biography, old news and facts that do not affect the campaign intent. Tie every retained fact to one of three outcomes: close a customer deal, build a commercially useful relationship, or start a credible partnership. Reuse saved research when still current and refresh only facts likely to have changed. The saved research must be concise enough to reuse in future Brain, intent and call prep prompts without reopening the web.
+RESEARCH DISCIPLINE: bring back only information that changes the decision or message for the campaign contract. Use the company's own website and other approved primary company or applicant tracking system pages only. Never search, open, scrape or cite LinkedIn. Do not use job aggregators, social networks or copied vacancy listings. When the official company site has an About, About us, Who we are, Our story, Company or What we do page, use it to understand what the business sells, whom it serves, its specialism and its operating model. Put only the commercially useful facts in companyOverview. Do not copy generic marketing prose, biographies or values. Research current vacancies only when hiring evidence directly supports this campaign goal or offer angle. When it does, find up to four current or very recent vacancies and retain only roles with an exact primary source URL. Otherwise activeJobs and jobSignals must be empty and volumeAssessment must be unknown. Never invent a job count or use a generic industry applicant average as if it belongs to this company. Ignore generic biography, old news and facts that do not affect the campaign intent. Tie every retained fact to one of three outcomes: close a customer deal, build a commercially useful relationship, or start a credible partnership. Reuse saved research when still current and refresh only facts likely to have changed. The saved research must be concise enough to reuse in future Brain, intent and call prep prompts without reopening the web.
 
 ${candidatePreparationVacancyPriority}
 
@@ -272,7 +275,7 @@ ${sequenceStep.assetUrl ? `Approved asset link: ${clean(sequenceStep.assetUrl, 6
 Before writing, choose ONE evidence-backed reason this person should care now and ONE angle permitted by the campaign contract. The first sentence must be grounded in a verified fact or transparently framed hypothesis. Never mix several random use cases. The voice note must include the exact why now sentence returned in voiceNote.whyNow. Explain the urgency basis and choice in strategy so ${sender.senderName} can approve the thinking as well as the words.
 
 Output exactly:
-{"research":{"summary":"max 65 words, only decision useful facts","signals":["max 3 factual current signals"],"activeJobs":["max 4 verified current or recent roles ordered by campaign relevance"],"jobSignals":[{"role":"verified role","location":"verified location or empty","compensation":"exact published annual compensation or empty","recency":"verified date or current status","sourceUrl":"exact primary company or ATS vacancy URL"}],"volumeAssessment":"high|medium|low|unknown","volumeReason":"evidence based reason, max 35 words","likelyNeeds":["max 2 clearly labelled hypotheses"],"bestAngle":"one grounded angle permitted by the campaign contract","commercialPath":"customer deal|relationship|partnership plus one short reason","fitDecision":"contact now|hold|skip plus one short reason","personalisationFact":"one verifiable fact or empty string","approvedProof":"verified Interviewa case study or result from product truth, otherwise empty string","freshness":"what was checked and how current it is, max 25 words","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 55 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."},"voiceNote":{"script":"about 100 words, normally 80 to 120, fully personalised, gently urgent and ending with a complete sentence","whyNow":"one exact complete sentence copied from the script","urgencyType":"verified_trigger|natural_next_moment","urgencyEvidence":"verified current fact or honest next natural moment, max 30 words"}}`;
+{"research":{"summary":"max 65 words, only decision useful facts","companyOverview":"max 55 words on what the business does, whom it serves, its specialism and operating model, using only the official company overview or homepage","signals":["max 3 factual current signals"],"activeJobs":["max 4 verified current or recent roles ordered by campaign relevance"],"jobSignals":[{"role":"verified role","location":"verified location or empty","compensation":"exact published annual compensation or empty","recency":"verified date or current status","sourceUrl":"exact primary company or ATS vacancy URL"}],"volumeAssessment":"high|medium|low|unknown","volumeReason":"evidence based reason, max 35 words","likelyNeeds":["max 2 clearly labelled hypotheses"],"bestAngle":"one grounded angle permitted by the campaign contract","commercialPath":"customer deal|relationship|partnership plus one short reason","fitDecision":"contact now|hold|skip plus one short reason","personalisationFact":"one verifiable fact or empty string","approvedProof":"verified Interviewa case study or result from product truth, otherwise empty string","freshness":"what was checked and how current it is, max 25 words","confidence":"high|medium|low"},"strategy":{"reasoning":"why this one message is relevant, max 55 words","evidenceUsed":["max 3 facts actually used"],"angle":"short label","tone":"short label","cta":"short label","persona":"short label","qualityScore":0},"email":{"subject":"...","previewText":"...","bodyText":"..."},"voiceNote":{"script":"about 100 words, normally 80 to 120, fully personalised, gently urgent and ending with a complete sentence","whyNow":"one exact complete sentence copied from the script","urgencyType":"verified_trigger|natural_next_moment","urgencyEvidence":"verified current fact or honest next natural moment, max 30 words"}}`;
     const user = `PERSON
 Name: ${prospect.first_name || ""} ${prospect.last_name || ""}
 Role: ${prospect.job_title || ""}
@@ -330,7 +333,7 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `SENDER'S EXTRA GU
         model: OPENAI_MODEL_LIVE,
         max_tokens: 2200,
         response_format: OUTREACH_DRAFT_FORMAT,
-        system: `Repair an incomplete structured outreach result and return ONLY the required JSON. Preserve every supplied research fact. Never invent facts about the person, company, vacancies, customers, savings or results. If a research field is missing, use an empty array, empty string, unknown volume, or low confidence as appropriate. jobSignals must be an empty array unless the incomplete result contains an exact primary company or applicant tracking system vacancy URL. For every retained job signal, copy an explicitly published annual compensation or set compensation to an empty string. Never use LinkedIn or a job aggregator. You may complete the email and voiceNote using only the supplied facts and approved Interviewa truth. Use British English, short mobile friendly email paragraphs, one email question, no semicolons, and no hyphens or dashes in prose. The first email must naturally introduce: I’m ${sender.senderName} from Interviewa. Include a natural opt out in the email, followed by the exact final pre-signature CTA "${OUTREACH_EMAIL_DEMO_REPLY_CTA}". voiceNote.script must be a distinct natural spoken pitch aiming for ${OUTREACH_VOICE_TARGET_WORDS} words and normally between ${OUTREACH_VOICE_PREFERRED_MIN_WORDS} and ${OUTREACH_VOICE_PREFERRED_MAX_WORDS} words. It must never cut a sentence to meet the target. It must start "Hi ${prospect.first_name || "there"}, how are you doing?", name their exact company, use "We are Interviewa" when introducing the brand, use the strongest current verified relevance signal, and end with the exact sentence "${OUTREACH_VOICE_DEMO_REPLY_CTA}". The synthetic voice must never say it is ${sender.senderName}, introduce itself using the sender's name, or claim to be the sender. Keep Interviewa spelled correctly in the visible script because the audio layer supplies the pronunciation. It must not read out a URL or the opt out line.`,
+        system: `Repair an incomplete structured outreach result and return ONLY the required JSON. Preserve every supplied research fact. Never invent facts about the person, company, vacancies, customers, savings or results. If a research field is missing, use an empty array, empty string, unknown volume, or low confidence as appropriate. companyOverview must be empty unless the incomplete result contains facts from the official company website. jobSignals must be an empty array unless the incomplete result contains an exact primary company or applicant tracking system vacancy URL. For every retained job signal, copy an explicitly published annual compensation or set compensation to an empty string. Never use LinkedIn or a job aggregator. You may complete the email and voiceNote using only the supplied facts and approved Interviewa truth. Use British English, short mobile friendly email paragraphs, one email question, no semicolons, and no hyphens or dashes in prose. The first email must naturally introduce: I’m ${sender.senderName} from Interviewa. Include a natural opt out in the email, followed by the exact final pre-signature CTA "${OUTREACH_EMAIL_DEMO_REPLY_CTA}". voiceNote.script must be a distinct natural spoken pitch aiming for ${OUTREACH_VOICE_TARGET_WORDS} words and normally between ${OUTREACH_VOICE_PREFERRED_MIN_WORDS} and ${OUTREACH_VOICE_PREFERRED_MAX_WORDS} words. It must never cut a sentence to meet the target. It must start "Hi ${prospect.first_name || "there"}, how are you doing?", name their exact company, use "We are Interviewa" when introducing the brand, use the strongest current verified relevance signal, and end with the exact sentence "${OUTREACH_VOICE_DEMO_REPLY_CTA}". The synthetic voice must never say it is ${sender.senderName}, introduce itself using the sender's name, or claim to be the sender. Keep Interviewa spelled correctly in the visible script because the audio layer supplies the pronunciation. It must not read out a URL or the opt out line.`,
         messages: [{ role: "user", content: `PERSON: ${prospect.first_name || ""} ${prospect.last_name || ""}, ${prospect.job_title || ""} at ${prospect.company_name || ""}
 CAMPAIGN GOAL: ${campaign.goal || ""}
 CAMPAIGN ANGLE: ${campaign.offer_angle || ""}
@@ -359,9 +362,28 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
     const jobSignals = candidatePreparationCampaign
       ? rankCandidatePreparationJobSignals(verifiedJobSignals)
       : verifiedJobSignals;
+    const companyOverviewUrl = officialCompanyOverviewUrl(
+      [
+        ...sources,
+        ...(existingResearch?.companyOverviewUrl
+          ? [{
+              url: existingResearch.companyOverviewUrl,
+              title: "Previously verified company overview",
+            }]
+          : []),
+      ],
+      prospect
+    );
     const jobBoardUrl = officialJobBoardUrl(sources, prospect);
     const research = {
       summary: clean(parsed.research.summary, 800),
+      companyOverview: companyOverviewUrl
+        ? clean(
+            parsed.research.companyOverview || existingResearch?.companyOverview,
+            500
+          )
+        : "",
+      companyOverviewUrl,
       signals: Array.isArray(parsed.research.signals) ? parsed.research.signals.map((x: any) => clean(x, 240)).filter(Boolean).slice(0, 3) : [],
       activeJobs: jobSignals.map(conciseJobSignal),
       jobBoardUrl,
@@ -522,7 +544,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       supabaseAdmin.from("outreach_enrolments").update({ status: "drafted", research, research_sources: sources, researched_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("workspace_id", sender.workspaceId).eq("owner_id", sender.userId).eq("id", enrolment.id),
       supabaseAdmin.from("outreach_prospects").update({ research, last_researched_at: new Date().toISOString(), status: "ready", updated_at: new Date().toISOString() }).eq("workspace_id", sender.workspaceId).eq("assigned_to_user_id", sender.userId).eq("id", prospect.id),
       supabaseAdmin.from("outreach_events").insert([
-        { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, kind: "researched", metadata: { sources: sources.length, confidence: research.confidence, verifiedJobs: jobSignals.length, jobBoardSaved: Boolean(jobBoardUrl) } },
+        { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, kind: "researched", metadata: { sources: sources.length, confidence: research.confidence, verifiedJobs: jobSignals.length, jobBoardSaved: Boolean(jobBoardUrl), companyOverviewSaved: Boolean(research.companyOverview && companyOverviewUrl) } },
         { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, message_id: draft.id, kind: "drafted", metadata: { step, variant, qualityScore, tags: messageTags } },
       ]),
     ]);
