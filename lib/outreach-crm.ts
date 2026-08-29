@@ -5,6 +5,10 @@ import {
   normaliseCompanyDomain,
   normaliseCompanyName,
 } from "@/lib/company-identity";
+import {
+  officialResearchSources,
+  verifiedJobResearchEvidence,
+} from "@/lib/job-research-sources";
 
 const asText = (value: any, max = 1000) => String(value || "").trim().slice(0, max);
 
@@ -182,8 +186,17 @@ async function resolveOutreachCompany(
   };
 }
 
-function compactResearch(research: any) {
+function compactResearch(
+  research: any,
+  researchSources: any,
+  prospect: { website?: unknown; company_domain?: unknown }
+) {
   const source = research && typeof research === "object" ? research : {};
+  const verifiedSources = officialResearchSources(
+    Array.isArray(researchSources) ? researchSources : [],
+    prospect
+  );
+  const jobEvidence = verifiedJobResearchEvidence(source, verifiedSources, prospect);
   return {
     summary: asText(source.summary, 600),
     signals: Array.isArray(source.signals)
@@ -192,6 +205,8 @@ function compactResearch(research: any) {
     activeJobs: Array.isArray(source.activeJobs)
       ? source.activeJobs.map((item: any) => asText(item, 220)).filter(Boolean).slice(0, 4)
       : [],
+    jobBoardUrl: jobEvidence.jobBoardUrl || null,
+    jobSignals: jobEvidence.jobSignals,
     volumeAssessment: asText(source.volumeAssessment, 20) || "unknown",
     volumeReason: asText(source.volumeReason, 260),
     likelyNeeds: Array.isArray(source.likelyNeeds)
@@ -295,7 +310,15 @@ export async function ensureOutreachCompany(
       .limit(1)
       .maybeSingle(),
   ]);
-  const research = compactResearch(enrolment?.research || prospect.research || {});
+  const researchSources = officialResearchSources(
+    Array.isArray(enrolment?.research_sources) ? enrolment.research_sources : [],
+    prospect
+  );
+  const research = compactResearch(
+    enrolment?.research || prospect.research || {},
+    researchSources,
+    prospect
+  );
   const resolution = await resolveOutreachCompany(prospect, options);
   let company = resolution.company;
   let companyId = company?.id || null;
@@ -408,9 +431,10 @@ export async function ensureOutreachCompany(
         source: "outreach",
         personLinkedIn: prospect.person_linkedin_url || null,
         research: {
+          ...research,
           subject: fullName,
           background: [prospect.job_title ? `${fullName} is recorded as ${prospect.job_title} at ${prospect.company_name}.` : "", research?.personalisationFact, ...(Array.isArray(research?.signals) ? research.signals : [])].filter(Boolean).join("\n"),
-          sources: enrolment?.research_sources || [],
+          sources: researchSources,
           generatedAt: research?.generatedAt || contextUpdatedAt,
         },
       };
@@ -475,6 +499,11 @@ export async function ensureOutreachCompany(
     typeof (existingProfile as any).outreach === "object"
       ? (existingProfile as any).outreach
       : {};
+  const existingProfileResearch =
+    (existingProfile as any).research &&
+    typeof (existingProfile as any).research === "object"
+      ? (existingProfile as any).research
+      : {};
   const previousRelationships = Array.isArray(existingOutreach.relationships)
     ? existingOutreach.relationships
     : existingOutreach.prospectId
@@ -504,10 +533,13 @@ export async function ensureOutreachCompany(
   ].slice(0, 8);
   const nextProfile = {
     ...existingProfile,
-    research: existingProfile.research || {
-      subject: prospect.company_name,
-      background: [research?.summary, research?.bestAngle ? `Interviewa relevance: ${research.bestAngle}` : ""].filter(Boolean).join("\n\n"),
-      sources: enrolment?.research_sources || [],
+    research: {
+      ...existingProfileResearch,
+      subject: existingProfileResearch.subject || prospect.company_name,
+      background: existingProfileResearch.background || [research?.summary, research?.bestAngle ? `Interviewa relevance: ${research.bestAngle}` : ""].filter(Boolean).join("\n\n"),
+      sources: researchSources,
+      jobBoardUrl: research.jobBoardUrl || null,
+      jobSignals: research.jobSignals,
       generatedAt: research?.generatedAt || contextUpdatedAt,
     },
     outreach: {

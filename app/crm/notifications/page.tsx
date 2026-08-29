@@ -94,6 +94,22 @@ const isFutureSnooze = (notification: CrmNotification) =>
   !!notification.snoozedUntil &&
   new Date(notification.snoozedUntil).getTime() > Date.now();
 
+const notificationPermissionHelp = (userAgent: string) => {
+  if (/iphone|ipad/i.test(userAgent)) {
+    return "Add LiveCoach to your Home Screen, open it from the new icon, then allow notifications when asked.";
+  }
+  if (/android/i.test(userAgent)) {
+    return "Open the browser menu, choose Settings, Site settings, Notifications, then allow livecoachcrm.com.";
+  }
+  if (/firefox/i.test(userAgent)) {
+    return "Click the padlock beside the address, open the site permissions, set Send notifications to Allow, then return here.";
+  }
+  if (/safari/i.test(userAgent) && !/(?:chrome|chromium|crios|edg)/i.test(userAgent)) {
+    return "Open Safari Settings, choose Websites, then Notifications, and set livecoachcrm.com to Allow.";
+  }
+  return "Click the site controls icon beside the web address, open Site settings, set Notifications to Allow, then return here.";
+};
+
 export default function NotificationsPage() {
   const router = useRouter();
   const [feed, setFeed] = useState<NotificationFeed | null>(null);
@@ -109,6 +125,17 @@ export default function NotificationsPage() {
   const [error, setError] = useState("");
   const [permission, setPermission] =
     useState<BrowserPermission>("unsupported");
+  const [permissionHelp, setPermissionHelp] = useState(
+    "Open this site's browser settings and allow notifications."
+  );
+
+  const syncDesktopPermission = useCallback(() => {
+    if (typeof window === "undefined") return;
+    setPermission(
+      "Notification" in window ? Notification.permission : "unsupported"
+    );
+    setPermissionHelp(notificationPermissionHelp(window.navigator.userAgent));
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -125,12 +152,13 @@ export default function NotificationsPage() {
   }, []);
 
   useEffect(() => {
-    setPermission(
-      "Notification" in window ? Notification.permission : "unsupported"
-    );
+    syncDesktopPermission();
     void load();
     const timer = window.setInterval(() => void load(), 60_000);
-    const refresh = () => void load();
+    const refresh = () => {
+      syncDesktopPermission();
+      void load();
+    };
     window.addEventListener("focus", refresh);
     window.addEventListener("lc:notifications-updated", refresh);
     window.addEventListener("lc:notifications-realtime", refresh);
@@ -140,7 +168,7 @@ export default function NotificationsPage() {
       window.removeEventListener("lc:notifications-updated", refresh);
       window.removeEventListener("lc:notifications-realtime", refresh);
     };
-  }, [load]);
+  }, [load, syncDesktopPermission]);
 
   const counts = useMemo(() => {
     const notifications = feed?.notifications || [];
@@ -174,6 +202,7 @@ export default function NotificationsPage() {
 
   const enableDesktop = async () => {
     if (!("Notification" in window)) return;
+    setError("");
     try {
       const next = await Notification.requestPermission();
       setPermission(next);
@@ -190,6 +219,18 @@ export default function NotificationsPage() {
         "This browser could not enable desktop popups. In-app notifications will still work."
       );
     }
+  };
+
+  const checkDesktopPermission = () => {
+    if (!("Notification" in window)) return;
+    const next = Notification.permission;
+    setPermission(next);
+    setError(
+      next === "denied"
+        ? "Notifications are still blocked in this browser. Follow the site settings steps, reload LiveCoach, then check again."
+        : ""
+    );
+    if (next === "default") void enableDesktop();
   };
 
   const updateOne = async (
@@ -518,7 +559,7 @@ export default function NotificationsPage() {
               {permission === "granted"
                 ? "Enabled in this browser."
                 : permission === "denied"
-                  ? "Blocked in this browser. Allow notifications for LiveCoach in your browser site settings."
+                  ? "Blocked in this browser. Browsers will not show the permission prompt again until you allow LiveCoach in site settings."
                   : permission === "unsupported"
                     ? "This browser does not support desktop notifications."
                     : "Optional. Enable popups for team messages, replies and newly assigned leads."}
@@ -535,6 +576,17 @@ export default function NotificationsPage() {
             >
               Enable desktop popups
             </button>
+          ) : permission === "denied" ? (
+            <div className="w-full rounded-lg border border-rust/35 bg-rust/[0.06] p-3 sm:max-w-md">
+              <p className="text-xs leading-5 text-bone/80">{permissionHelp}</p>
+              <button
+                type="button"
+                onClick={checkDesktopPermission}
+                className={`${button} mt-2 w-full border-rust/45 text-rust sm:w-auto`}
+              >
+                I allowed it, check again
+              </button>
+            </div>
           ) : null}
         </div>
       </section>

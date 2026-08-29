@@ -13,6 +13,10 @@ import { crmFetch } from "@/lib/crm";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import { prepareOutreachVoiceScriptForReview } from "@/lib/outreach-voice-policy";
 import {
+  officialResearchSources,
+  verifiedJobResearchEvidence,
+} from "@/lib/job-research-sources";
+import {
   outreachSequenceValidationError,
   type OutreachSequenceStep,
 } from "@/lib/outreach-sequence";
@@ -22,7 +26,16 @@ type Priority = "high" | "medium" | "low";
 type ProspectSort = "name" | "company" | "priority" | "status" | "activity";
 type RecommendationAction = "contact_today" | "hold" | "skip";
 type Recommendation = { action: RecommendationAction; label: string; score: number; confidence: "high" | "medium" | "low"; reasons: string[]; risks: string[] };
-type Prospect = Record<string, any> & { id: string; email: string; company_name: string; priority: Priority; priority_score: number; recommendation: Recommendation };
+type Prospect = Record<string, any> & {
+  id: string;
+  email: string;
+  company_name: string;
+  company_domain?: string;
+  website?: string;
+  priority: Priority;
+  priority_score: number;
+  recommendation: Recommendation;
+};
 type QueueRow = Record<string, any> & { id: string; prospect: Prospect; campaign: Record<string, any>; message: Record<string, any> | null; recommendation: Recommendation };
 type SequenceStep = OutreachSequenceStep;
 type Campaign = Record<string, any> & { id: string; name: string; goal: string; audience: string; offer_angle: string; status: string; daily_limit: number; sequence: SequenceStep[] };
@@ -220,6 +233,71 @@ function linkedinTarget(prospect: Prospect) {
     prospect.company_name,
   ].filter(Boolean).join(" ");
   return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`;
+}
+
+function ResearchEvidenceLinks({
+  research,
+  sources,
+  prospect,
+}: {
+  research: Record<string, any>;
+  sources: Array<{ url?: unknown; title?: unknown }>;
+  prospect: Prospect;
+}) {
+  const evidence = verifiedJobResearchEvidence(research, sources, prospect);
+  const shown = new Set([
+    evidence.jobBoardUrl,
+    ...evidence.jobSignals.map((signal) => signal.sourceUrl),
+  ].filter(Boolean));
+  const otherSources = officialResearchSources(sources, prospect)
+    .filter((source) => !shown.has(String(source.url || "")))
+    .slice(0, 4);
+  if (!evidence.jobBoardUrl && !evidence.jobSignals.length && !otherSources.length) {
+    return null;
+  }
+  return (
+    <div className="mt-3 space-y-3 border-t border-edge pt-3">
+      {evidence.jobBoardUrl ? (
+        <a
+          href={evidence.jobBoardUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex min-h-9 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 py-2 font-mono text-[0.5rem] uppercase tracking-wider text-amber hover:bg-amber/20"
+        >
+          Open company job board ↗
+        </a>
+      ) : null}
+      {evidence.jobSignals.length ? (
+        <div>
+          <p className="font-mono text-[0.53rem] uppercase text-muted">Verified vacancies</p>
+          <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+            {evidence.jobSignals.map((signal) => {
+              const detail = [signal.location, signal.compensation, signal.recency]
+                .filter(Boolean)
+                .join(" · ");
+              return (
+                <li key={`${signal.role}:${signal.sourceUrl}`} className="rounded-lg border border-edge bg-panel/45 px-3 py-2">
+                  <a href={signal.sourceUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-amber hover:underline">
+                    {signal.role} ↗
+                  </a>
+                  {detail ? <p className="mt-1 text-[0.68rem] text-muted">{detail}</p> : null}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+      {otherSources.length ? (
+        <div className="flex flex-wrap gap-2">
+          {otherSources.map((source) => (
+            <a key={String(source.url)} href={String(source.url)} target="_blank" rel="noreferrer" className="text-xs text-sky hover:underline">
+              {String(source.title || "Official evidence")} ↗
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function RecommendationCard({ recommendation, compact = false, actionLabel }: { recommendation: Recommendation; compact?: boolean; actionLabel?: string }) {
@@ -1445,7 +1523,7 @@ export default function OutreachPage() {
           {manual && channel === "phone" && manualCallProspectId === p.id ? <div className="mt-3"><ProspectManualCall prospect={p} campaignId={row.campaign_id} onCancel={() => setManualCallProspectId("")} onSaved={async () => { setManualCallProspectId(""); setNotice("Call saved. The sequence now follows the outcome you logged."); await Promise.all([loadCore(), loadMetrics()]); }} /></div> : null}
           {rowErrors[p.id] ? <p className="mt-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm leading-5 text-rust">{rowErrors[p.id]}</p> : null}
           <RecommendationCard recommendation={row.recommendation || p.recommendation} compact actionLabel={followUpDue ? "Follow up today" : undefined} />
-          {row.research ? <details className="mt-4 rounded-lg border border-edge bg-ink/30 p-3"><summary className="cursor-pointer font-mono text-[0.6rem] uppercase tracking-wider text-amber">Why this message {m?.quality_score ? `· quality ${m.quality_score}/100` : ""}</summary><p className="mt-2 text-sm leading-6 text-bone/80">{m?.strategy?.reasoning || row.research.summary}</p><div className="mt-2 flex flex-wrap gap-1.5">{row.research.fitDecision ? <span className="rounded-full border border-moss/40 bg-moss/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-moss">{row.research.fitDecision}</span> : null}{row.research.commercialPath ? <span className="rounded-full border border-sky/40 bg-sky/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-sky">{row.research.commercialPath}</span> : null}{row.research.volumeAssessment ? <span className="rounded-full border border-amber/40 bg-amber/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-amber">{row.research.volumeAssessment} vacancy volume</span> : null}{row.research.freshness ? <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.5rem] uppercase text-muted">{row.research.freshness}</span> : null}</div><p className="mt-2 text-xs text-muted"><strong className="text-bone">Chosen angle:</strong> {m?.strategy?.angle || row.research.bestAngle}</p>{row.research.volumeReason ? <p className="mt-2 text-xs text-muted"><strong className="text-bone">Volume evidence:</strong> {row.research.volumeReason}</p> : null}{row.research.activeJobs?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Current jobs found</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{row.research.activeJobs.map((job: string) => <li key={job}>• {job}</li>)}</ul></div> : null}{m?.strategy?.evidenceUsed?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Evidence actually used</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{m.strategy.evidenceUsed.map((fact: string) => <li key={fact}>• {fact}</li>)}</ul></div> : null}{(row.research_sources || []).length ? <div className="mt-2 flex flex-wrap gap-2">{row.research_sources.slice(0, 4).map((source: any) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="text-xs text-amber hover:underline">{source.title || "Source"} ↗</a>)}</div> : null}</details> : null}
+          {row.research ? <details className="mt-4 rounded-lg border border-edge bg-ink/30 p-3"><summary className="cursor-pointer font-mono text-[0.6rem] uppercase tracking-wider text-amber">Why this message {m?.quality_score ? `· quality ${m.quality_score}/100` : ""}</summary><p className="mt-2 text-sm leading-6 text-bone/80">{m?.strategy?.reasoning || row.research.summary}</p><div className="mt-2 flex flex-wrap gap-1.5">{row.research.fitDecision ? <span className="rounded-full border border-moss/40 bg-moss/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-moss">{row.research.fitDecision}</span> : null}{row.research.commercialPath ? <span className="rounded-full border border-sky/40 bg-sky/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-sky">{row.research.commercialPath}</span> : null}{row.research.volumeAssessment ? <span className="rounded-full border border-amber/40 bg-amber/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-amber">{row.research.volumeAssessment} vacancy volume</span> : null}{row.research.freshness ? <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.5rem] uppercase text-muted">{row.research.freshness}</span> : null}</div><p className="mt-2 text-xs text-muted"><strong className="text-bone">Chosen angle:</strong> {m?.strategy?.angle || row.research.bestAngle}</p>{row.research.volumeReason ? <p className="mt-2 text-xs text-muted"><strong className="text-bone">Volume evidence:</strong> {row.research.volumeReason}</p> : null}{row.research.activeJobs?.length && !row.research.jobSignals?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Current jobs found</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{row.research.activeJobs.map((job: string) => <li key={job}>• {job}</li>)}</ul></div> : null}{m?.strategy?.evidenceUsed?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Evidence actually used</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{m.strategy.evidenceUsed.map((fact: string) => <li key={fact}>• {fact}</li>)}</ul></div> : null}<ResearchEvidenceLinks research={row.research} sources={row.research_sources || []} prospect={p} /></details> : null}
           {m && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-edge bg-ink/40 px-3 py-2 font-mono text-[0.58rem] text-muted">From: <span className="text-bone">{sender?.senderName || "Your account"} &lt;{m.from_email || sender?.senderEmail || "connected mailbox"}&gt;</span> · To: {p.email}</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(m.id, { subject: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Email</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(m.id, { body_text: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} /></label><OutreachVoiceNoteEditor message={m} script={edit.voice_script} disabled={Boolean(m.scheduled_at)} generating={generatingVoiceMessageId === m.id} onScriptChange={(value) => setMessage(m.id, { voice_script: value })} onGenerate={() => void generateVoiceNote(m.id)} />{!["sending", "sent"].includes(m.status) && !m.scheduled_at ? <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3"><p className="text-xs leading-5 text-bone/75">Test the real email appearance safely. The exact saved body and ready voice note go only to <strong className="text-bone">{sender?.mailboxEmail || "your connected mailbox"}</strong>. The prospect, sequence, daily allowance and results stay untouched.</p>{sender?.provider === "google" ? <p className="mt-2 text-xs leading-5 text-sky">Gmail keeps a rehearsal sent back to the same account under Sent or All Mail. It may not create a new Inbox message.</p> : null}<button onClick={() => rehearse(m.id)} disabled={!!busy} className={`${button} mt-2 w-full border-sky/45 text-sky sm:w-auto`}>{busy === `rehearse:${m.id}` ? "Sending rehearsal…" : "Send rehearsal to me"}</button></div> : null}<div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => saveDraft(m.id)} disabled={!!busy || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>Save changes</button>{m.status === "draft" || m.status === "failed" ? <button onClick={() => approveAndSend(m.id)} disabled={!!busy || Boolean(edit.voice_script) && (m.voice_status !== "ready" || edit.voice_script.trim() !== String(m.voice_script || "").trim())} className={primary}>{busy === `approve-send:${m.id}` ? "Approving and queueing…" : "Approve & queue"}</button> : null}{m.status === "approved" && !m.scheduled_at ? <button onClick={() => send(m.id)} disabled={!!busy} className={primary}>{busy === `send:${m.id}` ? "Queueing…" : "Queue approved email"}</button> : null}{m.status === "approved" && m.scheduled_at ? <span className="self-center rounded-lg border border-sky bg-sky px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-ink">✓ Queued for {formatActivityDate(m.scheduled_at)}</span> : null}{m.status === "sending" ? <span className="self-center rounded-lg border border-sky/60 bg-sky/10 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-sky">Sending now</span> : null}{m.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Sent safely</span> : null}</div><p className="text-right text-xs text-muted">Approved emails and their ready voice notes send automatically five minutes apart. There is no second confirmation pop-up.</p></div> : null}
         </article>; })}{!queue.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">The morning queue can be selected automatically, or you can build it now. Nobody is researched or contacted until you act.</div> : null}</div>
       </section> : null}

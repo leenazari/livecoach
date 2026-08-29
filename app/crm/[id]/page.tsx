@@ -64,6 +64,17 @@ type ClientAccess = {
   privateSourcesHidden: boolean;
 };
 
+type SalesResearch = {
+  jobBoardUrl: string;
+  jobSignals: Array<{
+    role: string;
+    location: string;
+    compensation: string;
+    recency: string;
+    sourceUrl: string;
+  }>;
+};
+
 export default function CompanyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -72,6 +83,10 @@ export default function CompanyDetailPage() {
 
   const [company, setCompany] = useState<Company | null>(null);
   const [access, setAccess] = useState<ClientAccess | null>(null);
+  const [salesResearch, setSalesResearch] = useState<SalesResearch>({
+    jobBoardUrl: "",
+    jobSignals: [],
+  });
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [workstreams, setWorkstreams] = useState<Workstream[]>([]);
@@ -136,6 +151,7 @@ export default function CompanyDetailPage() {
               workstreams: Workstream[];
               workstreamContacts: WorkstreamContact[];
               access: ClientAccess;
+              salesResearch: SalesResearch;
             }
           | { redirectTo: string }
         >(
@@ -163,9 +179,11 @@ export default function CompanyDetailPage() {
         workstreams,
         workstreamContacts,
         access,
+        salesResearch,
       } = companyResponse;
       setCompany(company);
       setAccess(access);
+      setSalesResearch(salesResearch || { jobBoardUrl: "", jobSignals: [] });
       setContacts(contacts);
       setDepartments(departments || []);
       setWorkstreams(workstreams || []);
@@ -833,6 +851,48 @@ export default function CompanyDetailPage() {
           </div>
         );
       })()}
+
+      {salesResearch.jobBoardUrl || salesResearch.jobSignals.length ? (
+        <section className="mb-5 rounded-xl border border-amber/40 bg-amber/[0.05] p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+                Verified hiring evidence
+              </p>
+              <p className="mt-1 text-xs leading-5 text-muted">
+                Saved from the latest outreach research. Open the exact source before using it in a conversation.
+              </p>
+            </div>
+            {salesResearch.jobBoardUrl ? (
+              <a
+                href={salesResearch.jobBoardUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg border border-amber/50 bg-amber/10 px-3 py-2 font-mono text-[0.52rem] uppercase tracking-wider text-amber hover:bg-amber/20"
+              >
+                Open company job board ↗
+              </a>
+            ) : null}
+          </div>
+          {salesResearch.jobSignals.length ? (
+            <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+              {salesResearch.jobSignals.map((signal) => {
+                const detail = [signal.location, signal.compensation, signal.recency]
+                  .filter(Boolean)
+                  .join(" · ");
+                return (
+                  <li key={`${signal.role}:${signal.sourceUrl}`} className="rounded-lg border border-edge bg-ink/35 px-3 py-2">
+                    <a href={signal.sourceUrl} target="_blank" rel="noreferrer" className="text-sm font-medium text-amber hover:underline">
+                      {signal.role} ↗
+                    </a>
+                    {detail ? <p className="mt-1 text-xs text-muted">{detail}</p> : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* PLAYBOOK - the main play to move this client toward the outcome you
           want. AI-built from the history, refreshed after each call. */}

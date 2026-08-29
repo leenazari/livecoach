@@ -3,6 +3,7 @@ import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { loadSafeSharedCompany } from "@/lib/team-client-sharing";
 import { withCompanyPipelineExclusion } from "@/lib/company-pipeline-exclusion";
+import { verifiedJobResearchEvidence } from "@/lib/job-research-sources";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -27,6 +28,37 @@ const PATCHABLE = [
   // the assistant and the build-profile pass.
   "email_context",
 ] as const;
+
+async function loadVerifiedCompanyJobEvidence(
+  companyId: string,
+  workspaceId: string
+) {
+  const { data: prospects, error: prospectError } = await supabaseAdmin
+    .from("outreach_prospects")
+    .select("id,research,website,company_domain,last_researched_at")
+    .eq("workspace_id", workspaceId)
+    .eq("crm_company_id", companyId)
+    .order("last_researched_at", { ascending: false, nullsFirst: false })
+    .limit(1);
+  if (prospectError) throw prospectError;
+  const prospect = prospects?.[0];
+  if (!prospect) return { jobBoardUrl: "", jobSignals: [] };
+
+  const { data: enrolments, error: enrolmentError } = await supabaseAdmin
+    .from("outreach_enrolments")
+    .select("research,research_sources,researched_at")
+    .eq("workspace_id", workspaceId)
+    .eq("prospect_id", prospect.id)
+    .order("researched_at", { ascending: false, nullsFirst: false })
+    .limit(1);
+  if (enrolmentError) throw enrolmentError;
+  const enrolment = enrolments?.[0];
+  return verifiedJobResearchEvidence(
+    enrolment?.research || prospect.research,
+    Array.isArray(enrolment?.research_sources) ? enrolment.research_sources : [],
+    prospect
+  );
+}
 
 export async function GET(
   _req: NextRequest,
@@ -98,6 +130,10 @@ export async function GET(
       return NextResponse.json({ error: "company not found" }, { status: 404 });
     }
 
+    const salesResearchPromise = loadVerifiedCompanyJobEvidence(
+      params.id,
+      scope.workspaceId
+    );
     const [contactsResult, departmentsResult, workstreamsResult, linksResult] =
       sharedSalesAccess
         ? [
@@ -140,6 +176,7 @@ export async function GET(
     ]) {
       if (result.error) throw result.error;
     }
+    const salesResearch = await salesResearchPromise;
 
     return NextResponse.json({
       company,
@@ -147,6 +184,7 @@ export async function GET(
       departments: departmentsResult.data || [],
       workstreams: workstreamsResult.data || [],
       workstreamContacts: linksResult.data || [],
+      salesResearch,
       access: {
         mode: sharedSalesAccess ? "shared_sales" : "owner",
         shared: !!activeShare,

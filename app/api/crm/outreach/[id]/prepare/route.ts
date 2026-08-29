@@ -30,6 +30,7 @@ import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import {
   conciseJobSignal,
   isCandidatePreparationCampaign,
+  officialJobBoardUrl,
   officialJobSearchDomains,
   officialResearchSources,
   rankCandidatePreparationJobSignals,
@@ -358,10 +359,12 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
     const jobSignals = candidatePreparationCampaign
       ? rankCandidatePreparationJobSignals(verifiedJobSignals)
       : verifiedJobSignals;
+    const jobBoardUrl = officialJobBoardUrl(sources, prospect);
     const research = {
       summary: clean(parsed.research.summary, 800),
       signals: Array.isArray(parsed.research.signals) ? parsed.research.signals.map((x: any) => clean(x, 240)).filter(Boolean).slice(0, 3) : [],
       activeJobs: jobSignals.map(conciseJobSignal),
+      jobBoardUrl,
       jobSignals,
       volumeAssessment: jobSignals.length && ["high", "medium", "low"].includes(parsed.research.volumeAssessment) ? parsed.research.volumeAssessment : "unknown",
       volumeReason: jobSignals.length ? clean(parsed.research.volumeReason, 300) : "No current vacancies were verified on the company or its public applicant tracking system.",
@@ -519,7 +522,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       supabaseAdmin.from("outreach_enrolments").update({ status: "drafted", research, research_sources: sources, researched_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("workspace_id", sender.workspaceId).eq("owner_id", sender.userId).eq("id", enrolment.id),
       supabaseAdmin.from("outreach_prospects").update({ research, last_researched_at: new Date().toISOString(), status: "ready", updated_at: new Date().toISOString() }).eq("workspace_id", sender.workspaceId).eq("assigned_to_user_id", sender.userId).eq("id", prospect.id),
       supabaseAdmin.from("outreach_events").insert([
-        { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, kind: "researched", metadata: { sources: sources.length, confidence: research.confidence, verifiedJobs: jobSignals.length } },
+        { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, kind: "researched", metadata: { sources: sources.length, confidence: research.confidence, verifiedJobs: jobSignals.length, jobBoardSaved: Boolean(jobBoardUrl) } },
         { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, message_id: draft.id, kind: "drafted", metadata: { step, variant, qualityScore, tags: messageTags } },
       ]),
     ]);
