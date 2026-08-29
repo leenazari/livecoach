@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import PublicVoiceNotePlayer from "@/components/PublicVoiceNotePlayer";
+import ReturnToInboxButton from "@/components/ReturnToInboxButton";
 import { supabaseService } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -66,12 +67,9 @@ export default async function VoiceNotePage({
             </p>
           </details>
         ) : null}
-        <a
-          href={`mailto:${message.from_email}`}
-          className="mt-6 inline-flex min-h-12 items-center justify-center rounded-full bg-amber px-6 font-mono text-xs font-semibold uppercase tracking-wider text-ink"
-        >
-          Reply to {senderName.split(/\s+/)[0]}
-        </a>
+        <ReturnToInboxButton
+          senderFirstName={senderName.split(/\s+/)[0] || "the sender"}
+        />
         <p className="mt-6 text-xs text-muted">
           Shared securely through LiveCoach CRM.
         </p>
