@@ -7,6 +7,7 @@ import {
 } from "@/lib/account-readiness";
 import { gmailAccessDiagnostic } from "@/lib/gmail";
 import {
+  GMAIL_COMPOSE_SCOPE,
   GMAIL_READ_SCOPE,
   GMAIL_SEND_SCOPE,
   googleConnected,
@@ -103,7 +104,7 @@ export async function GET() {
         .in("owner_id", memberIds),
       supabaseService
         .from("salesperson_profiles")
-        .select("user_id,completed_at")
+        .select("user_id,completed_at,booking_url,email_assistant_voice_id")
         .eq("workspace_id", scope.workspaceId)
         .in("user_id", memberIds),
       supabaseService
@@ -151,6 +152,7 @@ export async function GET() {
           "workspace_member_privacy_test_confirmed",
           "workspace_member_privacy_test_reset",
           "account_readiness_test_email_completed",
+          "email_assistant_rehearsal_accepted",
         ])
         .order("created_at", { ascending: false })
         .limit(3000),
@@ -188,6 +190,9 @@ export async function GET() {
       (salesProfilesResult.data || [])
         .filter((row: any) => !!row.completed_at)
         .map((row: any) => row.user_id)
+    );
+    const salesProfileByUser = new Map(
+      (salesProfilesResult.data || []).map((row: any) => [row.user_id, row])
     );
     const calendarSyncByUser = new Map<string, string>();
     for (const row of calendarSyncResult.data || []) {
@@ -235,7 +240,8 @@ export async function GET() {
     const testEmailByUser = new Map<string, string>();
     for (const event of auditResult.data || []) {
       if (
-        event.action === "account_readiness_test_email_completed" &&
+        (event.action === "account_readiness_test_email_completed" ||
+          event.action === "email_assistant_rehearsal_accepted") &&
         event.target_id &&
         !testEmailByUser.has(event.target_id)
       ) {
@@ -401,6 +407,37 @@ export async function GET() {
 
     const account = readinessByUser.get(scope.userId);
     if (!account) throw new Error("Account readiness could not be built");
+    const currentSalesProfile = salesProfileByUser.get(scope.userId) as any;
+    const currentGoogle = googleByUser.get(scope.userId) as any;
+    const currentMicrosoft = microsoftByUser.get(scope.userId) as any;
+    const currentProvider = currentGoogle?.refresh_token
+      ? ("google" as const)
+      : currentMicrosoft?.refresh_token
+        ? ("microsoft" as const)
+        : null;
+    const capabilities = {
+      emailAssistant: {
+        replyVoiceReady: Boolean(
+          String(currentSalesProfile?.email_assistant_voice_id || "").trim()
+        ),
+        bookingLinkReady: Boolean(
+          String(currentSalesProfile?.booking_url || "").trim()
+        ),
+        providerDraftReady:
+          currentProvider === "google"
+            ? liveGoogle.connected &&
+              liveGoogleScopes.has(GMAIL_COMPOSE_SCOPE)
+            : currentProvider === "microsoft"
+              ? liveMicrosoft.status === "ok" && liveMicrosoft.mailDraft
+              : false,
+        rehearsalReady:
+          currentProvider === "google"
+            ? liveGoogle.connected && liveGoogleScopes.has(GMAIL_SEND_SCOPE)
+            : currentProvider === "microsoft"
+              ? liveMicrosoft.status === "ok" && liveMicrosoft.mailSend
+              : false,
+      },
+    };
     const team =
       scope.role === "owner"
         ? (members || [])
@@ -412,6 +449,7 @@ export async function GET() {
     return NextResponse.json(
       {
         account,
+        capabilities,
         ...(scope.role === "owner" ? { team } : {}),
         generatedAt: new Date().toISOString(),
         aiUsed: false,

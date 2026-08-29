@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
-  handOffEmailAssistantDraft,
+  rehearseEmailAssistantDraft,
   type EmailAssistantVoiceIntent,
 } from "@/lib/email-assistant";
 import { requireRequestScope } from "@/lib/request-scope";
@@ -24,12 +24,15 @@ export async function POST(
     const voiceIntent = String(body?.voice_intent || "") as EmailAssistantVoiceIntent;
     if (voiceIntent !== "include" && voiceIntent !== "omit") {
       return NextResponse.json(
-        { error: "Choose whether this provider draft includes voice" },
+        { error: "Choose whether this test includes voice" },
         { status: 400, headers: noStore }
       );
     }
-    const result = await handOffEmailAssistantDraft(params.id, voiceIntent);
-    return NextResponse.json({ ok: true, ...result }, { headers: noStore });
+    const result = await rehearseEmailAssistantDraft(params.id, voiceIntent);
+    return NextResponse.json(
+      { ok: true, ...result },
+      { headers: noStore }
+    );
   } catch (error: any) {
     const requested = Number(error?.status) || 500;
     const status = [400, 404, 409, 502].includes(requested) ? requested : 500;
@@ -37,8 +40,8 @@ export async function POST(
       {
         error:
           status === 500
-            ? "Could not create the provider draft"
-            : String(error?.message || "Could not create the provider draft"),
+            ? "Could not send the Email Assistant test"
+            : String(error?.message || "Could not send the Email Assistant test"),
       },
       { status, headers: noStore }
     );

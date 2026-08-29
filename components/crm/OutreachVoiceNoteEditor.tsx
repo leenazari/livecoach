@@ -39,7 +39,6 @@ export default function OutreachVoiceNoteEditor({
   disabled,
   approving,
   generating,
-  kind = "outreach",
   onScriptChange,
   onApprove,
   onGenerate,
@@ -49,7 +48,6 @@ export default function OutreachVoiceNoteEditor({
   disabled?: boolean;
   approving?: boolean;
   generating?: boolean;
-  kind?: "outreach" | "next-move";
   onScriptChange: (value: string) => void;
   onApprove: () => void;
   onGenerate: () => void;
@@ -215,18 +213,10 @@ export default function OutreachVoiceNoteEditor({
             className="w-full"
             controls
             preload="metadata"
-            src={
-              kind === "next-move"
-                ? `/api/listen/next-move/${encodeURIComponent(message.voice_public_token)}/audio`
-                : `/api/listen/${encodeURIComponent(message.voice_public_token)}/audio`
-            }
+            src={`/api/listen/${encodeURIComponent(message.voice_public_token)}/audio`}
           />
           <a
-            href={
-              kind === "next-move"
-                ? `/listen/next-move/${encodeURIComponent(message.voice_public_token)}`
-                : `/listen/${encodeURIComponent(message.voice_public_token)}`
-            }
+            href={`/listen/${encodeURIComponent(message.voice_public_token)}`}
             target="_blank"
             rel="noreferrer"
             className="mt-2 inline-block text-xs text-moss hover:underline"

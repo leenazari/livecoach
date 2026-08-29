@@ -56,6 +56,7 @@
     "validate:sendpilot-workspace-guard": "node scripts/validate-sendpilot-workspace-guard.mjs",
     "validate:email-next-moves": "node scripts/validate-email-next-moves.mjs",
     "validate:email-next-move-voice": "node scripts/validate-email-next-move-voice-booking.mjs",
+    "validate:email-assistant-hardening": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-email-assistant-hardening.mjs",
     "validate:provider-disconnect": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-provider-disconnect.mjs",
     "validate:outreach-rehearsal": "node scripts/validate-outreach-rehearsal-receipt.mjs",
     "validate:focused-outreach": "node scripts/validate-focused-outreach-sales-desk.mjs",

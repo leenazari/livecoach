@@ -6,19 +6,19 @@ import {
   loadOwnedEmailAssistantDraft,
 } from "@/lib/email-assistant";
 import {
-  assertOutreachVoiceWithinBudget,
-  configuredVoiceNoteCostGbp,
+  assertEmailAssistantVoiceWithinBudget,
+  configuredEmailAssistantVoiceCostGbp,
+  EMAIL_ASSISTANT_VOICE_BUCKET,
+  EMAIL_ASSISTANT_VOICE_MIME,
+  EmailAssistantVoiceBudgetError,
+  emailAssistantEstimatedVoiceSeconds,
+  emailAssistantVoiceApprovalHash,
   emailAssistantVoicePublicUrl,
   emailAssistantVoiceStoragePath,
-  estimatedVoiceSeconds,
-  generateElevenLabsOutreachAudio,
-  normaliseOutreachVoiceScript,
-  OUTREACH_VOICE_BUCKET,
-  OUTREACH_VOICE_MIME,
-  outreachVoiceApprovalHash,
-  outreachVoiceScriptHash,
-  OutreachVoiceBudgetError,
-} from "@/lib/outreach-voice-note";
+  emailAssistantVoiceScriptHash,
+  generateElevenLabsEmailAssistantAudio,
+} from "@/lib/email-assistant-voice-note";
+import { normaliseEmailAssistantVoiceScript } from "@/lib/email-assistant-voice-policy";
 import { resolveEmailAssistantVoiceConfig } from "@/lib/email-assistant-voice-config";
 import { supabaseService } from "@/lib/supabase";
 import { logUsage } from "@/lib/usage";
@@ -50,7 +50,7 @@ export async function generateEmailAssistantVoiceNote(
       409
     );
   }
-  const script = normaliseOutreachVoiceScript(draft.voice_script);
+  const script = normaliseEmailAssistantVoiceScript(draft.voice_script);
   if (!script) {
     throw requestError("Write the personal voice script first", 400);
   }
@@ -67,8 +67,8 @@ export async function generateEmailAssistantVoiceNote(
       400
     );
   }
-  const budget = assertOutreachVoiceWithinBudget(script, config.modelId);
-  const scriptHash = outreachVoiceScriptHash(
+  const budget = assertEmailAssistantVoiceWithinBudget(script, config.modelId);
+  const scriptHash = emailAssistantVoiceScriptHash(
     script,
     config.voiceId,
     config.modelId
@@ -93,7 +93,7 @@ export async function generateEmailAssistantVoiceNote(
     };
   }
 
-  const approvalHash = outreachVoiceApprovalHash(script);
+  const approvalHash = emailAssistantVoiceApprovalHash(script);
   if (
     !draft.voice_script_approved_at ||
     draft.voice_script_approved_by !== scope.userId ||
@@ -166,7 +166,7 @@ export async function generateEmailAssistantVoiceNote(
   }
 
   try {
-    const generated = await generateElevenLabsOutreachAudio({ script, config });
+    const generated = await generateElevenLabsEmailAssistantAudio({ script, config });
     const audioPath = emailAssistantVoiceStoragePath({
       workspaceId: scope.workspaceId,
       ownerId: scope.userId,
@@ -174,23 +174,23 @@ export async function generateEmailAssistantVoiceNote(
       scriptHash,
     });
     const { error: uploadError } = await supabaseService.storage
-      .from(OUTREACH_VOICE_BUCKET)
+      .from(EMAIL_ASSISTANT_VOICE_BUCKET)
       .upload(audioPath, generated.audio, {
-        contentType: OUTREACH_VOICE_MIME,
+        contentType: EMAIL_ASSISTANT_VOICE_MIME,
         cacheControl: "31536000",
         upsert: true,
       });
     if (uploadError) throw uploadError;
 
     const generatedAt = new Date().toISOString();
-    const estimatedSeconds = estimatedVoiceSeconds(script);
+    const estimatedSeconds = emailAssistantEstimatedVoiceSeconds(script);
     const { data: saved, error: saveError } = await supabaseService
       .from("email_assistant_drafts")
       .update({
         voice_script: script,
         voice_status: "ready",
         voice_audio_path: audioPath,
-        voice_audio_mime: OUTREACH_VOICE_MIME,
+        voice_audio_mime: EMAIL_ASSISTANT_VOICE_MIME,
         voice_generated_at: generatedAt,
         voice_script_hash: scriptHash,
         voice_model_id: config.modelId,
@@ -233,7 +233,10 @@ export async function generateEmailAssistantVoiceNote(
       }),
       logUsage(
         "email_assistant_voice_note",
-        configuredVoiceNoteCostGbp(generated.characters, config.modelId),
+        configuredEmailAssistantVoiceCostGbp(
+          generated.characters,
+          config.modelId
+        ),
         {
           provider: "elevenlabs",
           modelId: config.modelId,
@@ -287,7 +290,7 @@ export async function generateEmailAssistantVoiceNote(
       .eq("id", draft.id)
       .eq("voice_status", "generating");
     if (concurrentGeneration) throw requestError(detail, 409);
-    if (error instanceof OutreachVoiceBudgetError) {
+    if (error instanceof EmailAssistantVoiceBudgetError) {
       throw requestError(detail, error.status);
     }
     throw requestError(detail, Number(error?.status) || 502);

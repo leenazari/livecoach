@@ -11,9 +11,12 @@ const [
   separateVoiceMigration,
   assistant,
   voice,
+  voiceNote,
+  voicePolicy,
   voiceConfig,
   patchRoute,
   voiceRoute,
+  rehearseRoute,
   mail,
   profile,
   profileTypes,
@@ -29,16 +32,19 @@ const [
   read("supabase/migrations/20260829083628_separate_email_assistant_reply_voice.sql"),
   read("lib/email-assistant.ts"),
   read("lib/email-assistant-voice.ts"),
+  read("lib/email-assistant-voice-note.ts"),
+  read("lib/email-assistant-voice-policy.ts"),
   read("lib/email-assistant-voice-config.ts"),
   read("app/api/crm/email-assistant/drafts/[id]/route.ts"),
   read("app/api/crm/email-assistant/drafts/[id]/voice/route.ts"),
+  read("app/api/crm/email-assistant/drafts/[id]/rehearse/route.ts"),
   read("lib/mail.ts"),
   read("lib/sales-profile.ts"),
   read("lib/sales-profile-types.ts"),
   read("app/api/crm/sales-profile/route.ts"),
   read("app/settings/sales-profile/page.tsx"),
   read("app/crm/board/page.tsx"),
-  read("components/crm/OutreachVoiceNoteEditor.tsx"),
+  read("components/crm/EmailAssistantVoiceNoteEditor.tsx"),
   read("app/listen/next-move/[token]/page.tsx"),
   read("app/api/listen/next-move/[token]/audio/route.ts"),
   read("app/api/cron/email-next-moves/route.ts"),
@@ -78,9 +84,10 @@ assert.match(profilePage, /Each salesperson saves their own link/);
 assert.match(profilePage, /nobody else&apos;s calendar is substituted/);
 assert.match(profilePage, /Email Assistant reply voice/);
 assert.match(profilePage, /Outreach campaign voice/);
-assert.match(profilePage, /Use for replies/);
+assert.match(profilePage, /Choose only the Email Assistant reply voice/);
+assert.match(profilePage, /Use for Email Assistant/);
 assert.match(profilePage, /Use for Outreach/);
-assert.match(profilePage, /Email Assistant never borrows the Outreach voice/);
+assert.match(profilePage, /each saves and uses its own voice/);
 
 assert.match(assistant, /"voiceScript":"\.\.\."/);
 assert.match(assistant, /Audio is not generated automatically/);
@@ -95,24 +102,40 @@ assert.match(assistant, /emailAssistantVoicePublicUrl/);
 assert.match(assistant, /createConnectedMailDraft/);
 assert.match(assistant, /resolveEmailAssistantVoiceConfig\(scope\)/);
 assert.doesNotMatch(assistant, /resolveOutreachVoiceConfig/);
+assert.doesNotMatch(assistant, /outreach-voice/);
 assert.match(assistant, /invalidateEmailAssistantVoiceAudio/);
-assert.match(assistant, /draft\.voice_provider_voice_id !== currentVoiceId/);
+assert.match(assistant, /emailAssistantVoiceMatchesCurrentConfig/);
+assert.match(assistant, /voiceIntent: EmailAssistantVoiceIntent/);
+assert.match(assistant, /voiceIncluded: Boolean\(voiceNote\)/);
 
 assert.match(patchRoute, /requireRequestScope/);
 assert.match(patchRoute, /approveVoiceScript: body\?\.approve_voice_script/);
 assert.match(voiceRoute, /requireRequestScope/);
 assert.match(voiceRoute, /generateEmailAssistantVoiceNote/);
+assert.match(rehearseRoute, /requireRequestScope/);
+assert.match(rehearseRoute, /voice_intent/);
+assert.match(rehearseRoute, /rehearseEmailAssistantDraft/);
 assert.match(voice, /loadOwnedEmailAssistantDraft/);
 assert.match(voice, /draft\.voice_script_approved_by !== scope\.userId/);
 assert.match(voice, /Approve this exact voice script before creating the paid audio/);
-assert.match(voice, /assertOutreachVoiceWithinBudget/);
-assert.match(voice, /generateElevenLabsOutreachAudio/);
+assert.match(voice, /assertEmailAssistantVoiceWithinBudget/);
+assert.match(voice, /generateElevenLabsEmailAssistantAudio/);
 assert.match(voice, /emailAssistantVoiceStoragePath/);
-assert.match(voice, /OUTREACH_VOICE_BUCKET/);
+assert.match(voice, /EMAIL_ASSISTANT_VOICE_BUCKET/);
 assert.match(voice, /\.eq\("owner_id", scope\.userId\)/);
-assert.match(voice, /configuredVoiceNoteCostGbp/);
+assert.match(voice, /configuredEmailAssistantVoiceCostGbp/);
 assert.match(voice, /resolveEmailAssistantVoiceConfig\(scope\)/);
 assert.doesNotMatch(voice, /resolveOutreachVoiceConfig/);
+assert.doesNotMatch(voice, /outreach-voice/);
+
+assert.match(voicePolicy, /EMAIL_ASSISTANT_VOICE_TARGET_WORDS = 100/);
+assert.match(voicePolicy, /emailAssistantVoiceReadyForDisplayedScript/);
+assert.doesNotMatch(voicePolicy, /OUTREACH_VOICE/);
+assert.match(voiceNote, /emailAssistantVoiceMatchesCurrentConfig/);
+assert.match(voiceNote, /draft\.voice_script_hash ===/);
+assert.match(voiceNote, /draft\.voice_model_id === config\.modelId/);
+assert.match(voiceNote, /draft\.voice_provider_voice_id === config\.voiceId/);
+assert.doesNotMatch(voiceNote, /outreach-voice/);
 
 assert.match(voiceConfig, /email_assistant_voice_id,email_assistant_voice_name/);
 assert.match(voiceConfig, /\.eq\("workspace_id", scope\.workspaceId\)/);
@@ -125,18 +148,25 @@ assert.doesNotMatch(voiceConfig, /ELEVENLABS_OUTREACH_MODEL_ID/);
 
 assert.match(board, /approveNextMoveVoiceScript/);
 assert.match(board, /generateNextMoveVoice/);
-assert.match(board, /kind="next-move"/);
-assert.match(board, /You can approve the email without audio/);
-assert.match(editor, /1 · Approve script/);
-assert.match(editor, /kind === "next-move"/);
+assert.match(board, /EmailAssistantVoiceNoteEditor/);
+assert.match(board, /emailAssistantVoiceReadyForDisplayedScript/);
+assert.match(board, /voice_intent: voiceIntent/);
+assert.match(board, /Approve email without voice to/);
+assert.match(board, /Send test to me/);
+assert.match(editor, /1 · Approve reply script/);
+assert.match(editor, /Choose reply voice/);
+assert.doesNotMatch(editor, /outreach-voice/);
 assert.match(mail, /voiceNote\?:/);
-assert.match(mail, /I recorded a short personal voice note for you/);
+assert.match(mail, /I’ve added a short personal voice message for you/);
 
 assert.match(listener, /robots: \{ index: false/);
 assert.match(listener, /\.eq\("voice_public_token", params\.token\)/);
 assert.match(listener, /Book a meeting with/);
+assert.match(listener, /AI-assisted voice message/);
+assert.doesNotMatch(listener, /outreach_sender_name/);
 assert.match(audio, /createSignedUrl/);
-assert.match(audio, /OUTREACH_VOICE_BUCKET/);
+assert.match(audio, /EMAIL_ASSISTANT_VOICE_BUCKET/);
+assert.doesNotMatch(audio, /outreach-voice-note/);
 assert.match(audio, /Cache-Control", "private, no-store/);
 
 assert.doesNotMatch(overnight, /generateEmailAssistantVoiceNote/);

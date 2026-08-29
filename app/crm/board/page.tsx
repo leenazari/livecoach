@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import { crmFetch, type Company } from "@/lib/crm";
+import { emailAssistantVoiceReadyForDisplayedScript } from "@/lib/email-assistant-voice-policy";
 import NavMenu from "@/components/crm/NavMenu";
 import MatrixRain from "@/components/MatrixRain";
 import type { ClosePlan } from "@/components/crm/OpportunityClosePlan";
@@ -42,10 +43,20 @@ const ClientTriage = dynamic(
   () => import("@/components/crm/ClientTriage"),
   { ssr: false, loading: tabLoading }
 );
-const OutreachVoiceNoteEditor = dynamic(
-  () => import("@/components/crm/OutreachVoiceNoteEditor"),
+const EmailAssistantVoiceNoteEditor = dynamic(
+  () => import("@/components/crm/EmailAssistantVoiceNoteEditor"),
   { ssr: false, loading: tabLoading }
 );
+
+type EmailAssistantCapabilities = {
+  replyVoiceReady: boolean;
+  bookingLinkReady: boolean;
+  mailboxConnected: boolean;
+  providerDraftReady: boolean;
+  rehearsalReady: boolean;
+  mailboxEmail: string | null;
+  provider: "google" | "microsoft" | null;
+};
 
 type Tab = "tasks" | "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
@@ -61,6 +72,16 @@ function BoardInner() {
   const [tab, setTab] = useState<Tab>("tasks");
   const [drafts, setDrafts] = useState<any[]>([]);
   const [nextMoveDrafts, setNextMoveDrafts] = useState<any[]>([]);
+  const [nextMoveCapabilities, setNextMoveCapabilities] =
+    useState<EmailAssistantCapabilities>({
+      replyVoiceReady: false,
+      bookingLinkReady: false,
+      mailboxConnected: false,
+      providerDraftReady: false,
+      rehearsalReady: false,
+      mailboxEmail: null,
+      provider: null,
+    });
   const [emailTasks, setEmailTasks] = useState<any[]>([]);
   const [opps, setOpps] = useState<any[]>([]);
   const [companies, setCompanies] = useState<ClientPortfolioRow[]>([]);
@@ -117,6 +138,17 @@ function BoardInner() {
         ]);
         setDrafts(d.drafts || []);
         setNextMoveDrafts(n.drafts || []);
+        setNextMoveCapabilities(
+          n.capabilities || {
+            replyVoiceReady: false,
+            bookingLinkReady: false,
+            mailboxConnected: false,
+            providerDraftReady: false,
+            rehearsalReady: false,
+            mailboxEmail: null,
+            provider: null,
+          }
+        );
         setEmailTasks(
           (t.tasks || []).filter(
             (x: any) => x.link_kind === "email" && x.status === "open"
@@ -247,9 +279,18 @@ function BoardInner() {
     setSaveNotice("");
     try {
       const saved = await saveNextMove(draft);
-      const result = await crmFetch<{ draft: any }>(
+      const voiceIntent = emailAssistantVoiceReadyForDisplayedScript(
+        saved,
+        saved.voice_script
+      )
+        ? "include"
+        : "omit";
+      const result = await crmFetch<{ draft: any; voiceIncluded: boolean }>(
         `/api/crm/email-assistant/drafts/${draft.id}/approve`,
-        { method: "POST" }
+        {
+          method: "POST",
+          body: JSON.stringify({ voice_intent: voiceIntent }),
+        }
       );
       setNextMoveDrafts((items) =>
         items.map((item) =>
@@ -257,7 +298,7 @@ function BoardInner() {
         )
       );
       setSaveNotice(
-        `Approved draft created in ${result.draft.mail_provider === "google" ? "Gmail" : "Outlook"}. It has not been sent.`
+        `Approved ${result.voiceIncluded ? "email and exact reply voice" : "email without voice"} created in ${result.draft.mail_provider === "google" ? "Gmail" : "Outlook"}. It has not been sent.`
       );
     } catch (error: any) {
       setSaveError(error?.message || "That provider draft was not created.");
@@ -331,6 +372,56 @@ function BoardInner() {
       );
     } catch (error: any) {
       setSaveError(error?.message || "That personal voice note was not created.");
+      await load("drafts");
+    } finally {
+      setNextMoveBusy("");
+    }
+  };
+  const rehearseNextMove = async (draft: any) => {
+    if (!nextMoveCapabilities.rehearsalReady) {
+      setSaveError("Reconnect your own mailbox with send permission before sending a test to yourself.");
+      return;
+    }
+    const mailbox = nextMoveCapabilities.mailboxEmail || "your connected mailbox";
+    if (
+      !window.confirm(
+        `Send this exact draft only to ${mailbox} as a test? The real recipient will not be contacted.`
+      )
+    ) {
+      return;
+    }
+    setNextMoveBusy(`rehearse:${draft.id}`);
+    setSaveError("");
+    setSaveNotice("");
+    try {
+      const saved = await saveNextMove(draft);
+      const voiceIntent = emailAssistantVoiceReadyForDisplayedScript(
+        saved,
+        saved.voice_script
+      )
+        ? "include"
+        : "omit";
+      const result = await crmFetch<{
+        accepted: true;
+        sentTo: string;
+        provider: "google" | "microsoft";
+        deliveryLocation: "sent_or_all_mail" | "inbox_or_sent";
+        voiceIncluded: boolean;
+        recipientChanged: false;
+      }>(`/api/crm/email-assistant/drafts/${draft.id}/rehearse`, {
+        method: "POST",
+        body: JSON.stringify({ voice_intent: voiceIntent }),
+      });
+      if (!result.accepted || result.recipientChanged !== false) {
+        throw new Error("The safe Email Assistant test was not confirmed");
+      }
+      setSaveNotice(
+        result.provider === "google"
+          ? `Gmail accepted the ${result.voiceIncluded ? "email and voice" : "email-only"} test to ${result.sentTo}. Find it in Sent or All Mail. The real recipient was not contacted.`
+          : `Microsoft accepted the ${result.voiceIncluded ? "email and voice" : "email-only"} test to ${result.sentTo}. Check Inbox or Sent. The real recipient was not contacted.`
+      );
+    } catch (error: any) {
+      setSaveError(error?.message || "That Email Assistant test could not be sent.");
       await load("drafts");
     } finally {
       setNextMoveBusy("");
@@ -534,13 +625,51 @@ function BoardInner() {
                   </p>
                 </div>
               </div>
+              {!nextMoveCapabilities.mailboxConnected ? (
+                <div className="mb-3 rounded-xl border border-rust/45 bg-rust/[0.07] px-3 py-2 text-xs leading-5 text-rust">
+                  Connect your own Gmail or Outlook account before creating or testing provider drafts.
+                  <Link href="/settings" className="ml-1 font-semibold underline">
+                    Open connections
+                  </Link>
+                </div>
+              ) : !nextMoveCapabilities.providerDraftReady ? (
+                <div className="mb-3 rounded-xl border border-rust/45 bg-rust/[0.07] px-3 py-2 text-xs leading-5 text-rust">
+                  Reconnect your mailbox to grant the provider draft permission. LiveCoach will not offer approval until that exact permission is available.
+                  <Link href="/settings" className="ml-1 font-semibold underline">
+                    Reconnect mailbox
+                  </Link>
+                </div>
+              ) : !nextMoveCapabilities.rehearsalReady ? (
+                <div className="mb-3 rounded-xl border border-amber/45 bg-amber/[0.07] px-3 py-2 text-xs leading-5 text-amber">
+                  Provider drafts are ready. Reconnect your mailbox with send permission to enable safe tests to yourself.
+                  <Link href="/settings" className="ml-1 font-semibold underline">
+                    Reconnect mailbox
+                  </Link>
+                </div>
+              ) : !nextMoveCapabilities.replyVoiceReady ? (
+                <div className="mb-3 rounded-xl border border-amber/45 bg-amber/[0.07] px-3 py-2 text-xs leading-5 text-amber">
+                  Email-only approval is ready. Choose your separate Email Assistant reply voice only if you want to add audio.
+                  <Link
+                    href="/settings/sales-profile"
+                    className="ml-1 font-semibold underline"
+                  >
+                    Choose reply voice
+                  </Link>
+                </div>
+              ) : null}
               <div className="space-y-3">
                 {nextMoveDrafts.map((draft) => {
                   const editable = draft.status === "draft" || draft.status === "blocked";
+                  const voiceReadyForCurrentScript =
+                    emailAssistantVoiceReadyForDisplayedScript(
+                      draft,
+                      draft.voice_script
+                    );
                   const busy =
                     nextMoveBusy === draft.id ||
                     nextMoveBusy === `voice-approve:${draft.id}` ||
-                    nextMoveBusy === `voice:${draft.id}`;
+                    nextMoveBusy === `voice:${draft.id}` ||
+                    nextMoveBusy === `rehearse:${draft.id}`;
                   const providerName =
                     draft.mail_provider === "google" ? "Gmail" : "Outlook";
                   return (
@@ -637,13 +766,13 @@ function BoardInner() {
                       ) : null}
 
                       <div className="mt-3">
-                        <OutreachVoiceNoteEditor
-                          message={draft}
+                        <EmailAssistantVoiceNoteEditor
+                          draft={draft}
                           script={draft.voice_script || ""}
+                          voiceConfigured={nextMoveCapabilities.replyVoiceReady}
                           disabled={!editable}
                           approving={nextMoveBusy === `voice-approve:${draft.id}`}
                           generating={nextMoveBusy === `voice:${draft.id}`}
-                          kind="next-move"
                           onScriptChange={(value) =>
                             editNextMove(draft.id, "voice_script", value)
                           }
@@ -677,15 +806,25 @@ function BoardInner() {
                             </button>
                             <button
                               type="button"
+                              onClick={() => void rehearseNextMove(draft)}
+                              disabled={busy || !nextMoveCapabilities.rehearsalReady}
+                              className="rounded-full border border-sky/55 bg-sky/10 px-3 py-1.5 font-mono text-[0.54rem] uppercase tracking-wider text-sky hover:bg-sky/20 disabled:opacity-40"
+                            >
+                              {nextMoveBusy === `rehearse:${draft.id}`
+                                ? "Sending test…"
+                                : "Send test to me"}
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => void approveNextMove(draft)}
-                              disabled={busy}
+                              disabled={busy || !nextMoveCapabilities.providerDraftReady}
                               className="rounded-full border border-sage/55 bg-sage/10 px-3 py-1.5 font-mono text-[0.54rem] uppercase tracking-wider text-sage hover:bg-sage/20 disabled:opacity-40"
                             >
                               {busy
                                 ? "Creating…"
-                                : draft.voice_status === "ready"
+                                : voiceReadyForCurrentScript
                                   ? `Approve email + voice to ${providerName}`
-                                  : `Approve email to ${providerName} drafts`}
+                                  : `Approve email without voice to ${providerName}`}
                             </button>
                           </>
                         ) : null}
@@ -712,12 +851,12 @@ function BoardInner() {
                       </div>
                       {draft.status === "handed_off" ? (
                         <p className="mt-2 text-xs leading-5 text-sage">
-                          Approved into {providerName}. {draft.voice_status === "ready" ? "The personal voice-note link is included. " : ""}It has not been sent by LiveCoach.
+                          Approved into {providerName}. {voiceReadyForCurrentScript ? "The exact reply voice link is included. " : "This is email only. "}It has not been sent by LiveCoach.
                         </p>
-                      ) : editable && draft.voice_status !== "ready" ? (
+                      ) : editable && !voiceReadyForCurrentScript ? (
                         <p className="mt-2 text-xs leading-5 text-muted">
-                          You can approve the email without audio. Generate the voice first if
-                          you want its private listening link included in the provider draft.
+                          Approval will create an email-only provider draft. Approve and generate
+                          the exact current reply voice first if you want its private link included.
                         </p>
                       ) : null}
                     </article>

@@ -18,6 +18,7 @@ const [
   listRoute,
   updateRoute,
   approveRoute,
+  rehearseRoute,
   board,
   draftsRoute,
   vercel,
@@ -33,6 +34,7 @@ const [
   read("app/api/crm/email-assistant/drafts/route.ts"),
   read("app/api/crm/email-assistant/drafts/[id]/route.ts"),
   read("app/api/crm/email-assistant/drafts/[id]/approve/route.ts"),
+  read("app/api/crm/email-assistant/drafts/[id]/rehearse/route.ts"),
   read("app/crm/board/page.tsx"),
   read("app/api/crm/drafts/route.ts"),
   read("vercel.json"),
@@ -58,7 +60,8 @@ assert.match(assistant, /status: "approving"/);
 assert.match(assistant, /createConnectedMailDraft/);
 assert.match(assistant, /draft\.status === "handed_off"/);
 assert.match(assistant, /source: "human"/);
-assert.doesNotMatch(assistant, /sendConnectedMail/);
+assert.match(assistant, /rehearseEmailAssistantDraft/);
+assert.match(assistant, /to: mailboxEmail/);
 
 assert.match(monitor, /"draftMode":"immediate\|overnight\|none"/);
 assert.match(monitor, /generateEmailAssistantDraft/);
@@ -81,9 +84,13 @@ assert.match(mail, /createConnectedMailDraft/);
 assert.match(listRoute, /requireRequestScope/);
 assert.match(updateRoute, /requireRequestScope/);
 assert.match(approveRoute, /requireRequestScope/);
+assert.match(approveRoute, /voice_intent/);
+assert.match(rehearseRoute, /requireRequestScope/);
+assert.match(rehearseRoute, /voice_intent/);
 assert.match(board, /LiveCoach never[\s\S]*?sends these automatically/);
-assert.match(board, /Approve email to \$\{providerName\} drafts/);
+assert.match(board, /Approve email without voice to \$\{providerName\}/);
 assert.match(board, /Approve email \+ voice to \$\{providerName\}/);
+assert.match(board, /Send test to me/);
 assert.match(board, /draft\.status === "handed_off" \? "archive" : "dismiss"/);
 assert.match(draftsRoute, /\.eq\("workspace_id", account\.workspaceId\)/);
 assert.match(draftsRoute, /\.eq\("owner_id", account\.userId\)/);

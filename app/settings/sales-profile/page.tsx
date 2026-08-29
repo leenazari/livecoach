@@ -56,6 +56,9 @@ export default function SalesProfilePage() {
   const [voicesError, setVoicesError] = useState("");
   const [playingVoiceId, setPlayingVoiceId] = useState("");
   const [showAllVoices, setShowAllVoices] = useState(false);
+  const [voicePurpose, setVoicePurpose] = useState<
+    "email-assistant" | "outreach"
+  >("email-assistant");
   const voiceAudio = useRef<HTMLAudioElement | null>(null);
   const touched = useRef(false);
 
@@ -379,95 +382,118 @@ export default function SalesProfilePage() {
               </span>
             </label>
             <div className="mt-5 rounded-2xl border border-edge bg-ink/25 p-4 sm:p-5">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="text-sm text-bone">Your separate sales voices</p>
-                  <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">
-                    Listen free, choose the voice for Email Assistant replies and choose the voice for Outreach campaigns. They are independent from each other and from Brain&apos;s voice. Voice-note generation remains a separate approved action and can cost up to 5p.
-                  </p>
-                </div>
-              </div>
+              <p className="text-sm text-bone">Separate voice settings</p>
+              <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">
+                Pick one product at a time. Both use the same free stock previews, but each saves and uses its own voice. Neither can borrow Brain&apos;s voice or the other product&apos;s setting.
+              </p>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border border-sky/40 bg-sky/[0.06] p-3">
+                <button
+                  type="button"
+                  onClick={() => setVoicePurpose("email-assistant")}
+                  className={`rounded-xl border p-3 text-left ${voicePurpose === "email-assistant" ? "border-sky/60 bg-sky/[0.09]" : "border-edge bg-panel/30"}`}
+                >
                   <p className="font-mono text-[0.52rem] uppercase tracking-wider text-sky">Email Assistant reply voice</p>
                   <p className="mt-1 text-sm text-bone">
                     {profile.emailAssistantVoiceId
-                      ? profile.emailAssistantVoiceName || "Email Assistant voice selected"
-                      : "Choose a voice"}
+                      ? profile.emailAssistantVoiceName || "Reply voice selected"
+                      : "Not selected"}
                   </p>
-                  <p className="mt-1 text-xs leading-5 text-muted">Used only for approved voice notes attached to next-move email drafts.</p>
-                </div>
-                <div className="rounded-xl border border-amber/40 bg-amber/[0.06] p-3">
+                  <p className="mt-1 text-xs leading-5 text-muted">Used only for approved voice replies attached to next-move emails.</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVoicePurpose("outreach")}
+                  className={`rounded-xl border p-3 text-left ${voicePurpose === "outreach" ? "border-amber/60 bg-amber/[0.09]" : "border-edge bg-panel/30"}`}
+                >
                   <p className="font-mono text-[0.52rem] uppercase tracking-wider text-amber">Outreach campaign voice</p>
                   <p className="mt-1 text-sm text-bone">
                     {profile.outreachVoiceId
                       ? profile.outreachVoiceName || "Outreach voice selected"
-                      : "Choose a voice"}
+                      : "Not selected"}
                   </p>
                   <p className="mt-1 text-xs leading-5 text-muted">Used only for Outreach campaign voice notes sent by this salesperson.</p>
-                </div>
+                </button>
               </div>
 
-              {voicesLoading ? (
-                <div className="mt-4">
-                  <MatrixRain size="compact" messages={["loading stock voices", "previews cost nothing"]} />
-                </div>
-              ) : null}
-              {voicesError ? (
-                <p role="alert" className="mt-4 rounded-xl border border-rust/45 bg-rust/10 px-3 py-2 text-xs leading-5 text-rust">
-                  {voicesError}
+              <div className={`mt-4 rounded-xl border p-3 ${voicePurpose === "email-assistant" ? "border-sky/35 bg-sky/[0.04]" : "border-amber/35 bg-amber/[0.04]"}`}>
+                <p className={`font-mono text-[0.54rem] uppercase tracking-wider ${voicePurpose === "email-assistant" ? "text-sky" : "text-amber"}`}>
+                  {voicePurpose === "email-assistant"
+                    ? "Choose only the Email Assistant reply voice"
+                    : "Choose only the Outreach campaign voice"}
                 </p>
-              ) : null}
-              {!voicesLoading && voices.length ? (
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {(showAllVoices ? voices : voices.slice(0, 8)).map((voice) => {
-                    const selectedForEmailAssistant =
-                      profile.emailAssistantVoiceId === voice.id;
-                    const selectedForOutreach = profile.outreachVoiceId === voice.id;
-                    const detail = [voice.accent, voice.gender, voice.age, voice.useCase]
-                      .filter(Boolean)
-                      .join(" · ");
-                    return (
-                      <article key={voice.id} className={`rounded-xl border p-3 transition ${selectedForEmailAssistant || selectedForOutreach ? "border-bone/45 bg-bone/[0.04]" : "border-edge bg-panel/35 hover:border-bone/35"}`}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-bone">{voice.name}</p>
-                            <p className="mt-1 truncate font-mono text-[0.52rem] uppercase tracking-wider text-muted">
-                              {detail || "ElevenLabs stock voice"}
-                            </p>
+                <p className="mt-1 text-xs leading-5 text-muted">
+                  Listening to a preview is free. Saving a selection does not generate audio or incur a voice cost.
+                </p>
+
+                {voicesLoading ? (
+                  <div className="mt-4">
+                    <MatrixRain size="compact" messages={["loading stock voices", "previews cost nothing"]} />
+                  </div>
+                ) : null}
+                {voicesError ? (
+                  <p role="alert" className="mt-4 rounded-xl border border-rust/45 bg-rust/10 px-3 py-2 text-xs leading-5 text-rust">
+                    {voicesError}
+                  </p>
+                ) : null}
+                {!voicesLoading && voices.length ? (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {(showAllVoices ? voices : voices.slice(0, 8)).map((voice) => {
+                      const selected =
+                        voicePurpose === "email-assistant"
+                          ? profile.emailAssistantVoiceId === voice.id
+                          : profile.outreachVoiceId === voice.id;
+                      const detail = [voice.accent, voice.gender, voice.age, voice.useCase]
+                        .filter(Boolean)
+                        .join(" · ");
+                      return (
+                        <article key={voice.id} className={`rounded-xl border p-3 transition ${selected ? "border-bone/45 bg-bone/[0.04]" : "border-edge bg-panel/35 hover:border-bone/35"}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-bone">{voice.name}</p>
+                              <p className="mt-1 truncate font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                                {detail || "ElevenLabs stock voice"}
+                              </p>
+                            </div>
+                            {selected ? (
+                              <span className={voicePurpose === "email-assistant" ? "text-xs text-sky" : "text-xs text-amber"}>
+                                ✓ Selected
+                              </span>
+                            ) : null}
                           </div>
-                          <div className="flex shrink-0 flex-col items-end gap-1">
-                            {selectedForEmailAssistant ? <span className="text-xs text-sky">✓ Email replies</span> : null}
-                            {selectedForOutreach ? <span className="text-xs text-amber">✓ Outreach</span> : null}
+                          {voice.description ? (
+                            <p className="mt-2 line-clamp-2 text-xs leading-5 text-bone/70">{voice.description}</p>
+                          ) : null}
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            <button type="button" onClick={() => void previewVoice(voice)} disabled={!voice.previewUrl} className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase tracking-wider text-bone disabled:opacity-35">
+                              {playingVoiceId === voice.id ? "Stop" : "Listen"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => chooseVoice(voicePurpose, voice)}
+                              disabled={selected}
+                              className={`min-h-10 rounded-lg border px-3 font-mono text-[0.52rem] uppercase tracking-wider disabled:opacity-45 ${voicePurpose === "email-assistant" ? "border-sky/55 bg-sky/10 text-sky" : "border-amber/55 bg-amber/10 text-amber"}`}
+                            >
+                              {selected
+                                ? "✓ Selected"
+                                : voicePurpose === "email-assistant"
+                                  ? "Use for Email Assistant"
+                                  : "Use for Outreach"}
+                            </button>
                           </div>
-                        </div>
-                        {voice.description ? (
-                          <p className="mt-2 line-clamp-2 text-xs leading-5 text-bone/70">{voice.description}</p>
-                        ) : null}
-                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                          <button type="button" onClick={() => void previewVoice(voice)} disabled={!voice.previewUrl} className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase tracking-wider text-bone disabled:opacity-35">
-                            {playingVoiceId === voice.id ? "Stop" : "Listen"}
-                          </button>
-                          <button type="button" onClick={() => chooseVoice("email-assistant", voice)} disabled={selectedForEmailAssistant} className="min-h-10 rounded-lg border border-sky/55 bg-sky/10 px-3 font-mono text-[0.52rem] uppercase tracking-wider text-sky disabled:opacity-45">
-                            {selectedForEmailAssistant ? "✓ Email replies" : "Use for replies"}
-                          </button>
-                          <button type="button" onClick={() => chooseVoice("outreach", voice)} disabled={selectedForOutreach} className="min-h-10 rounded-lg border border-amber/55 bg-amber/10 px-3 font-mono text-[0.52rem] uppercase tracking-wider text-amber disabled:opacity-45">
-                            {selectedForOutreach ? "✓ Outreach" : "Use for Outreach"}
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              ) : null}
-              {voices.length > 8 ? (
-                <button type="button" onClick={() => setShowAllVoices((value) => !value)} className="mt-3 text-xs text-amber hover:underline">
-                  {showAllVoices ? "Show fewer voices" : `Show all ${voices.length} stock voices`}
-                </button>
-              ) : null}
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {voices.length > 8 ? (
+                  <button type="button" onClick={() => setShowAllVoices((value) => !value)} className="mt-3 text-xs text-amber hover:underline">
+                    {showAllVoices ? "Show fewer voices" : `Show all ${voices.length} stock voices`}
+                  </button>
+                ) : null}
+              </div>
               <p className="mt-3 text-xs leading-5 text-muted">
-                Both voices belong only to your login. Email Assistant never borrows the Outreach voice, Outreach never borrows the Email Assistant voice, and neither feature uses Brain&apos;s voice. Until you choose the relevant voice, that feature&apos;s audio generation stops safely.
+                Each selection belongs only to this login. Until the relevant voice is chosen, that product&apos;s audio generation stops safely. Email-only work is unaffected.
               </p>
             </div>
           </section>

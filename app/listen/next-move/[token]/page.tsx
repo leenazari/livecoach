@@ -34,12 +34,10 @@ export default async function NextMoveVoiceNotePage({
 
   const { data: profile } = await supabaseService
     .from("profiles")
-    .select("display_name,outreach_sender_name")
+    .select("display_name")
     .eq("user_id", draft.owner_id)
     .maybeSingle();
-  const senderName = String(
-    profile?.outreach_sender_name || profile?.display_name || "the sender"
-  ).trim();
+  const senderName = String(profile?.display_name || "the sender").trim();
   const firstName = senderName.split(/\s+/)[0] || "them";
 
   return (
@@ -52,7 +50,7 @@ export default async function NextMoveVoiceNotePage({
           A short message from {senderName}
         </h1>
         <p className="mt-3 text-sm leading-6 text-muted">
-          Created specifically for this conversation. It lasts about {draft.voice_estimated_seconds || 50} seconds.
+          Created specifically for this conversation and approved by {senderName}. It lasts about {draft.voice_estimated_seconds || 50} seconds.
         </p>
         <PublicVoiceNotePlayer
           token={params.token}
@@ -80,7 +78,7 @@ export default async function NextMoveVoiceNotePage({
           </a>
         ) : null}
         <p className="mt-6 text-xs text-muted">
-          Shared securely through LiveCoach CRM.
+          This AI-assisted voice message was reviewed and approved by {senderName}. Shared securely through LiveCoach CRM.
         </p>
       </article>
     </main>

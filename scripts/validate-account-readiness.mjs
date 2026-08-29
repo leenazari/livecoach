@@ -14,6 +14,9 @@ const teamApi = read("app/api/crm/team/route.ts");
 const rehearsal = read(
   "app/api/crm/outreach/messages/[id]/rehearse/route.ts"
 );
+const emailAssistantRehearsal = read(
+  "app/api/crm/email-assistant/drafts/[id]/rehearse/route.ts"
+);
 
 assert.match(helperSource, /type AccountReadinessFacts/);
 assert.match(helperSource, /connectedProviderCount > 1/);
@@ -28,6 +31,11 @@ assert.match(api, /membershipQuery\.eq\("user_id", scope\.userId\)/);
 assert.match(api, /scope\.role === "owner"\s*\? \{ team \}/);
 assert.match(api, /Cache-Control": "private, no-store"/);
 assert.match(api, /aiUsed: false/);
+assert.match(api, /capabilities/);
+assert.match(api, /replyVoiceReady/);
+assert.match(api, /providerDraftReady/);
+assert.match(api, /rehearsalReady/);
+assert.match(api, /email_assistant_rehearsal_accepted/);
 assert.match(api, /\.from\("linkedin_oauth"\)/);
 assert.doesNotMatch(api, /linkedin_oauth[\s\S]{0,180}access_token/);
 assert.match(api, /\.select\("owner_id,created_at"\)/);
@@ -48,6 +56,8 @@ assert.doesNotMatch(page, /interview_sessions|outreach_messages|google_oauth/);
 assert.match(nav, /href: "\/settings\/readiness"/);
 assert.match(rehearsal, /account_readiness_test_email_completed/);
 assert.match(rehearsal, /target_id: sender\.userId/);
+assert.match(emailAssistantRehearsal, /rehearseEmailAssistantDraft/);
+assert.match(emailAssistantRehearsal, /voice_intent/);
 assert.match(teamApi, /account_readiness_test_email_completed/);
 assert.match(teamApi, /Math\.max\(sentResult\.count \|\| 0, rehearsalResult\.count \|\| 0\)/);
 assert.doesNotMatch(

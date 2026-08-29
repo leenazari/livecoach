@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { OUTREACH_VOICE_BUCKET } from "@/lib/outreach-voice-note";
+import { EMAIL_ASSISTANT_VOICE_BUCKET } from "@/lib/email-assistant-voice-note";
 import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -26,7 +26,7 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const { data, error } = await supabaseService.storage
-    .from(OUTREACH_VOICE_BUCKET)
+    .from(EMAIL_ASSISTANT_VOICE_BUCKET)
     .createSignedUrl(draft.voice_audio_path, 60 * 60);
   if (error || !data?.signedUrl) {
     return NextResponse.json({ error: "Audio unavailable" }, { status: 404 });
