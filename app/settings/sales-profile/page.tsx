@@ -20,6 +20,10 @@ import type {
   SalespersonVoiceChoice,
   SalespersonVoiceLibraryResponse,
 } from "@/lib/salesperson-voice-library-types";
+import {
+  OUTREACH_SHARED_DEFAULT_VOICE_ID,
+  OUTREACH_SHARED_DEFAULT_VOICE_NAME,
+} from "@/lib/outreach-voice-default";
 
 const PROFILE_URL = "/api/crm/sales-profile";
 const VOICES_URL = "/api/crm/sales-profile/voices";
@@ -173,6 +177,15 @@ export default function SalesProfilePage() {
             outreachVoiceName: voice.name,
           }
     );
+  };
+
+  const useSharedOutreachDefault = () => {
+    markTouched();
+    setProfile((current) => ({
+      ...current,
+      outreachVoiceId: "",
+      outreachVoiceName: "",
+    }));
   };
 
   const save = async () => {
@@ -384,7 +397,7 @@ export default function SalesProfilePage() {
             <div className="mt-5 rounded-2xl border border-edge bg-ink/25 p-4 sm:p-5">
               <p className="text-sm text-bone">Separate voice settings</p>
               <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">
-                Pick one product at a time. Both use the same free stock previews, but each saves and uses its own voice. Neither can borrow Brain&apos;s voice or the other product&apos;s setting.
+                Pick one product at a time. Email Assistant needs its own saved choice. Outreach uses the shared Sam Elliott default until this salesperson chooses an override. Neither can borrow Brain&apos;s voice or the other product&apos;s setting.
               </p>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -410,9 +423,13 @@ export default function SalesProfilePage() {
                   <p className="mt-1 text-sm text-bone">
                     {profile.outreachVoiceId
                       ? profile.outreachVoiceName || "Outreach voice selected"
-                      : "Not selected"}
+                      : OUTREACH_SHARED_DEFAULT_VOICE_NAME}
                   </p>
-                  <p className="mt-1 text-xs leading-5 text-muted">Used only for Outreach campaign voice notes sent by this salesperson.</p>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    {profile.outreachVoiceId
+                      ? "Personal override used across this salesperson's Outreach campaigns."
+                      : "Shared default used across this salesperson's Outreach campaigns."}
+                  </p>
                 </button>
               </div>
 
@@ -425,6 +442,27 @@ export default function SalesProfilePage() {
                 <p className="mt-1 text-xs leading-5 text-muted">
                   Listening to a preview is free. Saving a selection does not generate audio or incur a voice cost.
                 </p>
+
+                {voicePurpose === "outreach" ? (
+                  <div className="mt-4 flex flex-col gap-3 rounded-xl border border-amber/35 bg-ink/25 p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm text-bone">{OUTREACH_SHARED_DEFAULT_VOICE_NAME}</p>
+                      <p className="mt-1 text-xs leading-5 text-muted">
+                        Shared default for every salesperson and campaign until a personal override is saved.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={useSharedOutreachDefault}
+                      disabled={!profile.outreachVoiceId}
+                      className="min-h-10 shrink-0 rounded-lg border border-amber/55 bg-amber/10 px-3 font-mono text-[0.52rem] uppercase tracking-wider text-amber disabled:opacity-45"
+                    >
+                      {profile.outreachVoiceId
+                        ? "Use shared default"
+                        : `✓ Default · ${OUTREACH_SHARED_DEFAULT_VOICE_ID.slice(-4)}`}
+                    </button>
+                  </div>
+                ) : null}
 
                 {voicesLoading ? (
                   <div className="mt-4">
@@ -493,7 +531,7 @@ export default function SalesProfilePage() {
                 ) : null}
               </div>
               <p className="mt-3 text-xs leading-5 text-muted">
-                Each selection belongs only to this login. Until the relevant voice is chosen, that product&apos;s audio generation stops safely. Email-only work is unaffected.
+                Personal selections belong only to this login. Outreach falls back to the shared default. Email Assistant audio still stops safely until its separate voice is chosen. Email-only work is unaffected.
               </p>
             </div>
           </section>

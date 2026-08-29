@@ -3,6 +3,7 @@ import "server-only";
 import { publicAppOrigin } from "@/lib/public-app-url";
 import { supabaseService } from "@/lib/supabase";
 import type { OutreachIdentity } from "@/lib/outreach-identity";
+import { selectEffectiveOutreachVoice } from "@/lib/outreach-voice-default";
 import {
   estimateOutreachVoiceCostGbp,
   OUTREACH_VOICE_DEFAULT_RATE_GBP_PER_1000_CHARACTERS,
@@ -29,6 +30,7 @@ export type OutreachVoiceConfig = {
   voiceId: string;
   voiceName: string;
   modelId: string;
+  source: "personal" | "shared_default";
 };
 
 export type OutreachVoiceBudget = {
@@ -115,24 +117,20 @@ export async function resolveOutreachVoiceConfig(
     .maybeSingle();
   if (profileError) throw profileError;
 
-  // Outreach is profile-only. The global Brain voice must never be used as a
-  // fallback, including for the workspace owner.
-  const personalVoiceId = clean(profile?.outreach_voice_id, 120);
-  if (!personalVoiceId) {
-    throw new Error(
-      "Choose a separate sales outreach voice in My Sales Setup before creating a voice note. Brain's voice is never used for outreach."
-    );
-  }
+  // Outreach has its own shared product default. A salesperson's exact scoped
+  // selection overrides it. Brain and Email Assistant voices are never used as
+  // fallbacks, including for the workspace owner.
+  const selectedVoice = selectEffectiveOutreachVoice(profile);
   if (!process.env.ELEVENLABS_API_KEY) {
     throw new Error("ElevenLabs is not configured for this LiveCoach deployment");
   }
   return {
-    voiceId: personalVoiceId,
-    voiceName:
-      clean(profile?.outreach_voice_name, 120) || "My sales outreach voice",
+    voiceId: selectedVoice.voiceId,
+    voiceName: selectedVoice.voiceName,
     modelId: safeOutreachVoiceModel(
       process.env.ELEVENLABS_OUTREACH_MODEL_ID
     ),
+    source: selectedVoice.source,
   };
 }
 

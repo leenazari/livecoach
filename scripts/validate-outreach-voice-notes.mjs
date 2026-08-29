@@ -20,6 +20,7 @@ const approvalMigration = read(
 );
 const policy = read("lib/outreach-voice-policy.ts");
 const voice = read("lib/outreach-voice-note.ts");
+const voiceDefault = read("lib/outreach-voice-default.ts");
 const emailAssistantVoiceConfig = read("lib/email-assistant-voice-config.ts");
 const prepare = read("app/api/crm/outreach/[id]/prepare/route.ts");
 const generate = read(
@@ -84,10 +85,15 @@ assert.doesNotMatch(voice, /process\.env\.ELEVENLABS_VOICE_ID/);
 assert.doesNotMatch(voice, /usingOwnerDefault/);
 assert.doesNotMatch(voice, /LiveCoach owner voice/);
 assert.doesNotMatch(voice, /\.from\("workspace_members"\)/);
-assert.match(voice, /if \(!personalVoiceId\)/);
-assert.match(voice, /voiceId: personalVoiceId/);
-assert.match(voice, /Brain's voice is never used for outreach/);
+assert.match(voice, /selectEffectiveOutreachVoice\(profile\)/);
+assert.match(voice, /voiceId: selectedVoice\.voiceId/);
+assert.match(voice, /source: selectedVoice\.source/);
+assert.match(voice, /Brain and Email Assistant voices are never used as/);
 assert.doesNotMatch(voice, /email_assistant_voice_id/);
+assert.match(voiceDefault, /bDTlr4ICxntY9qVWyL0o/);
+assert.match(voiceDefault, /Sam Elliott – British Podcast Host/);
+assert.match(voiceDefault, /source: "personal"/);
+assert.match(voiceDefault, /source: "shared_default"/);
 assert.match(emailAssistantVoiceConfig, /email_assistant_voice_id/);
 assert.doesNotMatch(emailAssistantVoiceConfig, /outreach_voice_id/);
 
@@ -205,11 +211,12 @@ assert.match(salesProfileRoute, /validateSalespersonVoiceSelection/);
 assert.doesNotMatch(salesProfileRoute, /validateOutreachVoiceSelection/);
 assert.match(salesProfileRoute, /input\.outreachVoiceId !== previous\.outreachVoiceId/);
 assert.match(salesProfilePage, /Separate voice settings/);
-assert.match(salesProfilePage, /each saves and uses its own voice/);
+assert.match(salesProfilePage, /Outreach uses the shared Sam Elliott default/);
 assert.match(salesProfilePage, /Outreach campaign voice/);
-assert.match(salesProfilePage, /Used only for Outreach campaign voice notes/);
-assert.match(salesProfilePage, /Each selection belongs only to this login/);
-assert.match(salesProfilePage, /that product&apos;s audio generation stops safely/);
+assert.match(salesProfilePage, /Shared default used across this salesperson's Outreach campaigns/);
+assert.match(salesProfilePage, /Use shared default/);
+assert.match(salesProfilePage, /Outreach falls back to the shared default/);
+assert.match(salesProfilePage, /Email Assistant audio still stops safely/);
 assert.match(salesProfilePage, /Neither can borrow Brain&apos;s voice or the other product&apos;s setting/);
 assert.match(salesProfilePage, /voice\.previewUrl/);
 assert.match(campaignRoute, /legacy field describes campaign writing only/);
@@ -222,6 +229,38 @@ assert.match(assistantRoute, /campaign voice object controls writing tone only/)
 assert.match(assistantRoute, /never select or override the salesperson's audio voice/);
 
 const policyModule = await import("../lib/outreach-voice-policy.ts");
+const voiceDefaultModule = await import("../lib/outreach-voice-default.ts");
+assert.equal(
+  voiceDefaultModule.OUTREACH_SHARED_DEFAULT_VOICE_ID,
+  "bDTlr4ICxntY9qVWyL0o"
+);
+assert.equal(
+  voiceDefaultModule.OUTREACH_SHARED_DEFAULT_VOICE_NAME,
+  "Sam Elliott – British Podcast Host"
+);
+const salespersonA = voiceDefaultModule.selectEffectiveOutreachVoice({
+  outreach_voice_id: "personal-voice-user-a",
+  outreach_voice_name: "User A voice",
+});
+const salespersonB = voiceDefaultModule.selectEffectiveOutreachVoice({
+  outreach_voice_id: null,
+  outreach_voice_name: null,
+});
+assert.deepEqual(salespersonA, {
+  voiceId: "personal-voice-user-a",
+  voiceName: "User A voice",
+  source: "personal",
+});
+assert.deepEqual(salespersonB, {
+  voiceId: "bDTlr4ICxntY9qVWyL0o",
+  voiceName: "Sam Elliott – British Podcast Host",
+  source: "shared_default",
+});
+assert.notEqual(
+  salespersonA.voiceId,
+  salespersonB.voiceId,
+  "one salesperson's override must never leak into another salesperson's fallback"
+);
 assert.equal(policyModule.OUTREACH_VOICE_TARGET_WORDS, 100);
 assert.equal(policyModule.OUTREACH_VOICE_PREFERRED_MIN_WORDS, 80);
 assert.equal(policyModule.OUTREACH_VOICE_PREFERRED_MAX_WORDS, 120);
@@ -235,4 +274,4 @@ assert.equal(
   0.075
 );
 
-console.log("Salesperson-scoped outreach voice note checks passed");
+console.log("Shared-default and salesperson-scoped outreach voice checks passed");
