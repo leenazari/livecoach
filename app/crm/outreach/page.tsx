@@ -308,6 +308,7 @@ export default function OutreachPage() {
   const prepareQueueRef = useRef<string[]>([]);
   const activePrepareRef = useRef<Set<string>>(new Set());
   const ownerFilterInitialisedRef = useRef(false);
+  const initialQueueFillAttemptedRef = useRef(false);
   const [q, setQ] = useState("");
   const [priority, setPriority] = useState<"all" | Priority>("all");
   const [stageFilter, setStageFilter] = useState("active");
@@ -330,13 +331,37 @@ export default function OutreachPage() {
         crmFetch<any>("/api/crm/outreach/campaigns"),
         crmFetch<any>("/api/crm/outreach/metrics?summary=1"),
       ]);
-      setQueue(qd.queue || []);
+      const selectedId = c.selectedCampaignId || qd.selectedCampaignId || "";
+      const selectedCampaign = (c.campaigns || []).find(
+        (campaign: Campaign) => campaign.id === selectedId && campaign.status === "active"
+      ) || (c.campaigns || []).find(
+        (campaign: Campaign) => campaign.status === "active"
+      );
+      let nextQueue = qd.queue || [];
+      // Queue selection is free. Fill the user's working day on first entry so
+      // they do not have to understand or find a separate top-up control.
+      if (
+        !initialQueueFillAttemptedRef.current &&
+        selectedCampaign &&
+        nextQueue.length < Math.min(20, selectedCampaign.daily_limit || 20)
+      ) {
+        initialQueueFillAttemptedRef.current = true;
+        try {
+          const filled = await crmFetch<any>("/api/crm/outreach/queue", {
+            method: "POST",
+            body: JSON.stringify({ limit: selectedCampaign.daily_limit || 20 }),
+          });
+          nextQueue = filled.queue || nextQueue;
+        } catch {
+          // Keep the valid existing queue visible. The manual top-up control
+          // remains available with the precise server error if it is needed.
+        }
+      }
+      setQueue(nextQueue);
       setSender(qd.sender || null);
       setCampaigns(c.campaigns || []);
       if (c.campaignStats) setCampaignStats(c.campaignStats);
-      setSelectedCampaignId(
-        c.selectedCampaignId || qd.selectedCampaignId || ""
-      );
+      setSelectedCampaignId(selectedId);
       setCanManageCampaigns(c.canManageCampaigns === true);
       setMetrics(m.metrics || {});
     } catch (e: any) { setError(e.message || "Could not load outreach"); }
@@ -516,9 +541,7 @@ export default function OutreachPage() {
   const activeCampaign = orderedCampaigns.find(
     (campaign) => campaign.id === selectedCampaignId
   ) || orderedCampaigns.find((campaign) => campaign.status === "active");
-  const activeCampaignQueueCount = activeCampaign
-    ? queue.filter((row) => row.campaign?.id === activeCampaign.id).length
-    : 0;
+  const dailyQueueLimit = Math.min(20, activeCampaign?.daily_limit || 20);
   const selectableCampaigns = orderedCampaigns.filter(
     (campaign) => campaign.status === "active"
   );
@@ -1355,7 +1378,7 @@ export default function OutreachPage() {
               <p className="mt-1 text-sm text-muted">Step one is prioritised across the active campaign. Scheduled follow ups stay visible, but move behind every eligible new contact and use only spare daily capacity. Email drafts still require approval.</p>
               <p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{newContactCount} new contacts · {followUpDueCount} follow ups due · {remainingToPrepare} emails to prepare · {manualStepsDue} LinkedIn or phone actions · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p>
             </div>
-            <button onClick={buildQueue} disabled={!!busy || activeCampaignQueueCount >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : activeCampaignQueueCount ? `Top up ${activeCampaign?.name || "campaign"} to ${activeCampaign?.daily_limit || 20}` : "Rank + build for this campaign"}</button>
+            <button onClick={buildQueue} disabled={!!busy || queue.length >= dailyQueueLimit} className={button}>{busy === "queue" ? "Ranking…" : queue.length ? `Fill today's remaining ${Math.max(0, dailyQueueLimit - queue.length)}` : "Build today's 20-person queue"}</button>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare current wave (${remainingToPrepare})` : "Current wave prepared"}</button>

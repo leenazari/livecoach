@@ -33,7 +33,8 @@ assert.match(page, /useState\("all"\)/);
 assert.match(page, /All campaigns is the combined priority list/);
 assert.match(page, /membershipCampaigns\.map/);
 assert.match(page, /Today’s combined queue/);
-assert.match(page, /activeCampaignQueueCount/);
+assert.match(page, /const dailyQueueLimit = Math\.min\(20,/);
+assert.match(page, /queue\.length >= dailyQueueLimit/);
 assert.match(page, /useState<ProspectSort>\("priority"\)/);
 assert.match(page, /return \{ key: "warm", label: "Warm lead" \}/);
 

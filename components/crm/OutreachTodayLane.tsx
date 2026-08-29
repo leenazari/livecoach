@@ -95,6 +95,7 @@ type QueueResponse = {
 
 const PREPARE_QUEUE_KEY = "livecoach:sales-today-prepare-queue:v1";
 const MAX_CONCURRENT_RESEARCH = 2;
+const DAILY_QUEUE_TARGET = 20;
 
 type DraftEdit = { subject: string; body: string; voiceScript: string };
 type ReplyAction = { text: string; dueAt: string };
@@ -262,12 +263,32 @@ export default function OutreachTodayLane({
   const prepareJobsRef = useRef<Record<string, PrepareStatus>>({});
   const pendingRef = useRef<string[]>([]);
   const activeRef = useRef<Set<string>>(new Set());
+  const initialQueueFillAttemptedRef = useRef(false);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const data = await crmFetch<QueueResponse>("/api/crm/outreach/queue");
-      const nextQueue = data.queue || [];
+      let nextQueue = data.queue || [];
+      // Entering Sales Today should supply the full free-to-rank worklist. It
+      // does not research, draft, approve or send anything automatically.
+      if (
+        !quiet &&
+        !initialQueueFillAttemptedRef.current &&
+        nextQueue.length < DAILY_QUEUE_TARGET
+      ) {
+        initialQueueFillAttemptedRef.current = true;
+        try {
+          const filled = await crmFetch<QueueResponse>("/api/crm/outreach/queue", {
+            method: "POST",
+            body: JSON.stringify({ limit: DAILY_QUEUE_TARGET }),
+          });
+          nextQueue = filled.queue || nextQueue;
+        } catch {
+          // Preserve the existing queue. The visible Fill queue control still
+          // gives the user an explicit retry with the server's error message.
+        }
+      }
       setQueue(nextQueue);
       setSender(data.sender || null);
       onQueueCount?.(nextQueue.length);
