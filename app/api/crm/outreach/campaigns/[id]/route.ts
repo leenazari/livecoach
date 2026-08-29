@@ -25,6 +25,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       patch.sequence = result.sequence;
     }
     if (body.voice && typeof body.voice === "object") {
+      // This legacy field describes campaign writing only. Keep an explicit
+      // allowlist so a campaign can never store or override a salesperson's
+      // ElevenLabs audio voice.
       patch.voice = {
         tone: String(body.voice.tone || "warm, commercially curious and concise").trim().slice(0, 300),
         style: String(body.voice.style || "founder-to-founder, plain English and respectful").trim().slice(0, 500),
