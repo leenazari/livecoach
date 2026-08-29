@@ -1,7 +1,9 @@
+import Link from "next/link";
 import { WIN_OUTLOOK_LABELS, type WinOutlook } from "@/lib/opportunity-fields";
 
 type Assessment = {
   id: string;
+  companyId: string | null;
   company: string;
   opportunity: string;
   sourceRecordType: string;
@@ -89,7 +91,7 @@ export default function OutlookIntelligencePanel({ health }: { health: SignalHea
                 <article key={item.id} className="rounded-lg border border-edge bg-panel/70 p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <strong className="text-bone">{item.company}</strong>
+                      {item.companyId ? <Link href={`/crm/${item.companyId}`} className="inline-flex min-h-10 items-center rounded-md font-semibold text-bone transition hover:text-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/70">{item.company}</Link> : <strong className="text-bone">{item.company}</strong>}
                       <p className="text-xs text-muted">{item.opportunity}</p>
                     </div>
                     <span className={`rounded-full border px-2 py-1 font-mono text-[0.48rem] uppercase ${statusTone[item.status] || statusTone.ignored}`}>{formatLabel(item.status)}</span>

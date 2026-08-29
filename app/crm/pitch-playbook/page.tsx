@@ -354,7 +354,9 @@ export default function PitchPlaybookPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                         <div>
-                          <p className="font-display text-[1.05rem] text-bone">{call.company || call.candidate || "Unnamed call"}</p>
+                          <Link href={`/crm/calls/${call.id}`} className="inline-flex min-h-10 items-center rounded-md font-display text-[1.05rem] text-bone transition hover:text-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber/70">
+                            {call.company || call.candidate || "Unnamed call"}
+                          </Link>
                           <p className="text-[0.76rem] text-muted">
                             {[call.candidate && call.candidate !== call.company ? call.candidate : "", call.role].filter(Boolean).join(" · ") || "Recorded sales conversation"}
                           </p>

@@ -94,7 +94,7 @@ export async function GET(req: NextRequest) {
     const { data: messageProspects } = messageProspectIds.length
       ? await supabaseAdmin
           .from("outreach_prospects")
-          .select("id,first_name,last_name,company_name,email,last_reply_at,reply_category")
+          .select("id,first_name,last_name,company_name,email,last_reply_at,reply_category,crm_company_id")
           .eq("workspace_id", account.workspaceId)
           .in("id", messageProspectIds)
       : { data: [] as any[] };

@@ -81,7 +81,8 @@
     "validate:deal-intent": "node scripts/validate-opportunity-deal-intent.mjs",
     "validate:today-state": "node scripts/validate-today-state-transitions.mjs",
     "validate:brain-task-confirmation": "node scripts/validate-brain-task-confirmation.mjs",
-    "validate:outreach-voice-notes": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-voice-notes.mjs"
+    "validate:outreach-voice-notes": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-voice-notes.mjs",
+    "validate:canonical-navigation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-canonical-entity-navigation.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

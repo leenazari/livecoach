@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MatrixRain from "@/components/MatrixRain";
+import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import OutreachVoiceNoteEditor from "@/components/crm/OutreachVoiceNoteEditor";
 import { crmFetch } from "@/lib/crm";
+import { outreachProspectHref } from "@/lib/crm-navigation";
 import { prepareOutreachVoiceScriptForReview } from "@/lib/outreach-voice-policy";
 import type { WorkInboxItem } from "@/lib/work-inbox";
 
@@ -72,6 +74,7 @@ type QueueRow = {
   queueKind?: "new_contact" | "follow_up";
   prospect: {
     id: string;
+    crm_company_id?: string | null;
     first_name?: string;
     last_name?: string;
     job_title?: string;
@@ -1048,12 +1051,14 @@ export default function OutreachTodayLane({
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <h4 className="text-sm text-bone">{item.title}</h4>
-                    <p className="mt-1 text-xs leading-5 text-muted">
-                      {[context?.jobTitle, item.company, context?.email]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
+                    <CanonicalRecordLink href={item.href} className="block min-h-11 py-1" ariaLabel={`Open ${context?.person || item.company || "prospect"}`}>
+                      <h4 className="text-sm text-bone">{item.title}</h4>
+                      <p className="mt-1 text-xs leading-5 text-muted">
+                        {[context?.jobTitle, item.company, context?.email]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    </CanonicalRecordLink>
                   </div>
                   <span
                     className={`rounded-full border px-2 py-1 font-mono text-[0.48rem] uppercase ${
@@ -1240,12 +1245,13 @@ export default function OutreachTodayLane({
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {nextReplies.map((item) => (
-                  <span
+                  <CanonicalRecordLink
                     key={item.id}
-                    className="rounded-full border border-edge bg-ink/35 px-3 py-1 text-xs text-bone/75"
+                    href={item.href}
+                    className="inline-flex min-h-11 items-center rounded-full border border-edge bg-ink/35 px-3 py-1 text-xs text-bone/75"
                   >
                     {item.outreach?.person || item.company || "Prospect"} · {replyAge(item.outreach?.lastReplyAt || item.createdAt).label}
-                  </span>
+                  </CanonicalRecordLink>
                 ))}
               </div>
             </div>
@@ -1334,11 +1340,13 @@ export default function OutreachTodayLane({
                         </span>
                       ) : null}
                     </div>
-                    <h3 className="mt-2 text-[0.95rem] text-bone">{name}</h3>
-                    <p className="mt-0.5 text-xs text-muted">
-                      {row.prospect.job_title || "Role not saved"}
-                      {row.prospect.company_name ? ` · ${row.prospect.company_name}` : ""}
-                    </p>
+                    <CanonicalRecordLink href={outreachProspectHref(row.prospect)} className="mt-1 block min-h-11 min-w-0 py-1" ariaLabel={`Open ${name}`}>
+                      <h3 className="text-[0.95rem] text-bone">{name}</h3>
+                      <p className="mt-0.5 text-xs text-muted">
+                        {row.prospect.job_title || "Role not saved"}
+                        {row.prospect.company_name ? ` · ${row.prospect.company_name}` : ""}
+                      </p>
+                    </CanonicalRecordLink>
                     {row.message?.subject || row.lastSentMessage?.subject ? (
                       <p className="mt-2 line-clamp-1 text-xs text-bone/75">
                         {row.message?.subject || row.lastSentMessage?.subject}
