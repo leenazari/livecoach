@@ -5,12 +5,15 @@ import { fileURLToPath } from "node:url";
 
 import {
   candidatePreparationJobScore,
+  isOfficialCompanyResearchUrl,
   isOfficialJobResearchUrl,
   isCandidatePreparationCampaign,
+  officialCompanyOverviewUrl,
   officialJobBoardUrl,
   officialJobSearchDomains,
   rankCandidatePreparationJobSignals,
   sanitiseJobResearchSignals,
+  verifiedCompanyResearchEvidence,
   verifiedJobResearchEvidence,
 } from "../lib/job-research-sources.ts";
 
@@ -25,6 +28,25 @@ assert.equal(isOfficialJobResearchUrl("https://uk.indeed.com/viewjob?jk=123", pr
 assert.equal(isOfficialJobResearchUrl("example-recruitment.co.uk/jobs", prospect), false);
 assert.equal(isOfficialJobResearchUrl("javascript:alert(1)", prospect), false);
 assert.ok(officialJobSearchDomains(prospect).includes("example-recruitment.co.uk"));
+assert.equal(isOfficialCompanyResearchUrl("https://example-recruitment.co.uk/about-us/", prospect), true);
+assert.equal(isOfficialCompanyResearchUrl("https://apply.workable.com/example/", prospect), false);
+assert.equal(isOfficialCompanyResearchUrl("https://www.linkedin.com/company/example/", prospect), false);
+assert.equal(
+  officialCompanyOverviewUrl([
+    { title: "Example Recruitment", url: "https://example-recruitment.co.uk/" },
+    { title: "About us", url: "https://example-recruitment.co.uk/about-us/" },
+    { title: "Current jobs", url: "https://example-recruitment.co.uk/jobs/" },
+  ], prospect),
+  "https://example-recruitment.co.uk/about-us/"
+);
+assert.equal(
+  officialCompanyOverviewUrl([
+    { title: "Example Recruitment", url: "https://example-recruitment.co.uk/" },
+    { title: "Head of Product", url: "https://example-recruitment.co.uk/job/head-of-product" },
+  ], prospect),
+  "https://example-recruitment.co.uk/",
+  "An exact official homepage is the safe fallback when no overview page was opened"
+);
 assert.equal(
   officialJobBoardUrl([
     { title: "Head of Product", url: "https://example-recruitment.co.uk/job/head-of-product" },
@@ -76,6 +98,25 @@ const evidence = verifiedJobResearchEvidence(
 );
 assert.equal(evidence.jobBoardUrl, "https://example-recruitment.co.uk/jobs/");
 assert.equal(evidence.jobSignals.length, 3);
+const companyEvidence = verifiedCompanyResearchEvidence(
+  {
+    companyOverview: "A specialist recruiter serving engineering teams across the UK.",
+    companyOverviewUrl: "https://example-recruitment.co.uk/about-us/",
+  },
+  [{ title: "About us", url: "https://example-recruitment.co.uk/about-us/" }],
+  prospect
+);
+assert.equal(companyEvidence.companyOverviewUrl, "https://example-recruitment.co.uk/about-us/");
+assert.match(companyEvidence.companyOverview, /specialist recruiter/);
+assert.equal(
+  verifiedCompanyResearchEvidence(
+    { companyOverview: "Unsupported copy", companyOverviewUrl: "https://linkedin.com/company/example" },
+    [],
+    prospect
+  ).companyOverview,
+  "",
+  "Overview copy must not be exposed without an exact official company source"
+);
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
@@ -96,17 +137,28 @@ assert.match(route, /Higher compensation is supporting evidence/);
 assert.match(route, /rankCandidatePreparationJobSignals/);
 assert.match(route, /compensation: \{ type: "string" \}/);
 assert.match(route, /const jobBoardUrl = officialJobBoardUrl\(sources, prospect\)/);
+assert.match(route, /const companyOverviewUrl = officialCompanyOverviewUrl\(/);
+assert.match(route, /Previously verified company overview/);
+assert.match(route, /companyOverview: companyOverviewUrl/);
 assert.match(route, /jobBoardUrl,/);
 assert.match(queueRoute, /verifiedJobResearchEvidence/);
+assert.match(queueRoute, /verifiedCompanyResearchEvidence/);
+assert.match(queueRoute, /companyOverviewUrl: companyEvidence\.companyOverviewUrl/);
 assert.match(queueRoute, /jobSignals: jobEvidence\.jobSignals/);
 assert.match(outreachPage, /Open company job board/);
+assert.match(outreachPage, /Open company overview/);
+assert.match(outreachPage, /Business overview/);
 assert.match(outreachPage, /Verified vacancies/);
 assert.match(todayLane, /Open company job board/);
+assert.match(todayLane, /Open company overview/);
 assert.match(todayLane, /Verified vacancies/);
 assert.match(outreachCrm, /jobBoardUrl: research\.jobBoardUrl \|\| null/);
-assert.match(companyRoute, /loadVerifiedCompanyJobEvidence/);
+assert.match(outreachCrm, /companyOverviewUrl: research\.companyOverviewUrl \|\| null/);
+assert.match(companyRoute, /loadVerifiedCompanySalesResearch/);
+assert.match(companyRoute, /verifiedCompanyResearchEvidence/);
 assert.match(companyRoute, /salesResearch,/);
-assert.match(companyPage, /Verified hiring evidence/);
+assert.match(companyPage, /Verified public research/);
+assert.match(companyPage, /Open company overview/);
 assert.match(wrapper, /allowed_domains: webSearchTool\.filters\.allowed_domains/);
 
 console.log("Official job research checks passed");

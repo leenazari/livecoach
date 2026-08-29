@@ -7,6 +7,7 @@ import {
 } from "@/lib/company-identity";
 import {
   officialResearchSources,
+  verifiedCompanyResearchEvidence,
   verifiedJobResearchEvidence,
 } from "@/lib/job-research-sources";
 
@@ -197,8 +198,15 @@ function compactResearch(
     prospect
   );
   const jobEvidence = verifiedJobResearchEvidence(source, verifiedSources, prospect);
+  const companyEvidence = verifiedCompanyResearchEvidence(
+    source,
+    verifiedSources,
+    prospect
+  );
   return {
     summary: asText(source.summary, 600),
+    companyOverview: companyEvidence.companyOverview,
+    companyOverviewUrl: companyEvidence.companyOverviewUrl || null,
     signals: Array.isArray(source.signals)
       ? source.signals.map((item: any) => asText(item, 220)).filter(Boolean).slice(0, 3)
       : [],
@@ -538,6 +546,8 @@ export async function ensureOutreachCompany(
       subject: existingProfileResearch.subject || prospect.company_name,
       background: existingProfileResearch.background || [research?.summary, research?.bestAngle ? `Interviewa relevance: ${research.bestAngle}` : ""].filter(Boolean).join("\n\n"),
       sources: researchSources,
+      companyOverview: research.companyOverview || null,
+      companyOverviewUrl: research.companyOverviewUrl || null,
       jobBoardUrl: research.jobBoardUrl || null,
       jobSignals: research.jobSignals,
       generatedAt: research?.generatedAt || contextUpdatedAt,

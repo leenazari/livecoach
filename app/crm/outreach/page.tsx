@@ -14,6 +14,7 @@ import { removeDashesFromProse } from "@/lib/outreach-voice";
 import { prepareOutreachVoiceScriptForReview } from "@/lib/outreach-voice-policy";
 import {
   officialResearchSources,
+  verifiedCompanyResearchEvidence,
   verifiedJobResearchEvidence,
 } from "@/lib/job-research-sources";
 import {
@@ -244,29 +245,60 @@ function ResearchEvidenceLinks({
   sources: Array<{ url?: unknown; title?: unknown }>;
   prospect: Prospect;
 }) {
+  const companyEvidence = verifiedCompanyResearchEvidence(
+    research,
+    sources,
+    prospect
+  );
   const evidence = verifiedJobResearchEvidence(research, sources, prospect);
   const shown = new Set([
+    companyEvidence.companyOverviewUrl,
     evidence.jobBoardUrl,
     ...evidence.jobSignals.map((signal) => signal.sourceUrl),
   ].filter(Boolean));
   const otherSources = officialResearchSources(sources, prospect)
     .filter((source) => !shown.has(String(source.url || "")))
     .slice(0, 4);
-  if (!evidence.jobBoardUrl && !evidence.jobSignals.length && !otherSources.length) {
+  if (
+    !companyEvidence.companyOverviewUrl &&
+    !evidence.jobBoardUrl &&
+    !evidence.jobSignals.length &&
+    !otherSources.length
+  ) {
     return null;
   }
   return (
     <div className="mt-3 space-y-3 border-t border-edge pt-3">
-      {evidence.jobBoardUrl ? (
-        <a
-          href={evidence.jobBoardUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex min-h-9 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 py-2 font-mono text-[0.5rem] uppercase tracking-wider text-amber hover:bg-amber/20"
-        >
-          Open company job board ↗
-        </a>
+      {companyEvidence.companyOverview ? (
+        <div className="rounded-lg border border-sky/30 bg-sky/[0.04] px-3 py-2">
+          <p className="font-mono text-[0.53rem] uppercase text-sky">Business overview</p>
+          <p className="mt-1 text-xs leading-5 text-bone/80">
+            {companyEvidence.companyOverview}
+          </p>
+        </div>
       ) : null}
+      <div className="flex flex-wrap gap-2">
+        {companyEvidence.companyOverviewUrl ? (
+          <a
+            href={companyEvidence.companyOverviewUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-9 items-center rounded-lg border border-sky/45 bg-sky/10 px-3 py-2 font-mono text-[0.5rem] uppercase tracking-wider text-sky hover:bg-sky/20"
+          >
+            Open company overview ↗
+          </a>
+        ) : null}
+        {evidence.jobBoardUrl ? (
+          <a
+            href={evidence.jobBoardUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-9 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 py-2 font-mono text-[0.5rem] uppercase tracking-wider text-amber hover:bg-amber/20"
+          >
+            Open company job board ↗
+          </a>
+        ) : null}
+      </div>
       {evidence.jobSignals.length ? (
         <div>
           <p className="font-mono text-[0.53rem] uppercase text-muted">Verified vacancies</p>

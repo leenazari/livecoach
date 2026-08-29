@@ -11,6 +11,11 @@ export type VerifiedJobResearchEvidence = {
   jobSignals: JobResearchSignal[];
 };
 
+export type VerifiedCompanyResearchEvidence = {
+  companyOverview: string;
+  companyOverviewUrl: string;
+};
+
 type CampaignResearchContract = {
   name?: unknown;
   audience?: unknown;
@@ -180,6 +185,147 @@ export function officialResearchSources<T extends { url?: unknown }>(
   return (Array.isArray(sources) ? sources : [])
     .filter((source) => isOfficialJobResearchUrl(source?.url, prospect))
     .slice(0, 8);
+}
+
+function officialCompanyResearchDomains(prospect: {
+  website?: unknown;
+  company_domain?: unknown;
+}): string[] {
+  return Array.from(
+    new Set([
+      researchHostname(prospect.website),
+      researchHostname(prospect.company_domain),
+    ].filter(Boolean))
+  );
+}
+
+export function isOfficialCompanyResearchUrl(
+  value: unknown,
+  prospect: { website?: unknown; company_domain?: unknown }
+): boolean {
+  const raw = String(value || "").trim();
+  try {
+    const parsed = new URL(raw);
+    if (!/^https?:$/.test(parsed.protocol)) return false;
+  } catch {
+    return false;
+  }
+  const hostname = researchHostname(value);
+  if (!hostname || isLinkedInResearchUrl(value)) return false;
+  if (
+    PUBLIC_JOB_SOURCE_DOMAINS.some((domain) =>
+      isSameOrSubdomain(hostname, domain)
+    )
+  ) {
+    return false;
+  }
+  return officialCompanyResearchDomains(prospect).some((domain) =>
+    isSameOrSubdomain(hostname, domain)
+  );
+}
+
+const COMPANY_OVERVIEW_PATH_PARTS = new Set([
+  "about",
+  "about-us",
+  "aboutus",
+  "company",
+  "company-overview",
+  "our-company",
+  "our-story",
+  "what-we-do",
+  "who-we-are",
+]);
+
+const NON_OVERVIEW_PATH_PARTS = new Set([
+  "career",
+  "careers",
+  "job",
+  "jobs",
+  "news",
+  "privacy",
+  "terms",
+  "vacancies",
+]);
+
+function companyOverviewSourceScore(source: {
+  url?: unknown;
+  title?: unknown;
+}): number {
+  const raw = clean(source?.url, 1200);
+  if (!raw) return -1;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return -1;
+  }
+  const parts = parsed.pathname
+    .toLowerCase()
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.some((part) => NON_OVERVIEW_PATH_PARTS.has(part))) return -1;
+
+  const title = clean(source?.title, 240).toLowerCase();
+  let score = parts.length === 0 ? 55 : 0;
+  const overviewPartIndex = parts.findIndex((part) =>
+    COMPANY_OVERVIEW_PATH_PARTS.has(part)
+  );
+  if (overviewPartIndex === 0 && parts.length === 1) score += 145;
+  else if (overviewPartIndex >= 0) score += 110 - Math.min(30, overviewPartIndex * 10);
+  if (
+    /\b(?:about(?: us)?|company overview|our company|our story|what we do|who we are)\b/.test(
+      title
+    )
+  ) {
+    score += 45;
+  }
+  return score;
+}
+
+export function officialCompanyOverviewUrl<
+  T extends { url?: unknown; title?: unknown },
+>(
+  sources: T[],
+  prospect: { website?: unknown; company_domain?: unknown }
+): string {
+  return (Array.isArray(sources) ? sources : [])
+    .filter((source) => isOfficialCompanyResearchUrl(source?.url, prospect))
+    .map((source, index) => ({
+      index,
+      score: companyOverviewSourceScore(source),
+      url: clean(source?.url, 1200),
+    }))
+    .filter((source) => source.score >= 50)
+    .sort((left, right) => right.score - left.score || left.index - right.index)[0]
+    ?.url || "";
+}
+
+export function verifiedCompanyResearchEvidence(
+  research: unknown,
+  sources: Array<{ url?: unknown; title?: unknown }>,
+  prospect: { website?: unknown; company_domain?: unknown }
+): VerifiedCompanyResearchEvidence {
+  const record = research && typeof research === "object"
+    ? research as Record<string, any>
+    : {};
+  const companyOverviewUrl = officialCompanyOverviewUrl(
+    [
+      ...(record.companyOverviewUrl
+        ? [{ url: record.companyOverviewUrl, title: "Official company overview" }]
+        : []),
+      ...(Array.isArray(sources) ? sources : []),
+    ],
+    prospect
+  );
+  return {
+    companyOverviewUrl,
+    // Fail closed. The reusable overview is exposed only while its exact
+    // official company source remains attached to the canonical research.
+    companyOverview: companyOverviewUrl
+      ? clean(record.companyOverview, 500)
+      : "",
+  };
 }
 
 const JOB_BOARD_PATH_PARTS = new Set([

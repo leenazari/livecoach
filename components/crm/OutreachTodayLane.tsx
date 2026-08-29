@@ -21,6 +21,8 @@ type Recommendation = {
 
 type SavedResearch = {
   summary?: string;
+  companyOverview?: string;
+  companyOverviewUrl?: string | null;
   signals?: string[];
   activeJobs?: string[];
   jobBoardUrl?: string | null;
@@ -1283,6 +1285,8 @@ export default function OutreachTodayLane({
             const research = row.savedResearch || {};
             const hasResearch = Boolean(
               research.summary ||
+                research.companyOverview ||
+                research.companyOverviewUrl ||
                 research.bestAngle ||
                 research.personalisationFact ||
                 research.signals?.length ||
@@ -1579,22 +1583,40 @@ export default function OutreachTodayLane({
                         {hasResearch ? (
                           <div className="mt-3 space-y-3 text-xs leading-5 text-bone/80">
                             {research.summary ? <p>{research.summary}</p> : null}
+                            {research.companyOverview ? (
+                              <p>
+                                <strong className="text-bone">Business overview. </strong>
+                                {research.companyOverview}
+                              </p>
+                            ) : null}
                             {research.personalisationFact ? (
                               <p><strong className="text-bone">Relevant fact. </strong>{research.personalisationFact}</p>
                             ) : null}
                             {research.bestAngle ? (
                               <p><strong className="text-bone">Best angle. </strong>{research.bestAngle}</p>
                             ) : null}
-                            {safeExternalUrl(research.jobBoardUrl) ? (
-                              <a
-                                href={safeExternalUrl(research.jobBoardUrl)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex min-h-9 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 py-2 font-mono text-[0.5rem] uppercase tracking-wider text-amber hover:bg-amber/20"
-                              >
-                                Open company job board ↗
-                              </a>
-                            ) : null}
+                            <div className="flex flex-wrap gap-2">
+                              {safeExternalUrl(research.companyOverviewUrl) ? (
+                                <a
+                                  href={safeExternalUrl(research.companyOverviewUrl)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex min-h-9 items-center rounded-lg border border-sky/45 bg-sky/10 px-3 py-2 font-mono text-[0.5rem] uppercase tracking-wider text-sky hover:bg-sky/20"
+                                >
+                                  Open company overview ↗
+                                </a>
+                              ) : null}
+                              {safeExternalUrl(research.jobBoardUrl) ? (
+                                <a
+                                  href={safeExternalUrl(research.jobBoardUrl)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex min-h-9 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 py-2 font-mono text-[0.5rem] uppercase tracking-wider text-amber hover:bg-amber/20"
+                                >
+                                  Open company job board ↗
+                                </a>
+                              ) : null}
+                            </div>
                             {research.jobSignals?.length ? (
                               <div>
                                 <p className="font-mono text-[0.48rem] uppercase tracking-wider text-muted">

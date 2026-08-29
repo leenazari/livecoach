@@ -65,6 +65,8 @@ type ClientAccess = {
 };
 
 type SalesResearch = {
+  companyOverview: string;
+  companyOverviewUrl: string;
   jobBoardUrl: string;
   jobSignals: Array<{
     role: string;
@@ -84,6 +86,8 @@ export default function CompanyDetailPage() {
   const [company, setCompany] = useState<Company | null>(null);
   const [access, setAccess] = useState<ClientAccess | null>(null);
   const [salesResearch, setSalesResearch] = useState<SalesResearch>({
+    companyOverview: "",
+    companyOverviewUrl: "",
     jobBoardUrl: "",
     jobSignals: [],
   });
@@ -183,7 +187,12 @@ export default function CompanyDetailPage() {
       } = companyResponse;
       setCompany(company);
       setAccess(access);
-      setSalesResearch(salesResearch || { jobBoardUrl: "", jobSignals: [] });
+      setSalesResearch(salesResearch || {
+        companyOverview: "",
+        companyOverviewUrl: "",
+        jobBoardUrl: "",
+        jobSignals: [],
+      });
       setContacts(contacts);
       setDepartments(departments || []);
       setWorkstreams(workstreams || []);
@@ -852,28 +861,52 @@ export default function CompanyDetailPage() {
         );
       })()}
 
-      {salesResearch.jobBoardUrl || salesResearch.jobSignals.length ? (
+      {salesResearch.companyOverviewUrl ||
+      salesResearch.jobBoardUrl ||
+      salesResearch.jobSignals.length ? (
         <section className="mb-5 rounded-xl border border-amber/40 bg-amber/[0.05] p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-                Verified hiring evidence
+                Verified public research
               </p>
               <p className="mt-1 text-xs leading-5 text-muted">
-                Saved from the latest outreach research. Open the exact source before using it in a conversation.
+                Saved from the latest outreach research. Open the exact official source before using it in a conversation.
               </p>
             </div>
-            {salesResearch.jobBoardUrl ? (
-              <a
-                href={salesResearch.jobBoardUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg border border-amber/50 bg-amber/10 px-3 py-2 font-mono text-[0.52rem] uppercase tracking-wider text-amber hover:bg-amber/20"
-              >
-                Open company job board ↗
-              </a>
-            ) : null}
+            <div className="flex flex-wrap gap-2">
+              {salesResearch.companyOverviewUrl ? (
+                <a
+                  href={salesResearch.companyOverviewUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg border border-sky/50 bg-sky/10 px-3 py-2 font-mono text-[0.52rem] uppercase tracking-wider text-sky hover:bg-sky/20"
+                >
+                  Open company overview ↗
+                </a>
+              ) : null}
+              {salesResearch.jobBoardUrl ? (
+                <a
+                  href={salesResearch.jobBoardUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg border border-amber/50 bg-amber/10 px-3 py-2 font-mono text-[0.52rem] uppercase tracking-wider text-amber hover:bg-amber/20"
+                >
+                  Open company job board ↗
+                </a>
+              ) : null}
+            </div>
           </div>
+          {salesResearch.companyOverview ? (
+            <div className="mt-3 rounded-lg border border-sky/30 bg-sky/[0.04] px-3 py-2">
+              <p className="font-mono text-[0.52rem] uppercase tracking-wider text-sky">
+                Business overview
+              </p>
+              <p className="mt-1 text-sm leading-6 text-bone/80">
+                {salesResearch.companyOverview}
+              </p>
+            </div>
+          ) : null}
           {salesResearch.jobSignals.length ? (
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
               {salesResearch.jobSignals.map((signal) => {
