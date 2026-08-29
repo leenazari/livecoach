@@ -80,6 +80,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           { error: "Wait for the current voice note to finish" },
           { status: 409 }
         );
+      const requiredWhyNow = normaliseOutreachVoiceScript(
+        existing.strategy?.voiceUrgency?.whyNow
+      );
+      if (
+        requiredWhyNow &&
+        !nextVoiceScript.toLocaleLowerCase("en-GB").includes(
+          requiredWhyNow.toLocaleLowerCase("en-GB")
+        )
+      )
+        return NextResponse.json(
+          {
+            error:
+              "Keep the approved why now sentence in the voice pitch, or prepare the draft again",
+          },
+          { status: 400 }
+        );
       const config = await resolveOutreachVoiceConfig(sender);
       voiceApprovalBudget = assertOutreachVoiceWithinBudget(
         nextVoiceScript,
