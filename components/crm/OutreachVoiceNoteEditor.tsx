@@ -95,15 +95,6 @@ export default function OutreachVoiceNoteEditor({
       setPlaying(false);
     }
   };
-  const previewPronunciation = () => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const preview = new SpeechSynthesisUtterance("Interviewer");
-    preview.lang = "en-GB";
-    preview.rate = 0.9;
-    window.speechSynthesis.speak(preview);
-  };
-
   return (
     <section className="rounded-xl border border-amber/40 bg-amber/[0.05] p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -145,18 +136,6 @@ export default function OutreachVoiceNoteEditor({
           className="w-full rounded-lg border border-edge bg-ink/55 px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60 disabled:opacity-60"
         />
       </label>
-      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-sky/25 bg-sky/[0.04] px-3 py-2">
-        <p className="text-xs leading-5 text-bone/75">
-          The script keeps the brand spelling <strong className="text-bone">Interviewa</strong>. The generated audio says <strong className="text-bone">Interviewer</strong>.
-        </p>
-        <button
-          type="button"
-          onClick={previewPronunciation}
-          className="inline-flex min-h-8 items-center justify-center rounded-full border border-sky/40 px-3 font-mono text-[0.5rem] uppercase tracking-wider text-sky hover:bg-sky/10"
-        >
-          ▶ Hear pronunciation
-        </button>
-      </div>
       {whyNow ? (
         <div className={`mt-2 rounded-lg border px-3 py-2 ${whyNowIncluded ? "border-moss/35 bg-moss/[0.06]" : "border-amber/45 bg-amber/[0.07]"}`}>
           <p className={`font-mono text-[0.52rem] uppercase tracking-wider ${whyNowIncluded ? "text-moss" : "text-amber"}`}>
