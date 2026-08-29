@@ -119,24 +119,22 @@ export async function sendConnectedMail(
   return { ok: false, error: "Connect Google or Microsoft in Settings first" };
 }
 
-// Create a real provider draft, never send it. The CRM calls this only after
-// the signed-in user approves the editable LiveCoach draft.
-export async function createConnectedMailDraft(
-  opts: {
-    to: string;
-    subject: string;
-    text: string;
-    threadId?: string;
-    sourceMessageId?: string;
-    voiceNote?: {
-      url: string;
-      estimatedSeconds?: number | null;
-      previewText?: string | null;
-    };
-  },
-  ownerId?: string
-): Promise<ConnectedMailDraftResult> {
-  const connection = await connectedMailProvider(ownerId);
+export type ConnectedMailDraftInput = {
+  to: string;
+  subject: string;
+  text: string;
+  threadId?: string;
+  sourceMessageId?: string;
+  voiceNote?: {
+    url: string;
+    estimatedSeconds?: number | null;
+    previewText?: string | null;
+  };
+};
+
+export function buildConnectedMailDraftContent(
+  opts: Pick<ConnectedMailDraftInput, "text" | "voiceNote">
+): { text: string; html: string } {
   const safeText = String(opts.text || "").trim();
   const voiceUrl = String(opts.voiceNote?.url || "").trim();
   const seconds = Math.max(
@@ -155,21 +153,34 @@ export async function createConnectedMailDraft(
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
   const providerText = voiceUrl
-    ? `${safeText}\n\nI recorded a short personal voice note for you.\nListen here\n${voiceUrl}${previewText ? `\n\nIn short, ${previewText}` : ""}`
+    ? `${safeText}\n\nI’ve added a short personal voice message for you.\nListen here\n${voiceUrl}${previewText ? `\n\nIn short, ${previewText}` : ""}`
     : safeText;
-  if (connection.provider === "google") {
-    const voiceHtml = voiceUrl
-      ? `<div style="margin:24px 0;padding:18px;border:1px solid #d9a34a;border-radius:12px;background:#fffaf0"><p style="margin:0 0 12px"><strong>I recorded a short personal voice note for you.</strong></p><a href="${escapeHtml(voiceUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#b7791f;color:#ffffff;text-decoration:none;font-weight:600">Listen to the ${seconds} second message</a>${previewText ? `<p style="margin:12px 0 0;color:#555;font-size:13px;line-height:1.5">In short, ${escapeHtml(previewText)}</p>` : ""}</div>`
-      : "";
-    const html = `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#171717">${escapeHtml(
+  const voiceHtml = voiceUrl
+    ? `<div style="margin:24px 0;padding:18px;border:1px solid #d9a34a;border-radius:12px;background:#fffaf0"><p style="margin:0 0 12px"><strong>I’ve added a short personal voice message for you.</strong></p><a href="${escapeHtml(voiceUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#b7791f;color:#ffffff;text-decoration:none;font-weight:600">Listen to the ${seconds} second message</a>${previewText ? `<p style="margin:12px 0 0;color:#555;font-size:13px;line-height:1.5">In short, ${escapeHtml(previewText)}</p>` : ""}</div>`
+    : "";
+  return {
+    text: providerText,
+    html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#171717">${escapeHtml(
       safeText
-    ).replace(/\n/g, "<br>")}${voiceHtml}</div>`;
+    ).replace(/\n/g, "<br>")}${voiceHtml}</div>`,
+  };
+}
+
+// Create a real provider draft, never send it. The CRM calls this only after
+// the signed-in user approves the editable LiveCoach draft.
+export async function createConnectedMailDraft(
+  opts: ConnectedMailDraftInput,
+  ownerId?: string
+): Promise<ConnectedMailDraftResult> {
+  const connection = await connectedMailProvider(ownerId);
+  const content = buildConnectedMailDraftContent(opts);
+  if (connection.provider === "google") {
     return createGmailDraft(
       {
         to: opts.to,
         subject: opts.subject,
-        text: providerText,
-        html,
+        text: content.text,
+        html: content.html,
         threadId: opts.threadId,
         sourceMessageId: opts.sourceMessageId,
       },
@@ -181,7 +192,7 @@ export async function createConnectedMailDraft(
       {
         to: opts.to,
         subject: opts.subject,
-        text: providerText,
+        text: content.text,
         sourceMessageId: opts.sourceMessageId,
       },
       ownerId
@@ -234,11 +245,11 @@ export async function sendConnectedOutreachMail(opts: {
     .trim()
     .slice(0, 220);
   const voiceHtml = voiceUrl
-    ? `<div style="margin:24px 0;padding:18px;border:1px solid #d9a34a;border-radius:12px;background:#fffaf0"><p style="margin:0 0 12px;font-size:15px;line-height:1.5"><strong>I recorded a short personal message for you.</strong></p><a href="${escapeHtml(voiceUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#b7791f;color:#ffffff;text-decoration:none;font-weight:600">Listen to ${escapeHtml(firstName)}’s ${seconds} second message</a>${previewText ? `<p style="margin:12px 0 0;color:#555;font-size:13px;line-height:1.5">In short, ${escapeHtml(previewText)}</p>` : ""}</div>`
+    ? `<div style="margin:24px 0;padding:18px;border:1px solid #d9a34a;border-radius:12px;background:#fffaf0"><p style="margin:0 0 12px;font-size:15px;line-height:1.5"><strong>I’ve added a short personal voice message for you.</strong></p><a href="${escapeHtml(voiceUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#b7791f;color:#ffffff;text-decoration:none;font-weight:600">Listen to ${escapeHtml(firstName)}’s ${seconds} second message</a>${previewText ? `<p style="margin:12px 0 0;color:#555;font-size:13px;line-height:1.5">In short, ${escapeHtml(previewText)}</p>` : ""}</div>`
     : "";
   const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#171717;max-width:640px">${paragraphs}${voiceHtml}</div>`;
   const text = voiceUrl
-    ? `${safeText}\n\nI recorded a short personal message for you.\nListen to ${firstName}'s ${seconds} second message\n${voiceUrl}${previewText ? `\n\nIn short, ${previewText}` : ""}`
+    ? `${safeText}\n\nI’ve added a short personal voice message for you.\nListen to ${firstName}'s ${seconds} second message\n${voiceUrl}${previewText ? `\n\nIn short, ${previewText}` : ""}`
     : safeText;
   // Gmail performs its own verified send-as alias check. Keep that path intact
   // so Lee can continue sending from lee@interviewa.com through his connected

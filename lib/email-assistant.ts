@@ -2,10 +2,12 @@ import "server-only";
 
 import {
   connectedMailProvider,
+  buildConnectedMailDraftContent,
   createConnectedMailDraft,
   emailFromHeader,
   nameFromHeader,
   recentMessages,
+  sendConnectedMail,
   type MailMessage,
   type MailProvider,
 } from "@/lib/mail";
@@ -14,18 +16,25 @@ import type { ClientEmailTarget } from "@/lib/client-email-activity";
 import { resolveRecordScope, type RecordScope } from "@/lib/record-scope";
 import { getSalesProfile } from "@/lib/sales-profile";
 import {
-  assertOutreachVoiceWithinBudget,
+  GMAIL_COMPOSE_SCOPE,
+  GMAIL_SEND_SCOPE,
+  googleGrantedScopes,
+} from "@/lib/google";
+import { microsoftAccessStatus } from "@/lib/microsoft";
+import {
+  assertEmailAssistantVoiceWithinBudget,
+  emailAssistantEstimatedVoiceSeconds,
+  emailAssistantVoiceApprovalHash,
+  emailAssistantVoiceMatchesCurrentConfig,
   emailAssistantVoicePublicUrl,
-  estimatedVoiceSeconds,
-  normaliseOutreachVoiceScript,
-  outreachVoiceApprovalHash,
-} from "@/lib/outreach-voice-note";
+} from "@/lib/email-assistant-voice-note";
 import { resolveEmailAssistantVoiceConfig } from "@/lib/email-assistant-voice-config";
 import {
-  OUTREACH_VOICE_HARD_MAX_CHARACTERS,
-  OUTREACH_VOICE_HARD_MAX_WORDS,
-  outreachVoiceWordCount,
-} from "@/lib/outreach-voice-policy";
+  EMAIL_ASSISTANT_VOICE_HARD_MAX_CHARACTERS,
+  EMAIL_ASSISTANT_VOICE_HARD_MAX_WORDS,
+  emailAssistantVoiceWordCount,
+  normaliseEmailAssistantVoiceScript,
+} from "@/lib/email-assistant-voice-policy";
 import { supabaseService } from "@/lib/supabase";
 import { logModelUsage } from "@/lib/usage";
 
@@ -107,6 +116,32 @@ export type EmailAssistantDraft = {
   updated_at: string;
 };
 
+export type EmailAssistantVoiceIntent = "include" | "omit";
+
+export type EmailAssistantCapabilities = {
+  replyVoiceReady: boolean;
+  bookingLinkReady: boolean;
+  mailboxConnected: boolean;
+  providerDraftReady: boolean;
+  rehearsalReady: boolean;
+  mailboxEmail: string | null;
+  provider: MailProvider | null;
+};
+
+export type EmailAssistantHandoffResult = {
+  draft: EmailAssistantDraft;
+  voiceIncluded: boolean;
+};
+
+export type EmailAssistantRehearsalResult = {
+  accepted: true;
+  sentTo: string;
+  provider: MailProvider;
+  deliveryLocation: "sent_or_all_mail" | "inbox_or_sent";
+  voiceIncluded: boolean;
+  recipientChanged: false;
+};
+
 export const EMAIL_ASSISTANT_DRAFT_SELECT =
   "id,workspace_id,owner_id,company_id,outreach_prospect_id,source_task_id,mail_provider,source_message_id,source_thread_id,source_received_at,recipient_email,recipient_name,draft_subject,draft_body,intent,next_step,evidence_summary,confidence,urgency,generation_mode,due_at,meeting_cta_recommended,booking_url,voice_script,voice_status,voice_audio_path,voice_audio_mime,voice_generated_at,voice_script_hash,voice_public_token,voice_model_id,voice_provider_voice_id,voice_provider_request_id,voice_estimated_seconds,voice_character_count,voice_estimated_cost_gbp,voice_error,voice_script_approved_at,voice_script_approved_by,voice_script_approved_hash,status,provider_draft_id,provider_draft_url,approved_at,last_error,created_at,updated_at";
 
@@ -166,21 +201,23 @@ function includeBookingLinkOnce(body: string, bookingUrl: string): string {
 }
 
 function safeGeneratedVoiceScript(value: unknown, fallbackBody: string): string {
-  const candidate = normaliseOutreachVoiceScript(
+  const candidate = normaliseEmailAssistantVoiceScript(
     String(value || "").replace(/https:\/\/\S+/gi, "the booking link below")
   );
   if (
     candidate &&
-    candidate.length <= OUTREACH_VOICE_HARD_MAX_CHARACTERS &&
-    outreachVoiceWordCount(candidate) <= OUTREACH_VOICE_HARD_MAX_WORDS
+    candidate.length <= EMAIL_ASSISTANT_VOICE_HARD_MAX_CHARACTERS &&
+    emailAssistantVoiceWordCount(candidate) <=
+      EMAIL_ASSISTANT_VOICE_HARD_MAX_WORDS
   ) {
     return candidate;
   }
-  const fallback = normaliseOutreachVoiceScript(
+  const fallback = normaliseEmailAssistantVoiceScript(
     fallbackBody.replace(/https:\/\/\S+/gi, "the booking link below")
   );
-  return fallback.length <= OUTREACH_VOICE_HARD_MAX_CHARACTERS &&
-    outreachVoiceWordCount(fallback) <= OUTREACH_VOICE_HARD_MAX_WORDS
+  return fallback.length <= EMAIL_ASSISTANT_VOICE_HARD_MAX_CHARACTERS &&
+    emailAssistantVoiceWordCount(fallback) <=
+      EMAIL_ASSISTANT_VOICE_HARD_MAX_WORDS
     ? fallback
     : "";
 }
@@ -494,7 +531,7 @@ The voiceScript is a separate natural spoken reply from the signed-in salesperso
     voice_script: voiceScript || null,
     voice_status: voiceScript ? "script_ready" : "none",
     voice_estimated_seconds: voiceScript
-      ? estimatedVoiceSeconds(voiceScript)
+      ? emailAssistantEstimatedVoiceSeconds(voiceScript)
       : null,
     status: "draft",
     provider_draft_id: null,
@@ -547,6 +584,46 @@ export async function listEmailAssistantDrafts(): Promise<
     ...(row as EmailAssistantDraft),
     company: row.company_id ? names.get(row.company_id) || null : null,
   }));
+}
+
+export async function getEmailAssistantCapabilities(): Promise<EmailAssistantCapabilities> {
+  const scope = await resolveRecordScope();
+  const [profileResult, connection] = await Promise.all([
+    supabaseService
+      .from("salesperson_profiles")
+      .select("email_assistant_voice_id,booking_url")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("user_id", scope.userId)
+      .maybeSingle(),
+    connectedMailProvider(scope.userId),
+  ]);
+  if (profileResult.error) throw profileResult.error;
+  let providerDraftReady = false;
+  let rehearsalReady = false;
+  if (connection.provider === "google") {
+    const scopes = await googleGrantedScopes(scope.userId);
+    providerDraftReady = scopes.has(GMAIL_COMPOSE_SCOPE);
+    rehearsalReady = scopes.has(GMAIL_SEND_SCOPE);
+  } else if (connection.provider === "microsoft") {
+    const access = await microsoftAccessStatus(scope.userId).catch(() => null);
+    providerDraftReady = Boolean(
+      access?.status === "ok" && access.mailDraft
+    );
+    rehearsalReady = Boolean(access?.status === "ok" && access.mailSend);
+  }
+  return {
+    replyVoiceReady: Boolean(
+      String(profileResult.data?.email_assistant_voice_id || "").trim()
+    ),
+    bookingLinkReady: Boolean(
+      cleanBookingUrl(profileResult.data?.booking_url)
+    ),
+    mailboxConnected: Boolean(connection.provider && connection.email),
+    providerDraftReady,
+    rehearsalReady,
+    mailboxEmail: cleanEmail(connection.email) || null,
+    provider: connection.provider,
+  };
 }
 
 export async function loadOwnedEmailAssistantDraft(id: string): Promise<{
@@ -634,18 +711,21 @@ export async function updateEmailAssistantDraft(
       patch.draft_body = body;
       changed = true;
     }
-    const currentVoiceScript = normaliseOutreachVoiceScript(draft.voice_script);
+    const currentVoiceScript = normaliseEmailAssistantVoiceScript(
+      draft.voice_script
+    );
     const nextVoiceScript =
       typeof input.voiceScript === "string"
-        ? normaliseOutreachVoiceScript(input.voiceScript)
+        ? normaliseEmailAssistantVoiceScript(input.voiceScript)
         : currentVoiceScript;
     if (
-      nextVoiceScript.length > OUTREACH_VOICE_HARD_MAX_CHARACTERS ||
-      outreachVoiceWordCount(nextVoiceScript) > OUTREACH_VOICE_HARD_MAX_WORDS
+      nextVoiceScript.length > EMAIL_ASSISTANT_VOICE_HARD_MAX_CHARACTERS ||
+      emailAssistantVoiceWordCount(nextVoiceScript) >
+        EMAIL_ASSISTANT_VOICE_HARD_MAX_WORDS
     ) {
       throw Object.assign(
         new Error(
-          `Shorten the voice reply to ${OUTREACH_VOICE_HARD_MAX_WORDS} words or fewer while keeping the final sentence complete`
+          `Shorten the voice reply to ${EMAIL_ASSISTANT_VOICE_HARD_MAX_WORDS} words or fewer while keeping the final sentence complete`
         ),
         { status: 422 }
       );
@@ -665,7 +745,7 @@ export async function updateEmailAssistantDraft(
       patch.voice_provider_voice_id = null;
       patch.voice_provider_request_id = null;
       patch.voice_estimated_seconds = nextVoiceScript
-        ? estimatedVoiceSeconds(nextVoiceScript)
+        ? emailAssistantEstimatedVoiceSeconds(nextVoiceScript)
         : null;
       patch.voice_character_count = null;
       patch.voice_estimated_cost_gbp = null;
@@ -701,11 +781,11 @@ export async function updateEmailAssistantDraft(
           { status: 400 }
         );
       }
-      const budget = assertOutreachVoiceWithinBudget(
+      const budget = assertEmailAssistantVoiceWithinBudget(
         nextVoiceScript,
         config.modelId
       );
-      const approvalHash = outreachVoiceApprovalHash(nextVoiceScript);
+      const approvalHash = emailAssistantVoiceApprovalHash(nextVoiceScript);
       const approvalAlreadyCurrent =
         !voiceChanged &&
         draft.voice_script_approved_by === scope.userId &&
@@ -720,7 +800,8 @@ export async function updateEmailAssistantDraft(
       if (draft.voice_status !== "ready" || voiceChanged) {
         patch.voice_status = "script_ready";
       }
-      patch.voice_estimated_seconds = estimatedVoiceSeconds(nextVoiceScript);
+      patch.voice_estimated_seconds =
+        emailAssistantEstimatedVoiceSeconds(nextVoiceScript);
       patch.voice_character_count = budget.characters;
       patch.voice_estimated_cost_gbp = budget.estimatedCostGbp;
       patch.voice_error = null;
@@ -808,10 +889,78 @@ async function invalidateEmailAssistantVoiceAudio(
   if (error) throw error;
 }
 
-export async function handOffEmailAssistantDraft(id: string): Promise<EmailAssistantDraft> {
+async function currentEmailAssistantVoiceAttachment(
+  draft: EmailAssistantDraft,
+  scope: RecordScope,
+  voiceIntent: EmailAssistantVoiceIntent
+): Promise<
+  | {
+      url: string;
+      estimatedSeconds: number | null;
+      previewText: string | null;
+    }
+  | undefined
+> {
+  if (voiceIntent === "omit") return undefined;
+  if (draft.voice_status !== "ready") {
+    throw Object.assign(
+      new Error(
+        "This exact voice reply is not ready. Generate it again or approve the email without voice."
+      ),
+      { status: 409 }
+    );
+  }
+
+  let config: Awaited<ReturnType<typeof resolveEmailAssistantVoiceConfig>>;
+  try {
+    config = await resolveEmailAssistantVoiceConfig(scope);
+  } catch (error: any) {
+    await invalidateEmailAssistantVoiceAudio(draft);
+    throw Object.assign(
+      new Error(
+        String(
+          error?.message ||
+            "Choose your Email Assistant reply voice in My Sales Setup"
+        )
+      ),
+      { status: 409 }
+    );
+  }
+
+  if (!emailAssistantVoiceMatchesCurrentConfig(draft, config)) {
+    await invalidateEmailAssistantVoiceAudio(draft);
+    throw Object.assign(
+      new Error(
+        "The script, reply voice, or voice model changed. Generate this exact voice reply again before including it."
+      ),
+      { status: 409 }
+    );
+  }
+
+  return {
+    url: emailAssistantVoicePublicUrl(draft.voice_public_token),
+    estimatedSeconds: draft.voice_estimated_seconds,
+    previewText: draft.voice_script,
+  };
+}
+
+export async function handOffEmailAssistantDraft(
+  id: string,
+  voiceIntent: EmailAssistantVoiceIntent
+): Promise<EmailAssistantHandoffResult> {
+  if (voiceIntent !== "include" && voiceIntent !== "omit") {
+    throw Object.assign(new Error("Choose whether this draft includes voice"), {
+      status: 400,
+    });
+  }
   const { scope, draft } = await loadOwnedEmailAssistantDraft(id);
   if (!draft) throw Object.assign(new Error("Email draft not found"), { status: 404 });
-  if (draft.status === "handed_off") return draft;
+  if (draft.status === "handed_off") {
+    return {
+      draft,
+      voiceIncluded: draft.voice_status === "ready",
+    };
+  }
   if (draft.status === "approving") {
     throw Object.assign(
       new Error("This draft approval is already in progress. Check the provider drafts before retrying."),
@@ -833,31 +982,11 @@ export async function handOffEmailAssistantDraft(id: string): Promise<EmailAssis
       { status: 409 }
     );
   }
-  if (draft.voice_status === "ready") {
-    let currentVoiceId = "";
-    let setupMessage = "";
-    try {
-      currentVoiceId = (await resolveEmailAssistantVoiceConfig(scope)).voiceId;
-    } catch (error: any) {
-      setupMessage = String(
-        error?.message ||
-          "Choose your Email Assistant reply voice in My Sales Setup"
-      );
-    }
-    if (
-      !currentVoiceId ||
-      draft.voice_provider_voice_id !== currentVoiceId
-    ) {
-      await invalidateEmailAssistantVoiceAudio(draft);
-      throw Object.assign(
-        new Error(
-          setupMessage ||
-            "Your Email Assistant reply voice changed. Generate this voice note again before including it in the provider draft."
-        ),
-        { status: 409 }
-      );
-    }
-  }
+  const voiceNote = await currentEmailAssistantVoiceAttachment(
+    draft,
+    scope,
+    voiceIntent
+  );
   if (draft.booking_url) {
     if (draft.draft_body.split(draft.booking_url).length - 1 !== 1) {
       await blockDraft(
@@ -975,16 +1104,7 @@ export async function handOffEmailAssistantDraft(id: string): Promise<EmailAssis
       text: draft.draft_body,
       threadId: draft.source_thread_id || undefined,
       sourceMessageId: draft.source_message_id,
-      voiceNote:
-        draft.voice_status === "ready" &&
-        draft.voice_audio_path &&
-        draft.voice_public_token
-          ? {
-              url: emailAssistantVoicePublicUrl(draft.voice_public_token),
-              estimatedSeconds: draft.voice_estimated_seconds,
-              previewText: draft.voice_script,
-            }
-          : undefined,
+      voiceNote,
     },
     scope.userId
   );
@@ -1043,8 +1163,141 @@ export async function handOffEmailAssistantDraft(id: string): Promise<EmailAssis
         status: "handed_off",
         provider: draft.mail_provider,
         recipient,
+        voiceIncluded: Boolean(voiceNote),
       },
     });
   if (auditError) console.error("Email assistant draft audit failed", auditError.message);
-  return data as EmailAssistantDraft;
+  return {
+    draft: data as EmailAssistantDraft,
+    voiceIncluded: Boolean(voiceNote),
+  };
+}
+
+export async function rehearseEmailAssistantDraft(
+  id: string,
+  voiceIntent: EmailAssistantVoiceIntent
+): Promise<EmailAssistantRehearsalResult> {
+  if (voiceIntent !== "include" && voiceIntent !== "omit") {
+    throw Object.assign(new Error("Choose whether this test includes voice"), {
+      status: 400,
+    });
+  }
+  const { scope, draft } = await loadOwnedEmailAssistantDraft(id);
+  if (!draft) {
+    throw Object.assign(new Error("Email draft not found"), { status: 404 });
+  }
+  if (draft.status !== "draft" && draft.status !== "blocked") {
+    throw Object.assign(
+      new Error("Only an editable next-move draft can be tested"),
+      { status: 409 }
+    );
+  }
+  if (!clean(draft.draft_subject, 240) || !clean(draft.draft_body, 10_000)) {
+    throw Object.assign(
+      new Error("Save the subject and email before sending a test"),
+      { status: 400 }
+    );
+  }
+  if (draft.voice_status === "generating") {
+    throw Object.assign(
+      new Error("Wait for the personal voice reply to finish before testing"),
+      { status: 409 }
+    );
+  }
+
+  const connection = await connectedMailProvider(scope.userId);
+  const mailboxEmail = cleanEmail(connection.email);
+  if (!connection.provider || !mailboxEmail) {
+    throw Object.assign(
+      new Error("Connect your Google or Microsoft mailbox before sending a test"),
+      { status: 409 }
+    );
+  }
+  if (connection.provider !== draft.mail_provider) {
+    throw Object.assign(
+      new Error(
+        "The mailbox provider changed. Reconnect the original provider or recreate this draft."
+      ),
+      { status: 409 }
+    );
+  }
+
+  const voiceNote = await currentEmailAssistantVoiceAttachment(
+    draft,
+    scope,
+    voiceIntent
+  );
+  const content = buildConnectedMailDraftContent({
+    text: draft.draft_body,
+    voiceNote,
+  });
+  const intendedFor = clean(
+    draft.recipient_name || draft.recipient_email,
+    120
+  );
+  const sent = await sendConnectedMail(
+    {
+      to: mailboxEmail,
+      subject: `[TEST${intendedFor ? ` · for ${intendedFor}` : ""}] ${draft.draft_subject}`,
+      text: content.text,
+      html: content.html,
+    },
+    scope.userId
+  );
+  if (!sent.ok) {
+    throw Object.assign(
+      new Error(sent.error || "The connected mailbox refused the test"),
+      { status: 502 }
+    );
+  }
+
+  const deliveryLocation =
+    connection.provider === "google"
+      ? ("sent_or_all_mail" as const)
+      : ("inbox_or_sent" as const);
+  console.log(
+    JSON.stringify({
+      level: "info",
+      msg: "email_assistant_rehearsal_accepted",
+      route: "/api/crm/email-assistant/drafts/[id]/rehearse",
+      userId: scope.userId,
+      provider: connection.provider,
+      draftId: draft.id,
+      deliveryLocation,
+      voiceIncluded: Boolean(voiceNote),
+      recipientChanged: false,
+    })
+  );
+
+  const { error: auditError } = await supabaseService
+    .from("access_audit_events")
+    .insert({
+      workspace_id: scope.workspaceId,
+      actor_user_id: scope.userId,
+      source: "human",
+      action: "email_assistant_rehearsal_accepted",
+      target_table: "workspace_members",
+      target_id: scope.userId,
+      metadata: {
+        provider: connection.provider,
+        draft_id: draft.id,
+        voice_included: Boolean(voiceNote),
+        recipient_changed: false,
+      },
+    });
+  if (auditError) {
+    console.error(
+      "Email Assistant rehearsal readiness receipt failed",
+      auditError.message
+    );
+  }
+
+  return {
+    accepted: true,
+    sentTo: mailboxEmail,
+    provider: connection.provider,
+    deliveryLocation,
+    voiceIncluded: Boolean(voiceNote),
+    recipientChanged: false,
+  };
 }

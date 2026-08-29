@@ -1,6 +1,5 @@
 import "server-only";
 
-import { createHash } from "crypto";
 import { publicAppOrigin } from "@/lib/public-app-url";
 import { supabaseService } from "@/lib/supabase";
 import type { OutreachIdentity } from "@/lib/outreach-identity";
@@ -15,9 +14,16 @@ import {
   OUTREACH_VOICE_TARGET_COST_GBP,
   outreachVoiceWordCount,
 } from "@/lib/outreach-voice-policy";
+import {
+  approvedVoiceScriptHash,
+  generateElevenLabsVoiceAudio,
+  VOICE_NOTE_BUCKET,
+  VOICE_NOTE_MIME,
+  voiceScriptHash,
+} from "@/lib/voice-note-provider";
 
-export const OUTREACH_VOICE_BUCKET = "outreach-voice-notes";
-export const OUTREACH_VOICE_MIME = "audio/mpeg";
+export const OUTREACH_VOICE_BUCKET = VOICE_NOTE_BUCKET;
+export const OUTREACH_VOICE_MIME = VOICE_NOTE_MIME;
 
 export type OutreachVoiceConfig = {
   voiceId: string;
@@ -73,15 +79,11 @@ export function outreachVoiceScriptHash(
   voiceId: string,
   modelId: string
 ): string {
-  return createHash("sha256")
-    .update(`${voiceId}\n${modelId}\n${script}`)
-    .digest("hex");
+  return voiceScriptHash(script, voiceId, modelId);
 }
 
 export function outreachVoiceApprovalHash(script: string): string {
-  return createHash("sha256")
-    .update(normaliseOutreachVoiceScript(script))
-    .digest("hex");
+  return approvedVoiceScriptHash(normaliseOutreachVoiceScript(script));
 }
 
 export function outreachVoiceStoragePath(input: {
@@ -98,27 +100,8 @@ export function outreachVoiceStoragePath(input: {
   ].join("/");
 }
 
-export function emailAssistantVoiceStoragePath(input: {
-  workspaceId: string;
-  ownerId: string;
-  draftId: string;
-  scriptHash: string;
-}): string {
-  return [
-    input.workspaceId,
-    input.ownerId,
-    "email-assistant",
-    input.draftId,
-    `${input.scriptHash}.mp3`,
-  ].join("/");
-}
-
 export function outreachVoicePublicUrl(token: string): string {
   return `${publicAppOrigin()}/listen/${encodeURIComponent(token)}`;
-}
-
-export function emailAssistantVoicePublicUrl(token: string): string {
-  return `${publicAppOrigin()}/listen/next-move/${encodeURIComponent(token)}`;
 }
 
 export async function resolveOutreachVoiceConfig(
@@ -163,45 +146,17 @@ export async function generateElevenLabsOutreachAudio(input: {
 }> {
   const script = normaliseOutreachVoiceScript(input.script);
   const budget = assertOutreachVoiceWithinBudget(script, input.config.modelId);
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(input.config.voiceId)}?output_format=mp3_44100_128`,
-    {
-      method: "POST",
-      headers: {
-        "xi-api-key": process.env.ELEVENLABS_API_KEY || "",
-        "Content-Type": "application/json",
-        Accept: OUTREACH_VOICE_MIME,
-      },
-      body: JSON.stringify({
-        text: script,
-        model_id: input.config.modelId,
-        voice_settings: {
-          stability: 0.58,
-          similarity_boost: 0.82,
-          style: 0.18,
-          use_speaker_boost: true,
-        },
-      }),
-      signal: AbortSignal.timeout(45_000),
-    }
-  );
-  if (!response.ok) {
-    const detail = (await response.text().catch(() => "")).slice(0, 240);
-    throw new Error(
-      response.status === 401
-        ? "ElevenLabs rejected the configured account or voice"
-        : `ElevenLabs could not create this voice note (${response.status})${detail ? `, ${detail}` : ""}`
-    );
-  }
-  const audio = Buffer.from(await response.arrayBuffer());
-  if (audio.length < 1000) throw new Error("ElevenLabs returned an empty voice note");
-  return {
-    audio,
-    requestId:
-      response.headers.get("request-id") ||
-      response.headers.get("x-request-id"),
-    characters: budget.characters,
-  };
+  const generated = await generateElevenLabsVoiceAudio({
+    script,
+    config: input.config,
+    settings: {
+      stability: 0.58,
+      similarity_boost: 0.82,
+      style: 0.18,
+      use_speaker_boost: true,
+    },
+  });
+  return { ...generated, characters: budget.characters };
 }
 
 function conservativeModelRateGbp(modelId: string): number {

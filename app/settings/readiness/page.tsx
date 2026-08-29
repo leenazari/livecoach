@@ -13,6 +13,14 @@ import { crmFetch, getCached } from "@/lib/crm";
 
 type ReadinessData = {
   account: AccountReadiness;
+  capabilities: {
+    emailAssistant: {
+      replyVoiceReady: boolean;
+      bookingLinkReady: boolean;
+      providerDraftReady: boolean;
+      rehearsalReady: boolean;
+    };
+  };
   team?: AccountReadiness[];
   generatedAt: string;
   aiUsed: false;
@@ -224,6 +232,63 @@ export default function AccountReadinessPage() {
       {data ? (
         <div className="space-y-7">
           <AccountCard account={data.account} />
+
+          <section className="rounded-2xl border border-amber/35 bg-amber/[0.04] p-4 sm:p-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="font-mono text-[0.58rem] uppercase tracking-[0.18em] text-amber">
+                  Email Assistant
+                </p>
+                <h2 className="mt-1 font-display text-xl text-bone">
+                  Reply workflow readiness
+                </h2>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
+                  Voice remains optional. Email-only approval still works when no reply voice is selected.
+                </p>
+              </div>
+              <Link
+                href="/settings/sales-profile"
+                className="inline-flex min-h-10 items-center self-start rounded-full border border-amber/45 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-amber hover:bg-amber/10"
+              >
+                My Sales Setup
+              </Link>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                {
+                  label: "Provider drafts",
+                  ready: data.capabilities.emailAssistant.providerDraftReady,
+                  detail: "Gmail or Outlook draft permission",
+                },
+                {
+                  label: "Test to me",
+                  ready: data.capabilities.emailAssistant.rehearsalReady,
+                  detail: "Mailbox send permission for safe rehearsal",
+                },
+                {
+                  label: "Reply voice",
+                  ready: data.capabilities.emailAssistant.replyVoiceReady,
+                  detail: "Optional and personal to this login",
+                },
+                {
+                  label: "Booking link",
+                  ready: data.capabilities.emailAssistant.bookingLinkReady,
+                  detail: "Optional meeting call to action",
+                },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="rounded-xl border border-edge bg-ink/35 p-3"
+                >
+                  <p className="text-sm text-bone">{item.label}</p>
+                  <p className={`mt-1 text-xs ${item.ready ? "text-sage" : "text-amber"}`}>
+                    {item.ready ? "✓ Ready" : "Not set"}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted">{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          </section>
 
           {Array.isArray(data.team) ? (
             <section className="rounded-2xl border border-sky/35 bg-sky/[0.04] p-4 sm:p-5">

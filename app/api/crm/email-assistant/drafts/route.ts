@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { listEmailAssistantDrafts } from "@/lib/email-assistant";
+import {
+  getEmailAssistantCapabilities,
+  listEmailAssistantDrafts,
+} from "@/lib/email-assistant";
 import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
@@ -13,10 +16,11 @@ const noStore = {
 export async function GET() {
   try {
     requireRequestScope();
-    return NextResponse.json(
-      { drafts: await listEmailAssistantDrafts() },
-      { headers: noStore }
-    );
+    const [drafts, capabilities] = await Promise.all([
+      listEmailAssistantDrafts(),
+      getEmailAssistantCapabilities(),
+    ]);
+    return NextResponse.json({ drafts, capabilities }, { headers: noStore });
   } catch {
     return NextResponse.json(
       { error: "Could not load the next-move drafts" },
