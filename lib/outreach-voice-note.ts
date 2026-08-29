@@ -13,6 +13,7 @@ import {
   OUTREACH_VOICE_PREFERRED_MAX_WORDS,
   OUTREACH_VOICE_PREFERRED_MIN_WORDS,
   OUTREACH_VOICE_TARGET_COST_GBP,
+  outreachVoiceSpeechText,
   outreachVoiceWordCount,
 } from "@/lib/outreach-voice-policy";
 import {
@@ -81,7 +82,7 @@ export function outreachVoiceScriptHash(
   voiceId: string,
   modelId: string
 ): string {
-  return voiceScriptHash(script, voiceId, modelId);
+  return voiceScriptHash(outreachVoiceSpeechText(script), voiceId, modelId);
 }
 
 export function outreachVoiceApprovalHash(script: string): string {
@@ -142,8 +143,12 @@ export async function generateElevenLabsOutreachAudio(input: {
   requestId: string | null;
   characters: number;
 }> {
-  const script = normaliseOutreachVoiceScript(input.script);
-  const budget = assertOutreachVoiceWithinBudget(script, input.config.modelId);
+  const approvedScript = normaliseOutreachVoiceScript(input.script);
+  const script = outreachVoiceSpeechText(approvedScript);
+  const budget = assertOutreachVoiceWithinBudget(
+    approvedScript,
+    input.config.modelId
+  );
   const generated = await generateElevenLabsVoiceAudio({
     script,
     config: input.config,
@@ -181,7 +186,7 @@ export function outreachVoiceBudget(
   script: string,
   modelId: string
 ): OutreachVoiceBudget {
-  const characters = script.length;
+  const characters = outreachVoiceSpeechText(script).length;
   const words = outreachVoiceWordCount(script);
   const rateGbpPerThousandCharacters =
     outreachVoiceRateGbpPerThousand(modelId);

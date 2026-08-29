@@ -120,6 +120,11 @@ assert.match(prepare, /Keep that complete causal chain in the voice note/);
 assert.match(prepare, /Do not carry this candidate preparation message into screening/);
 assert.match(prepare, /Do not use an offer, use case or CTA from another campaign/);
 assert.match(prepare, /one grounded angle permitted by the campaign contract/);
+assert.match(prepare, /how are you doing\?/);
+assert.match(prepare, /We are Interviewa/);
+assert.match(prepare, /must never impersonate the salesperson/);
+assert.match(prepare, /audio layer handles its pronunciation as "Interviewer"/);
+assert.match(prepare, /prepareOutreachVoiceScriptForReview/);
 assert.doesNotMatch(prepare, /Candidate training is the primary campaign angle/);
 assert.match(prepare, /voice_status: "script_ready"/);
 assert.match(editor, /Why act now/);
@@ -142,6 +147,8 @@ assert.match(generate, /message\.voice_script_approved_by !== sender\.userId/);
 assert.match(generate, /message\.voice_script_approved_hash !== approvedHash/);
 assert.match(generate, /Nothing has been charged/);
 assert.match(generate, /One personal voice note is already being created/);
+assert.match(generate, /outreachVoiceHasFalseSenderIdentity/);
+assert.match(generate, /Use We are Interviewa instead/);
 assert.match(generate, /Date\.now\(\) - 3 \* 60 \* 1000/);
 assert.match(generate, /previous interrupted voice generation was released safely/i);
 assert.ok(
@@ -155,6 +162,7 @@ assert.match(generate, /\.eq\("voice_script", script\)/);
 assert.match(patchRoute, /voiceChanged/);
 assert.match(patchRoute, /voice_audio_path = null/);
 assert.match(patchRoute, /body\.approve_voice_script === true/);
+assert.match(patchRoute, /outreachVoiceHasFalseSenderIdentity/);
 assert.match(patchRoute, /existing\.strategy\?\.voiceUrgency\?\.whyNow/);
 assert.match(patchRoute, /Keep the approved why now sentence in the voice pitch/);
 assert.match(patchRoute, /voice_script_approved_at/);
@@ -181,17 +189,22 @@ assert.match(audio, /createSignedUrl/);
 assert.match(audio, /voice_public_token/);
 assert.match(played, /kind: "voice_played"/);
 
-assert.match(editor, /1 · Approve script/);
-assert.match(editor, /2 · Generate voice · est/);
-assert.match(editor, /Approving the words costs nothing/);
+assert.doesNotMatch(editor, /Approve script/);
+assert.match(editor, /Generate voice · est/);
+assert.match(editor, /one click approves the visible script/);
+assert.match(editor, /Hear pronunciation/);
+assert.match(editor, /SpeechSynthesisUtterance\("Interviewer"\)/);
+assert.match(editor, /Play personal voice note/);
 assert.match(editor, /OUTREACH_VOICE_HARD_MAX_CHARACTERS/);
 assert.match(editor, /Complete sentences and useful personalisation take priority/);
 assert.match(editor, /voice_estimated_cost_gbp/);
 assert.match(outreachPage, /generateVoiceNote/);
-assert.match(outreachPage, /approveVoiceScript/);
+assert.match(outreachPage, /approve_voice_script: true/);
+assert.doesNotMatch(outreachPage, /approveVoiceScript/);
 assert.match(outreachPage, /OutreachVoiceNoteEditor/);
 assert.match(today, /generateVoiceNote/);
-assert.match(today, /approveVoiceScript/);
+assert.match(today, /approve_voice_script: true/);
+assert.doesNotMatch(today, /approveVoiceScript/);
 assert.match(today, /OutreachVoiceNoteEditor/);
 
 assert.match(profile, /outreach_voice_id/);
@@ -265,6 +278,33 @@ assert.equal(policyModule.OUTREACH_VOICE_TARGET_WORDS, 100);
 assert.equal(policyModule.OUTREACH_VOICE_PREFERRED_MIN_WORDS, 80);
 assert.equal(policyModule.OUTREACH_VOICE_PREFERRED_MAX_WORDS, 120);
 assert.equal(policyModule.OUTREACH_VOICE_HARD_MAX_WORDS, 150);
+assert.equal(
+  policyModule.outreachVoiceSpeechText("A note from Interviewa"),
+  "A note from Interviewer"
+);
+const safeGeneratedScript = policyModule.prepareOutreachVoiceScriptForReview({
+  script:
+    "I'm Lee Nazari from Interviewa. We help recruiters prepare candidates before client interviews.",
+  recipientFirstName: "Alex",
+  senderName: "Lee Nazari",
+});
+assert.match(safeGeneratedScript, /^Hi Alex, how are you doing\?/);
+assert.match(safeGeneratedScript, /We are Interviewa\./);
+assert.doesNotMatch(safeGeneratedScript, /I'm Lee|I am Lee|This is Lee/i);
+assert.equal(
+  policyModule.outreachVoiceHasFalseSenderIdentity(
+    "I'm Cam from Interviewa.",
+    "Cam Smith"
+  ),
+  true
+);
+assert.equal(
+  policyModule.outreachVoiceHasFalseSenderIdentity(
+    "I’m Jordan Reed from Interviewa.",
+    "Lee Nazari"
+  ),
+  true
+);
 assert.equal(
   policyModule.estimateOutreachVoiceCostGbp("x".repeat(800)),
   0.05

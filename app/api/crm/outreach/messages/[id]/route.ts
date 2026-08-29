@@ -11,6 +11,7 @@ import {
 } from "@/lib/outreach-voice-note";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { outreachSafetyError } from "@/lib/outreach-team-safety";
+import { outreachVoiceHasFalseSenderIdentity } from "@/lib/outreach-voice-policy";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -79,6 +80,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         return NextResponse.json(
           { error: "Wait for the current voice note to finish" },
           { status: 409 }
+        );
+      if (outreachVoiceHasFalseSenderIdentity(nextVoiceScript, sender.senderName))
+        return NextResponse.json(
+          {
+            error:
+              "The shared voice cannot claim to be the salesperson. Use We are Interviewa instead.",
+          },
+          { status: 400 }
         );
       const requiredWhyNow = normaliseOutreachVoiceScript(
         existing.strategy?.voiceUrgency?.whyNow

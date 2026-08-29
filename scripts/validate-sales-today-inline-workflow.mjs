@@ -23,7 +23,9 @@ assert.match(
   lane,
   /crmFetch<\{ message: OutreachMessage \}>[\s\S]*crmFetch\(`\/api\/crm\/outreach\/messages\/\$\{message\.id\}\/send`/
 );
-assert.match(lane, /Approval covers the exact words above/);
+assert.match(lane, /Approval covers the exact email and ready voice note above/);
+assert.match(lane, /approve_voice_script: true/);
+assert.doesNotMatch(lane, /approveVoiceScript/);
 assert.doesNotMatch(lane, /gmail\.users\.messages\.send|supabaseAdmin/);
 
 // Research and history are bounded projections of saved records. Opening them
