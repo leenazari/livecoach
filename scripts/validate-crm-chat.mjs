@@ -102,6 +102,13 @@ assert.match(page, /Only the safe card fields are copied/);
 assert.match(page, /lc:notifications-realtime/);
 assert.match(page, /clientNonce/);
 assert.match(page, /Shift Enter for a new line/);
+assert.doesNotMatch(
+  page,
+  /MatrixRain/,
+  "Team Chat must not render a permanent page-level loading banner"
+);
+assert.match(page, /\{loading \? \(/);
+assert.match(page, /Loading chat…/);
 assert.match(clientPage, /shareType=company/);
 assert.match(clientPage, /shareType=contact/);
 assert.match(clientPage, /Calls, notes, transcripts, mailbox context and Brain memory stay private/);

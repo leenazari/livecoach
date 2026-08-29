@@ -11,7 +11,6 @@ import {
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import MatrixRain from "@/components/MatrixRain";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmFetch } from "@/lib/crm";
 
@@ -378,7 +377,6 @@ function ChatPageInner() {
 
   return (
     <main className="relative z-10 mx-auto max-w-[1360px] px-3 py-4 pb-24 sm:px-5 sm:py-7 sm:pb-10">
-      <MatrixRain />
       <NavMenu />
 
       <header className="mb-4 flex flex-wrap items-end justify-between gap-3 border-b border-edge pb-4">
