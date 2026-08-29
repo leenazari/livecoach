@@ -50,18 +50,33 @@ export const SALES_OUTREACH_TUTORIAL_STEPS: Step[] = [
     eyebrow: "Step 1",
     title: "Check the campaign first",
     body:
-      "Use the campaign that matches the audience and offer. A manager should activate the correct campaign before the team builds a queue.",
+      "A campaign answers who you are contacting and why. Open one campaign and check the amber Setup view before anyone builds a queue.",
     checklist: [
       "Confirm the goal, audience and Interviewa angle",
-      "Check the follow up sequence and daily maximum",
+      "Check the daily maximum and whether the campaign is active",
       "Keep approval mode on so nothing sends unchecked",
     ],
     href: "/crm/outreach?tab=campaign",
     target: "campaign-setup",
   },
   {
-    id: "claim",
+    id: "campaign-sequence",
     eyebrow: "Step 2",
+    title: "Build only the sequence you need",
+    body:
+      "New campaigns begin with one email. Open a campaign, choose the blue Sequence view and add a follow up only when it has a clear purpose.",
+    checklist: [
+      "Edit the first email before adding more steps",
+      "Use Add next step for email, phone or manual LinkedIn activity",
+      "Templates are optional and replace only the unsaved sequence",
+      "Every email still waits for human approval",
+    ],
+    href: "/crm/outreach?tab=campaign",
+    target: "campaign-sequence",
+  },
+  {
+    id: "claim",
+    eyebrow: "Step 3",
     title: "Claim suitable unassigned prospects",
     body:
       "Filter by campaign and choose Unassigned. Press Claim only when you intend to work that person.",
@@ -75,7 +90,7 @@ export const SALES_OUTREACH_TUTORIAL_STEPS: Step[] = [
   },
   {
     id: "queue",
-    eyebrow: "Step 3",
+    eyebrow: "Step 4",
     title: "Build today’s ranked queue",
     body:
       "The Today view prioritises the strongest safe prospects within the active campaign. Work the limited queue instead of the whole database.",
@@ -89,7 +104,7 @@ export const SALES_OUTREACH_TUTORIAL_STEPS: Step[] = [
   },
   {
     id: "research",
-    eyebrow: "Step 4",
+    eyebrow: "Step 5",
     title: "Queue research and a first draft",
     body:
       "Research runs in the background only after you choose a prospect. You can continue working while LiveCoach prepares the draft.",
@@ -103,7 +118,7 @@ export const SALES_OUTREACH_TUTORIAL_STEPS: Step[] = [
   },
   {
     id: "approval",
-    eyebrow: "Step 5",
+    eyebrow: "Step 6",
     title: "Approve the exact message",
     body:
       "Check the recipient, evidence, tone and offer. Only the exact words you approve can join your paced sending queue.",
@@ -117,7 +132,7 @@ export const SALES_OUTREACH_TUTORIAL_STEPS: Step[] = [
   },
   {
     id: "replies",
-    eyebrow: "Step 6",
+    eyebrow: "Step 7",
     title: "Turn positive replies into CRM context",
     body:
       "A reply stops the sequence. Review the reply, link it to the correct client, and prepare the next response or meeting.",
@@ -131,7 +146,7 @@ export const SALES_OUTREACH_TUTORIAL_STEPS: Step[] = [
   },
   {
     id: "pipeline",
-    eyebrow: "Step 7",
+    eyebrow: "Step 8",
     title: "Assign and advance the opportunity",
     body:
       "Pipeline becomes the source of truth once there is genuine commercial interest. Give the deal an owner, stage and dated next action.",
@@ -226,12 +241,17 @@ export default function SalesOutreachTutorial() {
   }, [writeProgress]);
 
   useEffect(() => {
-    const start = () => {
-      setCurrentStep(0);
+    const start = (event: Event) => {
+      const requestedStepId = (event as CustomEvent<{ stepId?: string }>).detail?.stepId;
+      const requestedStep = requestedStepId
+        ? SALES_OUTREACH_TUTORIAL_STEPS.findIndex((item) => item.id === requestedStepId)
+        : 0;
+      const nextStep = requestedStep >= 0 ? requestedStep : 0;
+      setCurrentStep(nextStep);
       setConfirmDismiss(false);
       setError("");
       setOpen(true);
-      void writeProgress("active", 0);
+      void writeProgress("active", nextStep);
     };
     window.addEventListener("lc:start-sales-tutorial", start);
     return () => window.removeEventListener("lc:start-sales-tutorial", start);

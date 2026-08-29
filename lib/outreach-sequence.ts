@@ -215,6 +215,10 @@ function manualStep(
 
 const DEFAULT_SEQUENCE: OutreachSequenceStep[] = [
   emailStep("plain", 0),
+];
+
+const CONCISE_THREE_TOUCH_SEQUENCE: OutreachSequenceStep[] = [
+  emailStep("plain", 0),
   emailStep("insight", 1),
   emailStep("close_loop", 2, 7),
 ];
@@ -224,7 +228,7 @@ export const OUTREACH_SEQUENCE_PRESETS: ReadonlyArray<OutreachSequencePreset> = 
     id: "concise_three_touch",
     name: "Concise three touch",
     description: "Relevant opening, useful follow up, then a respectful close.",
-    sequence: DEFAULT_SEQUENCE,
+    sequence: CONCISE_THREE_TOUCH_SEQUENCE,
   },
   {
     id: "proof_led",

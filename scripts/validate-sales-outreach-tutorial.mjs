@@ -32,9 +32,10 @@ assert.match(route, /onConflict: "workspace_id,user_id,guide_key"/);
 assert.match(route, /autoStart: !row && role === "sales"/);
 
 assert.match(tutorial, /SALES_OUTREACH_TUTORIAL_STEPS: Step\[\]/);
-assert.equal((tutorial.match(/\n    id: "/g) || []).length, 8);
+assert.equal((tutorial.match(/\n    id: "/g) || []).length, 9);
 for (const label of [
   "Check the campaign first",
+  "Build only the sequence you need",
   "Claim suitable unassigned prospects",
   "Build today’s ranked queue",
   "Queue research and a first draft",
@@ -45,12 +46,14 @@ for (const label of [
 assert.doesNotMatch(tutorial, /\/prepare|\/send|supabaseAdmin/);
 assert.match(tutorial, /Turn off tutorial/);
 assert.match(tutorial, /lc:start-sales-tutorial/);
+assert.match(tutorial, /requestedStepId/);
 
 assert.match(layout, /<SalesOutreachTutorial \/>/);
 assert.match(nav, /Sales tutorial/);
 assert.match(nav, /lc:start-sales-tutorial/);
 for (const target of [
   "campaign-setup",
+  "campaign-sequence",
   "prospect-pool",
   "outreach-queue",
   "reply-handover",

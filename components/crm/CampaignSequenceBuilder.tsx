@@ -20,6 +20,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   createOutreachActionStep,
   createOutreachSequenceStep,
+  defaultOutreachSequence,
   moveOutreachSequenceStep,
   OUTREACH_SEQUENCE_ACTION_TEMPLATES,
   OUTREACH_SEQUENCE_MAX_STEPS,
@@ -48,6 +49,27 @@ const secondaryButton =
   "min-h-10 rounded-lg border border-edge px-3 py-2 font-mono text-[0.56rem] uppercase tracking-wider text-bone transition hover:border-amber/60 hover:text-amber disabled:cursor-not-allowed disabled:opacity-35";
 const saveButton =
   "min-h-11 rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40";
+
+function channelTone(channel: OutreachSequenceStep["channel"]) {
+  if (channel === "linkedin") return {
+    border: "border-sky/45",
+    header: "bg-sky/[0.06]",
+    badge: "border-sky/45 bg-sky/10 text-sky",
+    text: "text-sky",
+  };
+  if (channel === "phone") return {
+    border: "border-moss/45",
+    header: "bg-moss/[0.06]",
+    badge: "border-moss/45 bg-moss/10 text-moss",
+    text: "text-moss",
+  };
+  return {
+    border: "border-amber/45",
+    header: "bg-amber/[0.05]",
+    badge: "border-amber/45 bg-amber/10 text-amber",
+    text: "text-amber",
+  };
+}
 
 function templateFor(item: OutreachSequenceStep) {
   if ((item.channel || "email") !== "email") {
@@ -94,6 +116,7 @@ function SortableSequenceStep({
   } = useSortable({ id, disabled });
   const template = templateFor(item);
   const manual = (item.channel || "email") !== "email";
+  const tone = channelTone(item.channel || "email");
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -111,13 +134,13 @@ function SortableSequenceStep({
         </div>
       ) : null}
       <article
-        className={`overflow-hidden rounded-xl border bg-panel/75 transition ${
+        className={`overflow-hidden rounded-xl border bg-panel/75 transition ${tone.border} ${
           isDragging
-            ? "border-amber shadow-[0_18px_45px_rgba(0,0,0,0.45)]"
-            : "border-edge hover:border-amber/45"
+            ? "shadow-[0_18px_45px_rgba(0,0,0,0.45)]"
+            : "hover:brightness-110"
         }`}
       >
-        <div className="flex items-center gap-2 p-3">
+        <div className={`flex items-center gap-2 p-3 ${tone.header}`}>
           <button
             type="button"
             {...attributes}
@@ -130,7 +153,7 @@ function SortableSequenceStep({
             ☰
           </button>
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-amber/45 bg-amber/10 font-display text-base text-amber">
+            <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border font-display text-base ${tone.badge}`}>
               {template.icon}
             </span>
             <div className="min-w-0">
@@ -140,9 +163,9 @@ function SortableSequenceStep({
               <strong className="block truncate text-sm text-bone">
                 {item.purpose || template.label}
               </strong>
-              <p className="mt-0.5 font-mono text-[0.48rem] uppercase text-amber">
+              <span className={`mt-1 inline-flex rounded-full border px-2 py-0.5 font-mono text-[0.46rem] uppercase ${tone.badge}`}>
                 {template.label}{manual ? " · manual" : ""}
-              </p>
+              </span>
             </div>
           </div>
           <div className="hidden items-center gap-1 sm:flex">
@@ -386,65 +409,29 @@ export default function CampaignSequenceBuilder({
   };
 
   return (
-    <section className="mt-4 overflow-hidden rounded-xl border border-amber/35 bg-ink/30">
+    <section className="overflow-hidden rounded-xl border border-sky/40 bg-sky/[0.035]">
       <div className="border-b border-edge p-3 sm:p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="font-mono text-[0.56rem] uppercase tracking-wider text-amber">
-              Visual sequence builder
+            <p className="font-mono text-[0.56rem] uppercase tracking-wider text-sky">
+              Outreach sequence
             </p>
             <h4 className="mt-1 font-display text-lg text-bone">
-              Drag every campaign touch into order
+              Start with one clear email
             </h4>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
-              Email steps create a fresh draft for approval. LinkedIn and phone steps stay manual. Replies stop the remaining sequence automatically.
+              Add another touch only when it has a distinct purpose. Email is amber, LinkedIn is blue and phone is green. Replies stop everything that remains.
             </p>
           </div>
-          {!disabled ? (
-            <button
-              type="button"
-              onClick={onSave}
-              disabled={saving || Boolean(validationError)}
-              className={`${saveButton} w-full sm:w-auto`}
-            >
-              {saving ? "Saving…" : "Save sequence"}
-            </button>
-          ) : (
-            <span className="self-start rounded-full border border-edge px-3 py-1 font-mono text-[0.5rem] uppercase text-muted">
-              Shared · view only
-            </span>
-          )}
+          <span className="self-start rounded-full border border-sky/40 bg-sky/10 px-3 py-1 font-mono text-[0.5rem] uppercase text-sky">
+            {sequence.length} {sequence.length === 1 ? "step" : "steps"}
+          </span>
         </div>
 
         {!disabled ? (
           <div className="mt-4">
-            <div className="mb-4 rounded-lg border border-edge bg-panel/55 p-3">
-              <label className="block">
-                <span className="mb-1 block font-mono text-[0.5rem] uppercase tracking-wider text-muted">
-                  Start from a proven structure
-                </span>
-                <select
-                  className={field}
-                  defaultValue=""
-                  onChange={(event) => {
-                    applyPreset(event.target.value);
-                    event.target.value = "";
-                  }}
-                >
-                  <option value="" disabled>Choose a reusable sequence</option>
-                  {OUTREACH_SEQUENCE_PRESETS.map((preset) => (
-                    <option key={preset.id} value={preset.id}>
-                      {preset.name} · {preset.description}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="mt-2 text-xs leading-5 text-muted">
-                A preset replaces the unsaved sequence shown below. Nothing changes in the campaign until you press Save sequence.
-              </p>
-            </div>
-            <p className="mb-2 font-mono text-[0.5rem] uppercase tracking-wider text-muted">
-              Add a step
+            <p className="mb-2 font-mono text-[0.5rem] uppercase tracking-wider text-sky">
+              Add the next step only if needed
             </p>
             <div className="flex gap-2 overflow-x-auto pb-1">
               {OUTREACH_SEQUENCE_ACTION_TEMPLATES.map((template) => (
@@ -453,9 +440,15 @@ export default function CampaignSequenceBuilder({
                   key={template.key}
                   onClick={() => addStep(template)}
                   disabled={sequence.length >= OUTREACH_SEQUENCE_MAX_STEPS}
-                  className="min-h-12 min-w-[8.5rem] shrink-0 rounded-lg border border-edge bg-panel/65 px-3 py-2 text-left transition hover:border-amber/55 hover:bg-amber/[0.07] disabled:cursor-not-allowed disabled:opacity-35"
+                  className={`min-h-12 min-w-[8.5rem] shrink-0 rounded-lg border px-3 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-35 ${
+                    template.channel === "linkedin"
+                      ? "border-sky/40 bg-sky/[0.06] hover:bg-sky/10"
+                      : template.channel === "phone"
+                        ? "border-moss/40 bg-moss/[0.06] hover:bg-moss/10"
+                        : "border-amber/40 bg-amber/[0.05] hover:bg-amber/10"
+                  }`}
                 >
-                  <span className="mr-2 text-amber">{template.icon}</span>
+                  <span className={template.channel === "linkedin" ? "mr-2 text-sky" : template.channel === "phone" ? "mr-2 text-moss" : "mr-2 text-amber"}>{template.icon}</span>
                   <span className="font-mono text-[0.52rem] uppercase text-bone">
                     {template.shortLabel}
                   </span>
@@ -470,8 +463,42 @@ export default function CampaignSequenceBuilder({
             <p className="mt-2 text-xs text-muted">
               Up to {OUTREACH_SEQUENCE_MAX_STEPS} touches per campaign. LiveCoach automates only approved email delivery. LinkedIn and phone actions require you to complete and confirm them.
             </p>
+            <details className="group mt-3 rounded-lg border border-edge bg-panel/45">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 font-mono text-[0.52rem] uppercase text-muted [&::-webkit-details-marker]:hidden">
+                Optional templates and reset
+                <span className="text-sky"><span className="group-open:hidden">Open ▾</span><span className="hidden group-open:inline">Close ▴</span></span>
+              </summary>
+              <div className="space-y-3 border-t border-edge p-3">
+                <label className="block">
+                  <span className="mb-1 block font-mono text-[0.5rem] uppercase tracking-wider text-muted">
+                    Replace with a reusable sequence
+                  </span>
+                  <select
+                    className={field}
+                    defaultValue=""
+                    onChange={(event) => {
+                      applyPreset(event.target.value);
+                      event.target.value = "";
+                    }}
+                  >
+                    <option value="" disabled>Choose a template</option>
+                    {OUTREACH_SEQUENCE_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name} · {preset.description}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button type="button" onClick={() => onChange(defaultOutreachSequence())} className={secondaryButton}>
+                  Start again with one email
+                </button>
+                <p className="text-xs leading-5 text-muted">
+                  These controls replace only the unsaved sequence shown here. Press Save sequence to confirm it.
+                </p>
+              </div>
+            </details>
           </div>
-        ) : null}
+        ) : <p className="mt-3 text-xs text-muted">This shared sequence is view only.</p>}
       </div>
 
       <div className="p-3 sm:p-4">
@@ -480,14 +507,8 @@ export default function CampaignSequenceBuilder({
             {validationError}
           </p>
         ) : (
-          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-moss/35 bg-moss/[0.06] px-3 py-2 text-xs text-moss">
-            <span>✓ Ordered campaign workflow</span>
-            <span>·</span>
-            <span>✓ Human approval before every send</span>
-            <span>·</span>
-            <span>✓ Reply stops follow ups</span>
-            <span>·</span>
-            <span>✓ Manual social actions</span>
+          <div className="mb-3 rounded-lg border border-moss/35 bg-moss/[0.06] px-3 py-2 text-xs leading-5 text-moss">
+            ✓ Human approval before every email. Any reply stops the remaining steps.
           </div>
         )}
 
