@@ -1,8 +1,16 @@
 export type JobResearchSignal = {
   role: string;
   location: string;
+  compensation: string;
   recency: string;
   sourceUrl: string;
+};
+
+type CampaignResearchContract = {
+  name?: unknown;
+  audience?: unknown;
+  goal?: unknown;
+  offerAngle?: unknown;
 };
 
 const PUBLIC_JOB_SOURCE_DOMAINS = [
@@ -88,6 +96,7 @@ export function sanitiseJobResearchSignals(
     signals.push({
       role,
       location: clean(item?.location, 120),
+      compensation: clean(item?.compensation, 120),
       recency: clean(item?.recency, 120),
       sourceUrl,
     });
@@ -95,8 +104,58 @@ export function sanitiseJobResearchSignals(
   return signals.slice(0, 4);
 }
 
+export function isCandidatePreparationCampaign(
+  contract: CampaignResearchContract
+): boolean {
+  const text = [contract.name, contract.audience, contract.goal, contract.offerAngle]
+    .map((value) => clean(value, 1_200).toLowerCase())
+    .join(" ");
+  const candidateContext = /\b(?:candidate|candidates|recruiter|recruiters|recruitment)\b/.test(text);
+  const preparationOffer = /\b(?:prepar\w*|train\w*|mock interviews?|practice interviews?|candidate readiness)\b/.test(text);
+  return candidateContext && preparationOffer;
+}
+
+function maximumPublishedCompensation(value: string): number {
+  const matches = value.replace(/,/g, "").match(/\d+(?:\.\d+)?\s*[kK]?/g) || [];
+  return matches.reduce((maximum, match) => {
+    const thousands = /[kK]/.test(match);
+    const amount = Number.parseFloat(match.replace(/[kK\s]/g, ""));
+    if (!Number.isFinite(amount)) return maximum;
+    return Math.max(maximum, thousands ? amount * 1_000 : amount);
+  }, 0);
+}
+
+export function candidatePreparationJobScore(signal: JobResearchSignal): number {
+  const role = signal.role.toLowerCase();
+  let score = 0;
+  if (/\b(?:software|engineering|engineer|developer|devops|cloud|data|cyber|security|technical|technology|architect|machine learning|artificial intelligence|ai|infrastructure|platform|systems?|qa|automation|product)\b/.test(role)) {
+    score += 70;
+  }
+  if (/\b(?:medical|clinical|legal|finance|financial|compliance|actuarial|quantitative|scientist)\b/.test(role)) {
+    score += 35;
+  }
+  if (/\b(?:chief|head|director|vice president|vp|principal|lead|senior|manager|architect)\b/.test(role)) {
+    score += 20;
+  }
+  const compensation = maximumPublishedCompensation(signal.compensation);
+  if (compensation >= 120_000) score += 25;
+  else if (compensation >= 90_000) score += 20;
+  else if (compensation >= 60_000) score += 12;
+  else if (compensation >= 40_000) score += 6;
+  return score;
+}
+
+export function rankCandidatePreparationJobSignals(
+  signals: JobResearchSignal[]
+): JobResearchSignal[] {
+  return signals
+    .map((signal, index) => ({ signal, index, score: candidatePreparationJobScore(signal) }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map(({ signal }) => signal);
+}
+
 export function conciseJobSignal(signal: JobResearchSignal): string {
-  return [signal.role, signal.location, signal.recency]
+  return [signal.role, signal.location, signal.compensation, signal.recency]
     .filter(Boolean)
     .join(" · ")
     .slice(0, 240);
