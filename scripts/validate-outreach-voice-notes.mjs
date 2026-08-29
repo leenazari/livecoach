@@ -79,6 +79,13 @@ assert.match(voice, /conservativeModelRateGbp/);
 assert.doesNotMatch(voice, /slice\(0, OUTREACH_VOICE_MAX_WORDS\)/);
 assert.doesNotMatch(voice, /clean\(value, 1800\)/);
 assert.match(voice, /Never slice a spoken script/);
+assert.doesNotMatch(voice, /process\.env\.ELEVENLABS_VOICE_ID/);
+assert.doesNotMatch(voice, /usingOwnerDefault/);
+assert.doesNotMatch(voice, /LiveCoach owner voice/);
+assert.doesNotMatch(voice, /\.from\("workspace_members"\)/);
+assert.match(voice, /if \(!personalVoiceId\)/);
+assert.match(voice, /voiceId: personalVoiceId/);
+assert.match(voice, /Brain's voice is never used for outreach/);
 
 assert.match(prepare, /required: \["research", "strategy", "email", "voiceNote"\]/);
 assert.match(prepare, /OUTREACH_VOICE_TARGET_WORDS/);
@@ -173,8 +180,11 @@ assert.match(voiceLibraryRoute, /Cache-Control": "private/);
 assert.match(salesProfileRoute, /validateOutreachVoiceSelection/);
 assert.match(salesProfileRoute, /input\.outreachVoiceId !== previous\.outreachVoiceId/);
 assert.match(salesProfilePage, /Listen free, choose one stock voice/);
+assert.match(salesProfilePage, /separate from Brain&apos;s voice/);
+assert.match(salesProfilePage, /never uses Brain&apos;s voice for sales outreach/);
 assert.match(salesProfilePage, /belongs only to your login/);
 assert.match(salesProfilePage, /follows you across every campaign/);
+assert.match(salesProfilePage, /voice-note generation stops safely/);
 assert.match(salesProfilePage, /never the audio voice/);
 assert.match(salesProfilePage, /voice\.previewUrl/);
 assert.match(campaignRoute, /legacy field describes campaign writing only/);
@@ -200,4 +210,4 @@ assert.equal(
   0.075
 );
 
-console.log("Owner-scoped outreach voice note checks passed");
+console.log("Salesperson-scoped outreach voice note checks passed");

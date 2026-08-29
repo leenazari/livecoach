@@ -23,7 +23,6 @@ export type OutreachVoiceConfig = {
   voiceId: string;
   voiceName: string;
   modelId: string;
-  usingOwnerDefault: boolean;
 };
 
 export type OutreachVoiceBudget = {
@@ -125,46 +124,32 @@ export function emailAssistantVoicePublicUrl(token: string): string {
 export async function resolveOutreachVoiceConfig(
   sender: Pick<OutreachIdentity, "userId" | "workspaceId">
 ): Promise<OutreachVoiceConfig> {
-  const [{ data: profile, error: profileError }, { data: member, error: memberError }] =
-    await Promise.all([
-      supabaseService
-        .from("salesperson_profiles")
-        .select("outreach_voice_id,outreach_voice_name")
-        .eq("workspace_id", sender.workspaceId)
-        .eq("user_id", sender.userId)
-        .maybeSingle(),
-      supabaseService
-        .from("workspace_members")
-        .select("role")
-        .eq("workspace_id", sender.workspaceId)
-        .eq("user_id", sender.userId)
-        .eq("status", "active")
-        .maybeSingle(),
-    ]);
+  const { data: profile, error: profileError } = await supabaseService
+    .from("salesperson_profiles")
+    .select("outreach_voice_id,outreach_voice_name")
+    .eq("workspace_id", sender.workspaceId)
+    .eq("user_id", sender.userId)
+    .maybeSingle();
   if (profileError) throw profileError;
-  if (memberError) throw memberError;
 
+  // Outreach is profile-only. The global Brain voice must never be used as a
+  // fallback, including for the workspace owner.
   const personalVoiceId = clean(profile?.outreach_voice_id, 120);
-  const ownerDefaultVoiceId = member?.role === "owner"
-    ? clean(process.env.ELEVENLABS_VOICE_ID, 120)
-    : "";
-  const voiceId = personalVoiceId || ownerDefaultVoiceId;
+  if (!personalVoiceId) {
+    throw new Error(
+      "Choose a separate sales outreach voice in My Sales Setup before creating a voice note. Brain's voice is never used for outreach."
+    );
+  }
   if (!process.env.ELEVENLABS_API_KEY) {
     throw new Error("ElevenLabs is not configured for this LiveCoach deployment");
   }
-  if (!voiceId) {
-    throw new Error(
-      "Add your own ElevenLabs voice ID in My Sales Setup before creating a personal voice note"
-    );
-  }
   return {
-    voiceId,
-    voiceName: clean(profile?.outreach_voice_name, 120) ||
-      (personalVoiceId ? "My outreach voice" : "LiveCoach owner voice"),
+    voiceId: personalVoiceId,
+    voiceName:
+      clean(profile?.outreach_voice_name, 120) || "My sales outreach voice",
     modelId: safeOutreachVoiceModel(
       process.env.ELEVENLABS_OUTREACH_MODEL_ID
     ),
-    usingOwnerDefault: !personalVoiceId && Boolean(ownerDefaultVoiceId),
   };
 }
 
