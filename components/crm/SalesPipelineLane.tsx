@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PIPELINE_STAGES } from "@/lib/opportunity-fields";
 import type { WorkPipelineDeal, WorkPipelineSummary } from "@/lib/work-inbox";
+import MetricDrilldown from "@/components/crm/MetricDrilldown";
 
 type Props = {
   pipeline: WorkPipelineSummary;
@@ -96,14 +97,19 @@ export default function SalesPipelineLane(props: Props) {
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {[["Clients", companyGroups.length, "text-bone"], ["Recorded value", gbp(pipeline.totalValue), "text-moss"], ["Overdue moves", pipeline.overdue, pipeline.overdue ? "text-rust" : "text-muted"], ["At risk", pipeline.atRisk, pipeline.atRisk ? "text-rust" : "text-muted"]].map(([metric, value, colour]) => (
-          <div key={String(metric)} className="rounded-lg border border-edge bg-ink/35 p-2.5"><strong className={`block font-display text-xl ${colour}`}>{value}</strong><span className="font-mono text-[0.46rem] uppercase tracking-wider text-muted">{metric}</span></div>
+        {[
+          ["Clients", companyGroups.length, "text-bone", "/crm/revenue?view=raw"],
+          ["Recorded value", gbp(pipeline.totalValue), "text-moss", "/crm/revenue?view=raw"],
+          ["Overdue moves", pipeline.overdue, pipeline.overdue ? "text-rust" : "text-muted", "/crm/revenue?view=overdue"],
+          ["At risk", pipeline.atRisk, pipeline.atRisk ? "text-rust" : "text-muted", "/crm/revenue?view=at_risk"],
+        ].map(([metric, value, colour, href]) => (
+          <MetricDrilldown key={String(metric)} label={String(metric)} value={value} valueClassName={String(colour)} href={String(href)} compact />
         ))}
       </div>
 
       <div className="mt-3 flex gap-2 overflow-x-auto pb-1" aria-label="Assigned deals by pipeline stage">
         {pipeline.stages.map((stage) => (
-          <div key={stage.key} className="min-w-[7.5rem] flex-1 rounded-lg border border-edge bg-panel/45 px-2.5 py-2"><div className="flex items-center justify-between gap-2"><span className="font-mono text-[0.46rem] uppercase tracking-wider text-muted">{label(stage.key)}</span><strong className="font-display text-lg text-bone">{stage.count}</strong></div><span className="mt-1 block text-[0.65rem] text-moss">{gbp(stage.value)}</span></div>
+          <MetricDrilldown key={stage.key} label={label(stage.key)} value={stage.count} note={gbp(stage.value)} href={`/crm/revenue?view=stage-${stage.key}`} compact className="min-w-[7.5rem] flex-1 bg-panel/45" />
         ))}
       </div>
 

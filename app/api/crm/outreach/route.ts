@@ -11,6 +11,45 @@ import { loadSendPilotOutreachContext } from "@/lib/sendpilot-outreach";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const PROSPECT_LIST_FIELDS = [
+  "id",
+  "assigned_to_user_id",
+  "email",
+  "first_name",
+  "last_name",
+  "job_title",
+  "company_name",
+  "company_domain",
+  "website",
+  "employee_range",
+  "industry",
+  "state",
+  "country",
+  "person_linkedin_url",
+  "company_linkedin_url",
+  "public_profile",
+  "priority",
+  "priority_score",
+  "status",
+  "research",
+  "last_researched_at",
+  "last_contacted_at",
+  "last_reply_at",
+  "reply_category",
+  "reply_summary",
+  "next_action_at",
+  "source_metadata",
+  "crm_company_id",
+  "updated_at",
+].join(",");
+
+function hasSavedResearch(value: unknown) {
+  if (value == null) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return String(value).trim().length > 0;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const account = requireRequestScope();
@@ -19,7 +58,7 @@ export async function GET(req: NextRequest) {
     const status = req.nextUrl.searchParams.get("status") || "all";
     let query = supabaseAdmin
       .from("outreach_prospects")
-      .select("*")
+      .select(PROSPECT_LIST_FIELDS)
       .eq("workspace_id", account.workspaceId)
       .order("priority_score", { ascending: false })
       .order("company_name", { ascending: true })
@@ -181,8 +220,16 @@ export async function GET(req: NextRequest) {
           ...(activeCampaignIdsByEmail.get(recipientEmail) || []),
         ].filter((id, index, all) => all.indexOf(id) === index);
         const scoringCampaign = campaignMap.get(activeCampaignIds[0]) || campaign;
+        const recommendation = scoreOutreachProspect(prospect, {
+          campaign: scoringCampaign,
+          learnings: (learnings || []).filter((learning: any) => !scoringCampaign || learning.campaign_id === scoringCampaign.id),
+          blockedTargets,
+          crmGuard,
+        });
+        const { research, ...listProspect } = prospect;
         return {
-          ...prospect,
+          ...listProspect,
+          has_research: hasSavedResearch(research),
           outreach: {
             ...(messageSummary.get(prospect.id) || {
               latestMessage: null,
@@ -206,12 +253,7 @@ export async function GET(req: NextRequest) {
                 : null;
             })(),
           },
-          recommendation: scoreOutreachProspect(prospect, {
-            campaign: scoringCampaign,
-            learnings: (learnings || []).filter((learning: any) => !scoringCampaign || learning.campaign_id === scoringCampaign.id),
-            blockedTargets,
-            crmGuard,
-          }),
+          recommendation,
         };
       })
       .sort((a: any, b: any) =>

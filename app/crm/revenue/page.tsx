@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
-import { crmFetch } from "@/lib/crm";
+import { crmFetch, getCached } from "@/lib/crm";
 import MatrixRain from "@/components/MatrixRain";
 import PipelineWorkspace from "@/components/crm/PipelineWorkspace";
 import OutlookIntelligencePanel, { type SignalHealth } from "@/components/crm/OutlookIntelligencePanel";
+import MetricDrilldown from "@/components/crm/MetricDrilldown";
 import { opportunityMatchesOwner } from "@/lib/opportunity-owner-filter";
 import { outreachProspectHref } from "@/lib/crm-navigation";
 
@@ -62,29 +63,64 @@ const typeLabels: Record<Opportunity["opportunity_type"], string> = {
   strategic: "Strategic idea",
 };
 
+const REVENUE_VIEWS = new Set([
+  "all",
+  "raw",
+  "weighted",
+  "best_case",
+  "commit",
+  "coverage",
+  "overdue",
+  "meetings",
+  "at_risk",
+  "stalled",
+  "strategic",
+  "internal",
+  "investment",
+]);
+
+function parseRevenueView(value: string | null): string {
+  if (!value) return "all";
+  if (value.startsWith("stage-") && value.length > 6)
+    return `stage:${value.slice(6)}`;
+  return REVENUE_VIEWS.has(value) ? value : "all";
+}
+
+function revenueViewQuery(value: string): string {
+  return value.startsWith("stage:") ? `stage-${value.slice(6)}` : value;
+}
+
+function editableOpportunityRows(next: Pipeline | null): Opportunity[] {
+  if (!next) return [];
+  return [...(next.opportunities || []), ...(next.excludedOpportunities || [])].map(
+    (row: Opportunity) => ({
+      ...row,
+      // Put the deterministic suggestion into editable state. Pressing Save
+      // deal therefore confirms exactly what the user can see.
+      next_action: row.next_action ?? row.nextAction ?? "",
+    })
+  );
+}
+
 export default function RevenuePage() {
-  const [data, setData] = useState<Pipeline | null>(null);
-  const [rows, setRows] = useState<Opportunity[]>([]);
-  const [target, setTarget] = useState(2_000_000);
+  const cachedRevenue = useMemo(
+    () => getCached<Pipeline>("/api/crm/revenue") || null,
+    []
+  );
+  const [data, setData] = useState<Pipeline | null>(cachedRevenue);
+  const [rows, setRows] = useState<Opportunity[]>(editableOpportunityRows(cachedRevenue));
+  const [target, setTarget] = useState(cachedRevenue?.goal?.target || 2_000_000);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [ownerFilter, setOwnerFilter] = useState<string | null>(null);
+  const [drilldown, setDrilldown] = useState("all");
 
   const load = useCallback(async () => {
     try {
       const next = await crmFetch<Pipeline>("/api/crm/revenue");
       setData(next);
-      setRows(
-        [...(next.opportunities || []), ...(next.excludedOpportunities || [])].map(
-          (row: Opportunity) => ({
-            ...row,
-            // Put the deterministic suggestion into editable state. Pressing
-            // Save deal therefore confirms exactly what the user can see.
-            next_action: row.next_action ?? row.nextAction ?? "",
-          })
-        )
-      );
+      setRows(editableOpportunityRows(next));
       setTarget(next.goal?.target || 2_000_000);
     } catch (e: any) {
       setError(e.message || "Could not load the revenue pipeline");
@@ -92,6 +128,29 @@ export default function RevenuePage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const syncView = () => {
+      const next = parseRevenueView(new URLSearchParams(window.location.search).get("view"));
+      setDrilldown(next);
+    };
+    syncView();
+    window.addEventListener("popstate", syncView);
+    return () => window.removeEventListener("popstate", syncView);
+  }, []);
+
+  const chooseDrilldown = useCallback((next: string, target: "pipeline" | "excluded" = "pipeline") => {
+    setDrilldown(next);
+    const url = new URL(window.location.href);
+    if (next === "all") url.searchParams.delete("view");
+    else url.searchParams.set("view", revenueViewQuery(next));
+    window.history.pushState({}, "", `${url.pathname}${url.search}`);
+    window.requestAnimationFrame(() => {
+      document.getElementById(target === "pipeline" ? "pipeline-records" : "excluded-records")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, []);
 
   const updateRow = (id: string, patch: Partial<Opportunity>) => setRows((all) => all.map((row) => row.id === id ? { ...row, ...patch } : row));
   const changeType = (row: Opportunity, opportunity_type: Opportunity["opportunity_type"]) => updateRow(row.id, {
@@ -232,6 +291,13 @@ export default function RevenuePage() {
     internal: excludedRows.filter((row) => row.opportunity_type === "internal").length,
     strategic: excludedRows.filter((row) => row.opportunity_type === "strategic").length,
   }), [excludedRows, visibleRevenueRows.length]);
+  const excludedDrilldown = ["strategic", "internal", "investment"].includes(drilldown)
+    ? drilldown as Opportunity["opportunity_type"]
+    : null;
+  const shownExcludedRows = excludedDrilldown
+    ? excludedRows.filter((row) => row.opportunity_type === excludedDrilldown)
+    : excludedRows;
+  const pipelineFocus = excludedDrilldown ? "all" : drilldown;
 
   return (
     <main className="relative z-10 mx-auto max-w-[1220px] px-3 py-5 sm:px-5 sm:py-9">
@@ -270,22 +336,42 @@ export default function RevenuePage() {
           <p className="mt-1 text-sm leading-6 text-muted">The original 16 records mixed customer deals with fundraising, internal work and future routes. Nothing was deleted, but only genuine customer revenue is included in the figures below.</p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
-              ["Customer revenue", visibleClassification.revenue],
-              ["Strategic ideas", visibleClassification.strategic],
-              ["Internal projects", visibleClassification.internal],
-              ["Investment", visibleClassification.investment],
-            ].map(([label, value]) => <div key={String(label)} className="rounded-lg border border-edge bg-ink/30 p-3"><strong className="block font-display text-xl text-bone">{value}</strong><span className="font-mono text-[0.52rem] uppercase text-muted">{label}</span></div>)}
+              ["Customer revenue", visibleClassification.revenue, "raw", "pipeline"],
+              ["Strategic ideas", visibleClassification.strategic, "strategic", "excluded"],
+              ["Internal projects", visibleClassification.internal, "internal", "excluded"],
+              ["Investment", visibleClassification.investment, "investment", "excluded"],
+            ].map(([label, value, view, target]) => (
+              <MetricDrilldown
+                key={String(label)}
+                label={String(label)}
+                value={value}
+                note="Open the records behind this number"
+                compact
+                active={drilldown === view}
+                onClick={() => chooseDrilldown(String(view), target as "pipeline" | "excluded")}
+              />
+            ))}
           </div>
         </section>
 
         <section className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
           {[
-            ["Raw pipeline", visibleKpis.rawPipeline, "Customer sales only"],
-            ["Weighted", visibleKpis.weightedPipeline, "Value × probability"],
-            ["Best case", visibleKpis.bestCase, "Best case + commit"],
-            ["Commit", visibleKpis.commit, "Deals you expect"],
-            ["Coverage", `${Math.round(visibleKpis.coverage * 10) / 10}×`, "Pipeline ÷ target gap"],
-          ].map(([label, value, note]) => <div key={String(label)} className="rounded-xl border border-edge bg-panel p-3"><p className="font-mono text-[0.53rem] uppercase tracking-wider text-muted">{label}</p><strong className="mt-1 block font-display text-xl text-bone">{typeof value === "number" ? gbp(value) : value}</strong><span className="text-[0.69rem] text-muted">{note}</span></div>)}
+            ["Raw pipeline", visibleKpis.rawPipeline, "Customer sales only", "raw"],
+            ["Weighted", visibleKpis.weightedPipeline, "Value × probability", "weighted"],
+            ["Best case", visibleKpis.bestCase, "Best case + commit", "best_case"],
+            ["Commit", visibleKpis.commit, "Deals you expect", "commit"],
+            ["Coverage", `${Math.round(visibleKpis.coverage * 10) / 10}×`, "Pipeline ÷ target gap", "coverage"],
+          ].map(([label, value, note, view]) => (
+            <MetricDrilldown
+              key={String(label)}
+              label={String(label)}
+              value={typeof value === "number" ? gbp(value) : value}
+              note={note}
+              compact
+              active={drilldown === view}
+              onClick={() => chooseDrilldown(String(view))}
+            />
+          ))}
         </section>
 
         <OutlookIntelligencePanel health={data.signalHealth as SignalHealth} />
@@ -332,23 +418,28 @@ export default function RevenuePage() {
           </section>
         ) : null}
 
-        <PipelineWorkspace
-          rows={revenueRows as any}
-          stageDefinitions={data.stageDefinitions}
-          team={data.team || []}
-          currentUser={data.currentUser || ""}
-          canManageAssignments={data.canManageAssignments === true}
-          ownerFilter={activeOwnerFilter}
-          onOwnerFilterChange={setOwnerFilter}
-          busy={busy}
-          onChange={updateRow as any}
-          onSave={saveOpportunity as any}
-          onDismiss={dismissOpportunity as any}
-        />
+        <div id="pipeline-records" className="scroll-mt-20">
+          <PipelineWorkspace
+            rows={revenueRows as any}
+            stageDefinitions={data.stageDefinitions}
+            team={data.team || []}
+            currentUser={data.currentUser || ""}
+            canManageAssignments={data.canManageAssignments === true}
+            ownerFilter={activeOwnerFilter}
+            onOwnerFilterChange={setOwnerFilter}
+            busy={busy}
+            onChange={updateRow as any}
+            onSave={saveOpportunity as any}
+            onDismiss={dismissOpportunity as any}
+            focus={pipelineFocus}
+            onFocusChange={(next) => chooseDrilldown(next)}
+          />
+        </div>
 
-        {excludedRows.length ? <section className="mt-4 rounded-xl border border-edge bg-panel p-4">
-          <div className="mb-3"><h2 className="font-display text-lg text-bone">Kept outside the revenue forecast</h2><p className="mt-1 text-sm leading-6 text-muted">These records are still available as useful CRM context. Change the classification if any should become a real customer deal.</p></div>
-          <div className="space-y-2">{excludedRows.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-ink/30 p-3">
+        {excludedRows.length ? <section id="excluded-records" className="mt-4 scroll-mt-20 rounded-xl border border-edge bg-panel p-4">
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h2 className="font-display text-lg text-bone">Kept outside the revenue forecast</h2><p className="mt-1 text-sm leading-6 text-muted">These records are still available as useful CRM context. Change the classification if any should become a real customer deal.</p></div>{excludedDrilldown ? <button type="button" onClick={() => chooseDrilldown("all", "excluded")} className="min-h-9 rounded-lg border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted hover:border-amber/50 hover:text-amber">Show every classification</button> : null}</div>
+          {excludedDrilldown ? <p className="mb-3 rounded-lg border border-amber/35 bg-amber/[0.06] px-3 py-2 text-sm text-bone">Showing {shownExcludedRows.length} {typeLabels[excludedDrilldown].toLowerCase()} records behind the selected number.</p> : null}
+          <div className="space-y-2">{shownExcludedRows.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-ink/30 p-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><strong className="text-bone">{row.company}</strong><p className="mt-0.5 text-sm text-muted">{row.title}</p>{row.value ? <p className="mt-1 text-xs text-amber">Recorded value {gbp(row.value)}, excluded from revenue</p> : null}</div><div className="flex w-full gap-2 sm:w-auto"><select aria-label={`Classification for ${row.title}`} className={`${input} sm:w-44`} value={row.opportunity_type} onChange={(e) => changeType(row, e.target.value as Opportunity["opportunity_type"])}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><button onClick={() => saveOpportunity(row)} disabled={!!busy} className={`${button} shrink-0`}>{busy === `opp:${row.id}` ? "Saving…" : "Save"}</button></div></div>
           </article>)}</div>
         </section> : null}

@@ -8,6 +8,7 @@ import SalesPipelineLane from "@/components/crm/SalesPipelineLane";
 import { crmFetch } from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import MatrixRain from "@/components/MatrixRain";
+import MetricDrilldown from "@/components/crm/MetricDrilldown";
 import type {
   WorkCleanupSuggestion,
   WorkInboxItem,
@@ -30,6 +31,7 @@ const OutreachTodayLane = dynamic(
 
 type Filter =
   | "now"
+  | "urgent"
   | "outreach"
   | "calls"
   | "revenue"
@@ -128,6 +130,8 @@ const dateInputInLondon = (daysFromNow = 1) => {
 const belongsTo = (item: WorkInboxItem, filter: Filter) => {
   if (filter === "now")
     return !item.done && !item.waiting && item.priority >= 78;
+  if (filter === "urgent")
+    return !item.done && item.priorityLabel === "urgent";
   if (filter === "outreach")
     return (
       !item.done &&
@@ -979,6 +983,7 @@ export default function WorkInboxPage() {
   const countFor = (key: Filter) => {
     if (!data) return 0;
     if (key === "now") return data.counts.now;
+    if (key === "urgent") return data.counts.urgent;
     if (key === "outreach")
       return outreachQueueCount ?? data.items.filter((item) => belongsTo(item, "outreach")).length;
     if (key === "calls")
@@ -1067,18 +1072,9 @@ export default function WorkInboxPage() {
 
         {data ? (
           <section className="mb-4 grid grid-cols-3 gap-2">
-            <div className="rounded-xl border border-amber/35 bg-amber/[0.06] p-3">
-              <strong className="block font-display text-2xl text-amber">{data.counts.now}</strong>
-              <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">To handle</span>
-            </div>
-            <div className="rounded-xl border border-rust/35 bg-rust/[0.06] p-3">
-              <strong className="block font-display text-2xl text-rust">{data.counts.urgent}</strong>
-              <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">Urgent</span>
-            </div>
-            <div className="rounded-xl border border-moss/35 bg-moss/[0.06] p-3">
-              <strong className="block font-display text-2xl text-moss">{data.pipeline.totalDeals}</strong>
-              <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">Pipeline deals</span>
-            </div>
+            <MetricDrilldown label="To handle" value={data.counts.now} valueClassName="text-amber" active={filter === "now"} onClick={() => chooseFilter("now")} compact className="border-amber/35 bg-amber/[0.06]" />
+            <MetricDrilldown label="Urgent" value={data.counts.urgent} valueClassName="text-rust" active={filter === "urgent"} onClick={() => chooseFilter("urgent")} compact className="border-rust/35 bg-rust/[0.06]" />
+            <MetricDrilldown label="Pipeline deals" value={data.pipeline.totalDeals} valueClassName="text-moss" href="/crm/revenue?view=raw" compact className="border-moss/35 bg-moss/[0.06]" />
           </section>
         ) : null}
 
