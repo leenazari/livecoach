@@ -17,6 +17,10 @@
       "schedule": "10 9,10 * * 0,6"
     },
     {
+      "path": "/api/cron/email-next-moves",
+      "schedule": "40 5 * * *"
+    },
+    {
       "path": "/api/cron/opportunity-signals",
       "schedule": "25 8-21 * * 1-5"
     },

@@ -267,6 +267,7 @@ export async function GET() {
           email: null,
           mailRead: false,
           mailSend: false,
+          mailDraft: false,
           calendar: false,
         })),
       ]);

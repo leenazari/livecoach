@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -11,12 +12,19 @@ export const dynamic = "force-dynamic";
 // Powers the dashboard "drafts" drill-down.
 export async function GET(req: NextRequest) {
   try {
+    const account = requireRequestScope();
     const status = req.nextUrl.searchParams.get("status") || "draft";
     const [{ data: companies }, { data: drafts }] = await Promise.all([
-      supabaseAdmin.from("companies").select("id, name"),
+      supabaseAdmin
+        .from("companies")
+        .select("id, name")
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId),
       supabaseAdmin
         .from("follow_ups")
         .select("*")
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
         .eq("status", status)
         .order("created_at", { ascending: false })
         .limit(200),

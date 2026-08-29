@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   connectedEmail as googleConnectedEmail,
+  createGmailDraft,
   digestMessages,
   emailFromHeader,
   freshMessageText as freshGmailMessageText,
@@ -16,6 +17,7 @@ import {
 } from "@/lib/gmail";
 import { googleConnected } from "@/lib/google";
 import {
+  createMicrosoftMailDraft,
   freshMicrosoftMessageText,
   microsoftConnected,
   newMicrosoftInboxMessagesSince,
@@ -26,6 +28,13 @@ import {
 export type MailProvider = "google" | "microsoft";
 export type MailMessage = GmailMsg;
 export type MailInboxDelta = GmailInboxDelta;
+export type ConnectedMailDraftResult = {
+  ok: boolean;
+  id?: string;
+  threadId?: string;
+  url?: string;
+  error?: string;
+};
 export { digestMessages, emailFromHeader, nameFromHeader };
 
 export async function connectedMailProvider(ownerId?: string): Promise<{
@@ -108,6 +117,56 @@ export async function sendConnectedMail(
   if (connection.provider === "google") return sendGmail(opts, ownerId);
   if (connection.provider === "microsoft") return sendMicrosoftMail(opts, ownerId);
   return { ok: false, error: "Connect Google or Microsoft in Settings first" };
+}
+
+// Create a real provider draft, never send it. The CRM calls this only after
+// the signed-in user approves the editable LiveCoach draft.
+export async function createConnectedMailDraft(
+  opts: {
+    to: string;
+    subject: string;
+    text: string;
+    threadId?: string;
+    sourceMessageId?: string;
+  },
+  ownerId?: string
+): Promise<ConnectedMailDraftResult> {
+  const connection = await connectedMailProvider(ownerId);
+  if (connection.provider === "google") {
+    const html = `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#171717">${String(
+      opts.text || ""
+    )
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\n/g, "<br>")}</div>`;
+    return createGmailDraft(
+      {
+        to: opts.to,
+        subject: opts.subject,
+        text: opts.text,
+        html,
+        threadId: opts.threadId,
+        sourceMessageId: opts.sourceMessageId,
+      },
+      ownerId
+    );
+  }
+  if (connection.provider === "microsoft") {
+    return createMicrosoftMailDraft(
+      {
+        to: opts.to,
+        subject: opts.subject,
+        text: opts.text,
+        sourceMessageId: opts.sourceMessageId,
+      },
+      ownerId
+    );
+  }
+  return {
+    ok: false,
+    error: "Connect Google or Microsoft in Settings before creating a mail draft",
+  };
 }
 
 export async function sendConnectedOutreachMail(opts: {

@@ -25,6 +25,7 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 // digest silently doing nothing.
 export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 export const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+export const GMAIL_COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose";
 export const GOOGLE_CALENDAR_EVENTS_SCOPE =
   "https://www.googleapis.com/auth/calendar.events";
 export const GOOGLE_CALENDAR_LIST_READ_SCOPE =
@@ -50,6 +51,7 @@ const SCOPE = [
   "https://www.googleapis.com/auth/userinfo.email",
   GMAIL_READ_SCOPE,
   GMAIL_SEND_SCOPE,
+  GMAIL_COMPOSE_SCOPE,
 ].join(" ");
 
 export function googleConfigured(): boolean {

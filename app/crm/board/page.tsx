@@ -56,6 +56,7 @@ function BoardInner() {
   const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>("tasks");
   const [drafts, setDrafts] = useState<any[]>([]);
+  const [nextMoveDrafts, setNextMoveDrafts] = useState<any[]>([]);
   const [emailTasks, setEmailTasks] = useState<any[]>([]);
   const [opps, setOpps] = useState<any[]>([]);
   const [companies, setCompanies] = useState<ClientPortfolioRow[]>([]);
@@ -78,6 +79,7 @@ function BoardInner() {
   const [saveNotice, setSaveNotice] = useState("");
   const [openOpportunity, setOpenOpportunity] = useState("");
   const [savingClientId, setSavingClientId] = useState("");
+  const [nextMoveBusy, setNextMoveBusy] = useState("");
 
   // Follow the ?tab= param. Using useSearchParams means this re-runs when the
   // query changes (e.g. clicking Drafts in the side menu while already on the
@@ -104,11 +106,13 @@ function BoardInner() {
       } else if (which === "drafts") {
         // Drafts = emails already written (follow_ups, ready to send) PLUS the
         // email next steps that still need drafting (ready to be drafted).
-        const [d, t] = await Promise.all([
+        const [d, t, n] = await Promise.all([
           crmFetch<any>("/api/crm/drafts"),
           crmFetch<any>("/api/crm/tasks"),
+          crmFetch<any>("/api/crm/email-assistant/drafts"),
         ]);
         setDrafts(d.drafts || []);
+        setNextMoveDrafts(n.drafts || []);
         setEmailTasks(
           (t.tasks || []).filter(
             (x: any) => x.link_kind === "email" && x.status === "open"
@@ -205,6 +209,82 @@ function BoardInner() {
     } catch {
       setEmailTasks(previous);
       setSaveError("That task was not removed. Please try again.");
+    }
+  };
+  const editNextMove = (id: string, field: "draft_subject" | "draft_body", value: string) => {
+    setNextMoveDrafts((items) =>
+      items.map((item) => (item.id === id ? { ...item, [field]: value } : item))
+    );
+  };
+  const saveNextMove = async (draft: any) => {
+    const result = await crmFetch<{ draft: any }>(
+      `/api/crm/email-assistant/drafts/${draft.id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          subject: draft.draft_subject,
+          body: draft.draft_body,
+        }),
+      }
+    );
+    setNextMoveDrafts((items) =>
+      items.map((item) => (item.id === draft.id ? { ...item, ...result.draft } : item))
+    );
+    return result.draft;
+  };
+  const approveNextMove = async (draft: any) => {
+    setNextMoveBusy(draft.id);
+    setSaveError("");
+    setSaveNotice("");
+    try {
+      const saved = await saveNextMove(draft);
+      const result = await crmFetch<{ draft: any }>(
+        `/api/crm/email-assistant/drafts/${draft.id}/approve`,
+        { method: "POST" }
+      );
+      setNextMoveDrafts((items) =>
+        items.map((item) =>
+          item.id === draft.id ? { ...item, ...saved, ...result.draft } : item
+        )
+      );
+      setSaveNotice(
+        `Approved draft created in ${result.draft.mail_provider === "google" ? "Gmail" : "Outlook"}. It has not been sent.`
+      );
+    } catch (error: any) {
+      setSaveError(error?.message || "That provider draft was not created.");
+      await load("drafts");
+    } finally {
+      setNextMoveBusy("");
+    }
+  };
+  const saveOnlyNextMove = async (draft: any) => {
+    setNextMoveBusy(draft.id);
+    setSaveError("");
+    setSaveNotice("");
+    try {
+      await saveNextMove(draft);
+      setSaveNotice("Next-move draft saved in LiveCoach. It has not been sent.");
+    } catch (error: any) {
+      setSaveError(error?.message || "That draft did not save.");
+    } finally {
+      setNextMoveBusy("");
+    }
+  };
+  const dismissNextMove = async (draft: any) => {
+    const previous = nextMoveDrafts;
+    setNextMoveBusy(draft.id);
+    setSaveError("");
+    setNextMoveDrafts((items) => items.filter((item) => item.id !== draft.id));
+    try {
+      await crmFetch(`/api/crm/email-assistant/drafts/${draft.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "dismiss" }),
+      });
+    } catch (error: any) {
+      setNextMoveDrafts(previous);
+      setSaveError(error?.message || "That draft was not dismissed.");
+    } finally {
+      setNextMoveBusy("");
     }
   };
   const setOppStatus = async (id: string, status: string) => {
@@ -373,6 +453,170 @@ function BoardInner() {
         </div>
       ) : tab === "drafts" ? (
         <div className="flex flex-col gap-3">
+          {nextMoveDrafts.length > 0 && (
+            <section className="rounded-xl border border-amber/45 bg-amber/[0.05] p-4">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+                    ◆ Next-move email drafts{" "}
+                    <span className="text-muted">({nextMoveDrafts.length})</span>
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    Edit here, then approve a copy into Gmail or Outlook. LiveCoach never
+                    sends these automatically.
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {nextMoveDrafts.map((draft) => {
+                  const editable = draft.status === "draft" || draft.status === "blocked";
+                  const busy = nextMoveBusy === draft.id;
+                  const providerName =
+                    draft.mail_provider === "google" ? "Gmail" : "Outlook";
+                  return (
+                    <article
+                      key={draft.id}
+                      className="rounded-xl border border-edge bg-ink/45 p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span
+                              className={`rounded-full border px-2 py-0.5 font-mono text-[0.5rem] uppercase tracking-wider ${
+                                draft.urgency === "urgent"
+                                  ? "border-rust/55 bg-rust/10 text-rust"
+                                  : draft.urgency === "high"
+                                    ? "border-amber/55 bg-amber/10 text-amber"
+                                    : "border-edge text-muted"
+                              }`}
+                            >
+                              {draft.urgency}
+                            </span>
+                            <span className="rounded-full border border-sky/40 bg-sky/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase tracking-wider text-sky">
+                              {draft.generation_mode}
+                            </span>
+                            <span className="font-mono text-[0.52rem] uppercase text-muted">
+                              {draft.confidence}% confidence
+                            </span>
+                          </div>
+                          <p className="mt-2 text-xs leading-5 text-bone/85">
+                            <strong className="text-bone">Why now</strong>{" "}
+                            {draft.evidence_summary}
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-muted">
+                            <strong className="text-bone/80">Next step</strong>{" "}
+                            {draft.next_step}
+                          </p>
+                        </div>
+                        <div className="text-right font-mono text-[0.54rem] uppercase leading-5 text-muted">
+                          <p>to {draft.recipient_name || draft.recipient_email}</p>
+                          {draft.company_id && draft.company ? (
+                            <Link
+                              href={`/crm/${draft.company_id}`}
+                              className="text-sky hover:text-amber hover:underline"
+                            >
+                              {draft.company} ↗
+                            </Link>
+                          ) : (
+                            <p>not linked to a private client</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <label className="mt-3 block">
+                        <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                          Subject
+                        </span>
+                        <input
+                          value={draft.draft_subject || ""}
+                          onChange={(event) =>
+                            editNextMove(draft.id, "draft_subject", event.target.value)
+                          }
+                          readOnly={!editable}
+                          className="mt-1 min-h-10 w-full rounded-lg border border-edge bg-panel/55 px-3 text-sm text-bone outline-none focus:border-amber/60 read-only:opacity-70"
+                        />
+                      </label>
+                      <label className="mt-2 block">
+                        <span className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
+                          Email
+                        </span>
+                        <textarea
+                          value={draft.draft_body || ""}
+                          onChange={(event) =>
+                            editNextMove(draft.id, "draft_body", event.target.value)
+                          }
+                          readOnly={!editable}
+                          rows={7}
+                          className="mt-1 w-full resize-y rounded-lg border border-edge bg-panel/55 px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60 read-only:opacity-70"
+                        />
+                      </label>
+
+                      {draft.last_error ? (
+                        <p className="mt-2 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-xs leading-5 text-rust">
+                          {draft.last_error}
+                        </p>
+                      ) : null}
+                      {draft.status === "approving" ? (
+                        <p className="mt-3 text-xs leading-5 text-amber">
+                          Approval is already in progress. Check {providerName} drafts before
+                          trying again.
+                        </p>
+                      ) : null}
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {editable ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void saveOnlyNextMove(draft)}
+                              disabled={busy}
+                              className="rounded-full border border-edge px-3 py-1.5 font-mono text-[0.54rem] uppercase tracking-wider text-muted hover:text-bone disabled:opacity-40"
+                            >
+                              {busy ? "Saving…" : "Save edits"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void approveNextMove(draft)}
+                              disabled={busy}
+                              className="rounded-full border border-sage/55 bg-sage/10 px-3 py-1.5 font-mono text-[0.54rem] uppercase tracking-wider text-sage hover:bg-sage/20 disabled:opacity-40"
+                            >
+                              {busy ? "Creating…" : `Approve to ${providerName} drafts`}
+                            </button>
+                          </>
+                        ) : null}
+                        {draft.status === "handed_off" && draft.provider_draft_url ? (
+                          <a
+                            href={draft.provider_draft_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-full border border-sky/55 bg-sky/10 px-3 py-1.5 font-mono text-[0.54rem] uppercase tracking-wider text-sky hover:bg-sky/20"
+                          >
+                            Open {providerName} draft ↗
+                          </a>
+                        ) : null}
+                        {draft.status !== "approving" ? (
+                          <button
+                            type="button"
+                            onClick={() => void dismissNextMove(draft)}
+                            disabled={busy}
+                            className="rounded-full border border-edge px-3 py-1.5 font-mono text-[0.54rem] uppercase tracking-wider text-muted hover:text-rust disabled:opacity-40"
+                          >
+                            {draft.status === "handed_off" ? "archive" : "dismiss"}
+                          </button>
+                        ) : null}
+                      </div>
+                      {draft.status === "handed_off" ? (
+                        <p className="mt-2 text-xs leading-5 text-sage">
+                          Approved into {providerName}. It has not been sent by LiveCoach.
+                        </p>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           {/* EMAILS TO DRAFT - email next steps you haven't written yet. */}
           {emailTasks.length > 0 && (
             <div className="rounded-xl border border-sky/40 bg-sky/[0.06] p-4">
@@ -421,7 +665,7 @@ function BoardInner() {
               Ready to send
             </p>
           )}
-          {drafts.length === 0 && (
+          {drafts.length === 0 && nextMoveDrafts.length === 0 && (
             <p className="font-mono text-[0.66rem] text-muted">
               No written drafts yet. After a call, a ready-to-send draft lands
               here.

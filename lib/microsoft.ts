@@ -20,6 +20,7 @@ export const MICROSOFT_SCOPES = [
   "offline_access",
   "User.Read",
   "Mail.Read",
+  "Mail.ReadWrite",
   "Mail.Send",
   "Calendars.ReadWrite",
 ];
@@ -314,6 +315,7 @@ export async function microsoftAccessStatus(ownerId?: string): Promise<{
   email: string | null;
   mailRead: boolean;
   mailSend: boolean;
+  mailDraft: boolean;
   calendar: boolean;
 }> {
   const connection = await microsoftConnected(ownerId);
@@ -323,6 +325,7 @@ export async function microsoftAccessStatus(ownerId?: string): Promise<{
       email: null,
       mailRead: false,
       mailSend: false,
+      mailDraft: false,
       calendar: false,
     };
   }
@@ -333,6 +336,7 @@ export async function microsoftAccessStatus(ownerId?: string): Promise<{
     email: profile?.email || connection.email,
     mailRead: scopes.has("mail.read") || scopes.has("mail.readwrite"),
     mailSend: scopes.has("mail.send"),
+    mailDraft: scopes.has("mail.readwrite"),
     calendar:
       scopes.has("calendars.read") || scopes.has("calendars.readwrite"),
   };
@@ -712,4 +716,74 @@ export async function sendMicrosoftMail(
     };
   }
   return { ok: true };
+}
+
+export async function createMicrosoftMailDraft(
+  opts: {
+    to: string;
+    subject: string;
+    text: string;
+    sourceMessageId?: string;
+  },
+  ownerId?: string
+): Promise<{ ok: boolean; id?: string; threadId?: string; url?: string; error?: string }> {
+  const to = cleanEmailAddress(opts.to);
+  if (!to) return { ok: false, error: "A valid recipient is required" };
+  const text = String(opts.text || "").trim();
+  if (!text) return { ok: false, error: "The email draft is empty" };
+  const sourceMessageId = String(opts.sourceMessageId || "").trim();
+  const response = sourceMessageId
+    ? await graphFetch(
+        `/me/messages/${encodeURIComponent(sourceMessageId)}/createReply`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ comment: text }),
+        },
+        ownerId
+      )
+    : await graphFetch(
+        "/me/messages",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subject: String(opts.subject || "").slice(0, 240),
+            body: { contentType: "Text", content: text },
+            toRecipients: [{ emailAddress: { address: to } }],
+          }),
+        },
+        ownerId
+      );
+  if (!response) {
+    return { ok: false, error: "Microsoft Mail could not be reached" };
+  }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    if (response.status === 403) {
+      return {
+        ok: false,
+        error:
+          "Microsoft draft access is missing. Reconnect Microsoft in Settings to approve Mail.ReadWrite.",
+      };
+    }
+    return {
+      ok: false,
+      error: `Microsoft Mail could not create the draft (${response.status})${
+        detail ? ` ${detail.slice(0, 180)}` : ""
+      }`,
+    };
+  }
+  const data = await response.json().catch(() => ({}));
+  return {
+    ok: true,
+    id: data?.id,
+    threadId: data?.conversationId,
+    url: data?.webLink || "https://outlook.office.com/mail/drafts",
+  };
+}
+
+function cleanEmailAddress(value: unknown): string {
+  const email = String(value || "").trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
 }

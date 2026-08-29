@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  GMAIL_COMPOSE_SCOPE,
   GMAIL_READ_SCOPE,
   GMAIL_SEND_SCOPE,
   googleCanListCalendars,
@@ -28,6 +29,7 @@ export async function GET() {
     const gmailRead =
       scopes.has(GMAIL_READ_SCOPE) || gmailDiagnostic.status === "ok";
     const gmailSend = scopes.has(GMAIL_SEND_SCOPE);
+    const gmailDraft = scopes.has(GMAIL_COMPOSE_SCOPE);
     const gmail = connected ? (gmailRead ? "ok" : "missing") : "disconnected";
     const calendarList = connected
       ? googleCanListCalendars(scopes)
@@ -41,6 +43,7 @@ export async function GET() {
         configured: googleConfigured(),
         gmail,
         gmailSend,
+        gmailDraft,
         gmailIssue: gmailRead ? "none" : gmailDiagnostic.issue,
         calendarList,
         calendarReconnectRequired: connected && calendarList !== "ok",
@@ -55,6 +58,7 @@ export async function GET() {
         configured: false,
         gmail: "disconnected",
         gmailSend: false,
+        gmailDraft: false,
         calendarList: "disconnected",
         calendarReconnectRequired: false,
       },

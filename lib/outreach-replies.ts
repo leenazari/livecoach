@@ -33,6 +33,7 @@ type Category =
 type ReplyProcessResult = {
   processed: boolean;
   category: Category | null;
+  summary: string | null;
   companyId: string | null;
   outOfOffice: boolean;
   returnDate: string | null;
@@ -111,6 +112,7 @@ export async function processOutreachReplyMessage(input: {
   const empty: ReplyProcessResult = {
     processed: false,
     category: null,
+    summary: null,
     companyId: input.target?.companyId || null,
     outOfOffice: false,
     returnDate: null,
@@ -301,6 +303,7 @@ export async function processOutreachReplyMessage(input: {
   return {
     processed: true,
     category: classified.category,
+    summary: classified.summary,
     companyId,
     outOfOffice: outOfOffice.isOutOfOffice,
     returnDate: outOfOffice.returnDate,

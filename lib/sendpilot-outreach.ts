@@ -29,6 +29,10 @@ import {
   isInsideCrossCampaignCooldown,
 } from "@/lib/outreach-team-safety";
 import { outreachSequenceStepAt } from "@/lib/outreach-sequence";
+import {
+  activeSendPilotConflictForProspect,
+  pauseLiveCoachEmailOutreachForSendPilot,
+} from "@/lib/sendpilot-reconciliation";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 
 type OwnerScope = { userId: string; workspaceId: string };
@@ -58,6 +62,7 @@ export type SendPilotLeadLink = {
   sendpilot_campaign_name: string | null;
   sendpilot_lead_id: string | null;
   linkedin_url: string;
+  email: string | null;
   sync_status: string;
   external_status: string | null;
   custom_lead_status: string | null;
@@ -73,7 +78,7 @@ export type SendPilotLeadLink = {
 };
 
 const LEAD_LINK_SELECT =
-  "id,integration_id,campaign_link_id,workspace_id,owner_id,outreach_prospect_id,outreach_enrolment_id,livecoach_campaign_id,sendpilot_campaign_id,sendpilot_campaign_name,sendpilot_lead_id,linkedin_url,sync_status,external_status,custom_lead_status,last_event_type,enrolled_at,last_event_at,last_message_at,last_reply_at,last_connection_at,last_error,created_at,updated_at";
+  "id,integration_id,campaign_link_id,workspace_id,owner_id,outreach_prospect_id,outreach_enrolment_id,livecoach_campaign_id,sendpilot_campaign_id,sendpilot_campaign_name,sendpilot_lead_id,linkedin_url,email,sync_status,external_status,custom_lead_status,last_event_type,enrolled_at,last_event_at,last_message_at,last_reply_at,last_connection_at,last_error,created_at,updated_at";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -682,6 +687,22 @@ export async function enrolProspectInSendPilot(
     return { alreadySubmitted: true, link: existingLink as SendPilotLeadLink };
   }
 
+  const workspaceConflict = await activeSendPilotConflictForProspect({
+    workspaceId: scope.workspaceId,
+    prospectId: prospect.id,
+    email,
+    linkedinUrl: profileUrl,
+    excludeLinkId: existingLink?.id || null,
+  });
+  if (workspaceConflict) {
+    throw Object.assign(
+      new Error(
+        "This person is already tracked by a SendPilot account in this workspace"
+      ),
+      { status: 409 }
+    );
+  }
+
   const now = new Date().toISOString();
   const claimValues = {
     integration_id: integration.id,
@@ -696,6 +717,7 @@ export async function enrolProspectInSendPilot(
     sendpilot_campaign_name: remoteCampaign.name,
     sendpilot_lead_id: null,
     linkedin_url: profileUrl,
+    email: email || null,
     enrollment_request_id: requestId,
     sync_status: "submitting",
     external_status: null,
@@ -716,7 +738,9 @@ export async function enrolProspectInSendPilot(
     .maybeSingle();
   if (claimError?.code === "23505") {
     throw Object.assign(
-      new Error("This LinkedIn profile is already active in your SendPilot outreach"),
+      new Error(
+        "This LinkedIn profile or email is already tracked by SendPilot in this workspace"
+      ),
       { status: 409 }
     );
   }
@@ -799,6 +823,12 @@ export async function enrolProspectInSendPilot(
       .eq("prospect_id", prospect.id)
       .in("status", ["queued", "contacted"]);
     if (enrolmentUpdateError) throw enrolmentUpdateError;
+    await pauseLiveCoachEmailOutreachForSendPilot({
+      workspaceId: scope.workspaceId,
+      prospectId: prospect.id,
+      keepEnrolmentId: enrolment.id,
+      reason: `Paused because SendPilot owns this contact in ${remoteCampaign.name}`,
+    });
     await writeAudit(scope, {
       action: "sendpilot_lead_enrolled",
       targetTable: "sendpilot_lead_links",
