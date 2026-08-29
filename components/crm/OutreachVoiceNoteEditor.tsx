@@ -1,5 +1,7 @@
 "use client";
 
+import { useRef, useState } from "react";
+
 import {
   estimateOutreachVoiceCostGbp,
   OUTREACH_VOICE_HARD_MAX_CHARACTERS,
@@ -37,21 +39,19 @@ export default function OutreachVoiceNoteEditor({
   message,
   script,
   disabled,
-  approving,
   generating,
   onScriptChange,
-  onApprove,
   onGenerate,
 }: {
   message: VoiceMessage;
   script: string;
   disabled?: boolean;
-  approving?: boolean;
   generating?: boolean;
   onScriptChange: (value: string) => void;
-  onApprove: () => void;
   onGenerate: () => void;
 }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
   const words = script.trim().split(/\s+/).filter(Boolean).length;
   const scriptChanged = script.trim() !== String(message.voice_script || "").trim();
   const ready = message.voice_status === "ready" && !scriptChanged;
@@ -82,6 +82,27 @@ export default function OutreachVoiceNoteEditor({
     estimatedCostPence > OUTREACH_VOICE_HARD_MAX_COST_GBP * 100
   );
   const locked = disabled || ["sending", "sent"].includes(message.status || "");
+  const togglePlayback = async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (!audio.paused) {
+      audio.pause();
+      return;
+    }
+    try {
+      await audio.play();
+    } catch {
+      setPlaying(false);
+    }
+  };
+  const previewPronunciation = () => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const preview = new SpeechSynthesisUtterance("Interviewer");
+    preview.lang = "en-GB";
+    preview.rate = 0.9;
+    window.speechSynthesis.speak(preview);
+  };
 
   return (
     <section className="rounded-xl border border-amber/40 bg-amber/[0.05] p-3">
@@ -91,7 +112,7 @@ export default function OutreachVoiceNoteEditor({
             Personal voice note
           </p>
           <p className="mt-1 text-xs leading-5 text-bone/75">
-            Review and edit the free script first. Approving the words costs nothing. ElevenLabs is called only after you separately create the voice.
+            Your personalised script appears automatically. Edit it if needed, then generate one audio preview. That click confirms these exact words and creates the voice note.
           </p>
         </div>
         <span
@@ -104,14 +125,14 @@ export default function OutreachVoiceNoteEditor({
           }`}
         >
           {ready
-            ? `Ready · ${message.voice_estimated_seconds || seconds}s${generatedCostPence > 0 ? ` · est ${generatedCostPence.toFixed(1)}p` : ""}`
+              ? `Ready · ${message.voice_estimated_seconds || seconds}s${generatedCostPence > 0 ? ` · est ${generatedCostPence.toFixed(1)}p` : ""}`
             : scriptChanged && message.voice_status === "ready"
-              ? "Edited · approve again"
-              : scriptApproved
-                ? "Script approved · no cost yet"
+              ? "Edited · regenerate"
               : message.voice_status === "failed"
                 ? "Needs retry"
-                : "Review script"}
+                : generating || message.voice_status === "generating"
+                  ? "Creating voice"
+                  : "Script ready"}
         </span>
       </div>
       <label className="mt-3 block">
@@ -124,6 +145,18 @@ export default function OutreachVoiceNoteEditor({
           className="w-full rounded-lg border border-edge bg-ink/55 px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60 disabled:opacity-60"
         />
       </label>
+      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-sky/25 bg-sky/[0.04] px-3 py-2">
+        <p className="text-xs leading-5 text-bone/75">
+          The script keeps the brand spelling <strong className="text-bone">Interviewa</strong>. The generated audio says <strong className="text-bone">Interviewer</strong>.
+        </p>
+        <button
+          type="button"
+          onClick={previewPronunciation}
+          className="inline-flex min-h-8 items-center justify-center rounded-full border border-sky/40 px-3 font-mono text-[0.5rem] uppercase tracking-wider text-sky hover:bg-sky/10"
+        >
+          ▶ Hear pronunciation
+        </button>
+      </div>
       {whyNow ? (
         <div className={`mt-2 rounded-lg border px-3 py-2 ${whyNowIncluded ? "border-moss/35 bg-moss/[0.06]" : "border-amber/45 bg-amber/[0.07]"}`}>
           <p className={`font-mono text-[0.52rem] uppercase tracking-wider ${whyNowIncluded ? "text-moss" : "text-amber"}`}>
@@ -143,32 +176,11 @@ export default function OutreachVoiceNoteEditor({
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
             <button
               type="button"
-              onClick={onApprove}
-              disabled={
-                approving ||
-                generating ||
-                ready ||
-                scriptApproved ||
-                Boolean(whyNow && !whyNowIncluded) ||
-                beyondSafetyLimit ||
-                !script.trim()
-              }
-              className="inline-flex min-h-10 items-center justify-center rounded-lg border border-edge bg-ink/35 px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-bone disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {approving
-                ? "Approving script…"
-                : scriptApproved || ready
-                  ? "✓ Script approved"
-                  : "1 · Approve script"}
-            </button>
-            <button
-              type="button"
               onClick={onGenerate}
               disabled={
-                approving ||
                 generating ||
                 ready ||
-                !scriptApproved ||
+                Boolean(whyNow && !whyNowIncluded) ||
                 beyondSafetyLimit ||
                 !script.trim()
               }
@@ -178,7 +190,7 @@ export default function OutreachVoiceNoteEditor({
                 ? "Creating voice…"
                 : ready
                   ? "✓ Audio ready"
-                  : `2 · Generate voice · est ${estimatedCostPence.toFixed(1)}p`}
+                  : `Generate voice · est ${estimatedCostPence.toFixed(1)}p`}
             </button>
           </div>
         ) : null}
@@ -195,9 +207,11 @@ export default function OutreachVoiceNoteEditor({
       <p className="mt-2 text-xs leading-5 text-moss" role="status" aria-live="polite">
         {ready
           ? "This one approved voice note has been generated and can now be previewed."
-          : scriptApproved
-            ? "The exact script is approved. Generation still has not started and no voice cost has been incurred."
-            : "Nothing is generated or charged until you approve this exact script and then press Generate voice."}
+          : generating || message.voice_status === "generating"
+            ? "The voice note is being created. You can continue using the rest of the CRM."
+            : scriptApproved
+              ? "The exact script is saved. Press Generate voice to create or retry the preview."
+              : "Nothing is generated or charged until you press Generate voice. That one click approves the visible script and creates the preview."}
       </p>
       <p className="mt-1 text-xs leading-5 text-muted">
         Urgency must come from a verified current trigger or the prospect&apos;s next natural business moment. Never from fake scarcity or an invented deadline.
@@ -208,18 +222,35 @@ export default function OutreachVoiceNoteEditor({
         </p>
       ) : null}
       {ready && message.voice_public_token ? (
-        <div className="mt-3 rounded-lg border border-moss/35 bg-moss/[0.05] p-3">
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-moss/35 bg-moss/[0.05] p-3">
+          <button
+            type="button"
+            onClick={() => void togglePlayback()}
+            aria-label={playing ? "Pause personal voice note" : "Play personal voice note"}
+            className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-moss/55 bg-moss/10 text-lg text-moss transition hover:bg-moss/20"
+          >
+            {playing ? "Ⅱ" : "▶"}
+          </button>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-bone">Voice note ready</p>
+            <p className="mt-0.5 text-xs text-muted">
+              About {message.voice_estimated_seconds || seconds} seconds. Play it before queueing the email.
+            </p>
+          </div>
           <audio
-            className="w-full"
-            controls
+            ref={audioRef}
+            className="hidden"
             preload="metadata"
             src={`/api/listen/${encodeURIComponent(message.voice_public_token)}/audio`}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onEnded={() => setPlaying(false)}
           />
           <a
             href={`/listen/${encodeURIComponent(message.voice_public_token)}`}
             target="_blank"
             rel="noreferrer"
-            className="mt-2 inline-block text-xs text-moss hover:underline"
+            className="w-full text-xs text-moss hover:underline sm:w-auto"
           >
             Open the recipient listening page ↗
           </a>

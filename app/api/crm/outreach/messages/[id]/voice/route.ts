@@ -17,6 +17,7 @@ import {
 } from "@/lib/outreach-voice-note";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { logUsage } from "@/lib/usage";
+import { outreachVoiceHasFalseSenderIdentity } from "@/lib/outreach-voice-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,6 +61,15 @@ export async function POST(
     if (!script) {
       return NextResponse.json(
         { error: "Prepare or write the personal voice pitch first" },
+        { status: 400 }
+      );
+    }
+    if (outreachVoiceHasFalseSenderIdentity(script, sender.senderName)) {
+      return NextResponse.json(
+        {
+          error:
+            "The shared voice cannot claim to be the salesperson. Use We are Interviewa instead.",
+        },
         { status: 400 }
       );
     }

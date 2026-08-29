@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MatrixRain from "@/components/MatrixRain";
 import OutreachVoiceNoteEditor from "@/components/crm/OutreachVoiceNoteEditor";
 import { crmFetch } from "@/lib/crm";
+import { prepareOutreachVoiceScriptForReview } from "@/lib/outreach-voice-policy";
 import type { WorkInboxItem } from "@/lib/work-inbox";
 
 type PrepareStatus = "queued" | "researching" | "done" | "error";
@@ -251,7 +252,6 @@ export default function OutreachTodayLane({
   const [draftEdits, setDraftEdits] = useState<Record<string, DraftEdit>>({});
   const [savingMessageId, setSavingMessageId] = useState("");
   const [rehearsingMessageId, setRehearsingMessageId] = useState("");
-  const [approvingVoiceMessageId, setApprovingVoiceMessageId] = useState("");
   const [generatingVoiceMessageId, setGeneratingVoiceMessageId] = useState("");
   const [showFullQueue, setShowFullQueue] = useState(false);
   const [focusedRowId, setFocusedRowId] = useState("");
@@ -419,6 +419,14 @@ export default function OutreachTodayLane({
   const openMessage = (row: QueueRow) => {
     const message = displayMessageFor(row);
     if (message) {
+      const reviewableVoiceScript =
+        ["draft", "failed"].includes(message.status) && message.voice_script
+          ? prepareOutreachVoiceScriptForReview({
+              script: message.voice_script,
+              recipientFirstName: row.prospect.first_name,
+              senderName: sender?.senderName || "",
+            })
+          : message.voice_script || "";
       setDraftEdits((current) =>
         current[message.id]
           ? current
@@ -427,7 +435,7 @@ export default function OutreachTodayLane({
               [message.id]: {
                 subject: message.subject || "",
                 body: message.body_text || "",
-                voiceScript: message.voice_script || "",
+                voiceScript: reviewableVoiceScript,
               },
             }
       );
@@ -506,79 +514,35 @@ export default function OutreachTodayLane({
     }
   };
 
-  const approveVoiceScript = async (message: OutreachMessage) => {
-    if (
-      savingMessageId ||
-      approvingVoiceMessageId ||
-      generatingVoiceMessageId
-    ) return;
-    const edit = draftEdits[message.id] || {
-      subject: message.subject || "",
-      body: message.body_text || "",
-      voiceScript: message.voice_script || "",
-    };
-    if (!edit.subject.trim() || !edit.body.trim() || !edit.voiceScript.trim()) {
-      setError("Review the email and voice script before approving it.");
-      return;
-    }
-    setApprovingVoiceMessageId(message.id);
-    setError("");
-    setNotice("");
-    try {
-      const approved = await crmFetch<{
-        message: OutreachMessage;
-        voiceApproval?: { estimatedCostGbp?: number; maximumCostGbp?: number };
-      }>(`/api/crm/outreach/messages/${message.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          subject: edit.subject,
-          body_text: edit.body,
-          voice_script: edit.voiceScript,
-          approve_voice_script: true,
-        }),
-      });
-      if (!approved.message?.voice_script_approved_at)
-        throw new Error("The exact voice script was not confirmed as approved");
-      setNotice(
-        "Exact voice script approved. No audio has been generated and no voice cost has been incurred."
-      );
-      await load(true);
-    } catch (err: any) {
-      setError(err?.message || "The voice script could not be approved.");
-      await load(true);
-    } finally {
-      setApprovingVoiceMessageId("");
-    }
-  };
-
   const generateVoiceNote = async (message: OutreachMessage) => {
-    if (
-      savingMessageId ||
-      approvingVoiceMessageId ||
-      generatingVoiceMessageId
-    ) return;
+    if (savingMessageId || generatingVoiceMessageId) return;
     const edit = draftEdits[message.id] || {
       subject: message.subject || "",
       body: message.body_text || "",
       voiceScript: message.voice_script || "",
     };
     if (!edit.subject.trim() || !edit.body.trim() || !edit.voiceScript.trim()) {
-      setError("Approve the personal voice script before creating audio.");
-      return;
-    }
-    if (
-      !message.voice_script_approved_at ||
-      edit.voiceScript.trim() !== String(message.voice_script || "").trim()
-    ) {
-      setError(
-        "Approve this exact script first. Nothing has been generated or charged."
-      );
+      setError("Review the email and voice script before creating audio.");
       return;
     }
     setGeneratingVoiceMessageId(message.id);
     setError("");
     setNotice("");
     try {
+      const approved = await crmFetch<{ message: OutreachMessage }>(
+        `/api/crm/outreach/messages/${message.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            subject: edit.subject,
+            body_text: edit.body,
+            voice_script: edit.voiceScript,
+            approve_voice_script: true,
+          }),
+        }
+      );
+      if (!approved.message?.voice_script_approved_at)
+        throw new Error("The exact voice script was not confirmed");
       const generated = await crmFetch<{
         message: OutreachMessage;
         reused: boolean;
@@ -1506,16 +1470,10 @@ export default function OutreachTodayLane({
                               generating={
                                 generatingVoiceMessageId === displayMessage.id
                               }
-                              approving={
-                                approvingVoiceMessageId === displayMessage.id
-                              }
                               onScriptChange={(value) =>
                                 updateDraft(displayMessage.id, {
                                   voiceScript: value,
                                 })
-                              }
-                              onApprove={() =>
-                                void approveVoiceScript(displayMessage)
                               }
                               onGenerate={() =>
                                 void generateVoiceNote(displayMessage)
