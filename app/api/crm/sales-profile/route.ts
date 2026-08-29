@@ -75,6 +75,7 @@ export async function PUT(req: NextRequest) {
       sales_goal: input.salesGoal || null,
       email_tone: input.emailTone,
       email_signoff: input.emailSignoff || null,
+      booking_url: input.bookingUrl || null,
       outreach_voice_id: selectedVoice?.id || input.outreachVoiceId || null,
       outreach_voice_name:
         selectedVoice?.name || input.outreachVoiceName || null,

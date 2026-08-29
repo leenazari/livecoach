@@ -70,6 +70,18 @@ const timezone = (value: unknown): string => {
   }
 };
 
+const bookingUrl = (value: unknown): string => text(value, 500);
+
+const validBookingUrl = (value: string): boolean => {
+  if (!value) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && Boolean(parsed.hostname);
+  } catch {
+    return false;
+  }
+};
+
 const choice = <T extends string>(
   value: unknown,
   allowed: readonly T[],
@@ -86,6 +98,7 @@ export function normaliseSalesProfile(row: any): SalesProfile {
       DEFAULT_SALES_PROFILE.emailTone
     ),
     emailSignoff: text(row?.email_signoff ?? row?.emailSignoff, 160),
+    bookingUrl: bookingUrl(row?.booking_url ?? row?.bookingUrl),
     outreachVoiceId: text(
       row?.outreach_voice_id ?? row?.outreachVoiceId,
       120
@@ -133,6 +146,8 @@ export function validateSalesProfileInput(value: unknown): SalesProfile {
     throw new Error("Choose your usual working hours");
   if (input.workdayStart >= input.workdayEnd)
     throw new Error("Your finish time must be after your start time");
+  if (!validBookingUrl(input.bookingUrl))
+    throw new Error("Your booking link must be a full https:// address");
   return input;
 }
 
@@ -169,7 +184,7 @@ export async function getSalesProfile(scopeOverride?: Scope): Promise<SalesProfi
   const { data, error } = await client
     .from("salesperson_profiles")
     .select(
-      "role_title,sales_goal,email_tone,email_signoff,outreach_voice_id,outreach_voice_name,coaching_style,suggestion_frequency,product_focus,customer_focus,workday_start,workday_end,timezone,personal_context,completed_at,updated_at"
+      "role_title,sales_goal,email_tone,email_signoff,booking_url,outreach_voice_id,outreach_voice_name,coaching_style,suggestion_frequency,product_focus,customer_focus,workday_start,workday_end,timezone,personal_context,completed_at,updated_at"
     )
     .eq("workspace_id", scope.workspaceId)
     .eq("user_id", scope.userId)

@@ -353,6 +353,20 @@ export default function SalesProfilePage() {
                 maxLength={160}
               />
             </label>
+            <label className="mt-5 block">
+              <span className="mb-2 block text-sm text-bone">Your personal booking link</span>
+              <input
+                type="url"
+                value={profile.bookingUrl}
+                onChange={(event) => update("bookingUrl", event.target.value)}
+                className={input}
+                placeholder="https://calendar.google.com/calendar/appointments/…"
+                maxLength={500}
+              />
+              <span className="mt-1 block text-xs leading-5 text-muted">
+                Next-move drafts use this link only when the suggested step is a meeting. Each salesperson saves their own link, so nobody else&apos;s calendar is substituted.
+              </span>
+            </label>
             <div className="mt-5 rounded-2xl border border-edge bg-ink/25 p-4 sm:p-5">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>
