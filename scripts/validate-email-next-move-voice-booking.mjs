@@ -8,8 +8,10 @@ const read = (file) => readFile(path.join(root, file), "utf8");
 
 const [
   migration,
+  separateVoiceMigration,
   assistant,
   voice,
+  voiceConfig,
   patchRoute,
   voiceRoute,
   mail,
@@ -24,8 +26,10 @@ const [
   overnight,
 ] = await Promise.all([
   read("supabase/migrations/20260829004508_email_next_move_voice_booking.sql"),
+  read("supabase/migrations/20260829083628_separate_email_assistant_reply_voice.sql"),
   read("lib/email-assistant.ts"),
   read("lib/email-assistant-voice.ts"),
+  read("lib/email-assistant-voice-config.ts"),
   read("app/api/crm/email-assistant/drafts/[id]/route.ts"),
   read("app/api/crm/email-assistant/drafts/[id]/voice/route.ts"),
   read("lib/mail.ts"),
@@ -53,14 +57,30 @@ assert.match(migration, /profile\.user_id = new\.owner_id/);
 assert.match(migration, /profile\.booking_url = new\.booking_url/);
 assert.doesNotMatch(migration, /create policy[\s\S]*?storage\.objects/i);
 
+assert.match(separateVoiceMigration, /add column if not exists email_assistant_voice_id text/);
+assert.match(separateVoiceMigration, /add column if not exists email_assistant_voice_name text/);
+assert.match(separateVoiceMigration, /status in \('draft', 'blocked'\)/);
+assert.match(separateVoiceMigration, /voice_provider_voice_id = null/);
+assert.doesNotMatch(separateVoiceMigration, /outreach_voice_id/);
+
 assert.match(profileTypes, /bookingUrl: string/);
-assert.match(profile, /booking_url,outreach_voice_id/);
+assert.match(profileTypes, /emailAssistantVoiceId: string/);
+assert.match(profileTypes, /emailAssistantVoiceName: string/);
+assert.match(profile, /booking_url,email_assistant_voice_id,email_assistant_voice_name,outreach_voice_id/);
 assert.match(profile, /Your booking link must be a full https:\/\/ address/);
 assert.match(profileRoute, /booking_url: input\.bookingUrl \|\| null/);
+assert.match(profileRoute, /email_assistant_voice_id:/);
+assert.match(profileRoute, /input\.emailAssistantVoiceId !== previous\.emailAssistantVoiceId/);
+assert.match(profileRoute, /Email Assistant voice invalidation failed/);
 assert.doesNotMatch(profileRoute, /body\.(?:userId|workspaceId)/);
 assert.match(profilePage, /Your personal booking link/);
 assert.match(profilePage, /Each salesperson saves their own link/);
 assert.match(profilePage, /nobody else&apos;s calendar is substituted/);
+assert.match(profilePage, /Email Assistant reply voice/);
+assert.match(profilePage, /Outreach campaign voice/);
+assert.match(profilePage, /Use for replies/);
+assert.match(profilePage, /Use for Outreach/);
+assert.match(profilePage, /Email Assistant never borrows the Outreach voice/);
 
 assert.match(assistant, /"voiceScript":"\.\.\."/);
 assert.match(assistant, /Audio is not generated automatically/);
@@ -73,6 +93,10 @@ assert.match(assistant, /\.eq\("user_id", scope\.userId\)/);
 assert.match(assistant, /Keep your personal booking link exactly once/);
 assert.match(assistant, /emailAssistantVoicePublicUrl/);
 assert.match(assistant, /createConnectedMailDraft/);
+assert.match(assistant, /resolveEmailAssistantVoiceConfig\(scope\)/);
+assert.doesNotMatch(assistant, /resolveOutreachVoiceConfig/);
+assert.match(assistant, /invalidateEmailAssistantVoiceAudio/);
+assert.match(assistant, /draft\.voice_provider_voice_id !== currentVoiceId/);
 
 assert.match(patchRoute, /requireRequestScope/);
 assert.match(patchRoute, /approveVoiceScript: body\?\.approve_voice_script/);
@@ -87,6 +111,17 @@ assert.match(voice, /emailAssistantVoiceStoragePath/);
 assert.match(voice, /OUTREACH_VOICE_BUCKET/);
 assert.match(voice, /\.eq\("owner_id", scope\.userId\)/);
 assert.match(voice, /configuredVoiceNoteCostGbp/);
+assert.match(voice, /resolveEmailAssistantVoiceConfig\(scope\)/);
+assert.doesNotMatch(voice, /resolveOutreachVoiceConfig/);
+
+assert.match(voiceConfig, /email_assistant_voice_id,email_assistant_voice_name/);
+assert.match(voiceConfig, /\.eq\("workspace_id", scope\.workspaceId\)/);
+assert.match(voiceConfig, /\.eq\("user_id", scope\.userId\)/);
+assert.match(voiceConfig, /Brain and Outreach voices are never substituted/);
+assert.match(voiceConfig, /ELEVENLABS_EMAIL_ASSISTANT_MODEL_ID/);
+assert.doesNotMatch(voiceConfig, /outreach_voice_id/);
+assert.doesNotMatch(voiceConfig, /ELEVENLABS_VOICE_ID/);
+assert.doesNotMatch(voiceConfig, /ELEVENLABS_OUTREACH_MODEL_ID/);
 
 assert.match(board, /approveNextMoveVoiceScript/);
 assert.match(board, /generateNextMoveVoice/);
@@ -107,4 +142,4 @@ assert.match(audio, /Cache-Control", "private, no-store/);
 assert.doesNotMatch(overnight, /generateEmailAssistantVoiceNote/);
 assert.doesNotMatch(overnight, /ElevenLabs/);
 
-console.log("Owner-scoped next-move voice and booking checks passed");
+console.log("Separate salesperson Email Assistant voice and booking checks passed");
