@@ -13,14 +13,16 @@ const rehearsal = read("app/api/crm/outreach/messages/[id]/rehearse/route.ts");
 
 // The default Sales Desk presents one next action, while retaining an explicit
 // full-queue escape hatch and a compact preview of what comes next.
-assert.match(lane, /One prospect at a time/);
+assert.match(lane, /Step one first/);
 assert.match(lane, /const rowsToRender = showFullQueue[\s\S]*?focusedRow[\s\S]*?\[focusedRow\]/);
 assert.match(lane, /Do this next/);
 assert.match(lane, /Keep moving without leaving this screen/);
 assert.match(lane, /View full queue/);
 
-// Reviewable drafts outrank new research, and approval clears the explicit
-// focus so the next actionable row becomes current after the canonical reload.
+// Step one rows outrank follow ups. Within the active wave, reviewable drafts
+// outrank new research, and approval clears the explicit focus so the next
+// actionable row becomes current after the canonical reload.
+assert.match(lane, /queueWaveRank\(a\.row\) - queueWaveRank\(b\.row\)/);
 assert.match(lane, /\["draft", "failed"\]\.includes\(row\.message\.status\)\) return 0/);
 assert.match(lane, /!row\.message && row\.status === "queued"\) return 2/);
 assert.match(lane, /setFocusedRowId\(""\)[\s\S]*?await load\(true\)/);

@@ -300,7 +300,13 @@ export async function POST(req: NextRequest) {
       account.workspaceId,
       campaign.id
     );
-    let selection = { contactToday: 0, held: 0, skipped: 0 };
+    let selection = {
+      contactToday: 0,
+      firstTouches: 0,
+      followUps: 0,
+      held: 0,
+      skipped: 0,
+    };
     let remaining = Math.max(0, limit - existing.length);
 
     // A deliberate choice from the Prospects tracker may be added directly,
@@ -460,47 +466,41 @@ export async function POST(req: NextRequest) {
         supabaseAdmin.from("outreach_prospects").update({ status: "queued", updated_at: now }).eq("id", requestedProspectId),
         supabaseAdmin.from("outreach_events").insert({ campaign_id: campaign.id, prospect_id: requestedProspectId, kind: "queued", metadata: { date: today, enrolment_id: enrolmentId, source: "prospects_tracker" } }),
       ]);
+      const directIsFollowUp = Boolean(previous?.last_sent_at) ||
+        Number(previous?.current_step || 1) > 1;
       const queue = await loadQueue(account.userId, account.workspaceId);
-      return NextResponse.json({ date: today, queue, added: previous ? 0 : 1, selection: { contactToday: 1, held: 0, skipped: 0 } });
+      return NextResponse.json({
+        date: today,
+        queue,
+        added: previous ? 0 : 1,
+        selection: {
+          contactToday: 1,
+          firstTouches: directIsFollowUp ? 0 : 1,
+          followUps: directIsFollowUp ? 1 : 0,
+          held: 0,
+          skipped: 0,
+        },
+      });
     }
     if (!remaining) {
       return NextResponse.json({
         date: today,
         queue: await loadQueue(account.userId, account.workspaceId),
         added: 0,
-        selection: { contactToday: 0, held: 0, skipped: 0 },
+        selection: {
+          contactToday: 0,
+          firstTouches: 0,
+          followUps: 0,
+          held: 0,
+          skipped: 0,
+        },
       });
     }
 
-    // Due follow-ups come first. A response or suppression changes enrolment
-    // status, so those people can never re-enter this selection.
-    const { data: assignedRows } = await supabaseAdmin
-      .from("outreach_prospects")
-      .select("id")
-      .eq("workspace_id", account.workspaceId)
-      .eq("assigned_to_user_id", account.userId);
-    const assignedProspectIds = (assignedRows || []).map((row: any) => row.id);
-    const dueQuery = supabaseAdmin.from("outreach_enrolments").select("*")
-      .eq("campaign_id", campaign.id).eq("status", "contacted").lte("next_action_at", new Date().toISOString())
-      .order("next_action_at").limit(remaining);
-    const { data: due } = assignedProspectIds.length
-      ? await dueQuery.in("prospect_id", assignedProspectIds)
-      : { data: [] as any[] };
-    for (const row of due || []) {
-      const { error } = await supabaseAdmin
-        .from("outreach_enrolments")
-        .update({ queued_for: today, status: "queued", updated_at: new Date().toISOString() })
-        .eq("id", row.id);
-      if (error) {
-        if (outreachSafetyError(error)) {
-          selection.held += 1;
-          continue;
-        }
-        throw error;
-      }
-      remaining -= 1;
-    }
-
+    // First touches fill today's available slots before due follow ups.
+    // This moves the whole eligible campaign audience through step one before
+    // repeatedly advancing the first few people. Protected, suppressed and
+    // low-evidence prospects still remain safely held.
     if (remaining > 0) {
       const [{ data: enrolments }, { data: suppressions }, { data: prospects }, { data: learnings }, crmGuard] = await Promise.all([
         supabaseAdmin.from("outreach_enrolments").select("id,campaign_id,prospect_id,status,queued_for,last_sent_at,recipient_email").eq("workspace_id", account.workspaceId).limit(5000),
@@ -624,9 +624,59 @@ export async function POST(req: NextRequest) {
       }
       selection = {
         contactToday: addedSelected,
+        firstTouches: addedSelected,
+        followUps: 0,
         held: selection.held + held,
         skipped,
       };
+      remaining = Math.max(0, remaining - addedSelected);
+    }
+
+    // Due follow ups use only capacity left after the first touch wave. A
+    // response or suppression changes enrolment status, so those people can
+    // never re-enter this selection.
+    if (remaining > 0) {
+      const { data: assignedRows, error: assignedError } = await supabaseAdmin
+        .from("outreach_prospects")
+        .select("id")
+        .eq("workspace_id", account.workspaceId)
+        .eq("assigned_to_user_id", account.userId);
+      if (assignedError) throw assignedError;
+      const assignedProspectIds = (assignedRows || []).map((row: any) => row.id);
+      if (assignedProspectIds.length) {
+        const { data: due, error: dueError } = await supabaseAdmin
+          .from("outreach_enrolments")
+          .select("*")
+          .eq("workspace_id", account.workspaceId)
+          .eq("campaign_id", campaign.id)
+          .eq("status", "contacted")
+          .lte("next_action_at", new Date().toISOString())
+          .in("prospect_id", assignedProspectIds)
+          .order("next_action_at")
+          .limit(remaining);
+        if (dueError) throw dueError;
+        let queuedFollowUps = 0;
+        for (const row of due || []) {
+          const { error } = await supabaseAdmin
+            .from("outreach_enrolments")
+            .update({
+              queued_for: today,
+              status: "queued",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", row.id);
+          if (error) {
+            if (outreachSafetyError(error)) {
+              selection.held += 1;
+              continue;
+            }
+            throw error;
+          }
+          queuedFollowUps += 1;
+        }
+        selection.contactToday += queuedFollowUps;
+        selection.followUps += queuedFollowUps;
+      }
     }
     const queue = await loadQueue(account.userId, account.workspaceId);
     return NextResponse.json({

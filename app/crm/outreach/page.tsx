@@ -156,6 +156,10 @@ function isUntouchedProspect(prospect: Prospect): boolean {
     !prospect.outreach?.enrolment;
 }
 
+function queueWaveRank(row: QueueRow): number {
+  return row.queueKind === "follow_up" || Boolean(row.lastSentMessage) ? 1 : 0;
+}
+
 function formatActivityDate(value?: string | null) {
   if (!value) return "No activity";
   return new Intl.DateTimeFormat("en-GB", {
@@ -534,7 +538,24 @@ export default function OutreachPage() {
 
   const buildQueue = async () => {
     setBusy("queue"); setError(""); setNotice("");
-    try { const data = await crmFetch<any>("/api/crm/outreach/queue", { method: "POST", body: JSON.stringify({ limit: activeCampaign?.daily_limit || 20 }) }); setQueue(data.queue || []); const held = data.selection?.held || 0; const skipped = data.selection?.skipped || 0; setNotice(`${data.added || 0} best-fit people added. ${held} held for stronger evidence${skipped ? ` and ${skipped} skipped` : ""}.`); await loadCore(); }
+    try {
+      const data = await crmFetch<any>("/api/crm/outreach/queue", {
+        method: "POST",
+        body: JSON.stringify({ limit: activeCampaign?.daily_limit || 20 }),
+      });
+      setQueue(data.queue || []);
+      const held = data.selection?.held || 0;
+      const skipped = data.selection?.skipped || 0;
+      const firstTouches = data.selection?.firstTouches || 0;
+      const followUps = data.selection?.followUps || 0;
+      const addedSummary = firstTouches
+        ? `${firstTouches} new ${firstTouches === 1 ? "contact" : "contacts"} added first${followUps ? `, followed by ${followUps} due follow ${followUps === 1 ? "up" : "ups"} in spare slots` : ""}`
+        : followUps
+          ? `${followUps} due follow ${followUps === 1 ? "up" : "ups"} added because no eligible step one contacts remained`
+          : "No new contacts were added";
+      setNotice(`${addedSummary}. ${held} held for stronger evidence${skipped ? ` and ${skipped} skipped` : ""}.`);
+      await loadCore();
+    }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
   const selectActiveCampaign = async (campaignId: string) => {
@@ -702,14 +723,17 @@ export default function OutreachPage() {
     }
   };
   const prepareAllRemaining = () => {
-    const ids = queue
+    const preparable = queue
       .filter(
         (row) =>
           !row.message &&
           row.status === "queued" &&
           (row.sequenceStep?.channel || "email") === "email" &&
           row.prospect?.id
-      )
+      );
+    const firstTouches = preparable.filter((row) => queueWaveRank(row) === 0);
+    const activeWave = firstTouches.length ? firstTouches : preparable;
+    const ids = activeWave
       .map((row) => row.prospect.id)
       .filter((id) => !["queued", "researching", "done"].includes(prepareJobsRef.current[id] || ""));
     if (!ids.length) {
@@ -717,7 +741,7 @@ export default function OutreachPage() {
       return;
     }
     for (const id of ids) enqueuePrepare(id);
-    setNotice(`${ids.length} prospects added to the research queue. Two will prepare at a time while you keep reviewing.`);
+    setNotice(`${ids.length} ${firstTouches.length ? "step one prospects" : "follow ups"} added to the research queue. Two will prepare at a time while you keep reviewing.`);
   };
   const completeManualSequenceStep = async (row: QueueRow) => {
     const step = row.sequenceStep;
@@ -799,12 +823,16 @@ export default function OutreachPage() {
     }
   };
   const approveAllPrepared = async () => {
-    const drafts = queue.filter(
+    const readyDrafts = queue.filter(
       (row) =>
         row.message &&
         ["draft", "failed"].includes(row.message.status) &&
         (!row.message.voice_script || row.message.voice_status === "ready")
     );
+    const firstTouchDrafts = readyDrafts.filter(
+      (row) => queueWaveRank(row) === 0
+    );
+    const drafts = firstTouchDrafts.length ? firstTouchDrafts : readyDrafts;
     if (!drafts.length) {
       setNotice("There are no prepared drafts waiting for approval.");
       return;
@@ -1240,6 +1268,7 @@ export default function OutreachPage() {
             );
           };
           return (
+            queueWaveRank(a.row) - queueWaveRank(b.row) ||
             Number(needsAction(b.row)) - Number(needsAction(a.row)) ||
             a.originalIndex - b.originalIndex
           );
@@ -1247,11 +1276,17 @@ export default function OutreachPage() {
         .map(({ row }) => row),
     [queue]
   );
-  const remainingToPrepare = queue.filter(
+  const preparableEmailRows = queue.filter(
     (row) =>
       !row.message &&
       row.status === "queued" &&
       (row.sequenceStep?.channel || "email") === "email"
+  );
+  const firstTouchEmailRows = preparableEmailRows.filter(
+    (row) => queueWaveRank(row) === 0
+  );
+  const remainingToPrepare = (
+    firstTouchEmailRows.length ? firstTouchEmailRows : preparableEmailRows
   ).length;
   const newContactCount = queue.filter(
     (row) => row.queueKind !== "follow_up"
@@ -1272,11 +1307,17 @@ export default function OutreachPage() {
         row.status
       )
   ).length;
-  const preparedToApprove = queue.filter(
+  const approvalReadyRows = queue.filter(
     (row) =>
       row.message &&
       ["draft", "failed"].includes(row.message.status) &&
       (!row.message.voice_script || row.message.voice_status === "ready")
+  );
+  const firstTouchApprovalRows = approvalReadyRows.filter(
+    (row) => queueWaveRank(row) === 0
+  );
+  const preparedToApprove = (
+    firstTouchApprovalRows.length ? firstTouchApprovalRows : approvalReadyRows
   ).length;
   const scheduledToSend = queue.filter(
     (row) => row.message?.status === "approved" && row.message?.scheduled_at
@@ -1311,14 +1352,14 @@ export default function OutreachPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="font-display text-lg text-bone">Today’s combined queue</h2>
-              <p className="mt-1 text-sm text-muted">New contacts and scheduled follow ups share one working list, but every row below now identifies which it is. Email drafts require approval. A LinkedIn lead enters SendPilot only after you confirm that exact person and mapped campaign.</p>
+              <p className="mt-1 text-sm text-muted">Step one is prioritised across the active campaign. Scheduled follow ups stay visible, but move behind every eligible new contact and use only spare daily capacity. Email drafts still require approval.</p>
               <p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{newContactCount} new contacts · {followUpDueCount} follow ups due · {remainingToPrepare} emails to prepare · {manualStepsDue} LinkedIn or phone actions · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p>
             </div>
             <button onClick={buildQueue} disabled={!!busy || activeCampaignQueueCount >= (activeCampaign?.daily_limit || 20)} className={button}>{busy === "queue" ? "Ranking…" : activeCampaignQueueCount ? `Top up ${activeCampaign?.name || "campaign"} to ${activeCampaign?.daily_limit || 20}` : "Rank + build for this campaign"}</button>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare all email steps (${remainingToPrepare})` : "All email research prepared"}</button>
-            <button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve all prepared & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button>
+            <button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare current wave (${remainingToPrepare})` : "Current wave prepared"}</button>
+            <button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve current wave & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button>
           </div>
           <p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact email drafts already shown below. SendPilot handoffs and manual actions are confirmed one person at a time.</p>
         </div>
