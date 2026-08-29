@@ -9,6 +9,10 @@ import {
   personalOutreachSenderId,
 } from "@/lib/brain-sales-scope";
 import {
+  compactOutreachResearchFacts,
+  rankNamedOutreachProspects,
+} from "@/lib/brain-outreach-reference";
+import {
   listVisibleClientGrants,
   loadSafeSharedCompanies,
   loadSafeSharedCompany,
@@ -1194,8 +1198,6 @@ export async function gatherOutreachContext(
     const text = String(value || "").replace(/\s+/g, " ").trim();
     return text.length > max ? `${text.slice(0, max)}…` : text;
   };
-  const normal = (value: unknown) =>
-    String(value || "").toLowerCase().replace(/[^a-z0-9@.\s-]/g, " ").replace(/\s+/g, " ").trim();
   const requestScope = getRequestScope();
   const limitedScope = isLimitedBrainScope(requestScope);
   const senderUserId = personalOutreachSenderId(requestScope);
@@ -1221,7 +1223,7 @@ export async function gatherOutreachContext(
     .eq("status", "approved");
   let prospectsQuery = supabaseAdmin
     .from("outreach_prospects")
-    .select("first_name,last_name,company_name,email,job_title,priority,status,reply_category,reply_summary,last_reply_at,assigned_to_user_id")
+    .select("id,first_name,last_name,company_name,email,job_title,priority,status,reply_category,reply_summary,last_reply_at,assigned_to_user_id")
     .limit(1000);
   if (requestScope) {
     learningsQuery = options.detailed
@@ -1312,17 +1314,61 @@ export async function gatherOutreachContext(
     );
   }
 
-  const needle = normal(message);
-  const named = prospects.filter((p) => {
-    const email = normal(p.email);
-    const name = normal(`${p.first_name || ""} ${p.last_name || ""}`);
-    const company = normal(p.company_name);
-    return (
-      (email.length >= 6 && needle.includes(email)) ||
-      (name.length >= 4 && needle.includes(name)) ||
-      (company.length >= 4 && needle.includes(company))
+  // Resolve identity from the compact assigned prospect rows first. Only when
+  // the user actually names a prospect do we fetch saved research for those
+  // few same-name candidates. This keeps normal Brain turns cheap and avoids
+  // loading hundreds of research objects merely to build the queue roll-up.
+  const identityCandidates = rankNamedOutreachProspects(message, prospects, 25);
+  let named = identityCandidates.slice(0, 3);
+  if (identityCandidates.length) {
+    let namedResearchQuery = supabaseAdmin
+      .from("outreach_prospects")
+      .select("id,research,last_researched_at")
+      .in(
+        "id",
+        identityCandidates.map((prospect) => prospect.id)
+      );
+    if (requestScope) {
+      namedResearchQuery = namedResearchQuery.eq(
+        "workspace_id",
+        requestScope.workspaceId
+      );
+    }
+    if (senderUserId) {
+      namedResearchQuery = namedResearchQuery.eq(
+        "assigned_to_user_id",
+        senderUserId
+      );
+    }
+    const { data: namedResearch } = await namedResearchQuery;
+    const researchById = new Map(
+      (namedResearch || []).map((row: any) => [row.id, row])
     );
-  }).slice(0, 3);
+    const enrichedCandidates = identityCandidates.map((prospect: any) => ({
+      ...prospect,
+      ...(researchById.get(prospect.id) || {}),
+    }));
+    named = rankNamedOutreachProspects(message, enrichedCandidates, 3);
+  }
+
+  // Named evidence must precede generic roll-ups so the defensive prompt cap
+  // can never trim away the answer to the user's specific follow-up.
+  if (named.length) {
+    lines.push(
+      "NAMED OUTREACH REFERENCE CANDIDATES. These are ranked by exact identity and overlap between the user's referenced fact and research already saved for this account. If one candidate uniquely contains that fact, answer with that person's full name and the saved source detail. Ask only when the evidence remains genuinely tied: " +
+        named
+          .map((p) => {
+            const researchFacts = compactOutreachResearchFacts(p.research)
+              .map((fact) => cut(fact, 260));
+            return `${cut(`${p.first_name || ""} ${p.last_name || ""}`, 50)} at ${cut(p.company_name, 60)}, ${cut(p.job_title, 60) || "role not recorded"}, ${p.priority || "priority not set"}, status ${p.status || "not set"}${p.reply_summary ? `, last reply: ${cut(p.reply_summary, 200)}` : ""}. ${
+              researchFacts.length
+                ? `Saved research: ${researchFacts.join(" | ")}`
+                : "No saved research evidence."
+            }`;
+          })
+          .join(" | ")
+    );
+  }
 
   if (options.detailed) {
     const statusSummary = [...status.entries()]
@@ -1351,15 +1397,6 @@ export async function gatherOutreachContext(
           learnings.map((l) => `${cut(l.dimension, 24)} ${cut(l.label, 60)}: ${cut(l.insight, 160)}`).join(" | ")
       );
     }
-  }
-
-  if (named.length) {
-    lines.push(
-      "Named outreach prospects: " +
-        named
-          .map((p) => `${cut(`${p.first_name || ""} ${p.last_name || ""}`, 50)} at ${cut(p.company_name, 60)}, ${cut(p.job_title, 60) || "role not recorded"}, ${p.priority || "priority not set"}, status ${p.status || "not set"}${p.reply_summary ? `, last reply: ${cut(p.reply_summary, 200)}` : ""}`)
-          .join(" | ")
-    );
   }
 
   // Defensive prompt budget cap even if future labels or summaries grow.
