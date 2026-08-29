@@ -18,8 +18,8 @@ import {
   outreachVoiceApprovalHash,
   outreachVoiceScriptHash,
   OutreachVoiceBudgetError,
-  resolveOutreachVoiceConfig,
 } from "@/lib/outreach-voice-note";
+import { resolveEmailAssistantVoiceConfig } from "@/lib/email-assistant-voice-config";
 import { supabaseService } from "@/lib/supabase";
 import { logUsage } from "@/lib/usage";
 
@@ -55,12 +55,15 @@ export async function generateEmailAssistantVoiceNote(
     throw requestError("Write the personal voice script first", 400);
   }
 
-  let config: Awaited<ReturnType<typeof resolveOutreachVoiceConfig>>;
+  let config: Awaited<ReturnType<typeof resolveEmailAssistantVoiceConfig>>;
   try {
-    config = await resolveOutreachVoiceConfig(scope);
+    config = await resolveEmailAssistantVoiceConfig(scope);
   } catch (error: any) {
     throw requestError(
-      String(error?.message || "Choose your personal voice in My Sales Setup"),
+      String(
+        error?.message ||
+          "Choose your Email Assistant reply voice in My Sales Setup"
+      ),
       400
     );
   }

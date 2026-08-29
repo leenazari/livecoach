@@ -17,9 +17,9 @@ import {
   type SalesProfileResponse,
 } from "@/lib/sales-profile-types";
 import type {
-  OutreachVoiceChoice,
-  OutreachVoiceLibraryResponse,
-} from "@/lib/outreach-voice-library-types";
+  SalespersonVoiceChoice,
+  SalespersonVoiceLibraryResponse,
+} from "@/lib/salesperson-voice-library-types";
 
 const PROFILE_URL = "/api/crm/sales-profile";
 const VOICES_URL = "/api/crm/sales-profile/voices";
@@ -51,7 +51,7 @@ export default function SalesProfilePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
-  const [voices, setVoices] = useState<OutreachVoiceChoice[]>([]);
+  const [voices, setVoices] = useState<SalespersonVoiceChoice[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(true);
   const [voicesError, setVoicesError] = useState("");
   const [playingVoiceId, setPlayingVoiceId] = useState("");
@@ -83,7 +83,7 @@ export default function SalesProfilePage() {
       setVoicesLoading(true);
       setVoicesError("");
       try {
-        const result = await crmFetch<OutreachVoiceLibraryResponse>(VOICES_URL);
+        const result = await crmFetch<SalespersonVoiceLibraryResponse>(VOICES_URL);
         if (active) setVoices(result.voices || []);
       } catch (err: any) {
         if (active)
@@ -123,7 +123,7 @@ export default function SalesProfilePage() {
     setProfile((current) => ({ ...current, [key]: value }));
   };
 
-  const previewVoice = async (voice: OutreachVoiceChoice) => {
+  const previewVoice = async (voice: SalespersonVoiceChoice) => {
     if (!voice.previewUrl) {
       setVoicesError("This stock voice does not include a preview");
       return;
@@ -152,13 +152,24 @@ export default function SalesProfilePage() {
     }
   };
 
-  const chooseVoice = (voice: OutreachVoiceChoice) => {
+  const chooseVoice = (
+    target: "email-assistant" | "outreach",
+    voice: SalespersonVoiceChoice
+  ) => {
     markTouched();
-    setProfile((current) => ({
-      ...current,
-      outreachVoiceId: voice.id,
-      outreachVoiceName: voice.name,
-    }));
+    setProfile((current) =>
+      target === "email-assistant"
+        ? {
+            ...current,
+            emailAssistantVoiceId: voice.id,
+            emailAssistantVoiceName: voice.name,
+          }
+        : {
+            ...current,
+            outreachVoiceId: voice.id,
+            outreachVoiceName: voice.name,
+          }
+    );
   };
 
   const save = async () => {
@@ -202,7 +213,7 @@ export default function SalesProfilePage() {
           </p>
           <h1 className="mt-1 font-display text-2xl text-bone">My Sales Setup</h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
-            This tells Brain, outreach and Live Coach how to work with you. It never opens another user&apos;s private calls, email, calendar or memory.
+            This tells Brain, Email Assistant, Outreach and Live Coach how to work with you. It never opens another user&apos;s private calls, email, calendar or memory.
           </p>
         </div>
         <button
@@ -229,7 +240,7 @@ export default function SalesProfilePage() {
       ) : null}
       {saved ? (
         <p role="status" className="mb-5 rounded-xl border border-sage/50 bg-sage/10 px-4 py-3 text-sm text-sage">
-          {saved}. Your future Brain, outreach and coaching prompts now use this version.
+          {saved}. Your future Brain, Email Assistant, Outreach and coaching prompts now use this version.
         </p>
       ) : null}
 
@@ -370,16 +381,32 @@ export default function SalesProfilePage() {
             <div className="mt-5 rounded-2xl border border-edge bg-ink/25 p-4 sm:p-5">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <p className="text-sm text-bone">Your sales outreach voice</p>
+                  <p className="text-sm text-bone">Your separate sales voices</p>
                   <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">
-                    Listen free, choose one stock voice, then save. This is separate from Brain&apos;s voice. LiveCoach never uses Brain&apos;s voice for sales outreach. Voice-note generation remains a separate approved action and can cost up to 5p.
+                    Listen free, choose the voice for Email Assistant replies and choose the voice for Outreach campaigns. They are independent from each other and from Brain&apos;s voice. Voice-note generation remains a separate approved action and can cost up to 5p.
                   </p>
                 </div>
-                <span className={`w-fit rounded-full border px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider ${profile.outreachVoiceId ? "border-sage/45 bg-sage/10 text-sage" : "border-amber/45 bg-amber/10 text-amber"}`}>
-                  {profile.outreachVoiceId
-                    ? `Selected · ${profile.outreachVoiceName || "Personal voice"}`
-                    : "Choose a voice"}
-                </span>
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-sky/40 bg-sky/[0.06] p-3">
+                  <p className="font-mono text-[0.52rem] uppercase tracking-wider text-sky">Email Assistant reply voice</p>
+                  <p className="mt-1 text-sm text-bone">
+                    {profile.emailAssistantVoiceId
+                      ? profile.emailAssistantVoiceName || "Email Assistant voice selected"
+                      : "Choose a voice"}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted">Used only for approved voice notes attached to next-move email drafts.</p>
+                </div>
+                <div className="rounded-xl border border-amber/40 bg-amber/[0.06] p-3">
+                  <p className="font-mono text-[0.52rem] uppercase tracking-wider text-amber">Outreach campaign voice</p>
+                  <p className="mt-1 text-sm text-bone">
+                    {profile.outreachVoiceId
+                      ? profile.outreachVoiceName || "Outreach voice selected"
+                      : "Choose a voice"}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted">Used only for Outreach campaign voice notes sent by this salesperson.</p>
+                </div>
               </div>
 
               {voicesLoading ? (
@@ -395,12 +422,14 @@ export default function SalesProfilePage() {
               {!voicesLoading && voices.length ? (
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {(showAllVoices ? voices : voices.slice(0, 8)).map((voice) => {
-                    const selected = profile.outreachVoiceId === voice.id;
+                    const selectedForEmailAssistant =
+                      profile.emailAssistantVoiceId === voice.id;
+                    const selectedForOutreach = profile.outreachVoiceId === voice.id;
                     const detail = [voice.accent, voice.gender, voice.age, voice.useCase]
                       .filter(Boolean)
                       .join(" · ");
                     return (
-                      <article key={voice.id} className={`rounded-xl border p-3 transition ${selected ? "border-amber/70 bg-amber/10" : "border-edge bg-panel/35 hover:border-bone/35"}`}>
+                      <article key={voice.id} className={`rounded-xl border p-3 transition ${selectedForEmailAssistant || selectedForOutreach ? "border-bone/45 bg-bone/[0.04]" : "border-edge bg-panel/35 hover:border-bone/35"}`}>
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium text-bone">{voice.name}</p>
@@ -408,17 +437,23 @@ export default function SalesProfilePage() {
                               {detail || "ElevenLabs stock voice"}
                             </p>
                           </div>
-                          {selected ? <span className="shrink-0 text-xs text-amber">✓ Selected</span> : null}
+                          <div className="flex shrink-0 flex-col items-end gap-1">
+                            {selectedForEmailAssistant ? <span className="text-xs text-sky">✓ Email replies</span> : null}
+                            {selectedForOutreach ? <span className="text-xs text-amber">✓ Outreach</span> : null}
+                          </div>
                         </div>
                         {voice.description ? (
                           <p className="mt-2 line-clamp-2 text-xs leading-5 text-bone/70">{voice.description}</p>
                         ) : null}
-                        <div className="mt-3 flex gap-2">
-                          <button type="button" onClick={() => void previewVoice(voice)} disabled={!voice.previewUrl} className="min-h-10 flex-1 rounded-lg border border-edge px-3 font-mono text-[0.55rem] uppercase tracking-wider text-bone disabled:opacity-35">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                          <button type="button" onClick={() => void previewVoice(voice)} disabled={!voice.previewUrl} className="min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.52rem] uppercase tracking-wider text-bone disabled:opacity-35">
                             {playingVoiceId === voice.id ? "Stop" : "Listen"}
                           </button>
-                          <button type="button" onClick={() => chooseVoice(voice)} disabled={selected} className="min-h-10 flex-1 rounded-lg border border-amber/55 bg-amber/10 px-3 font-mono text-[0.55rem] uppercase tracking-wider text-amber disabled:opacity-45">
-                            {selected ? "Chosen" : "Choose"}
+                          <button type="button" onClick={() => chooseVoice("email-assistant", voice)} disabled={selectedForEmailAssistant} className="min-h-10 rounded-lg border border-sky/55 bg-sky/10 px-3 font-mono text-[0.52rem] uppercase tracking-wider text-sky disabled:opacity-45">
+                            {selectedForEmailAssistant ? "✓ Email replies" : "Use for replies"}
+                          </button>
+                          <button type="button" onClick={() => chooseVoice("outreach", voice)} disabled={selectedForOutreach} className="min-h-10 rounded-lg border border-amber/55 bg-amber/10 px-3 font-mono text-[0.52rem] uppercase tracking-wider text-amber disabled:opacity-45">
+                            {selectedForOutreach ? "✓ Outreach" : "Use for Outreach"}
                           </button>
                         </div>
                       </article>
@@ -432,7 +467,7 @@ export default function SalesProfilePage() {
                 </button>
               ) : null}
               <p className="mt-3 text-xs leading-5 text-muted">
-                The voice saved here belongs only to your login and follows you across every campaign. Until you choose one, voice-note generation stops safely. Campaigns can change the wording and guardrails, never the audio voice.
+                Both voices belong only to your login. Email Assistant never borrows the Outreach voice, Outreach never borrows the Email Assistant voice, and neither feature uses Brain&apos;s voice. Until you choose the relevant voice, that feature&apos;s audio generation stops safely.
               </p>
             </div>
           </section>

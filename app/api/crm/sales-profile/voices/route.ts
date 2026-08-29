@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listOutreachStockVoices } from "@/lib/outreach-voice-library";
+import { listSalespersonStockVoices } from "@/lib/salesperson-voice-library";
 import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
@@ -12,7 +12,7 @@ export async function GET() {
     return NextResponse.json({ error: "Sign in to choose your voice" }, { status: 403 });
   }
   try {
-    const voices = await listOutreachStockVoices();
+    const voices = await listSalespersonStockVoices();
     return NextResponse.json(
       { voices },
       { headers: { "Cache-Control": "private, max-age=300" } }

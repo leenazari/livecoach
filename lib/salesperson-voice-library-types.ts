@@ -1,4 +1,4 @@
-export type OutreachVoiceChoice = {
+export type SalespersonVoiceChoice = {
   id: string;
   name: string;
   category: string;
@@ -10,6 +10,6 @@ export type OutreachVoiceChoice = {
   useCase: string;
 };
 
-export type OutreachVoiceLibraryResponse = {
-  voices: OutreachVoiceChoice[];
+export type SalespersonVoiceLibraryResponse = {
+  voices: SalespersonVoiceChoice[];
 };

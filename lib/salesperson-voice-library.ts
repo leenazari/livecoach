@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { OutreachVoiceChoice } from "@/lib/outreach-voice-library-types";
+import type { SalespersonVoiceChoice } from "@/lib/salesperson-voice-library-types";
 
 const ELEVENLABS_API_ORIGIN = "https://api.elevenlabs.io";
 
@@ -28,13 +28,12 @@ function elevenLabsKey(): string {
   return key;
 }
 
-function compactVoice(value: any): OutreachVoiceChoice | null {
+function compactVoice(value: any): SalespersonVoiceChoice | null {
   const id = clean(value?.voice_id, 120);
   const name = clean(value?.name, 120);
   if (!id || !name) return null;
-  const labels = value?.labels && typeof value.labels === "object"
-    ? value.labels
-    : {};
+  const labels =
+    value?.labels && typeof value.labels === "object" ? value.labels : {};
   return {
     id,
     name,
@@ -48,13 +47,18 @@ function compactVoice(value: any): OutreachVoiceChoice | null {
   };
 }
 
-function voiceOrder(a: OutreachVoiceChoice, b: OutreachVoiceChoice): number {
-  const british = (voice: OutreachVoiceChoice) =>
+function voiceOrder(
+  a: SalespersonVoiceChoice,
+  b: SalespersonVoiceChoice
+): number {
+  const british = (voice: SalespersonVoiceChoice) =>
     /british|english|uk/i.test(voice.accent) ? 0 : 1;
   return british(a) - british(b) || a.name.localeCompare(b.name, "en-GB");
 }
 
-export async function listOutreachStockVoices(): Promise<OutreachVoiceChoice[]> {
+export async function listSalespersonStockVoices(): Promise<
+  SalespersonVoiceChoice[]
+> {
   const query = new URLSearchParams({
     voice_type: "default",
     page_size: "40",
@@ -78,7 +82,11 @@ export async function listOutreachStockVoices(): Promise<OutreachVoiceChoice[]> 
   const voices = Array.isArray(payload?.voices)
     ? payload.voices
         .map(compactVoice)
-        .filter((voice: OutreachVoiceChoice | null): voice is OutreachVoiceChoice => Boolean(voice))
+        .filter(
+          (
+            voice: SalespersonVoiceChoice | null
+          ): voice is SalespersonVoiceChoice => Boolean(voice)
+        )
         .sort(voiceOrder)
     : [];
   if (!voices.length)
@@ -86,11 +94,11 @@ export async function listOutreachStockVoices(): Promise<OutreachVoiceChoice[]> 
   return voices;
 }
 
-export async function validateOutreachVoiceSelection(
+export async function validateSalespersonVoiceSelection(
   voiceId: string
 ): Promise<{ id: string; name: string }> {
   const id = clean(voiceId, 120);
-  if (!id) throw new Error("Choose an outreach voice");
+  if (!id) throw new Error("Choose a voice");
   const response = await fetch(
     `${ELEVENLABS_API_ORIGIN}/v1/voices/${encodeURIComponent(id)}`,
     {
