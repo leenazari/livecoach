@@ -14,13 +14,15 @@ import {
 } from "../lib/outreach-sequence.ts";
 
 const defaults = defaultOutreachSequence();
-assert.equal(defaults.length, 3, "new campaigns start with three useful steps");
+assert.equal(defaults.length, 1, "new campaigns start with one clear email step");
 assert.equal(defaults[0].step, 1);
 assert.equal(defaults[0].delayDays, 0);
-assert.equal(defaults[2].delayDays, 7);
 assert.ok(defaults.every((step) => step.channel === "email"));
 
-const moved = moveOutreachSequenceStep(defaults, 2, 0);
+const concise = outreachSequencePreset("concise_three_touch");
+assert.equal(concise.length, 3, "a longer sequence is an explicit choice");
+assert.equal(concise[2].delayDays, 7);
+const moved = moveOutreachSequenceStep(concise, 2, 0);
 assert.equal(moved[0].contentType, "close_loop");
 assert.deepEqual(moved.map((step) => step.step), [1, 2, 3]);
 assert.equal(moved[0].delayDays, 0, "the first visual step never waits");
@@ -44,7 +46,7 @@ assert.equal(
 assert.match(
   outreachSequenceValidationError([
     defaults[0],
-    { ...defaults[1], delayDays: 0 },
+    { ...createOutreachSequenceStep("insight", 1), delayDays: 0 },
   ]) || "",
   /between 1 and 30/
 );
@@ -120,8 +122,16 @@ assert.match(component, /DndContext/);
 assert.match(component, /sortableKeyboardCoordinates/);
 assert.match(component, /Save sequence/);
 assert.match(component, /LiveCoach automates only approved email delivery/);
-assert.match(component, /Start from a proven structure/);
+assert.match(component, /Start with one clear email/);
+assert.match(component, /Add the next step only if needed/);
+assert.match(component, /Optional templates and reset/);
+assert.match(component, /Start again with one email/);
 assert.match(component, /never clicks, likes, connects, calls or sends/);
+assert.match(page, /One campaign, three clear views/);
+assert.match(page, /campaignEditorView/);
+assert.match(page, /startCampaignTutorial/);
+assert.match(page, /campaign-card-/);
+assert.match(page, /data-sales-tour="campaign-sequence"/);
 
 for (const route of [updateRoute, createRoute]) {
   assert.match(route, /requireRequestScope/);

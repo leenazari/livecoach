@@ -58,6 +58,7 @@ type Prospect = Record<string, any> & {
 type QueueRow = Record<string, any> & { id: string; prospect: Prospect; campaign: Record<string, any>; message: Record<string, any> | null; recommendation: Recommendation };
 type SequenceStep = OutreachSequenceStep;
 type Campaign = Record<string, any> & { id: string; name: string; goal: string; audience: string; offer_angle: string; status: string; daily_limit: number; sequence: SequenceStep[] };
+type CampaignEditorView = "setup" | "sequence" | "results";
 type CampaignStats = {
   enrolled: number;
   contacted: number;
@@ -398,6 +399,21 @@ function CampaignResultStrip({ stats }: { stats?: CampaignStats }) {
   </div>;
 }
 
+const campaignStatusTone: Record<string, string> = {
+  active: "border-moss/50 bg-moss/10 text-moss",
+  draft: "border-amber/50 bg-amber/10 text-amber",
+  paused: "border-edge bg-ink/45 text-muted",
+  completed: "border-sky/45 bg-sky/10 text-sky",
+};
+
+function campaignCardTone(status: string, current: boolean) {
+  if (current) return "border-moss/60 bg-moss/[0.035]";
+  if (status === "active") return "border-moss/35 bg-panel";
+  if (status === "draft") return "border-amber/35 bg-panel";
+  if (status === "completed") return "border-sky/35 bg-panel";
+  return "border-edge bg-panel";
+}
+
 export default function OutreachPage() {
   const {
     queue: cachedQueue,
@@ -436,6 +452,7 @@ export default function OutreachPage() {
     cachedCampaigns?.selectedCampaignId || cachedQueue?.selectedCampaignId || ""
   );
   const [expandedCampaignId, setExpandedCampaignId] = useState("");
+  const [campaignEditorView, setCampaignEditorView] = useState<CampaignEditorView>("setup");
   const [canManageCampaigns, setCanManageCampaigns] = useState(cachedCampaigns?.canManageCampaigns === true);
   const [metrics, setMetrics] = useState<any>(cachedMetrics?.metrics || cachedSummary?.metrics || {});
   const [replies, setReplies] = useState<any[]>(cachedMetrics?.replies || []);
@@ -774,8 +791,21 @@ export default function OutreachPage() {
     setDraftEdits(next);
   }, [queue, replies, sender?.senderName]);
   useEffect(() => {
-    if (selectedCampaignId) setExpandedCampaignId(selectedCampaignId);
-  }, [selectedCampaignId]);
+    if (!expandedCampaignId) return;
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        document.getElementById(`campaign-card-${expandedCampaignId}`)?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [expandedCampaignId]);
 
   const orderedCampaigns = useMemo(
     () => campaigns.slice().sort((left, right) => {
@@ -793,6 +823,16 @@ export default function OutreachPage() {
   const selectableCampaigns = orderedCampaigns.filter(
     (campaign) => campaign.status === "active"
   );
+  const startCampaignTutorial = () => {
+    const campaignId = selectedCampaignId || orderedCampaigns[0]?.id || "";
+    if (campaignId) {
+      setCampaignEditorView("setup");
+      setExpandedCampaignId(campaignId);
+    }
+    window.dispatchEvent(new CustomEvent("lc:start-sales-tutorial", {
+      detail: { stepId: "campaign" },
+    }));
+  };
   const selectTab = (next: Tab) => {
     setTab(next);
     setFocusedProspectId("");
@@ -1898,59 +1938,78 @@ export default function OutreachPage() {
         </div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "campaign" ? <section data-sales-tour="campaign-setup" className="space-y-3">
-        {variants.length ? <details className="group rounded-xl border border-edge bg-panel">
-          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
-            <div><h2 className="font-display text-base text-bone">Subject performance</h2><p className="mt-0.5 text-xs text-muted">Open only when you want to compare tested subject lines.</p></div>
-            <span className="font-mono text-[0.55rem] uppercase text-amber"><span className="group-open:hidden">Show</span><span className="hidden group-open:inline">Hide</span> · {variants.length}</span>
-          </summary>
-          <div className="grid grid-cols-1 gap-2 border-t border-edge p-3 sm:grid-cols-2">{variants.map((row) => <div key={row.variant} className="rounded-xl border border-edge bg-ink/35 p-3"><p className="font-mono text-[0.56rem] uppercase text-muted">Subject variant {row.variant}</p><strong className="mt-1 block font-display text-xl text-bone">{row.replyRate}% replies</strong><span className="text-xs text-muted">{row.replies} replies from {row.sent} sent</span></div>)}</div>
-        </details> : null}
+      {!loading && !tabLoading && tab === "campaign" ? <section data-sales-tour="campaign-setup" className="space-y-4">
+        <div className="rounded-2xl border border-amber/40 bg-amber/[0.045] p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div><p className="font-mono text-[0.55rem] uppercase tracking-wider text-amber">Campaign control</p><h2 className="mt-1 font-display text-xl text-bone">One campaign, three clear views</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-muted">A campaign defines who you are contacting and why. Its sequence defines the order of contact. Results show what happened. Open only the part you need.</p></div>
+            <button type="button" onClick={startCampaignTutorial} className="min-h-11 shrink-0 rounded-lg border border-sage/50 bg-sage/10 px-4 font-mono text-[0.56rem] uppercase tracking-wider text-sage hover:bg-sage/15">? Campaign tutorial</button>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <div className="rounded-xl border border-amber/35 bg-amber/[0.06] p-3"><span className="font-mono text-[0.5rem] uppercase text-amber">1 · Setup</span><p className="mt-1 text-sm text-bone/80">Audience, goal and offer</p></div>
+            <div className="rounded-xl border border-sky/35 bg-sky/[0.06] p-3"><span className="font-mono text-[0.5rem] uppercase text-sky">2 · Sequence</span><p className="mt-1 text-sm text-bone/80">Email, phone and LinkedIn order</p></div>
+            <div className="rounded-xl border border-moss/35 bg-moss/[0.06] p-3"><span className="font-mono text-[0.5rem] uppercase text-moss">3 · Results</span><p className="mt-1 text-sm text-bone/80">Contacts, replies and meetings</p></div>
+          </div>
+        </div>
 
         <div className="flex flex-col gap-2 rounded-xl border border-edge bg-panel px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="font-display text-lg text-bone">Campaigns</h2><p className="mt-1 text-sm text-muted">Your current campaign stays first. Everything else is newest first and collapsed until you need it.</p></div>
+          <div><h2 className="font-display text-lg text-bone">Your campaigns</h2><p className="mt-1 text-sm text-muted">Current means the campaign feeding your Today queue. Active means the team can use it.</p></div>
           <span className="self-start rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted sm:self-auto">{orderedCampaigns.length} total</span>
         </div>
 
         {orderedCampaigns.map((campaign) => {
           const isCurrent = campaign.id === selectedCampaignId;
           const personalStats = campaignStats[campaign.id];
-          return <details key={campaign.id} open={expandedCampaignId === campaign.id} onToggle={(event) => {
+          const sequenceCount = campaign.sequence?.length || 0;
+          return <details id={`campaign-card-${campaign.id}`} key={campaign.id} open={expandedCampaignId === campaign.id} onToggle={(event) => {
             const isOpen = event.currentTarget.open;
+            if (isOpen) setCampaignEditorView("setup");
             setExpandedCampaignId((current) => isOpen ? campaign.id : current === campaign.id ? "" : current);
-          }} className={`group overflow-hidden rounded-xl border bg-panel ${isCurrent ? "border-moss/50" : "border-edge"}`}>
-            <summary className="cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
-              <div className="flex min-w-0 items-start justify-between gap-3">
-                <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-display text-lg text-bone">{campaign.name}</h3>{isCurrent ? <span className="rounded-full border border-moss/50 bg-moss/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-moss">Current</span> : null}<span className={`rounded-full border px-2 py-0.5 font-mono text-[0.5rem] uppercase ${campaign.status === "active" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{campaign.status}</span></div><p className="mt-1 truncate text-sm text-bone/70">{campaign.goal || "No goal saved yet"}</p></div>
-                <span className="shrink-0 font-mono text-[0.55rem] uppercase text-amber"><span className="group-open:hidden">Open ▾</span><span className="hidden group-open:inline">Close ▴</span></span>
+          }} className={`group scroll-mt-24 overflow-hidden rounded-2xl border-2 shadow-[0_10px_30px_rgba(0,0,0,0.16)] ${campaignCardTone(campaign.status, isCurrent)}`}>
+            <summary className="cursor-pointer list-none px-4 py-4 [&::-webkit-details-marker]:hidden sm:px-5">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-amber/40 bg-amber/10 font-display text-lg text-amber">↗</span>
+                <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-[0.48rem] uppercase tracking-wider text-amber">Campaign</span>{isCurrent ? <span className="rounded-full border border-moss/50 bg-moss/10 px-2 py-0.5 font-mono text-[0.48rem] uppercase text-moss">Current queue</span> : null}<span className={`rounded-full border px-2 py-0.5 font-mono text-[0.48rem] uppercase ${campaignStatusTone[campaign.status] || campaignStatusTone.paused}`}>{campaign.status}</span></div><h3 className="mt-1 truncate font-display text-lg text-bone">{campaign.name}</h3><p className="mt-1 line-clamp-2 text-sm text-bone/70">{campaign.goal || "No goal saved yet"}</p></div>
+                <span className="shrink-0 rounded-lg border border-edge px-3 py-2 font-mono text-[0.52rem] uppercase text-amber"><span className="group-open:hidden">Open</span><span className="hidden group-open:inline">Close</span> <span className="group-open:hidden">▾</span><span className="hidden group-open:inline">▴</span></span>
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[0.5rem] uppercase text-muted"><span>Updated {formatActivityDate(campaign.updated_at || campaign.created_at)}</span><span>·</span><span>{personalStats?.contacted || 0} contacted</span><span>·</span><span>{personalStats?.replies || 0} replies</span><span>·</span><span>{personalStats?.meetings || 0} meetings</span></div>
+              <div className="mt-3 grid grid-cols-3 gap-2 sm:max-w-lg"><div className="rounded-lg border border-amber/25 bg-amber/[0.05] px-2 py-2"><strong className="block font-display text-lg text-bone">{campaign.daily_limit}</strong><span className="font-mono text-[0.43rem] uppercase text-muted">Daily maximum</span></div><div className="rounded-lg border border-sky/25 bg-sky/[0.05] px-2 py-2"><strong className="block font-display text-lg text-bone">{sequenceCount}</strong><span className="font-mono text-[0.43rem] uppercase text-muted">Sequence steps</span></div><div className="rounded-lg border border-moss/25 bg-moss/[0.05] px-2 py-2"><strong className="block font-display text-lg text-bone">{personalStats?.contacted || 0}</strong><span className="font-mono text-[0.43rem] uppercase text-muted">Contacted by you</span></div></div>
             </summary>
 
-            <div className="border-t border-edge p-4">
-              <CampaignResultStrip stats={personalStats} />
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted">Edit only this campaign. The collapsed campaigns remain untouched.</p>{canManageCampaigns ? <button onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign"}</button> : <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted">Shared · view only</span>}</div>
-              <fieldset disabled={!canManageCampaigns} className="contents">
-                <div className="grid gap-3"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Goal</span><input className={input} value={campaign.goal} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, goal: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Audience</span><textarea className={`${input} min-h-20`} value={campaign.audience} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, audience: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Interviewa angle</span><textarea className={`${input} min-h-24`} value={campaign.offer_angle} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, offer_angle: e.target.value } : c))} /></label><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max="20" className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : Math.min(20, Number(e.target.value)) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active</option><option value="paused">Paused</option><option value="draft">Draft</option></select></label></div></div>
-                <CampaignSequenceBuilder
-                  campaignId={campaign.id}
-                  sequence={campaign.sequence || []}
-                  disabled={!canManageCampaigns}
-                  saving={busy === `campaign:${campaign.id}`}
-                  onChange={(sequence) =>
-                    setCampaigns((all) =>
-                      all.map((item) =>
-                        item.id === campaign.id ? { ...item, sequence } : item
-                      )
-                    )
-                  }
-                  onSave={() => saveCampaign(campaign)}
-                />
-              </fieldset>
+            <div className="border-t border-edge bg-ink/20 p-3 sm:p-4">
+              <div role="tablist" aria-label={`${campaign.name} campaign sections`} className="mb-4 grid grid-cols-3 gap-2 rounded-xl border border-edge bg-ink/45 p-1.5">
+                <button type="button" role="tab" aria-selected={campaignEditorView === "setup"} onClick={() => setCampaignEditorView("setup")} className={`min-h-11 rounded-lg border px-2 font-mono text-[0.52rem] uppercase transition ${campaignEditorView === "setup" ? "border-amber/55 bg-amber/15 text-amber" : "border-transparent text-muted hover:text-bone"}`}>1 Setup</button>
+                <button type="button" role="tab" data-sales-tour="campaign-sequence" aria-selected={campaignEditorView === "sequence"} onClick={() => setCampaignEditorView("sequence")} className={`min-h-11 rounded-lg border px-2 font-mono text-[0.52rem] uppercase transition ${campaignEditorView === "sequence" ? "border-sky/55 bg-sky/15 text-sky" : "border-transparent text-muted hover:text-bone"}`}>2 Sequence · {sequenceCount}</button>
+                <button type="button" role="tab" aria-selected={campaignEditorView === "results"} onClick={() => setCampaignEditorView("results")} className={`min-h-11 rounded-lg border px-2 font-mono text-[0.52rem] uppercase transition ${campaignEditorView === "results" ? "border-moss/55 bg-moss/15 text-moss" : "border-transparent text-muted hover:text-bone"}`}>3 Results</button>
+              </div>
+
+              {campaignEditorView === "setup" ? <div role="tabpanel" className="rounded-xl border border-amber/35 bg-amber/[0.035] p-4">
+                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><p className="font-mono text-[0.52rem] uppercase text-amber">Campaign setup</p><h4 className="mt-1 font-display text-lg text-bone">Who is this for and why should they care?</h4></div>{!canManageCampaigns ? <span className="self-start rounded-full border border-edge px-3 py-1 font-mono text-[0.5rem] uppercase text-muted">Shared · view only</span> : null}</div>
+                <fieldset disabled={!canManageCampaigns} className="grid gap-3">
+                  <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign goal</span><input className={input} value={campaign.goal} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, goal: e.target.value } : c))} /></label>
+                  <div className="grid gap-3 lg:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Target audience</span><textarea className={`${input} min-h-28`} value={campaign.audience} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, audience: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Interviewa reason to respond</span><textarea className={`${input} min-h-28`} value={campaign.offer_angle} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, offer_angle: e.target.value } : c))} /></label></div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max="20" className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : Math.min(20, Number(e.target.value)) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active and available</option><option value="paused">Paused</option><option value="draft">Draft</option><option value="completed">Completed</option></select></label></div>
+                </fieldset>
+                {canManageCampaigns ? <div className="mt-4 flex flex-col-reverse gap-2 border-t border-amber/20 pt-4 sm:flex-row sm:justify-end">{!isCurrent && campaign.status === "active" ? <button type="button" onClick={() => void selectActiveCampaign(campaign.id)} disabled={!!busy} className={button}>{busy === "select-campaign" ? "Switching…" : "Use for my Today queue"}</button> : null}<button type="button" onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign setup"}</button></div> : null}
+              </div> : null}
+
+              {campaignEditorView === "sequence" ? <div role="tabpanel"><CampaignSequenceBuilder
+                campaignId={campaign.id}
+                sequence={campaign.sequence || []}
+                disabled={!canManageCampaigns}
+                saving={busy === `campaign:${campaign.id}`}
+                onChange={(sequence) => setCampaigns((all) => all.map((item) => item.id === campaign.id ? { ...item, sequence } : item))}
+                onSave={() => saveCampaign(campaign)}
+              /></div> : null}
+
+              {campaignEditorView === "results" ? <div role="tabpanel" className="rounded-xl border border-moss/35 bg-moss/[0.035] p-4"><div className="mb-3"><p className="font-mono text-[0.52rem] uppercase text-moss">Your results</p><h4 className="mt-1 font-display text-lg text-bone">What this campaign has produced for you</h4><p className="mt-1 text-sm text-muted">These figures are personal to your signed in account, even when the campaign is shared with the team.</p></div><CampaignResultStrip stats={personalStats} /></div> : null}
             </div>
           </details>;
         })}
-        {!orderedCampaigns.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">No campaigns have been created yet.</div> : null}
+        {!orderedCampaigns.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">No campaigns have been created yet. Ask the Brain to create one and it will begin with a single email step.</div> : null}
+
+        {variants.length ? <details className="group rounded-xl border border-edge bg-panel">
+          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden"><div><h2 className="font-display text-base text-bone">Advanced subject learning</h2><p className="mt-0.5 text-xs text-muted">Optional results across your sent outreach. This is not needed to set up a campaign.</p></div><span className="font-mono text-[0.55rem] uppercase text-muted"><span className="group-open:hidden">Open ▾</span><span className="hidden group-open:inline">Close ▴</span></span></summary>
+          <div className="grid grid-cols-1 gap-2 border-t border-edge p-3 sm:grid-cols-2">{variants.map((row) => <div key={row.variant} className="rounded-xl border border-edge bg-ink/35 p-3"><p className="font-mono text-[0.56rem] uppercase text-muted">Subject variant {row.variant}</p><strong className="mt-1 block font-display text-xl text-bone">{row.replyRate}% replies</strong><span className="text-xs text-muted">{row.replies} replies from {row.sent} sent</span></div>)}</div>
+        </details> : null}
       </section> : null}
 
       {!loading && !tabLoading && tab === "intelligence" && activeCampaign ? <section className="space-y-4">

@@ -60,7 +60,9 @@ assert.match(page, /Your teammates keep their own selections/);
 assert.match(page, /const orderedCampaigns = useMemo/);
 assert.match(page, /open=\{expandedCampaignId === campaign\.id\}/);
 assert.match(page, /onToggle=\{\(event\) =>/);
-assert.match(page, /Everything else is newest first and collapsed until you need it/);
+assert.match(page, /Current means the campaign feeding your Today queue/);
+assert.match(page, /new Date\(right\.updated_at \|\| right\.created_at \|\| 0\)/);
+assert.match(page, /campaign-card-/);
 assert.match(page, /aria-label="Outreach sections"/);
 assert.doesNotMatch(
   page.match(/<nav aria-label="Outreach sections"[\s\S]*?<\/nav>/)?.[0] || "",
