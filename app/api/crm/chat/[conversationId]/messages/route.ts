@@ -9,7 +9,9 @@ import {
   CHAT_MAX_MESSAGE_LENGTH,
   buildChatRecordAttachment,
   cleanChatText,
+  isOwnedChatUploadPath,
   isUuid,
+  removeUnattachedChatUpload,
   requireChatMembership,
   safeChatFileName,
   sendChatEmailNotifications,
@@ -171,15 +173,17 @@ export async function POST(
   { params }: { params: { conversationId: string } }
 ) {
   let uploadedPath = "";
+  let uploadWorkspaceId = "";
   try {
     const scope = requireRequestScope();
+    uploadWorkspaceId = scope.workspaceId;
     const { conversation } = await requireChatMembership(
       scope,
       params.conversationId
     );
-    const form = await req.formData();
-    const body = cleanChatText(form.get("body"), CHAT_MAX_MESSAGE_LENGTH);
-    const clientNonce = String(form.get("clientNonce") || "");
+    const payload = await req.json().catch(() => ({}));
+    const body = cleanChatText(payload.body, CHAT_MAX_MESSAGE_LENGTH);
+    const clientNonce = String(payload.clientNonce || "");
     if (!isUuid(clientNonce)) {
       return NextResponse.json(
         { error: "This message needs a valid retry key" },
@@ -188,89 +192,61 @@ export async function POST(
     }
 
     const attachments: ChatAttachmentInput[] = [];
-    const recordKind = String(form.get("recordKind") || "");
-    const recordId = String(form.get("recordId") || "");
+    const recordKind = String(payload.recordKind || "");
+    const recordId = String(payload.recordId || "");
     if (recordKind || recordId) {
       attachments.push(
         await buildChatRecordAttachment(scope, recordKind, recordId)
       );
     }
 
-    const fileValue = form.get("file");
-    const file = fileValue instanceof File && fileValue.size > 0 ? fileValue : null;
-    if (file) {
-      if (file.size > CHAT_MAX_FILE_BYTES) {
-        return NextResponse.json(
-          { error: "Files are limited to 10 MB" },
-          { status: 413, headers: noStore }
-        );
+    const uploadedFile =
+      payload.file && typeof payload.file === "object" ? payload.file : null;
+    if (uploadedFile) {
+      const candidatePath = String(uploadedFile.path || "");
+      if (!isOwnedChatUploadPath(scope, conversation.id, candidatePath)) {
+        throw new Error("The uploaded file does not belong to this conversation");
       }
-      if (!CHAT_ALLOWED_MIME_TYPES.has(file.type)) {
-        return NextResponse.json(
-          { error: "That file type is not allowed in CRM chat" },
-          { status: 415, headers: noStore }
-        );
+      uploadedPath = candidatePath;
+      const { data: storedFile, error: fileInfoError } =
+        await supabaseService.storage.from(CHAT_FILE_BUCKET).info(uploadedPath);
+      if (fileInfoError || !storedFile) {
+        throw new Error("The uploaded file could not be verified");
       }
-      const messageId = randomUUID();
-      const fileName = safeChatFileName(file.name);
-      uploadedPath = `${scope.workspaceId}/${conversation.id}/${messageId}/${fileName}`;
-      const { error: uploadError } = await supabaseService.storage
-        .from(CHAT_FILE_BUCKET)
-        .upload(uploadedPath, Buffer.from(await file.arrayBuffer()), {
-          contentType: file.type,
-          upsert: false,
-          cacheControl: "private, max-age=0",
-        });
-      if (uploadError) throw uploadError;
+      const storedSize = Number(
+        storedFile.size ?? storedFile.metadata?.size ?? 0
+      );
+      const storedMimeType = String(
+        storedFile.contentType || storedFile.metadata?.mimetype || ""
+      );
+      if (!Number.isInteger(storedSize) || storedSize < 1) {
+        throw new Error("The uploaded file is empty");
+      }
+      if (storedSize > CHAT_MAX_FILE_BYTES) {
+        throw new Error("Files are limited to 20 MB");
+      }
+      if (!CHAT_ALLOWED_MIME_TYPES.has(storedMimeType)) {
+        throw new Error("That file type is not allowed in CRM chat");
+      }
+      const fileName = safeChatFileName(uploadedFile.fileName);
       attachments.push({
         kind: "file",
         title: fileName,
-        subtitle: `${Math.max(1, Math.round(file.size / 1024))} KB`,
+        subtitle: `${Math.max(1, Math.round(storedSize / 1024))} KB`,
         storagePath: uploadedPath,
         fileName,
-        mimeType: file.type,
-        fileSize: file.size,
+        mimeType: storedMimeType,
+        fileSize: storedSize,
         snapshot: {},
       });
-
-      const { data, error } = await supabaseService.rpc(
-        "post_crm_chat_message_service",
-        {
-          p_actor_user_id: scope.userId,
-          p_workspace_id: scope.workspaceId,
-          p_conversation_id: conversation.id,
-          p_message_id: messageId,
-          p_client_nonce: clientNonce,
-          p_body: body,
-          p_attachments: attachments,
-        }
-      );
-      if (error) throw error;
-      if (!data?.id || !isUuid(data.id)) {
-        throw new Error("The database did not confirm the message");
-      }
-      if (data.existing && uploadedPath) {
-        await supabaseService.storage.from(CHAT_FILE_BUCKET).remove([uploadedPath]);
-        uploadedPath = "";
-      }
-      if (!data.existing) {
-        waitUntil(
-          sendChatEmailNotifications({
-            scope,
-            conversationId: conversation.id,
-            messageId: data.id,
-            requestOrigin: req.nextUrl.origin,
-          }).catch((emailError) =>
-            console.error("Chat email notification failed", emailError)
-          )
-        );
-      }
-      return NextResponse.json(
-        { ok: true, messageId: data.id, existing: !!data.existing },
-        { status: data.existing ? 200 : 201, headers: noStore }
-      );
     }
 
+    if (!body && !attachments.length) {
+      return NextResponse.json(
+        { error: "Write a message or choose something to share" },
+        { status: 400, headers: noStore }
+      );
+    }
     const messageId = randomUUID();
     const { data, error } = await supabaseService.rpc(
       "post_crm_chat_message_service",
@@ -287,6 +263,10 @@ export async function POST(
     if (error) throw error;
     if (!data?.id || !isUuid(data.id)) {
       throw new Error("The database did not confirm the message");
+    }
+    if (data.existing && uploadedPath) {
+      await removeUnattachedChatUpload(scope.workspaceId, uploadedPath);
+      uploadedPath = "";
     }
     if (!data.existing) {
       waitUntil(
@@ -305,15 +285,17 @@ export async function POST(
       { status: data.existing ? 200 : 201, headers: noStore }
     );
   } catch (error: any) {
-    if (uploadedPath) {
-      await supabaseService.storage.from(CHAT_FILE_BUCKET).remove([uploadedPath]);
+    if (uploadedPath && uploadWorkspaceId) {
+      await removeUnattachedChatUpload(uploadWorkspaceId, uploadedPath);
     }
     const message = error?.message || "Message could not be sent";
-    const status = /choose|write|valid|limited|allowed|member|confidential|not found/i.test(
-      message
-    )
-      ? 400
-      : 500;
+    const status = /limited/i.test(message)
+      ? 413
+      : /choose|write|valid|allowed|member|belong|verified|empty|confidential|not found/i.test(
+            message
+          )
+        ? 400
+        : 500;
     return NextResponse.json({ error: message }, { status, headers: noStore });
   }
 }

@@ -12,7 +12,13 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import NavMenu from "@/components/crm/NavMenu";
+import {
+  CHAT_ALLOWED_MIME_TYPES,
+  CHAT_FILE_BUCKET,
+  CHAT_MAX_FILE_BYTES,
+} from "@/lib/crm-chat-shared";
 import { crmFetch } from "@/lib/crm";
+import { createSupabaseBrowser } from "@/lib/supabase-browser";
 
 type WorkspaceMember = {
   userId: string;
@@ -85,6 +91,14 @@ type PendingShare = {
   label: string;
 };
 
+type PreparedChatUpload = {
+  path: string;
+  token: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+};
+
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const primaryButton =
@@ -106,6 +120,16 @@ const fileSize = (bytes: number | null) => {
   if (!bytes) return "";
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const chatFileError = (selectedFile: File) => {
+  if (selectedFile.size > CHAT_MAX_FILE_BYTES) {
+    return "Files are limited to 20 MB";
+  }
+  if (!CHAT_ALLOWED_MIME_TYPES.has(selectedFile.type)) {
+    return "That file type is not allowed in CRM chat";
+  }
+  return "";
 };
 
 function AttachmentCard({ attachment }: { attachment: ChatAttachment }) {
@@ -156,6 +180,7 @@ function AttachmentCard({ attachment }: { attachment: ChatAttachment }) {
 function ChatPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const supabase = useMemo(() => createSupabaseBrowser(), []);
   const requestedConversation = searchParams.get("conversation") || "";
   const shareType = searchParams.get("shareType") || "";
   const shareId = searchParams.get("shareId") || "";
@@ -341,22 +366,48 @@ function ChatPageInner() {
     setSending(true);
     setError("");
     try {
-      const form = new FormData();
-      form.set("body", composer.trim());
-      form.set("clientNonce", clientNonce);
-      if (file) form.set("file", file);
-      if (pendingShare) {
-        form.set("recordKind", pendingShare.kind);
-        form.set("recordId", pendingShare.id);
+      let uploadedFile: PreparedChatUpload | null = null;
+      if (file) {
+        const validationError = chatFileError(file);
+        if (validationError) throw new Error(validationError);
+        uploadedFile = await crmFetch<PreparedChatUpload>(
+          `/api/crm/chat/${selectedId}/uploads`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              fileName: file.name,
+              mimeType: file.type,
+              fileSize: file.size,
+            }),
+          }
+        );
+        const { error: uploadError } = await supabase.storage
+          .from(CHAT_FILE_BUCKET)
+          .uploadToSignedUrl(uploadedFile.path, uploadedFile.token, file, {
+            contentType: file.type,
+            cacheControl: "0",
+            upsert: false,
+          });
+        if (uploadError) throw uploadError;
       }
-      const response = await fetch(
+      await crmFetch(
         `/api/crm/chat/${selectedId}/messages`,
-        { method: "POST", body: form, cache: "no-store" }
+        {
+          method: "POST",
+          body: JSON.stringify({
+            body: composer.trim(),
+            clientNonce,
+            recordKind: pendingShare?.kind,
+            recordId: pendingShare?.id,
+            file: uploadedFile
+              ? {
+                  path: uploadedFile.path,
+                  fileName: uploadedFile.fileName,
+                }
+              : undefined,
+          }),
+        }
       );
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(result.error || `Message failed (${response.status})`);
-      }
       setComposer("");
       setFile(null);
       if (fileInput.current) fileInput.current.value = "";
@@ -737,11 +788,24 @@ function ChatPageInner() {
                       type="file"
                       className="sr-only"
                       accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.jpg,.jpeg,.png,.webp,.heic,.mp3,.m4a,.wav,.webm,.mp4,.mov"
-                      onChange={(event) => setFile(event.target.files?.[0] || null)}
+                      onChange={(event) => {
+                        const selectedFile = event.target.files?.[0] || null;
+                        if (selectedFile) {
+                          const validationError = chatFileError(selectedFile);
+                          if (validationError) {
+                            setFile(null);
+                            setError(validationError);
+                            event.target.value = "";
+                            return;
+                          }
+                        }
+                        setError("");
+                        setFile(selectedFile);
+                      }}
                     />
                   </label>
                   <span className="hidden flex-1 text-right font-mono text-[0.48rem] uppercase tracking-wider text-muted sm:block">
-                    Enter to send · Shift Enter for a new line · Files up to 10 MB
+                    Enter to send · Shift Enter for a new line · Files up to 20 MB
                   </span>
                   <button
                     type="button"
