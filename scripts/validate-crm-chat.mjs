@@ -10,12 +10,19 @@ const migration = read("supabase/migrations/20260829120000_workspace_chat.sql");
 const advisorMigration = read(
   "supabase/migrations/20260829121500_workspace_chat_advisor_hardening.sql"
 );
+const attachmentLimitMigration = read(
+  "supabase/migrations/20260830083924_chat_20mb_attachments.sql"
+);
 const chatRoute = read("app/api/crm/chat/route.ts");
 const messagesRoute = read(
   "app/api/crm/chat/[conversationId]/messages/route.ts"
 );
+const uploadsRoute = read(
+  "app/api/crm/chat/[conversationId]/uploads/route.ts"
+);
 const fileRoute = read("app/api/crm/chat/files/[attachmentId]/route.ts");
 const helpers = read("lib/crm-chat.ts");
+const shared = read("lib/crm-chat-shared.ts");
 const page = read("app/crm/chat/page.tsx");
 const clientPage = read("app/crm/[id]/page.tsx");
 const nav = read("components/crm/NavMenu.tsx");
@@ -61,12 +68,19 @@ assert.match(migration, /The receipt never[\s\S]*message body/);
 assert.match(migration, /'crm-chat-files'/);
 assert.match(migration, /10485760/);
 assert.match(migration, /public, file_size_limit/);
+assert.match(attachmentLimitMigration, /crm_chat_attachments_file_size_check/);
+assert.match(attachmentLimitMigration, /file_size between 1 and 20971520/);
+assert.match(attachmentLimitMigration, /file_size_limit = 20971520/);
+assert.match(attachmentLimitMigration, /crm_chat_attachments_storage_path_unique_idx/);
+assert.match(shared, /CHAT_MAX_FILE_BYTES = 20 \* 1024 \* 1024/);
+assert.match(messagesRoute, /Files are limited to 20 MB/);
+assert.match(page, /Files up to 20 MB/);
 assert.match(advisorMigration, /No browser access to chat email deliveries/);
 assert.match(advisorMigration, /using \(false\)/);
 assert.match(advisorMigration, /crm_chat_messages_sender_idx/);
 assert.match(advisorMigration, /crm_chat_attachments_conversation_idx/);
 
-for (const route of [chatRoute, messagesRoute, fileRoute]) {
+for (const route of [chatRoute, messagesRoute, uploadsRoute, fileRoute]) {
   assert.match(route, /requireRequestScope\(\)/);
   assert.match(route, /scope\.workspaceId/);
 }
@@ -76,9 +90,21 @@ assert.match(fileRoute, /\.from\("crm_chat_attachments"\)[\s\S]*?\.eq\("workspac
 assert.match(messagesRoute, /requireChatMembership/);
 assert.match(messagesRoute, /CHAT_ALLOWED_MIME_TYPES/);
 assert.match(messagesRoute, /CHAT_MAX_FILE_BYTES/);
+assert.match(messagesRoute, /isOwnedChatUploadPath/);
+assert.match(messagesRoute, /removeUnattachedChatUpload/);
+assert.match(messagesRoute, /\.info\(uploadedPath\)/);
+assert.doesNotMatch(messagesRoute, /req\.formData\(\)/);
+assert.doesNotMatch(messagesRoute, /Buffer\.from\(await file\.arrayBuffer\(\)\)/);
 assert.match(messagesRoute, /post_crm_chat_message_service/);
 assert.match(messagesRoute, /sendChatEmailNotifications/);
+assert.match(uploadsRoute, /requireChatMembership/);
+assert.match(uploadsRoute, /createSignedUploadUrl/);
+assert.match(uploadsRoute, /scope\.workspaceId/);
+assert.match(uploadsRoute, /scope\.userId/);
 assert.match(fileRoute, /requireChatMembership/);
+assert.match(fileRoute, /createSignedUrl/);
+assert.match(fileRoute, /NextResponse\.redirect/);
+assert.doesNotMatch(fileRoute, /arrayBuffer\(\)/);
 assert.match(fileRoute, /X-Content-Type-Options/);
 assert.match(fileRoute, /Cache-Control.*private, no-store/);
 
@@ -102,6 +128,8 @@ assert.match(page, /Only the safe card fields are copied/);
 assert.match(page, /lc:notifications-realtime/);
 assert.match(page, /clientNonce/);
 assert.match(page, /Shift Enter for a new line/);
+assert.match(page, /uploadToSignedUrl/);
+assert.match(page, /Files are limited to 20 MB/);
 assert.doesNotMatch(
   page,
   /MatrixRain/,

@@ -3,34 +3,15 @@ import "server-only";
 import { sendConnectedMail } from "@/lib/mail";
 import { publicAppOrigin } from "@/lib/public-app-url";
 import type { RequestScope } from "@/lib/request-scope";
+import { CHAT_FILE_BUCKET } from "@/lib/crm-chat-shared";
 import { supabaseService } from "@/lib/supabase";
 
-export const CHAT_FILE_BUCKET = "crm-chat-files";
-export const CHAT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+export {
+  CHAT_ALLOWED_MIME_TYPES,
+  CHAT_FILE_BUCKET,
+  CHAT_MAX_FILE_BYTES,
+} from "@/lib/crm-chat-shared";
 export const CHAT_MAX_MESSAGE_LENGTH = 5000;
-
-export const CHAT_ALLOWED_MIME_TYPES = new Set([
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-powerpoint",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  "text/plain",
-  "text/csv",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "audio/mpeg",
-  "audio/mp4",
-  "audio/wav",
-  "audio/webm",
-  "video/mp4",
-  "video/quicktime",
-  "video/webm",
-]);
 
 export type ChatAttachmentInput = {
   kind: "file" | "company" | "contact" | "opportunity" | "crm_link";
@@ -50,6 +31,44 @@ const UUID =
 
 export const isUuid = (value: unknown): value is string =>
   typeof value === "string" && UUID.test(value);
+
+export const isOwnedChatUploadPath = (
+  scope: Pick<RequestScope, "userId" | "workspaceId">,
+  conversationId: string,
+  storagePath: string
+) => {
+  const segments = storagePath.split("/");
+  return (
+    segments.length === 4 &&
+    segments[0] === scope.workspaceId &&
+    segments[1] === conversationId &&
+    segments[2] === scope.userId &&
+    isUuid(segments[3])
+  );
+};
+
+export async function removeUnattachedChatUpload(
+  workspaceId: string,
+  storagePath: string
+) {
+  const { data: attachment, error } = await supabaseService
+    .from("crm_chat_attachments")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .eq("storage_path", storagePath)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error("Chat upload cleanup check failed", error);
+    return;
+  }
+  if (attachment) return;
+
+  const { error: removeError } = await supabaseService.storage
+    .from(CHAT_FILE_BUCKET)
+    .remove([storagePath]);
+  if (removeError) console.error("Chat upload cleanup failed", removeError);
+}
 
 export const cleanChatText = (value: unknown, max: number) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
