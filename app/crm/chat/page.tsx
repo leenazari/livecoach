@@ -15,6 +15,7 @@ import NavMenu from "@/components/crm/NavMenu";
 import {
   CHAT_ALLOWED_MIME_TYPES,
   CHAT_FILE_BUCKET,
+  CHAT_INLINE_PREVIEW_MIME_TYPES,
   CHAT_MAX_FILE_BYTES,
 } from "@/lib/crm-chat-shared";
 import { crmFetch } from "@/lib/crm";
@@ -132,7 +133,131 @@ const chatFileError = (selectedFile: File) => {
   return "";
 };
 
-function AttachmentCard({ attachment }: { attachment: ChatAttachment }) {
+const attachmentFileUrl = (
+  attachment: ChatAttachment,
+  mode: "open" | "download"
+) => {
+  if (!attachment.href) return "";
+  const separator = attachment.href.includes("?") ? "&" : "?";
+  return `${attachment.href}${separator}mode=${mode}`;
+};
+
+function FilePreviewDialog({
+  attachment,
+  onClose,
+}: {
+  attachment: ChatAttachment;
+  onClose: () => void;
+}) {
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const mimeType = attachment.mimeType || "";
+  const previewUrl = attachmentFileUrl(attachment, "open");
+  const downloadUrl = attachmentFileUrl(attachment, "download");
+  const titleId = `chat-file-preview-${attachment.id}`;
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  const preview = previewFailed ? (
+    <div className="m-auto max-w-md p-8 text-center">
+      <p className="text-base text-bone">This file did not render in your browser.</p>
+      <p className="mt-2 text-sm leading-6 text-muted">
+        You can still download and open it on your device.
+      </p>
+    </div>
+  ) : mimeType.startsWith("image/") ? (
+    <img
+      src={previewUrl}
+      alt={attachment.fileName || attachment.title}
+      className="h-full w-full object-contain"
+      onError={() => setPreviewFailed(true)}
+    />
+  ) : mimeType.startsWith("audio/") ? (
+    <div className="m-auto w-full max-w-2xl p-6">
+      <audio
+        controls
+        className="w-full"
+        src={previewUrl}
+        onError={() => setPreviewFailed(true)}
+      >
+        Your browser cannot play this audio file.
+      </audio>
+    </div>
+  ) : mimeType.startsWith("video/") ? (
+    <video
+      controls
+      playsInline
+      className="h-full w-full object-contain"
+      src={previewUrl}
+      onError={() => setPreviewFailed(true)}
+    >
+      Your browser cannot play this video file.
+    </video>
+  ) : (
+    <iframe
+      title={`Preview of ${attachment.fileName || attachment.title}`}
+      src={previewUrl}
+      className="h-full min-h-[24rem] w-full border-0 bg-white"
+      referrerPolicy="no-referrer"
+    />
+  );
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-2 backdrop-blur-sm sm:p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="flex h-[min(52rem,94vh)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-edge bg-panel shadow-2xl">
+        <header className="flex items-center gap-3 border-b border-edge px-3 py-3 sm:px-4">
+          <div className="min-w-0 flex-1">
+            <h2 id={titleId} className="truncate text-sm font-medium text-bone">
+              {attachment.fileName || attachment.title}
+            </h2>
+            <p className="mt-0.5 font-mono text-[0.48rem] uppercase tracking-wider text-muted">
+              {fileSize(attachment.fileSize)}
+            </p>
+          </div>
+          <a href={downloadUrl} className={secondaryButton}>
+            Download
+          </a>
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-11 min-w-11 rounded-lg border border-edge text-xl text-muted transition hover:border-amber/50 hover:text-bone"
+            aria-label="Close file preview"
+          >
+            ×
+          </button>
+        </header>
+        <div className="flex min-h-0 flex-1 bg-ink/80">{preview}</div>
+        <p className="border-t border-edge px-3 py-2 text-xs text-muted sm:px-4">
+          If this format does not render in your browser, download it instead.
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function AttachmentCard({
+  attachment,
+  onPreview,
+}: {
+  attachment: ChatAttachment;
+  onPreview: (attachment: ChatAttachment) => void;
+}) {
+  const canPreview =
+    attachment.kind === "file" &&
+    CHAT_INLINE_PREVIEW_MIME_TYPES.has(attachment.mimeType || "");
   const inner = (
     <div className="rounded-lg border border-edge bg-ink/45 p-3 transition hover:border-amber/50">
       <div className="flex items-start gap-3">
@@ -158,20 +283,35 @@ function AttachmentCard({ attachment }: { attachment: ChatAttachment }) {
             </p>
           ) : null}
         </div>
-        <span className="text-muted">↗</span>
+        {attachment.kind !== "file" ? <span className="text-muted">↗</span> : null}
       </div>
+      {attachment.kind === "file" && attachment.href ? (
+        <div className="mt-3 flex flex-wrap gap-2 border-t border-edge pt-3">
+          {canPreview ? (
+            <button
+              type="button"
+              onClick={() => onPreview(attachment)}
+              className={`${secondaryButton} min-h-9 flex-1 px-3`}
+            >
+              Open
+            </button>
+          ) : null}
+          <a
+            href={attachmentFileUrl(attachment, "download")}
+            className={`${secondaryButton} inline-flex min-h-9 flex-1 items-center justify-center px-3`}
+          >
+            Download
+          </a>
+        </div>
+      ) : null}
     </div>
   );
   return attachment.href ? (
-    attachment.kind === "file" ? (
-      <a href={attachment.href} className="block">
-        {inner}
-      </a>
-    ) : (
+    attachment.kind !== "file" ? (
       <Link href={attachment.href} className="block">
         {inner}
       </Link>
-    )
+    ) : inner
   ) : (
     inner
   );
@@ -209,6 +349,8 @@ function ChatPageInner() {
     () => new Set()
   );
   const [creating, setCreating] = useState(false);
+  const [previewAttachment, setPreviewAttachment] =
+    useState<ChatAttachment | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messageEnd = useRef<HTMLDivElement | null>(null);
 
@@ -712,6 +854,7 @@ function ChatPageInner() {
                                 <AttachmentCard
                                   key={attachment.id}
                                   attachment={attachment}
+                                  onPreview={setPreviewAttachment}
                                 />
                               ))}
                             </div>
@@ -834,6 +977,14 @@ function ChatPageInner() {
       <p className="mt-3 text-xs leading-5 text-muted">
         Shared cards are a conversation snapshot. Full CRM access remains governed by the client privacy and assignment controls.
       </p>
+
+      {previewAttachment ? (
+        <FilePreviewDialog
+          key={previewAttachment.id}
+          attachment={previewAttachment}
+          onClose={() => setPreviewAttachment(null)}
+        />
+      ) : null}
     </main>
   );
 }

@@ -73,6 +73,12 @@ assert.match(attachmentLimitMigration, /file_size between 1 and 20971520/);
 assert.match(attachmentLimitMigration, /file_size_limit = 20971520/);
 assert.match(attachmentLimitMigration, /crm_chat_attachments_storage_path_unique_idx/);
 assert.match(shared, /CHAT_MAX_FILE_BYTES = 20 \* 1024 \* 1024/);
+assert.match(shared, /CHAT_INLINE_PREVIEW_MIME_TYPES/);
+assert.doesNotMatch(
+  shared.match(/CHAT_INLINE_PREVIEW_MIME_TYPES[\s\S]*?\]\);/)?.[0] || "",
+  /wordprocessingml|spreadsheetml|presentationml|application\/msword/,
+  "Office files must remain download only"
+);
 assert.match(messagesRoute, /Files are limited to 20 MB/);
 assert.match(page, /Files up to 20 MB/);
 assert.match(advisorMigration, /No browser access to chat email deliveries/);
@@ -103,6 +109,12 @@ assert.match(uploadsRoute, /scope\.workspaceId/);
 assert.match(uploadsRoute, /scope\.userId/);
 assert.match(fileRoute, /requireChatMembership/);
 assert.match(fileRoute, /createSignedUrl/);
+assert.match(fileRoute, /CHAT_INLINE_PREVIEW_MIME_TYPES/);
+assert.match(fileRoute, /mime_type/);
+assert.match(fileRoute, /searchParams\.get\("mode"\) === "open"/);
+assert.match(fileRoute, /This file is download only/);
+assert.match(fileRoute, /createSignedUrl\(attachment\.storage_path, 60\)/);
+assert.match(fileRoute, /createSignedUrl\(attachment\.storage_path, 60, \{ download: fileName \}\)/);
 assert.match(fileRoute, /NextResponse\.redirect/);
 assert.doesNotMatch(fileRoute, /arrayBuffer\(\)/);
 assert.match(fileRoute, /X-Content-Type-Options/);
@@ -130,6 +142,15 @@ assert.match(page, /clientNonce/);
 assert.match(page, /Shift Enter for a new line/);
 assert.match(page, /uploadToSignedUrl/);
 assert.match(page, /Files are limited to 20 MB/);
+assert.match(page, /CHAT_INLINE_PREVIEW_MIME_TYPES/);
+assert.match(page, /mode=\$\{mode\}/);
+assert.match(page, /role="dialog"/);
+assert.match(page, />\s*Open\s*</);
+assert.match(page, />\s*Download\s*</);
+assert.match(page, /mimeType\.startsWith\("image\/"\)/);
+assert.match(page, /mimeType\.startsWith\("audio\/"\)/);
+assert.match(page, /mimeType\.startsWith\("video\/"\)/);
+assert.match(page, /<iframe/);
 assert.doesNotMatch(
   page,
   /MatrixRain/,
