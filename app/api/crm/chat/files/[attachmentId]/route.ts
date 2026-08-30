@@ -6,6 +6,7 @@ import {
   requireChatMembership,
   safeChatFileName,
 } from "@/lib/crm-chat";
+import { CHAT_INLINE_PREVIEW_MIME_TYPES } from "@/lib/crm-chat-shared";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
 
@@ -13,7 +14,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { attachmentId: string } }
 ) {
   try {
@@ -24,7 +25,7 @@ export async function GET(
     const { data: attachment, error } = await supabaseService
       .from("crm_chat_attachments")
       .select(
-        "id,workspace_id,conversation_id,kind,storage_path,file_name"
+        "id,workspace_id,conversation_id,kind,storage_path,file_name,mime_type"
       )
       .eq("workspace_id", scope.workspaceId)
       .eq("id", params.attachmentId)
@@ -35,11 +36,26 @@ export async function GET(
       return NextResponse.json({ error: "File not found" }, { status: 404 });
     }
     await requireChatMembership(scope, attachment.conversation_id);
+    const wantsInlinePreview = req.nextUrl.searchParams.get("mode") === "open";
+    if (
+      wantsInlinePreview &&
+      !CHAT_INLINE_PREVIEW_MIME_TYPES.has(attachment.mime_type || "")
+    ) {
+      return NextResponse.json(
+        { error: "This file is download only" },
+        { status: 415 }
+      );
+    }
     const fileName = safeChatFileName(attachment.file_name);
-    const { data: signedFile, error: downloadError } = await supabaseService.storage
-      .from(CHAT_FILE_BUCKET)
-      .createSignedUrl(attachment.storage_path, 60, { download: fileName });
-    if (downloadError) throw downloadError;
+    const signedFileRequest = wantsInlinePreview
+      ? supabaseService.storage
+          .from(CHAT_FILE_BUCKET)
+          .createSignedUrl(attachment.storage_path, 60)
+      : supabaseService.storage
+          .from(CHAT_FILE_BUCKET)
+          .createSignedUrl(attachment.storage_path, 60, { download: fileName });
+    const { data: signedFile, error: signedFileError } = await signedFileRequest;
+    if (signedFileError) throw signedFileError;
     if (!signedFile?.signedUrl) throw new Error("File could not be downloaded");
     const response = NextResponse.redirect(signedFile.signedUrl, 307);
     response.headers.set("Cache-Control", "private, no-store");

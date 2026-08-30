@@ -23,3 +23,20 @@ export const CHAT_ALLOWED_MIME_TYPES = new Set([
   "video/quicktime",
   "video/webm",
 ]);
+
+export const CHAT_INLINE_PREVIEW_MIME_TYPES = new Set([
+  "application/pdf",
+  "text/plain",
+  "text/csv",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/wav",
+  "audio/webm",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+]);
