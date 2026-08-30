@@ -169,6 +169,8 @@ export default function SettingsPage() {
     gmailSend?: boolean;
     gmailDraft?: boolean;
     gmailIssue?: GmailIssue;
+    drive?: "ok" | "missing" | "disconnected";
+    driveReconnectRequired?: boolean;
     calendarList?: "ok" | "missing" | "disconnected";
     calendarReconnectRequired?: boolean;
   } | null>(null);
@@ -228,7 +230,7 @@ export default function SettingsPage() {
     crmFetch<{ lessons: Lesson[] }>("/api/crm/lessons")
       .then((d) => setLessons(d.lessons || []))
       .catch(() => {});
-    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected"; gmailSend?: boolean; gmailDraft?: boolean; gmailIssue?: GmailIssue; calendarList?: "ok" | "missing" | "disconnected"; calendarReconnectRequired?: boolean }>(
+    crmFetch<{ connected: boolean; email: string | null; configured: boolean; gmail?: "ok" | "missing" | "disconnected"; gmailSend?: boolean; gmailDraft?: boolean; gmailIssue?: GmailIssue; drive?: "ok" | "missing" | "disconnected"; driveReconnectRequired?: boolean; calendarList?: "ok" | "missing" | "disconnected"; calendarReconnectRequired?: boolean }>(
       "/api/auth/google/status"
     )
       .then((d) => setGcal(d))
@@ -827,6 +829,12 @@ export default function SettingsPage() {
     }
   };
 
+  const googleReconnectRequired = Boolean(
+    gcal?.calendarReconnectRequired ||
+      gcal?.gmailDraft === false ||
+      gcal?.driveReconnectRequired
+  );
+
   return (
     <main className="relative z-10 mx-auto max-w-[900px] px-5 py-10">
       <header className="mb-5 flex items-center justify-between gap-3 border-b border-edge pb-3">
@@ -871,7 +879,7 @@ export default function SettingsPage() {
         className={`mb-5 rounded-xl border p-5 ${
           gcal === null
             ? "border-edge bg-panel/40"
-            : gcal.connected && !gcal.calendarReconnectRequired && gcal.gmailDraft !== false
+            : gcal.connected && !googleReconnectRequired
               ? "border-sage/45 bg-sage/[0.06]"
               : gcal.connected
                 ? "border-amber/50 bg-amber/[0.07]"
@@ -884,7 +892,7 @@ export default function SettingsPage() {
               className={`font-mono text-[0.62rem] uppercase tracking-[0.2em] ${
                 gcal === null
                   ? "text-muted"
-                  : gcal.connected && !gcal.calendarReconnectRequired && gcal.gmailDraft !== false
+                  : gcal.connected && !googleReconnectRequired
                     ? "text-sage"
                     : gcal.connected
                       ? "text-amber"
@@ -894,7 +902,7 @@ export default function SettingsPage() {
               {gcal === null
                 ? "◷"
                 : gcal.connected
-                  ? gcal.calendarReconnectRequired || gcal.gmailDraft === false
+                  ? googleReconnectRequired
                     ? "!"
                     : "✓"
                   : "!"} Google connection
@@ -907,6 +915,8 @@ export default function SettingsPage() {
                   ? `Connected${gcal.email ? ` as ${gcal.email}` : ""}, but Google has not granted permission to discover secondary and shared calendars. Reconnect Google once below, then sync again.`
                   : gcal.gmailDraft === false
                     ? `Connected${gcal.email ? ` as ${gcal.email}` : ""}, but Google has not granted permission to create approval-only Gmail drafts. Reconnect once below. LiveCoach will still never send those drafts automatically.`
+                    : gcal.driveReconnectRequired
+                      ? `Connected${gcal.email ? ` as ${gcal.email}` : ""}, but Google Drive storage has not been granted yet. Grant Drive access once below to use Save to Drive in Team Chat.`
                     : `Connected${
                     gcal.email ? ` as ${gcal.email}` : ""
                   }. Calendar is working${
@@ -918,6 +928,11 @@ export default function SettingsPage() {
                   }. The Sync button on the dashboard pulls calendar changes on demand.`
                 : "Not connected. Reconnect Google Calendar so meetings, cancellations and reschedules stay in sync."}
             </p>
+            {gcal?.connected && gcal.drive === "ok" ? (
+              <p className="mt-1 font-mono text-[0.58rem] leading-relaxed text-sage">
+                Google Drive storage is ready. Chat files are copied only when you press Save to Drive.
+              </p>
+            ) : null}
             {gcalNote && (
               <p aria-live="polite" className="mt-1 font-mono text-[0.58rem] text-sage">{gcalNote}</p>
             )}
@@ -930,24 +945,26 @@ export default function SettingsPage() {
           </div>
           {gcal?.connected ? (
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              {gcal.calendarReconnectRequired || gcal.gmailDraft === false ? (
+              {googleReconnectRequired ? (
                 <a
                   href="/api/auth/google/start"
                   className="rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25"
                 >
                   {gcal.calendarReconnectRequired
                     ? "Grant calendar access"
-                    : "Grant email draft access"}
+                    : gcal.gmailDraft === false
+                      ? "Grant email draft access"
+                      : "Grant Drive access"}
                 </a>
               ) : null}
               <span
                 className={`rounded-full border px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider ${
-                  gcal.calendarReconnectRequired || gcal.gmailDraft === false
+                  googleReconnectRequired
                     ? "border-amber/55 bg-amber/10 text-amber"
                     : "border-sage/55 bg-sage/10 text-sage"
                 }`}
               >
-                {gcal.calendarReconnectRequired || gcal.gmailDraft === false
+                {googleReconnectRequired
                   ? "● Google partly connected"
                   : "● Google connected"}
               </span>

@@ -72,6 +72,7 @@
     "validate:calendar-event-create": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-crm-calendar-event-create.mjs",
     "validate:google-calendar-list": "node scripts/validate-google-calendar-list-sync.mjs",
     "validate:google-oauth": "node scripts/validate-google-oauth-callback.mjs",
+    "validate:google-drive-chat": "node scripts/validate-google-drive-chat.mjs",
     "validate:account-readiness": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-account-readiness.mjs",
     "validate:password-reset": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-password-reset.mjs",
     "validate:email-otp": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-email-otp-login.mjs",

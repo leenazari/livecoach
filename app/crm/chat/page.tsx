@@ -100,6 +100,13 @@ type PreparedChatUpload = {
   fileSize: number;
 };
 
+type DriveSaveState = {
+  status: "saving" | "saved" | "error";
+  webViewLink?: string;
+  message?: string;
+  requiresReconnect?: boolean;
+};
+
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const primaryButton =
@@ -142,11 +149,85 @@ const attachmentFileUrl = (
   return `${attachment.href}${separator}mode=${mode}`;
 };
 
+function DriveSaveMessage({ state }: { state?: DriveSaveState }) {
+  if (!state || state.status === "saving") return null;
+  if (state.status === "saved") {
+    return (
+      <p className="mt-2 text-xs leading-5 text-sage">
+        Saved in your Google Drive.
+      </p>
+    );
+  }
+  return (
+    <p role="alert" className="mt-2 text-xs leading-5 text-rust">
+      {state.message || "The file could not be saved to Google Drive."}{" "}
+      {state.requiresReconnect ? (
+        <a
+          href="/api/auth/google/start"
+          className="font-medium text-amber underline decoration-amber/50 underline-offset-2"
+        >
+          Grant Drive access
+        </a>
+      ) : null}
+    </p>
+  );
+}
+
+function DriveFileAction({
+  attachment,
+  state,
+  onSave,
+  className = "",
+}: {
+  attachment: ChatAttachment;
+  state?: DriveSaveState;
+  onSave: (attachment: ChatAttachment) => void;
+  className?: string;
+}) {
+  if (state?.status === "saved" && state.webViewLink) {
+    return (
+      <a
+        href={state.webViewLink}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={className}
+      >
+        Open Drive
+      </a>
+    );
+  }
+  if (state?.requiresReconnect) {
+    return (
+      <a href="/api/auth/google/start" className={className}>
+        Grant Drive access
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onSave(attachment)}
+      disabled={state?.status === "saving"}
+      className={className}
+    >
+      {state?.status === "saving"
+        ? "Saving to Drive…"
+        : state?.status === "error"
+          ? "Try Drive again"
+          : "Save to Drive"}
+    </button>
+  );
+}
+
 function FilePreviewDialog({
   attachment,
+  driveState,
+  onSaveToDrive,
   onClose,
 }: {
   attachment: ChatAttachment;
+  driveState?: DriveSaveState;
+  onSaveToDrive: (attachment: ChatAttachment) => void;
   onClose: () => void;
 }) {
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -218,7 +299,7 @@ function FilePreviewDialog({
       }}
     >
       <section className="flex h-[min(52rem,94vh)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-edge bg-panel shadow-2xl">
-        <header className="flex items-center gap-3 border-b border-edge px-3 py-3 sm:px-4">
+        <header className="flex flex-wrap items-center gap-3 border-b border-edge px-3 py-3 sm:px-4">
           <div className="min-w-0 flex-1">
             <h2 id={titleId} className="truncate text-sm font-medium text-bone">
               {attachment.fileName || attachment.title}
@@ -230,6 +311,12 @@ function FilePreviewDialog({
           <a href={downloadUrl} className={secondaryButton}>
             Download
           </a>
+          <DriveFileAction
+            attachment={attachment}
+            state={driveState}
+            onSave={onSaveToDrive}
+            className={`${secondaryButton} inline-flex items-center justify-center`}
+          />
           <button
             type="button"
             onClick={onClose}
@@ -240,9 +327,12 @@ function FilePreviewDialog({
           </button>
         </header>
         <div className="flex min-h-0 flex-1 bg-ink/80">{preview}</div>
-        <p className="border-t border-edge px-3 py-2 text-xs text-muted sm:px-4">
-          If this format does not render in your browser, download it instead.
-        </p>
+        <div className="border-t border-edge px-3 py-2 sm:px-4">
+          <p className="text-xs text-muted">
+            If this format does not render in your browser, download it instead.
+          </p>
+          <DriveSaveMessage state={driveState} />
+        </div>
       </section>
     </div>
   );
@@ -250,10 +340,14 @@ function FilePreviewDialog({
 
 function AttachmentCard({
   attachment,
+  driveState,
   onPreview,
+  onSaveToDrive,
 }: {
   attachment: ChatAttachment;
+  driveState?: DriveSaveState;
   onPreview: (attachment: ChatAttachment) => void;
+  onSaveToDrive: (attachment: ChatAttachment) => void;
 }) {
   const canPreview =
     attachment.kind === "file" &&
@@ -302,7 +396,16 @@ function AttachmentCard({
           >
             Download
           </a>
+          <DriveFileAction
+            attachment={attachment}
+            state={driveState}
+            onSave={onSaveToDrive}
+            className={`${secondaryButton} inline-flex min-h-9 flex-1 items-center justify-center px-3`}
+          />
         </div>
+      ) : null}
+      {attachment.kind === "file" ? (
+        <DriveSaveMessage state={driveState} />
       ) : null}
     </div>
   );
@@ -351,13 +454,65 @@ function ChatPageInner() {
   const [creating, setCreating] = useState(false);
   const [previewAttachment, setPreviewAttachment] =
     useState<ChatAttachment | null>(null);
+  const [driveStates, setDriveStates] = useState<Record<string, DriveSaveState>>(
+    {}
+  );
   const fileInput = useRef<HTMLInputElement | null>(null);
   const messageEnd = useRef<HTMLDivElement | null>(null);
+  const driveSaving = useRef<Set<string>>(new Set());
 
   const selectedConversation = useMemo(
     () => feed?.conversations.find((item) => item.id === selectedId) || null,
     [feed?.conversations, selectedId]
   );
+
+  const saveAttachmentToDrive = useCallback(async (attachment: ChatAttachment) => {
+    if (attachment.kind !== "file" || driveSaving.current.has(attachment.id)) {
+      return;
+    }
+    driveSaving.current.add(attachment.id);
+    setDriveStates((current) => ({
+      ...current,
+      [attachment.id]: { status: "saving" },
+    }));
+    try {
+      const result = await crmFetch<{
+        created: boolean;
+        fileId: string;
+        fileName: string;
+        webViewLink: string;
+      }>(`/api/crm/chat/files/${attachment.id}/drive`, {
+        method: "POST",
+      });
+      if (!result.webViewLink) {
+        throw new Error("Google Drive did not return the saved file link");
+      }
+      setDriveStates((current) => ({
+        ...current,
+        [attachment.id]: {
+          status: "saved",
+          webViewLink: result.webViewLink,
+        },
+      }));
+    } catch (reason: any) {
+      const message = String(
+        reason?.message || "The file could not be saved to Google Drive"
+      );
+      setDriveStates((current) => ({
+        ...current,
+        [attachment.id]: {
+          status: "error",
+          message,
+          requiresReconnect:
+            /connect google|reconnect google|grant livecoach permission/i.test(
+              message
+            ),
+        },
+      }));
+    } finally {
+      driveSaving.current.delete(attachment.id);
+    }
+  }, []);
 
   const loadFeed = useCallback(async () => {
     const next = await crmFetch<ChatFeed>("/api/crm/chat");
@@ -854,7 +1009,9 @@ function ChatPageInner() {
                                 <AttachmentCard
                                   key={attachment.id}
                                   attachment={attachment}
+                                  driveState={driveStates[attachment.id]}
                                   onPreview={setPreviewAttachment}
+                                  onSaveToDrive={saveAttachmentToDrive}
                                 />
                               ))}
                             </div>
@@ -982,6 +1139,8 @@ function ChatPageInner() {
         <FilePreviewDialog
           key={previewAttachment.id}
           attachment={previewAttachment}
+          driveState={driveStates[previewAttachment.id]}
+          onSaveToDrive={saveAttachmentToDrive}
           onClose={() => setPreviewAttachment(null)}
         />
       ) : null}
