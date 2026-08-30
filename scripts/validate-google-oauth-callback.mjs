@@ -26,6 +26,8 @@ assert.match(callback, /Google OAuth callback failed/);
 assert.doesNotMatch(callback, /getRequestScope/);
 
 assert.match(connector, /export async function saveGoogleConnectionForOwner/);
+assert.match(connector, /GOOGLE_DRIVE_FILE_SCOPE/);
+assert.match(connector, /https:\/\/www\.googleapis\.com\/auth\/drive\.file/);
 assert.match(connector, /\.eq\("workspace_id", owner\.workspaceId\)/);
 assert.match(connector, /\.eq\("owner_id", owner\.userId\)/);
 assert.match(

@@ -7,6 +7,7 @@ import {
   googleConnected,
   googleConfigured,
   googleGrantedScopes,
+  GOOGLE_DRIVE_FILE_SCOPE,
 } from "@/lib/google";
 import { gmailAccessDiagnostic } from "@/lib/gmail";
 
@@ -30,6 +31,11 @@ export async function GET() {
       scopes.has(GMAIL_READ_SCOPE) || gmailDiagnostic.status === "ok";
     const gmailSend = scopes.has(GMAIL_SEND_SCOPE);
     const gmailDraft = scopes.has(GMAIL_COMPOSE_SCOPE);
+    const drive = connected
+      ? scopes.has(GOOGLE_DRIVE_FILE_SCOPE)
+        ? "ok"
+        : "missing"
+      : "disconnected";
     const gmail = connected ? (gmailRead ? "ok" : "missing") : "disconnected";
     const calendarList = connected
       ? googleCanListCalendars(scopes)
@@ -45,6 +51,8 @@ export async function GET() {
         gmailSend,
         gmailDraft,
         gmailIssue: gmailRead ? "none" : gmailDiagnostic.issue,
+        drive,
+        driveReconnectRequired: connected && drive !== "ok",
         calendarList,
         calendarReconnectRequired: connected && calendarList !== "ok",
       },
@@ -59,6 +67,8 @@ export async function GET() {
         gmail: "disconnected",
         gmailSend: false,
         gmailDraft: false,
+        drive: "disconnected",
+        driveReconnectRequired: false,
         calendarList: "disconnected",
         calendarReconnectRequired: false,
       },

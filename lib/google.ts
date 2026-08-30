@@ -30,6 +30,8 @@ export const GOOGLE_CALENDAR_EVENTS_SCOPE =
   "https://www.googleapis.com/auth/calendar.events";
 export const GOOGLE_CALENDAR_LIST_READ_SCOPE =
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
+export const GOOGLE_DRIVE_FILE_SCOPE =
+  "https://www.googleapis.com/auth/drive.file";
 
 const GOOGLE_CALENDAR_LIST_SCOPES = new Set([
   "https://www.googleapis.com/auth/calendar",
@@ -52,6 +54,7 @@ const SCOPE = [
   GMAIL_READ_SCOPE,
   GMAIL_SEND_SCOPE,
   GMAIL_COMPOSE_SCOPE,
+  GOOGLE_DRIVE_FILE_SCOPE,
 ].join(" ");
 
 export function googleConfigured(): boolean {

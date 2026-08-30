@@ -9,7 +9,7 @@ export const metadata: Metadata = {
     "How LiveCoach CRM collects, uses, protects and deletes personal information.",
 };
 
-const updated = "27 August 2026";
+const updated = "30 August 2026";
 
 function PolicySection({
   title,
@@ -77,6 +77,7 @@ export default function PrivacyPolicyPage() {
             <li>Calendar events and email content or metadata when a user connects Google or Microsoft.</li>
             <li>Meeting details, live transcription, call transcripts, summaries and coaching output.</li>
             <li>Outreach drafts, approvals, sent messages, replies, suppressions and campaign activity.</li>
+            <li>Private team-chat messages and files shared with selected workspace members.</li>
             <li>Connected-service identifiers, permissions and security tokens needed to maintain a connection.</li>
             <li>Inbound LinkedIn message content and sender profile links when a user runs the optional local inbox capture.</li>
             <li>Technical logs used for authentication, security, reliability, usage control and troubleshooting.</li>
@@ -93,6 +94,13 @@ export default function PrivacyPolicyPage() {
             Connected services are optional. LiveCoach CRM requests only the permissions needed for the
             feature a user chooses, such as reading a calendar, reading or sending authorised email, or
             identifying the connected account.
+          </p>
+          <p>
+            Google Drive storage is optional and user initiated. When a user presses Save to Drive on a chat
+            attachment, LiveCoach CRM copies that selected file into a LiveCoach folder in that user&apos;s
+            connected Drive. The limited Drive permission does not allow LiveCoach CRM to browse or manage
+            unrelated Drive files. Nothing is copied automatically and the saved file is not automatically
+            shared with other chat members.
           </p>
           <p>
             If LinkedIn access is enabled, LiveCoach CRM will use LinkedIn information only within the
@@ -118,6 +126,7 @@ export default function PrivacyPolicyPage() {
           <ul className="list-disc space-y-2 pl-5 marker:text-amber">
             <li>Authenticate users and keep workspaces separated.</li>
             <li>Synchronise authorised calendars and mailboxes.</li>
+            <li>Copy a selected chat attachment to the requesting user&apos;s connected Drive.</li>
             <li>Prepare, support and summarise calls.</li>
             <li>Maintain CRM history, priorities, pipelines and approved outreach.</li>
             <li>Generate requested drafts, coaching and next-step suggestions.</li>
@@ -162,6 +171,11 @@ export default function PrivacyPolicyPage() {
             LiveCoach CRM will verify the requester, remove or anonymise eligible information, and explain any
             information that must be retained. Backups may retain protected copies for a limited recovery period
             before they are overwritten.
+          </p>
+          <p>
+            A file copied to Google Drive is a separate copy controlled by the connected Google account.
+            Disconnecting Google or deleting the CRM attachment does not delete that Drive copy. The user must
+            remove it from Drive when it is no longer needed.
           </p>
         </PolicySection>
 

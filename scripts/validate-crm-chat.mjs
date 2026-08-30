@@ -21,6 +21,9 @@ const uploadsRoute = read(
   "app/api/crm/chat/[conversationId]/uploads/route.ts"
 );
 const fileRoute = read("app/api/crm/chat/files/[attachmentId]/route.ts");
+const driveRoute = read(
+  "app/api/crm/chat/files/[attachmentId]/drive/route.ts"
+);
 const helpers = read("lib/crm-chat.ts");
 const shared = read("lib/crm-chat-shared.ts");
 const page = read("app/crm/chat/page.tsx");
@@ -86,7 +89,7 @@ assert.match(advisorMigration, /using \(false\)/);
 assert.match(advisorMigration, /crm_chat_messages_sender_idx/);
 assert.match(advisorMigration, /crm_chat_attachments_conversation_idx/);
 
-for (const route of [chatRoute, messagesRoute, uploadsRoute, fileRoute]) {
+for (const route of [chatRoute, messagesRoute, uploadsRoute, fileRoute, driveRoute]) {
   assert.match(route, /requireRequestScope\(\)/);
   assert.match(route, /scope\.workspaceId/);
 }
@@ -119,6 +122,13 @@ assert.match(fileRoute, /NextResponse\.redirect/);
 assert.doesNotMatch(fileRoute, /arrayBuffer\(\)/);
 assert.match(fileRoute, /X-Content-Type-Options/);
 assert.match(fileRoute, /Cache-Control.*private, no-store/);
+assert.match(driveRoute, /requireChatMembership/);
+assert.match(driveRoute, /getAccessToken\(false, scope\.userId\)/);
+assert.match(driveRoute, /findChatAttachmentInDrive/);
+assert.match(driveRoute, /CHAT_MAX_FILE_BYTES/);
+assert.match(driveRoute, /\.download\(attachment\.storage_path\)/);
+assert.match(driveRoute, /chat_attachment_saved_to_google_drive/);
+assert.match(driveRoute, /Cache-Control.*private, no-store/);
 
 assert.match(helpers, /is_confidential/);
 assert.match(helpers, /Confidential clients cannot be shared into chat/);
@@ -151,6 +161,9 @@ assert.match(page, /mimeType\.startsWith\("image\/"\)/);
 assert.match(page, /mimeType\.startsWith\("audio\/"\)/);
 assert.match(page, /mimeType\.startsWith\("video\/"\)/);
 assert.match(page, /<iframe/);
+assert.match(page, /Save to Drive/);
+assert.match(page, /Open Drive/);
+assert.match(page, /\/api\/crm\/chat\/files\/\$\{attachment\.id\}\/drive/);
 assert.doesNotMatch(
   page,
   /MatrixRain/,
