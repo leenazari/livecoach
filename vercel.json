@@ -21,6 +21,10 @@
       "schedule": "40 5 * * *"
     },
     {
+      "path": "/api/cron/brain-routines",
+      "schedule": "*/30 * * * *"
+    },
+    {
       "path": "/api/cron/opportunity-signals",
       "schedule": "25 8-21 * * 1-5"
     },

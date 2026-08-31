@@ -19,6 +19,11 @@ import {
 } from "@/lib/crm-chat";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
+import {
+  answerTeamChatBrain,
+  asksTeamChatBrain,
+  queueTeamChatBrainReply,
+} from "@/lib/team-chat-brain";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,15 +41,26 @@ export async function GET(
       scope,
       params.conversationId
     );
-    const { data: descending, error: messageError } = await supabaseService
-      .from("crm_chat_messages")
-      .select("id,sender_user_id,body,created_at")
-      .eq("workspace_id", scope.workspaceId)
-      .eq("conversation_id", conversation.id)
-      .order("created_at", { ascending: false })
-      .limit(100);
-    if (messageError) throw messageError;
-    const rows = (descending || []).reverse();
+    const [humanMessagesResult, brainMessagesResult] = await Promise.all([
+      supabaseService
+        .from("crm_chat_messages")
+        .select("id,sender_user_id,body,created_at")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("conversation_id", conversation.id)
+        .order("created_at", { ascending: false })
+        .limit(100),
+      supabaseService
+        .from("crm_chat_brain_messages")
+        .select("id,requested_by_user_id,body,status,error,created_at,completed_at")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("conversation_id", conversation.id)
+        .order("created_at", { ascending: false })
+        .limit(100),
+    ]);
+    if (humanMessagesResult.error) throw humanMessagesResult.error;
+    if (brainMessagesResult.error) throw brainMessagesResult.error;
+    const rows = (humanMessagesResult.data || []).reverse();
+    const brainRows = (brainMessagesResult.data || []).reverse();
     const messageIds = rows.map((row: any) => row.id);
     const senderIds = [...new Set(rows.map((row: any) => row.sender_user_id))];
     const [attachmentsResult, profilesResult, membersResult] = await Promise.all([
@@ -147,14 +163,30 @@ export async function GET(
           })),
         },
         currentUserId: scope.userId,
-        messages: rows.map((row: any) => ({
-          id: row.id,
-          senderUserId: row.sender_user_id,
-          senderName: profiles.get(row.sender_user_id) || "Workspace member",
-          body: row.body,
-          attachments: attachmentsByMessage.get(row.id) || [],
-          createdAt: row.created_at,
-        })),
+        messages: [
+          ...rows.map((row: any) => ({
+            id: row.id,
+            senderKind: "human",
+            senderUserId: row.sender_user_id,
+            senderName: profiles.get(row.sender_user_id) || "Workspace member",
+            body: row.body,
+            status: "completed",
+            error: null,
+            attachments: attachmentsByMessage.get(row.id) || [],
+            createdAt: row.created_at,
+          })),
+          ...brainRows.map((row: any) => ({
+            id: row.id,
+            senderKind: "brain",
+            senderUserId: null,
+            senderName: "Brain",
+            body: row.body,
+            status: row.status,
+            error: row.error,
+            attachments: [],
+            createdAt: row.created_at,
+          })),
+        ].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
         readAt,
       },
       { headers: noStore }
@@ -268,8 +300,9 @@ export async function POST(
       await removeUnattachedChatUpload(scope.workspaceId, uploadedPath);
       uploadedPath = "";
     }
+    let brainQueued = false;
     if (!data.existing) {
-      waitUntil(
+      const backgroundWork: Promise<unknown>[] = [
         sendChatEmailNotifications({
           scope,
           conversationId: conversation.id,
@@ -277,11 +310,37 @@ export async function POST(
           requestOrigin: req.nextUrl.origin,
         }).catch((emailError) =>
           console.error("Chat email notification failed", emailError)
-        )
-      );
+        ),
+      ];
+      if (asksTeamChatBrain(body)) {
+        const queued = await queueTeamChatBrainReply({
+          scope,
+          conversationId: conversation.id,
+          sourceMessageId: data.id,
+        });
+        brainQueued = queued.queued;
+        if (queued.queued && queued.id) {
+          backgroundWork.push(
+            answerTeamChatBrain({
+              scope,
+              brainMessageId: queued.id,
+              conversationId: conversation.id,
+              sourceMessageId: data.id,
+            }).catch((brainError) =>
+              console.error("Team Chat Brain response failed", brainError)
+            )
+          );
+        }
+      }
+      waitUntil(Promise.all(backgroundWork));
     }
     return NextResponse.json(
-      { ok: true, messageId: data.id, existing: !!data.existing },
+      {
+        ok: true,
+        messageId: data.id,
+        existing: !!data.existing,
+        brainQueued,
+      },
       { status: data.existing ? 200 : 201, headers: noStore }
     );
   } catch (error: any) {
