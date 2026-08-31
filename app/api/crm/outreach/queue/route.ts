@@ -17,6 +17,7 @@ import {
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
 import { outreachSequenceStepAt } from "@/lib/outreach-sequence";
+import { canResumeUnsentFirstTouch } from "@/lib/outreach-queue-policy";
 import { loadSendPilotOutreachContext } from "@/lib/sendpilot-outreach";
 import {
   verifiedCompanyResearchEvidence,
@@ -589,11 +590,7 @@ export async function POST(req: NextRequest) {
         const existingEnrolment = enrolmentByProspect.get(prospect.id);
         // Prepared first-touch work must return to today's queue without
         // spending research tokens again or losing the exact saved draft.
-        const canResume = existingEnrolment &&
-          ["paused", "queued", "researched", "drafted", "approved"].includes(existingEnrolment.status) &&
-          Number(existingEnrolment.current_step || 1) === 1 &&
-          !existingEnrolment.last_sent_at &&
-          !existingEnrolment.queued_for;
+        const canResume = canResumeUnsentFirstTouch(existingEnrolment, today);
         if (!email || reservedEmailsForAnotherCampaign.has(email) || (existingEnrolment && !canResume) || blocked.has(email) || blocked.has(domain) || prospectHasBlockedCrmRelationship(prospect, crmGuard)) continue;
         if (recommendation.action !== "contact_today") {
           if (recommendation.action === "hold") held += 1;

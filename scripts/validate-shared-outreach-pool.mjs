@@ -11,6 +11,7 @@ const migration = read(
 );
 const prospectRoute = read("app/api/crm/outreach/[id]/route.ts");
 const queueRoute = read("app/api/crm/outreach/queue/route.ts");
+const queuePolicy = read("lib/outreach-queue-policy.ts");
 const safety = read("lib/outreach-team-safety.ts");
 const outreachPage = read("app/crm/outreach/page.tsx");
 const todayLane = read("components/crm/OutreachTodayLane.tsx");
@@ -41,8 +42,11 @@ assert.match(
 );
 assert.match(
   queueRoute,
-  /\["paused", "queued", "researched", "drafted", "approved"\]\.includes\(existingEnrolment\.status\)/
+  /canResumeUnsentFirstTouch\(existingEnrolment, today\)/
 );
+for (const status of ["paused", "queued", "researched", "drafted", "approved"]) {
+  assert.match(queuePolicy, new RegExp(`"${status}"`));
+}
 assert.match(safety, /"paused"/);
 
 // Salespeople land on a useful but still isolated view. They see their own
