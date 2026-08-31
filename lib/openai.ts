@@ -18,6 +18,32 @@ type LegacyRequest = {
 };
 
 const API_URL = "https://api.openai.com/v1/responses";
+const TRANSIENT_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+const RESPONSE_ATTEMPTS = 2;
+
+export class OpenAIResponsesError extends Error {
+  status: number;
+  detail: string;
+
+  constructor(status: number, detail: string) {
+    super(`OpenAI Responses API failed (${status}): ${detail}`);
+    this.name = "OpenAIResponsesError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+export function isTransientOpenAIError(error: unknown): boolean {
+  if (error instanceof OpenAIResponsesError) {
+    return TRANSIENT_STATUS_CODES.has(error.status);
+  }
+  const name = String((error as any)?.name || "").toLowerCase();
+  if (name === "aborterror") return false;
+  const message = String((error as any)?.message || error || "").toLowerCase();
+  return /\b429\b|\b500\b|\b502\b|\b503\b|\b504\b|rate limit|temporar|unavailable|timeout|timed out|network|fetch failed|stream error/.test(
+    message
+  );
+}
 
 const pickModel = (value: string | undefined, fallback: string): string =>
   (value || "").trim() || fallback;
@@ -205,20 +231,35 @@ async function post(
     ? setTimeout(() => controller.abort(), options.timeout)
     : null;
   try {
-    const response = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey()}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody(body, stream)),
-      signal: options?.signal || controller.signal,
-    });
-    if (!response.ok) {
-      const detail = (await response.text()).slice(0, 1200);
-      throw new Error(`OpenAI Responses API failed (${response.status}): ${detail}`);
+    const authorization = `Bearer ${apiKey()}`;
+    const payload = JSON.stringify(requestBody(body, stream));
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= RESPONSE_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await fetch(API_URL, {
+          method: "POST",
+          headers: {
+            Authorization: authorization,
+            "Content-Type": "application/json",
+          },
+          body: payload,
+          signal: options?.signal || controller.signal,
+        });
+        if (response.ok) return response;
+        const detail = (await response.text()).slice(0, 1200);
+        lastError = new OpenAIResponsesError(response.status, detail);
+      } catch (error) {
+        lastError = error;
+      }
+      if (
+        attempt >= RESPONSE_ATTEMPTS ||
+        !isTransientOpenAIError(lastError)
+      ) {
+        throw lastError;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
     }
-    return response;
+    throw lastError;
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -228,8 +269,10 @@ class OpenAIResponseStream implements AsyncIterable<any> {
   private finalPromise: Promise<any>;
   private resolveFinal!: (value: any) => void;
   private rejectFinal!: (reason: any) => void;
+  private responsePromise: Promise<Response>;
 
-  constructor(private responsePromise: Promise<Response>) {
+  constructor(responsePromise: Promise<Response>) {
+    this.responsePromise = responsePromise;
     this.finalPromise = new Promise((resolve, reject) => {
       this.resolveFinal = resolve;
       this.rejectFinal = reject;
@@ -266,7 +309,12 @@ class OpenAIResponseStream implements AsyncIterable<any> {
           }
           if (event.type === "response.completed") finalResponse = event.response;
           if (event.type === "response.incomplete") finalResponse = event.response;
-          if (event.type === "error") throw new Error(event?.message || "OpenAI stream error");
+          if (event.type === "error") {
+            throw new OpenAIResponsesError(
+              Number(event?.status) || 503,
+              String(event?.message || "OpenAI stream error").slice(0, 1200)
+            );
+          }
         }
         if (done) break;
       }

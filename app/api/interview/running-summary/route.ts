@@ -1,19 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
-import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
+import {
+  isTransientOpenAIError,
+  openai,
+  OPENAI_MODEL_LIVE,
+} from "@/lib/openai";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
+
+const cleanBullets = (value: unknown) =>
+  (Array.isArray(value) ? value : [])
+    .filter((item): item is string => typeof item === "string" && !!item.trim())
+    .slice(0, 5);
+
+const cleanCoverage = (value: unknown) => {
+  const coverage: Record<string, number> = {};
+  if (!value || typeof value !== "object") return coverage;
+  for (const [key, raw] of Object.entries(value)) {
+    const score = Math.round(Number(raw));
+    if (key && Number.isFinite(score)) {
+      coverage[key] = Math.max(0, Math.min(100, score));
+    }
+  }
+  return coverage;
+};
+
+const cleanRunningSummary = (value: any) => ({
+  context: cleanBullets(value?.context),
+  signals: cleanBullets(value?.signals),
+  concerns: cleanBullets(value?.concerns),
+  coverage: cleanCoverage(value?.coverage),
+});
 
 // Maintains a LIVE running summary of the conversation as themed bullets
 // (context / signals / concerns). Incremental: it's given the current bullets
 // plus the conversation so far and folds in anything new. Cheap (Luna), runs
 // on a light cadence off the cue's critical path.
 export async function POST(req: NextRequest) {
+  let fallback = cleanRunningSummary(null);
   try {
     const { transcript, previousBullets, focusAreas, role } = await req.json();
+    fallback = cleanRunningSummary(previousBullets);
 
     if (!transcript || !String(transcript).trim()) {
-      return NextResponse.json({ context: [], signals: [], concerns: [] });
+      return NextResponse.json(fallback);
     }
 
     // Clamp the transcript here as well as on the client. The call screen sends
@@ -24,15 +54,7 @@ export async function POST(req: NextRequest) {
     const MAX_TRANSCRIPT_CHARS = 6000;
     const recent = String(transcript).slice(-MAX_TRANSCRIPT_CHARS);
 
-    const prev =
-      previousBullets && typeof previousBullets === "object"
-        ? previousBullets
-        : {};
-    const prevText = JSON.stringify({
-      context: Array.isArray(prev.context) ? prev.context : [],
-      signals: Array.isArray(prev.signals) ? prev.signals : [],
-      concerns: Array.isArray(prev.concerns) ? prev.concerns : [],
-    });
+    const prevText = JSON.stringify(fallback);
 
     const system = `You maintain a LIVE running summary of an ongoing conversation as short bullet points, grouped into three themes:
 - "context": background and facts established about the person / situation.
@@ -93,28 +115,8 @@ Return the updated JSON bullets now.`;
       out = {};
     }
 
-    const clean = (a: any) =>
-      Array.isArray(a)
-        ? a.filter((x: any) => typeof x === "string" && x.trim()).slice(0, 5)
-        : [];
-
-    const coverage: Record<string, number> = {};
-    if (out.coverage && typeof out.coverage === "object") {
-      for (const [k, v] of Object.entries(out.coverage)) {
-        const n = Math.round(Number(v));
-        if (typeof k === "string" && Number.isFinite(n)) {
-          coverage[k] = Math.max(0, Math.min(100, n));
-        }
-      }
-    }
-
     return NextResponse.json(
-      {
-        context: clean(out.context),
-        signals: clean(out.signals),
-        concerns: clean(out.concerns),
-        coverage,
-      },
+      cleanRunningSummary(out),
       {
         headers: {
           "x-usage": JSON.stringify(msg.usage || {}),
@@ -123,6 +125,15 @@ Return the updated JSON bullets now.`;
       }
     );
   } catch (err: any) {
+    if (isTransientOpenAIError(err)) {
+      console.warn("Running summary temporarily unavailable, preserving prior state");
+      return NextResponse.json(fallback, {
+        headers: {
+          "Cache-Control": "no-store",
+          "x-livecoach-degraded": "openai-temporary",
+        },
+      });
+    }
     console.error("Running summary error:", err);
     return NextResponse.json(
       { error: err?.message || "summary failed" },
