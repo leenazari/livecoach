@@ -17,6 +17,11 @@ export const OUTREACH_VOICE_DEFAULT_RATE_GBP_PER_1000_CHARACTERS = 0.0625;
 export const OUTREACH_VOICE_BRAND_DISPLAY_NAME = "Interviewa";
 export const OUTREACH_VOICE_BRAND_SPOKEN_NAME = "Interviewer";
 
+export function outreachVoiceOpening(recipientFirstName?: string | null): string {
+  const firstName = String(recipientFirstName || "").trim() || "there";
+  return `Hi ${firstName}, I hope you're doing well today!`;
+}
+
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -99,8 +104,12 @@ export function prepareOutreachVoiceScriptForReview(input: {
     ""
   );
   script = script.replace(/^how are you(?: doing)?(?: today)?[?.!,]?\s*/i, "");
+  script = script.replace(
+    /^I hope you(?: are|'re|’re)(?: doing)? well(?: today)?[?.!,]?\s*/i,
+    ""
+  );
 
-  return `Hi ${firstName}, how are you doing? ${script}`
+  return `${outreachVoiceOpening(firstName)} ${script}`
     .replace(/\s+/g, " ")
     .trim();
 }
