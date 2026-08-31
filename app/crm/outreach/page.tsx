@@ -196,6 +196,24 @@ function queueWaveRank(row: QueueRow): number {
   return row.queueKind === "follow_up" || Boolean(row.lastSentMessage) ? 1 : 0;
 }
 
+function queueRowNeedsVoiceScript(row: QueueRow): boolean {
+  return Boolean(
+    row.message &&
+      ["draft", "failed"].includes(row.message.status) &&
+      !String(row.message.voice_script || "").trim()
+  );
+}
+
+function queueRowNeedsPreparation(row: QueueRow): boolean {
+  if (!row.prospect?.id) return false;
+  if (queueRowNeedsVoiceScript(row)) return true;
+  return Boolean(
+    !row.message &&
+      row.status === "queued" &&
+      (row.sequenceStep?.channel || "email") === "email"
+  );
+}
+
 function formatActivityDate(value?: string | null) {
   if (!value) return "No activity";
   return new Intl.DateTimeFormat("en-GB", {
@@ -1037,6 +1055,8 @@ export default function OutreachPage() {
       const visible = draftEdits[messageId];
       if (!visible?.subject?.trim() || !visible?.body_text?.trim())
         throw new Error("Add a subject and email before sending");
+      if (!visible.voice_script?.trim())
+        throw new Error("Complete and generate the personal voice note before queueing this outreach");
       const { message } = await crmFetch<{ message: Record<string, any> }>(
         `/api/crm/outreach/messages/${messageId}`,
         {
@@ -1061,25 +1081,24 @@ export default function OutreachPage() {
     }
   };
   const prepareAllRemaining = () => {
-    const preparable = queue
-      .filter(
-        (row) =>
-          !row.message &&
-          row.status === "queued" &&
-          (row.sequenceStep?.channel || "email") === "email" &&
-          row.prospect?.id
-      );
+    const preparable = queue.filter(queueRowNeedsPreparation);
     const firstTouches = preparable.filter((row) => queueWaveRank(row) === 0);
     const activeWave = firstTouches.length ? firstTouches : preparable;
-    const ids = activeWave
-      .map((row) => row.prospect.id)
-      .filter((id) => !["queued", "researching", "done"].includes(prepareJobsRef.current[id] || ""));
+    const selectedRows = activeWave.filter(
+      (row) =>
+        !["queued", "researching", "done"].includes(
+          prepareJobsRef.current[row.prospect.id] || ""
+        )
+    );
+    const ids = selectedRows.map((row) => row.prospect.id);
     if (!ids.length) {
       setNotice("Every eligible person in today's queue is already prepared or in progress.");
       return;
     }
     for (const id of ids) enqueuePrepare(id);
-    setNotice(`${ids.length} ${firstTouches.length ? "step one prospects" : "follow ups"} added to the research queue. Two will prepare at a time while you keep reviewing.`);
+    const voiceRepairs = selectedRows.filter(queueRowNeedsVoiceScript).length;
+    const newDrafts = ids.length - voiceRepairs;
+    setNotice(`${ids.length} ${firstTouches.length ? "step one drafts" : "follow ups"} added to the preparation queue. ${newDrafts} need a new email and voice script. ${voiceRepairs} existing drafts need their missing voice script restored. Two will prepare at a time while you keep reviewing.`);
   };
   const completeManualSequenceStep = async (row: QueueRow) => {
     const step = row.sequenceStep;
@@ -1165,7 +1184,8 @@ export default function OutreachPage() {
       (row) =>
         row.message &&
         ["draft", "failed"].includes(row.message.status) &&
-        (!row.message.voice_script || row.message.voice_status === "ready")
+        Boolean(String(row.message.voice_script || "").trim()) &&
+        row.message.voice_status === "ready"
     );
     const firstTouchDrafts = readyDrafts.filter(
       (row) => queueWaveRank(row) === 0
@@ -1185,6 +1205,8 @@ export default function OutreachPage() {
         const visible = draftEdits[messageId];
         if (!visible?.subject?.trim() || !visible?.body_text?.trim())
           throw new Error(`The draft for ${row.prospect?.first_name || "this prospect"} is incomplete`);
+        if (!visible.voice_script?.trim())
+          throw new Error(`The voice note for ${row.prospect?.first_name || "this prospect"} is incomplete`);
         const { message } = await crmFetch<{ message: Record<string, any> }>(
           `/api/crm/outreach/messages/${messageId}`,
           { method: "PATCH", body: JSON.stringify({ ...visible, status: "approved" }) }
@@ -1622,18 +1644,18 @@ export default function OutreachPage() {
         .map(({ row }) => row),
     [queue]
   );
-  const preparableEmailRows = queue.filter(
-    (row) =>
-      !row.message &&
-      row.status === "queued" &&
-      (row.sequenceStep?.channel || "email") === "email"
-  );
+  const preparableEmailRows = queue.filter(queueRowNeedsPreparation);
   const firstTouchEmailRows = preparableEmailRows.filter(
     (row) => queueWaveRank(row) === 0
   );
-  const remainingToPrepare = (
+  const activePreparationRows = (
     firstTouchEmailRows.length ? firstTouchEmailRows : preparableEmailRows
+  );
+  const remainingToPrepare = activePreparationRows.length;
+  const missingVoiceScriptCount = activePreparationRows.filter(
+    queueRowNeedsVoiceScript
   ).length;
+  const newEmailDraftCount = remainingToPrepare - missingVoiceScriptCount;
   const newContactCount = queue.filter(
     (row) => row.queueKind !== "follow_up"
   ).length;
@@ -1657,7 +1679,8 @@ export default function OutreachPage() {
     (row) =>
       row.message &&
       ["draft", "failed"].includes(row.message.status) &&
-      (!row.message.voice_script || row.message.voice_status === "ready")
+      Boolean(String(row.message.voice_script || "").trim()) &&
+      row.message.voice_status === "ready"
   );
   const firstTouchApprovalRows = approvalReadyRows.filter(
     (row) => queueWaveRank(row) === 0
@@ -1699,17 +1722,17 @@ export default function OutreachPage() {
             <div>
               <h2 className="font-display text-lg text-bone">Today’s combined queue</h2>
               <p className="mt-1 text-sm text-muted">Step one is prioritised across the active campaign. Scheduled follow ups stay visible, but move behind every eligible new contact and use only spare daily capacity. Email drafts still require approval.</p>
-              <p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{newContactCount} new contacts · {followUpDueCount} follow ups due · {remainingToPrepare} emails to prepare · {manualStepsDue} LinkedIn or phone actions · {preparedToApprove} awaiting approval · {scheduledToSend} scheduled</p>
+              <p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{newContactCount} new contacts · {followUpDueCount} follow ups due · {newEmailDraftCount} new emails to prepare · {missingVoiceScriptCount} voice scripts to complete · {manualStepsDue} LinkedIn or phone actions · {preparedToApprove} ready to approve · {scheduledToSend} scheduled</p>
             </div>
             <button onClick={buildQueue} disabled={!!busy || queue.length >= dailyQueueLimit} className={button}>{busy === "queue" ? "Ranking…" : queue.length ? `Fill today's remaining ${Math.max(0, dailyQueueLimit - queue.length)}` : "Build today's 20-person queue"}</button>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Prepare current wave (${remainingToPrepare})` : "Current wave prepared"}</button>
+            <button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Complete current wave (${remainingToPrepare})` : "Current wave complete"}</button>
             <button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve current wave & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button>
           </div>
           <p className="mt-2 text-xs leading-5 text-muted">Bulk approval applies only to the exact email drafts already shown below. SendPilot handoffs and manual actions are confirmed one person at a time.</p>
         </div>
-        <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const isFollowUp = row.queueKind === "follow_up" || Boolean(lastSent); const followUpDue = isFollowUp && row.status === "queued" && Number(row.current_step) > 1 && row.sequenceStepDue !== false; const sequenceStep = row.sequenceStep as SequenceStep | null; const channel = sequenceStep?.channel || "email"; const manual = channel !== "email"; const manualDue = manual && row.sequenceStepDue !== false && !["completed", "paused", "replied", "booked", "suppressed"].includes(row.status); const canPrepare = !manual && !m && row.status === "queued"; const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = manualDue ? channel : followUpDue && !m ? "follow_up_due" : m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const displayStatusLabel = displayStatus === "sent" ? "✓ sent" : displayStatus === "follow_up_due" ? "Follow up due" : displayStatus; const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text, voice_script: m.voice_script || "" } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className={`rounded-xl border bg-panel p-4 ${isFollowUp ? "border-amber/45" : "border-edge"}`}>
+        <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const isFollowUp = row.queueKind === "follow_up" || Boolean(lastSent); const followUpDue = isFollowUp && row.status === "queued" && Number(row.current_step) > 1 && row.sequenceStepDue !== false; const sequenceStep = row.sequenceStep as SequenceStep | null; const channel = sequenceStep?.channel || "email"; const manual = channel !== "email"; const manualDue = manual && row.sequenceStepDue !== false && !["completed", "paused", "replied", "booked", "suppressed"].includes(row.status); const needsVoiceScript = queueRowNeedsVoiceScript(row); const canPrepare = !manual && queueRowNeedsPreparation(row); const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = manualDue ? channel : followUpDue && !m ? "follow_up_due" : m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const displayStatusLabel = displayStatus === "sent" ? "✓ sent" : displayStatus === "follow_up_due" ? "Follow up due" : displayStatus; const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text, voice_script: m.voice_script || "" } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className={`rounded-xl border bg-panel p-4 ${isFollowUp ? "border-amber/45" : "border-edge"}`}>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
               <p className={`font-mono text-[0.55rem] uppercase ${isFollowUp ? "text-amber" : "text-sky"}`}>#{index + 1} · {followUpDue ? "follow up due" : isFollowUp ? "previously contacted" : "new contact"} · step {row.current_step}{sequenceStep ? ` · ${sequenceStep.purpose}` : ""}</p>
@@ -1726,7 +1749,7 @@ export default function OutreachPage() {
             </div>
             {canPrepare ? (
               <button onClick={() => prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>
-                {prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : isFollowUp ? `Prepare step ${row.current_step} follow up` : "Queue research + draft"}
+                {prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : needsVoiceScript ? "Complete draft + voice" : isFollowUp ? `Prepare step ${row.current_step} follow up` : "Queue research + draft"}
               </button>
             ) : manual && channel === "linkedin" ? (
               <div className="grid w-full gap-2 sm:w-auto sm:min-w-[25rem] sm:grid-cols-2">

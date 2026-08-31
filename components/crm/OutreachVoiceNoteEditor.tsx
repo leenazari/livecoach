@@ -55,6 +55,7 @@ export default function OutreachVoiceNoteEditor({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const words = script.trim().split(/\s+/).filter(Boolean).length;
+  const scriptMissing = !script.trim();
   const scriptChanged = script.trim() !== String(message.voice_script || "").trim();
   const ready = message.voice_status === "ready" && !scriptChanged;
   const scriptApproved =
@@ -121,6 +122,8 @@ export default function OutreachVoiceNoteEditor({
               ? `Ready · ${message.voice_estimated_seconds || seconds}s${generatedCostPence > 0 ? ` · est ${generatedCostPence.toFixed(1)}p` : ""}`
             : scriptChanged && message.voice_status === "ready"
               ? "Edited · regenerate"
+              : scriptMissing
+                ? "Script missing"
               : message.voice_status === "failed"
                 ? "Needs retry"
                 : generating || message.voice_status === "generating"
@@ -170,7 +173,9 @@ export default function OutreachVoiceNoteEditor({
                 ? "Creating voice…"
                 : ready
                   ? "Refresh steady delivery"
-                  : `Generate voice · est ${estimatedCostPence.toFixed(1)}p`}
+                  : scriptMissing
+                    ? "Complete script first"
+                    : `Generate voice · est ${estimatedCostPence.toFixed(1)}p`}
             </button>
           </div>
         ) : null}
@@ -189,6 +194,8 @@ export default function OutreachVoiceNoteEditor({
           ? "This approved voice note is ready to preview. Refresh reuses it unless the script or delivery profile has changed."
           : generating || message.voice_status === "generating"
             ? "The voice note is being created. You can continue using the rest of the CRM."
+            : scriptMissing
+              ? "This older email draft has no voice script yet. Complete the draft before generating audio."
             : scriptApproved
               ? "The exact script is saved. Press Generate voice to create or retry the preview."
               : "Nothing is generated or charged until you press Generate voice. That one click approves the visible script and creates the preview."}
