@@ -89,10 +89,10 @@ assert.doesNotMatch(voice, /\.from\("workspace_members"\)/);
 assert.match(voice, /selectEffectiveOutreachVoice\(profile\)/);
 assert.match(voice, /voiceId: selectedVoice\.voiceId/);
 assert.match(voice, /source: selectedVoice\.source/);
-assert.match(voice, /OUTREACH_VOICE_DELIVERY_PROFILE = "warm_upbeat_paced_v3"/);
-assert.match(voice, /stability: 0\.36/);
+assert.match(voice, /OUTREACH_VOICE_DELIVERY_PROFILE = "warm_upbeat_steady_v4"/);
+assert.match(voice, /stability: 0\.44/);
 assert.match(voice, /similarity_boost: 0\.8/);
-assert.match(voice, /style: 0\.55/);
+assert.match(voice, /style: 0\.36/);
 assert.match(voice, /settings: OUTREACH_VOICE_SETTINGS/);
 assert.match(voice, /`\$\{modelId\}:\$\{OUTREACH_VOICE_DELIVERY_PROFILE\}`/);
 assert.match(voice, /Brain and Email Assistant voices are never used as/);
@@ -127,9 +127,11 @@ assert.match(prepare, /Keep that complete causal chain in the voice note/);
 assert.match(prepare, /Do not carry this candidate preparation message into screening/);
 assert.match(prepare, /Do not use an offer, use case or CTA from another campaign/);
 assert.match(prepare, /one grounded angle permitted by the campaign contract/);
-assert.match(prepare, /I hope you're doing well today!/);
+assert.match(prepare, /I hope you are doing well today\./);
 assert.match(prepare, /welcoming, upbeat and positive/);
 assert.match(prepare, /speaker is smiling and pleased/);
+assert.match(prepare, /never rushed or overexcited/);
+assert.match(prepare, /Do not use an exclamation mark in that opening/);
 assert.match(prepare, /We are Interviewa/);
 assert.match(prepare, /must never impersonate the salesperson/);
 assert.match(prepare, /audio layer handles its pronunciation as "Interviewer"/);
@@ -211,7 +213,7 @@ assert.doesNotMatch(editor, /Hear pronunciation/);
 assert.doesNotMatch(editor, /SpeechSynthesisUtterance/);
 assert.doesNotMatch(editor, /generated audio says/);
 assert.match(editor, /Play personal voice note/);
-assert.match(editor, /Refresh paced delivery/);
+assert.match(editor, /Refresh steady delivery/);
 assert.match(editor, /delivery profile has changed/);
 assert.match(editor, /voice_generated_at/);
 assert.match(editor, /OUTREACH_VOICE_HARD_MAX_CHARACTERS/);
@@ -301,17 +303,12 @@ assert.equal(
   policyModule.outreachVoiceSpeechText("A note from Interviewa"),
   "A note from Interviewer"
 );
-const pacedOpening = policyModule.outreachVoiceSpeechText(
-  "Hi Alex, I hope you're doing well today! We are Interviewa and this could help."
-);
-assert.equal(
-  pacedOpening,
-  `Hi Alex, ${policyModule.OUTREACH_VOICE_NAME_PAUSE} I hope you're doing well today! ${policyModule.OUTREACH_VOICE_GREETING_PAUSE} We are Interviewer and this could help.`
-);
 assert.doesNotMatch(
-  policyModule.outreachVoiceOpening("Alex"),
+  policyModule.outreachVoiceSpeechText(
+    "Hi Alex, I hope you are doing well today. We are Interviewa and this could help."
+  ),
   /<break/i,
-  "the editable approved script must never expose provider pacing tags"
+  "outreach audio must not insert artificial pause tags"
 );
 const safeGeneratedScript = policyModule.prepareOutreachVoiceScriptForReview({
   script:
@@ -319,7 +316,7 @@ const safeGeneratedScript = policyModule.prepareOutreachVoiceScriptForReview({
   recipientFirstName: "Alex",
   senderName: "Lee Nazari",
 });
-assert.match(safeGeneratedScript, /^Hi Alex, I hope you're doing well today!/);
+assert.match(safeGeneratedScript, /^Hi Alex, I hope you are doing well today\./);
 assert.match(safeGeneratedScript, /We are Interviewa\./);
 assert.doesNotMatch(safeGeneratedScript, /I'm Lee|I am Lee|This is Lee/i);
 const replacedOldOpening = policyModule.prepareOutreachVoiceScriptForReview({
@@ -328,7 +325,7 @@ const replacedOldOpening = policyModule.prepareOutreachVoiceScriptForReview({
   recipientFirstName: "Alex",
   senderName: "Lee Nazari",
 });
-assert.match(replacedOldOpening, /^Hi Alex, I hope you're doing well today!/);
+assert.match(replacedOldOpening, /^Hi Alex, I hope you are doing well today\./);
 assert.equal((replacedOldOpening.match(/Hi Alex/g) || []).length, 1);
 assert.doesNotMatch(replacedOldOpening, /how are you doing/i);
 const dedupedWarmOpening = policyModule.prepareOutreachVoiceScriptForReview({
@@ -337,7 +334,7 @@ const dedupedWarmOpening = policyModule.prepareOutreachVoiceScriptForReview({
   recipientFirstName: "Alex",
   senderName: "Lee Nazari",
 });
-assert.equal((dedupedWarmOpening.match(/hope you're doing well today/i) || []).length, 1);
+assert.equal((dedupedWarmOpening.match(/hope you are doing well today/i) || []).length, 1);
 assert.equal(
   policyModule.outreachVoiceHasFalseSenderIdentity(
     "I'm Cam from Interviewa.",
