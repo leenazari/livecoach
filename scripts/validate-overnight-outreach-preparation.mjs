@@ -82,6 +82,9 @@ const vercel = JSON.parse(read("vercel.json"));
 
 assert.match(cron, /listActiveAccountScopes\(\{ connectedOnly: true \}\)/);
 assert.match(cron, /prepareOutreach/);
+assert.match(cron, /createOutreachVoiceScript/);
+assert.match(cron, /needsOnlyVoiceScript/);
+assert.match(cron, /preparationType: needsOnlyVoiceScript/);
 assert.match(cron, /generationMode: "overnight"/);
 assert.match(cron, /roundRobinPreparationJobs/);
 assert.match(cron, /MAX_PER_ACCOUNT = 8/);
