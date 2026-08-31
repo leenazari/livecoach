@@ -16,6 +16,8 @@ export const OUTREACH_VOICE_DEFAULT_RATE_GBP_PER_1000_CHARACTERS = 0.0625;
 
 export const OUTREACH_VOICE_BRAND_DISPLAY_NAME = "Interviewa";
 export const OUTREACH_VOICE_BRAND_SPOKEN_NAME = "Interviewer";
+export const OUTREACH_VOICE_NAME_PAUSE = '<break time="0.35s" />';
+export const OUTREACH_VOICE_GREETING_PAUSE = '<break time="0.65s" />';
 
 export function outreachVoiceOpening(recipientFirstName?: string | null): string {
   const firstName = String(recipientFirstName || "").trim() || "there";
@@ -30,10 +32,24 @@ const escapeRegExp = (value: string) =>
  * provider text uses the natural English pronunciation "Interviewer".
  */
 export function outreachVoiceSpeechText(script: string): string {
-  return String(script || "").replace(
+  const spokenBrand = String(script || "").replace(
     /\bInterviewa\b/gi,
     OUTREACH_VOICE_BRAND_SPOKEN_NAME
   );
+  if (!/^(?:hi|hello|hey)\s+/i.test(spokenBrand)) return spokenBrand;
+
+  // The visible, approved script stays clean. These Flash-compatible SSML
+  // breaks are added only to the provider text so the opening has a natural
+  // beat after the person's name and does not rush into the main message.
+  return spokenBrand
+    .replace(
+      /^([^.!?]{1,200}[.!?])\s+/,
+      `$1 ${OUTREACH_VOICE_GREETING_PAUSE} `
+    )
+    .replace(
+      /^((?:hi|hello|hey)\s+[^,!?]{1,80}),\s+/i,
+      `$1, ${OUTREACH_VOICE_NAME_PAUSE} `
+    );
 }
 
 export function outreachVoiceHasFalseSenderIdentity(

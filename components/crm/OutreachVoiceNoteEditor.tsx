@@ -169,7 +169,7 @@ export default function OutreachVoiceNoteEditor({
               {generating
                 ? "Creating voice…"
                 : ready
-                  ? "Refresh upbeat delivery"
+                  ? "Refresh paced delivery"
                   : `Generate voice · est ${estimatedCostPence.toFixed(1)}p`}
             </button>
           </div>
