@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { POST as buildQueue } from "@/app/api/crm/outreach/queue/route";
 import { POST as prepareOutreach } from "@/app/api/crm/outreach/[id]/prepare/route";
+import { POST as createOutreachVoiceScript } from "@/app/api/crm/outreach/messages/[id]/voice-script/route";
 import { listActiveAccountScopes } from "@/lib/automation-accounts";
 import { runWithServiceRecordScope } from "@/lib/service-scope";
 import {
@@ -82,18 +83,39 @@ async function prepareJob(req: NextRequest, job: PreparationJob) {
   if (!prospectId) {
     return { prospectId: null, ok: false, status: 400, error: "missing prospect" };
   }
+  const messageId = String(job.row?.message?.id || "").trim();
+  const needsOnlyVoiceScript = Boolean(
+    messageId &&
+      ["draft", "failed"].includes(job.row?.message?.status) &&
+      !String(job.row?.message?.voice_script || "").trim()
+  );
   const response = await runWithServiceRecordScope(job.account, () =>
-    prepareOutreach(
-      new NextRequest(
-        new URL(`/api/crm/outreach/${prospectId}/prepare`, req.url),
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ generationMode: "overnight" }),
-        }
-      ),
-      { params: { id: prospectId } }
-    )
+    needsOnlyVoiceScript
+      ? createOutreachVoiceScript(
+          new NextRequest(
+            new URL(
+              `/api/crm/outreach/messages/${messageId}/voice-script`,
+              req.url
+            ),
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: "{}",
+            }
+          ),
+          { params: { id: messageId } }
+        )
+      : prepareOutreach(
+          new NextRequest(
+            new URL(`/api/crm/outreach/${prospectId}/prepare`, req.url),
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ generationMode: "overnight" }),
+            }
+          ),
+          { params: { id: prospectId } }
+        )
   );
   const body = await response.json().catch(() => ({}));
   const ok = response.ok && Boolean(body?.message?.id);
@@ -101,7 +123,8 @@ async function prepareJob(req: NextRequest, job: PreparationJob) {
     prospectId,
     ok,
     status: response.status,
-    messageId: body?.message?.id || null,
+    messageId: body?.message?.id || messageId || null,
+    preparationType: needsOnlyVoiceScript ? "voice_script" : "full_draft",
     error: ok ? null : body?.error || "preparation did not return a draft",
   };
 }

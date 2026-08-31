@@ -491,6 +491,68 @@ export default function OutreachTodayLane({
     }));
   };
 
+  const createVoiceScript = async (
+    message: OutreachMessage,
+    prospectId: string,
+    quiet = false
+  ) => {
+    const current = prepareJobsRef.current[prospectId];
+    if (current === "queued" || current === "researching") return;
+    updatePrepareJob(prospectId, "researching");
+    setError("");
+    if (!quiet) setNotice("");
+    try {
+      const result = await crmFetch<{
+        message: OutreachMessage;
+        audioGenerated: boolean;
+        emailPreserved: boolean;
+      }>(`/api/crm/outreach/messages/${message.id}/voice-script`, {
+        method: "POST",
+        body: "{}",
+      });
+      if (
+        !result.message?.voice_script ||
+        result.message.voice_status !== "script_ready" ||
+        result.audioGenerated !== false ||
+        result.emailPreserved !== true
+      ) {
+        throw new Error("The text voice script was not confirmed safely");
+      }
+      updatePrepareJob(prospectId, "done");
+      setQueue((currentQueue) =>
+        currentQueue.map((row) =>
+          row.message?.id === message.id
+            ? { ...row, message: { ...row.message, ...result.message } }
+            : row
+        )
+      );
+      setDraftEdits((currentEdits) => ({
+        ...currentEdits,
+        [message.id]: {
+          subject:
+            result.message.subject || currentEdits[message.id]?.subject || "",
+          body:
+            result.message.body_text || currentEdits[message.id]?.body || "",
+          voiceScript: result.message.voice_script || "",
+        },
+      }));
+      if (!quiet)
+        setNotice(
+          "Voice script created. The email was preserved and no audio was generated or charged."
+        );
+      window.dispatchEvent(
+        new CustomEvent("lc:tasks-updated", {
+          detail: { source: "sales-today-voice-script" },
+        })
+      );
+    } catch (err: any) {
+      updatePrepareJob(prospectId, "error");
+      setError(err?.message || "The text voice script could not be created.");
+    } finally {
+      await load(true);
+    }
+  };
+
   const saveDraft = async (message: OutreachMessage, approveAndQueue = false) => {
     if (savingMessageId) return;
     const edit = draftEdits[message.id] || {
@@ -962,10 +1024,18 @@ export default function OutreachTodayLane({
           {unprepared.length ? (
             <button
               type="button"
-              onClick={() => unprepared.forEach((row) => enqueuePrepare(row.prospect.id))}
+              onClick={() =>
+                unprepared.forEach((row) => {
+                  if (queueRowNeedsVoiceScript(row) && row.message) {
+                    void createVoiceScript(row.message, row.prospect.id, true);
+                  } else {
+                    enqueuePrepare(row.prospect.id);
+                  }
+                })
+              }
               className={button}
             >
-              Prepare all with AI · {unprepared.length}
+              Prepare missing work · {unprepared.length}
             </button>
           ) : null}
         </div>
@@ -1282,7 +1352,7 @@ export default function OutreachTodayLane({
             const needsVoiceScript = queueRowNeedsVoiceScript(row);
             const canPrepare = queueRowNeedsPreparation(row);
             const followUpNeedsDraft =
-              canPrepare && Number(row.current_step || 1) > 1;
+              canPrepare && !row.message && Number(row.current_step || 1) > 1;
             const displayMessage = followUpNeedsDraft
               ? null
               : displayMessageFor(row);
@@ -1382,18 +1452,26 @@ export default function OutreachTodayLane({
                     {canPrepare ? (
                       <button
                         type="button"
-                        onClick={() => enqueuePrepare(row.prospect.id)}
+                        onClick={() =>
+                          needsVoiceScript && row.message
+                            ? void createVoiceScript(row.message, row.prospect.id)
+                            : enqueuePrepare(row.prospect.id)
+                        }
                         disabled={job === "queued" || job === "researching"}
                         className={primary}
                       >
                         {job === "researching"
-                          ? "Researching…"
+                          ? needsVoiceScript
+                            ? "Creating voice script…"
+                            : "Researching…"
                           : job === "queued"
                             ? "Queued"
                             : job === "error"
-                              ? "Retry prepare"
+                              ? needsVoiceScript
+                                ? "Retry voice script"
+                                : "Retry prepare"
                               : needsVoiceScript
-                                ? "Complete draft + voice"
+                                ? "Create voice script"
                                 : "Prepare research + draft"}
                       </button>
                     ) : displayMessage ? (
@@ -1525,6 +1603,20 @@ export default function OutreachTodayLane({
                               }
                             />
                             <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => enqueuePrepare(row.prospect.id)}
+                                disabled={
+                                  job === "queued" ||
+                                  job === "researching" ||
+                                  Boolean(displayMessage.scheduled_at)
+                                }
+                                className={button}
+                              >
+                                {job === "queued" || job === "researching"
+                                  ? "Refreshing draft…"
+                                  : "Refresh draft"}
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => void rehearseDraft(displayMessage)}

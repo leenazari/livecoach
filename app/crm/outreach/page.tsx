@@ -974,6 +974,65 @@ export default function OutreachPage() {
     }
   };
   const prepare = (prospectId: string) => enqueuePrepare(prospectId);
+  const createVoiceScript = async (
+    messageId: string,
+    prospectId: string,
+    quiet = false
+  ) => {
+    const current = prepareJobsRef.current[prospectId];
+    if (current === "queued" || current === "researching") return;
+    updatePrepareJob(prospectId, "researching");
+    setRowErrors((all) => ({ ...all, [prospectId]: "" }));
+    setError("");
+    if (!quiet) setNotice("");
+    try {
+      const result = await crmFetch<{
+        message: Record<string, any>;
+        audioGenerated: boolean;
+        emailPreserved: boolean;
+      }>(`/api/crm/outreach/messages/${messageId}/voice-script`, {
+        method: "POST",
+        body: "{}",
+      });
+      if (
+        !result.message?.voice_script ||
+        result.message.voice_status !== "script_ready" ||
+        result.audioGenerated !== false ||
+        result.emailPreserved !== true
+      ) {
+        throw new Error("The text voice script was not confirmed safely");
+      }
+      updatePrepareJob(prospectId, "done");
+      setQueue((all) =>
+        all.map((row) =>
+          row.message?.id === messageId
+            ? { ...row, message: { ...row.message, ...result.message } }
+            : row
+        )
+      );
+      setDraftEdits((all) => ({
+        ...all,
+        [messageId]: {
+          subject: result.message.subject || all[messageId]?.subject || "",
+          body_text:
+            result.message.body_text || all[messageId]?.body_text || "",
+          voice_script: result.message.voice_script || "",
+        },
+      }));
+      if (!quiet)
+        setNotice(
+          "Voice script created. The email was preserved and no audio was generated or charged."
+        );
+    } catch (caught: any) {
+      const message =
+        caught?.message || "The text voice script could not be created";
+      updatePrepareJob(prospectId, "error");
+      setRowErrors((all) => ({ ...all, [prospectId]: message }));
+      setError(message);
+    } finally {
+      await loadCore();
+    }
+  };
   const saveDraft = async (messageId: string) => {
     setBusy(`save:${messageId}`); setError("");
     try {
@@ -1105,7 +1164,13 @@ export default function OutreachPage() {
       setNotice("Every eligible person in today's queue is already prepared or in progress.");
       return;
     }
-    for (const id of ids) enqueuePrepare(id);
+    for (const row of selectedRows) {
+      if (queueRowNeedsVoiceScript(row) && row.message?.id) {
+        void createVoiceScript(row.message.id, row.prospect.id, true);
+      } else {
+        enqueuePrepare(row.prospect.id);
+      }
+    }
     const voiceRepairs = selectedRows.filter(queueRowNeedsVoiceScript).length;
     const newDrafts = ids.length - voiceRepairs;
     setNotice(`${ids.length} ${firstTouches.length ? "step one drafts" : "follow ups"} added to the preparation queue. ${newDrafts} need a new email and voice script. ${voiceRepairs} existing drafts need their missing voice script restored. Two will prepare at a time while you keep reviewing.`);
@@ -1756,8 +1821,8 @@ export default function OutreachPage() {
               {!m && row.next_action_at && row.sequenceStepDue === false ? <p className="mt-2 text-xs text-muted">Next step becomes ready {formatActivityDate(row.next_action_at)}.</p> : null}
             </div>
             {canPrepare ? (
-              <button onClick={() => prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>
-                {prepareStatus === "researching" ? "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : needsVoiceScript ? "Complete draft + voice" : isFollowUp ? `Prepare step ${row.current_step} follow up` : "Queue research + draft"}
+              <button onClick={() => needsVoiceScript && m?.id ? void createVoiceScript(m.id, p.id) : prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>
+                {prepareStatus === "researching" ? needsVoiceScript ? "Creating voice script…" : "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? needsVoiceScript ? "Voice script ready" : "Draft ready" : needsVoiceScript ? "Create voice script" : isFollowUp ? `Prepare step ${row.current_step} follow up` : "Queue research + draft"}
               </button>
             ) : manual && channel === "linkedin" ? (
               <div className="grid w-full gap-2 sm:w-auto sm:min-w-[25rem] sm:grid-cols-2">
@@ -1816,7 +1881,7 @@ export default function OutreachPage() {
           {rowErrors[p.id] ? <p className="mt-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm leading-5 text-rust">{rowErrors[p.id]}</p> : null}
           <RecommendationCard recommendation={row.recommendation || p.recommendation} compact actionLabel={followUpDue ? "Follow up today" : undefined} />
           {row.research ? <details className="mt-4 rounded-lg border border-edge bg-ink/30 p-3"><summary className="cursor-pointer font-mono text-[0.6rem] uppercase tracking-wider text-amber">Why this message {m?.quality_score ? `· quality ${m.quality_score}/100` : ""}</summary><p className="mt-2 text-sm leading-6 text-bone/80">{m?.strategy?.reasoning || row.research.summary}</p><div className="mt-2 flex flex-wrap gap-1.5">{row.research.fitDecision ? <span className="rounded-full border border-moss/40 bg-moss/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-moss">{row.research.fitDecision}</span> : null}{row.research.commercialPath ? <span className="rounded-full border border-sky/40 bg-sky/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-sky">{row.research.commercialPath}</span> : null}{row.research.volumeAssessment ? <span className="rounded-full border border-amber/40 bg-amber/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-amber">{row.research.volumeAssessment} vacancy volume</span> : null}{row.research.freshness ? <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.5rem] uppercase text-muted">{row.research.freshness}</span> : null}</div><p className="mt-2 text-xs text-muted"><strong className="text-bone">Chosen angle:</strong> {m?.strategy?.angle || row.research.bestAngle}</p>{row.research.volumeReason ? <p className="mt-2 text-xs text-muted"><strong className="text-bone">Volume evidence:</strong> {row.research.volumeReason}</p> : null}{row.research.activeJobs?.length && !row.research.jobSignals?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Current jobs found</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{row.research.activeJobs.map((job: string) => <li key={job}>• {job}</li>)}</ul></div> : null}{m?.strategy?.evidenceUsed?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Evidence actually used</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{m.strategy.evidenceUsed.map((fact: string) => <li key={fact}>• {fact}</li>)}</ul></div> : null}<ResearchEvidenceLinks research={row.research} sources={row.research_sources || []} prospect={p} /></details> : null}
-          {m && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-edge bg-ink/40 px-3 py-2 font-mono text-[0.58rem] text-muted">From: <span className="text-bone">{sender?.senderName || "Your account"} &lt;{m.from_email || sender?.senderEmail || "connected mailbox"}&gt;</span> · To: {p.email}</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(m.id, { subject: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Email</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(m.id, { body_text: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} /></label><OutreachVoiceNoteEditor message={m} script={edit.voice_script} disabled={Boolean(m.scheduled_at)} generating={generatingVoiceMessageId === m.id} onScriptChange={(value) => setMessage(m.id, { voice_script: value })} onGenerate={() => void generateVoiceNote(m.id)} />{!["sending", "sent"].includes(m.status) && !m.scheduled_at ? <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3"><p className="text-xs leading-5 text-bone/75">Test the real email appearance safely. The exact saved body and ready voice note go only to <strong className="text-bone">{sender?.mailboxEmail || "your connected mailbox"}</strong>. The prospect, sequence, daily allowance and results stay untouched.</p>{sender?.provider === "google" ? <p className="mt-2 text-xs leading-5 text-sky">Gmail keeps a rehearsal sent back to the same account under Sent or All Mail. It may not create a new Inbox message.</p> : null}<button onClick={() => rehearse(m.id)} disabled={!!busy} className={`${button} mt-2 w-full border-sky/45 text-sky sm:w-auto`}>{busy === `rehearse:${m.id}` ? "Sending rehearsal…" : "Send rehearsal to me"}</button></div> : null}<div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => saveDraft(m.id)} disabled={!!busy || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>Save changes</button>{m.status === "draft" || m.status === "failed" ? <button onClick={() => approveAndSend(m.id)} disabled={!!busy || Boolean(edit.voice_script) && (m.voice_status !== "ready" || edit.voice_script.trim() !== String(m.voice_script || "").trim())} className={primary}>{busy === `approve-send:${m.id}` ? "Approving and queueing…" : "Approve & queue"}</button> : null}{m.status === "approved" && !m.scheduled_at ? <button onClick={() => send(m.id)} disabled={!!busy} className={primary}>{busy === `send:${m.id}` ? "Queueing…" : "Queue approved email"}</button> : null}{m.status === "approved" && m.scheduled_at ? <span className="self-center rounded-lg border border-sky bg-sky px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-ink">✓ Queued for {formatActivityDate(m.scheduled_at)}</span> : null}{m.status === "sending" ? <span className="self-center rounded-lg border border-sky/60 bg-sky/10 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-sky">Sending now</span> : null}{m.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Sent safely</span> : null}</div><p className="text-right text-xs text-muted">Approved emails and their ready voice notes send automatically five minutes apart. There is no second confirmation pop-up.</p></div> : null}
+          {m && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-edge bg-ink/40 px-3 py-2 font-mono text-[0.58rem] text-muted">From: <span className="text-bone">{sender?.senderName || "Your account"} &lt;{m.from_email || sender?.senderEmail || "connected mailbox"}&gt;</span> · To: {p.email}</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(m.id, { subject: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Email</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(m.id, { body_text: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} /></label><OutreachVoiceNoteEditor message={m} script={edit.voice_script} disabled={Boolean(m.scheduled_at)} generating={generatingVoiceMessageId === m.id} onScriptChange={(value) => setMessage(m.id, { voice_script: value })} onGenerate={() => void generateVoiceNote(m.id)} />{!["sending", "sent"].includes(m.status) && !m.scheduled_at ? <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3"><p className="text-xs leading-5 text-bone/75">Test the real email appearance safely. The exact saved body and ready voice note go only to <strong className="text-bone">{sender?.mailboxEmail || "your connected mailbox"}</strong>. The prospect, sequence, daily allowance and results stay untouched.</p>{sender?.provider === "google" ? <p className="mt-2 text-xs leading-5 text-sky">Gmail keeps a rehearsal sent back to the same account under Sent or All Mail. It may not create a new Inbox message.</p> : null}<button onClick={() => rehearse(m.id)} disabled={!!busy} className={`${button} mt-2 w-full border-sky/45 text-sky sm:w-auto`}>{busy === `rehearse:${m.id}` ? "Sending rehearsal…" : "Send rehearsal to me"}</button></div> : null}<div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => prepare(p.id)} disabled={!!busy || prepareStatus === "queued" || prepareStatus === "researching" || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>{prepareStatus === "queued" || prepareStatus === "researching" ? "Refreshing draft…" : "Refresh draft"}</button><button onClick={() => saveDraft(m.id)} disabled={!!busy || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>Save changes</button>{m.status === "draft" || m.status === "failed" ? <button onClick={() => approveAndSend(m.id)} disabled={!!busy || Boolean(edit.voice_script) && (m.voice_status !== "ready" || edit.voice_script.trim() !== String(m.voice_script || "").trim())} className={primary}>{busy === `approve-send:${m.id}` ? "Approving and queueing…" : "Approve & queue"}</button> : null}{m.status === "approved" && !m.scheduled_at ? <button onClick={() => send(m.id)} disabled={!!busy} className={primary}>{busy === `send:${m.id}` ? "Queueing…" : "Queue approved email"}</button> : null}{m.status === "approved" && m.scheduled_at ? <span className="self-center rounded-lg border border-sky bg-sky px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-ink">✓ Queued for {formatActivityDate(m.scheduled_at)}</span> : null}{m.status === "sending" ? <span className="self-center rounded-lg border border-sky/60 bg-sky/10 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-sky">Sending now</span> : null}{m.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Sent safely</span> : null}</div><p className="text-right text-xs text-muted">Approved emails and their ready voice notes send automatically five minutes apart. There is no second confirmation pop-up.</p></div> : null}
         </article>; })}{!queue.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">The morning queue can be selected automatically, or you can build it now. Nobody is researched or contacted until you act.</div> : null}</div>
       </section> : null}
 
