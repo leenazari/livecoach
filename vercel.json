@@ -38,7 +38,7 @@
     },
     {
       "path": "/api/cron/outreach-queue",
-      "schedule": "20 6 * * *"
+      "schedule": "20 5,6,7 * * *"
     },
     {
       "path": "/api/cron/outreach-send",
