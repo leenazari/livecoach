@@ -33,6 +33,11 @@ const CHAT_ITEM: Item = {
   label: "Team chat",
   icon: "◫",
 };
+const BRAIN_CONTROL_ITEM: Item = {
+  href: "/crm/brain-control",
+  label: "Brain control",
+  icon: "◎",
+};
 const PIPELINE_ITEM: Item = { href: "/crm/revenue", label: "Pipeline", icon: "◆" };
 const CLIENTS_ITEM: Item = { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" };
 const CALLS_ITEM: Item = { href: "/crm/calls", label: "Calls", icon: "☎" };
@@ -49,6 +54,7 @@ const OWNER_CORE_ITEMS: Item[] = [
 ];
 const SALES_CORE_ITEMS: Item[] = [
   SALES_OUTREACH_ITEM,
+  BRAIN_CONTROL_ITEM,
   PIPELINE_ITEM,
   CLIENTS_ITEM,
 ];
@@ -121,6 +127,7 @@ function NavMenuInner({
         NOTIFICATIONS_ITEM,
         { href: "/crm/inbox", label: "Sales Today", icon: "✓" },
         OUTREACH_ITEM,
+        BRAIN_CONTROL_ITEM,
         ...OWNER_CORE_ITEMS,
       ];
   const moreItems = salesHome
@@ -198,6 +205,8 @@ function NavMenuInner({
     if (it.href === "/crm/notifications")
       return pathname.startsWith("/crm/notifications");
     if (it.href === "/crm/chat") return pathname.startsWith("/crm/chat");
+    if (it.href === "/crm/brain-control")
+      return pathname.startsWith("/crm/brain-control");
     if (it.href === "/crm/documents")
       return pathname.startsWith("/crm/documents");
     if (it.href === "/crm/revenue")

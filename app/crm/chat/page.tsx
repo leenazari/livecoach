@@ -68,9 +68,12 @@ type ChatAttachment = {
 
 type ChatMessage = {
   id: string;
-  senderUserId: string;
+  senderKind: "human" | "brain";
+  senderUserId: string | null;
   senderName: string;
   body: string;
+  status: "queued" | "running" | "completed" | "failed";
+  error: string | null;
   attachments: ChatAttachment[];
   createdAt: string;
 };
@@ -588,6 +591,20 @@ function ChatPageInner() {
     };
   }, [loadFeed, loadMessages, selectedId]);
 
+  const brainThinking = messages.some(
+    (message) =>
+      message.senderKind === "brain" &&
+      (message.status === "queued" || message.status === "running")
+  );
+
+  useEffect(() => {
+    if (!selectedId || !brainThinking) return;
+    const timer = window.setInterval(() => {
+      void loadMessages(selectedId);
+    }, 2_500);
+    return () => window.clearInterval(timer);
+  }, [brainThinking, loadMessages, selectedId]);
+
   useEffect(() => {
     messageEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
@@ -736,7 +753,7 @@ function ChatPageInner() {
             Team <span className="italic text-amber">chat</span>
           </h1>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
-            Talk about CRM work, share safe client cards and keep files inside the selected conversation.
+            Talk about CRM work, share safe client cards and mention @Brain when the conversation needs a grounded answer.
           </p>
         </div>
         <button
@@ -977,7 +994,8 @@ function ChatPageInner() {
                   </div>
                 ) : (
                   messages.map((message) => {
-                    const mine = message.senderUserId === feed?.currentUserId;
+                    const brain = message.senderKind === "brain";
+                    const mine = !brain && message.senderUserId === feed?.currentUserId;
                     return (
                       <article
                         key={message.id}
@@ -985,14 +1003,16 @@ function ChatPageInner() {
                       >
                         <div
                           className={`max-w-[min(42rem,88%)] rounded-2xl border px-3 py-2.5 ${
-                            mine
+                            brain
+                              ? "border-sky/40 bg-sky/[0.07]"
+                              : mine
                               ? "border-amber/35 bg-amber/[0.09]"
                               : "border-edge bg-panel"
                           }`}
                         >
                           <div className="mb-1 flex items-center justify-between gap-4">
                             <span className="font-mono text-[0.5rem] uppercase tracking-wider text-amber">
-                              {mine ? "You" : message.senderName}
+                              {brain ? "◇ Brain" : mine ? "You" : message.senderName}
                             </span>
                             <time className="font-mono text-[0.46rem] uppercase text-muted">
                               {formatTime(message.createdAt)}
@@ -1001,6 +1021,13 @@ function ChatPageInner() {
                           {message.body ? (
                             <p className="whitespace-pre-wrap break-words text-sm leading-6 text-bone">
                               {message.body}
+                            </p>
+                          ) : brain && message.status !== "failed" ? (
+                            <p className="text-sm text-sky">Brain is thinking…</p>
+                          ) : null}
+                          {brain && message.status === "failed" ? (
+                            <p className="text-sm leading-6 text-rust">
+                              Brain stopped safely. {message.error || "Mention @Brain again to retry."}
                             </p>
                           ) : null}
                           {message.attachments.length ? (
@@ -1077,7 +1104,7 @@ function ChatPageInner() {
                     }
                   }}
                   rows={2}
-                  placeholder={`Message ${selectedConversation.name}`}
+                  placeholder={`Message ${selectedConversation.name} or ask @Brain`}
                   className="w-full resize-none rounded-xl border border-edge bg-ink px-3 py-2.5 text-sm leading-6 text-bone outline-none placeholder:text-muted/60 focus:border-amber/60"
                 />
                 <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1105,7 +1132,7 @@ function ChatPageInner() {
                     />
                   </label>
                   <span className="hidden flex-1 text-right font-mono text-[0.48rem] uppercase tracking-wider text-muted sm:block">
-                    Enter to send · Shift Enter for a new line · Files up to 20 MB
+                    @Brain answers from this chat only · Shift Enter for a new line · Files up to 20 MB
                   </span>
                   <button
                     type="button"
