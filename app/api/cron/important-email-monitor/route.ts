@@ -233,22 +233,9 @@ async function runAccount() {
           receivedAt: message.date,
         });
 
-        if (
-          target.companyId &&
-          !target.ambiguous &&
-          !message.listUnsubscribe &&
-          (!automated || outOfOffice.isOutOfOffice)
-        ) {
-          const activity = await recordClientEmailActivity({
-            provider: identity.provider,
-            message,
-            freshText,
-            target,
-            outOfOffice,
-          });
-          if (activity.inserted) clientRepliesLogged += 1;
-        }
-
+        // Stop an outreach sequence before any ancillary CRM timeline write.
+        // A missing activity kind or another logging failure must never allow
+        // a later campaign step to reach someone who has already replied.
         if (target.outreachProspectId && !target.ambiguous) {
           const outreach = await processOutreachReplyMessage({
             message,
@@ -327,6 +314,22 @@ async function runAccount() {
             // second intent model pass over the same fresh message.
             continue;
           }
+        }
+
+        if (
+          target.companyId &&
+          !target.ambiguous &&
+          !message.listUnsubscribe &&
+          (!automated || outOfOffice.isOutOfOffice)
+        ) {
+          const activity = await recordClientEmailActivity({
+            provider: identity.provider,
+            message,
+            freshText,
+            target,
+            outOfOffice,
+          });
+          if (activity.inserted) clientRepliesLogged += 1;
         }
 
         if (outOfOffice.isOutOfOffice) {

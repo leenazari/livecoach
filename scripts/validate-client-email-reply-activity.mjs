@@ -48,6 +48,9 @@ assert.deepEqual(
 const migration = read(
   "supabase/migrations/20260828142225_client_email_reply_activity.sql"
 );
+const kindMigration = read(
+  "supabase/migrations/20260831135749_allow_client_email_reply_context.sql"
+);
 const activity = read("lib/client-email-activity.ts");
 const monitor = read("app/api/cron/important-email-monitor/route.ts");
 const outreach = read("lib/outreach-replies.ts");
@@ -60,6 +63,11 @@ const brainContext = read("lib/crm-context.ts");
 assert.match(migration, /add column if not exists source_ref text/);
 assert.match(migration, /add column if not exists metadata jsonb/);
 assert.match(migration, /unique index[\s\S]*?\(owner_id, source_ref\)/);
+assert.match(kindMigration, /drop constraint if exists client_context_kind_check/);
+assert.match(
+  kindMigration,
+  /check \(kind in \('note', 'link', 'doc', 'email_reply'\)\)/
+);
 assert.match(activity, /onConflict: "owner_id,source_ref"/);
 assert.match(activity, /ignoreDuplicates: true/);
 assert.match(activity, /kind: "email_reply"/);
@@ -76,6 +84,18 @@ assert.match(monitor, /newInboxMessagesSince/);
 assert.match(monitor, /freshMessageText\(message\.id, 5000\)/);
 assert.match(monitor, /recordClientEmailActivity/);
 assert.match(monitor, /processOutreachReplyMessage/);
+const outreachStopIndex = monitor.indexOf(
+  "const outreach = await processOutreachReplyMessage"
+);
+const clientActivityIndex = monitor.indexOf(
+  "const activity = await recordClientEmailActivity"
+);
+assert(outreachStopIndex >= 0);
+assert(clientActivityIndex >= 0);
+assert(
+  outreachStopIndex < clientActivityIndex,
+  "Outreach reply processing must run before client timeline logging"
+);
 assert.match(monitor, /if \(outOfOffice\.isOutOfOffice\)[\s\S]*?continue/);
 assert.match(monitor, /ambiguousSenderMatches/);
 
