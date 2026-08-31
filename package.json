@@ -66,7 +66,7 @@
     "validate:focused-outreach": "node scripts/validate-focused-outreach-sales-desk.mjs",
     "validate:reply-to-meeting": "node scripts/validate-reply-to-meeting-flow.mjs",
     "validate:client-email-replies": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-client-email-reply-activity.mjs",
-    "validate:cross-campaign-outreach": "node scripts/validate-cross-campaign-outreach.mjs",
+    "validate:cross-campaign-outreach": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-cross-campaign-outreach.mjs",
     "validate:manual-outreach-calls": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-manual-outreach-calls.mjs",
     "validate:official-job-research": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-official-job-research.mjs",
     "validate:campaign-sequence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-campaign-sequence-builder.mjs",

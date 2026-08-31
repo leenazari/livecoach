@@ -20,6 +20,10 @@ import {
   outreachSequenceValidationError,
   type OutreachSequenceStep,
 } from "@/lib/outreach-sequence";
+import {
+  explainOutreachCampaignSelection,
+  outreachQueueCampaignCounts,
+} from "@/lib/outreach-campaign-queue-copy";
 
 const CampaignSequenceBuilder = dynamic(
   () => import("@/components/crm/CampaignSequenceBuilder"),
@@ -841,6 +845,17 @@ export default function OutreachPage() {
     (campaign) => campaign.id === selectedCampaignId
   ) || orderedCampaigns.find((campaign) => campaign.status === "active");
   const dailyQueueLimit = Math.min(20, activeCampaign?.daily_limit || 20);
+  const queueCampaigns = useMemo(
+    () => outreachQueueCampaignCounts(queue),
+    [queue]
+  );
+  const campaignSelectionExplanation = explainOutreachCampaignSelection({
+    selectedCampaignName: activeCampaign?.name,
+    selectedCampaignId: activeCampaign?.id,
+    queueCampaigns,
+    queueLength: queue.length,
+    dailyLimit: dailyQueueLimit,
+  });
   const selectableCampaigns = orderedCampaigns.filter(
     (campaign) => campaign.status === "active"
   );
@@ -961,8 +976,17 @@ export default function OutreachPage() {
           limit: result.campaign.daily_limit || 20,
         }),
       });
-      setQueue(filled.queue || []);
-      setNotice(`${result.campaign.name} is now your campaign and has filled today's available places. Your teammates keep their own selections.`);
+      const nextQueue = filled.queue || [];
+      setQueue(nextQueue);
+      setNotice(
+        `${result.campaign.name} is selected for new queue spaces. ${explainOutreachCampaignSelection({
+          selectedCampaignName: result.campaign.name,
+          selectedCampaignId: result.campaign.id,
+          queueCampaigns: outreachQueueCampaignCounts(nextQueue),
+          queueLength: nextQueue.length,
+          dailyLimit: Math.min(20, result.campaign.daily_limit || 20),
+        })} Your teammates keep their own selections.`
+      );
       await Promise.all([
         loadCore(),
         tab === "prospects" ? loadProspects() : Promise.resolve(),
@@ -1789,15 +1813,33 @@ export default function OutreachPage() {
 
       {!loading && !tabLoading && tab === "queue" ? <section data-sales-tour="outreach-queue">
         <RevenueToday />
-        <div className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.06] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase tracking-wider text-moss">Campaign to top up</p><h2 className="mt-1 font-display text-lg text-bone">{activeCampaign?.name || "No active campaign"}</h2><p className="mt-1 text-sm text-muted">This choice controls Rank + build only. The combined list below keeps queued work from every campaign together.</p></div>{selectableCampaigns.length ? <label className="w-full sm:w-72"><span className="sr-only">Choose your active campaign</span><select aria-label="Choose your active campaign" className={`${input} min-h-11`} value={activeCampaign?.id || ""} onChange={(event) => void selectActiveCampaign(event.target.value)} disabled={!!busy}>{selectableCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label> : <button type="button" onClick={() => selectTab("campaign")} className={button}>Review campaigns</button>}</div></div>
+        <div className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.06] p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="max-w-2xl">
+              <p className="font-mono text-[0.55rem] uppercase tracking-wider text-moss">Campaign for new queue spaces</p>
+              <h2 className="mt-1 font-display text-lg text-bone">{activeCampaign?.name || "No active campaign"}</h2>
+              <p className="mt-1 text-sm leading-6 text-bone/75">{campaignSelectionExplanation}</p>
+              {queueCampaigns.length ? (
+                <div className="mt-2 flex flex-wrap gap-2" aria-label="Today's contacts by campaign">
+                  {queueCampaigns.map((campaign) => (
+                    <span key={campaign.id} className="rounded-full border border-edge bg-ink/35 px-2 py-1 font-mono text-[0.5rem] uppercase tracking-wider text-muted">
+                      Today · {campaign.count} · {campaign.name}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            {selectableCampaigns.length ? <label className="w-full sm:w-72"><span className="sr-only">Choose campaign for new queue spaces</span><select aria-label="Choose campaign for new queue spaces" className={`${input} min-h-11`} value={activeCampaign?.id || ""} onChange={(event) => void selectActiveCampaign(event.target.value)} disabled={!!busy}>{selectableCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label> : <button type="button" onClick={() => selectTab("campaign")} className={button}>Review campaigns</button>}
+          </div>
+        </div>
         <div className="mb-4 rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className="font-display text-lg text-bone">Today’s combined queue</h2>
-              <p className="mt-1 text-sm text-muted">Step one is prioritised across the active campaign. Scheduled follow ups stay visible, but move behind every eligible new contact and use only spare daily capacity. Email drafts still require approval.</p>
+              <h2 className="font-display text-lg text-bone">Today’s assigned contacts</h2>
+              <p className="mt-1 text-sm text-muted">Each person keeps the campaign shown on their card. Changing the campaign above never moves or rewrites anyone already queued. New contacts use the selected campaign only when a space is available. Email drafts still require approval.</p>
               <p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{newContactCount} new contacts · {followUpDueCount} follow ups due · {newEmailDraftCount} new emails to prepare · {missingVoiceScriptCount} voice scripts to complete · {manualStepsDue} LinkedIn or phone actions · {preparedToApprove} ready to approve · {scheduledToSend} scheduled</p>
             </div>
-            <button onClick={buildQueue} disabled={!!busy || queue.length >= dailyQueueLimit} className={button}>{busy === "queue" ? "Ranking…" : queue.length ? `Fill today's remaining ${Math.max(0, dailyQueueLimit - queue.length)}` : "Build today's 20-person queue"}</button>
+            <button onClick={buildQueue} disabled={!!busy || queue.length >= dailyQueueLimit} className={button}>{busy === "queue" ? "Ranking…" : queue.length >= dailyQueueLimit ? "Today’s queue is full" : queue.length ? `Add ${Math.max(0, dailyQueueLimit - queue.length)} from ${activeCampaign?.name || "selected campaign"}` : `Build today's queue from ${activeCampaign?.name || "selected campaign"}`}</button>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Complete current wave (${remainingToPrepare})` : "Current wave complete"}</button>
@@ -1814,6 +1856,7 @@ export default function OutreachPage() {
                 <p className="text-sm text-bone/80">{p.job_title} · {p.company_name}</p>
               </CanonicalRecordLink>
               <div className="mt-2 flex flex-wrap gap-2">
+                <span className="rounded-full border border-sky/45 bg-sky/10 px-2 py-0.5 font-mono text-[0.54rem] uppercase text-sky">Campaign · {row.campaign?.name || "Not recorded"}</span>
                 <span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[p.priority]}`}>manual priority {p.priority}</span>
                 <span className={`rounded-full border px-2 py-0.5 font-mono text-[0.54rem] uppercase ${pill[displayStatus] || (manual ? "border-sky/50 bg-sky/10 text-sky" : "border-edge text-muted")}`}>{displayStatusLabel}</span>
               </div>
@@ -2064,7 +2107,7 @@ export default function OutreachPage() {
         </div>
 
         <div className="flex flex-col gap-2 rounded-xl border border-edge bg-panel px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="font-display text-lg text-bone">Your campaigns</h2><p className="mt-1 text-sm text-muted">Current means the campaign feeding your Today queue. Active means the team can use it.</p></div>
+          <div><h2 className="font-display text-lg text-bone">Your campaigns</h2><p className="mt-1 text-sm text-muted">Selected for new spaces means this campaign supplies only new contacts added to available Today spaces. It never moves contacts already queued. Active means the team can use it.</p></div>
           <span className="self-start rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted sm:self-auto">{orderedCampaigns.length} total</span>
         </div>
 
@@ -2080,7 +2123,7 @@ export default function OutreachPage() {
             <summary className="cursor-pointer list-none px-4 py-4 [&::-webkit-details-marker]:hidden sm:px-5">
               <div className="flex min-w-0 items-start gap-3">
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-amber/40 bg-amber/10 font-display text-lg text-amber">↗</span>
-                <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-[0.48rem] uppercase tracking-wider text-amber">Campaign</span>{isCurrent ? <span className="rounded-full border border-moss/50 bg-moss/10 px-2 py-0.5 font-mono text-[0.48rem] uppercase text-moss">Current queue</span> : null}<span className={`rounded-full border px-2 py-0.5 font-mono text-[0.48rem] uppercase ${campaignStatusTone[campaign.status] || campaignStatusTone.paused}`}>{campaign.status}</span></div><h3 className="mt-1 truncate font-display text-lg text-bone">{campaign.name}</h3><p className="mt-1 line-clamp-2 text-sm text-bone/70">{campaign.goal || "No goal saved yet"}</p></div>
+                <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-[0.48rem] uppercase tracking-wider text-amber">Campaign</span>{isCurrent ? <span className="rounded-full border border-moss/50 bg-moss/10 px-2 py-0.5 font-mono text-[0.48rem] uppercase text-moss">Selected for new spaces</span> : null}<span className={`rounded-full border px-2 py-0.5 font-mono text-[0.48rem] uppercase ${campaignStatusTone[campaign.status] || campaignStatusTone.paused}`}>{campaign.status}</span></div><h3 className="mt-1 truncate font-display text-lg text-bone">{campaign.name}</h3><p className="mt-1 line-clamp-2 text-sm text-bone/70">{campaign.goal || "No goal saved yet"}</p></div>
                 <span className="shrink-0 rounded-lg border border-edge px-3 py-2 font-mono text-[0.52rem] uppercase text-amber"><span className="group-open:hidden">Open</span><span className="hidden group-open:inline">Close</span> <span className="group-open:hidden">▾</span><span className="hidden group-open:inline">▴</span></span>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2 sm:max-w-lg"><div className="rounded-lg border border-amber/25 bg-amber/[0.05] px-2 py-2"><strong className="block font-display text-lg text-bone">{campaign.daily_limit}</strong><span className="font-mono text-[0.43rem] uppercase text-muted">Daily maximum</span></div><div className="rounded-lg border border-sky/25 bg-sky/[0.05] px-2 py-2"><strong className="block font-display text-lg text-bone">{sequenceCount}</strong><span className="font-mono text-[0.43rem] uppercase text-muted">Sequence steps</span></div><div className="rounded-lg border border-moss/25 bg-moss/[0.05] px-2 py-2"><strong className="block font-display text-lg text-bone">{personalStats?.contacted || 0}</strong><span className="font-mono text-[0.43rem] uppercase text-muted">Contacted by you</span></div></div>
