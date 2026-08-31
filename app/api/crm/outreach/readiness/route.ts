@@ -11,6 +11,7 @@ import { microsoftAccessStatus } from "@/lib/microsoft";
 import { londonDate, OUTREACH_DAILY_HARD_LIMIT } from "@/lib/outreach";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
+import { getPersonalOutreachBookingLink } from "@/lib/outreach-booking-link";
 import { requireRequestScope } from "@/lib/request-scope";
 
 export const dynamic = "force-dynamic";
@@ -30,10 +31,13 @@ export async function GET() {
     const account = requireRequestScope();
     const sender = await resolveOutreachIdentity();
     const today = londonDate();
-    const selection = await resolveOutreachCampaignSelection(
-      account.userId,
-      account.workspaceId
-    );
+    const [selection, personalBookingUrl] = await Promise.all([
+      resolveOutreachCampaignSelection(account.userId, account.workspaceId),
+      getPersonalOutreachBookingLink({
+        userId: account.userId,
+        workspaceId: account.workspaceId,
+      }),
+    ]);
     const campaign = selection.campaign;
     const { data: membershipRows, error: membershipError } = campaign
       ? await supabaseAdmin
@@ -190,13 +194,15 @@ export async function GET() {
       },
       {
         id: "booking",
-        label: "Booking handoff",
-        status: campaign?.booking_url ? "pass" : "warn",
-        detail: campaign?.booking_url
-          ? "A positive reply can receive the saved booking link after approval."
-          : "Add the AI13 booking link so interested replies can convert straight into calls.",
-        href: "/crm/outreach?tab=intelligence",
-        action: campaign?.booking_url ? undefined : "Add booking link",
+        label: "Your booking link",
+        status: personalBookingUrl ? "pass" : "warn",
+        detail: personalBookingUrl
+          ? campaign?.booking_cta_mode === "never"
+            ? "Your personal link is saved. This campaign is currently set not to include booking links."
+            : "Outreach will use only your personal link. It cannot substitute a campaign or teammate calendar."
+          : "Add your personal booking link before preparing meeting replies. Outreach will not substitute another person's calendar.",
+        href: "/settings/sales-profile",
+        action: personalBookingUrl ? undefined : "Open My Sales Setup",
       },
       {
         id: "limit",

@@ -80,8 +80,8 @@ assert.match(profileRoute, /input\.emailAssistantVoiceId !== previous\.emailAssi
 assert.match(profileRoute, /Email Assistant voice invalidation failed/);
 assert.doesNotMatch(profileRoute, /body\.(?:userId|workspaceId)/);
 assert.match(profilePage, /Your personal booking link/);
-assert.match(profilePage, /Each salesperson saves their own link/);
-assert.match(profilePage, /nobody else&apos;s calendar is substituted/);
+assert.match(profilePage, /Outreach and Email Assistant use this exact salesperson-specific link/);
+assert.match(profilePage, /A teammate, campaign or global link can never replace it/);
 assert.match(profilePage, /Email Assistant reply voice/);
 assert.match(profilePage, /Outreach campaign voice/);
 assert.match(profilePage, /Choose only the Email Assistant reply voice/);

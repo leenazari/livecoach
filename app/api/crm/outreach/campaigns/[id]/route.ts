@@ -38,11 +38,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (Array.isArray(body.banned_phrases)) {
       patch.banned_phrases = body.banned_phrases.map((phrase: any) => String(phrase).trim().toLowerCase().slice(0, 100)).filter(Boolean).slice(0, 30);
     }
-    if (typeof body.booking_url === "string") {
-      const bookingUrl = body.booking_url.trim();
-      if (bookingUrl && !/^https:\/\//i.test(bookingUrl)) return NextResponse.json({ error: "The booking link must start with https://" }, { status: 400 });
-      patch.booking_url = bookingUrl || null;
-    }
+    // Campaign booking links are legacy data and are never written or used.
+    // Each salesperson owns their link in My Sales Setup.
     if (["interested_reply", "final_step", "always", "never"].includes(body.booking_cta_mode)) patch.booking_cta_mode = body.booking_cta_mode;
     // Approval mode is deliberately locked on for this first safe release.
     patch.approval_mode = true;

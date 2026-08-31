@@ -41,6 +41,7 @@ import {
   getOptionalSalesProfile,
   salesProfileContextBlock,
 } from "@/lib/sales-profile";
+import { shouldIncludePersonalOutreachBookingLink } from "@/lib/outreach-booking-link";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -171,7 +172,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       supabaseAdmin.from("workspace_profile").select("knowledge,learned").eq("id", profileId).maybeSingle(),
       getAppConfigValue("revenue_target_gbp").then((data) => ({ data })),
       getAppConfigValue("interviewa_outreach_offer_truth").then((data) => ({ data })),
-      getOptionalSalesProfile(),
+      getOptionalSalesProfile({
+        userId: sender.userId,
+        workspaceId: sender.workspaceId,
+      }),
     ]);
     const enrolment = enrolments?.[0];
     if (!prospect || !enrolment) return NextResponse.json({ error: "This person is not in today's queue" }, { status: 400 });
@@ -226,7 +230,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       );
     }
     const lastStep = Math.max(1, ...sequence.map((row: any) => Number(row?.step) || 0));
-    const includeBooking = !!campaign.booking_url && (campaign.booking_cta_mode === "always" || (campaign.booking_cta_mode === "final_step" && step >= lastStep));
+    const personalBookingUrl = String(personalProfile.bookingUrl || "").trim();
+    const includeBooking = shouldIncludePersonalOutreachBookingLink({
+      bookingUrl: personalBookingUrl,
+      mode: campaign.booking_cta_mode,
+      step,
+      lastStep,
+    });
     const jobSearchDomains = officialJobSearchDomains(prospect);
     const campaignContract = {
       name: clean(campaign.name, 180),
@@ -262,7 +272,7 @@ PERSONAL DELIVERY: write in a ${personalProfile.emailTone.replace(/_/g, " ")} st
 COACHING RULES: ${Array.isArray(voice.rules) ? voice.rules.join(" | ").slice(0, 1000) : "Lead with one verified relevance signal | make one useful commercial observation | ask one easy question | never pretend familiarity"}
 EMAIL BANNED PHRASES: ${banned.join(" | ") || "quick question | hope you are well | reaching out"}. These apply to the email body. The required welcoming voice note opening below is allowed.
 
-The email must be plain text, 90 to 135 words, use short mobile friendly paragraphs, ask one easy question, and be signed exactly "${emailSignoff}". Its final three parts must appear in this order: a natural one line opt out such as "If this is not relevant, tell me and I will not follow up.", then this exact mandatory CTA as its own paragraph, "${OUTREACH_EMAIL_DEMO_REPLY_CTA}", then the signature. This reply to book CTA is required on every campaign email step and must not be replaced with a generic invitation. It must sound individually written by ${sender.senderName}, not like a template or a faceless product message. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Subject under 45 characters. Select one supported benefit and one approved next step from the campaign contract. Do not list unrelated Interviewa capabilities. Use a verified current vacancy only when it is relevant to this campaign. Use approved proof only when it appears in product truth and directly supports the selected angle. Be commercially vivid without hype. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? `This is a follow up. Do not repeat ${sender.senderName}'s full introduction or the opening email, and make it easy to close the loop.` : `This is the first email. After the personalised opening, introduce the sender naturally with: I’m ${sender.senderName} from Interviewa. Then explain Interviewa only through the selected campaign angle.`} ${includeBooking ? `Include this booking link once, naturally, as the optional next step: ${campaign.booking_url}` : "Do not include a calendar or booking link. Earn interest first."}
+The email must be plain text, 90 to 135 words, use short mobile friendly paragraphs, ask one easy question, and be signed exactly "${emailSignoff}". Its final three parts must appear in this order: a natural one line opt out such as "If this is not relevant, tell me and I will not follow up.", then this exact mandatory CTA as its own paragraph, "${OUTREACH_EMAIL_DEMO_REPLY_CTA}", then the signature. This reply to book CTA is required on every campaign email step and must not be replaced with a generic invitation. It must sound individually written by ${sender.senderName}, not like a template or a faceless product message. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Subject under 45 characters. Select one supported benefit and one approved next step from the campaign contract. Do not list unrelated Interviewa capabilities. Use a verified current vacancy only when it is relevant to this campaign. Use approved proof only when it appears in product truth and directly supports the selected angle. Be commercially vivid without hype. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? `This is a follow up. Do not repeat ${sender.senderName}'s full introduction or the opening email, and make it easy to close the loop.` : `This is the first email. After the personalised opening, introduce the sender naturally with: I’m ${sender.senderName} from Interviewa. Then explain Interviewa only through the selected campaign angle.`} ${includeBooking ? `Include this salesperson's personal booking link once, naturally, as the optional next step: ${personalBookingUrl}` : "Do not include a calendar or booking link. Earn interest first."}
 
 VOICE NOTE: also write a separate spoken pitch. Aim for about ${OUTREACH_VOICE_TARGET_WORDS} words and normally stay between ${OUTREACH_VOICE_PREFERRED_MIN_WORDS} and ${OUTREACH_VOICE_PREFERRED_MAX_WORDS} words so it lands at roughly 45 seconds. This is a naturalness target, not permission to cut a sentence. Always finish the final sentence cleanly. Personalisation matters more than hitting an exact word count. The delivery must feel welcoming, upbeat and positive, with genuine conversational enthusiasm and varied sentence rhythm. Write as if the speaker is smiling and pleased to speak to this person. The opening must be steady and conversational, never rushed or overexcited. Avoid flat corporate phrasing, forced excitement, hype and repeated exclamation marks. Start exactly with "Hi ${prospect.first_name || "there"}, I hope you are doing well today." Do not use an exclamation mark in that opening. Then use "We are Interviewa" when the brand needs introducing. This is a shared or synthetic voice, so it must never impersonate the salesperson. Never say "I am ${sender.senderName}", "I'm ${sender.senderName}", "This is ${sender.senderName}", "My name is ${sender.senderName}" or claim the voice is the sender. Keep the correct Interviewa spelling in the visible script. The audio layer handles its pronunciation as "Interviewer". Use the recipient's first name, their exact company, and the single strongest current verified fact from the research, such as a relevant live vacancy or recent hiring signal. If no current fact is verified, use a clearly framed role and company specific hypothesis rather than inventing one. It must use the same campaign contract, sequence purpose, approved offer and verified prospect evidence as the email. Explain one campaign approved outcome, state one supported next step, and finish with this exact mandatory final sentence, "${OUTREACH_VOICE_DEMO_REPLY_CTA}". Do not use an offer, use case or CTA from another campaign. Do not read out a URL, email address, opt out line or subject. Do not copy the email word for word. Use British English, contractions where natural, short spoken sentences, and no hyphens, dashes or semicolons.
 
