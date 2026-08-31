@@ -1297,7 +1297,7 @@ export default function SettingsPage() {
                 disabled={!!sendPilotBusy}
                 className="min-h-10 rounded-full border border-sky/55 bg-sky/10 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-sky disabled:opacity-40"
               >
-                {sendPilotBusy === "backfill" ? "Importing…" : "Import previous 14 days"}
+                {sendPilotBusy === "backfill" ? "Syncing…" : "Sync SendPilot now"}
               </button>
               <button
                 type="button"
@@ -1394,6 +1394,14 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
+        ) : null}
+
+        {sendPilot?.connected && sendPilot.webhookConfigured ? (
+          <p className="mt-4 rounded-lg border border-sky/35 bg-sky/[0.05] p-3 text-xs leading-5 text-muted">
+            Replies and activity arrive through the webhook as they happen. A twice-daily
+            inbound-only safety sync repairs missed events and rechecks exact CRM matches.
+            It cannot enrol a lead, start a sequence or send a message.
+          </p>
         ) : null}
 
         {sendPilot?.leadReviews?.length ? (

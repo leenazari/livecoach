@@ -58,6 +58,7 @@
     "validate:sendpilot-inbound": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sendpilot-inbound.mjs",
     "validate:sendpilot-crm": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sendpilot-crm-orchestration.mjs",
     "validate:sendpilot-workspace-guard": "node scripts/validate-sendpilot-workspace-guard.mjs",
+    "validate:sendpilot-safety-sync": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sendpilot-safety-sync.mjs",
     "validate:email-next-moves": "node scripts/validate-email-next-moves.mjs",
     "validate:email-next-move-voice": "node scripts/validate-email-next-move-voice-booking.mjs",
     "validate:email-assistant-hardening": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-email-assistant-hardening.mjs",

@@ -4,6 +4,20 @@ export const SENDPILOT_WEBHOOK_TOLERANCE_MS = 5 * 60 * 1_000;
 export const SENDPILOT_MAX_WEBHOOK_BYTES = 128 * 1_024;
 export const SENDPILOT_BACKFILL_DAYS = 14;
 export const SENDPILOT_BACKFILL_MAX_CONVERSATIONS = 100;
+export const SENDPILOT_BACKFILL_OVERLAP_MS = 2 * 60 * 60 * 1_000;
+
+// The first import reaches back 14 days. Later repair syncs begin two hours
+// before the last confirmed sync so a delayed or missed webhook is recovered
+// without repeatedly downloading the entire two-week inbox.
+export function sendPilotBackfillCutoffMs(
+  lastBackfillAt: string | null | undefined,
+  nowMs = Date.now()
+): number {
+  const hardCutoff = nowMs - SENDPILOT_BACKFILL_DAYS * 24 * 60 * 60 * 1_000;
+  const previousMs = lastBackfillAt ? Date.parse(lastBackfillAt) : Number.NaN;
+  if (!Number.isFinite(previousMs) || previousMs > nowMs) return hardCutoff;
+  return Math.max(hardCutoff, previousMs - SENDPILOT_BACKFILL_OVERLAP_MS);
+}
 
 export type SendPilotReplyEvent = {
   eventId: string;
