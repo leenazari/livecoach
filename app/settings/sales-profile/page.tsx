@@ -391,7 +391,7 @@ export default function SalesProfilePage() {
                 maxLength={500}
               />
               <span className="mt-1 block text-xs leading-5 text-muted">
-                Next-move drafts use this link only when the suggested step is a meeting. Each salesperson saves their own link, so nobody else&apos;s calendar is substituted.
+                Outreach and Email Assistant use this exact salesperson-specific link when a meeting is the approved next step. A teammate, campaign or global link can never replace it.
               </span>
             </label>
             <div className="mt-5 rounded-2xl border border-edge bg-ink/25 p-4 sm:p-5">

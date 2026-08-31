@@ -1425,7 +1425,21 @@ export default function OutreachPage() {
       if (!Number.isFinite(campaign.daily_limit) || campaign.daily_limit < 1 || campaign.daily_limit > 20) throw new Error("Daily maximum must be between 1 and 20");
       const sequenceError = outreachSequenceValidationError(campaign.sequence || []);
       if (sequenceError) throw new Error(sequenceError);
-      const { campaign: saved } = await crmFetch<{ campaign: Campaign }>(`/api/crm/outreach/campaigns/${campaign.id}`, { method: "PATCH", body: JSON.stringify(campaign) });
+      const { campaign: saved } = await crmFetch<{ campaign: Campaign }>(`/api/crm/outreach/campaigns/${campaign.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: campaign.name,
+          goal: campaign.goal,
+          audience: campaign.audience,
+          offer_angle: campaign.offer_angle,
+          status: campaign.status,
+          daily_limit: campaign.daily_limit,
+          sequence: campaign.sequence,
+          voice: campaign.voice,
+          banned_phrases: campaign.banned_phrases,
+          booking_cta_mode: campaign.booking_cta_mode,
+        }),
+      });
       if (!saved?.id) throw new Error("Campaign was not confirmed");
       setCampaigns((all) => all.map((item) => item.id === saved.id ? { ...item, ...saved } : item));
       setNotice("Campaign settings saved.");
@@ -2180,8 +2194,8 @@ export default function OutreachPage() {
         </div>
 
         <div className="rounded-xl border border-edge bg-panel p-4">
-          <h2 className="font-display text-lg text-bone">AI13 calendar handoff</h2><p className="mt-1 text-sm leading-6 text-muted">The safest default is to earn interest first. A positive reply gets a draft containing your booking link, which still needs your approval.</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_13rem]"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Booking link</span><input className={input} placeholder="https://calendar.google.com/calendar/appointments/…" value={activeCampaign.booking_url || ""} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, booking_url: e.target.value } : campaign))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">When to include</span><select className={input} value={activeCampaign.booking_cta_mode || "interested_reply"} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, booking_cta_mode: e.target.value } : campaign))}><option value="interested_reply">Only after interest</option><option value="final_step">Final sequence email</option><option value="always">Every email</option><option value="never">Never</option></select></label></div>
+          <h2 className="font-display text-lg text-bone">Personal calendar handoff</h2><p className="mt-1 text-sm leading-6 text-muted">The campaign controls when a calendar can appear. The link itself always belongs to the salesperson doing the communication and the exact draft still needs approval.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_13rem]"><div className="rounded-lg border border-edge bg-ink/35 p-3"><span className="block font-mono text-[0.55rem] uppercase text-muted">Booking link source</span><p className="mt-2 text-sm leading-6 text-bone/80">Managed separately for each salesperson in My Sales Setup. Campaign and teammate links are never substituted.</p><Link href="/settings/sales-profile" className="mt-2 inline-block font-mono text-[0.54rem] uppercase tracking-wider text-amber underline underline-offset-4">Open My Sales Setup →</Link></div><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">When to include</span><select className={input} value={activeCampaign.booking_cta_mode || "interested_reply"} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, booking_cta_mode: e.target.value } : campaign))}><option value="interested_reply">Only after interest</option><option value="final_step">Final sequence email</option><option value="always">Every email</option><option value="never">Never</option></select></label></div>
           <p className="mt-3 rounded-lg border border-moss/35 bg-moss/[0.07] px-3 py-2 text-sm text-moss">When a prospect books, Calendar Sync links the meeting and seeds the call intent with the research, sent email and reply. Deal value and probability stay blank until a real conversation supports them.</p>
         </div>
         </fieldset>

@@ -246,9 +246,11 @@ export async function getSalesProfileContextBlock(): Promise<string> {
   return salesProfileContextBlock(await getOptionalSalesProfile());
 }
 
-export async function getOptionalSalesProfile(): Promise<SalesProfile> {
+export async function getOptionalSalesProfile(
+  scopeOverride?: Scope
+): Promise<SalesProfile> {
   try {
-    return await getSalesProfile();
+    return await getSalesProfile(scopeOverride);
   } catch (error: any) {
     // Personal preferences improve the experience, but a transient read must
     // never stop the Brain, a live cue, outreach preparation or a daily brief.
