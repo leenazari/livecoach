@@ -26,7 +26,7 @@ import {
 
 export const OUTREACH_VOICE_BUCKET = VOICE_NOTE_BUCKET;
 export const OUTREACH_VOICE_MIME = VOICE_NOTE_MIME;
-export const OUTREACH_VOICE_DELIVERY_PROFILE = "warm_upbeat_v2";
+export const OUTREACH_VOICE_DELIVERY_PROFILE = "warm_upbeat_paced_v3";
 
 export const OUTREACH_VOICE_SETTINGS = {
   stability: 0.36,

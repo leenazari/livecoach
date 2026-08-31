@@ -89,7 +89,7 @@ assert.doesNotMatch(voice, /\.from\("workspace_members"\)/);
 assert.match(voice, /selectEffectiveOutreachVoice\(profile\)/);
 assert.match(voice, /voiceId: selectedVoice\.voiceId/);
 assert.match(voice, /source: selectedVoice\.source/);
-assert.match(voice, /OUTREACH_VOICE_DELIVERY_PROFILE = "warm_upbeat_v2"/);
+assert.match(voice, /OUTREACH_VOICE_DELIVERY_PROFILE = "warm_upbeat_paced_v3"/);
 assert.match(voice, /stability: 0\.36/);
 assert.match(voice, /similarity_boost: 0\.8/);
 assert.match(voice, /style: 0\.55/);
@@ -211,7 +211,7 @@ assert.doesNotMatch(editor, /Hear pronunciation/);
 assert.doesNotMatch(editor, /SpeechSynthesisUtterance/);
 assert.doesNotMatch(editor, /generated audio says/);
 assert.match(editor, /Play personal voice note/);
-assert.match(editor, /Refresh upbeat delivery/);
+assert.match(editor, /Refresh paced delivery/);
 assert.match(editor, /delivery profile has changed/);
 assert.match(editor, /voice_generated_at/);
 assert.match(editor, /OUTREACH_VOICE_HARD_MAX_CHARACTERS/);
@@ -300,6 +300,18 @@ assert.equal(policyModule.OUTREACH_VOICE_HARD_MAX_WORDS, 150);
 assert.equal(
   policyModule.outreachVoiceSpeechText("A note from Interviewa"),
   "A note from Interviewer"
+);
+const pacedOpening = policyModule.outreachVoiceSpeechText(
+  "Hi Alex, I hope you're doing well today! We are Interviewa and this could help."
+);
+assert.equal(
+  pacedOpening,
+  `Hi Alex, ${policyModule.OUTREACH_VOICE_NAME_PAUSE} I hope you're doing well today! ${policyModule.OUTREACH_VOICE_GREETING_PAUSE} We are Interviewer and this could help.`
+);
+assert.doesNotMatch(
+  policyModule.outreachVoiceOpening("Alex"),
+  /<break/i,
+  "the editable approved script must never expose provider pacing tags"
 );
 const safeGeneratedScript = policyModule.prepareOutreachVoiceScriptForReview({
   script:
