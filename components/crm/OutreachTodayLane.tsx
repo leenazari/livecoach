@@ -1415,7 +1415,7 @@ export default function OutreachTodayLane({
                       </span>
                       {row.campaign?.name ? (
                         <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.46rem] uppercase tracking-wider text-muted">
-                          {row.campaign.name}
+                          Campaign · {row.campaign.name}
                         </span>
                       ) : null}
                     </div>
