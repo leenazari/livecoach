@@ -19,6 +19,8 @@ type VoiceMessage = {
   voice_script?: string | null;
   voice_status?: string | null;
   voice_public_token?: string | null;
+  voice_generated_at?: string | null;
+  voice_script_hash?: string | null;
   voice_estimated_seconds?: number | null;
   voice_estimated_cost_gbp?: number | null;
   voice_error?: string | null;
@@ -158,7 +160,6 @@ export default function OutreachVoiceNoteEditor({
               onClick={onGenerate}
               disabled={
                 generating ||
-                ready ||
                 Boolean(whyNow && !whyNowIncluded) ||
                 beyondSafetyLimit ||
                 !script.trim()
@@ -168,7 +169,7 @@ export default function OutreachVoiceNoteEditor({
               {generating
                 ? "Creating voice…"
                 : ready
-                  ? "✓ Audio ready"
+                  ? "Refresh upbeat delivery"
                   : `Generate voice · est ${estimatedCostPence.toFixed(1)}p`}
             </button>
           </div>
@@ -185,7 +186,7 @@ export default function OutreachVoiceNoteEditor({
       ) : null}
       <p className="mt-2 text-xs leading-5 text-moss" role="status" aria-live="polite">
         {ready
-          ? "This one approved voice note has been generated and can now be previewed."
+          ? "This approved voice note is ready to preview. Refresh reuses it unless the script or delivery profile has changed."
           : generating || message.voice_status === "generating"
             ? "The voice note is being created. You can continue using the rest of the CRM."
             : scriptApproved
@@ -217,10 +218,11 @@ export default function OutreachVoiceNoteEditor({
             </p>
           </div>
           <audio
+            key={`${message.voice_generated_at || ""}:${message.voice_script_hash || ""}`}
             ref={audioRef}
             className="hidden"
             preload="metadata"
-            src={`/api/listen/${encodeURIComponent(message.voice_public_token)}/audio`}
+            src={`/api/listen/${encodeURIComponent(message.voice_public_token)}/audio?v=${encodeURIComponent(message.voice_generated_at || message.voice_script_hash || "ready")}`}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onEnded={() => setPlaying(false)}

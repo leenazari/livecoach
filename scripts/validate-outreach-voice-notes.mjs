@@ -89,6 +89,12 @@ assert.doesNotMatch(voice, /\.from\("workspace_members"\)/);
 assert.match(voice, /selectEffectiveOutreachVoice\(profile\)/);
 assert.match(voice, /voiceId: selectedVoice\.voiceId/);
 assert.match(voice, /source: selectedVoice\.source/);
+assert.match(voice, /OUTREACH_VOICE_DELIVERY_PROFILE = "warm_upbeat_v2"/);
+assert.match(voice, /stability: 0\.36/);
+assert.match(voice, /similarity_boost: 0\.8/);
+assert.match(voice, /style: 0\.55/);
+assert.match(voice, /settings: OUTREACH_VOICE_SETTINGS/);
+assert.match(voice, /`\$\{modelId\}:\$\{OUTREACH_VOICE_DELIVERY_PROFILE\}`/);
 assert.match(voice, /Brain and Email Assistant voices are never used as/);
 assert.doesNotMatch(voice, /email_assistant_voice_id/);
 assert.match(voiceDefault, /bDTlr4ICxntY9qVWyL0o/);
@@ -121,7 +127,9 @@ assert.match(prepare, /Keep that complete causal chain in the voice note/);
 assert.match(prepare, /Do not carry this candidate preparation message into screening/);
 assert.match(prepare, /Do not use an offer, use case or CTA from another campaign/);
 assert.match(prepare, /one grounded angle permitted by the campaign contract/);
-assert.match(prepare, /how are you doing\?/);
+assert.match(prepare, /I hope you're doing well today!/);
+assert.match(prepare, /welcoming, upbeat and positive/);
+assert.match(prepare, /speaker is smiling and pleased/);
 assert.match(prepare, /We are Interviewa/);
 assert.match(prepare, /must never impersonate the salesperson/);
 assert.match(prepare, /audio layer handles its pronunciation as "Interviewer"/);
@@ -203,6 +211,9 @@ assert.doesNotMatch(editor, /Hear pronunciation/);
 assert.doesNotMatch(editor, /SpeechSynthesisUtterance/);
 assert.doesNotMatch(editor, /generated audio says/);
 assert.match(editor, /Play personal voice note/);
+assert.match(editor, /Refresh upbeat delivery/);
+assert.match(editor, /delivery profile has changed/);
+assert.match(editor, /voice_generated_at/);
 assert.match(editor, /OUTREACH_VOICE_HARD_MAX_CHARACTERS/);
 assert.match(editor, /Complete sentences and useful personalisation take priority/);
 assert.match(editor, /voice_estimated_cost_gbp/);
@@ -296,9 +307,25 @@ const safeGeneratedScript = policyModule.prepareOutreachVoiceScriptForReview({
   recipientFirstName: "Alex",
   senderName: "Lee Nazari",
 });
-assert.match(safeGeneratedScript, /^Hi Alex, how are you doing\?/);
+assert.match(safeGeneratedScript, /^Hi Alex, I hope you're doing well today!/);
 assert.match(safeGeneratedScript, /We are Interviewa\./);
 assert.doesNotMatch(safeGeneratedScript, /I'm Lee|I am Lee|This is Lee/i);
+const replacedOldOpening = policyModule.prepareOutreachVoiceScriptForReview({
+  script:
+    "Hi Alex, how are you doing? We are Interviewa. Here is why this could help.",
+  recipientFirstName: "Alex",
+  senderName: "Lee Nazari",
+});
+assert.match(replacedOldOpening, /^Hi Alex, I hope you're doing well today!/);
+assert.equal((replacedOldOpening.match(/Hi Alex/g) || []).length, 1);
+assert.doesNotMatch(replacedOldOpening, /how are you doing/i);
+const dedupedWarmOpening = policyModule.prepareOutreachVoiceScriptForReview({
+  script:
+    "Hi Alex, I hope you're doing well today. We are Interviewa. Here is why this could help.",
+  recipientFirstName: "Alex",
+  senderName: "Lee Nazari",
+});
+assert.equal((dedupedWarmOpening.match(/hope you're doing well today/i) || []).length, 1);
 assert.equal(
   policyModule.outreachVoiceHasFalseSenderIdentity(
     "I'm Cam from Interviewa.",

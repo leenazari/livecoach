@@ -26,6 +26,14 @@ import {
 
 export const OUTREACH_VOICE_BUCKET = VOICE_NOTE_BUCKET;
 export const OUTREACH_VOICE_MIME = VOICE_NOTE_MIME;
+export const OUTREACH_VOICE_DELIVERY_PROFILE = "warm_upbeat_v2";
+
+export const OUTREACH_VOICE_SETTINGS = {
+  stability: 0.36,
+  similarity_boost: 0.8,
+  style: 0.55,
+  use_speaker_boost: true,
+} as const;
 
 export type OutreachVoiceConfig = {
   voiceId: string;
@@ -82,7 +90,11 @@ export function outreachVoiceScriptHash(
   voiceId: string,
   modelId: string
 ): string {
-  return voiceScriptHash(outreachVoiceSpeechText(script), voiceId, modelId);
+  return voiceScriptHash(
+    outreachVoiceSpeechText(script),
+    voiceId,
+    `${modelId}:${OUTREACH_VOICE_DELIVERY_PROFILE}`
+  );
 }
 
 export function outreachVoiceApprovalHash(script: string): string {
@@ -152,12 +164,7 @@ export async function generateElevenLabsOutreachAudio(input: {
   const generated = await generateElevenLabsVoiceAudio({
     script,
     config: input.config,
-    settings: {
-      stability: 0.58,
-      similarity_boost: 0.82,
-      style: 0.18,
-      use_speaker_boost: true,
-    },
+    settings: OUTREACH_VOICE_SETTINGS,
   });
   return { ...generated, characters: budget.characters };
 }
