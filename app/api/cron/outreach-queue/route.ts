@@ -4,9 +4,13 @@ import { POST as prepareOutreach } from "@/app/api/crm/outreach/[id]/prepare/rou
 import { POST as createOutreachVoiceScript } from "@/app/api/crm/outreach/messages/[id]/voice-script/route";
 import { listActiveAccountScopes } from "@/lib/automation-accounts";
 import { runWithServiceRecordScope } from "@/lib/service-scope";
+import { supabaseAdmin } from "@/lib/supabase";
 import {
-  needsOvernightOutreachPreparation,
+  needsNewOvernightOutreachResearch,
+  needsOnlyOvernightVoiceScript,
+  OVERNIGHT_RESEARCH_INVENTORY_LIMIT,
   roundRobinPreparationJobs,
+  selectOvernightOutreachPreparation,
 } from "@/lib/outreach-overnight-preparation";
 
 export const maxDuration = 300;
@@ -23,9 +27,18 @@ type QueueBuild = {
   status: number;
   body: any;
   candidates: any[];
+  eligible: number;
+  outstandingResearch: number;
+  researchSlotsAvailable: number;
+  newResearchPlanned: number;
+  deferredByResearchCap: number;
   skipReason: string | null;
 };
-type PreparationJob = { account: AccountScope; row: any };
+type PreparationJob = {
+  account: AccountScope;
+  row: any;
+  needsNewResearch: boolean;
+};
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -64,16 +77,34 @@ async function buildAccountQueue(req: NextRequest, account: AccountScope) {
   )
     ? "no active campaign"
     : null;
-  const candidates = Array.isArray(body?.queue)
-    ? body.queue
-        .filter(needsOvernightOutreachPreparation)
-        .slice(0, MAX_PER_ACCOUNT)
-    : [];
+  const { count: outstandingResearch, error: researchCountError } =
+    await supabaseAdmin
+      .from("outreach_enrolments")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
+      .eq("current_step", 1)
+      .is("last_sent_at", null)
+      .not("researched_at", "is", null)
+      .in("status", ["paused", "queued", "researched", "drafted", "approved"]);
+  if (researchCountError) throw researchCountError;
+  const selection = selectOvernightOutreachPreparation(
+    Array.isArray(body?.queue) ? body.queue : [],
+    {
+      outstandingResearch: outstandingResearch || 0,
+      maxAttempts: MAX_PER_ACCOUNT,
+    }
+  );
   return {
     account,
     status: response.status,
     body,
-    candidates,
+    candidates: selection.candidates,
+    eligible: selection.eligible,
+    outstandingResearch: selection.outstandingResearch,
+    researchSlotsAvailable: selection.researchSlotsAvailable,
+    newResearchPlanned: selection.newResearchPlanned,
+    deferredByResearchCap: selection.deferredByResearchCap,
     skipReason,
   } as QueueBuild;
 }
@@ -81,14 +112,16 @@ async function buildAccountQueue(req: NextRequest, account: AccountScope) {
 async function prepareJob(req: NextRequest, job: PreparationJob) {
   const prospectId = String(job.row?.prospect?.id || "").trim();
   if (!prospectId) {
-    return { prospectId: null, ok: false, status: 400, error: "missing prospect" };
+    return {
+      prospectId: null,
+      ok: false,
+      status: 400,
+      researchMode: job.needsNewResearch ? "new" : "existing",
+      error: "missing prospect",
+    };
   }
   const messageId = String(job.row?.message?.id || "").trim();
-  const needsOnlyVoiceScript = Boolean(
-    messageId &&
-      ["draft", "failed"].includes(job.row?.message?.status) &&
-      !String(job.row?.message?.voice_script || "").trim()
-  );
+  const needsOnlyVoiceScript = needsOnlyOvernightVoiceScript(job.row);
   const response = await runWithServiceRecordScope(job.account, () =>
     needsOnlyVoiceScript
       ? createOutreachVoiceScript(
@@ -125,14 +158,16 @@ async function prepareJob(req: NextRequest, job: PreparationJob) {
     status: response.status,
     messageId: body?.message?.id || messageId || null,
     preparationType: needsOnlyVoiceScript ? "voice_script" : "full_draft",
+    researchMode: job.needsNewResearch ? "new" : "existing",
     error: ok ? null : body?.error || "preparation did not return a draft",
   };
 }
 
 // Builds each salesperson's protected queue, then prepares only incomplete
 // email drafts and text voice scripts. It never approves, sends or creates paid
-// audio. Three early-morning passes make failures retryable and fill a 20-person
-// day without one oversized function invocation.
+// audio. Existing research and incomplete scripts are recovered first. New
+// research stops when that salesperson already has 20 unused researched leads,
+// even though three early-morning passes make transient failures retryable.
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET || "";
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) return NextResponse.json({ error: "not authorised" }, { status: 401 });
@@ -143,7 +178,11 @@ export async function GET(req: NextRequest) {
       accounts.map((account) => buildAccountQueue(req, account))
     );
     const groupedJobs = builds.map((build) =>
-      build.candidates.map((row) => ({ account: build.account, row }))
+      build.candidates.map((row) => ({
+        account: build.account,
+        row,
+        needsNewResearch: needsNewOvernightOutreachResearch(row),
+      }))
     );
     const jobs = roundRobinPreparationJobs(groupedJobs, MAX_PER_RUN);
     const prepared = await mapWithConcurrency(
@@ -156,6 +195,7 @@ export async function GET(req: NextRequest) {
             ok: false,
             status: 503,
             messageId: null,
+            researchMode: job.needsNewResearch ? "new" : "existing",
             error: "deferred to the next morning pass",
           };
         }
@@ -176,13 +216,22 @@ export async function GET(req: NextRequest) {
         queueDate: build.body?.date || null,
         queueSize: Array.isArray(build.body?.queue) ? build.body.queue.length : 0,
         queueAdded: Number(build.body?.added || 0),
-        eligible: build.candidates.length,
+        eligible: build.eligible,
+        attempted: rows.length,
         prepared: rows.filter((row) => row.ok).length,
+        newResearchPrepared: rows.filter(
+          (row) => row.ok && row.researchMode === "new"
+        ).length,
         failed: rows.filter((row) => !row.ok).length,
         skipped: build.skipReason,
+        researchInventory: build.outstandingResearch,
+        researchInventoryLimit: OVERNIGHT_RESEARCH_INVENTORY_LIMIT,
+        researchSlotsAvailable: build.researchSlotsAvailable,
+        newResearchPlanned: build.newResearchPlanned,
+        deferredByResearchCap: build.deferredByResearchCap,
         remaining: Math.max(
           0,
-          build.candidates.length - rows.filter((row) => row.ok).length
+          build.eligible - rows.filter((row) => row.ok).length
         ),
         errors: rows
           .filter((row) => !row.ok)
@@ -203,6 +252,14 @@ export async function GET(req: NextRequest) {
         msg: "overnight outreach preparation completed",
         accounts: results.length,
         prepared: prepared.filter((row) => row.ok).length,
+        newResearchPrepared: prepared.filter(
+          (row) => row.ok && row.researchMode === "new"
+        ).length,
+        researchInventoryLimit: OVERNIGHT_RESEARCH_INVENTORY_LIMIT,
+        deferredByResearchCap: results.reduce(
+          (total, result) => total + result.deferredByResearchCap,
+          0
+        ),
         failed: prepared.filter((row) => !row.ok).length,
         ms: Date.now() - startedAt,
       })
@@ -211,6 +268,14 @@ export async function GET(req: NextRequest) {
       ok,
       mode: "overnight",
       prepared: prepared.filter((row) => row.ok).length,
+      newResearchPrepared: prepared.filter(
+        (row) => row.ok && row.researchMode === "new"
+      ).length,
+      researchInventoryLimit: OVERNIGHT_RESEARCH_INVENTORY_LIMIT,
+      deferredByResearchCap: results.reduce(
+        (total, result) => total + result.deferredByResearchCap,
+        0
+      ),
       failed: prepared.filter((row) => !row.ok).length,
       accounts: results,
       ms: Date.now() - startedAt,
