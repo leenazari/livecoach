@@ -429,8 +429,8 @@ export default function CallPage() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [summary, setSummary] = useState<any>(null);
   const [summarising, setSummarising] = useState(false);
-  // True while the full scorecard is still generating after the fast top half
-  // has shown - drives the "filling in the rest" note on the summary card.
+  const [summaryQueued, setSummaryQueued] = useState(false);
+  // Kept for the summary component's existing progressive-loading contract.
   const [summaryLoadingMore, setSummaryLoadingMore] = useState(false);
   // Quick mid-call wrap-up card (confirm next steps out loud before ending).
   const [wrapping, setWrapping] = useState(false);
@@ -495,6 +495,7 @@ export default function CallPage() {
   const costTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callEndedAtRef = useRef<number | null>(null);
   const endRequestedRef = useRef(false);
+  const summaryPollCancelledRef = useRef(false);
   const sonnetCallsRef = useRef(0);
   const callLiveRef = useRef(false);
   const autoLaunchHandledRef = useRef(false);
@@ -2571,176 +2572,114 @@ export default function CallPage() {
       return;
     }
     setSummarising(true);
+    setSummaryQueued(false);
     setSummaryLoadingMore(true);
-    setStatus("building summary...");
-    // Build the transcript summary once. The former "fast top" request sent the
-    // full transcript to a second model immediately before the full scorecard,
-    // doubling input tokens for a temporary result that was then overwritten.
+    summaryPollCancelledRef.current = false;
+    setStatus("saving call and starting summary...");
     try {
       sonnetCallsRef.current += 1;
-      // Make sure the session row carries the company link before we store the
-      // scorecard under it.
       if (linkedCompanyRef.current) linkSession();
-      // Enrich the call-event row (interview_sessions) with the end time, full
-      // transcript and total cost - powers duration / length / participants on
-      // the call view. Fire-and-forget: must never block summarising.
-      fetch("/api/interview/session-end", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: room,
-          transcript: labelled,
-          totalCost: finalCostGBP,
-          upcomingId: upcomingIdRef.current || null,
-        }),
-      }).catch(() => {});
-      const res = await fetch("/api/interview/summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transcript: labelled,
-          knowledgeContext: knowledgeRef.current,
-          role: roleRef.current || null,
-          candidate: candidate || null,
-          competencies: suggestedCompsRef.current,
-          callType,
-          sessionId: room,
-          companyId: linkedCompanyRef.current?.id || null,
-          workstreamId: linkedWorkstreamRef.current?.id || null,
-          upcomingId: upcomingIdRef.current || null,
-          // Cues the host kept (favourited) during the call, saved with the
-          // scorecard so they can be reviewed later on the call page.
-          favouriteCues: favouritesRef.current,
-          // This call's cost (GBP) from wall-clock duration so spend totals stay
-          // right even if the live meter was throttled in a background tab.
-          cost: finalCostGBP,
-          // Lets the server fall back to a duration-based cost if the meter
-          // reported nothing (e.g. a Meet call where the in-app meter never ran).
-          source: sourceRef.current,
-          // Whatever you typed in the notes pane during the call. Sent WITH the
-          // scorecard because the scorecard row does not exist until this
-          // request creates it, so a mid-call save has nothing to attach to.
-          // A no-bot recap is the user's own account of the call. Preserve it
-          // verbatim with the structured scorecard so it remains available on
-          // the call record, instead of keeping only the AI-written digest.
-          userNotes:
-            manualRecap && recapText.trim()
-              ? recapText.trim()
-              : notesRef.current || "",
-        }),
-      });
-      const data = await res.json();
-      addUsageToRef(aiUsdRef, res);
-      if (!res.ok) throw new Error(data.error || "Summary failed");
-      cachedSummaryRef.current = data.summary;
-      cachedSigRef.current = sig;
-      setSummary(data.summary);
-      setSummaryLoadingMore(false);
-      setStatus("summary ready");
-      // Phase 3: if this call is linked to a client, fold the scorecard into
-      // that client's running profile (fire-and-forget, never blocks).
-      if (linkedCompanyRef.current && data.summary) {
-        fetch("/api/crm/update-profile", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            companyId: linkedCompanyRef.current.id,
-            summary: data.summary,
-            sessionId: room,
-            candidate: candidateRef.current || null,
-            role: roleRef.current || null,
-          }),
-        })
-          .then((response) => {
-            if (!response.ok) return;
-            window.dispatchEvent(
-              new CustomEvent("lc:tasks-updated", {
-                detail: { source: "post-call-opportunity-check" },
-              })
-            );
-          })
-          .catch(() => {});
+
+      const summaryRequest = {
+        knowledgeContext: knowledgeRef.current,
+        role: roleRef.current || null,
+        candidate: candidateRef.current || null,
+        competencies: suggestedCompsRef.current,
+        callType: callTypeRef.current,
+        companyId: linkedCompanyRef.current?.id || null,
+        workstreamId: linkedWorkstreamRef.current?.id || null,
+        upcomingId: upcomingIdRef.current || null,
+        favouriteCues: favouritesRef.current,
+        cost: finalCostGBP,
+        source: sourceRef.current,
+        userNotes:
+          manualRecap && recapText.trim()
+            ? recapText.trim()
+            : notesRef.current || "",
+        manualRecap,
+      };
+
+      // Persist the final transcript and queue the scorecard together. The
+      // endpoint is idempotent, so one quick retry is safe if the browser loses
+      // the response while the call is ending.
+      let queued = false;
+      let queueError = "could not start the summary";
+      for (let attempt = 1; attempt <= 2 && !queued; attempt += 1) {
+        try {
+          const response = await fetch("/api/interview/session-end", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sessionId: room,
+              transcript: labelled,
+              totalCost: finalCostGBP,
+              upcomingId: upcomingIdRef.current || null,
+              summaryRequest,
+            }),
+          });
+          const data = await response.json().catch(() => ({}));
+          queued = response.ok && data?.ok === true && data?.summaryQueued === true;
+          if (!queued) queueError = data?.error || queueError;
+        } catch (error: any) {
+          queueError = error?.message || queueError;
+        }
+        if (!queued && attempt === 1)
+          await new Promise((resolve) => setTimeout(resolve, 500));
       }
-      // Recap mode: turn what the user said happened into to-dos with actions,
-      // so a bot-less call still feeds the to-do list. Fire-and-forget.
-      if (manualRecap && recapText.trim() && linkedCompanyRef.current) {
-        fetch("/api/crm/extract-tasks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            companyId: linkedCompanyRef.current.id,
-            workstreamId: linkedWorkstreamRef.current?.id || null,
-            text: recapText,
-            clientName: candidateRef.current || null,
-            source: "recap",
-          }),
-        })
-          .then(() => {
+      if (!queued) throw new Error(queueError);
+
+      setSummaryQueued(true);
+      setStatus("summary running in the background");
+
+      // Stay here if the result is quick, but do not trap the user on this
+      // screen. The Continue button can leave immediately and a five-minute
+      // recovery job keeps retrying independently of this browser tab.
+      const deadline = Date.now() + 60_000;
+      while (
+        !summaryPollCancelledRef.current &&
+        Date.now() < deadline
+      ) {
+        try {
+          const response = await fetch(
+            `/api/interview/summary-status?sessionId=${encodeURIComponent(room)}`,
+            { cache: "no-store" }
+          );
+          const data = await response.json().catch(() => ({}));
+          if (response.ok && data?.state === "ready" && data?.summary) {
+            cachedSummaryRef.current = data.summary;
+            cachedSigRef.current = sig;
+            setSummary(data.summary);
+            setSummaryQueued(false);
+            setSummaryLoadingMore(false);
+            setStatus("summary ready");
             if (typeof window !== "undefined")
               window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-          })
-          .catch(() => {});
+            return;
+          }
+          if (response.ok && data?.state === "retrying") {
+            setStatus("call saved. summary retry is scheduled");
+          }
+        } catch {
+          // A polling failure does not affect the server-side summary job.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
       }
-      // Detect commitments YOU made on this call (recap OR transcript) and
-      // pre-draft each so they land in the Commitments queue ready to approve.
-      // Fire-and-forget; works for any client-linked call.
-      if (linkedCompanyRef.current && labelled.trim().length >= 30) {
-        fetch("/api/crm/commitments/detect", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            companyId: linkedCompanyRef.current.id,
-            workstreamId: linkedWorkstreamRef.current?.id || null,
-            text: labelled,
-            clientName: candidateRef.current || null,
-            source: manualRecap ? "recap" : "call",
-          }),
-        })
-          .then(() => {
-            if (typeof window !== "undefined")
-              window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-          })
-          .catch(() => {});
+
+      if (!summaryPollCancelledRef.current) {
+        setStatus("call saved. summary will finish automatically");
+        router.push("/crm/calls");
       }
-      // Learn what YOU personally need to get better at - technical depth
-      // (systems / AI), product fit, and pitch & closing - and fold it into your
-      // development profile for future calls. Fire-and-forget; needs a real
-      // transcript so recap-only calls are skipped.
-      if (!manualRecap && labelled.trim().length >= 200) {
-        fetch("/api/interview/coaching-learn", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            transcript: labelled,
-            candidate: candidateRef.current || null,
-            callType,
-          }),
-        }).catch(() => {});
-      }
-    } catch (e: any) {
-      setStatus(`error: ${e.message}`);
+    } catch (error: any) {
+      console.error("Could not queue call summary", error);
+      setStatus("call saved. summary will retry automatically");
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      router.push("/crm/calls");
     } finally {
       setSummarising(false);
+      setSummaryQueued(false);
       setSummaryLoadingMore(false);
-      // Auto-run the safety-net sweep the moment a call is finished, so a summary
-      // that failed to land (e.g. a long call that timed out) is rebuilt in
-      // seconds instead of waiting up to 15 min for the cron. It is idempotent:
-      // if the scorecard already saved, this is a no-op for this call and it just
-      // clears any older orphaned calls in the same pass. Small delay so the
-      // session-end stamp (ended_at + transcript) lands first. Fire-and-forget.
-      setTimeout(() => {
-        fetch("/api/interview/backfill-scorecards", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        })
-          .then(() => {
-            if (typeof window !== "undefined")
-              window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-          })
-          .catch(() => {});
-      }, 4000);
     }
-  }, [candidate, manualRecap, recapText]);
+  }, [linkSession, manualRecap, recapText, room, router]);
 
   const briefRef = useRef<HTMLTextAreaElement | null>(null);
   // Auto-follow: keep the newest text in view as the brief grows (e.g. while a
@@ -5381,10 +5320,25 @@ export default function CallPage() {
               The transcriber has stopped. LiveCoach is building the summary,
               actions and coaching now.
             </p>
+            <p className="mt-2 font-sans text-sm leading-relaxed text-bone/80">
+              You can continue working. This will finish automatically.
+            </p>
             <div className="mt-5 flex items-center justify-center gap-2 font-mono text-[0.6rem] uppercase tracking-wider text-amber">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber" />
               Building your call record
             </div>
+            {summaryQueued && (
+              <button
+                type="button"
+                onClick={() => {
+                  summaryPollCancelledRef.current = true;
+                  router.push("/crm/calls");
+                }}
+                className="mt-6 min-h-11 w-full rounded-xl border border-sage/60 bg-sage/20 px-5 py-3 font-mono text-[0.66rem] uppercase tracking-wider text-sage transition hover:bg-sage/30"
+              >
+                Continue to CRM
+              </button>
+            )}
           </div>
         </div>
       )}
