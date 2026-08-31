@@ -167,6 +167,16 @@ const queueActionRank = (row: QueueRow) => {
 const queueWaveRank = (row: QueueRow) =>
   row.queueKind === "follow_up" || hasBeenSent(row) ? 1 : 0;
 
+const queueRowNeedsVoiceScript = (row: QueueRow) => Boolean(
+  row.message &&
+    ["draft", "failed"].includes(row.message.status) &&
+    !String(row.message.voice_script || "").trim()
+);
+
+const queueRowNeedsPreparation = (row: QueueRow) =>
+  queueRowNeedsVoiceScript(row) ||
+  Boolean(!row.message && row.status === "queued");
+
 const displayMessageFor = (row: QueueRow) =>
   row.message && row.message.status !== "cancelled"
     ? row.message
@@ -829,9 +839,7 @@ export default function OutreachTodayLane({
     ? actionableQueue.filter((row) => row.id !== focusedRow.id).slice(0, 5)
     : [];
 
-  const allUnprepared = queue.filter(
-    (row) => !row.message && row.status === "queued"
-  );
+  const allUnprepared = queue.filter(queueRowNeedsPreparation);
   const firstTouchUnprepared = allUnprepared.filter(
     (row) => queueWaveRank(row) === 0
   );
@@ -1271,7 +1279,8 @@ export default function OutreachTodayLane({
               row.prospect.email ||
               "Unnamed prospect";
             const recommendation = row.recommendation;
-            const canPrepare = !row.message && row.status === "queued";
+            const needsVoiceScript = queueRowNeedsVoiceScript(row);
+            const canPrepare = queueRowNeedsPreparation(row);
             const followUpNeedsDraft =
               canPrepare && Number(row.current_step || 1) > 1;
             const displayMessage = followUpNeedsDraft
@@ -1383,7 +1392,9 @@ export default function OutreachTodayLane({
                             ? "Queued"
                             : job === "error"
                               ? "Retry prepare"
-                              : "Prepare research + draft"}
+                              : needsVoiceScript
+                                ? "Complete draft + voice"
+                                : "Prepare research + draft"}
                       </button>
                     ) : displayMessage ? (
                       isFocus ? (
@@ -1542,10 +1553,10 @@ export default function OutreachTodayLane({
                                 disabled={
                                   savingMessageId === displayMessage.id ||
                                   Boolean(displayMessage.scheduled_at) ||
-                                  Boolean(edit.voiceScript) &&
-                                    (displayMessage.voice_status !== "ready" ||
-                                      edit.voiceScript.trim() !==
-                                        String(displayMessage.voice_script || "").trim())
+                                  !edit.voiceScript.trim() ||
+                                  displayMessage.voice_status !== "ready" ||
+                                  edit.voiceScript.trim() !==
+                                    String(displayMessage.voice_script || "").trim()
                                 }
                                 className={primary}
                               >
