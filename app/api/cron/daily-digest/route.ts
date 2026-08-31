@@ -141,10 +141,21 @@ async function runDigestForAccount(
       syncResult?.ok !== true ||
       syncResult?.reconciled !== true
     ) {
-      throw new Error(
+      const reason = String(
         syncResult?.error ||
-          "The connected calendar could not be completely reconciled before the brief"
+          syncResult?.warning ||
+          "Reconnect the calendar so every calendar can be reconciled before the brief"
       );
+      const setupAction =
+        (syncResponse.ok && syncResult?.ok === true) ||
+        /connect|reconnect|not connected|permission|scope/i.test(reason);
+      if (setupAction) {
+        return {
+          status: "action_required" as const,
+          reason,
+        };
+      }
+      throw new Error(reason);
     }
 
     const since = new Date(now.getTime() - 36 * 60 * 60 * 1000).toISOString();
@@ -560,9 +571,9 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Each account runs in its own service scope. One failed mailbox does not
-  // block the others. A failing response still makes Vercel retry, while the
-  // successful users' private sent markers prevent duplicate delivery.
+  // Each account runs in its own service scope. An incomplete connector is an
+  // account-readiness action, not a server crash. Unexpected failures still
+  // make Vercel retry, while private sent markers prevent duplicate delivery.
   const results = await Promise.all(
     accounts.map(async (account) => {
       try {
@@ -580,11 +591,15 @@ export async function GET(req: NextRequest) {
     })
   );
   const failed = results.filter((result) => !result.ok).length;
+  const actionRequired = results.filter(
+    (result) => result.status === "action_required"
+  ).length;
   const payload = {
     ok: failed === 0,
     accounts: accounts.length,
     sent: results.filter((result) => result.status === "sent").length,
     skipped: results.filter((result) => result.status === "skipped").length,
+    actionRequired,
     failed,
     results,
     ...(failed ? { error: "One or more user briefs could not be sent" } : {}),

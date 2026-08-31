@@ -1,5 +1,9 @@
 import { NextRequest } from "next/server";
-import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
+import {
+  isTransientOpenAIError,
+  openai,
+  OPENAI_MODEL_PRO,
+} from "@/lib/openai";
 import { getTasteBlock } from "@/lib/workspace";
 import { getSalesProfileContextBlock } from "@/lib/sales-profile";
 
@@ -266,12 +270,14 @@ Give the natural next beat: a WARM, friendly MAIN question that flows from what 
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
       async start(controller) {
+        let wroteContent = false;
         try {
           for await (const event of openaiStream) {
             if (
               event.type === "content_block_delta" &&
               event.delta.type === "text_delta"
             ) {
+              wroteContent = true;
               controller.enqueue(encoder.encode(event.delta.text));
             }
           }
@@ -291,7 +297,13 @@ Give the natural next beat: a WARM, friendly MAIN question that flows from what 
             /* usage optional */
           }
         } catch (e) {
-          console.error("Stream error:", e);
+          await openaiStream.finalMessage().catch(() => null);
+          if (isTransientOpenAIError(e)) {
+            console.warn("Live cue temporarily unavailable, returning HOLD");
+          } else {
+            console.error("Stream error:", e);
+          }
+          if (!wroteContent) controller.enqueue(encoder.encode("HOLD"));
         } finally {
           controller.close();
         }

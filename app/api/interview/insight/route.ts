@@ -1,5 +1,9 @@
 import { NextRequest } from "next/server";
-import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
+import {
+  isTransientOpenAIError,
+  openai,
+  OPENAI_MODEL_PRO,
+} from "@/lib/openai";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -156,6 +160,17 @@ Give the single best thing to say now to solidify the current idea - or HOLD.`;
       },
     });
   } catch (err: any) {
+    if (isTransientOpenAIError(err)) {
+      console.warn("Live insight temporarily unavailable, returning HOLD");
+      return new Response("HOLD", {
+        status: 200,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+          "x-livecoach-degraded": "openai-temporary",
+        },
+      });
+    }
     console.error("Insight route error:", err);
     return new Response(
       JSON.stringify({ error: err?.message || "Insight failed" }),
