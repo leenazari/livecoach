@@ -544,7 +544,10 @@ export default function OutreachPage() {
         initialQueueFillAttemptedRef.current = true;
         void crmFetch<any>(OUTREACH_URLS.queue, {
             method: "POST",
-            body: JSON.stringify({ limit: selectedCampaign.daily_limit || 20 }),
+            body: JSON.stringify({
+              campaignId: selectedCampaign.id,
+              limit: selectedCampaign.daily_limit || 20,
+            }),
           })
           .then((filled) => setQueue(filled.queue || nextQueue))
           .catch(() => {
@@ -894,7 +897,10 @@ export default function OutreachPage() {
     try {
       const data = await crmFetch<any>("/api/crm/outreach/queue", {
         method: "POST",
-        body: JSON.stringify({ limit: activeCampaign?.daily_limit || 20 }),
+        body: JSON.stringify({
+          campaignId: activeCampaign?.id || null,
+          limit: activeCampaign?.daily_limit || 20,
+        }),
       });
       setQueue(data.queue || []);
       const held = data.selection?.held || 0;
@@ -920,9 +926,19 @@ export default function OutreachPage() {
         { method: "POST", body: JSON.stringify({ campaignId }) }
       );
       setSelectedCampaignId(result.selectedCampaignId);
-      setQueue([]);
-      setNotice(`${result.campaign.name} is now your campaign. Your teammates keep their own selections.`);
-      await Promise.all([loadCore(), tab === "prospects" ? loadProspects() : Promise.resolve()]);
+      const filled = await crmFetch<any>(OUTREACH_URLS.queue, {
+        method: "POST",
+        body: JSON.stringify({
+          campaignId: result.selectedCampaignId,
+          limit: result.campaign.daily_limit || 20,
+        }),
+      });
+      setQueue(filled.queue || []);
+      setNotice(`${result.campaign.name} is now your campaign and has filled today's available places. Your teammates keep their own selections.`);
+      await Promise.all([
+        loadCore(),
+        tab === "prospects" ? loadProspects() : Promise.resolve(),
+      ]);
     } catch (e: any) {
       setError(e.message || "The campaign could not be selected");
     } finally {

@@ -1,19 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
+import { isUuid } from "@/lib/uuid";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
   try {
     const account = requireRequestScope();
     const body = await req.json().catch(() => ({}));
     const campaignId = String(body.campaignId || "").trim();
-    if (!UUID.test(campaignId)) {
+    if (!isUuid(campaignId)) {
       return NextResponse.json({ error: "Choose an active campaign" }, { status: 400 });
     }
 
