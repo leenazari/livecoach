@@ -51,6 +51,7 @@
     "validate:date-added": "node scripts/validate-date-added-columns.mjs",
     "validate:outreach-campaign-selection": "node scripts/validate-per-user-outreach-campaign.mjs",
     "validate:outreach-queue-continuity": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-queue-continuity.mjs",
+    "validate:overnight-outreach": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-overnight-outreach-preparation.mjs",
     "validate:linkedin-engagement-safety": "node scripts/validate-linkedin-engagement-safety.mjs",
     "validate:linkedin-connection": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-linkedin-connection.mjs",
     "validate:linkedin-inbox": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-linkedin-inbox-connector.mjs",

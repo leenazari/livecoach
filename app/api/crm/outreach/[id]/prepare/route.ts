@@ -150,12 +150,14 @@ const completeDraft = (value: any): value is CompleteOutreachDraft => !!(
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const startedAt = Date.now();
-  console.log(JSON.stringify({ level: "info", msg: "outreach prepare started", route: "/api/crm/outreach/[id]/prepare", prospectId: params.id, requestId: req.headers.get("x-vercel-id") }));
   try {
     const sender = await resolveOutreachIdentity();
     const profileId = await ensureWorkspaceProfileId();
     const prospectId = params.id;
     const body = await req.json().catch(() => ({}));
+    const generationMode =
+      body?.generationMode === "overnight" ? "overnight" : "manual";
+    console.log(JSON.stringify({ level: "info", msg: "outreach prepare started", route: "/api/crm/outreach/[id]/prepare", prospectId, generationMode, requestId: req.headers.get("x-vercel-id") }));
     const [
       { data: prospect },
       { data: enrolments },
@@ -324,6 +326,7 @@ ${typeof body.guidance === "string" && body.guidance.trim() ? `SENDER'S EXTRA GU
       sourceCount: sources.length,
       stopReason: message?.stop_reason || "unknown",
       outputChars: originalText.length,
+      generationMode,
     }, { userId: sender.userId, workspaceId: sender.workspaceId });
     let parsed = parseObject(originalText);
     let formatRepaired = false;
@@ -350,6 +353,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
         outputTokens: Number(repair?.usage?.output_tokens) || 0,
         cachedInputTokens: Number(repair?.usage?.cache_read_input_tokens) || 0,
         originalStopReason: message?.stop_reason || "unknown",
+        generationMode,
       }, { userId: sender.userId, workspaceId: sender.workspaceId });
       parsed = parseObject(modelText(repair));
       formatRepaired = completeDraft(parsed);
@@ -497,6 +501,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       variant,
       sequenceContentType: sequenceStep.contentType || "plain",
       voiceUrgencyType,
+      generationMode,
     };
 
     const { data: previousDraft } = await supabaseAdmin
@@ -544,12 +549,12 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       supabaseAdmin.from("outreach_enrolments").update({ status: "drafted", research, research_sources: sources, researched_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("workspace_id", sender.workspaceId).eq("owner_id", sender.userId).eq("id", enrolment.id),
       supabaseAdmin.from("outreach_prospects").update({ research, last_researched_at: new Date().toISOString(), status: "ready", updated_at: new Date().toISOString() }).eq("workspace_id", sender.workspaceId).eq("assigned_to_user_id", sender.userId).eq("id", prospect.id),
       supabaseAdmin.from("outreach_events").insert([
-        { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, kind: "researched", metadata: { sources: sources.length, confidence: research.confidence, verifiedJobs: jobSignals.length, jobBoardSaved: Boolean(jobBoardUrl), companyOverviewSaved: Boolean(research.companyOverview && companyOverviewUrl) } },
-        { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, message_id: draft.id, kind: "drafted", metadata: { step, variant, qualityScore, tags: messageTags } },
+        { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, kind: "researched", metadata: { sources: sources.length, confidence: research.confidence, verifiedJobs: jobSignals.length, jobBoardSaved: Boolean(jobBoardUrl), companyOverviewSaved: Boolean(research.companyOverview && companyOverviewUrl), generationMode } },
+        { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, message_id: draft.id, kind: "drafted", metadata: { step, variant, qualityScore, tags: messageTags, generationMode } },
       ]),
     ]);
-    console.log(JSON.stringify({ level: "info", msg: "outreach prepare completed", prospectId, qualityScore, needsExtraReview, formatRepaired, ms: Date.now() - startedAt }));
-    return NextResponse.json({ research, sources, strategy, qualityScore, needsExtraReview, formatRepaired, checks: { wordCount, questionCount, bannedHits, voiceWordCount, voiceCharacterCount, emailHasDemoReplyCta, voiceHasDemoReplyCta }, message: draft });
+    console.log(JSON.stringify({ level: "info", msg: "outreach prepare completed", prospectId, generationMode, qualityScore, needsExtraReview, formatRepaired, ms: Date.now() - startedAt }));
+    return NextResponse.json({ research, sources, strategy, qualityScore, needsExtraReview, formatRepaired, generationMode, checks: { wordCount, questionCount, bannedHits, voiceWordCount, voiceCharacterCount, emailHasDemoReplyCta, voiceHasDemoReplyCta }, message: draft });
   } catch (error: any) {
     console.error(JSON.stringify({ level: "error", msg: "outreach prepare failed", prospectId: params.id, error: error?.message || "unknown error", ms: Date.now() - startedAt }));
     return NextResponse.json({ error: error?.name === "AbortError" ? "Research timed out, try this person again" : error?.message || "failed to prepare outreach" }, { status: 500 });
