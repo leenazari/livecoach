@@ -13,6 +13,7 @@ import {
 import {
   SENDPILOT_BACKFILL_DAYS,
   SENDPILOT_BACKFILL_MAX_CONVERSATIONS,
+  sendPilotBackfillCutoffMs,
   sendPilotMessageFingerprint,
   type SendPilotReplyEvent,
   type SendPilotWebhookEvent,
@@ -94,6 +95,48 @@ export async function loadSendPilotIntegrationForOwner(
     .maybeSingle();
   if (error) throw error;
   return (data as SendPilotIntegrationRow | null) || null;
+}
+
+export async function listScheduledSendPilotScopes(
+  maximum = 6
+): Promise<OwnerScope[]> {
+  const limit = Math.min(20, Math.max(1, Math.floor(maximum)));
+  const { data: integrations, error } = await supabaseService
+    .from("sendpilot_integrations")
+    .select("workspace_id,owner_id,last_backfill_at")
+    .eq("status", "active")
+    .not("api_key_ciphertext", "is", null)
+    .not("webhook_secret_ciphertext", "is", null)
+    .order("last_backfill_at", { ascending: true, nullsFirst: true })
+    .limit(limit * 3);
+  if (error) throw error;
+  if (!integrations?.length) return [];
+
+  const ownerIds = [...new Set(integrations.map((row: any) => row.owner_id))];
+  const workspaceIds = [
+    ...new Set(integrations.map((row: any) => row.workspace_id)),
+  ];
+  const { data: members, error: memberError } = await supabaseService
+    .from("workspace_members")
+    .select("workspace_id,user_id")
+    .eq("status", "active")
+    .in("workspace_id", workspaceIds)
+    .in("user_id", ownerIds);
+  if (memberError) throw memberError;
+  const activeMemberships = new Set(
+    (members || []).map(
+      (row: any) => `${String(row.workspace_id)}:${String(row.user_id)}`
+    )
+  );
+  return integrations
+    .filter((row: any) =>
+      activeMemberships.has(`${String(row.workspace_id)}:${String(row.owner_id)}`)
+    )
+    .slice(0, limit)
+    .map((row: any) => ({
+      workspaceId: String(row.workspace_id),
+      userId: String(row.owner_id),
+    }));
 }
 
 export async function loadSendPilotIntegrationByWebhookToken(
@@ -501,7 +544,7 @@ export async function runSendPilotBackfill(
       integration,
       apiKey
     );
-    const cutoffMs = Date.now() - SENDPILOT_BACKFILL_DAYS * 24 * 60 * 60 * 1_000;
+    const cutoffMs = sendPilotBackfillCutoffMs(integration.last_backfill_at);
     const conversations: SendPilotConversation[] = [];
     let continuationToken: string | null = null;
     let hasMore = false;

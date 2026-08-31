@@ -49,6 +49,10 @@
       "schedule": "15 7 * * *"
     },
     {
+      "path": "/api/cron/sendpilot-reconcile",
+      "schedule": "50 6,18 * * *"
+    },
+    {
       "path": "/api/interview/backfill-scorecards",
       "schedule": "*/5 * * * *"
     },
