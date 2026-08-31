@@ -910,6 +910,16 @@ export default function OutreachPage() {
     setDraftEdits((all) => ({ ...all, [id]: { subject: all[id]?.subject || "", body_text: all[id]?.body_text || "", voice_script: all[id]?.voice_script || "", ...styled } }));
   };
 
+  const hasCurrentReadyVoice = (row: QueueRow): boolean => {
+    const message = row.message;
+    if (!message || message.voice_status !== "ready") return false;
+    const savedScript = String(message.voice_script || "").trim();
+    const visibleScript = String(
+      draftEdits[message.id]?.voice_script ?? message.voice_script ?? ""
+    ).trim();
+    return Boolean(savedScript && visibleScript === savedScript);
+  };
+
   const buildQueue = async () => {
     setBusy("queue"); setError(""); setNotice("");
     try {
@@ -1184,8 +1194,7 @@ export default function OutreachPage() {
       (row) =>
         row.message &&
         ["draft", "failed"].includes(row.message.status) &&
-        Boolean(String(row.message.voice_script || "").trim()) &&
-        row.message.voice_status === "ready"
+        hasCurrentReadyVoice(row)
     );
     const firstTouchDrafts = readyDrafts.filter(
       (row) => queueWaveRank(row) === 0
@@ -1679,8 +1688,7 @@ export default function OutreachPage() {
     (row) =>
       row.message &&
       ["draft", "failed"].includes(row.message.status) &&
-      Boolean(String(row.message.voice_script || "").trim()) &&
-      row.message.voice_status === "ready"
+      hasCurrentReadyVoice(row)
   );
   const firstTouchApprovalRows = approvalReadyRows.filter(
     (row) => queueWaveRank(row) === 0

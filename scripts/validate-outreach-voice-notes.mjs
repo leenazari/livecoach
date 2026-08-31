@@ -227,6 +227,8 @@ assert.doesNotMatch(outreachPage, /approveVoiceScript/);
 assert.match(outreachPage, /OutreachVoiceNoteEditor/);
 assert.match(outreachPage, /queueRowNeedsVoiceScript/);
 assert.match(outreachPage, /queueRowNeedsPreparation/);
+assert.match(outreachPage, /hasCurrentReadyVoice/);
+assert.match(outreachPage, /visibleScript === savedScript/);
 assert.match(outreachPage, /voice scripts to complete/);
 assert.match(outreachPage, /Complete current wave/);
 assert.match(outreachPage, /Complete draft \+ voice/);
