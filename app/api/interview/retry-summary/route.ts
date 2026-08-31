@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { supabaseAdmin } from "@/lib/supabase";
+import { runCallSummaryJob } from "@/lib/call-summary-jobs";
+import { resolveRecordScope } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 // RETRY ONE CALL'S SUMMARY, on demand, from the Recent Calls list.
@@ -24,12 +27,15 @@ export async function POST(req: NextRequest) {
     if (!sessionId) {
       return NextResponse.json({ error: "sessionId required" }, { status: 400 });
     }
+    const accountScope = await resolveRecordScope();
 
     const { data: sess } = await supabaseAdmin
       .from("interview_sessions")
       .select(
-        "session_id, transcript, role, candidate, call_type, company_id, upcoming_id, summary_attempts"
+        "session_id, transcript, role, candidate, call_type, company_id, workstream_id, upcoming_id"
       )
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
       .eq("session_id", sessionId)
       .maybeSingle();
     if (!sess) {
@@ -50,78 +56,41 @@ export async function POST(req: NextRequest) {
     const { data: existing } = await supabaseAdmin
       .from("interview_summaries")
       .select("id")
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
       .eq("session_id", sessionId)
       .limit(1);
     if (existing && existing.length) {
       await supabaseAdmin
         .from("interview_sessions")
         .update({ summary_error: null })
+        .eq("workspace_id", accountScope.workspaceId)
+        .eq("owner_id", accountScope.userId)
         .eq("session_id", sessionId);
       return NextResponse.json({ ok: true, alreadyDone: true });
     }
 
-    const attempts = Number((sess as any).summary_attempts || 0);
-    await supabaseAdmin
-      .from("interview_sessions")
-      .update({
-        summary_error: null,
-        summary_attempts: attempts + 1,
-        summary_last_try: new Date().toISOString(),
-      })
-      .eq("session_id", sessionId);
+    const processing = runCallSummaryJob(
+      req,
+      {
+        transcript,
+        role: (sess as any).role || null,
+        candidate: (sess as any).candidate || null,
+        competencies: [],
+        callType: (sess as any).call_type || null,
+        sessionId,
+        companyId: (sess as any).company_id || null,
+        workstreamId: (sess as any).workstream_id || null,
+        upcomingId: (sess as any).upcoming_id || null,
+      },
+      { force: true }
+    ).catch((error) => console.error("Manual summary retry failed", error));
+    waitUntil(processing);
 
-    const origin = new URL(req.url).origin;
-    let failure = "";
-    try {
-      const r = await fetch(`${origin}/api/interview/summary`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(req.headers.get("cookie")
-            ? { Cookie: req.headers.get("cookie") as string }
-            : {}),
-          ...(req.headers.get("authorization")
-            ? { Authorization: req.headers.get("authorization") as string }
-            : {}),
-        },
-        body: JSON.stringify({
-          transcript,
-          role: (sess as any).role || null,
-          candidate: (sess as any).candidate || null,
-          competencies: [],
-          callType: (sess as any).call_type || null,
-          sessionId,
-          companyId: (sess as any).company_id || null,
-          upcomingId: (sess as any).upcoming_id || null,
-        }),
-      });
-      if (!r.ok) failure = `summariser returned ${r.status}`;
-    } catch (e: any) {
-      failure = e?.message || "the summariser did not respond";
-    }
-
-    // A 200 is not proof: verify the scorecard actually appeared.
-    const { data: chk } = await supabaseAdmin
-      .from("interview_summaries")
-      .select("id")
-      .eq("session_id", sessionId)
-      .limit(1);
-    const landed = !!(chk && chk.length);
-
-    await supabaseAdmin
-      .from("interview_sessions")
-      .update({
-        summary_error: landed
-          ? null
-          : failure || "the summary timed out, it will retry automatically",
-      })
-      .eq("session_id", sessionId);
-
-    return NextResponse.json({
-      ok: landed,
-      landed,
-      error: landed ? null : failure || "timed out",
-    });
+    return NextResponse.json(
+      { ok: true, queued: true },
+      { status: 202, headers: { "Cache-Control": "private, no-store" } }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "retry failed" },

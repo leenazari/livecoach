@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { runCallSummaryJob } from "@/lib/call-summary-jobs";
+import { listActiveAccountScopes } from "@/lib/automation-accounts";
+import { runWithServiceRecordScope } from "@/lib/service-scope";
+import { isVerifiedServiceRequest } from "@/lib/request-scope";
+import { resolveRecordScope } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 // Self-called and live data, so it must be dynamic.
 export const dynamic = "force-dynamic";
 
@@ -27,15 +32,14 @@ export const dynamic = "force-dynamic";
 //   2. THE ATTEMPT IS RECORDED BEFORE THE CALL IS MADE, so even a hard platform
 //      timeout (which kills this function without running any cleanup) still
 //      leaves a durable record. That is what makes the back-off real.
-//   3. A TIME BUDGET plus per-call abort, so the sweep always exits cleanly and
+//   3. A TIME BUDGET plus bounded summary calls, so the sweep exits cleanly and
 //      gets through as many calls as it can rather than dying on the first.
 //
 // Failures are now written to the session (summary_error / summary_attempts) so
 // they appear in Recent Calls as "summary failed" with a retry, instead of the
 // call silently vanishing.
 
-const BUDGET_MS = 42 * 1000; // leave headroom inside the 60s platform cap
-const PER_CALL_MS = 38 * 1000;
+const BUDGET_MS = 105 * 1000;
 
 // Back-off: wait longer between retries the more a call has failed, so a call
 // that will never summarise costs one attempt every few hours instead of
@@ -48,24 +52,28 @@ function dueForRetry(attempts: number, lastTry: string | null): boolean {
   return Date.now() - last >= waitMs;
 }
 
-async function run(req: Request) {
+async function runAccount(req: Request) {
   const started = Date.now();
   try {
-    const origin = new URL(req.url).origin;
+    const accountScope = await resolveRecordScope();
     const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
 
     const [{ data: sessions }, { data: summaries }] = await Promise.all([
       supabaseAdmin
         .from("interview_sessions")
         .select(
-          "session_id, company_id, candidate, role, call_type, transcript, created_at, upcoming_id, updated_at, ended_at, summary_attempts, summary_last_try"
+          "session_id, company_id, workstream_id, candidate, role, call_type, transcript, created_at, upcoming_id, updated_at, ended_at, summary_attempts, summary_last_try"
         )
+        .eq("workspace_id", accountScope.workspaceId)
+        .eq("owner_id", accountScope.userId)
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .limit(200),
       supabaseAdmin
         .from("interview_summaries")
         .select("session_id")
+        .eq("workspace_id", accountScope.workspaceId)
+        .eq("owner_id", accountScope.userId)
         .not("session_id", "is", null)
         .limit(3000),
     ]);
@@ -121,82 +129,22 @@ async function run(req: Request) {
       // picked up next run, in the same fair order.
       if (Date.now() - started > BUDGET_MS) break;
 
-      // Record the attempt BEFORE trying. If the platform hard-kills this
-      // function mid-summary, this row is already updated, so the back-off
-      // still applies and this call cannot jam the next run.
-      const attempts = Number(s.summary_attempts || 0) + 1;
-      await supabaseAdmin
-        .from("interview_sessions")
-        .update({
-          summary_attempts: attempts,
-          summary_last_try: new Date().toISOString(),
-        })
-        .eq("session_id", s.session_id);
+      const result = await runCallSummaryJob(req, {
+        transcript: s.transcript,
+        role: s.role || null,
+        candidate: s.candidate || null,
+        competencies: [],
+        callType: s.call_type || null,
+        sessionId: s.session_id,
+        companyId: s.company_id || null,
+        workstreamId: s.workstream_id || null,
+        upcomingId: s.upcoming_id || null,
+      });
 
-      let failure = "";
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), PER_CALL_MS);
-        try {
-          const r = await fetch(`${origin}/api/interview/summary`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(req.headers.get("cookie")
-                ? { Cookie: req.headers.get("cookie") as string }
-                : {}),
-              ...(req.headers.get("authorization")
-                ? { Authorization: req.headers.get("authorization") as string }
-                : {}),
-            },
-            body: JSON.stringify({
-              transcript: s.transcript,
-              role: s.role || null,
-              candidate: s.candidate || null,
-              competencies: [],
-              callType: s.call_type || null,
-              sessionId: s.session_id,
-              companyId: s.company_id || null,
-              // Pass the linked slot so the summary endpoint completes the right
-              // upcoming_calls row, clearing it from the list automatically.
-              upcomingId: s.upcoming_id || null,
-            }),
-            signal: controller.signal,
-          });
-          if (!r.ok) failure = `summariser returned ${r.status}`;
-        } finally {
-          clearTimeout(timer);
-        }
-      } catch (e: any) {
-        failure =
-          e?.name === "AbortError"
-            ? "the summary took too long and was stopped"
-            : e?.message || "the summariser did not respond";
-      }
-
-      // A 200 is NOT proof a scorecard landed - a long call can fail inside
-      // the summariser yet still return ok. Verify the row actually appeared.
-      const { data: chk } = await supabaseAdmin
-        .from("interview_summaries")
-        .select("id")
-        .eq("session_id", s.session_id)
-        .limit(1);
-
-      if (chk && chk.length) {
+      if (result.landed) {
         done.push(s.session_id);
-        await supabaseAdmin
-          .from("interview_sessions")
-          .update({ summary_error: null })
-          .eq("session_id", s.session_id);
-      } else {
+      } else if (!result.inProgress) {
         failed.push(s.session_id);
-        await supabaseAdmin
-          .from("interview_sessions")
-          .update({
-            summary_error:
-              failure || "the summary did not complete, it will retry",
-          })
-          .eq("session_id", s.session_id);
       }
     }
 
@@ -212,6 +160,34 @@ async function run(req: Request) {
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "backfill failed" },
+      { status: 500 }
+    );
+  }
+}
+
+async function run(req: Request) {
+  if (!isVerifiedServiceRequest()) return runAccount(req);
+  try {
+    const accounts = await listActiveAccountScopes();
+    const results = await Promise.all(
+      accounts.map(async (account) => {
+        const response = await runWithServiceRecordScope(account, () =>
+          runAccount(req)
+        );
+        return {
+          userId: account.userId,
+          status: response.status,
+          result: await response.json(),
+        };
+      })
+    );
+    return NextResponse.json({
+      ok: results.every((result) => result.status < 400),
+      accounts: results,
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: error?.message || "call summary recovery failed" },
       { status: 500 }
     );
   }

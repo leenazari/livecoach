@@ -14,6 +14,8 @@ import { completeUpcomingForCall } from "@/lib/calls";
 import { extractAttendees, matchByRoster } from "@/lib/roster";
 import { resolveCallScope } from "@/lib/workstreams";
 import { createHash } from "crypto";
+import { isVerifiedServiceRequest } from "@/lib/request-scope";
+import { withTransientSummaryRetry } from "@/lib/call-summary-retry";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -353,23 +355,32 @@ Return the JSON assessment now.`;
     // on the now-condensed input) instead of riding to the hard 60s kill that
     // produced an opaque 504 and stored nothing. max_tokens is 4096 so a rich,
     // long call's JSON is never truncated mid-object.
-    const summaryController = new AbortController();
-    const summaryTimer = setTimeout(() => summaryController.abort(), 52000);
-    let msg: any;
-    try {
-      msg = await openai.messages.create(
-        {
-          model: OPENAI_MODEL_PRO,
-          max_tokens: 4096,
-          temperature: 0,
-          system,
-          messages: [{ role: "user", content: userMsg }],
-        },
-        { signal: summaryController.signal }
-      );
-    } finally {
-      clearTimeout(summaryTimer);
-    }
+    const summaryDeadline = Date.now() + 52_000;
+    const msg: any = await withTransientSummaryRetry(
+      async () => {
+        const remainingMs = Math.max(1_000, summaryDeadline - Date.now());
+        const summaryController = new AbortController();
+        const summaryTimer = setTimeout(
+          () => summaryController.abort(),
+          remainingMs
+        );
+        try {
+          return await openai.messages.create(
+            {
+              model: OPENAI_MODEL_PRO,
+              max_tokens: 4096,
+              temperature: 0,
+              system,
+              messages: [{ role: "user", content: userMsg }],
+            },
+            { signal: summaryController.signal }
+          );
+        } finally {
+          clearTimeout(summaryTimer);
+        }
+      },
+      { attempts: 2, delayMs: 600 }
+    );
 
     const raw = msg.content
       .filter((b: any) => b.type === "text")
@@ -592,7 +603,7 @@ Return the JSON assessment now.`;
       // CROSS-CALL INTELLIGENCE: push what this call said about the user's OTHER
       // clients onto those clients (intel + next actions), so the next prep for
       // any of them carries it. Fire-and-forget - never blocks the summary.
-      if (sessionId) {
+      if (sessionId && !isVerifiedServiceRequest()) {
         try {
           const origin = new URL(req.url).origin;
           fetch(`${origin}/api/interview/cross-link`, {

@@ -42,6 +42,7 @@
     "validate:canonical-pipeline": "node scripts/validate-canonical-pipeline.mjs",
     "validate:opportunity-confirmation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-opportunity-confirmation-gate.mjs",
     "validate:call-silence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-call-silence-auto-end.mjs",
+    "validate:call-summary-resilience": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-call-summary-resilience.mjs",
     "validate:transcript-navigation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-transcript-download-latest-call.mjs",
     "validate:shared-outreach-pool": "node scripts/validate-shared-outreach-pool.mjs",
     "validate:sales-tutorial": "node scripts/validate-sales-outreach-tutorial.mjs",
