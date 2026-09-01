@@ -904,7 +904,7 @@ export default function OutreachPage() {
     prospect: Prospect | null | undefined,
     event: { preventDefault: () => void }
   ) => {
-    if (!prospect?.id || prospect.crm_company_id) return;
+    if (!prospect?.id) return;
     event.preventDefault();
     if (focusedProspectId === prospect.id && tab === "prospects") return;
     setFocusedProspectId(prospect.id);
