@@ -499,9 +499,10 @@ Return the JSON assessment now.`;
       console.error("Duration-cost fallback failed:", e);
     }
 
-    // The client for this call. Use the one passed from the start (the prep),
-    // and if there isn't one, try to auto-resolve it so the call doesn't land
-    // unassigned. Conservative - only links on a confident match.
+    // The client for this call. An exact scheduled event is authoritative at
+    // summary time because its link may have been corrected after the call tab
+    // opened. With no exact event, keep the original prep link and only then
+    // try a conservative auto-resolution.
     const exactUpcomingId =
       typeof upcomingId === "string" && upcomingId ? upcomingId : null;
     const scheduledScope = await resolveCallScope({
@@ -511,9 +512,11 @@ Return the JSON assessment now.`;
     });
     const scheduledCompanyId = scheduledScope.companyId;
 
-    let resolvedCompanyId: string | null =
-      typeof companyId === "string" && companyId ? companyId : null;
-    if (!resolvedCompanyId) resolvedCompanyId = scheduledCompanyId;
+    let resolvedCompanyId: string | null = exactUpcomingId
+      ? scheduledCompanyId
+      : typeof companyId === "string" && companyId
+        ? companyId
+        : scheduledCompanyId;
     // An exact scheduled slot with no client is intentionally left unassigned.
     // Never borrow the company from the next meeting merely because it is close
     // in time (the Cam interview was incorrectly attached to Danielle this way).
