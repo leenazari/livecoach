@@ -18,6 +18,9 @@ const sharedClientMigration = read(
 const standardUpgradeMigration = read(
   "supabase/migrations/20260824054534_notification_standard_upgrades.sql"
 );
+const notificationGrantMigration = read(
+  "supabase/migrations/20260901132902_fix_crm_notification_authenticated_grants.sql"
+);
 const feedRoute = read("app/api/crm/notifications/route.ts");
 const itemRoute = read("app/api/crm/notifications/[id]/route.ts");
 const preferencesRoute = read(
@@ -96,12 +99,33 @@ assert.doesNotMatch(
   /insert into public\.crm_notifications|update public\.crm_notifications|delete from public\.crm_notifications/,
   "The upgrade must not replay or mutate historical notification receipts"
 );
+assert.match(notificationGrantMigration, /enable row level security/);
+assert.match(
+  notificationGrantMigration,
+  /grant select on table public\.crm_notifications to authenticated/
+);
+assert.match(
+  notificationGrantMigration,
+  /grant update \(read_at, dismissed_at, snoozed_until\)[\s\S]*to authenticated/
+);
+assert.match(
+  notificationGrantMigration,
+  /revoke insert, delete, truncate, references, trigger[\s\S]*from authenticated/
+);
+assert.doesNotMatch(
+  notificationGrantMigration,
+  /grant (?:insert|delete|all)[^\n]*authenticated/,
+  "Authenticated users must not be able to forge or delete notifications"
+);
 
 for (const route of [feedRoute, itemRoute]) {
   assert.match(route, /requireRequestScope\(\)/);
   assert.match(route, /\.eq\("workspace_id", account\.workspaceId\)/);
   assert.match(route, /\.eq\("user_id", account\.userId\)/);
   assert.doesNotMatch(route, /supabaseService/);
+  assert.match(route, /crmBlockerPayload/);
+  assert.match(route, /notification_action_not_confirmed/);
+  assert.doesNotMatch(route, /error\?\.message/);
 }
 assert.match(feedRoute, /Cache-Control": "private, no-store/);
 assert.match(feedRoute, /\.is\("dismissed_at", null\)/);

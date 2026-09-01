@@ -53,7 +53,7 @@ export function crmBlockerMessage(input: CrmBlockerInput): string {
 }
 
 const INTERNAL_ERROR_DETAIL =
-  /(?:postgres|supabase|sqlstate|syntax error|duplicate key|violates|constraint|column .* does not exist|relation .* does not exist|stack trace|econn|enotfound|jwt|service role|fetch failed)/i;
+  /(?:postgres|supabase|sqlstate|syntax error|duplicate key|violates|constraint|column .* does not exist|relation .* does not exist|permission denied|row[- ]level security|for (?:table|relation|schema) [a-z0-9_."]+|42501|stack trace|econn|enotfound|jwt|service role|fetch failed)/i;
 
 const VAGUE_ERROR =
   /^(?:error|failed|failure|forbidden|unauthori[sz]ed|not found|request failed|unexpected response|company not found|client not found|contact not found|task not found|call not found|opportunity not found|prospect not found|nothing to update|could not save|failed to save|failed to update|failed to delete)(?:[.! ]*)$/i;
