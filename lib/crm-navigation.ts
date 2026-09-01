@@ -21,11 +21,12 @@ export function crmCallHref(callId: unknown): string | null {
 export function outreachProspectHref(
   prospect: ProspectNavigationTarget | null | undefined
 ): string | null {
-  const companyHref = crmCompanyHref(prospect?.crm_company_id);
-  if (companyHref) return companyHref;
-
   const prospectId = routePart(prospect?.id);
-  return prospectId
-    ? `/crm/outreach?tab=prospects&prospect=${prospectId}`
-    : null;
+  if (prospectId)
+    return `/crm/outreach?tab=prospects&prospect=${prospectId}`;
+
+  // A linked CRM company can still be private to another workspace member.
+  // Prospect links must therefore prefer the assigned outreach record and use
+  // the company only as a fallback for legacy activity without a prospect ID.
+  return crmCompanyHref(prospect?.crm_company_id);
 }
