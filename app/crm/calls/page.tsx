@@ -6,6 +6,7 @@ import { crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
+import UpcomingCalls from "@/components/crm/UpcomingCalls";
 import MatrixRain from "@/components/MatrixRain";
 import { crmCompanyHref } from "@/lib/crm-navigation";
 
@@ -168,6 +169,10 @@ export default function CallsPage() {
           transcript is safe, hit retry to rebuild the scorecard.
         </div>
       )}
+
+      <div className="mb-4">
+        <UpcomingCalls limit={10} />
+      </div>
 
       <input
         value={q}

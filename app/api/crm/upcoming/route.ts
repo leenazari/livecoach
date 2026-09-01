@@ -9,6 +9,7 @@ import {
 import { createConnectedCalendarEvent } from "@/lib/calendar-provider";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { validMeetingUrl } from "@/lib/meeting-url";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 
 export const runtime = "nodejs";
 // Keep this a dynamic function: a no-arg GET would otherwise be statically
@@ -32,9 +33,10 @@ export async function GET() {
     ).toISOString();
     const nowIso = new Date().toISOString();
     const [
-      { data: companies },
-      { data: calls },
-      { data: recentlyCompleted },
+      companiesResult,
+      callsResult,
+      recentlyCompletedResult,
+      callRemindersResult,
     ] = await Promise.all([
       supabaseAdmin
         .from("companies")
@@ -66,28 +68,65 @@ export async function GET() {
         .or(`completed_at.gte.${recoveryCutoff},scheduled_at.gte.${nowIso}`)
         .order("completed_at", { ascending: false })
         .limit(20),
+      supabaseAdmin
+        .from("tasks")
+        .select("id,text,due_at,created_at")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("status", "open")
+        .eq("link_kind", "call")
+        .not("due_at", "is", null)
+        .order("due_at", { ascending: true })
+        .limit(100),
     ]);
+    const firstError = [
+      companiesResult.error,
+      callsResult.error,
+      recentlyCompletedResult.error,
+      callRemindersResult.error,
+    ].find(Boolean);
+    if (firstError) throw firstError;
+    const companies = companiesResult.data || [];
+    const calls = callsResult.data || [];
+    const recentlyCompleted = recentlyCompletedResult.data || [];
+    const callReminders = callRemindersResult.data || [];
     const nameById = new Map<string, string>();
-    for (const c of companies || []) nameById.set(c.id, c.name);
-    const items = (calls || [])
+    for (const c of companies) nameById.set(c.id, c.name);
+    const items = calls
       .filter((c: any) => isPrepEligibleCalendarEvent(c))
       .map((c: any) => ({
         ...c,
         company: c.company_id ? nameById.get(c.company_id) || null : null,
       }));
-    const recoverable = (recentlyCompleted || [])
+    const recoverable = recentlyCompleted
       .filter((c: any) => isPrepEligibleCalendarEvent(c))
       .map((c: any) => ({
         ...c,
         company: c.company_id ? nameById.get(c.company_id) || null : null,
       }));
     return NextResponse.json(
-      { calls: items, recentlyCompleted: recoverable },
+      {
+        calls: items,
+        callReminders: callReminders.map((reminder: any) => ({
+          id: reminder.id,
+          text: reminder.text,
+          dueAt: reminder.due_at,
+          createdAt: reminder.created_at,
+        })),
+        recentlyCompleted: recoverable,
+      },
       { headers: { "Cache-Control": "no-store, max-age=0" } }
     );
-  } catch (err: any) {
+  } catch {
     return NextResponse.json(
-      { error: err?.message || "failed to load upcoming calls" },
+      crmBlockerPayload({
+        code: "calls_and_reminders_unavailable",
+        title: "Calls and reminders could not be loaded",
+        reason: "LiveCoach could not safely read your personal calls and reminders",
+        nextAction:
+          "Refresh Calls and try once. If it repeats, send the blocker code to a workspace owner",
+        responsible: "system",
+      }),
       { status: 500 }
     );
   }
