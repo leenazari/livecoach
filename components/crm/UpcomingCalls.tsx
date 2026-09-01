@@ -24,7 +24,15 @@ type Upcoming = {
 
 type UpcomingFeed = {
   calls: Upcoming[];
+  callReminders?: CallReminder[];
   recentlyCompleted?: Upcoming[];
+};
+
+type CallReminder = {
+  id: string;
+  text: string;
+  dueAt: string;
+  createdAt: string;
 };
 
 const fmtWhen = (iso: string | null) => {
@@ -36,6 +44,18 @@ const fmtWhen = (iso: string | null) => {
       month: "short",
       hour: "2-digit",
       minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+};
+
+const fmtReminderDate = (iso: string) => {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
     });
   } catch {
     return iso;
@@ -64,6 +84,9 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   const router = useRouter();
   const cached = getCached<UpcomingFeed>("/api/crm/upcoming");
   const [calls, setCalls] = useState<Upcoming[]>(cached?.calls || []);
+  const [callReminders, setCallReminders] = useState<CallReminder[]>(
+    cached?.callReminders || []
+  );
   const [recentlyCompleted, setRecentlyCompleted] = useState<Upcoming[]>(
     cached?.recentlyCompleted || []
   );
@@ -102,6 +125,7 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
       setCalls(
         (d.calls || []).filter((call) => !dismissedIds.current.has(call.id))
       );
+      setCallReminders(d.callReminders || []);
       setRecentlyCompleted(d.recentlyCompleted || []);
     } catch {
       /* Keep the last confirmed list if a background refresh fails. */
@@ -394,6 +418,33 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
     }
   };
 
+  const completeCallReminder = async (id: string) => {
+    const previous = callReminders;
+    setCallReminders((items) => items.filter((item) => item.id !== id));
+    try {
+      const { task } = await crmFetch<{ task: { id: string; status: string } }>(
+        `/api/crm/tasks/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: "done" }),
+        }
+      );
+      if (task?.id !== id || task.status !== "done")
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the call reminder was completed",
+        });
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+    } catch (error: any) {
+      setCallReminders(previous);
+      setSyncMsg(
+        error?.message || "Call reminder was not completed. Please try again."
+      );
+    }
+  };
+
   // Open the call screen preloaded from this scheduled call. The /call screen IS
   // the prep screen: it opens at the plan stage with this client, intent and link
   // already loaded, and only goes live when speech starts or you hit Go live. Both
@@ -450,7 +501,7 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
     <div className="rounded-xl border border-edge bg-panel/40 p-4">
       <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
         <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-          {"▦"} Upcoming calls
+          {"▦"} Calls and reminders
         </p>
         <div className="mobile-full flex flex-wrap items-center justify-end gap-2 sm:w-auto">
           {syncMsg && (
@@ -528,6 +579,48 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
                 >
                   {restoringId === call.id ? "restoring…" : "restore to upcoming"}
                 </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {callReminders.length > 0 && (
+        <div className="mb-3 rounded-lg border border-amber/35 bg-amber/[0.04] p-3">
+          <p className="font-mono text-[0.56rem] uppercase tracking-wider text-amber">
+            Call reminders
+          </p>
+          <p className="mt-1 font-mono text-[0.54rem] leading-relaxed text-muted">
+            Your dated call to-dos appear here automatically. Completing one here
+            completes the same reminder everywhere in LiveCoach.
+          </p>
+          <ul className="mt-2 flex max-h-80 flex-col gap-2 overflow-y-auto pr-1">
+            {callReminders.map((reminder) => (
+              <li
+                key={reminder.id}
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-edge bg-ink/40 px-3 py-2"
+              >
+                <button
+                  type="button"
+                  onClick={() => void completeCallReminder(reminder.id)}
+                  title="Mark this call reminder complete"
+                  aria-label={`Complete ${reminder.text}`}
+                  className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-edge text-[0.6rem] leading-none text-muted transition hover:border-sage/60 hover:text-sage"
+                >
+                  ✓
+                </button>
+                <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sky">
+                  {fmtReminderDate(reminder.dueAt)}
+                </span>
+                <span className="min-w-[12rem] flex-1 text-sm text-bone">
+                  {reminder.text}
+                </span>
+                <Link
+                  href="/crm/board?tab=tasks"
+                  className="rounded-full border border-edge px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+                >
+                  open reminder ↗
+                </Link>
               </li>
             ))}
           </ul>
@@ -650,9 +743,9 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
 
       {calls.length === 0 ? (
         <p className="font-mono text-[0.62rem] leading-relaxed text-muted">
-          Nothing scheduled. Add an upcoming call to prep it in advance and jump
-          straight in when it's time. Calendar events created here stay linked to
-          the same private CRM record.
+          {callReminders.length
+            ? "No meetings scheduled. Your call reminders are shown above."
+            : "Nothing scheduled. Add an upcoming call to prep it in advance and jump straight in when it's time. Calendar events created here stay linked to the same private CRM record."}
         </p>
       ) : (
         <>
