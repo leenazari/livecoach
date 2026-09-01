@@ -282,12 +282,16 @@ export async function GET(req: NextRequest) {
           },
         };
       });
-    const { data: members } = await supabaseService
+    let membersQuery = supabaseService
       .from("workspace_members")
       .select("user_id,role,status")
       .eq("workspace_id", account.workspaceId)
       .eq("status", "active")
       .order("created_at");
+    if (!canManageAssignments) {
+      membersQuery = membersQuery.eq("user_id", account.userId);
+    }
+    const { data: members } = await membersQuery;
     const memberIds = (members || []).map((row: any) => row.user_id);
     const { data: profiles } = memberIds.length
       ? await supabaseService

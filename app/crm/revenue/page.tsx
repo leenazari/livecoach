@@ -258,7 +258,9 @@ export default function RevenuePage() {
   };
 
   const wonProgress = data?.goal?.target ? Math.min(100, (data.goal.wonYtd / data.goal.target) * 100) : 0;
-  const activeOwnerFilter = ownerFilter || (data?.canManageAssignments ? "all" : "mine");
+  const activeOwnerFilter = data?.canManageAssignments
+    ? ownerFilter || "all"
+    : "mine";
   const revenueRows = useMemo(
     () => rows.filter((row) => row.opportunity_type === "revenue"),
     [rows]

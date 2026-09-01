@@ -29,6 +29,8 @@ const DAY = 24 * 60 * 60 * 1000;
 export async function GET() {
   try {
     const account = requireRequestScope();
+    const canManageAssignments =
+      account.role === "owner" || account.role === "manager";
     const now = new Date();
     const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1)).toISOString();
 
@@ -426,12 +428,16 @@ export async function GET() {
       };
     });
 
-    const { data: members, error: membersError } = await supabaseService
+    let membersQuery = supabaseService
       .from("workspace_members")
       .select("user_id,role")
       .eq("workspace_id", account.workspaceId)
       .eq("status", "active")
       .order("created_at");
+    if (!canManageAssignments) {
+      membersQuery = membersQuery.eq("user_id", account.userId);
+    }
+    const { data: members, error: membersError } = await membersQuery;
     if (membersError) throw membersError;
     const memberIds = (members || []).map((member: any) => member.user_id);
     const { data: profiles, error: profilesError } = memberIds.length
@@ -517,7 +523,7 @@ export async function GET() {
       stageDefinitions: STAGES,
       team,
       currentUser: account.userId,
-      canManageAssignments: account.role === "owner" || account.role === "manager",
+      canManageAssignments,
       generatedAt: new Date().toISOString(),
     }, {
       headers: { "Cache-Control": "private, no-store" },
