@@ -39,6 +39,8 @@ const firstText = (value: unknown): string =>
 export async function GET() {
   try {
     const scope = requireRequestScope();
+    const canManageAssignments =
+      scope.role === "owner" || scope.role === "manager";
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
     const accountRecords = (query: any) => {
@@ -58,6 +60,15 @@ export async function GET() {
         "assigned_to_user_id",
         scope.userId
       );
+    let membersQuery = supabaseService
+      .from("workspace_members")
+      .select("user_id,role")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("status", "active")
+      .order("created_at");
+    if (!canManageAssignments) {
+      membersQuery = membersQuery.eq("user_id", scope.userId);
+    }
     const [
       { data: ownedCompanies, error: companiesError },
       { data: contacts, error: contactsError },
@@ -120,12 +131,7 @@ export async function GET() {
         .order("scheduled_at", { ascending: true })
         .limit(1000),
       clientSharesQuery,
-      supabaseService
-        .from("workspace_members")
-        .select("user_id,role")
-        .eq("workspace_id", scope.workspaceId)
-        .eq("status", "active")
-        .order("created_at"),
+      membersQuery,
     ]);
 
     const firstError = [
@@ -424,8 +430,7 @@ export async function GET() {
         generatedAt: new Date().toISOString(),
         team,
         currentUser: scope.userId,
-        canManageAssignments:
-          scope.role === "owner" || scope.role === "manager",
+        canManageAssignments,
       },
       {
         headers: {

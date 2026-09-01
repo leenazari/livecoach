@@ -14,6 +14,7 @@
     "validate:outreach-team-safety": "node scripts/validate-team-outreach-safety.mjs",
     "validate:outreach-personal-analytics": "node scripts/validate-outreach-personal-analytics.mjs",
     "validate:outreach-row-isolation": "node scripts/validate-outreach-row-isolation.mjs",
+    "validate:sales-directory-isolation": "node scripts/validate-sales-directory-isolation.mjs",
     "validate:team-client-sharing": "node scripts/validate-team-client-sharing.mjs",
     "validate:team-privacy-review": "node scripts/validate-team-privacy-review.mjs",
     "validate:multi-user": "node scripts/validate-multi-user-foundation.mjs",

@@ -285,9 +285,14 @@ export default function PipelineWorkspace(props: Props) {
   const [localFocus, setLocalFocus] = useState("all");
   const activeFocus = props.focus ?? localFocus;
   const changeFocus = props.onFocusChange ?? setLocalFocus;
+  const effectiveOwnerFilter = canManageAssignments ? ownerFilter : "mine";
   const ownerName = (row: Row) => row.assigned_to_user_id === currentUser
     ? "Mine"
-    : team.find((member) => member.userId === row.assigned_to_user_id)?.name || "Unassigned";
+    : row.assigned_to_user_id
+      ? canManageAssignments
+        ? team.find((member) => member.userId === row.assigned_to_user_id)?.name || "Another team member"
+        : "Another team member"
+      : "Unassigned";
   const [view, setView] = useState<"table" | "kanban">("table");
   const [tableOrder, setTableOrder] = useState<
     "priority" | "newest" | "oldest" | "activity_newest" | "activity_oldest"
@@ -314,8 +319,8 @@ export default function PipelineWorkspace(props: Props) {
     };
   }, [editorRowId]);
   const ownerVisibleRows = useMemo(
-    () => rows.filter((row) => opportunityMatchesOwner(row, ownerFilter, currentUser)),
-    [currentUser, ownerFilter, rows]
+    () => rows.filter((row) => opportunityMatchesOwner(row, effectiveOwnerFilter, currentUser)),
+    [currentUser, effectiveOwnerFilter, rows]
   );
   const visibleRows = useMemo(
     () => ownerVisibleRows.filter((row) => matchesPipelineFocus(row, activeFocus)),
@@ -357,13 +362,13 @@ export default function PipelineWorkspace(props: Props) {
       </span>
     ) : null;
   };
-  const ownerViewLabel = ownerFilter === "all"
+  const ownerViewLabel = effectiveOwnerFilter === "all"
     ? "all team work"
-    : ownerFilter === "mine"
+    : effectiveOwnerFilter === "mine"
       ? "your work"
-      : ownerFilter === "unassigned"
+      : effectiveOwnerFilter === "unassigned"
         ? "unassigned work"
-        : `${team.find((member) => member.userId === ownerFilter)?.name || "selected owner"}'s work`;
+        : `${team.find((member) => member.userId === effectiveOwnerFilter)?.name || "selected owner"}'s work`;
   const stats = useMemo(() => ({
     overdue: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "overdue")).length,
     meetings: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "meetings")).length,
@@ -413,21 +418,27 @@ export default function PipelineWorkspace(props: Props) {
             <option value="newest">Newest deal</option>
             <option value="oldest">Oldest deal</option>
           </select>
-          <select
-            aria-label="Filter pipeline by deal owner"
-            value={ownerFilter}
-            onChange={(event) => onOwnerFilterChange(event.target.value)}
-            className="min-h-11 rounded-lg border border-edge bg-ink px-3 font-mono text-[0.56rem] uppercase text-bone outline-none focus:border-amber/60"
-          >
-            <option value="all">All team work</option>
-            <option value="mine">My work</option>
-            <option value="unassigned">Unassigned</option>
-            {team.map((member) => (
-              <option key={member.userId} value={member.userId}>
-                {member.name}
-              </option>
-            ))}
-          </select>
+          {canManageAssignments ? (
+            <select
+              aria-label="Filter pipeline by deal owner"
+              value={effectiveOwnerFilter}
+              onChange={(event) => onOwnerFilterChange(event.target.value)}
+              className="min-h-11 rounded-lg border border-edge bg-ink px-3 font-mono text-[0.56rem] uppercase text-bone outline-none focus:border-amber/60"
+            >
+              <option value="all">All team work</option>
+              <option value="mine">My work</option>
+              <option value="unassigned">Unassigned</option>
+              {team.map((member) => (
+                <option key={member.userId} value={member.userId}>
+                  {member.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="flex min-h-11 items-center rounded-lg border border-edge bg-ink px-3 font-mono text-[0.56rem] uppercase text-muted">
+              My work only
+            </div>
+          )}
           <div className="flex rounded-lg border border-edge bg-ink p-1">
             {(["table", "kanban"] as const).map((value) => <button key={value} onClick={() => setView(value)} className={`min-h-9 rounded-md px-3 font-mono text-[0.56rem] uppercase ${view === value ? "bg-amber/20 text-amber" : "text-muted"}`}>{value}</button>)}
           </div>

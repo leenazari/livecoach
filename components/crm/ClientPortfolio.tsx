@@ -348,6 +348,7 @@ export default function ClientPortfolio({
     canManageAssignments ? "all" : "mine"
   );
   const [showAdd, setShowAdd] = useState(false);
+  const effectiveOwnerFilter = canManageAssignments ? ownerFilter : "mine";
   const [sort, setSort] = useState<{
     key: "priority" | "health" | "name" | "owner" | "contact" | "stage" | "added" | "lastActivity" | "nextMeeting" | "commercial" | "nextMove";
     direction: "asc" | "desc";
@@ -361,7 +362,11 @@ export default function ClientPortfolio({
   const ownerName = (row: ClientPortfolioRow) =>
     row.assignedToUserId === currentUser
       ? "Mine"
-      : teamNameById.get(row.assignedToUserId || "") || "Unassigned";
+      : row.assignedToUserId
+        ? canManageAssignments
+          ? teamNameById.get(row.assignedToUserId) || "Another team member"
+          : "Another team member"
+        : "Unassigned";
 
   const stages = useMemo(
     () =>
@@ -383,12 +388,12 @@ export default function ClientPortfolio({
         )
           return false;
         if (stage !== "all" && row.relationshipStage !== stage) return false;
-        if (ownerFilter === "mine" && row.assignedToUserId !== currentUser)
+        if (effectiveOwnerFilter === "mine" && row.assignedToUserId !== currentUser)
           return false;
-        if (ownerFilter === "unassigned" && row.assignedToUserId) return false;
+        if (effectiveOwnerFilter === "unassigned" && row.assignedToUserId) return false;
         if (
-          !["all", "mine", "unassigned"].includes(ownerFilter) &&
-          row.assignedToUserId !== ownerFilter
+          !["all", "mine", "unassigned"].includes(effectiveOwnerFilter) &&
+          row.assignedToUserId !== effectiveOwnerFilter
         )
           return false;
         if (!deferredQuery) return true;
@@ -445,7 +450,7 @@ export default function ClientPortfolio({
         if (comparison === 0) comparison = a.name.localeCompare(b.name, "en-GB", { sensitivity: "base" });
         return sort.direction === "asc" ? comparison : -comparison;
       });
-    }, [clients, currentUser, deferredQuery, health, ownerFilter, sort, stage, teamNameById]);
+    }, [canManageAssignments, clients, currentUser, deferredQuery, effectiveOwnerFilter, health, sort, stage, teamNameById]);
 
   const chooseSort = (key: typeof sort.key) => {
     setSort((current) => {
@@ -517,21 +522,27 @@ export default function ClientPortfolio({
               <option key={value} value={value}>{value}</option>
             ))}
           </select>
-          <select
-            aria-label="Filter clients by sales owner"
-            value={ownerFilter}
-            onChange={(event) => setOwnerFilter(event.target.value)}
-            className="rounded-lg border border-edge bg-ink/70 px-3 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-bone outline-none focus:border-amber/60"
-          >
-            <option value="all">All team work</option>
-            <option value="mine">My work</option>
-            <option value="unassigned">Unassigned</option>
-            {team.map((member) => (
-              <option key={member.userId} value={member.userId}>
-                {member.name}
-              </option>
-            ))}
-          </select>
+          {canManageAssignments ? (
+            <select
+              aria-label="Filter clients by sales owner"
+              value={effectiveOwnerFilter}
+              onChange={(event) => setOwnerFilter(event.target.value)}
+              className="rounded-lg border border-edge bg-ink/70 px-3 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-bone outline-none focus:border-amber/60"
+            >
+              <option value="all">All team work</option>
+              <option value="mine">My work</option>
+              <option value="unassigned">Unassigned</option>
+              {team.map((member) => (
+                <option key={member.userId} value={member.userId}>
+                  {member.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="flex min-h-10 items-center rounded-lg border border-edge bg-ink/70 px-3 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-muted">
+              My clients only
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setShowAdd((open) => !open)}
@@ -586,7 +597,7 @@ export default function ClientPortfolio({
       </div>
 
       <p className="mb-2 font-mono text-[0.54rem] uppercase tracking-wider text-muted">
-        Showing {shown.length} of {health === "archived" ? totals.archived : totals.all} · {ownerFilter === "mine" ? "your work" : "team work"} · red and overdue relationships appear first
+        Showing {shown.length} of {health === "archived" ? totals.archived : totals.all} · {effectiveOwnerFilter === "mine" ? "your work" : "team work"} · red and overdue relationships appear first
       </p>
 
       {shown.length === 0 ? (
