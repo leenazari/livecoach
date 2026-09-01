@@ -119,6 +119,17 @@ const fallbackCases = [
     title: "To-do action not confirmed.",
     responsible: "system",
   },
+  {
+    input: {
+      status: 500,
+      url: "/api/crm/notifications/1",
+      method: "PATCH",
+      serverMessage: "permission denied for table crm_notifications",
+    },
+    code: "crm_notification_500",
+    title: "Notification action not confirmed.",
+    responsible: "system",
+  },
 ];
 
 for (const test of fallbackCases) {
@@ -131,6 +142,11 @@ for (const test of fallbackCases) {
 }
 assert.doesNotMatch(
   crmFallbackBlockerPayload(fallbackCases.at(-1).input).error,
+  /permission denied|crm_notifications|for table/i,
+  "Internal database detail must not be exposed in a fallback blocker"
+);
+assert.doesNotMatch(
+  crmFallbackBlockerPayload(fallbackCases.at(-2).input).error,
   /duplicate key|database constraint/i,
   "Internal database detail must not be exposed in a fallback blocker"
 );

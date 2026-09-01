@@ -5,6 +5,7 @@ import {
   mapNotificationPreferences,
   parseNotificationSnoozeUntil,
 } from "@/lib/crm-notifications";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -112,9 +113,16 @@ export async function GET(req: NextRequest) {
       },
       { headers: { "Cache-Control": "private, no-store" } }
     );
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
-      { error: error?.message || "Notifications could not be loaded" },
+      crmBlockerPayload({
+        code: "notifications_unavailable",
+        title: "Notifications could not be loaded",
+        reason: "LiveCoach could not safely read your notification feed",
+        nextAction:
+          "Refresh Notifications and try once. If it repeats, send the blocker code to a workspace owner",
+        responsible: "system",
+      }),
       { status: 500 }
     );
   }
@@ -181,9 +189,16 @@ export async function PATCH(req: NextRequest) {
     if (error) throw error;
 
     return NextResponse.json({ ok: true, updated: data?.length || 0 });
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
-      { error: error?.message || "Notifications could not be updated" },
+      crmBlockerPayload({
+        code: "notification_action_not_confirmed",
+        title: "Notification action not confirmed",
+        reason: "LiveCoach could not safely update the selected notification state",
+        nextAction:
+          "Refresh Notifications and try once. If it repeats, send the blocker code to a workspace owner",
+        responsible: "system",
+      }),
       { status: 500 }
     );
   }

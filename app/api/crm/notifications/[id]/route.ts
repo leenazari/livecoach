@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 import { parseNotificationSnoozeUntil } from "@/lib/crm-notifications";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,9 +68,16 @@ export async function PATCH(
         snoozedUntil: data.snoozed_until,
       },
     });
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
-      { error: error?.message || "Notification could not be updated" },
+      crmBlockerPayload({
+        code: "notification_action_not_confirmed",
+        title: "Notification action not confirmed",
+        reason: "LiveCoach could not safely update the selected notification state",
+        nextAction:
+          "Refresh Notifications and try once. If it repeats, send the blocker code to a workspace owner",
+        responsible: "system",
+      }),
       { status: 500 }
     );
   }
