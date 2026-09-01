@@ -91,6 +91,7 @@
     "validate:deal-intent": "node scripts/validate-opportunity-deal-intent.mjs",
     "validate:today-state": "node scripts/validate-today-state-transitions.mjs",
     "validate:brain-task-confirmation": "node scripts/validate-brain-task-confirmation.mjs",
+    "validate:manual-contact-callback": "node scripts/validate-manual-contact-callback.mjs",
     "validate:brain-operating-system": "node scripts/validate-brain-operating-system.mjs",
     "validate:outreach-voice-notes": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-voice-notes.mjs",
     "validate:canonical-navigation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-canonical-entity-navigation.mjs",

@@ -68,6 +68,8 @@ function safeLegacyReason(value: unknown): string {
 
 function crmResource(url: string): { key: string; label: string; lower: string } {
   const path = String(url || "").toLowerCase();
+  if (path.includes("/email-pull"))
+    return { key: "email", label: "Email history", lower: "email history" };
   if (path.includes("/companies"))
     return { key: "company", label: "Company", lower: "company" };
   if (path.includes("/contacts"))

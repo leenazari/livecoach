@@ -52,6 +52,11 @@ import {
   ensureOutreachEmailDemoReplyCta,
   OUTREACH_EMAIL_DEMO_REPLY_CTA,
 } from "@/lib/outreach-demo-reply-cta";
+import {
+  activeSharedClientIds,
+  loadSafeSharedCompanies,
+  loadSafeSharedCompany,
+} from "@/lib/team-client-sharing";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -110,15 +115,25 @@ async function findCompany(name: string) {
     }
   );
   const requestScope = getRequestScope();
-  if (
-    company &&
-    requestScope &&
-    requestScope.role !== "owner" &&
-    company.owner_id !== requestScope.userId
-  ) {
-    return null;
-  }
-  return company;
+  if (!requestScope || requestScope.role === "owner") return company;
+  if (company?.owner_id === requestScope.userId) return company;
+
+  const sharedIds = await activeSharedClientIds(
+    requestScope.workspaceId,
+    requestScope.userId
+  );
+  const shared = await loadSafeSharedCompanies(
+    sharedIds,
+    requestScope.workspaceId
+  );
+  const exact = shared.filter(
+    (candidate) => candidate.name.trim().toLowerCase() === term.toLowerCase()
+  );
+  if (exact.length === 1) return exact[0];
+  const partial = shared.filter((candidate) =>
+    candidate.name.toLowerCase().includes(term.toLowerCase())
+  );
+  return partial.length === 1 ? partial[0] : null;
 }
 async function findCompanyById(id: string) {
   if (!/^[0-9a-f-]{36}$/i.test(String(id || ""))) return null;
@@ -131,7 +146,13 @@ async function findCompanyById(id: string) {
     query = query.eq("owner_id", requestScope.userId);
   }
   const { data } = await query.maybeSingle();
-  return data || null;
+  if (data || !requestScope || requestScope.role === "owner") return data || null;
+  const sharedIds = await activeSharedClientIds(
+    requestScope.workspaceId,
+    requestScope.userId
+  );
+  if (!sharedIds.includes(id)) return null;
+  return loadSafeSharedCompany(id, requestScope.workspaceId);
 }
 async function findTasks(
   text: string,
@@ -175,6 +196,31 @@ async function findContacts(name: string, companyId: string): Promise<any[]> {
   }
   const { data } = await query;
   return data || [];
+}
+
+async function findOwnContacts(name: string, email = ""): Promise<any[]> {
+  const requestScope = getRequestScope();
+  if (!requestScope) return [];
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  const term = likeTerm(name);
+  if (!cleanEmail && !term) return [];
+  let query = supabaseAdmin
+    .from("contacts")
+    .select("id,company_id,name,email")
+    .eq("workspace_id", requestScope.workspaceId)
+    .eq("owner_id", requestScope.userId);
+  query = cleanEmail
+    ? query.ilike("email", cleanEmail)
+    : query.ilike("name", `%${term}%`);
+  const { data } = await query.limit(8);
+  const rows = data || [];
+  if (cleanEmail) return rows;
+  const exact = rows.filter(
+    (contact: any) =>
+      String(contact.name || "").trim().toLowerCase() ===
+      String(name || "").trim().toLowerCase()
+  );
+  return exact.length ? exact : rows;
 }
 async function findDraft(subject: string) {
   const term = likeTerm(subject);
@@ -771,7 +817,17 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
     if (it.type === "create_task") {
       const text = typeof it.text === "string" ? it.text.trim() : "";
       if (!text) continue;
-      const company = it.client ? await findCompany(String(it.client)) : null;
+      const requestedClient =
+        typeof it.client === "string" ? it.client.trim() : "";
+      const company = requestedClient
+        ? await findCompany(requestedClient)
+        : defaultCompanyId
+          ? await findCompanyById(defaultCompanyId)
+          : null;
+      // A named client that is not available to this account must never fall
+      // back to whichever client page happens to be open. That is how a Blue
+      // Eskimo callback was silently attached to Siamo Recruitment Coventry.
+      if (requestedClient && !company) continue;
       out.push({
         key,
         type: it.type,
@@ -779,7 +835,8 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
         endpoint: "/api/crm/tasks",
         method: "POST",
         body: {
-          companyId: company?.id || defaultCompanyId,
+          companyId: company?.id || null,
+          ...(company ? { companyName: company.name } : {}),
           text: text.slice(0, 500),
           action: ["email", "call", "task"].includes(it.action) ? it.action : "task",
           dueAt:
@@ -1113,15 +1170,36 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
           ? it.client
           : ""
       ).trim();
-      const em = typeof it.email === "string" ? it.email.trim() : "";
+      let em = typeof it.email === "string" ? it.email.trim().toLowerCase() : "";
       if (!person && !em) continue;
+      const contacts = await findOwnContacts(person, em);
+      const usableContacts = contacts.filter((contact: any) =>
+        String(contact.email || "").trim()
+      );
+      if (!em && usableContacts.length === 1) {
+        em = String(usableContacts[0].email).trim().toLowerCase();
+      }
+      const matchedContact =
+        usableContacts.length === 1
+          ? usableContacts[0]
+          : usableContacts.find(
+              (contact: any) =>
+                em && String(contact.email || "").trim().toLowerCase() === em
+            ) || null;
       out.push({
         key,
         type: it.type,
         label: `Pull ${person || em}'s emails and build their client profile`,
         endpoint: `/api/crm/email-pull`,
         method: "POST",
-        body: em ? { email: em } : { name: person },
+        body: {
+          ...(person ? { name: person } : {}),
+          ...(em ? { email: em } : {}),
+          ...(matchedContact?.id ? { contactId: matchedContact.id } : {}),
+          ...(matchedContact?.company_id
+            ? { companyId: matchedContact.company_id }
+            : {}),
+        },
       });
       continue;
     }
@@ -1245,6 +1323,10 @@ function flagUnresolvedActions(requested: any[], resolved: any[]): any[] {
             ? "This outreach email needs a simple do not follow up line. Ask me to add one and I will show the exact final version for approval."
             : "I could not safely match that recipient. Give me their exact email address and I will keep the campaign optional."
       : "";
+    const namedTaskFailure =
+      type === "create_task" && String(item?.client || "").trim()
+        ? `The named client ${String(item.client).trim().slice(0, 180)} is not available to this account. Ask a workspace owner to assign or safely share it, then create the to-do again.`
+        : "";
     unresolved.push({
       key: `not-done-${Math.random().toString(36).slice(2)}`,
       type: type || "unknown",
@@ -1254,6 +1336,7 @@ function flagUnresolvedActions(requested: any[], resolved: any[]): any[] {
       batchSafe: false,
       failureReason:
         sendEmailFailure ||
+        namedTaskFailure ||
         "Brain could not safely identify the exact record or a required edit value was missing. No change was made.",
     });
   }
@@ -1589,9 +1672,9 @@ FINISHED BUSINESS DOCUMENTS: when the user explicitly asks you to produce, creat
 
 TO-DOS: when the user asks you to arrange, remember, chase, follow up, add, draft, prep, or otherwise CREATE actions to do later, propose each as a to-do. It is shown in the visible action plan and is only created after approval. In ADDITION to your normal prose reply, put ONLY a JSON array between these exact markers:
 ---TASKS---
-[{"text":"short imperative to-do","action":"email|call|task","dueAt":"YYYY-MM-DD","pinned":true}]
+[{"text":"short imperative to-do","client":"optional exact client name","action":"email|call|task","dueAt":"YYYY-MM-DD","pinned":true}]
 ---END TASKS---
-Use "action" = "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Set "dueAt" to the deadline DATE when the user gives one, working out the real date from today's date in the context (e.g. "by Friday" becomes that Friday's YYYY-MM-DD, "by end of month" the last day of this month). Set "pinned" to true when the user says to keep it at the top, make it top priority, do it first, or that it is urgent. OMIT dueAt and pinned when the user did not give a deadline or priority. Only propose to-dos the user actually wants tracked, and do not repeat ones already outstanding in the context. Keep these markers out of your prose, and still answer naturally.
+Use "client" whenever the task names or clearly belongs to a client. If that named client is different from the client page currently open, the named client always wins. Never omit it and let the open page take over. Use "action" = "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Set "dueAt" to the deadline DATE when the user gives one, working out the real date from today's date in the context (e.g. "by Friday" becomes that Friday's YYYY-MM-DD, "by end of month" the last day of this month). Set "pinned" to true when the user says to keep it at the top, make it top priority, do it first, or that it is urgent. OMIT client when the task is genuinely global. OMIT dueAt and pinned when the user did not give a deadline or priority. Only propose to-dos the user actually wants tracked, and do not repeat ones already outstanding in the context. Keep these markers out of your prose, and still answer naturally.
 
 CALENDAR AND SAVED PREP: the user's upcoming calls, synced from their calendar, are in the context below. For a schedule or call list, always include the time and make the full time plus call title clickable to its supplied prep page using exactly [time, call title](/supplied/prep/path). This is the one permitted Markdown pattern. Never link the client name separately inside a schedule item. Never show raw URLs, never say a prep page is unavailable when a prep page is supplied, and never link straight to Google Meet, Teams or Zoom unless the user explicitly asks for the join link. If the context specifies the exact requested date, obey it, including the user's before 02:00 definition of "tomorrow". Flag overlapping meetings prominently. When they ask about a particular call's questions, focus, intent or battle plan, use the ON-DEMAND SAVED CALL PREP block when present. That block is the authoritative saved plan and was fetched specifically for this question, so never say you cannot see it. If the block says the plan is not built, say that plainly. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
 
@@ -1777,6 +1860,10 @@ ALWAYS end the spoken version with your closing question whenever your reply has
                   .map((x: any) => ({
                     type: "create_task",
                     text: String(x.text).trim(),
+                    client:
+                      typeof x.client === "string" && x.client.trim()
+                        ? x.client.trim().slice(0, 240)
+                        : undefined,
                     action: x.action,
                     dueAt:
                       typeof x.dueAt === "string" &&

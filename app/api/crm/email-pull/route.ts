@@ -24,6 +24,9 @@ import {
   calendarEmailDomain,
   emailMayInfluenceCompanyIntent,
 } from "@/lib/calendar-subject";
+import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
+import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,18 +72,169 @@ async function myAddresses(): Promise<Set<string>> {
 
 export async function POST(req: NextRequest) {
   try {
+    const scope = await resolveRecordScope();
     const body = await req.json().catch(() => ({}));
     let name = typeof body.name === "string" ? body.name.trim() : "";
     let email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    const companyId =
+    let companyId =
       typeof body.companyId === "string" ? body.companyId.trim() : "";
+    const contactId =
+      typeof body.contactId === "string" ? body.contactId.trim() : "";
     const requestedWorkstreamId =
       typeof body.workstreamId === "string" ? body.workstreamId.trim() : "";
     const upcomingId =
       typeof body.upcomingId === "string" ? body.upcomingId.trim() : "";
-    const workstream = requestedWorkstreamId
+    let matchedContact: any = null;
+    if (contactId) {
+      const { data, error: contactError } = await supabaseAdmin
+        .from("contacts")
+        .select("id,company_id,name,email")
+        .eq("id", contactId)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .maybeSingle();
+      if (contactError) throw contactError;
+      if (!data) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "email_contact_not_available",
+            title: "Email history not pulled",
+            reason: "The selected contact is not available to your account",
+            nextAction: "Open your own contact record or ask a workspace owner to assign the client",
+            responsible: "owner",
+          }),
+          { status: 404 }
+        );
+      }
+      matchedContact = data;
+    } else if (name && !email) {
+      const term = name.replace(/[%_]/g, "").trim().slice(0, 100);
+      const { data, error: contactError } = await supabaseAdmin
+        .from("contacts")
+        .select("id,company_id,name,email")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .ilike("name", `%${term}%`)
+        .not("email", "is", null)
+        .limit(8);
+      if (contactError) throw contactError;
+      const exact = (data || []).filter(
+        (contact: any) =>
+          String(contact.name || "").trim().toLowerCase() ===
+          name.toLowerCase()
+      );
+      const candidates = exact.length ? exact : data || [];
+      if (candidates.length === 1) matchedContact = candidates[0];
+      else if (candidates.length > 1) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "email_contact_ambiguous",
+            title: "Exact email needed",
+            reason: `More than one of your contacts matches ${name}`,
+            nextAction: "Enter the person's exact email address and pull the thread again",
+            responsible: "user",
+          }),
+          { status: 409 }
+        );
+      }
+    }
+    if (matchedContact) {
+      const contactEmail = String(matchedContact.email || "").trim().toLowerCase();
+      if (email && contactEmail && email !== contactEmail) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "email_contact_mismatch",
+            title: "Email history not pulled",
+            reason: "The selected contact and email address do not match",
+            nextAction: "Open the correct contact or enter the exact address before trying again",
+            responsible: "user",
+          }),
+          { status: 409 }
+        );
+      }
+      if (!email) email = contactEmail;
+      if (!name) name = String(matchedContact.name || "").trim();
+      if (!companyId && matchedContact.company_id) {
+        companyId = String(matchedContact.company_id);
+      }
+      if (
+        companyId &&
+        matchedContact.company_id &&
+        companyId !== String(matchedContact.company_id)
+      ) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "email_contact_company_mismatch",
+            title: "Email history not pulled",
+            reason: "The selected contact belongs to a different client",
+            nextAction: "Open the contact's correct client and pull the email thread there",
+            responsible: "user",
+          }),
+          { status: 409 }
+        );
+      }
+    }
+
+    const companyAccess = companyId
+      ? await loadAssignedClientAccess(companyId, scope)
+      : null;
+    if (companyId && !companyAccess) {
+      return NextResponse.json(
+        crmBlockerPayload({
+          code: "email_client_not_assigned",
+          title: "Email history not pulled",
+          reason: "The selected client is not owned by or assigned to your account",
+          nextAction: "Ask a workspace owner to assign the client, then pull the email thread again",
+          responsible: "owner",
+        }),
+        { status: 404 }
+      );
+    }
+    const sharedSalesTarget = companyAccess?.mode === "shared_sales";
+    let workstream = requestedWorkstreamId
       ? await getWorkstreamScope(requestedWorkstreamId)
       : null;
+    if (workstream) {
+      const { data: ownedWorkstream, error: workstreamAccessError } =
+        await supabaseAdmin
+          .from("workstreams")
+          .select("id")
+          .eq("id", workstream.id)
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
+          .maybeSingle();
+      if (workstreamAccessError) throw workstreamAccessError;
+      if (!ownedWorkstream) workstream = null;
+    }
+    if (!workstream && sharedSalesTarget && email) {
+      const { data: personalThreads, error: threadError } = await supabaseAdmin
+        .from("workstreams")
+        .select("id,company_id,department_id,name,kind,status,purpose,email_context_meta")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("company_id", companyId)
+        .eq("status", "active")
+        .limit(50);
+      if (threadError) throw threadError;
+      const personalThread = (personalThreads || []).find(
+          (thread: any) =>
+            String(
+              thread.email_context_meta?.email_context_counterparty_email || ""
+            ).toLowerCase() === email
+        );
+      workstream = personalThread
+        ? {
+            id: personalThread.id,
+            companyId: personalThread.company_id,
+            departmentId: personalThread.department_id || null,
+            departmentName: null,
+            name: personalThread.name,
+            kind: personalThread.kind,
+            status: personalThread.status,
+            purpose: personalThread.purpose || "",
+          }
+        : null;
+    }
     if (
       requestedWorkstreamId &&
       (!workstream || !companyId || workstream.companyId !== companyId)
@@ -138,15 +292,13 @@ export async function POST(req: NextRequest) {
 
     // If we were handed a company, search its recorded contact / domain.
     if (!email && !name && !query && companyId) {
-      const { data: co } = await supabaseAdmin
-        .from("companies")
-        .select("name, domain, website")
-        .eq("id", companyId)
-        .maybeSingle();
+      const co = companyAccess?.company || null;
       const { data: ct } = await supabaseAdmin
         .from("contacts")
         .select("email")
         .eq("company_id", companyId)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .not("email", "is", null)
         .limit(20);
       const companyDomain = normaliseCompanyDomain(co?.domain || co?.website);
@@ -174,7 +326,13 @@ export async function POST(req: NextRequest) {
     }
     if (!query) {
       return NextResponse.json(
-        { error: "give me a name, an email or a client to pull" },
+        crmBlockerPayload({
+          code: "email_target_missing",
+          title: "Email history needs a person",
+          reason: "No contact name, email address or client was supplied",
+          nextAction: "Enter the person's name or exact email address and try again",
+          responsible: "user",
+        }),
         { status: 400 }
       );
     }
@@ -182,15 +340,29 @@ export async function POST(req: NextRequest) {
     // For an existing client, load the rolling summary before touching the mailbox.
     // The newest processed message id lets subsequent refreshes use only the
     // new message bodies instead of paying to resend the old conversation.
-    const { data: cachedCompany } = companyId
-      ? await supabaseAdmin
+    let cachedCompany: any = null;
+    if (companyId) {
+      if (sharedSalesTarget) {
+        cachedCompany = {
+          ...companyAccess?.company,
+          profile: {},
+          email_context: null,
+          email_context_updated_at: null,
+        };
+      } else {
+        const { data, error: companyError } = await supabaseAdmin
           .from("companies")
           .select(
             "name, domain, website, profile, email_context, email_context_updated_at"
           )
           .eq("id", companyId)
-          .maybeSingle()
-      : { data: null };
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
+          .maybeSingle();
+        if (companyError) throw companyError;
+        cachedCompany = data || null;
+      }
+    }
     const { data: cachedThread } = workstream
       ? await supabaseAdmin
           .from("workstreams")
@@ -222,15 +394,41 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const msgs = await recentMessages(query, 25);
+    let msgs: Awaited<ReturnType<typeof recentMessages>> = [];
+    try {
+      msgs = await recentMessages(query, 25);
+    } catch {
+      return NextResponse.json(
+        crmBlockerPayload({
+          code: "email_mailbox_read_failed",
+          title: "Mailbox could not be read",
+          reason: "LiveCoach could not complete a search of the signed-in user's connected mailbox",
+          nextAction: "Reconnect Google or Microsoft in Settings, then try the email pull once more",
+          responsible: "user",
+        }),
+        { status: 502 }
+      );
+    }
     if (!msgs.length) {
       const connected = await mailboxConnected();
       return NextResponse.json(
-        {
-          error: connected
-            ? "No matching emails were found, or the connected mailbox is not readable yet."
-            : "Email is not connected. Connect Google or Microsoft in Settings first.",
-        },
+        crmBlockerPayload(
+          connected
+            ? {
+                code: "email_thread_not_found",
+                title: "No matching email found",
+                reason: `No recent email matched ${email || name || query} in the signed-in user's mailbox`,
+                nextAction: "Check the exact email address and search again. The CRM contact and callback remain saved",
+                responsible: "user",
+              }
+            : {
+                code: "email_mailbox_not_connected",
+                title: "Email is not connected",
+                reason: "This account has no readable Google or Microsoft mailbox connection",
+                nextAction: "Connect this user's mailbox in Settings, then pull the email thread again",
+                responsible: "user",
+              }
+        ),
         { status: connected ? 404 : 409 }
       );
     }
@@ -322,18 +520,30 @@ export async function POST(req: NextRequest) {
           email_context_counterparty_domain: domain || null,
         };
         if (workstream) {
-          await supabaseAdmin
+          const { data: savedThread, error: saveThreadError } = await supabaseAdmin
             .from("workstreams")
             .update({
               email_context_meta: emailMeta,
               updated_at: new Date().toISOString(),
             })
-            .eq("id", workstream.id);
+            .eq("id", workstream.id)
+            .eq("workspace_id", scope.workspaceId)
+            .eq("owner_id", scope.userId)
+            .select("id")
+            .maybeSingle();
+          if (saveThreadError) throw saveThreadError;
+          if (!savedThread) throw new Error("The relationship refresh was not saved");
         } else {
-          await supabaseAdmin
+          const { data: savedCompany, error: saveCompanyError } = await supabaseAdmin
             .from("companies")
             .update({ profile: emailMeta })
-            .eq("id", companyId);
+            .eq("id", companyId)
+            .eq("workspace_id", scope.workspaceId)
+            .eq("owner_id", scope.userId)
+            .select("id")
+            .maybeSingle();
+          if (saveCompanyError) throw saveCompanyError;
+          if (!savedCompany) throw new Error("The client refresh was not saved");
         }
         return NextResponse.json({
           ok: true,
@@ -389,7 +599,7 @@ export async function POST(req: NextRequest) {
       const msg = await openai.messages.create({
         model: OPENAI_MODEL_LIVE,
         max_tokens: 600,
-        system: `You maintain a short, clean CLIENT CONTEXT note for a CRM. The user is Lee (Interviewa / AI13). Write about the OTHER party (${personName}${
+        system: `You maintain a short, clean CLIENT CONTEXT note for the signed-in LiveCoach user. Write about the OTHER party (${personName}${
           isCompanyDomain ? `, ${domain}` : ""
         }). Output ONLY JSON: {"companyName": "the org name to file them under (their company if it is a business, else their name)", "emailContext": "3 to 6 plain sentences: who they are, what the relationship is about, where it is up to, and the next step."}. Update the saved context with only the fresh messages. Preserve still-relevant facts, replace superseded details, and never invent. No markdown, em dashes or semicolons.`,
         messages: [
@@ -431,6 +641,135 @@ export async function POST(req: NextRequest) {
 
     const website = isCompanyDomain ? `https://${domain}` : null;
     const nowIso = new Date().toISOString();
+    const emailMeta = {
+      ...((cachedThread as any)?.email_context_meta || {}),
+      email_context_source_hash: sourceHash,
+      email_last_message_id: msgs[0]?.id || null,
+      email_last_message_at: msgs[0]?.date || null,
+      email_context_counterparty_email: counterparty,
+      email_context_counterparty_domain: domain || null,
+    };
+
+    // A salesperson's mailbox summary must not overwrite the original owner's
+    // private client context. Keep it in the assignee's own relationship thread
+    // and link only the contact that this salesperson created.
+    if (sharedSalesTarget && companyId) {
+      const { data: sameEmailContacts, error: contactLookupError } =
+        await supabaseAdmin
+          .from("contacts")
+          .select("id,company_id,name,email")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
+          .ilike("email", counterparty)
+          .limit(5);
+      if (contactLookupError) throw contactLookupError;
+      const contactOnAnotherClient = (sameEmailContacts || []).find(
+        (contact: any) => String(contact.company_id || "") !== companyId
+      );
+      if (contactOnAnotherClient) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "email_contact_already_on_another_client",
+            title: "Email history not filed",
+            reason: `${contactOnAnotherClient.name} already exists on another client in your CRM`,
+            nextAction: "Correct the existing contact's company, then pull the email thread again",
+            responsible: "user",
+          }),
+          { status: 409 }
+        );
+      }
+      let privateContactId = (sameEmailContacts || []).find(
+        (contact: any) => String(contact.company_id || "") === companyId
+      )?.id;
+      let privateWorkstreamId = workstream?.id || "";
+      let relationshipCreated = false;
+      if (privateWorkstreamId) {
+        const { data: savedThread, error: saveThreadError } = await supabaseAdmin
+          .from("workstreams")
+          .update({
+            email_context: emailContext,
+            email_context_updated_at: nowIso,
+            email_context_meta: emailMeta,
+            updated_at: nowIso,
+          })
+          .eq("id", privateWorkstreamId)
+          .eq("company_id", companyId)
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
+          .select("id")
+          .maybeSingle();
+        if (saveThreadError) throw saveThreadError;
+        if (!savedThread) throw new Error("The private relationship thread was not updated");
+      } else {
+        const { data: savedThread, error: saveThreadError } = await supabaseAdmin
+          .from("workstreams")
+          .insert({
+            company_id: companyId,
+            name: personName || counterparty,
+            kind: "relationship",
+            status: "active",
+            purpose: `Email relationship with ${personName || counterparty}`,
+            email_context: emailContext,
+            email_context_updated_at: nowIso,
+            email_context_meta: emailMeta,
+            ...privateRecordFields(scope),
+          })
+          .select("id")
+          .single();
+        if (saveThreadError) throw saveThreadError;
+        if (!savedThread?.id) throw new Error("The private relationship thread was not created");
+        privateWorkstreamId = savedThread.id;
+        relationshipCreated = true;
+      }
+
+      if (!privateContactId) {
+        const { data: savedContact, error: saveContactError } = await supabaseAdmin
+          .from("contacts")
+          .insert({
+            company_id: companyId,
+            name: personName || counterparty,
+            email: counterparty,
+            ...privateRecordFields(scope),
+          })
+          .select("id")
+          .single();
+        if (saveContactError) throw saveContactError;
+        if (!savedContact?.id) throw new Error("The private contact was not created");
+        privateContactId = savedContact.id;
+      }
+      const { error: linkError } = await supabaseAdmin
+        .from("workstream_contacts")
+        .upsert(
+          {
+            workstream_id: privateWorkstreamId,
+            contact_id: privateContactId,
+            company_id: companyId,
+            relationship_role: "primary",
+            is_primary: true,
+            ...privateRecordFields(scope),
+          },
+          {
+            onConflict: "workstream_id,contact_id",
+            ignoreDuplicates: true,
+          }
+        );
+      if (linkError) throw linkError;
+
+      return NextResponse.json({
+        ok: true,
+        companyId,
+        workstreamId: privateWorkstreamId,
+        contactId: privateContactId,
+        name: companyAccess?.company?.name || companyName,
+        person: personName,
+        email: counterparty,
+        created: false,
+        relationshipCreated,
+        messages: msgs.length,
+        emailContext,
+        emailContextUpdatedAt: nowIso,
+      });
+    }
 
     // Find an existing client: the one we were told, else one on this domain,
     // else create a fresh one. Never duplicate.
@@ -452,7 +791,7 @@ export async function POST(req: NextRequest) {
         .eq("id", targetId)
         .maybeSingle();
       targetCompany = existingCompany || null;
-      const emailMeta = {
+      const companyEmailMeta = {
         ...((workstream
           ? (cachedThread as any)?.email_context_meta
           : existingCompany?.profile) || {}),
@@ -468,16 +807,25 @@ export async function POST(req: NextRequest) {
             email_context: emailContext,
             email_context_updated_at: nowIso,
             updated_at: nowIso,
-            profile: emailMeta,
+            profile: companyEmailMeta,
           };
       // Pulling an internal or cross-relationship email into a client's
       // context must never replace that client's own identity. Only an
       // automatically resolved record may have a missing domain filled here.
       if (!explicitTarget && website && !existingCompany?.website) patch.website = website;
       if (!explicitTarget && domain && !existingCompany?.domain) patch.domain = domain;
-      await supabaseAdmin.from("companies").update(patch).eq("id", targetId);
+      const { data: savedCompany, error: saveCompanyError } = await supabaseAdmin
+        .from("companies")
+        .update(patch)
+        .eq("id", targetId)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .select("id")
+        .maybeSingle();
+      if (saveCompanyError) throw saveCompanyError;
+      if (!savedCompany) throw new Error("The client email context was not updated");
       if (workstream) {
-        await supabaseAdmin
+        const { data: savedThread, error: saveThreadError } = await supabaseAdmin
           .from("workstreams")
           .update({
             email_context: emailContext,
@@ -486,10 +834,16 @@ export async function POST(req: NextRequest) {
             updated_at: nowIso,
           })
           .eq("id", workstream.id)
-          .eq("company_id", targetId);
+          .eq("company_id", targetId)
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
+          .select("id")
+          .maybeSingle();
+        if (saveThreadError) throw saveThreadError;
+        if (!savedThread) throw new Error("The relationship email context was not updated");
       }
     } else {
-      const { data: ins } = await supabaseAdmin
+      const { data: ins, error: insertCompanyError } = await supabaseAdmin
         .from("companies")
         .insert({
           name: companyName,
@@ -504,9 +858,12 @@ export async function POST(req: NextRequest) {
             email_context_counterparty_email: counterparty,
             email_context_counterparty_domain: domain || null,
           },
+          ...privateRecordFields(scope),
         })
         .select("id")
         .single();
+      if (insertCompanyError) throw insertCompanyError;
+      if (!ins?.id) throw new Error("The client profile was not created");
       targetId = ins?.id as string;
       created = true;
     }
@@ -532,11 +889,18 @@ export async function POST(req: NextRequest) {
         .ilike("email", counterparty)
         .limit(1);
       if (!existingCt || !existingCt.length) {
-        await supabaseAdmin.from("contacts").insert({
-          company_id: contactCompanyId,
-          name: personName || counterparty,
-          email: counterparty,
-        });
+        const { data: savedContact, error: saveContactError } = await supabaseAdmin
+          .from("contacts")
+          .insert({
+            company_id: contactCompanyId,
+            name: personName || counterparty,
+            email: counterparty,
+            ...privateRecordFields(scope),
+          })
+          .select("id")
+          .single();
+        if (saveContactError) throw saveContactError;
+        if (!savedContact?.id) throw new Error("The contact was not created");
       }
     }
 
@@ -553,8 +917,15 @@ export async function POST(req: NextRequest) {
       emailContextUpdatedAt: nowIso,
     });
   } catch (err: any) {
+    console.error("Email pull failed", err?.message || err);
     return NextResponse.json(
-      { error: err?.message || "failed to pull the email" },
+      crmBlockerPayload({
+        code: "email_pull_not_confirmed",
+        title: "Email history not saved",
+        reason: "LiveCoach could not confirm the mailbox summary and CRM updates",
+        nextAction: "Refresh the client and try once more. If it repeats, send this blocker code to a workspace owner",
+        responsible: "system",
+      }),
       { status: 500 }
     );
   }
