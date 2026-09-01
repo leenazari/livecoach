@@ -208,7 +208,7 @@ for (const classification of [
 }
 assert.match(companyRoute, /mode: sharedSalesAccess \? "shared_sales" : "owner"/);
 assert.match(companyRoute, /privateSourcesHidden: sharedSalesAccess/);
-assert.match(companyRoute, /belongs to another salesperson and is view only/);
+assert.match(companyRoute, /assigned to another salesperson and is view only/);
 assert.match(companyRoute, /shared_client_core_updated/);
 assert.match(activityRoute, /sharedCompany/);
 assert.match(activityRoute, /private history was not opened or changed/);

@@ -1,5 +1,7 @@
-import { supabaseAdmin } from "@/lib/supabase";
+import { getServiceRecordScope } from "@/lib/service-scope";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { getRequestScope, isVerifiedServiceRequest } from "@/lib/request-scope";
+import { loadSafeSharedCompanies } from "@/lib/team-client-sharing";
 import {
   crmCompanyAllowsColdOutreach,
   normalizeOutreachDomain,
@@ -80,6 +82,31 @@ export function modelSources(message: any): { title: string; url: string }[] {
 
 const CRM_GUARD_PAGE_SIZE = 500;
 
+async function loadAssignedSharedCompaniesForOutreach(): Promise<any[]> {
+  const requestScope = getRequestScope();
+  const serviceScope =
+    !requestScope && isVerifiedServiceRequest()
+      ? getServiceRecordScope()
+      : null;
+  const scope = requestScope || serviceScope;
+  if (!scope) return [];
+
+  // The verified sender may use only the safe projection of companies which
+  // the owner explicitly assigned to them. The private source row, notes,
+  // emails and commercial memory are never loaded into outreach.
+  const { data: grants, error } = await supabaseService
+    .from("team_client_shares")
+    .select("company_id")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("assigned_to_user_id", scope.userId)
+    .eq("status", "active");
+  if (error) throw error;
+  return loadSafeSharedCompanies(
+    (grants || []).map((grant: any) => String(grant.company_id || "")),
+    scope.workspaceId
+  );
+}
+
 async function loadCrmCompaniesForOutreach(): Promise<any[]> {
   const companies: any[] = [];
   for (let from = 0; ; from += CRM_GUARD_PAGE_SIZE) {
@@ -100,6 +127,11 @@ async function loadCrmCompaniesForOutreach(): Promise<any[]> {
     if (error) throw error;
     companies.push(...(data || []));
     if ((data || []).length < CRM_GUARD_PAGE_SIZE) break;
+  }
+  const visibleIds = new Set(companies.map((company) => String(company.id || "")));
+  const sharedCompanies = await loadAssignedSharedCompaniesForOutreach();
+  for (const company of sharedCompanies) {
+    if (!visibleIds.has(String(company.id || ""))) companies.push(company);
   }
   return companies;
 }
