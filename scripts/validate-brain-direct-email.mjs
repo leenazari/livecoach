@@ -56,7 +56,7 @@ assert.match(migration, /outreach_messages_sender_request_key_unique/);
 // Recent Brain activity is immediately discoverable from both product areas,
 // while the pipeline does not manufacture a revenue opportunity.
 assert.match(prospects, /setProspectSort\("activity"\)/);
-assert.match(prospects, /if \(requestedSearch\) setQ\(requestedSearch\)/);
+assert.match(prospects, /setQ\(params\.get\("q"\) \|\| ""\)/);
 assert.match(prospects, /Brain email/);
 assert.match(revenueRoute, /\.eq\("sender_user_id", account\.userId\)/);
 assert.match(revenueRoute, /recentOutreach/);

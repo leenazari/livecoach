@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { loadSafeSharedCompany } from "@/lib/team-client-sharing";
@@ -140,7 +141,16 @@ export async function GET(
           }
         );
       }
-      return NextResponse.json({ error: "company not found" }, { status: 404 });
+      return NextResponse.json(
+        crmBlockerPayload({
+          code: "company_unavailable",
+          title: "Company unavailable",
+          reason: "This company no longer exists or has not been shared with your account",
+          nextAction: "Return to the lead and ask a workspace owner to assign or safely share the company",
+          responsible: "owner",
+        }),
+        { status: 404 }
+      );
     }
 
     const salesResearchPromise = loadVerifiedCompanySalesResearch(
@@ -216,7 +226,13 @@ export async function GET(
     });
   } catch (err: any) {
     return NextResponse.json(
-      { error: err?.message || "company not found" },
+      crmBlockerPayload({
+        code: "company_access_not_confirmed",
+        title: "Company could not be opened",
+        reason: "The CRM could not confirm access to this company",
+        nextAction: "Refresh once. If it still fails, ask a workspace owner to check the company assignment",
+        responsible: "owner",
+      }),
       { status: 404 }
     );
   }
@@ -249,14 +265,29 @@ export async function PATCH(
       if (shareError) throw shareError;
       sharedSalesAccess = !!share;
       if (!sharedSalesAccess) {
-        return NextResponse.json({ error: "company not found" }, { status: 404 });
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "company_edit_access_missing",
+            title: "Company update blocked",
+            reason: "This company is not owned by or safely shared with your account",
+            nextAction: "Ask a workspace owner to assign or share the company before editing it",
+            responsible: "owner",
+          }),
+          { status: 404 }
+        );
       }
       if (
         scope.role === "sales" &&
         share?.assigned_to_user_id !== scope.userId
       ) {
         return NextResponse.json(
-          { error: "This client belongs to another salesperson and is view only" },
+          crmBlockerPayload({
+            code: "company_assigned_to_another_salesperson",
+            title: "Company update blocked",
+            reason: "This company is assigned to another salesperson and is view only for you",
+            nextAction: "Ask a manager to reassign the company if you should be responsible for it",
+            responsible: "manager",
+          }),
           { status: 403 }
         );
       }
@@ -273,7 +304,12 @@ export async function PATCH(
     }
     if (typeof body.name === "string" && !body.name.trim()) {
       return NextResponse.json(
-        { error: "name cannot be empty" },
+        crmBlockerPayload({
+          code: "company_name_empty",
+          title: "Company update blocked",
+          reason: "The company name cannot be empty",
+          nextAction: "Enter a company name, then save again",
+        }),
         { status: 400 }
       );
     }
@@ -308,7 +344,15 @@ export async function PATCH(
         : null;
     }
     if (Object.keys(patch).length === 0 && !removeFromPipeline) {
-      return NextResponse.json({ error: "nothing to update" }, { status: 400 });
+      return NextResponse.json(
+        crmBlockerPayload({
+          code: "company_no_changes",
+          title: "Nothing to save",
+          reason: "No company fields or pipeline choices were changed",
+          nextAction: "Change a field or close the editor without saving",
+        }),
+        { status: 400 }
+      );
     }
 
     let data: any = current;
@@ -413,7 +457,13 @@ export async function PATCH(
     );
   } catch (err: any) {
     return NextResponse.json(
-      { error: err?.message || "failed to update company" },
+      crmBlockerPayload({
+        code: "company_update_not_confirmed",
+        title: "Company update not saved",
+        reason: "The CRM could not confirm the company change",
+        nextAction: "Refresh the company and try once more. If it still fails, ask a workspace owner to check access",
+        responsible: "owner",
+      }),
       { status: 500 }
     );
   }
@@ -432,11 +482,26 @@ export async function DELETE(
       .maybeSingle();
     if (error) throw error;
     if (!data)
-      return NextResponse.json({ error: "company not found" }, { status: 404 });
+      return NextResponse.json(
+        crmBlockerPayload({
+          code: "company_delete_access_missing",
+          title: "Company deletion blocked",
+          reason: "The company does not exist or is not owned by your account",
+          nextAction: "Refresh the client list and ask a workspace owner to verify the record before deleting it",
+          responsible: "owner",
+        }),
+        { status: 404 }
+      );
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json(
-      { error: err?.message || "failed to delete company" },
+      crmBlockerPayload({
+        code: "company_delete_not_confirmed",
+        title: "Company deletion not completed",
+        reason: "The CRM could not confirm that the company was removed",
+        nextAction: "Refresh the client list before trying again. Do not assume the record was deleted",
+        responsible: "system",
+      }),
       { status: 500 }
     );
   }

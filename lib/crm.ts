@@ -150,6 +150,30 @@ export function setCached(url: string, value: any): void {
 
 // Tiny typed fetch wrapper - throws on non-OK with the server's message.
 // Successful GETs are cached by URL for instant re-render on revisit.
+export type CrmRequestBlocker = {
+  code: string;
+  title: string;
+  reason: string;
+  nextAction: string;
+  responsible: "user" | "manager" | "owner" | "system";
+};
+
+export class CrmRequestError extends Error {
+  status: number;
+  blocker: CrmRequestBlocker | null;
+
+  constructor(
+    message: string,
+    status: number,
+    blocker: CrmRequestBlocker | null = null
+  ) {
+    super(message);
+    this.name = "CrmRequestError";
+    this.status = status;
+    this.blocker = blocker;
+  }
+}
+
 export function crmFetch<T = any>(
   url: string,
   init?: RequestInit
@@ -190,7 +214,17 @@ export function crmFetch<T = any>(
     } catch {
       throw new Error("unexpected response from the server");
     }
-    if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
+    if (!res.ok) {
+      const blocker =
+        data?.blocker && typeof data.blocker === "object"
+          ? (data.blocker as CrmRequestBlocker)
+          : null;
+      throw new CrmRequestError(
+        data.error || `The CRM request failed with status ${res.status}. Refresh and try again.`,
+        res.status,
+        blocker
+      );
+    }
     // Cache under the CLEAN url (not the cache-busted one) so getCached() hits.
     if (method === "GET") {
       // A write may have completed while this read was in flight. Return the

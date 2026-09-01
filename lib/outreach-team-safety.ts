@@ -15,15 +15,15 @@ export const ACTIVE_OUTREACH_ENROLMENT_STATUSES = [
 
 const SAFETY_CONSTRAINT_MESSAGES: Record<string, string> = {
   outreach_one_active_campaign_per_recipient_email:
-    "This email address is already active in another campaign. Open its existing outreach history instead.",
+    "This email address is already enrolled in another campaign. Open the existing outreach history and continue there, or ask a manager to remove that enrolment before sending separately.",
   outreach_one_approved_message_per_recipient_email:
-    "Another approved email already exists for this address. Review that email before approving another.",
+    "Another approved email already exists for this address. Open that draft and send, edit or cancel it before approving another.",
   outreach_one_recipient_per_delivery_day:
-    "This email address already has a message reserved for that day.",
+    "This email address already has a message reserved for that day. Choose another delivery day or use the existing scheduled message.",
   outreach_one_sender_per_send_slot:
-    "Another email already has this sender's delivery slot.",
+    "Another email already uses this sender's delivery slot. Choose another time or let the queue reschedule it.",
   outreach_cross_campaign_cooldown:
-    "This email address was contacted through another campaign within the last 30 days. A workspace owner or manager may override this safety pause with a recorded reason.",
+    "This email address was contacted through another campaign within the last 30 days. Wait until the safety window ends, or ask a workspace owner or manager to record an override reason.",
 };
 
 export function isActiveOutreachEnrolmentStatus(value: unknown): boolean {

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import {
+  crmBlockerPayload,
+  type CrmBlockerInput,
+} from "@/lib/crm-blocker";
 import { emailDomain, outreachCrmGuard, prospectHasBlockedCrmRelationship } from "@/lib/outreach";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { queueApprovedOutreachMessage } from "@/lib/outreach-send-queue";
@@ -19,6 +23,16 @@ const SIMPLE_OPT_OUT = /(not|won't|will not|do not).{0,24}follow up/i;
 
 const clean = (value: unknown, max: number) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
+
+const blockedResponse = (
+  status: number,
+  blocker: CrmBlockerInput,
+  extra: Record<string, unknown> = {}
+) =>
+  NextResponse.json(
+    { ...crmBlockerPayload(blocker), ...extra },
+    { status }
+  );
 
 function nameParts(name: string) {
   const parts = name.split(/\s+/).filter(Boolean);
@@ -74,37 +88,45 @@ export async function POST(req: NextRequest) {
     const requestKey = clean(body.idempotencyKey, 160);
 
     if (!EMAIL.test(recipientEmail)) {
-      return NextResponse.json(
-        { error: "The exact recipient email is required before anything can be sent" },
-        { status: 400 }
-      );
+      return blockedResponse(400, {
+        code: "outreach_recipient_email_missing",
+        title: "Email approval blocked",
+        reason: "The recipient email is missing or invalid",
+        nextAction: "Add the exact email address, then approve the email again",
+      });
     }
     if (!subject || !bodyText) {
-      return NextResponse.json(
-        { error: "The exact subject and email body are required before approval" },
-        { status: 400 }
-      );
+      return blockedResponse(400, {
+        code: "outreach_content_missing",
+        title: "Email approval blocked",
+        reason: "The exact subject or email body is missing",
+        nextAction: "Complete both fields, then review and approve the final email",
+      });
     }
     if (!SIMPLE_OPT_OUT.test(bodyText)) {
-      return NextResponse.json(
-        { error: "Add a simple do not follow up line before approving this outreach email" },
-        { status: 400 }
-      );
+      return blockedResponse(400, {
+        code: "outreach_opt_out_missing",
+        title: "Email approval blocked",
+        reason: "Cold outreach needs a simple do not follow up line",
+        nextAction: "Add the opt-out sentence, then approve the revised email",
+      });
     }
     if (!outreachEmailEndsWithDemoReplyCta(bodyText)) {
-      return NextResponse.json(
-        {
-          error:
-            "End this outreach email by asking them to book a quick demo by replying to this email",
-        },
-        { status: 400 }
-      );
+      return blockedResponse(400, {
+        code: "outreach_demo_reply_cta_missing",
+        title: "Email approval blocked",
+        reason: "The email does not end with the required reply-to-book demo request",
+        nextAction: "Add that final request before the signature, then approve it again",
+      });
     }
     if (!requestKey) {
-      return NextResponse.json(
-        { error: "This approved Brain action is missing its retry-safe request key" },
-        { status: 400 }
-      );
+      return blockedResponse(400, {
+        code: "outreach_approval_key_missing",
+        title: "Email approval blocked",
+        reason: "This Brain action is missing the safety key that prevents duplicate sends",
+        nextAction: "Create a fresh Brain email action card and approve that version",
+        responsible: "system",
+      });
     }
 
     const finishApprovedMessage = async (message: any, reused: boolean) => {
@@ -114,16 +136,21 @@ export async function POST(req: NextRequest) {
         message.subject !== subject ||
         message.body_text !== bodyText
       ) {
-        return NextResponse.json(
-          { error: "This approval key was already used for different email content" },
-          { status: 409 }
-        );
+        return blockedResponse(409, {
+          code: "outreach_approval_key_conflict",
+          title: "Email approval blocked",
+          reason: "This approval key was already used for different email content",
+          nextAction: "Create a fresh action card for the revised email and approve it once",
+          responsible: "system",
+        });
       }
       if (["failed", "cancelled"].includes(message.status)) {
-        return NextResponse.json(
-          { error: "This earlier approved email was stopped and must be reviewed again" },
-          { status: 409 }
-        );
+        return blockedResponse(409, {
+          code: "outreach_previous_approval_stopped",
+          title: "Email approval blocked",
+          reason: "The earlier approved email was stopped or cancelled",
+          nextAction: "Open the draft, review the exact content, and approve it again",
+        });
       }
       await ensureApprovedEvent({
         workspaceId: sender.workspaceId,
@@ -174,10 +201,13 @@ export async function POST(req: NextRequest) {
       .in("target", [recipientEmail, domain]);
     if (suppressionError) throw suppressionError;
     if (suppressed?.length) {
-      return NextResponse.json(
-        { error: "This person or company is on the do not contact list" },
-        { status: 409 }
-      );
+      return blockedResponse(409, {
+        code: "outreach_do_not_contact",
+        title: "Email blocked",
+        reason: "This person or company is on the do-not-contact list",
+        nextAction: "Only a workspace owner should remove the suppression after confirmed permission to contact them",
+        responsible: "owner",
+      });
     }
 
     const { data: matchedProspect, error: prospectLookupError } =
@@ -191,19 +221,25 @@ export async function POST(req: NextRequest) {
 
     let prospect = matchedProspect;
     if (prospect?.assigned_to_user_id && prospect.assigned_to_user_id !== sender.userId) {
-      return NextResponse.json(
-        { error: "This recipient is assigned to another salesperson" },
-        { status: 409 }
-      );
+      return blockedResponse(409, {
+        code: "outreach_assigned_to_another_salesperson",
+        title: "Email blocked",
+        reason: "This lead is assigned to another salesperson",
+        nextAction: "Ask a manager to reassign the lead before sending",
+        responsible: "manager",
+      });
     }
     if (
       prospect &&
       prospectHasBlockedCrmRelationship(prospect, await outreachCrmGuard())
     ) {
-      return NextResponse.json(
-        { error: "This CRM relationship is not eligible for cold outreach" },
-        { status: 409 }
-      );
+      return blockedResponse(409, {
+        code: "outreach_crm_relationship_ineligible",
+        title: "Email blocked",
+        reason: "The linked company or matching domain is already engaged, dormant, confidential, or not confirmed as a New lead",
+        nextAction: "Open the company record and ask its owner to correct or safely share the sales relationship before sending",
+        responsible: "owner",
+      });
     }
 
     if (prospect) {
@@ -226,26 +262,42 @@ export async function POST(req: NextRequest) {
         ]);
       if (activeError) throw activeError;
       if (sentError) throw sentError;
-      if ((activeEnrolments || []).some((row: any) => isActiveOutreachEnrolmentStatus(row.status))) {
-        return NextResponse.json(
+      const blockingEnrolment = (activeEnrolments || []).find((row: any) =>
+        isActiveOutreachEnrolmentStatus(row.status)
+      );
+      if (blockingEnrolment) {
+        const paused = blockingEnrolment.status === "paused";
+        return blockedResponse(
+          409,
           {
-            error:
-              "This recipient already has an active outreach campaign. Do you want to use this email there, or pause that campaign before sending it separately?",
-            needsInput: true,
-            question:
-              "Do you want to use the approved email in their existing campaign, or pause that campaign before sending it separately?",
+            code: paused
+              ? "outreach_paused_campaign_enrolment"
+              : "outreach_existing_campaign_enrolment",
+            title: "Email blocked",
+            reason: paused
+              ? "This lead is still enrolled in a paused outreach campaign"
+              : "This lead is already enrolled in an outreach campaign",
+            nextAction: paused
+              ? "Open their outreach history and either continue that campaign or ask a manager to remove the paused enrolment before sending separately"
+              : "Open their outreach history and continue in the existing campaign, or ask a manager to remove that enrolment before sending separately",
+            responsible: paused ? "manager" : "user",
           },
-          { status: 409 }
+          {
+            needsInput: true,
+            question: paused
+              ? "Do you want to continue the paused campaign, or ask a manager to remove that enrolment before sending separately?"
+              : "Do you want to continue in the existing campaign, or ask a manager to remove that enrolment before sending separately?",
+          }
         );
       }
       if (latestSent?.sent_at && isInsideCrossCampaignCooldown(latestSent.sent_at)) {
-        return NextResponse.json(
-          {
-            error:
-              "This recipient was emailed within the last 30 days, so the safety pause is still active.",
-          },
-          { status: 409 }
-        );
+        return blockedResponse(409, {
+          code: "outreach_cross_campaign_cooldown",
+          title: "Email blocked",
+          reason: "This lead was emailed within the last 30 days, so the cross-campaign safety pause is active",
+          nextAction: "Wait until the safety window ends, or ask a manager to record an override reason",
+          responsible: "manager",
+        });
       }
     }
 
@@ -263,10 +315,13 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
       if (claimError) throw claimError;
       if (!claimed) {
-        return NextResponse.json(
-          { error: "Another salesperson claimed this recipient first" },
-          { status: 409 }
-        );
+        return blockedResponse(409, {
+          code: "outreach_claimed_during_approval",
+          title: "Email blocked",
+          reason: "Another salesperson claimed this lead while the email was being approved",
+          nextAction: "Refresh the lead, check its current owner, and ask a manager to reassign it if needed",
+          responsible: "manager",
+        });
       }
       prospect = claimed;
     }
@@ -343,9 +398,28 @@ export async function POST(req: NextRequest) {
     return finishApprovedMessage(message, Boolean(messageError));
   } catch (error: any) {
     const safetyMessage = outreachSafetyError(error);
-    return NextResponse.json(
-      { error: safetyMessage || error?.message || "The email could not be queued" },
-      { status: safetyMessage ? 409 : 500 }
+    if (safetyMessage) {
+      return blockedResponse(409, {
+        code: "outreach_safety_rule",
+        title: "Email blocked",
+        reason: safetyMessage,
+        nextAction: "Open the lead's outreach history to resolve the named conflict before trying again",
+      });
+    }
+    console.error(
+      JSON.stringify({
+        level: "error",
+        message: "Brain outreach approval failed",
+        requestId: req.headers.get("x-vercel-id"),
+        error: error?.message || String(error),
+      })
     );
+    return blockedResponse(500, {
+      code: "outreach_queue_confirmation_failed",
+      title: "Email not queued",
+      reason: "The CRM could not safely confirm the send request",
+      nextAction: "Refresh the outreach record and try once more. If it fails again, send this blocker to a workspace owner",
+      responsible: "system",
+    });
   }
 }

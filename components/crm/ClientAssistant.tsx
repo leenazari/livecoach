@@ -1528,8 +1528,8 @@ export default function ClientAssistant({
                             </div>
                           )}
                           {actionErrors[a.key] && (
-                            <p className="mt-1.5 font-sans text-[0.68rem] leading-snug text-rust">
-                              Could not save: {actionErrors[a.key]}
+                            <p role="alert" className="mt-1.5 rounded-md border border-rust/30 bg-rust/[0.06] px-2 py-1.5 font-sans text-[0.68rem] leading-snug text-rust">
+                              {actionErrors[a.key]}
                             </p>
                           )}
                         </div>
