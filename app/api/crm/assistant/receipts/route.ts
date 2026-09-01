@@ -5,6 +5,8 @@ import {
   normaliseBrainActionReceiptResults,
 } from "@/lib/brain-action-receipts";
 import { brainActionSignature } from "@/lib/brain-action-signatures";
+import { requireRequestScope } from "@/lib/request-scope";
+import { privateRecordFields } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +17,7 @@ export const dynamic = "force-dynamic";
 // happened merely because the Brain described it.
 export async function POST(req: NextRequest) {
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
     const results = normaliseBrainActionReceiptResults(body?.results);
     if (!results.length)
@@ -35,6 +38,28 @@ export async function POST(req: NextRequest) {
         ...brainActionSignature(result.action),
         outcome: result.status,
       }));
+    // Repeated taps after a fast failure used to save the identical receipt
+    // several times. Preserve one audit record for the same result in a short
+    // retry window while still allowing the underlying action to be retried.
+    let duplicateQuery = supabaseAdmin
+      .from("assistant_messages")
+      .select("id,role,content,created_at")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
+      .eq("role", "assistant")
+      .eq("content", content)
+      .gte("created_at", new Date(Date.now() - 60_000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1);
+    duplicateQuery = companyId
+      ? duplicateQuery.eq("company_id", companyId)
+      : duplicateQuery.is("company_id", null);
+    const { data: existingReceipt, error: duplicateError } =
+      await duplicateQuery.maybeSingle();
+    if (duplicateError) throw duplicateError;
+    if (existingReceipt) {
+      return NextResponse.json({ receipt: existingReceipt, duplicate: true });
+    }
     const { data, error } = await supabaseAdmin
       .from("assistant_messages")
       .insert({
@@ -42,6 +67,7 @@ export async function POST(req: NextRequest) {
         role: "assistant",
         content,
         action_sigs: actionSignatures.length ? actionSignatures : null,
+        ...privateRecordFields(scope),
       })
       .select("id,role,content,created_at")
       .single();

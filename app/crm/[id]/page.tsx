@@ -1263,11 +1263,12 @@ export default function CompanyDetailPage() {
         <section className="flex flex-col gap-4">
           {access?.mode === "shared_sales" ? (
             <div className="rounded-xl border border-sage/35 bg-sage/[0.05] p-4 text-sm leading-relaxed text-muted">
-              Private contacts and relationship threads are hidden. Use the assigned outreach prospect or add your own activity after you begin working this account.
+              The original owner's contacts and relationship threads stay hidden. Contacts you add to this assigned client are private to your account and appear below.
             </div>
-          ) : <div className="rounded-xl border border-edge bg-panel/40 p-4">
+          ) : null}
+          <div className="rounded-xl border border-edge bg-panel/40 p-4">
             <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-              Contacts{" "}
+              {access?.mode === "shared_sales" ? "Your contacts" : "Contacts"}{" "}
               <span className="text-muted">({contacts.length})</span>
             </p>
 
@@ -1321,7 +1322,7 @@ export default function CompanyDetailPage() {
               ))}
             </div>
 
-            <div className="flex flex-col gap-2 border-t border-edge/60 pt-3">
+            {access?.canEdit ? <div className="flex flex-col gap-2 border-t border-edge/60 pt-3">
               <span className={labelCls}>Add a contact</span>
               <input
                 value={cName}
@@ -1351,8 +1352,8 @@ export default function CompanyDetailPage() {
               >
                 + add contact
               </button>
-            </div>
-          </div>}
+            </div> : null}
+          </div>
 
           {access?.mode !== "shared_sales" ? (
             <button

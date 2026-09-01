@@ -157,24 +157,24 @@ export async function GET(
       params.id,
       scope.workspaceId
     );
+    // Related records remain private to the person who created them. On a
+    // safely shared client this lets the assigned salesperson see and add their
+    // own contacts and relationship threads without exposing the owner's ones.
     const [contactsResult, departmentsResult, workstreamsResult, linksResult] =
-      sharedSalesAccess
-        ? [
-            { data: [], error: null },
-            { data: [], error: null },
-            { data: [], error: null },
-            { data: [], error: null },
-          ]
-        : await Promise.all([
+      await Promise.all([
         supabaseAdmin
           .from("contacts")
           .select("*")
           .eq("company_id", params.id)
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
           .order("created_at", { ascending: true }),
         supabaseAdmin
           .from("departments")
           .select("id, company_id, name, description, created_at, updated_at")
           .eq("company_id", params.id)
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
           .order("name", { ascending: true }),
         supabaseAdmin
           .from("workstreams")
@@ -182,6 +182,8 @@ export async function GET(
             "id, company_id, department_id, name, kind, status, purpose, created_at, updated_at"
           )
           .eq("company_id", params.id)
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
           .order("status", { ascending: true })
           .order("name", { ascending: true }),
         supabaseAdmin
@@ -189,8 +191,10 @@ export async function GET(
           .select(
             "workstream_id, contact_id, company_id, relationship_role, is_primary"
           )
-          .eq("company_id", params.id),
-          ]);
+          .eq("company_id", params.id)
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId),
+      ]);
     for (const result of [
       contactsResult,
       departmentsResult,

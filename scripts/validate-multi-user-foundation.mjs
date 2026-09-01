@@ -373,7 +373,12 @@ assert.match(
 assert.match(opportunitySignals, /\.eq\("owner_id", claimed\.owner_id\)/);
 assert.match(opportunitySignals, /\.eq\("workspace_id", claimed\.workspace_id\)/);
 assert.match(companyRoute, /name, visibility: "private"/);
-assert.match(contactRoute, /let visibility: "private" \| "team" = "private"/);
+assert.match(contactRoute, /\.\.\.privateRecordFields\(scope\)/);
+assert.doesNotMatch(
+  contactRoute,
+  /company\.visibility === "team" \? "team" : "private"/,
+  "A contact added to an assigned client must remain private to its creator"
+);
 assert.match(outreachCrm, /visibility: "team"/);
 
 assert.match(onboardingMigration, /status in \('active', 'onboarding', 'suspended', 'removed'\)/);

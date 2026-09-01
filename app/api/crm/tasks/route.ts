@@ -8,6 +8,10 @@ import {
 } from "@/lib/tasks";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { resolveRecordScope } from "@/lib/record-scope";
+import { requireRequestScope } from "@/lib/request-scope";
+import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+import { normaliseCompanyName } from "@/lib/company-identity";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -31,6 +35,7 @@ const cleanText = (s: any): any =>
 // shows the exact item first, then calls this route only after approval.
 export async function POST(req: NextRequest) {
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
     const text = cleanText(body.text);
     if (typeof text !== "string" || !text.trim())
@@ -43,6 +48,39 @@ export async function POST(req: NextRequest) {
       typeof body.dueAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(body.dueAt)
         ? body.dueAt
         : null;
+    if (companyId) {
+      const access = await loadAssignedClientAccess(companyId, scope);
+      if (!access) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "task_client_not_assigned",
+            title: "To-do not added",
+            reason: "The selected client is not owned by or assigned to your account",
+            nextAction: "Ask a workspace owner to assign the client, then add the to-do again",
+            responsible: "owner",
+          }),
+          { status: 404 }
+        );
+      }
+      const expectedCompanyName =
+        typeof body.companyName === "string" ? body.companyName.trim() : "";
+      if (
+        expectedCompanyName &&
+        normaliseCompanyName(expectedCompanyName) !==
+          normaliseCompanyName(access.company.name)
+      ) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "task_client_mismatch",
+            title: "To-do not added",
+            reason: `The to-do names ${expectedCompanyName}, but the selected client is ${access.company.name}`,
+            nextAction: "Open or choose the correct client, then add the to-do again",
+            responsible: "user",
+          }),
+          { status: 409 }
+        );
+      }
+    }
     const taskText = text.slice(0, 500);
     const created = await upsertTasks(companyId, [
       {
