@@ -10,8 +10,12 @@ export {
   prospectHasBlockedCrmRelationship,
   type OutreachCrmGuard,
 } from "@/lib/outreach-crm-eligibility";
+export {
+  OUTREACH_DAILY_HARD_LIMIT,
+  OUTREACH_DEFAULT_DAILY_LIMIT,
+  clampOutreachDailyLimit,
+} from "@/lib/outreach-limits";
 
-export const OUTREACH_DAILY_HARD_LIMIT = 20;
 export const OUTREACH_TIME_ZONE = "Europe/London";
 
 export function londonDate(date = new Date()): string {

@@ -212,7 +212,7 @@ export async function GET() {
             ? "pass"
             : "fail",
         detail: campaign
-          ? `${Math.min(dailyLimit || 0, OUTREACH_DAILY_HARD_LIMIT)} maximum sends per London day; the hard ceiling is 20.`
+          ? `${Math.min(dailyLimit || 0, OUTREACH_DAILY_HARD_LIMIT)} maximum sends per London day. The hard ceiling is ${OUTREACH_DAILY_HARD_LIMIT}.`
           : "The daily limit will be checked when a campaign is activated.",
         href: "/crm/outreach?tab=campaign",
         action:

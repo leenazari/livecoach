@@ -43,13 +43,13 @@ assert.match(page, /Selected for new spaces/);
 assert.match(today, /Campaign · \{row\.campaign\.name\}/);
 assert.match(queueCopySource, /Those contacts stay in their original campaigns/);
 assert.match(queueCopySource, /will only supply a new contact after a space opens/);
-assert.match(page, /const dailyQueueLimit = Math\.min\(20,/);
+assert.match(page, /const dailyQueueLimit = clampOutreachDailyLimit/);
 assert.match(page, /queue\.length >= dailyQueueLimit/);
 assert.match(page, /useState<ProspectSort>\("priority"\)/);
 assert.match(page, /return \{ key: "warm", label: "Warm lead" \}/);
 
 const queueCopy = await import("../lib/outreach-campaign-queue-copy.ts");
-const recruitmentQueue = Array.from({ length: 20 }, () => ({
+const recruitmentQueue = Array.from({ length: 50 }, () => ({
   campaign_id: "recruitment",
   campaign: { id: "recruitment", name: "Interviewa recruitment leaders" },
 }));
@@ -58,7 +58,7 @@ assert.deepEqual(counts, [
   {
     id: "recruitment",
     name: "Interviewa recruitment leaders",
-    count: 20,
+    count: 50,
   },
 ]);
 assert.equal(
@@ -66,10 +66,10 @@ assert.equal(
     selectedCampaignName: "Workable",
     selectedCampaignId: "workable",
     queueCampaigns: counts,
-    queueLength: 20,
-    dailyLimit: 20,
+    queueLength: 50,
+    dailyLimit: 50,
   }),
-  "Today’s queue is full with 20 Interviewa recruitment leaders contacts. Those contacts stay in their original campaigns. Workable will only supply a new contact after a space opens."
+  "Today’s queue is full with 50 Interviewa recruitment leaders contacts. Those contacts stay in their original campaigns. Workable will only supply a new contact after a space opens."
 );
 assert.equal(
   queueCopy.explainOutreachCampaignSelection({
@@ -83,9 +83,9 @@ assert.equal(
       })),
     ]),
     queueLength: 15,
-    dailyLimit: 20,
+    dailyLimit: 50,
   }),
-  "Today’s queue currently has 12 Workable contacts, 3 Interviewa recruitment leaders contacts. Those contacts stay in their original campaigns. Workable will fill only the 5 open spaces."
+  "Today’s queue currently has 12 Workable contacts, 3 Interviewa recruitment leaders contacts. Those contacts stay in their original campaigns. Workable will fill only the 35 open spaces."
 );
 
 console.log("Cross campaign outreach checks passed");

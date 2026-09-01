@@ -19,6 +19,7 @@ import {
   normaliseStoredLinkedInProfileUrl,
 } from "@/lib/linkedin-inbox-contract";
 import {
+  clampOutreachDailyLimit,
   emailDomain,
   londonDayBounds,
   outreachCrmGuard,
@@ -666,7 +667,7 @@ export async function enrolProspectInSendPilot(
     .gte("enrolled_at", start)
     .lt("enrolled_at", end);
   if (dailyError) throw dailyError;
-  const dailyLimit = Math.min(20, Math.max(1, Number(campaign.daily_limit) || 20));
+  const dailyLimit = clampOutreachDailyLimit(campaign.daily_limit);
   if ((enrolledToday || 0) >= dailyLimit) {
     throw Object.assign(
       new Error(`Your SendPilot handoff limit of ${dailyLimit} leads has been reached today`),

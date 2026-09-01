@@ -7,6 +7,10 @@ import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import OutreachVoiceNoteEditor from "@/components/crm/OutreachVoiceNoteEditor";
 import { crmFetch } from "@/lib/crm";
 import { outreachProspectHref } from "@/lib/crm-navigation";
+import {
+  OUTREACH_DAILY_HARD_LIMIT,
+  clampOutreachDailyLimit,
+} from "@/lib/outreach-limits";
 import { prepareOutreachVoiceScriptForReview } from "@/lib/outreach-voice-policy";
 import type { WorkInboxItem } from "@/lib/work-inbox";
 
@@ -94,6 +98,7 @@ type QueueRow = {
 
 type QueueResponse = {
   queue?: QueueRow[];
+  dailyLimit?: number;
   added?: number;
   selection?: {
     held?: number;
@@ -111,7 +116,7 @@ type QueueResponse = {
 
 const PREPARE_QUEUE_KEY = "livecoach:sales-today-prepare-queue:v1";
 const MAX_CONCURRENT_RESEARCH = 2;
-const DAILY_QUEUE_TARGET = 20;
+const DAILY_QUEUE_TARGET = OUTREACH_DAILY_HARD_LIMIT;
 
 const safeExternalUrl = (value: unknown) => {
   const url = String(value || "").trim();
@@ -272,9 +277,10 @@ export default function OutreachTodayLane({
 }) {
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [sender, setSender] = useState<QueueResponse["sender"]>(null);
+  const [dailyLimit, setDailyLimit] = useState(OUTREACH_DAILY_HARD_LIMIT);
   const [loading, setLoading] = useState(true);
   const [building, setBuilding] = useState(false);
-  const [visible, setVisible] = useState(20);
+  const [visible, setVisible] = useState(OUTREACH_DAILY_HARD_LIMIT);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [prepareJobs, setPrepareJobs] = useState<Record<string, PrepareStatus>>({});
@@ -321,6 +327,7 @@ export default function OutreachTodayLane({
       }
       setQueue(nextQueue);
       setSender(data.sender || null);
+      setDailyLimit(clampOutreachDailyLimit(data.dailyLimit));
       onQueueCount?.(nextQueue.length);
       setError("");
       return nextQueue;
@@ -422,6 +429,7 @@ export default function OutreachTodayLane({
       });
       const nextQueue = result.queue || [];
       setQueue(nextQueue);
+      setDailyLimit(clampOutreachDailyLimit(result.dailyLimit));
       onQueueCount?.(nextQueue.length);
       const added = result.added || 0;
       const held = result.selection?.held || 0;
@@ -921,7 +929,6 @@ export default function OutreachTodayLane({
   const queuedResearch = Object.values(prepareJobs).filter(
     (status) => status === "queued"
   ).length;
-  const dailyLimit = Number(queue[0]?.campaign?.daily_limit || 20);
   const approvedOrSent = Math.min(dailyLimit, scheduled + sent);
   const dailyProgress = Math.round(
     (approvedOrSent / Math.max(1, dailyLimit)) * 100

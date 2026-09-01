@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sanitizeOutreachSequence } from "@/lib/outreach-sequence";
 import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
+import { clampOutreachDailyLimit } from "@/lib/outreach-limits";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -189,7 +190,7 @@ export async function POST(req: NextRequest) {
       goal,
       audience,
       offer_angle: offerAngle,
-      daily_limit: Math.min(20, Math.max(1, Number(body.daily_limit) || 20)),
+      daily_limit: clampOutreachDailyLimit(body.daily_limit),
       approval_mode: true,
       sequence: sequenceResult.sequence,
       workspace_id: account.workspaceId,

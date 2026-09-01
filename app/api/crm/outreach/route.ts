@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { outreachCrmGuard } from "@/lib/outreach";
+import { clampOutreachDailyLimit } from "@/lib/outreach-limits";
 import { scoreOutreachProspect } from "@/lib/outreach-scoring";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
@@ -170,7 +171,7 @@ export async function GET(req: NextRequest) {
     const blockedTargets = new Set(
       (suppressions || []).map((row: any) => String(row.target || "").toLowerCase())
     );
-    const dailyLimit = Math.min(20, Math.max(1, Number(campaign?.daily_limit) || 20));
+    const dailyLimit = clampOutreachDailyLimit(campaign?.daily_limit);
     let contactSlots = dailyLimit;
     const messageSummary = new Map<string, any>();
     for (const message of messages || []) {

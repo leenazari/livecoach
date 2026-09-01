@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import { londonDayBounds } from "@/lib/outreach";
+import { clampOutreachDailyLimit, londonDayBounds } from "@/lib/outreach";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { getRequestScope } from "@/lib/request-scope";
 import {
@@ -1298,7 +1298,7 @@ export async function gatherOutreachContext(
   const positive = replies.filter((p) => p.reply_category === "interested").length;
   const sentToday = sentRes.count || 0;
   const approved = approvedRes.count || 0;
-  const dailyLimit = Math.min(20, Math.max(1, Number(campaign?.daily_limit) || 20));
+  const dailyLimit = clampOutreachDailyLimit(campaign?.daily_limit);
   const lines = limitedScope
     ? [
         `PERSONAL OUTREACH QUEUE (only work assigned to this member, no teammate reply details loaded): ${prospects.length} assigned prospects, ${priority.high} high priority, ${sentToday}/${dailyLimit} sent by this member today, ${approved} approved for this member, ${replies.length} replies (${positive} interested).`,

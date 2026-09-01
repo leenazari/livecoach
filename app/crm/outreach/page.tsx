@@ -24,6 +24,11 @@ import {
   explainOutreachCampaignSelection,
   outreachQueueCampaignCounts,
 } from "@/lib/outreach-campaign-queue-copy";
+import {
+  OUTREACH_DAILY_HARD_LIMIT,
+  OUTREACH_DEFAULT_DAILY_LIMIT,
+  clampOutreachDailyLimit,
+} from "@/lib/outreach-limits";
 import { OVERNIGHT_RESEARCH_INVENTORY_LIMIT } from "@/lib/outreach-overnight-preparation";
 
 const CampaignSequenceBuilder = dynamic(
@@ -562,14 +567,14 @@ export default function OutreachPage() {
       if (
         !initialQueueFillAttemptedRef.current &&
         selectedCampaign &&
-        nextQueue.length < Math.min(20, selectedCampaign.daily_limit || 20)
+        nextQueue.length < clampOutreachDailyLimit(selectedCampaign.daily_limit)
       ) {
         initialQueueFillAttemptedRef.current = true;
         void crmFetch<any>(OUTREACH_URLS.queue, {
             method: "POST",
             body: JSON.stringify({
               campaignId: selectedCampaign.id,
-              limit: selectedCampaign.daily_limit || 20,
+              limit: clampOutreachDailyLimit(selectedCampaign.daily_limit),
             }),
           })
           .then((filled) => setQueue(filled.queue || nextQueue))
@@ -845,7 +850,7 @@ export default function OutreachPage() {
   const activeCampaign = orderedCampaigns.find(
     (campaign) => campaign.id === selectedCampaignId
   ) || orderedCampaigns.find((campaign) => campaign.status === "active");
-  const dailyQueueLimit = Math.min(20, activeCampaign?.daily_limit || 20);
+  const dailyQueueLimit = clampOutreachDailyLimit(activeCampaign?.daily_limit);
   const queueCampaigns = useMemo(
     () => outreachQueueCampaignCounts(queue),
     [queue]
@@ -943,7 +948,7 @@ export default function OutreachPage() {
         method: "POST",
         body: JSON.stringify({
           campaignId: activeCampaign?.id || null,
-          limit: activeCampaign?.daily_limit || 20,
+          limit: clampOutreachDailyLimit(activeCampaign?.daily_limit),
         }),
       });
       setQueue(data.queue || []);
@@ -974,7 +979,7 @@ export default function OutreachPage() {
         method: "POST",
         body: JSON.stringify({
           campaignId: result.selectedCampaignId,
-          limit: result.campaign.daily_limit || 20,
+          limit: clampOutreachDailyLimit(result.campaign.daily_limit),
         }),
       });
       const nextQueue = filled.queue || [];
@@ -985,7 +990,7 @@ export default function OutreachPage() {
           selectedCampaignId: result.campaign.id,
           queueCampaigns: outreachQueueCampaignCounts(nextQueue),
           queueLength: nextQueue.length,
-          dailyLimit: Math.min(20, result.campaign.daily_limit || 20),
+          dailyLimit: clampOutreachDailyLimit(result.campaign.daily_limit),
         })} Your teammates keep their own selections.`
       );
       await Promise.all([
@@ -1423,7 +1428,7 @@ export default function OutreachPage() {
   const saveCampaign = async (campaign: Campaign) => {
     setBusy(`campaign:${campaign.id}`); setError("");
     try {
-      if (!Number.isFinite(campaign.daily_limit) || campaign.daily_limit < 1 || campaign.daily_limit > 20) throw new Error("Daily maximum must be between 1 and 20");
+      if (!Number.isFinite(campaign.daily_limit) || campaign.daily_limit < 1 || campaign.daily_limit > OUTREACH_DAILY_HARD_LIMIT) throw new Error(`Daily maximum must be between 1 and ${OUTREACH_DAILY_HARD_LIMIT}`);
       const sequenceError = outreachSequenceValidationError(campaign.sequence || []);
       if (sequenceError) throw new Error(sequenceError);
       const { campaign: saved } = await crmFetch<{ campaign: Campaign }>(`/api/crm/outreach/campaigns/${campaign.id}`, {
@@ -1518,7 +1523,7 @@ export default function OutreachPage() {
     const payload = {
       prospectId: prospect.id,
       campaignId: targetCampaign.id,
-      limit: targetCampaign.daily_limit || 20,
+      limit: clampOutreachDailyLimit(targetCampaign.daily_limit),
     };
     try {
       return await crmFetch("/api/crm/outreach/queue", {
@@ -1808,7 +1813,7 @@ export default function OutreachPage() {
     <main className="relative z-10 mx-auto max-w-[1180px] px-3 py-5 sm:px-5 sm:py-9">
       <NavMenu />
       <header className="mb-4 flex items-start justify-between gap-3 border-b border-edge pb-4">
-        <div><h1 className="font-display text-[1.55rem] tracking-tight text-bone"><span className="italic text-amber">Interviewa</span> outreach</h1><p className="mt-1 font-mono text-[0.57rem] uppercase tracking-wider text-muted">Approval mode · from {sender?.senderEmail || "your connected mailbox"} · maximum 20/day</p></div>
+        <div><h1 className="font-display text-[1.55rem] tracking-tight text-bone"><span className="italic text-amber">Interviewa</span> outreach</h1><p className="mt-1 font-mono text-[0.57rem] uppercase tracking-wider text-muted">Approval mode · from {sender?.senderEmail || "your connected mailbox"} · maximum {OUTREACH_DAILY_HARD_LIMIT}/day</p></div>
         <Link href="/crm" className="shrink-0 rounded-full border border-edge px-3 py-2 font-mono text-[0.6rem] uppercase text-muted">◂ CRM</Link>
       </header>
 
@@ -2157,7 +2162,7 @@ export default function OutreachPage() {
                 <fieldset disabled={!canManageCampaigns} className="grid gap-3">
                   <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign goal</span><input className={input} value={campaign.goal} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, goal: e.target.value } : c))} /></label>
                   <div className="grid gap-3 lg:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Target audience</span><textarea className={`${input} min-h-28`} value={campaign.audience} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, audience: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Interviewa reason to respond</span><textarea className={`${input} min-h-28`} value={campaign.offer_angle} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, offer_angle: e.target.value } : c))} /></label></div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max="20" className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : Math.min(20, Number(e.target.value)) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active and available</option><option value="paused">Paused</option><option value="draft">Draft</option><option value="completed">Completed</option></select></label></div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max={OUTREACH_DAILY_HARD_LIMIT} className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : clampOutreachDailyLimit(e.target.value, OUTREACH_DEFAULT_DAILY_LIMIT) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active and available</option><option value="paused">Paused</option><option value="draft">Draft</option><option value="completed">Completed</option></select></label></div>
                 </fieldset>
                 {canManageCampaigns ? <div className="mt-4 flex flex-col-reverse gap-2 border-t border-amber/20 pt-4 sm:flex-row sm:justify-end">{!isCurrent && campaign.status === "active" ? <button type="button" onClick={() => void selectActiveCampaign(campaign.id)} disabled={!!busy} className={button}>{busy === "select-campaign" ? "Switching…" : "Use for my Today queue"}</button> : null}<button type="button" onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign setup"}</button></div> : null}
               </div> : null}
@@ -2226,7 +2231,7 @@ export default function OutreachPage() {
         </article>; })}{!replies.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">No replies detected yet.</div> : null}</div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "safety" ? <section className="space-y-4"><OutreachReadiness /><div className="rounded-xl border border-moss/40 bg-moss/10 p-4"><h2 className="font-display text-lg text-bone">Safety rules are active</h2><ul className="mt-3 space-y-2 text-sm text-bone/80"><li>• Email requires approval of the exact draft. SendPilot requires confirmation of the exact person and mapped campaign.</li><li>• Every email uses the assigned sender’s own connected mailbox and verified sending address{sender?.senderEmail ? `, currently ${sender.senderEmail}` : ""}.</li><li>• Maximum 20 sends or SendPilot handoffs per sender per London calendar day.</li><li>• New CRM leads can enter outreach. Engaged, dormant and unclassified CRM relationships remain blocked.</li><li>• Replies and blocked addresses stop outreach.</li><li>• Exact email addresses are checked across the whole team, including duplicate CRM records.</li><li>• The same email address cannot be active in two campaigns or receive two messages on the same day.</li><li>• Different people at the same company remain available for outreach.</li><li>• A 30 day pause applies before moving a contacted email address to another campaign. Manager overrides require a saved reason.</li><li>• The database checks every send or handoff again immediately before it leaves.</li><li>• No tracking pixels or hidden open tracking.</li></ul></div><div className="rounded-xl border border-edge bg-panel p-4"><h2 className="font-display text-lg text-bone">Do not contact list</h2><p className="mt-1 text-sm text-muted">Block a person’s email or an entire company domain. You can restore access without losing history.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input className={input} value={blockTarget} onChange={(e) => setBlockTarget(e.target.value)} placeholder="person@company.com or company.com" /><button onClick={addSuppression} disabled={!!busy || !blockTarget.trim()} className={primary}>Block</button></div><div className="mt-4 space-y-2">{suppressions.map((item) => <div key={item.target} className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink/30 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm text-bone">{item.target}</p><p className="text-xs text-muted">{item.reason}</p></div><div className="flex items-center gap-2"><span className="font-mono text-[0.54rem] uppercase text-muted">{item.kind}</span><button type="button" onClick={() => restoreSuppression(item.target)} disabled={!!busy} className="min-h-9 rounded-lg border border-edge px-2 font-mono text-[0.5rem] uppercase text-bone hover:border-amber/60 hover:text-amber disabled:opacity-40">{busy === `restore:${item.target}` ? "Restoring…" : "Restore"}</button></div></div>)}</div></div></section> : null}
+      {!loading && !tabLoading && tab === "safety" ? <section className="space-y-4"><OutreachReadiness /><div className="rounded-xl border border-moss/40 bg-moss/10 p-4"><h2 className="font-display text-lg text-bone">Safety rules are active</h2><ul className="mt-3 space-y-2 text-sm text-bone/80"><li>• Email requires approval of the exact draft. SendPilot requires confirmation of the exact person and mapped campaign.</li><li>• Every email uses the assigned sender’s own connected mailbox and verified sending address{sender?.senderEmail ? `, currently ${sender.senderEmail}` : ""}.</li><li>• Maximum {OUTREACH_DAILY_HARD_LIMIT} sends or SendPilot handoffs per sender per London calendar day.</li><li>• New CRM leads can enter outreach. Engaged, dormant and unclassified CRM relationships remain blocked.</li><li>• Replies and blocked addresses stop outreach.</li><li>• Exact email addresses are checked across the whole team, including duplicate CRM records.</li><li>• The same email address cannot be active in two campaigns or receive two messages on the same day.</li><li>• Different people at the same company remain available for outreach.</li><li>• A 30 day pause applies before moving a contacted email address to another campaign. Manager overrides require a saved reason.</li><li>• The database checks every send or handoff again immediately before it leaves.</li><li>• No tracking pixels or hidden open tracking.</li></ul></div><div className="rounded-xl border border-edge bg-panel p-4"><h2 className="font-display text-lg text-bone">Do not contact list</h2><p className="mt-1 text-sm text-muted">Block a person’s email or an entire company domain. You can restore access without losing history.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input className={input} value={blockTarget} onChange={(e) => setBlockTarget(e.target.value)} placeholder="person@company.com or company.com" /><button onClick={addSuppression} disabled={!!busy || !blockTarget.trim()} className={primary}>Block</button></div><div className="mt-4 space-y-2">{suppressions.map((item) => <div key={item.target} className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink/30 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm text-bone">{item.target}</p><p className="text-xs text-muted">{item.reason}</p></div><div className="flex items-center gap-2"><span className="font-mono text-[0.54rem] uppercase text-muted">{item.kind}</span><button type="button" onClick={() => restoreSuppression(item.target)} disabled={!!busy} className="min-h-9 rounded-lg border border-edge px-2 font-mono text-[0.5rem] uppercase text-bone hover:border-amber/60 hover:text-amber disabled:opacity-40">{busy === `restore:${item.target}` ? "Restoring…" : "Restore"}</button></div></div>)}</div></div></section> : null}
     </main>
   );
 }
