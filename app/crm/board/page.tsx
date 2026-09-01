@@ -5,7 +5,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { capitaliseSentenceStarts } from "@/lib/text";
-import { crmFetch, type Company } from "@/lib/crm";
+import { crmConfirmationError, crmFetch, type Company } from "@/lib/crm";
 import { emailAssistantVoiceReadyForDisplayedScript } from "@/lib/email-assistant-voice-policy";
 import NavMenu from "@/components/crm/NavMenu";
 import MatrixRain from "@/components/MatrixRain";
@@ -224,7 +224,12 @@ function BoardInner() {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
-      if (followUp?.status !== status) throw new Error("status not confirmed");
+      if (followUp?.status !== status)
+        throw crmConfirmationError({
+          url: `/api/crm/follow-ups/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different follow-up status from the one selected",
+        });
     } catch {
       setDrafts(previous);
       setSaveError("That draft change did not save. Please try again.");
@@ -241,7 +246,12 @@ function BoardInner() {
         method: "PATCH",
         body: JSON.stringify({ status: "dismissed" }),
       });
-      if (task?.status !== "dismissed") throw new Error("status not confirmed");
+      if (task?.status !== "dismissed")
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the to-do was removed",
+        });
     } catch {
       setEmailTasks(previous);
       setSaveError("That task was not removed. Please try again.");
@@ -413,7 +423,11 @@ function BoardInner() {
         body: JSON.stringify({ voice_intent: voiceIntent }),
       });
       if (!result.accepted || result.recipientChanged !== false) {
-        throw new Error("The safe Email Assistant test was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/email-assistant/drafts/${draft.id}/rehearse`,
+          method: "POST",
+          reason: "LiveCoach did not confirm safe delivery of the Email Assistant test",
+        });
       }
       setSaveNotice(
         result.provider === "google"
@@ -455,7 +469,12 @@ function BoardInner() {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
-      if (opportunity?.status !== status) throw new Error("status not confirmed");
+      if (opportunity?.status !== status)
+        throw crmConfirmationError({
+          url: `/api/crm/opportunities/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different opportunity status from the one selected",
+        });
     } catch {
       setOpps(previous);
       setSaveError("That opportunity change did not save. Please try again.");
@@ -468,7 +487,12 @@ function BoardInner() {
         method: "POST",
         body: JSON.stringify({ name: newName.trim() }),
       });
-      if (!company?.id) throw new Error("database did not confirm the new client");
+      if (!company?.id)
+        throw crmConfirmationError({
+          url: "/api/crm/companies",
+          method: "POST",
+          reason: "LiveCoach did not return the newly created client",
+        });
       setNewName("");
       await load("clients");
     } catch (error: any) {
@@ -499,7 +523,12 @@ function BoardInner() {
       const result = await crmFetch<{ ok: boolean }>(`/api/crm/companies/${id}`, {
         method: "DELETE",
       });
-      if (!result.ok) throw new Error("deletion not confirmed");
+      if (!result.ok)
+        throw crmConfirmationError({
+          url: `/api/crm/companies/${id}`,
+          method: "DELETE",
+          reason: "LiveCoach did not confirm that the client was deleted",
+        });
     } catch {
       setCompanies(previous);
       setClientTotals(previousTotals);
@@ -528,7 +557,11 @@ function BoardInner() {
       );
       const savedStage = company.stage || null;
       if (savedStage !== requestedStage) {
-        throw new Error("The database returned a different relationship stage");
+        throw crmConfirmationError({
+          url: `/api/crm/companies/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different relationship stage from the one selected",
+        });
       }
       // The PATCH response is the authoritative database row. Do not
       // immediately reload the whole portfolio: a slower/stale portfolio read

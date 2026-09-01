@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { crmFetch, getCached } from "@/lib/crm";
+import { crmConfirmationError, crmFetch, getCached } from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
 
 type LastCall = {
@@ -84,7 +84,12 @@ export default function CallCarryover({
         method: "PUT",
         body: JSON.stringify({ checklist: next }),
       });
-      if (!saved.ok) throw new Error("checklist not saved");
+      if (!saved.ok)
+        throw crmConfirmationError({
+          url,
+          method: "PUT",
+          reason: "LiveCoach did not confirm that the call checklist was saved",
+        });
       if (seq === saveSeq.current) {
         lastSaved.current = saved.checklist || next;
         setChecklist(saved.checklist || next);

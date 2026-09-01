@@ -2,6 +2,12 @@
 // ownership and workspace visibility are enforced by the server and database,
 // so browser-side shapes deliberately expose only the product fields they use.
 
+import {
+  crmBlockerPayload,
+  crmFallbackBlockerPayload,
+  type CrmBlocker,
+} from "@/lib/crm-blocker";
+
 export type FieldType =
   | "text"
   | "number"
@@ -150,12 +156,16 @@ export function setCached(url: string, value: any): void {
 
 // Tiny typed fetch wrapper - throws on non-OK with the server's message.
 // Successful GETs are cached by URL for instant re-render on revisit.
-export type CrmRequestBlocker = {
-  code: string;
-  title: string;
-  reason: string;
-  nextAction: string;
-  responsible: "user" | "manager" | "owner" | "system";
+export type CrmRequestBlocker = CrmBlocker;
+
+export const CRM_BLOCKER_EVENT = "lc:crm-blocked";
+
+export type CrmBlockerEventDetail = {
+  blocker: CrmRequestBlocker;
+  message: string;
+  method: string;
+  status: number;
+  url: string;
 };
 
 export class CrmRequestError extends Error {
@@ -172,6 +182,107 @@ export class CrmRequestError extends Error {
     this.status = status;
     this.blocker = blocker;
   }
+}
+
+function hasStructuredBlocker(value: any): value is CrmRequestBlocker {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof value.code === "string" &&
+      typeof value.title === "string" &&
+      typeof value.reason === "string" &&
+      typeof value.nextAction === "string" &&
+      ["user", "manager", "owner", "system"].includes(value.responsible)
+  );
+}
+
+export function crmRequestErrorFromData(input: {
+  data?: any;
+  method?: string;
+  status?: number;
+  url?: string;
+}): CrmRequestError {
+  const status = Number(input.status || 0);
+  const method = String(input.method || "GET").toUpperCase();
+  if (hasStructuredBlocker(input.data?.blocker)) {
+    const payload = crmBlockerPayload(input.data.blocker);
+    return new CrmRequestError(payload.error, status, payload.blocker);
+  }
+  const payload = crmFallbackBlockerPayload({
+    status,
+    url: input.url,
+    method,
+    serverMessage: input.data?.reason || input.data?.error,
+  });
+  return new CrmRequestError(payload.error, status, payload.blocker);
+}
+
+export function notifyCrmRequestError(
+  error: CrmRequestError,
+  url: string,
+  method: string
+): void {
+  if (typeof window === "undefined" || method.toUpperCase() === "GET") return;
+  window.dispatchEvent(
+    new CustomEvent<CrmBlockerEventDetail>(CRM_BLOCKER_EVENT, {
+      detail: {
+        blocker: error.blocker ||
+          crmFallbackBlockerPayload({
+            status: error.status,
+            url,
+            method,
+            serverMessage: error.message,
+          }).blocker,
+        message: error.message,
+        method: method.toUpperCase(),
+        status: error.status,
+        url,
+      },
+    })
+  );
+}
+
+export async function crmErrorFromResponse(
+  response: Response,
+  url: string,
+  method = "GET",
+  options: { notify?: boolean } = {}
+): Promise<CrmRequestError> {
+  const text = await response.text().catch(() => "");
+  let data: any = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = {};
+  }
+  const error = crmRequestErrorFromData({
+    data,
+    status: response.status || 502,
+    url,
+    method,
+  });
+  if (options.notify !== false) notifyCrmRequestError(error, url, method);
+  return error;
+}
+
+// A write can return HTTP 200 while still omitting or contradicting the saved
+// record the screen expects. Treat that contract mismatch as a failed action,
+// surface the same actionable blocker as every other CRM write, and never let
+// an optimistic UI imply that an unconfirmed change was saved.
+export function crmConfirmationError(input: {
+  url: string;
+  method?: string;
+  reason: string;
+}): CrmRequestError {
+  const method = String(input.method || "POST").toUpperCase();
+  const error = crmRequestErrorFromData({
+    data: { error: input.reason },
+    status: 500,
+    url: input.url,
+    method,
+  });
+  notifyCrmRequestError(error, input.url, method);
+  return error;
 }
 
 export function crmFetch<T = any>(
@@ -199,31 +310,47 @@ export function crmFetch<T = any>(
       ? `${url}${url.includes("?") ? "&" : "?"}_t=${Date.now()}`
       : url;
   const request = (async () => {
-    const res = await fetch(fetchUrl, {
-      // Never serve a CRM read from the browser's HTTP cache. A just-saved change
-      // (assigning a call to a client, marking a call done) must be reflected on
-      // the very next load, not after some cache TTL expires.
-      cache: "no-store",
-      headers: { "Content-Type": "application/json" },
-      ...init,
-    });
+    let res: Response;
+    try {
+      res = await fetch(fetchUrl, {
+        // Never serve a CRM read from the browser's HTTP cache. A just-saved change
+        // (assigning a call to a client, marking a call done) must be reflected on
+        // the very next load, not after some cache TTL expires.
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        ...init,
+      });
+    } catch {
+      const error = crmRequestErrorFromData({
+        status: 0,
+        url,
+        method,
+      });
+      notifyCrmRequestError(error, url, method);
+      throw error;
+    }
     const text = await res.text();
     let data: any = {};
     try {
       data = text ? JSON.parse(text) : {};
     } catch {
-      throw new Error("unexpected response from the server");
+      const error = crmRequestErrorFromData({
+        status: res.ok ? 502 : res.status,
+        url,
+        method,
+      });
+      notifyCrmRequestError(error, url, method);
+      throw error;
     }
-    if (!res.ok) {
-      const blocker =
-        data?.blocker && typeof data.blocker === "object"
-          ? (data.blocker as CrmRequestBlocker)
-          : null;
-      throw new CrmRequestError(
-        data.error || `The CRM request failed with status ${res.status}. Refresh and try again.`,
-        res.status,
-        blocker
-      );
+    if (!res.ok || data?.ok === false) {
+      const error = crmRequestErrorFromData({
+        data,
+        status: res.ok ? 409 : res.status,
+        url,
+        method,
+      });
+      notifyCrmRequestError(error, url, method);
+      throw error;
     }
     // Cache under the CLEAN url (not the cache-busted one) so getCached() hits.
     if (method === "GET") {

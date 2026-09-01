@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
+  crmConfirmationError,
   crmFetch,
   type Company,
   type Contact,
@@ -326,7 +327,12 @@ export default function CompanyDetailPage() {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
-      if (opportunity?.status !== status) throw new Error("status not confirmed");
+      if (opportunity?.status !== status)
+        throw crmConfirmationError({
+          url: `/api/crm/opportunities/${oppId}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different opportunity status from the one selected",
+        });
       setOpps((prev) =>
         prev.map((opportunityRow) =>
           opportunityRow.id === oppId
@@ -352,7 +358,12 @@ export default function CompanyDetailPage() {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
-      if (followUp?.status !== status) throw new Error("status not confirmed");
+      if (followUp?.status !== status)
+        throw crmConfirmationError({
+          url: `/api/crm/follow-ups/${fuId}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different follow-up status from the one selected",
+        });
       setFollowUps((prev) =>
         prev.map((followUpRow) =>
           followUpRow.id === fuId ? { ...followUpRow, ...followUp } : followUpRow

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import MatrixRain from "@/components/MatrixRain";
 import NavMenu from "@/components/crm/NavMenu";
-import { crmFetch } from "@/lib/crm";
+import { crmConfirmationError, crmFetch } from "@/lib/crm";
 
 type SharingRecord = {
   id: string;
@@ -226,7 +226,11 @@ export default function TeamSharingPage() {
         result.shared !== shared ||
         (shared && result.assignedToUserId !== assignedToUserId)
       ) {
-        throw new Error("The database did not confirm that access change");
+        throw crmConfirmationError({
+          url: "/api/crm/team/sharing",
+          method: "PATCH",
+          reason: `LiveCoach did not confirm the access change for ${record.name}`,
+        });
       }
       if (shared) {
         setNotice(
@@ -272,7 +276,11 @@ export default function TeamSharingPage() {
         result.confidential !== confidential ||
         (confidential && result.shared)
       ) {
-        throw new Error("The database did not confirm the privacy lock");
+        throw crmConfirmationError({
+          url: "/api/crm/team/sharing",
+          method: "PATCH",
+          reason: `LiveCoach did not confirm the privacy change for ${record.name}`,
+        });
       }
       if (confidential) {
         setNotice(

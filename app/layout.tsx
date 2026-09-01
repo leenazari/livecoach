@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import CrmBlockerAlert from "@/components/crm/CrmBlockerAlert";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -38,7 +39,10 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <CrmBlockerAlert />
+      </body>
     </html>
   );
 }

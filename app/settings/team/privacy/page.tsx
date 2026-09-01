@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import MatrixRain from "@/components/MatrixRain";
 import NavMenu from "@/components/crm/NavMenu";
-import { crmFetch } from "@/lib/crm";
+import { crmConfirmationError, crmFetch } from "@/lib/crm";
 
 type SharingRecord = {
   id: string;
@@ -140,7 +140,11 @@ export default function TeamPrivacyReviewPage() {
         result.confidential !== true ||
         result.shared !== false
       ) {
-        throw new Error("The database did not confirm the privacy lock");
+        throw crmConfirmationError({
+          url: "/api/crm/team/sharing",
+          method: "PATCH",
+          reason: `LiveCoach did not confirm the privacy lock for ${record.name}`,
+        });
       }
       setNotice(
         `${record.name} is now confidential. Team access was removed and only Lee can open it.`

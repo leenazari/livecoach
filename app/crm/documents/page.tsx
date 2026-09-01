@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import NavMenu from "@/components/crm/NavMenu";
+import { crmFetch } from "@/lib/crm";
 
 type DocumentJob = {
   id: string;
@@ -21,12 +22,19 @@ type DocumentJob = {
 export default function DocumentsPage() {
   const [jobs, setJobs] = useState<DocumentJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [blocker, setBlocker] = useState("");
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/crm/documents", { cache: "no-store" });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body?.error || "Could not load documents");
+      const body = await crmFetch<{ jobs?: DocumentJob[] }>(
+        "/api/crm/documents"
+      );
       setJobs(Array.isArray(body.jobs) ? body.jobs : []);
+      setBlocker("");
+    } catch (error: any) {
+      setBlocker(
+        error?.message ||
+          "Documents could not be loaded. Refresh the page and try once more."
+      );
     } finally {
       setLoading(false);
     }
@@ -57,8 +65,16 @@ export default function DocumentsPage() {
   }, [load]);
 
   const retry = async (id: string) => {
-    await fetch(`/api/crm/documents/${id}/retry`, { method: "POST" });
-    await load();
+    setBlocker("");
+    try {
+      await crmFetch(`/api/crm/documents/${id}/retry`, { method: "POST" });
+      await load();
+    } catch (error: any) {
+      setBlocker(
+        error?.message ||
+          "Document retry was not confirmed. Refresh the list and try once more."
+      );
+    }
   };
 
   return (
@@ -74,6 +90,15 @@ export default function DocumentsPage() {
             Ask Brain to create a plan, proposal, agreement, handbook, report or brief. It continues in the background while you use the CRM.
           </p>
         </div>
+
+        {blocker ? (
+          <p
+            role="alert"
+            className="mb-5 rounded-xl border border-rust/40 bg-rust/[0.08] p-4 text-sm leading-relaxed text-rust"
+          >
+            {blocker}
+          </p>
+        ) : null}
 
         {loading ? (
           <div className="rounded-2xl border border-edge bg-panel p-6 text-sm text-muted">Loading documents…</div>

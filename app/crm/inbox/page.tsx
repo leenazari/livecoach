@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import SalesPipelineLane from "@/components/crm/SalesPipelineLane";
-import { crmFetch } from "@/lib/crm";
+import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import MatrixRain from "@/components/MatrixRain";
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
@@ -388,9 +388,17 @@ export default function WorkInboxPage() {
         { method: "PATCH", body: JSON.stringify(change) }
       );
       if (change.status && result.task?.status !== change.status)
-        throw new Error("The database did not confirm that status.");
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${item.sourceId}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different to-do status from the one selected",
+        });
       if (change.text && result.task?.text !== capitaliseSentenceStarts(change.text))
-        throw new Error("The database did not confirm that edit.");
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${item.sourceId}`,
+          method: "PATCH",
+          reason: "LiveCoach returned different to-do text from the edit saved",
+        });
       setEditingId("");
       if (change.status === "done")
         setSessionCompleted((count) => count + 1);
@@ -427,7 +435,12 @@ export default function WorkInboxPage() {
         `/api/crm/upcoming/${item.sourceId}`,
         { method: "DELETE" }
       );
-      if (!result.ok) throw new Error("The database did not confirm that dismissal.");
+      if (!result.ok)
+        throw crmConfirmationError({
+          url: `/api/crm/upcoming/${item.sourceId}`,
+          method: "DELETE",
+          reason: "LiveCoach did not confirm that the calendar item was hidden",
+        });
       setNotice("Hidden from LiveCoach. The event is still in your calendar.");
       await load(true);
       window.dispatchEvent(
@@ -471,7 +484,11 @@ export default function WorkInboxPage() {
         }),
       });
       if (result.resolution !== action)
-        throw new Error("The database did not confirm that decision.");
+        throw crmConfirmationError({
+          url: `/api/crm/opportunity-clarifications/${item.sourceId}`,
+          method: "POST",
+          reason: "LiveCoach returned a different deal decision from the one selected",
+        });
       setSeparateClarificationId("");
       setSeparateWorkstreamName("");
       setNotice(
@@ -514,7 +531,11 @@ export default function WorkInboxPage() {
         body: JSON.stringify({ status: "reviewed" }),
       });
       if (result.message?.status !== "reviewed") {
-        throw new Error("The database did not confirm that review");
+        throw crmConfirmationError({
+          url: `/api/crm/linkedin-inbox/messages/${item.sourceId}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the LinkedIn lead was reviewed",
+        });
       }
       setSessionCompleted((count) => count + 1);
       setNotice("LinkedIn lead marked reviewed. The CRM record remains saved.");
@@ -658,7 +679,11 @@ export default function WorkInboxPage() {
         result.opportunity?.next_action !== capitaliseSentenceStarts(nextAction) ||
         !String(result.opportunity?.next_action_due_at || "").startsWith(nextActionDue)
       ) {
-        throw new Error("The database did not confirm the next action.");
+        throw crmConfirmationError({
+          url: `/api/crm/opportunities/${item.sourceId}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different next action from the one saved",
+        });
       }
       setDeferredIds((current) => [...new Set([...current, item.id])]);
       setSessionCompleted((count) => count + 1);
@@ -700,7 +725,11 @@ export default function WorkInboxPage() {
         }),
       });
       if (result.opportunity?.pipeline_stage !== pipelineStage)
-        throw new Error("The database did not confirm the pipeline stage.");
+        throw crmConfirmationError({
+          url: `/api/crm/opportunities/${deal.id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different pipeline stage from the one selected",
+        });
       setNotice(`${deal.company} moved to ${pipelineStage.replace(/_/g, " ")}.`);
       await load(true);
     } catch (err: any) {
@@ -759,7 +788,12 @@ export default function WorkInboxPage() {
           note,
         }),
       });
-      if (!result.noteSaved) throw new Error("The database did not confirm the call note");
+      if (!result.noteSaved)
+        throw crmConfirmationError({
+          url: `/api/crm/opportunities/${deal.id}/quick-call`,
+          method: "POST",
+          reason: "LiveCoach did not confirm that the call note was saved",
+        });
       const updated = result.applied?.length
         ? ` Updated ${result.applied.join(" and ")}.`
         : "";
@@ -796,7 +830,11 @@ export default function WorkInboxPage() {
         }),
       });
       if (result.opportunity?.status !== "dismissed") {
-        throw new Error("The database did not confirm the removal.");
+        throw crmConfirmationError({
+          url: `/api/crm/opportunities/${deal.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the deal left the active pipeline",
+        });
       }
       setNotice(`${deal.title} was removed from the active pipeline. Its history is still saved.`);
       await load(true);
@@ -845,7 +883,11 @@ export default function WorkInboxPage() {
         { method: "PATCH", body: JSON.stringify({ status: "dismissed" }) }
       );
       if (result.followUp?.status !== "dismissed")
-        throw new Error("The database did not confirm that removal.");
+        throw crmConfirmationError({
+          url: `/api/crm/follow-ups/${item.sourceId}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the draft was removed",
+        });
       setNotice("Draft removed.");
       await load(true);
     } catch (err: any) {
@@ -870,7 +912,11 @@ export default function WorkInboxPage() {
         }
       );
       if (!result.updatedIds?.length) {
-        throw new Error("No selected to-dos were removed");
+        throw crmConfirmationError({
+          url: "/api/crm/tasks/bulk",
+          method: "POST",
+          reason: "LiveCoach did not confirm removal of any selected to-dos",
+        });
       }
       setNotice(
         `${result.updatedIds.length} ${result.updatedIds.length === 1 ? "item was" : "items were"} removed. The records remain archived so they cannot pop back.`

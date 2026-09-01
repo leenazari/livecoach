@@ -17,7 +17,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { crmFetch, getCached } from "@/lib/crm";
+import { crmConfirmationError, crmFetch, getCached } from "@/lib/crm";
 import TaskList from "@/components/crm/TaskList";
 import Link from "next/link";
 import { capitaliseSentenceStarts } from "@/lib/text";
@@ -289,7 +289,11 @@ export default function OpportunityBoard() {
         body: JSON.stringify({ order: next.map((o) => o.companyId) }),
       });
       if (!result.ok || result.count !== next.length)
-        throw new Error("database did not confirm the full order");
+        throw crmConfirmationError({
+          url: "/api/crm/opportunities/order",
+          method: "POST",
+          reason: "LiveCoach did not confirm the complete opportunity order",
+        });
       setSavedNote("Order saved");
       setTimeout(() => setSavedNote(""), 1800);
     } catch {
@@ -304,7 +308,11 @@ export default function OpportunityBoard() {
     })
       .then((result) => {
         if (!result.ok || result.count !== 0)
-          throw new Error("database did not confirm the reset");
+          throw crmConfirmationError({
+            url: "/api/crm/opportunities/order",
+            method: "DELETE",
+            reason: "LiveCoach did not confirm that the opportunity order was reset",
+          });
         setSavedNote("Back to the coach's order");
         setTimeout(() => setSavedNote(""), 2500);
         return crmFetch<Board>("/api/crm/opportunities/board");
@@ -330,7 +338,11 @@ export default function OpportunityBoard() {
         body: JSON.stringify({ stage }),
       });
       if ((company?.stage || null) !== (stage || null))
-        throw new Error("database did not confirm the stage");
+        throw crmConfirmationError({
+          url: `/api/crm/companies/${companyId}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different relationship stage from the one selected",
+        });
       setBoard((current) =>
         current
           ? {

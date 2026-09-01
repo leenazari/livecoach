@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { crmFetch } from "@/lib/crm";
+import { crmConfirmationError, crmFetch } from "@/lib/crm";
 
 type TodayItem = {
   id: string;
@@ -118,9 +118,17 @@ export default function RevenueToday() {
         body: JSON.stringify(change),
       });
       if (change.status && result.task?.status !== change.status)
-        throw new Error("status not saved");
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${item.id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different to-do status from the one selected",
+        });
       if (change.text && result.task?.text !== change.text)
-        throw new Error("text not saved");
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${item.id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned different to-do text from the edit saved",
+        });
       setEditingId("");
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
@@ -155,7 +163,11 @@ export default function RevenueToday() {
       });
       const expected = action === "dismiss" ? "dismissed" : "applied";
       if (result.intelligence?.status !== expected)
-        throw new Error("activity state was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/companies/${item.companyId}/activity/approve`,
+          method: "POST",
+          reason: "LiveCoach returned a different client update decision from the one selected",
+        });
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
     } catch {

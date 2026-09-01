@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { crmFetch, getCached, setCached } from "@/lib/crm";
+import {
+  crmConfirmationError,
+  crmFetch,
+  getCached,
+  setCached,
+} from "@/lib/crm";
 import VoiceNoteButton from "@/components/VoiceNoteButton";
 import { capitaliseSentenceStarts } from "@/lib/text";
 
@@ -125,7 +130,12 @@ export default function Commitments({
             : null,
         }),
       });
-      if (!result.task?.id) throw new Error("draft not saved");
+      if (!result.task?.id)
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${t.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not return the saved commitment draft",
+        });
       setItems((all) =>
         all.map((item) =>
           item.id === t.id ? { ...item, ...result.task } : item
@@ -152,7 +162,12 @@ export default function Commitments({
         method: "PATCH",
         body: JSON.stringify({ status: "done" }),
       });
-      if (result.task?.status !== "done") throw new Error("status not saved");
+      if (result.task?.status !== "done")
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${t.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the commitment was completed",
+        });
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
       closedIds.current.delete(t.id);
@@ -177,7 +192,11 @@ export default function Commitments({
         body: JSON.stringify({ status: "dismissed" }),
       });
       if (result.task?.status !== "dismissed")
-        throw new Error("status not saved");
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${t.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the commitment was removed",
+        });
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
       closedIds.current.delete(t.id);
@@ -197,7 +216,12 @@ export default function Commitments({
         { method: "POST", body: JSON.stringify({ taskIds: selected }) }
       );
       const updated = new Set(result.updatedIds || []);
-      if (!updated.size) throw new Error("No selected commitments were removed");
+      if (!updated.size)
+        throw crmConfirmationError({
+          url: "/api/crm/tasks/bulk",
+          method: "POST",
+          reason: "LiveCoach did not confirm removal of any selected commitments",
+        });
       updated.forEach((id) => {
         closedIds.current.add(id);
         removeFromCachedList(id);
@@ -237,7 +261,12 @@ export default function Commitments({
         method: "PATCH",
         body: JSON.stringify({ text }),
       });
-      if (result.task?.text !== text) throw new Error("text not saved");
+      if (result.task?.text !== text)
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${t.id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned different commitment text from the edit saved",
+        });
       setItems((all) =>
         all.map((item) =>
           item.id === t.id ? { ...item, ...result.task } : item

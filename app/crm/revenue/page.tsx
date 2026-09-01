@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
-import { crmFetch, getCached } from "@/lib/crm";
+import { crmConfirmationError, crmFetch, getCached } from "@/lib/crm";
 import MatrixRain from "@/components/MatrixRain";
 import PipelineWorkspace from "@/components/crm/PipelineWorkspace";
 import OutlookIntelligencePanel, { type SignalHealth } from "@/components/crm/OutlookIntelligencePanel";
@@ -188,7 +188,12 @@ export default function RevenuePage() {
           rationale: "Confirmed from the pipeline dashboard",
         }),
       });
-      if (!saved?.id) throw new Error("Forecast was not confirmed");
+      if (!saved?.id)
+        throw crmConfirmationError({
+          url: `/api/crm/opportunities/${row.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not return the saved forecast",
+        });
       setNotice(`${row.company} forecast saved.`);
       await load();
       // Keep the exact confirmed row authoritative even if the aggregate read
@@ -218,7 +223,12 @@ export default function RevenuePage() {
           evidence: { preservedHistory: true },
         }),
       });
-      if (opportunity?.status !== "dismissed") throw new Error("The database did not confirm the removal");
+      if (opportunity?.status !== "dismissed")
+        throw crmConfirmationError({
+          url: `/api/crm/opportunities/${row.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the opportunity left the active pipeline",
+        });
       setNotice(`${row.title} was removed from the active pipeline. Its client and history are still saved.`);
       await load();
     } catch (e: any) {
@@ -233,7 +243,12 @@ export default function RevenuePage() {
     try {
       if (!Number.isFinite(target) || target < 1_000) throw new Error("Enter a revenue target of at least £1,000");
       const result = await crmFetch<{ target: number }>("/api/crm/revenue", { method: "PATCH", body: JSON.stringify({ target }) });
-      if (result.target !== target) throw new Error("Revenue target was not confirmed");
+      if (result.target !== target)
+        throw crmConfirmationError({
+          url: "/api/crm/revenue",
+          method: "PATCH",
+          reason: "LiveCoach returned a different revenue target from the one saved",
+        });
       setNotice("Revenue target saved.");
       await load();
       setTarget(result.target);
