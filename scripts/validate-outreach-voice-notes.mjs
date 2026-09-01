@@ -258,7 +258,7 @@ assert.match(outreachPage, /queueRowNeedsPreparation/);
 assert.match(outreachPage, /hasCurrentReadyVoice/);
 assert.match(outreachPage, /visibleScript === savedScript/);
 assert.match(outreachPage, /voice scripts to complete/);
-assert.match(outreachPage, /Complete current wave/);
+assert.match(outreachPage, /Research \+ draft current wave/);
 assert.match(outreachPage, /Create voice script/);
 assert.match(outreachPage, /Refresh draft/);
 assert.match(outreachPage, /emailPreserved !== true/);

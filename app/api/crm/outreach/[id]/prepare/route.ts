@@ -168,7 +168,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       personalProfile,
     ] = await Promise.all([
       supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", sender.workspaceId).eq("id", prospectId).single(),
-      supabaseAdmin.from("outreach_enrolments").select("*").eq("workspace_id", sender.workspaceId).eq("owner_id", sender.userId).eq("prospect_id", prospectId).eq("queued_for", londonDate()).in("status", ["queued", "researched", "drafted"]).limit(1),
+      // Shared campaigns are created by one teammate, so their untouched
+      // membership rows can retain that creator as owner. The prospect
+      // assignment is the authority for who may prepare the work. RLS already
+      // permits the assignee to read and update the related enrolment.
+      supabaseAdmin.from("outreach_enrolments").select("*").eq("workspace_id", sender.workspaceId).eq("prospect_id", prospectId).eq("queued_for", londonDate()).in("status", ["queued", "researched", "drafted"]).limit(2),
       supabaseAdmin.from("workspace_profile").select("knowledge,learned").eq("id", profileId).maybeSingle(),
       getAppConfigValue("revenue_target_gbp").then((data) => ({ data })),
       getAppConfigValue("interviewa_outreach_offer_truth").then((data) => ({ data })),
@@ -181,6 +185,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (!prospect || !enrolment) return NextResponse.json({ error: "This person is not in today's queue" }, { status: 400 });
     if (prospect.assigned_to_user_id !== sender.userId)
       return NextResponse.json({ error: "Assign this prospect to yourself before preparing outreach" }, { status: 403 });
+    if ((enrolments || []).length > 1)
+      return NextResponse.json(
+        { error: "This person has more than one active item in today's queue. Ask a manager to resolve it before research runs." },
+        { status: 409 }
+      );
     const { data: campaign } = await supabaseAdmin.from("outreach_campaigns").select("*").eq("workspace_id", sender.workspaceId).eq("id", enrolment.campaign_id).single();
     if (!campaign || campaign.status !== "active") return NextResponse.json({ error: "The campaign is not active" }, { status: 400 });
     const { data: learnings } = await supabaseAdmin.from("outreach_learnings").select("dimension,label,insight,confidence,sent_count,positive_reply_count,meeting_count").eq("workspace_id", sender.workspaceId).eq("owner_id", sender.userId).eq("campaign_id", campaign.id).eq("status", "promoted").order("meeting_count", { ascending: false }).limit(8);
@@ -556,7 +565,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
     }, { onConflict: "enrolment_id,step_number" }).select("*").single();
     if (draftError) throw draftError;
     await Promise.all([
-      supabaseAdmin.from("outreach_enrolments").update({ status: "drafted", research, research_sources: sources, researched_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("workspace_id", sender.workspaceId).eq("owner_id", sender.userId).eq("id", enrolment.id),
+      supabaseAdmin.from("outreach_enrolments").update({ status: "drafted", research, research_sources: sources, researched_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("workspace_id", sender.workspaceId).eq("prospect_id", prospect.id).eq("id", enrolment.id),
       supabaseAdmin.from("outreach_prospects").update({ research, last_researched_at: new Date().toISOString(), status: "ready", updated_at: new Date().toISOString() }).eq("workspace_id", sender.workspaceId).eq("assigned_to_user_id", sender.userId).eq("id", prospect.id),
       supabaseAdmin.from("outreach_events").insert([
         { workspace_id: sender.workspaceId, owner_id: sender.userId, visibility: "team", campaign_id: campaign.id, prospect_id: prospect.id, kind: "researched", metadata: { sources: sources.length, confidence: research.confidence, verifiedJobs: jobSignals.length, jobBoardSaved: Boolean(jobBoardUrl), companyOverviewSaved: Boolean(research.companyOverview && companyOverviewUrl), generationMode } },
