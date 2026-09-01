@@ -966,6 +966,9 @@ export default function OutreachTodayLane({
             <p className="mt-1 text-xs leading-5 text-muted">
               Work through every eligible new contact before returning to scheduled follow ups. As soon as one action is queued, the next prospect opens while delivery continues safely in the background.
             </p>
+            <p className="mt-2 text-xs leading-5 text-sky">
+              Choosing today&apos;s leads is free and starts no research. Use Research + write email + voice script on a contact to create both the draft and its voice script.
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -985,8 +988,8 @@ export default function OutreachTodayLane({
               {building
                 ? "Ranking eligible contacts…"
                 : queue.length
-                  ? `Fill queue to ${dailyLimit}`
-                  : "Fill today's queue"}
+                  ? `Choose more leads · ${queue.length}/${dailyLimit}`
+                  : `Choose today's leads · up to ${dailyLimit}`}
             </button>
           </div>
         </div>
@@ -1472,7 +1475,7 @@ export default function OutreachTodayLane({
                                 : "Retry prepare"
                               : needsVoiceScript
                                 ? "Create voice script"
-                                : "Prepare research + draft"}
+                                : "Research + write email + voice script"}
                       </button>
                     ) : displayMessage ? (
                       isFocus ? (

@@ -11,6 +11,7 @@ const migration = read(
 );
 const prospectRoute = read("app/api/crm/outreach/[id]/route.ts");
 const queueRoute = read("app/api/crm/outreach/queue/route.ts");
+const prepareRoute = read("app/api/crm/outreach/[id]/prepare/route.ts");
 const queuePolicy = read("lib/outreach-queue-policy.ts");
 const safety = read("lib/outreach-team-safety.ts");
 const outreachPage = read("app/crm/outreach/page.tsx");
@@ -49,6 +50,23 @@ for (const status of ["paused", "queued", "researched", "drafted", "approved"]) 
 }
 assert.match(safety, /"paused"/);
 
+// A salesperson may claim an unassigned prospect that already has a shared
+// campaign membership owned by the campaign creator. Preparation is authorised
+// by the exact prospect assignment, not by stale membership ownership.
+const enrolmentLookup = prepareRoute.match(
+  /supabaseAdmin\.from\("outreach_enrolments"\)\.select\("\*"\)[\s\S]*?\.limit\(2\)/
+)?.[0] || "";
+const enrolmentUpdate = prepareRoute.match(
+  /supabaseAdmin\.from\("outreach_enrolments"\)\.update\(\{ status: "drafted"[\s\S]*?\.eq\("id", enrolment\.id\)/
+)?.[0] || "";
+assert.ok(enrolmentLookup, "The preparation route must load today's assigned shared membership");
+assert.doesNotMatch(enrolmentLookup, /\.eq\("owner_id", sender\.userId\)/);
+assert.match(prepareRoute, /prospect\.assigned_to_user_id !== sender\.userId/);
+assert.match(prepareRoute, /more than one active item in today's queue/);
+assert.ok(enrolmentUpdate, "The preparation route must save research back to the exact membership");
+assert.doesNotMatch(enrolmentUpdate, /\.eq\("owner_id", sender\.userId\)/);
+assert.match(enrolmentUpdate, /\.eq\("prospect_id", prospect\.id\)/);
+
 // Salespeople land on a useful but still isolated view. They see their own
 // prospects plus unassigned inventory, never another salesperson's assigned
 // work unless they deliberately choose a wider read-only filter.
@@ -56,7 +74,7 @@ assert.match(outreachPage, /setOwnerFilter\(data\.canManageAssignments === true 
 assert.match(outreachPage, /ownerFilter === "available"[\s\S]*?!prospect\.assigned_to_user_id[\s\S]*?prospect\.assigned_to_user_id === currentUser/);
 assert.match(outreachPage, /<option value="available">Mine and available<\/option>/);
 assert.match(outreachPage, /initialQueueFillAttemptedRef/);
-assert.match(outreachPage, /Fill today's remaining/);
+assert.match(outreachPage, /Choose today's contacts from/);
 assert.match(todayLane, /initialQueueFillAttemptedRef/);
 assert.match(todayLane, /Entering Sales Today should supply the full free-to-rank worklist/);
 
