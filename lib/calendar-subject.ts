@@ -151,18 +151,37 @@ const attendeeName = (attendee: CalendarAttendee) => {
 
 const unique = <T,>(rows: T[]) => (rows.length === 1 ? rows[0] : null);
 
-const titleMatchScore = (attendee: CalendarAttendee, titleTokens: string[]) => {
+const titleMatchScore = (
+  attendee: CalendarAttendee,
+  titleTokens: string[],
+  compactTitle: string
+) => {
   const email = String(attendee.email || "").toLowerCase().trim();
   const local = email.split("@")[0] || "";
   const localTokens = new Set(tokens(local));
+  const domainTokens = new Set(
+    tokens(calendarEmailDomain(email)).filter((token) => token.length >= 4)
+  );
   const nameTokens = new Set(tokens(attendeeName(attendee)));
   const compactLocal = normalise(local).replace(/\s+/g, "");
   const compactName = normalise(attendeeName(attendee)).replace(/\s+/g, "");
+  const compactEmail = normalise(email).replace(/\s+/g, "");
   let score = 0;
+
+  // An address written in the event title is the clearest possible subject
+  // signal. It must beat another attendee who merely happens to be a saved
+  // contact, which is common when that attendee made the introduction.
+  if (
+    compactEmail.length >= 5 &&
+    compactTitle.includes(compactEmail)
+  ) {
+    score += 100;
+  }
 
   for (const titleToken of titleTokens) {
     if (nameTokens.has(titleToken)) score += 8;
     if (localTokens.has(titleToken)) score += 7;
+    if (domainTokens.has(titleToken)) score += 6;
     if (
       titleToken.length >= 4 &&
       (compactName.startsWith(titleToken) || compactLocal.startsWith(titleToken))
@@ -199,10 +218,15 @@ export function pickPrimaryAttendee(
     (token) => token.length >= 3 && !GENERIC_TITLE_WORDS.has(token)
   );
   if (meaningfulTitleTokens.length) {
+    const compactTitle = normalise(context.title).replace(/\s+/g, "");
     const scored = guests
       .map((attendee) => ({
         attendee,
-        score: titleMatchScore(attendee, meaningfulTitleTokens),
+        score: titleMatchScore(
+          attendee,
+          meaningfulTitleTokens,
+          compactTitle
+        ),
       }))
       .filter((row) => row.score > 0)
       .sort((a, b) => b.score - a.score);

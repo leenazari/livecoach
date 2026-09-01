@@ -7,6 +7,10 @@ import {
   emailMayInfluenceCompanyIntent,
   pickPrimaryAttendee,
 } from "../lib/calendar-subject.ts";
+import {
+  deriveNewClientFromAttendees,
+  inferLink,
+} from "../lib/attendee-linking.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -23,6 +27,106 @@ const ninderInvite = [
   { email: "ninderjohal@nachural.co.uk", responseStatus: "needsAction" },
   { email: "yas@interviewa.com", responseStatus: "accepted" },
 ];
+
+const referralCompanyId = "00000000-0000-4000-8000-000000000001";
+const logicDialogCompanyId = "00000000-0000-4000-8000-000000000002";
+const referralConfig = {
+  internalDomains: new Set(internalDomains),
+  internalCompanyId: null,
+  contactEmailToCompany: new Map([
+    ["steve@team.co.uk", referralCompanyId],
+  ]),
+  companyByDomain: new Map([["team.co.uk", referralCompanyId]]),
+};
+const introducedPaulInvite = [
+  { email: "paul@logicdialog.ai", responseStatus: "accepted" },
+  { email: "lee@ai13.com", self: true, organizer: true },
+  { email: "steve@team.co.uk", responseStatus: "needsAction" },
+];
+
+assert.deepEqual(
+  inferLink(introducedPaulInvite, referralConfig, {
+    title: "Interviewa + paul@logicdialog.ai",
+  }),
+  { companyId: null, isInternal: false },
+  "a saved referrer must not become the client when the title names a new lead"
+);
+
+assert.deepEqual(
+  deriveNewClientFromAttendees(introducedPaulInvite, referralConfig, {
+    title: "Interviewa + paul@logicdialog.ai",
+  }),
+  {
+    domain: "logicdialog.ai",
+    name: "Logicdialog",
+    website: "https://logicdialog.ai",
+    email: "paul@logicdialog.ai",
+  },
+  "the named lead's work domain must create the separate client"
+);
+
+assert.deepEqual(
+  inferLink(introducedPaulInvite, {
+    ...referralConfig,
+    companyByDomain: new Map([
+      ["team.co.uk", referralCompanyId],
+      ["logicdialog.ai", logicDialogCompanyId],
+    ]),
+  }, {
+    title: "Interviewa + paul@logicdialog.ai",
+  }),
+  { companyId: logicDialogCompanyId, isInternal: false },
+  "the named lead's own company must beat the saved referrer"
+);
+
+assert.deepEqual(
+  inferLink(introducedPaulInvite, referralConfig),
+  { companyId: null, isInternal: false },
+  "multiple external domains without a named subject must fail closed"
+);
+
+assert.equal(
+  pickPrimaryAttendee(
+    [
+      { email: "paul@ripponcapital.co.uk" },
+      { email: "paul@logicdialog.ai" },
+      { email: "lee@ai13.com", self: true },
+    ],
+    {
+      title: "Interviewa + paul@logicdialog.ai",
+      internalDomains,
+    }
+  )?.email,
+  "paul@logicdialog.ai",
+  "an exact email in the title must distinguish two guests with the same name"
+);
+
+const internalNamedInvite = [
+  { email: "kamm@interviewa.com" },
+  { email: "buyer@customer.com" },
+  { email: "lee@ai13.com", self: true },
+];
+const internalNamedConfig = {
+  ...referralConfig,
+  internalCompanyId: "00000000-0000-4000-8000-000000000003",
+  contactEmailToCompany: new Map([
+    ["kamm@interviewa.com", "00000000-0000-4000-8000-000000000003"],
+  ]),
+};
+assert.deepEqual(
+  inferLink(internalNamedInvite, internalNamedConfig, {
+    title: "Kamm client introduction",
+  }),
+  { companyId: null, isInternal: false },
+  "a named internal supporter must not replace the outside client"
+);
+assert.equal(
+  deriveNewClientFromAttendees(internalNamedInvite, internalNamedConfig, {
+    title: "Kamm client introduction",
+  })?.domain,
+  "customer.com",
+  "the single outside work domain must still create the client"
+);
 
 assert.deepEqual(
   pickPrimaryAttendee(ninderInvite, {
