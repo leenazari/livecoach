@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { crmFetch } from "@/lib/crm";
 
 type DocumentJob = {
   id: string;
@@ -23,16 +24,22 @@ export default function DocumentJobTray() {
   const [jobs, setJobs] = useState<DocumentJob[]>([]);
   const [collapsed, setCollapsed] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [blocker, setBlocker] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/crm/documents", { cache: "no-store" });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body?.error || "Could not load documents");
+      const body = await crmFetch<{ jobs?: DocumentJob[] }>(
+        "/api/crm/documents"
+      );
       setJobs(Array.isArray(body.jobs) ? body.jobs : []);
-    } catch {
-      // The document queue must never interfere with the rest of the CRM.
+      setBlocker("");
+    } catch (error: any) {
+      setBlocker(
+        error?.message ||
+          "Document queue could not be loaded. Refresh the page and try once more."
+      );
+      setCollapsed(false);
     } finally {
       setLoading(false);
     }
@@ -88,12 +95,23 @@ export default function DocumentJobTray() {
   }, [jobs]);
 
   const retry = async (job: DocumentJob) => {
-    await fetch(`/api/crm/documents/${job.id}/retry`, { method: "POST" });
-    setCollapsed(false);
-    await load();
+    setBlocker("");
+    try {
+      await crmFetch(`/api/crm/documents/${job.id}/retry`, {
+        method: "POST",
+      });
+      setCollapsed(false);
+      await load();
+    } catch (error: any) {
+      setBlocker(
+        error?.message ||
+          "Document retry was not confirmed. Refresh the document list and try once more."
+      );
+      setCollapsed(false);
+    }
   };
 
-  if (loading || shown.length === 0) return null;
+  if (loading || (shown.length === 0 && !blocker)) return null;
   if (collapsed)
     return (
       <button
@@ -101,7 +119,7 @@ export default function DocumentJobTray() {
         onClick={() => setCollapsed(false)}
         className="fixed bottom-20 right-3 z-[45] rounded-full border border-amber/50 bg-panel px-4 py-3 font-mono text-[0.62rem] uppercase tracking-wider text-amber shadow-2xl sm:bottom-4 sm:right-4"
       >
-        {hasActive ? "Document creating" : "Document ready"}
+        {blocker ? "Document blocked" : hasActive ? "Document creating" : "Document ready"}
       </button>
     );
 
@@ -127,6 +145,14 @@ export default function DocumentJobTray() {
           −
         </button>
       </div>
+      {blocker ? (
+        <p
+          role="alert"
+          className="mb-3 rounded-xl border border-rust/40 bg-rust/[0.08] p-3 text-xs leading-relaxed text-rust"
+        >
+          {blocker}
+        </p>
+      ) : null}
       <div className="space-y-2">
         {shown.map((job) => (
           <div key={job.id} className="rounded-xl border border-edge bg-ink/45 p-3">

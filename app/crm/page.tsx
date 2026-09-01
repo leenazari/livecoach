@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { crmFetch, getCached } from "@/lib/crm";
+import { crmConfirmationError, crmFetch, getCached } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import UpcomingCalls from "@/components/crm/UpcomingCalls";
 import TaskList from "@/components/crm/TaskList";
@@ -201,9 +201,17 @@ export default function DashboardPage() {
         body: JSON.stringify(change),
       });
       if (change.status && result.task?.status !== change.status)
-        throw new Error("status not saved");
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${item.id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different to-do status from the one selected",
+        });
       if (change.text && result.task?.text !== change.text)
-        throw new Error("text not saved");
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${item.id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned different to-do text from the edit saved",
+        });
       setEditingTodayId(null);
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch {
@@ -241,7 +249,11 @@ export default function DashboardPage() {
       });
       const expected = action === "dismiss" ? "dismissed" : "applied";
       if (result.intelligence?.status !== expected)
-        throw new Error("activity state was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/companies/${item.companyId}/activity/approve`,
+          method: "POST",
+          reason: "LiveCoach returned a different client update decision from the one selected",
+        });
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
     } catch {
@@ -265,7 +277,12 @@ export default function DashboardPage() {
         `/api/crm/upcoming/${item.id}`,
         { method: "DELETE" }
       );
-      if (!result.ok) throw new Error("calendar exclusion was not confirmed");
+      if (!result.ok)
+        throw crmConfirmationError({
+          url: `/api/crm/upcoming/${item.id}`,
+          method: "DELETE",
+          reason: "LiveCoach did not confirm that the calendar item was hidden",
+        });
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
     } catch {
@@ -343,7 +360,12 @@ export default function DashboardPage() {
         method: "PUT",
         body: JSON.stringify({ mode }),
       });
-      if (saved.mode !== mode) throw new Error("AI mode was not confirmed");
+      if (saved.mode !== mode)
+        throw crmConfirmationError({
+          url: "/api/crm/ai-mode",
+          method: "PUT",
+          reason: "LiveCoach returned a different AI mode from the one selected",
+        });
       setAiMode(saved.mode);
     } catch {
       setAiMode(aiMode);

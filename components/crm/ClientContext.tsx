@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { crmFetch } from "@/lib/crm";
+import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { extractDocText } from "@/lib/extract-doc";
 import { foldDictationEvent } from "@/lib/dictation";
 
@@ -89,7 +89,11 @@ export default function ClientContext({ companyId }: { companyId: string }) {
       });
       const requested = emailCtx.trim() || null;
       if (company?.email_context !== requested)
-        throw new Error("database returned different email context");
+        throw crmConfirmationError({
+          url: `/api/crm/companies/${companyId}`,
+          method: "PATCH",
+          reason: "LiveCoach returned different email context from the text saved",
+        });
       setEmailCtx(company.email_context || "");
       setEmailUpdatedAt(company.email_context_updated_at || new Date().toISOString());
       setEmailSaved(true);
@@ -151,7 +155,12 @@ export default function ClientContext({ companyId }: { companyId: string }) {
         method: "POST",
         body: JSON.stringify(body),
       });
-      if (!item?.id) throw new Error("database did not confirm the new item");
+      if (!item?.id)
+        throw crmConfirmationError({
+          url: `/api/crm/companies/${companyId}/context`,
+          method: "POST",
+          reason: "LiveCoach did not return the new client context item",
+        });
       setNote("");
       setTitle("");
       setUrl("");
@@ -188,7 +197,12 @@ export default function ClientContext({ companyId }: { companyId: string }) {
       const result = await crmFetch<{ deletedId: string }>(`/api/crm/context/${id}`, {
         method: "DELETE",
       });
-      if (result.deletedId !== id) throw new Error("database did not confirm deletion");
+      if (result.deletedId !== id)
+        throw crmConfirmationError({
+          url: `/api/crm/context/${id}`,
+          method: "DELETE",
+          reason: "LiveCoach did not confirm that the context item was deleted",
+        });
     } catch (e: any) {
       setItems(previous);
       setErr(e.message || "That note did not delete. Please try again.");

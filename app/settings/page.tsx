@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { crmFetch, getCached, setCached } from "@/lib/crm";
+import {
+  crmConfirmationError,
+  crmFetch,
+  getCached,
+  setCached,
+} from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import InitialCalendarSync from "@/components/InitialCalendarSync";
 
@@ -339,7 +344,12 @@ export default function SettingsPage() {
         };
         warning?: string | null;
       }>(`/api/auth/${provider}/disconnect`, { method: "DELETE" });
-      if (!result.ok) throw new Error("The database did not confirm the disconnect");
+      if (!result.ok)
+        throw crmConfirmationError({
+          url: `/api/auth/${provider}/disconnect`,
+          method: "DELETE",
+          reason: "LiveCoach did not receive a confirmed account disconnect",
+        });
       const warning = result.warning ? ` ${result.warning}` : "";
       if (provider === "google") {
         setGcal((current) => ({
@@ -390,7 +400,12 @@ export default function SettingsPage() {
         "/api/auth/linkedin/disconnect",
         { method: "DELETE" }
       );
-      if (!result.ok) throw new Error("The database did not confirm the disconnect");
+      if (!result.ok)
+        throw crmConfirmationError({
+          url: "/api/auth/linkedin/disconnect",
+          method: "DELETE",
+          reason: "LiveCoach did not receive a confirmed LinkedIn disconnect",
+        });
       setLinkedin((current) => ({
         status: "disconnected",
         connected: false,
@@ -440,7 +455,11 @@ export default function SettingsPage() {
         }),
       });
       if (!result.ok || !result.token || !result.shownOnce) {
-        throw new Error("The server did not confirm the new connector key");
+        throw crmConfirmationError({
+          url: "/api/crm/linkedin-inbox",
+          method: "POST",
+          reason: "LiveCoach did not return a complete new connector key",
+        });
       }
       setLinkedinInboxToken(result.token);
       setLinkedinInbox((current) => ({
@@ -495,7 +514,11 @@ export default function SettingsPage() {
         { method: "DELETE" }
       );
       if (!result.ok || result.active) {
-        throw new Error("The server did not confirm that revocation");
+        throw crmConfirmationError({
+          url: "/api/crm/linkedin-inbox",
+          method: "DELETE",
+          reason: "LiveCoach did not confirm that the connector key was revoked",
+        });
       }
       setLinkedinInboxToken("");
       setLinkedinInbox((current) =>
@@ -537,7 +560,11 @@ export default function SettingsPage() {
         }
       );
       if (!result.ok || !result.connected) {
-        throw new Error("The server did not confirm the SendPilot connection");
+        throw crmConfirmationError({
+          url: "/api/crm/sendpilot",
+          method: "POST",
+          reason: "LiveCoach did not confirm the SendPilot connection",
+        });
       }
       setSendPilot(result);
       setSendPilotApiKey("");
@@ -574,7 +601,11 @@ export default function SettingsPage() {
         }
       );
       if (!result.ok || !result.webhookConfigured) {
-        throw new Error("The server did not confirm the webhook secret");
+        throw crmConfirmationError({
+          url: "/api/crm/sendpilot",
+          method: "PATCH",
+          reason: "LiveCoach did not confirm the SendPilot webhook setup",
+        });
       }
       setSendPilot(result);
       setSendPilotWebhookSecret("");
@@ -614,7 +645,12 @@ export default function SettingsPage() {
         };
         integration: SendPilotStatus;
       }>("/api/crm/sendpilot/backfill", { method: "POST" });
-      if (!result.ok) throw new Error("The 14-day import did not complete");
+      if (!result.ok)
+        throw crmConfirmationError({
+          url: "/api/crm/sendpilot/backfill",
+          method: "POST",
+          reason: "LiveCoach did not confirm completion of the 14-day import",
+        });
       setSendPilot(result.integration);
       const leads = result.leadReconciliation;
       setSendPilotNote(
@@ -684,7 +720,11 @@ export default function SettingsPage() {
         { method: "DELETE" }
       );
       if (!result.ok || result.connected) {
-        throw new Error("The server did not confirm the disconnect");
+        throw crmConfirmationError({
+          url: "/api/crm/sendpilot",
+          method: "DELETE",
+          reason: "LiveCoach did not confirm the SendPilot disconnect",
+        });
       }
       setSendPilot(result);
       setSendPilotCampaigns(null);
@@ -713,7 +753,12 @@ export default function SettingsPage() {
         method: "PATCH",
         body: JSON.stringify({ livecoachCampaignId, sendpilotCampaignId }),
       });
-      if (!result.ok) throw new Error("The campaign mapping was not confirmed");
+      if (!result.ok)
+        throw crmConfirmationError({
+          url: "/api/crm/sendpilot/campaigns",
+          method: "PATCH",
+          reason: "LiveCoach did not confirm the SendPilot campaign mapping",
+        });
       setSendPilotCampaigns(result.configuration);
       const activeMappings = result.configuration.mappings.filter(
         (mapping) => mapping.active
@@ -779,7 +824,12 @@ export default function SettingsPage() {
       const result = await crmFetch<{ deletedId: string }>(`/api/crm/lessons/${id}`, {
         method: "DELETE",
       });
-      if (result.deletedId !== id) throw new Error("database did not confirm deletion");
+      if (result.deletedId !== id)
+        throw crmConfirmationError({
+          url: `/api/crm/lessons/${id}`,
+          method: "DELETE",
+          reason: "LiveCoach did not confirm that the lesson was deleted",
+        });
     } catch (error: any) {
       setLessons(previous);
       setLErr(error?.message || "That lesson did not delete. Please try again.");
@@ -804,7 +854,11 @@ export default function SettingsPage() {
         saved.knowledge !== knowledge ||
         saved.objectionStances !== objectionStances
       ) {
-        throw new Error("database returned different Brain content");
+        throw crmConfirmationError({
+          url: "/api/crm/workspace",
+          method: "PUT",
+          reason: "LiveCoach returned different Brain content from the text you saved",
+        });
       }
       // Keep the in-memory cache in step so navigating away and back shows the
       // saved text, not a stale copy.

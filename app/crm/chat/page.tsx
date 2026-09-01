@@ -18,7 +18,7 @@ import {
   CHAT_INLINE_PREVIEW_MIME_TYPES,
   CHAT_MAX_FILE_BYTES,
 } from "@/lib/crm-chat-shared";
-import { crmFetch } from "@/lib/crm";
+import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { createSupabaseBrowser } from "@/lib/supabase-browser";
 
 type WorkspaceMember = {
@@ -488,7 +488,11 @@ function ChatPageInner() {
         method: "POST",
       });
       if (!result.webViewLink) {
-        throw new Error("Google Drive did not return the saved file link");
+        throw crmConfirmationError({
+          url: `/api/crm/chat/files/${attachment.id}/drive`,
+          method: "POST",
+          reason: "Google Drive did not return the saved file link",
+        });
       }
       setDriveStates((current) => ({
         ...current,

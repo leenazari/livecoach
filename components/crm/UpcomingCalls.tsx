@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { crmFetch, getCached } from "@/lib/crm";
+import { crmConfirmationError, crmFetch, getCached } from "@/lib/crm";
 import { openAndArmCallLaunch } from "@/lib/call-launch";
 import { validMeetingUrl } from "@/lib/meeting-url";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
@@ -237,16 +237,33 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
         method: "PATCH",
         body: JSON.stringify(body),
       });
-      if (!call?.id) throw new Error("database did not confirm the call update");
+      if (!call?.id)
+        throw crmConfirmationError({
+          url: `/api/crm/upcoming/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not return the updated call",
+        });
       if (typeof body.prepped === "boolean" && call.prepped !== body.prepped)
-        throw new Error("prep status was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/upcoming/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different preparation status from the one selected",
+        });
       if (typeof body.intent === "string" && call.intent !== (body.intent.trim() || null))
-        throw new Error("intent was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/upcoming/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned different call intent from the text saved",
+        });
       if (
         typeof body.meetingUrl === "string" &&
         call.meeting_url !== (body.meetingUrl.trim() || null)
       )
-        throw new Error("meeting link was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/upcoming/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different meeting link from the one saved",
+        });
       setCalls((current) =>
         current.map((row) =>
           row.id === id
@@ -289,7 +306,11 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
         body: JSON.stringify({ companyId: v?.id || null }),
       });
       if (call?.company_id !== (v?.id || null))
-        throw new Error("database did not confirm the client link");
+        throw crmConfirmationError({
+          url: `/api/crm/upcoming/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm the selected client on this call",
+        });
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch (e: any) {
       setCalls(previous);
@@ -306,7 +327,12 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
       const result = await crmFetch<{ ok: boolean }>(`/api/crm/upcoming/${id}`, {
         method: "DELETE",
       });
-      if (!result.ok) throw new Error("database did not confirm removal");
+      if (!result.ok)
+        throw crmConfirmationError({
+          url: `/api/crm/upcoming/${id}`,
+          method: "DELETE",
+          reason: "LiveCoach did not confirm that the call was removed",
+        });
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
     } catch (e: any) {
@@ -328,7 +354,12 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
         method: "PATCH",
         body: JSON.stringify({ completed: true }),
       });
-      if (!call?.completed_at) throw new Error("database did not confirm completion");
+      if (!call?.completed_at)
+        throw crmConfirmationError({
+          url: `/api/crm/upcoming/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the call was marked complete",
+        });
     } catch (e: any) {
       setCalls(previous);
       setSyncMsg(e?.message || "Call was not marked done. Please try again.");
@@ -348,7 +379,11 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
         body: JSON.stringify({ completed: false }),
       });
       if (!call?.id || call.completed_at !== null)
-        throw new Error("database did not confirm the restored call");
+        throw crmConfirmationError({
+          url: `/api/crm/upcoming/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the call was restored",
+        });
       await load();
       setSyncMsg("call restored to upcoming");
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));

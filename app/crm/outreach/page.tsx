@@ -7,7 +7,7 @@ import NavMenu from "@/components/crm/NavMenu";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import RevenueToday from "@/components/crm/RevenueToday";
 import MatrixRain from "@/components/MatrixRain";
-import { crmFetch, getCached } from "@/lib/crm";
+import { crmConfirmationError, crmFetch, getCached } from "@/lib/crm";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import { prepareOutreachVoiceScriptForReview } from "@/lib/outreach-voice-policy";
 import { outreachProspectHref } from "@/lib/crm-navigation";
@@ -1030,7 +1030,11 @@ export default function OutreachPage() {
         result.audioGenerated !== false ||
         result.emailPreserved !== true
       ) {
-        throw new Error("The text voice script was not confirmed safely");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${messageId}/voice-script`,
+          method: "POST",
+          reason: "LiveCoach did not confirm a safe text-only voice script",
+        });
       }
       updatePrepareJob(prospectId, "done");
       setQueue((all) =>
@@ -1067,7 +1071,12 @@ export default function OutreachPage() {
     setBusy(`save:${messageId}`); setError("");
     try {
       const { message } = await crmFetch<{ message: Record<string, any> }>(`/api/crm/outreach/messages/${messageId}`, { method: "PATCH", body: JSON.stringify(draftEdits[messageId]) });
-      if (!message?.id) throw new Error("Draft was not confirmed");
+      if (!message?.id)
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${messageId}`,
+          method: "PATCH",
+          reason: "LiveCoach did not return the saved outreach draft",
+        });
       setQueue((all) => all.map((row) => row.message?.id === messageId ? { ...row, message: { ...row.message, ...message } } : row));
       setReplies((all) => all.map((reply) => reply.bookingDraft?.id === messageId ? { ...reply, bookingDraft: { ...reply.bookingDraft, ...message } } : reply));
       setDraftEdits((all) => ({ ...all, [messageId]: { subject: message.subject || "", body_text: message.body_text || "", voice_script: message.voice_script || "" } }));
@@ -1099,7 +1108,11 @@ export default function OutreachPage() {
         }
       );
       if (!approved.message?.voice_script_approved_at)
-        throw new Error("The exact voice script was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${messageId}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm approval of the exact voice script",
+        });
       setQueue((all) => all.map((row) => row.message?.id === messageId
         ? { ...row, message: { ...row.message, ...approved.message } }
         : row));
@@ -1116,7 +1129,11 @@ export default function OutreachPage() {
         { method: "POST", body: "{}" }
       );
       if (result.message?.voice_status !== "ready")
-        throw new Error("The voice preview was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${messageId}/voice`,
+          method: "POST",
+          reason: "LiveCoach did not confirm that the voice preview is ready",
+        });
       setQueue((all) => all.map((row) => row.message?.id === messageId
         ? { ...row, message: { ...row.message, ...result.message } }
         : row));
@@ -1164,7 +1181,11 @@ export default function OutreachPage() {
         }
       );
       if (!message?.id || message.status !== "approved")
-        throw new Error("The exact visible draft was not approved");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${messageId}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm approval of the exact visible draft",
+        });
       const result = await crmFetch<any>(
         `/api/crm/outreach/messages/${messageId}/send`,
         { method: "POST", body: "{}" }
@@ -1316,7 +1337,11 @@ export default function OutreachPage() {
           { method: "PATCH", body: JSON.stringify({ ...visible, status: "approved" }) }
         );
         if (!message?.id || message.status !== "approved")
-          throw new Error("One of the exact visible drafts was not confirmed as approved");
+          throw crmConfirmationError({
+            url: `/api/crm/outreach/messages/${messageId}`,
+            method: "PATCH",
+            reason: "LiveCoach did not confirm approval of one exact visible draft",
+          });
         const queued = await crmFetch<any>(
           `/api/crm/outreach/messages/${messageId}/send`,
           { method: "POST", body: "{}" }
@@ -1343,7 +1368,12 @@ export default function OutreachPage() {
         method: "PATCH",
         body: JSON.stringify(draftEdits[messageId] || {}),
       });
-      if (!message?.id || message.subject !== draftEdits[messageId]?.subject?.trim() || message.body_text !== draftEdits[messageId]?.body_text?.trim()) throw new Error("Save the visible draft before rehearsing it");
+      if (!message?.id || message.subject !== draftEdits[messageId]?.subject?.trim() || message.body_text !== draftEdits[messageId]?.body_text?.trim())
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${messageId}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different rehearsal draft from the one visible",
+        });
       setQueue((all) => all.map((row) => row.message?.id === messageId ? { ...row, message: { ...row.message, ...message } } : row));
       const result = await crmFetch<{
         ok: boolean;
@@ -1354,7 +1384,12 @@ export default function OutreachPage() {
         deliveryLocation: "sent_or_all_mail" | "inbox_or_sent";
         campaignChanged: boolean;
       }>(`/api/crm/outreach/messages/${messageId}/rehearse`, { method: "POST", body: "{}" });
-      if (!result.ok || !result.accepted || (sender?.mailboxEmail && result.sentTo !== sender.mailboxEmail) || result.campaignChanged !== false) throw new Error("The safe rehearsal was not confirmed");
+      if (!result.ok || !result.accepted || (sender?.mailboxEmail && result.sentTo !== sender.mailboxEmail) || result.campaignChanged !== false)
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${messageId}/rehearse`,
+          method: "POST",
+          reason: "LiveCoach did not confirm safe delivery of the rehearsal",
+        });
       setNotice(
         result.provider === "google" && result.deliveryLocation === "sent_or_all_mail"
           ? `Gmail accepted the rehearsal from ${result.from} to ${result.sentTo}. Because this is the same Gmail account, look in Sent or All Mail rather than waiting for a new Inbox message. No prospect was contacted and campaign results did not change.`
@@ -1368,7 +1403,12 @@ export default function OutreachPage() {
     setProspects((all) => all.map((p) => p.id === id ? { ...p, priority: value } : p));
     try {
       const { prospect } = await crmFetch<{ prospect: Prospect }>(`/api/crm/outreach/${id}`, { method: "PATCH", body: JSON.stringify({ priority: value }) });
-      if (prospect?.priority !== value) throw new Error("Priority was not confirmed");
+      if (prospect?.priority !== value)
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different prospect priority from the one selected",
+        });
       setProspects((all) => all.map((item) => item.id === id ? { ...item, ...prospect } : item));
     }
     catch (e: any) {
@@ -1385,7 +1425,12 @@ export default function OutreachPage() {
         method: "PATCH",
         body: JSON.stringify({ assignedToUserId: nextAssignee }),
       });
-      if (!prospect?.id || prospect.assigned_to_user_id !== nextAssignee) throw new Error("Assignment was not confirmed");
+      if (!prospect?.id || prospect.assigned_to_user_id !== nextAssignee)
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/${id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm the selected prospect assignment",
+        });
       setProspects((all) => all.map((item) => item.id === id ? { ...item, ...prospect } : item));
       const member = team.find((item) => item.userId === nextAssignee);
       setNotice(nextAssignee ? `Prospect assigned to ${member?.name || "the selected team member"}.` : "Prospect released from its current owner.");
@@ -1446,7 +1491,12 @@ export default function OutreachPage() {
           booking_cta_mode: campaign.booking_cta_mode,
         }),
       });
-      if (!saved?.id) throw new Error("Campaign was not confirmed");
+      if (!saved?.id)
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/campaigns/${campaign.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not return the saved campaign settings",
+        });
       setCampaigns((all) => all.map((item) => item.id === saved.id ? { ...item, ...saved } : item));
       setNotice("Campaign settings saved.");
     }
@@ -1618,7 +1668,12 @@ export default function OutreachPage() {
         method: "POST",
         body: JSON.stringify({ source: engagementInput }),
       });
-      if (!result.draft?.comment || result.savedToBrain !== false) throw new Error("The private comment draft was not confirmed");
+      if (!result.draft?.comment || result.savedToBrain !== false)
+        throw crmConfirmationError({
+          url: "/api/crm/outreach/engage",
+          method: "POST",
+          reason: "LiveCoach did not confirm a private comment draft that stays outside Brain",
+        });
       setEngagementDraft(result.draft);
       setEngagementComment(result.draft.comment);
       setNotice("Comment ready below. It has not been posted and nothing was saved to Brain.");

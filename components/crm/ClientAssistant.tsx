@@ -2,7 +2,14 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { crmFetch } from "@/lib/crm";
+import {
+  crmConfirmationError,
+  crmErrorFromResponse,
+  crmFetch,
+  crmRequestErrorFromData,
+  notifyCrmRequestError,
+  type CrmRequestError,
+} from "@/lib/crm";
 import {
   foldDictationEvent,
   stabiliseLiveDictationPreview,
@@ -20,15 +27,29 @@ function fullActionLabel(action: any): string {
   return String(action?.label || "CRM change");
 }
 
-function actionConfirmationError(action: any, result: any): string | null {
+function actionConfirmationError(action: any, result: any): CrmRequestError | null {
+  const url = action?.endpoint || "/api/crm/assistant";
+  const method = action?.method || "PATCH";
   if (result?.ok === false)
-    return result?.reason || result?.error || "The server did not confirm that change.";
+    return crmConfirmationError({
+      url,
+      method,
+      reason: result?.error || "LiveCoach reported that the CRM action was not completed",
+    });
   if (Array.isArray(result?.notCompleted) && result.notCompleted.length)
-    return `${result.notCompleted.length} part${
-      result.notCompleted.length === 1 ? " was" : "s were"
-    } not completed.`;
+    return crmConfirmationError({
+      url,
+      method,
+      reason: `${result.notCompleted.length} part${
+        result.notCompleted.length === 1 ? " was" : "s were"
+      } not completed`,
+    });
   if (action?.type === "create_task" && !result?.task?.id)
-    return "The server did not return the saved to-do.";
+    return crmConfirmationError({
+      url: action?.endpoint || "/api/crm/tasks",
+      method: action?.method || "POST",
+      reason: "LiveCoach did not return the saved to-do",
+    });
   return null;
 }
 
@@ -645,7 +666,22 @@ export default function ClientAssistant({
           message: t,
         }),
       });
-      if (!res.ok || !res.body) throw new Error("the assistant is unavailable");
+      if (!res.ok)
+        throw await crmErrorFromResponse(
+          res,
+          "/api/crm/assistant",
+          "POST"
+        );
+      if (!res.body) {
+        const error = crmRequestErrorFromData({
+          data: { error: "The assistant response was empty" },
+          status: 502,
+          url: "/api/crm/assistant",
+          method: "POST",
+        });
+        notifyCrmRequestError(error, "/api/crm/assistant", "POST");
+        throw error;
+      }
       // Read the newline-delimited JSON stream: {type:"delta"} as it writes,
       // then a {type:"done"} with the clean reply + actions + spoken.
       const reader = res.body.getReader();
@@ -675,7 +711,14 @@ export default function ClientAssistant({
           } else if (fr.type === "done") {
             done = fr;
           } else if (fr.type === "error") {
-            throw new Error(fr.error || "assistant error");
+            const error = crmRequestErrorFromData({
+              data: { error: fr.error },
+              status: 503,
+              url: "/api/crm/assistant",
+              method: "POST",
+            });
+            notifyCrmRequestError(error, "/api/crm/assistant", "POST");
+            throw error;
           }
         }
       }
@@ -708,7 +751,9 @@ export default function ClientAssistant({
     } catch (e: any) {
       setLastAssistant((m) => ({
         ...m,
-        content: `(couldn't answer: ${e?.message || "try again"})`,
+        content:
+          e?.message ||
+          "Brain answer not confirmed. LiveCoach could not complete the request. Refresh and try once more.",
       }));
     } finally {
       setBusy(false);
@@ -980,7 +1025,12 @@ export default function ClientAssistant({
           }),
         }
       );
-      if (!saved.receipt?.id) throw new Error("The receipt was not confirmed");
+      if (!saved.receipt?.id)
+        throw crmConfirmationError({
+          url: "/api/crm/assistant/receipts",
+          method: "POST",
+          reason: "LiveCoach did not return the saved Brain action receipt",
+        });
       setMessages((current) => [...current, saved.receipt]);
       setReceiptWarning("");
     } catch {
@@ -1024,7 +1074,7 @@ export default function ClientAssistant({
         body: JSON.stringify(a.body || {}),
       });
       const confirmationError = actionConfirmationError(a, result);
-      if (confirmationError) throw new Error(confirmationError);
+      if (confirmationError) throw confirmationError;
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       setActionResults((current) => ({ ...current, [a.key]: result }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
@@ -1082,7 +1132,7 @@ export default function ClientAssistant({
         body: JSON.stringify(c.body || {}),
       });
       const confirmationError = actionConfirmationError(a, result);
-      if (confirmationError) throw new Error(confirmationError);
+      if (confirmationError) throw confirmationError;
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       setActionResults((current) => ({ ...current, [a.key]: result }));
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import NavMenu from "@/components/crm/NavMenu";
-import { crmFetch, getCached } from "@/lib/crm";
+import { crmConfirmationError, crmFetch, getCached } from "@/lib/crm";
 import MatrixRain from "@/components/MatrixRain";
 
 type Period = "today" | "week" | "month" | "all";
@@ -88,7 +88,12 @@ export default function CostsPage() {
         method: "PUT",
         body: JSON.stringify({ mode }),
       });
-      if (saved.mode !== mode) throw new Error("The intelligence mode was not confirmed");
+      if (saved.mode !== mode)
+        throw crmConfirmationError({
+          url: "/api/crm/ai-mode",
+          method: "PUT",
+          reason: "LiveCoach returned a different intelligence mode from the one selected",
+        });
     } catch (reason: any) {
       setAiMode(previous);
       setError(reason?.message || "The intelligence mode did not save.");

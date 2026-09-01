@@ -3,7 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { crmFetch, getCached, setCached } from "@/lib/crm";
+import {
+  crmConfirmationError,
+  crmFetch,
+  getCached,
+  setCached,
+} from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
 
 type Task = {
@@ -196,7 +201,12 @@ export default function TaskList({
         method: "PATCH",
         body: JSON.stringify({ status: "done" }),
       });
-      if (result.task?.status !== "done") throw new Error("status not saved");
+      if (result.task?.status !== "done")
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${t.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm that the to-do was completed",
+        });
       savedEverywhere();
     } catch {
       closedIds.current.delete(t.id);
@@ -225,7 +235,11 @@ export default function TaskList({
           }
         );
         if (!result.ok) {
-          throw new Error("calendar exclusion was not confirmed");
+          throw crmConfirmationError({
+            url: `/api/crm/upcoming/${t.upcoming_id}`,
+            method: "DELETE",
+            reason: "LiveCoach did not confirm that the calendar item was hidden",
+          });
         }
       } else {
         const result = await crmFetch<{ task: Task }>(`/api/crm/tasks/${t.id}`, {
@@ -233,7 +247,11 @@ export default function TaskList({
           body: JSON.stringify({ status: "dismissed" }),
         });
         if (result.task?.status !== "dismissed")
-          throw new Error("status not saved");
+          throw crmConfirmationError({
+            url: `/api/crm/tasks/${t.id}`,
+            method: "PATCH",
+            reason: "LiveCoach did not confirm that the to-do was removed",
+          });
       }
       savedEverywhere();
     } catch {
@@ -269,7 +287,12 @@ export default function TaskList({
         method: "PATCH",
         body: JSON.stringify({ text }),
       });
-      if (result.task?.text !== text) throw new Error("text not saved");
+      if (result.task?.text !== text)
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${t.id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned different to-do text from the edit saved",
+        });
       savedEverywhere();
     } catch {
       showTasks(previous);
@@ -296,7 +319,11 @@ export default function TaskList({
         body: JSON.stringify({ payload }),
       });
       if (Boolean(result.task?.payload?.pinned) !== pinned)
-        throw new Error("pin not saved");
+        throw crmConfirmationError({
+          url: `/api/crm/tasks/${t.id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different pin setting from the one selected",
+        });
       savedEverywhere();
     } catch {
       showTasks(previous);
@@ -417,7 +444,12 @@ export default function TaskList({
         { method: "POST", body: JSON.stringify({ taskIds: selected }) }
       );
       const updated = new Set(result.updatedIds || []);
-      if (!updated.size) throw new Error("No selected to-dos were removed");
+      if (!updated.size)
+        throw crmConfirmationError({
+          url: "/api/crm/tasks/bulk",
+          method: "POST",
+          reason: "LiveCoach did not confirm removal of any selected to-dos",
+        });
       updated.forEach((id) => closedIds.current.add(id));
       showTasks(tasks.filter((task) => !updated.has(task.id)));
       setSelectedIds([]);

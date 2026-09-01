@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MatrixRain from "@/components/MatrixRain";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import OutreachVoiceNoteEditor from "@/components/crm/OutreachVoiceNoteEditor";
-import { crmFetch } from "@/lib/crm";
+import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { outreachProspectHref } from "@/lib/crm-navigation";
 import {
   OUTREACH_DAILY_HARD_LIMIT,
@@ -524,7 +524,11 @@ export default function OutreachTodayLane({
         result.audioGenerated !== false ||
         result.emailPreserved !== true
       ) {
-        throw new Error("The text voice script was not confirmed safely");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${message.id}/voice-script`,
+          method: "POST",
+          reason: "LiveCoach did not confirm a safe text-only voice script",
+        });
       }
       updatePrepareJob(prospectId, "done");
       setQueue((currentQueue) =>
@@ -590,7 +594,11 @@ export default function OutreachTodayLane({
       );
       if (approveAndQueue) {
         if (saved.message?.status !== "approved")
-          throw new Error("The exact draft was not approved");
+          throw crmConfirmationError({
+            url: `/api/crm/outreach/messages/${message.id}`,
+            method: "PATCH",
+            reason: "LiveCoach did not confirm approval of the exact visible draft",
+          });
         await crmFetch(`/api/crm/outreach/messages/${message.id}/send`, {
           method: "POST",
           body: "{}",
@@ -642,7 +650,11 @@ export default function OutreachTodayLane({
         }
       );
       if (!approved.message?.voice_script_approved_at)
-        throw new Error("The exact voice script was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${message.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm approval of the exact voice script",
+        });
       const generated = await crmFetch<{
         message: OutreachMessage;
         reused: boolean;
@@ -651,7 +663,11 @@ export default function OutreachTodayLane({
         body: "{}",
       });
       if (generated.message?.voice_status !== "ready")
-        throw new Error("The voice preview was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${message.id}/voice`,
+          method: "POST",
+          reason: "LiveCoach did not confirm that the voice preview is ready",
+        });
       setNotice(
         generated.reused
           ? "The existing personal voice note is ready to preview."
@@ -697,7 +713,11 @@ export default function OutreachTodayLane({
         saved.message.subject !== edit.subject.trim() ||
         saved.message.body_text !== edit.body.trim()
       )
-        throw new Error("The exact visible draft was not saved for rehearsal");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${message.id}`,
+          method: "PATCH",
+          reason: "LiveCoach returned a different rehearsal draft from the one visible",
+        });
       const result = await crmFetch<{
         ok: boolean;
         accepted: boolean;
@@ -716,7 +736,11 @@ export default function OutreachTodayLane({
         (sender?.mailboxEmail && result.sentTo !== sender.mailboxEmail) ||
         result.campaignChanged !== false
       )
-        throw new Error("The safe rehearsal was not confirmed");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${message.id}/rehearse`,
+          method: "POST",
+          reason: "LiveCoach did not confirm safe delivery of the rehearsal",
+        });
       setNotice(
         result.provider === "google"
           ? "Gmail accepted the rehearsal. Find it in Sent or All Mail. The prospect and campaign were untouched."
@@ -760,7 +784,11 @@ export default function OutreachTodayLane({
         }
       );
       if (!result.message?.id)
-        throw new Error("The booking reply was not saved");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/replies/${item.sourceId}/draft`,
+          method: "POST",
+          reason: "LiveCoach did not return the saved booking reply",
+        });
       setReplyDrafts((current) => ({
         ...current,
         [item.sourceId]: result.message,
@@ -830,7 +858,11 @@ export default function OutreachTodayLane({
         return;
       }
       if (saved.message?.status !== "approved")
-        throw new Error("The exact reply was not approved");
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${message.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm approval of the exact reply",
+        });
 
       await crmFetch(`/api/crm/outreach/${item.sourceId}/next-action`, {
         method: "POST",
@@ -843,7 +875,12 @@ export default function OutreachTodayLane({
         method: "POST",
         body: "{}",
       });
-      if (!queued.queued) throw new Error("The send queue was not confirmed");
+      if (!queued.queued)
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/messages/${message.id}/send`,
+          method: "POST",
+          reason: "LiveCoach did not confirm that the reply entered the send queue",
+        });
       setReplyDrafts((current) => ({
         ...current,
         [item.sourceId]: {

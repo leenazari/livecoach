@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { crmFetch } from "@/lib/crm";
 
 export default function DigestTestPage() {
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
@@ -13,18 +14,19 @@ export default function DigestTestPage() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/crm/digest-test", { method: "POST" });
-      const result = (await response.json()) as { ok?: boolean; error?: string };
-
-      if (!response.ok || !result.ok) {
-        throw new Error(result.error || "The test email could not be sent.");
-      }
+      await crmFetch<{ ok: true }>("/api/crm/digest-test", {
+        method: "POST",
+      });
 
       setStatus("sent");
       setMessage("Test brief sent to your connected email address.");
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "The test email could not be sent.");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Test email was not confirmed. Refresh the page and try once more."
+      );
     }
   }
 

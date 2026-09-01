@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { crmFetch, type Contact } from "@/lib/crm";
+import { crmConfirmationError, crmFetch, type Contact } from "@/lib/crm";
 
 type StakeholderRole =
   | "decision_maker"
@@ -134,7 +134,12 @@ export default function StakeholderMap({
           body: JSON.stringify({ attributes: optimistic.attributes }),
         }
       );
-      if (!saved?.id) throw new Error("stakeholder was not confirmed");
+      if (!saved?.id)
+        throw crmConfirmationError({
+          url: `/api/crm/contacts/${contact.id}`,
+          method: "PATCH",
+          reason: `LiveCoach did not return the saved stakeholder change for ${contact.name}`,
+        });
       onSaved(saved);
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
     } catch {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { crmFetch } from "@/lib/crm";
 
 type TutorialStatus =
   | "not_started"
@@ -162,12 +163,6 @@ export const SALES_OUTREACH_TUTORIAL_STEPS: Step[] = [
 
 const API = "/api/crm/tutorial";
 
-async function readJson(response: Response) {
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "The tutorial could not be updated");
-  return data as TutorialResponse;
-}
-
 export default function SalesOutreachTutorial() {
   const pathname = usePathname() || "/crm";
   const searchParams = useSearchParams();
@@ -191,18 +186,14 @@ export default function SalesOutreachTutorial() {
       setSaving(true);
       setError("");
       try {
-        return await readJson(
-          await fetch(API, {
-            method: "PUT",
-            cache: "no-store",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              status,
-              currentStep: nextStep,
-              lastPath: currentPath,
-            }),
-          })
-        );
+        return await crmFetch<TutorialResponse>(API, {
+          method: "PUT",
+          body: JSON.stringify({
+            status,
+            currentStep: nextStep,
+            lastPath: currentPath,
+          }),
+        });
       } catch (nextError: any) {
         setError(nextError?.message || "Your tutorial progress was not saved");
         return null;
@@ -217,8 +208,7 @@ export default function SalesOutreachTutorial() {
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
     let active = true;
-    void fetch(API, { cache: "no-store" })
-      .then(readJson)
+    void crmFetch<TutorialResponse>(API)
       .then((data) => {
         if (!active) return;
         const savedStep = Math.min(

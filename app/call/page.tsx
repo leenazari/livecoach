@@ -13,7 +13,7 @@ import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
 import { consumeArmedCallLaunch } from "@/lib/call-launch";
-import { crmFetch } from "@/lib/crm";
+import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { validMeetingUrl } from "@/lib/meeting-url";
 import { cleanResearchBackground } from "@/lib/research-format";
 import { pickPrimaryAttendee } from "@/lib/calendar-subject";
@@ -644,8 +644,7 @@ export default function CallPage() {
   // frequency, not model quality: a requested cue still uses Terra in every
   // mode. The user can still override each control during the call.
   useEffect(() => {
-    fetch("/api/crm/ai-mode", { cache: "no-store" })
-      .then((r) => r.json())
+    crmFetch<{ mode?: string }>("/api/crm/ai-mode")
       .then((d) => {
         if (d?.mode === "economical") {
           setCueSpeed("slow");
@@ -748,8 +747,7 @@ export default function CallPage() {
       setBattlecard(null);
       return;
     }
-    fetch(`/api/crm/companies/${id}`)
-      .then((r) => r.json())
+    crmFetch<any>(`/api/crm/companies/${id}`)
       .then(async (d) => {
         const departmentNames = new Map(
           (Array.isArray(d?.departments) ? d.departments : []).map(
@@ -773,9 +771,8 @@ export default function CallPage() {
           linkedWorkstreamRef.current = choices[0];
           setLinkedWorkstream(choices[0]);
           if (upcomingIdRef.current) {
-            fetch(`/api/crm/upcoming/${upcomingIdRef.current}`, {
+            crmFetch(`/api/crm/upcoming/${upcomingIdRef.current}`, {
               method: "PATCH",
-              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ workstreamId: choices[0].id }),
             }).catch(() => {});
           }
@@ -801,13 +798,14 @@ export default function CallPage() {
         let thread: any = null;
         if (linkedWorkstream?.id) {
           try {
-            const threadResponse = await fetch(
-              `/api/crm/workstreams/${linkedWorkstream.id}`,
-              { cache: "no-store" }
+            thread = await crmFetch(
+              `/api/crm/workstreams/${linkedWorkstream.id}`
             );
-            if (threadResponse.ok) thread = await threadResponse.json();
-          } catch {
-            /* thread context is best-effort */
+          } catch (error: any) {
+            setStatus(
+              error?.message ||
+                "Relationship context could not be loaded. Refresh the prep screen and try once more."
+            );
           }
         }
         const savedEmailContext = linkedWorkstream?.id
@@ -859,7 +857,12 @@ export default function CallPage() {
         const derived = fromCompany || websiteFromEmail(workEmail);
         if (derived) setPublicLink((prev) => (prev.trim() ? prev : derived));
       })
-      .catch(() => {});
+      .catch((error: any) =>
+        setStatus(
+          error?.message ||
+            "Company context could not be loaded. Refresh the prep screen and try once more."
+        )
+      );
   }, [linkedCompany?.id, linkedWorkstream?.id]);
 
   // Save the email summary back to the client so the planner reads the latest.
@@ -871,13 +874,12 @@ export default function CallPage() {
     if (!id || !clientEmailCtx.trim()) return;
     setEmailCtxSaving(true);
     try {
-      await fetch(
+      await crmFetch(
         workstreamId
           ? `/api/crm/workstreams/${workstreamId}`
           : `/api/crm/companies/${id}`,
         {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_context: clientEmailCtx }),
         }
       );
@@ -895,9 +897,8 @@ export default function CallPage() {
   // safe to call when linking, at go-live, and at end (the session row exists by
   // then). Never blocks the call.
   const linkSession = useCallback(() => {
-    fetch("/api/crm/link-session", {
+    crmFetch("/api/crm/link-session", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sessionId: room,
         companyId: linkedCompanyRef.current?.id || null,
@@ -931,25 +932,29 @@ export default function CallPage() {
         (thread) => thread.id === workstreamId
       );
       if (!chosen) return;
-      linkedWorkstreamRef.current = chosen;
-      setLinkedWorkstream(chosen);
-      if (upcomingIdRef.current) {
-        const response = await fetch(
-          `/api/crm/upcoming/${upcomingIdRef.current}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ workstreamId: chosen.id }),
-          }
-        );
-        if (!response.ok) {
+      try {
+        linkedWorkstreamRef.current = chosen;
+        setLinkedWorkstream(chosen);
+        if (upcomingIdRef.current) {
+          await crmFetch(
+            `/api/crm/upcoming/${upcomingIdRef.current}`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({ workstreamId: chosen.id }),
+            }
+          );
+        }
+        linkSession();
+      } catch (error: any) {
+        if (upcomingIdRef.current) {
           linkedWorkstreamRef.current = null;
           setLinkedWorkstream(null);
-          setStatus("That relationship did not save. Please choose it again.");
-          return;
+          setStatus(
+            error?.message ||
+              "Relationship selection was not confirmed. Refresh the call and choose it again."
+          );
         }
       }
-      linkSession();
     },
     [linkSession, workstreamChoices]
   );
@@ -1076,9 +1081,10 @@ export default function CallPage() {
       setUpcomingId(upcoming);
       (async () => {
         try {
-          const res = await fetch(`/api/crm/upcoming/${upcoming}`);
-          if (res.ok) {
-            const { call } = await res.json();
+          const { call } = await crmFetch<{ call: any }>(
+            `/api/crm/upcoming/${upcoming}`
+          );
+          if (call) {
             if (call?.company_id && call?.company && !linkedCompanyRef.current) {
               handleLinkCompany({ id: call.company_id, name: call.company });
             }
@@ -1176,9 +1182,8 @@ export default function CallPage() {
                 const emailGuest = guest;
                 if (emailGuest?.email) {
                   try {
-                    const mailRes = await fetch("/api/crm/email-pull", {
+                    const mail = await crmFetch<any>("/api/crm/email-pull", {
                       method: "POST",
-                      headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
                         companyId: call.company_id,
                         workstreamId: call.workstream_id || undefined,
@@ -1187,9 +1192,7 @@ export default function CallPage() {
                         email: emailGuest.email,
                       }),
                     });
-                    const mail = await mailRes.json();
                     if (
-                      mailRes.ok &&
                       typeof mail.emailContext === "string" &&
                       mail.emailContext.trim()
                     ) {
@@ -1204,32 +1207,22 @@ export default function CallPage() {
                           ? "Latest matching email loaded"
                           : "Latest matching email refreshed"
                       );
-                    } else if (mailRes.status === 404) {
-                      setEmailPullNote(
-                        "No matching email conversation found for this person"
-                      );
-                    } else if (mailRes.status === 409) {
-                      setEmailPullNote(
-                        typeof mail.error === "string" && mail.error.trim()
-                          ? mail.error
-                          : "The meeting's lead person could not be identified safely"
-                      );
                     }
-                  } catch {
-                    /* Gmail context is best-effort */
+                  } catch (error: any) {
+                    setEmailPullNote(
+                      error?.message ||
+                        "Email context could not be refreshed. Check the mailbox connection and try once more."
+                    );
                   }
                 }
-                const r = await fetch(
+                const fresh = await crmFetch<any>(
                   `/api/crm/companies/${call.company_id}/prep-intent`,
                   {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ concise: true, upcomingId: upcoming }),
                   }
                 );
-                const fresh = await r.json();
                 if (
-                  r.ok &&
                   typeof fresh.intent === "string" &&
                   fresh.intent.trim() &&
                   !intentEditedRef.current
@@ -1300,7 +1293,11 @@ export default function CallPage() {
                       })
                         .then((saved) => {
                           if (!saved.ok || saved.call?.intent !== it2)
-                            throw new Error("intent not confirmed");
+                            throw crmConfirmationError({
+                              url: `/api/crm/upcoming/${upcomingIdRef.current}`,
+                              method: "PATCH",
+                              reason: "LiveCoach returned different call intent from the text saved",
+                            });
                         })
                         .catch(() =>
                           setStatus(
@@ -1315,8 +1312,11 @@ export default function CallPage() {
               })();
             }
           }
-        } catch {
-          /* best-effort reload */
+        } catch (error: any) {
+          setStatus(
+            error?.message ||
+              "Scheduled call context could not be loaded. Refresh the prep screen and try once more."
+          );
         } finally {
           setIntentLoading(false);
           // Only allow auto-save once any existing plan has been reloaded.
@@ -1376,7 +1376,11 @@ export default function CallPage() {
       })
         .then((saved) => {
           if (!saved.ok || !saved.call?.prep)
-            throw new Error("prep not confirmed");
+            throw crmConfirmationError({
+              url: `/api/crm/upcoming/${upcomingIdRef.current}`,
+              method: "PATCH",
+              reason: "LiveCoach did not confirm that the call preparation was saved",
+            });
           lastPrepSigRef.current = sig;
         })
         .catch(() =>
