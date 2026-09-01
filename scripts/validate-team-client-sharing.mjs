@@ -23,6 +23,9 @@ const serviceBoundaryMigration = read(
 const confidentialityMigration = read(
   "supabase/migrations/20260823224104_add_company_confidentiality_lock.sql"
 );
+const sharedReadAccessMigration = read(
+  "supabase/migrations/20260901104524_fix_shared_client_read_access.sql"
+);
 const sharingHelper = read("lib/team-client-sharing.ts");
 const sharingPolicy = read("lib/client-sharing-policy.ts");
 const companyRoute = read("app/api/crm/companies/[id]/route.ts");
@@ -93,6 +96,18 @@ assert.match(confidentialityMigration, /set_company_confidentiality_service/);
 assert.match(confidentialityMigration, /client_confidential boolean/);
 assert.match(confidentialityMigration, /if p_shared and client_confidential then/);
 assert.match(confidentialityMigration, /Strategic and confidential partner records stay private|strategic\|major\|large\|confidential\|private/i);
+const sharedReadPolicy =
+  sharedReadAccessMigration.match(
+    /create policy "Members read active shared clients"[\s\S]*?\n  \);/
+  )?.[0] || "";
+assert.match(sharedReadPolicy, /workspace_members/);
+assert.match(sharedReadPolicy, /team_client_shares\.status = 'active'/);
+assert.match(sharedReadPolicy, /wm\.status = 'active'/);
+assert.doesNotMatch(
+  sharedReadPolicy,
+  /from public\.companies/,
+  "A shared grant must not disappear because the assignee cannot read its private source company"
+);
 assert.match(
   confidentialityMigration,
   /revoke all on function public\.set_company_confidentiality_service[\s\S]*?from public, anon, authenticated/i
