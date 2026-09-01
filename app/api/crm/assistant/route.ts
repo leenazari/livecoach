@@ -22,6 +22,7 @@ import {
 } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
 import { RELATIONSHIP_STAGE_BY_KEY } from "@/lib/relationship-stages";
+import { clampOutreachDailyLimit } from "@/lib/outreach-limits";
 import { resolveExistingCompany } from "@/lib/company-resolver";
 import {
   callTranscriptRequested,
@@ -874,7 +875,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
           goal,
           audience,
           offer_angle: offerAngle,
-          daily_limit: Math.min(20, Math.max(1, Number(it.dailyLimit) || 20)),
+          daily_limit: clampOutreachDailyLimit(it.dailyLimit),
         },
       });
       continue;
@@ -887,7 +888,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       if (typeof it.goal === "string" && it.goal.trim()) patch.goal = it.goal.trim();
       if (typeof it.audience === "string" && it.audience.trim()) patch.audience = it.audience.trim();
       if (typeof it.offerAngle === "string" && it.offerAngle.trim()) patch.offer_angle = it.offerAngle.trim();
-      if (it.dailyLimit != null) patch.daily_limit = Math.min(20, Math.max(1, Number(it.dailyLimit) || 20));
+      if (it.dailyLimit != null) patch.daily_limit = clampOutreachDailyLimit(it.dailyLimit);
       if (["draft", "active", "paused", "completed"].includes(it.status)) patch.status = it.status;
       if (it.voice && typeof it.voice === "object") patch.voice = it.voice;
       if (Array.isArray(it.bannedPhrases)) patch.banned_phrases = it.bannedPhrases;
@@ -910,7 +911,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
     if (it.type === "build_outreach_queue") {
       const campaign = await findCampaign("");
       if (!campaign || campaign.status !== "active") continue;
-      const limit = Math.min(20, Math.max(1, Number(it.limit) || 20));
+      const limit = clampOutreachDailyLimit(it.limit);
       out.push({
         key,
         type: it.type,
@@ -1606,9 +1607,9 @@ Additional supported actions are:
 {"type":"upsert_stakeholder","client":"<client name, omit on their profile>","person":"<contact name>","buyingRole":"decision_maker|champion|user|influencer|blocker|unknown","influence":"high|medium|low","engagement":"warm|neutral|cold","jobTitle":"<optional>","email":"<optional>"}
 {"type":"update_contact","client":"<client name, omit on their profile>","person":"<existing contact name>","newName":"<optional corrected name>","role":"<optional, null to clear>","email":"<optional, null to clear>","sector":"<optional, null to clear>","notes":"<optional, null to clear>"}
 {"type":"update_task","client":"<client name, omit on their profile>","item":"<existing to-do text>","status":"done|open","newText":"<optional replacement>","dueAt":"YYYY-MM-DD or null","pinned":true,"action":"email|call|task"}
-{"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":20}
-{"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":20,"status":"draft|active|paused|completed"}
-{"type":"build_outreach_queue","limit":20}
+{"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":50}
+{"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":50,"status":"draft|active|paused|completed"}
+{"type":"build_outreach_queue","limit":50}
 {"type":"send_email","recipientName":"<person name>","email":"<exact recipient email when known>","company":"<optional company>","subject":"<exact approved subject>","body":"<exact approved body including a simple do not follow up line, then ${OUTREACH_EMAIL_DEMO_REPLY_CTA}, then the signature>"}
 {"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","dealIntent":"<the commercial outcome this deal is pursuing>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","winOutlook":"not_assessed|at_risk|possible|likely|highly_likely|won","winOutlookConfidence":0,"winOutlookReasons":["<stored evidence only>"],"winOutlookQuestions":["<targeted next-call question>"],"engagementMotion":"cold_outreach_campaign|personal_relationship_led|existing_customer_expansion|inbound_enquiry|partner_referral","activeContactMethod":"automated_email|personal_email|phone|video_call|linkedin|event|in_person|other","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>","rationale":"<why this change is supported>"}
 {"type":"resolve_opportunity_clarification","clarificationId":"<exact id from PENDING PIPELINE CONFIRMATIONS>","decision":"same_deal|separate_workstream|not_an_opportunity","workstreamName":"<required only for a separate workstream>"}

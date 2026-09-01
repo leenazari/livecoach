@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { clampOutreachDailyLimit } from "@/lib/outreach-limits";
 import { sanitizeOutreachSequence } from "@/lib/outreach-sequence";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -16,7 +17,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     for (const key of ["name", "goal", "audience", "offer_angle"]) if (typeof body[key] === "string" && body[key].trim()) patch[key] = body[key].trim();
     if (["draft", "active", "paused", "completed"].includes(body.status)) patch.status = body.status;
-    if (body.daily_limit != null) patch.daily_limit = Math.min(20, Math.max(1, Number(body.daily_limit) || 20));
+    if (body.daily_limit != null) patch.daily_limit = clampOutreachDailyLimit(body.daily_limit);
     if (Array.isArray(body.sequence)) {
       const result = sanitizeOutreachSequence(body.sequence);
       if (result.error) {

@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
 import {
+  clampOutreachDailyLimit,
   londonDate,
-  OUTREACH_DAILY_HARD_LIMIT,
   outreachCrmGuard,
   prospectHasBlockedCrmRelationship,
 } from "@/lib/outreach";
@@ -287,6 +287,7 @@ export async function GET() {
       queue: await loadQueue(account.userId, account.workspaceId),
       sender,
       selectedCampaignId: selection.selectedCampaignId,
+      dailyLimit: clampOutreachDailyLimit(selection.campaign?.daily_limit),
     });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || "failed to load queue" }, { status: 500 });
@@ -321,7 +322,11 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    const limit = Math.min(OUTREACH_DAILY_HARD_LIMIT, Math.max(1, Number(body.limit) || campaign.daily_limit || 20));
+    const campaignDailyLimit = clampOutreachDailyLimit(campaign.daily_limit);
+    const requestedDailyLimit = body.limit == null
+      ? campaignDailyLimit
+      : clampOutreachDailyLimit(body.limit);
+    const limit = Math.min(campaignDailyLimit, requestedDailyLimit);
     const today = londonDate();
     // The hard limit applies to the salesperson's entire day, not separately
     // to every campaign. The selected campaign controls where new work comes
@@ -499,6 +504,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         date: today,
         queue,
+        dailyLimit: limit,
         added: previous ? 0 : 1,
         selection: {
           contactToday: 1,
@@ -513,6 +519,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         date: today,
         queue: await loadQueue(account.userId, account.workspaceId),
+        dailyLimit: limit,
         added: 0,
         selection: {
           contactToday: 0,
@@ -716,6 +723,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       date: today,
       queue,
+      dailyLimit: limit,
       added: Math.max(0, queue.length - existing.length),
       selection,
     });

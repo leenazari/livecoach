@@ -3,6 +3,7 @@ import { sendConnectedOutreachMail } from "@/lib/mail";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { outreachVoicePublicUrl } from "@/lib/outreach-voice-note";
 import {
+  clampOutreachDailyLimit,
   emailDomain,
   londonDate,
   londonDayBounds,
@@ -361,10 +362,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     .eq("sender_user_id", sender.userId)
     .gte("sent_at", start)
     .lt("sent_at", end);
-  const dailyLimit = Math.min(
-    OUTREACH_DAILY_HARD_LIMIT,
-    isBrainDirect ? OUTREACH_DAILY_HARD_LIMIT : Number(campaign.daily_limit) || 20
-  );
+  const dailyLimit = isBrainDirect ? OUTREACH_DAILY_HARD_LIMIT : clampOutreachDailyLimit(campaign.daily_limit);
   if ((count || 0) >= dailyLimit) {
     const retry = await reserveOutreachDelivery(
       message.id,
