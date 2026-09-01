@@ -55,6 +55,8 @@ assert.match(tasks, /\.eq\("workspace_id", accountScope\.workspaceId\)[\s\S]*\.e
 assert.match(taskRoute, /const account = await resolveRecordScope\(\)/);
 assert.match(taskRoute, /from\("tasks"\)[\s\S]*\.eq\("workspace_id", account\.workspaceId\)[\s\S]*\.eq\("owner_id", account\.userId\)/);
 assert.match(taskRoute, /from\("upcoming_calls"\)[\s\S]*\.eq\("workspace_id", account\.workspaceId\)[\s\S]*\.eq\("owner_id", account\.userId\)/);
+assert.match(taskRoute, /activeSharedClientIds\(account\.workspaceId, account\.userId\)/);
+assert.match(taskRoute, /loadSafeSharedCompanies/);
 assert.doesNotMatch(taskRoute, /from\("companies"\)\.select\("id, name"\)\s*[,)]/);
 
 console.log("Sales Today inline workflow checks passed");

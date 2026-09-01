@@ -75,6 +75,21 @@ assert.match(dashboard, /entity: "upcoming" as const/);
 assert.match(dashboardPage, /entity\?: "task" \| "activity" \| "upcoming"/);
 assert.match(dashboardPage, /dismissTodayUpcoming/);
 assert.match(dashboardPage, /`\/api\/crm\/upcoming\/\$\{item\.id\}`/);
+assert.match(dashboardPage, /→"\} Your task list/);
+assert.match(
+  dashboardPage,
+  /Your task list[\s\S]*?<TaskList[\s\S]*?showCompany[\s\S]*?allowBulk/
+);
+assert.match(dashboardPage, /Tick to complete\. Click a task to start it/);
+assert.doesNotMatch(dashboardPage, /clientlessOnly/);
+assert.ok(
+  dashboardPage.indexOf("Your task list") < dashboardPage.indexOf("<UpcomingCalls"),
+  "The complete task list must appear above upcoming calls on Today"
+);
+assert.match(taskList, /body: JSON\.stringify\(\{ status: "done" \}\)/);
+assert.match(taskList, /const runAction = \(t: Task, a: string\)/);
+assert.match(taskList, /const saveEdit = async \(t: Task\)/);
+assert.match(taskList, /const togglePin = async \(t: Task\)/);
 assert.match(workInboxRoute, /kind: "prep"[\s\S]{0,1200}dismissible: true/);
 assert.match(workInbox, /const dismissedItemIds = useRef\(new Set<string>\(\)\)/);
 assert.match(workInbox, /item\.kind !== "prep"/);
