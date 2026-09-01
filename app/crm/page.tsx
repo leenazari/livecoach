@@ -152,8 +152,6 @@ export default function DashboardPage() {
     }
   });
   const [modeSaving, setModeSaving] = useState(false);
-  const [editingTodayId, setEditingTodayId] = useState<string | null>(null);
-  const [editingTodayText, setEditingTodayText] = useState("");
   const [todaySavingId, setTodaySavingId] = useState<string | null>(null);
   const [todaySaveError, setTodaySaveError] = useState("");
   const dashboardSeq = useRef(0);
@@ -178,50 +176,6 @@ export default function DashboardPage() {
     // is exactly what made a successfully saved task appear to come back.
     setDash(next);
   }, []);
-
-  const saveTodayTask = async (
-    item: TodayItem,
-    change: { text?: string; status?: "done" | "dismissed" }
-  ) => {
-    const previous = dash;
-    dashboardSeq.current += 1;
-    if (change.status) {
-      closedTodayIds.current.add(item.id);
-      setDash((current) => changeTodayTask(current, item.id, () => null));
-    } else if (change.text) {
-      setDash((current) =>
-        changeTodayTask(current, item.id, (task) => ({ ...task, text: change.text! }))
-      );
-    }
-    setTodaySaveError("");
-    setTodaySavingId(item.id);
-    try {
-      const result = await crmFetch<{ task: { id: string; text: string; status: string } }>(`/api/crm/tasks/${item.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(change),
-      });
-      if (change.status && result.task?.status !== change.status)
-        throw crmConfirmationError({
-          url: `/api/crm/tasks/${item.id}`,
-          method: "PATCH",
-          reason: "LiveCoach returned a different to-do status from the one selected",
-        });
-      if (change.text && result.task?.text !== change.text)
-        throw crmConfirmationError({
-          url: `/api/crm/tasks/${item.id}`,
-          method: "PATCH",
-          reason: "LiveCoach returned different to-do text from the edit saved",
-        });
-      setEditingTodayId(null);
-      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-    } catch {
-      closedTodayIds.current.delete(item.id);
-      setDash(previous);
-      setTodaySaveError("That change did not save. Please try again.");
-    } finally {
-      setTodaySavingId(null);
-    }
-  };
 
   const resolveTodayActivity = async (
     item: TodayItem,
@@ -458,6 +412,9 @@ export default function DashboardPage() {
         ["Cooling deals", dash.today.coolingDeals, "text-muted"],
       ] as const
     : [];
+  const otherTodayActions = (dash?.today?.topActions || []).filter(
+    (item) => item.entity !== "task"
+  );
 
   const modeCopy: Record<AiMode, string> = {
     economical: "Slow automatic cues, Terra ideas off",
@@ -560,9 +517,32 @@ export default function DashboardPage() {
             {todaySaveError}
           </p>
         )}
-        {dash?.today?.topActions?.length ? (
+        <div className="mb-4 rounded-xl border border-amber/35 bg-ink/50 p-3 sm:p-4">
+          <div className="mb-2.5 flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+                {"→"} Your task list
+              </p>
+              <p className="mt-1 font-sans text-[0.76rem] text-bone/65">
+                Tick to complete. Click a task to start it, or edit and pin it here.
+              </p>
+            </div>
+            <Link
+              href="/crm/board?tab=tasks"
+              className="font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:text-amber"
+            >
+              see all ↗
+            </Link>
+          </div>
+          <TaskList
+            showCompany
+            allowBulk
+            emptyText="Nothing is waiting on you."
+          />
+        </div>
+        {otherTodayActions.length ? (
           <ol className="mb-4 grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-            {dash.today.topActions.map((item, i) => (
+            {otherTodayActions.map((item, i) => (
               <li key={`${item.reason}-${item.id}`}>
                 <div className="group flex h-full flex-col rounded-xl border border-edge bg-ink/55 p-3 transition hover:border-amber/60">
                   <div className="mb-1 flex items-center justify-between gap-2">
@@ -571,39 +551,15 @@ export default function DashboardPage() {
                     </span>
                     <span className="text-muted transition group-hover:text-amber">↗</span>
                   </div>
-                  {editingTodayId === item.id ? (
-                    <input
-                      autoFocus
-                      value={editingTodayText}
-                      onChange={(e) => setEditingTodayText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") e.currentTarget.blur();
-                        if (e.key === "Escape") setEditingTodayId(null);
-                      }}
-                      onBlur={() => {
-                        const text = editingTodayText.trim();
-                        if (text && text !== item.text) saveTodayTask(item, { text });
-                        else setEditingTodayId(null);
-                      }}
-                      className="w-full rounded-md border border-amber/50 bg-ink px-2 py-1 font-sans text-[0.86rem] text-bone outline-none"
-                    />
-                  ) : (
-                    <Link href={item.href} className="font-sans text-[0.86rem] leading-snug text-bone hover:text-amber">
-                      {capitaliseSentenceStarts(item.text)}
-                    </Link>
-                  )}
+                  <Link href={item.href} className="font-sans text-[0.86rem] leading-snug text-bone hover:text-amber">
+                    {capitaliseSentenceStarts(item.text)}
+                  </Link>
                   <div className="mt-auto flex items-end justify-between gap-2 pt-2">
                     <p className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
                       {item.company || "General"}
                       {item.at ? ` · ${shortDate(item.at)}` : ""}
                     </p>
-                    {item.entity === "task" ? (
-                      <span className="flex items-center gap-1">
-                        <button type="button" disabled={todaySavingId === item.id} onClick={() => { setEditingTodayId(item.id); setEditingTodayText(item.text); }} className="rounded px-2 py-1 font-mono text-[0.52rem] uppercase text-muted hover:text-amber disabled:opacity-40">edit</button>
-                        <button type="button" disabled={todaySavingId === item.id} onClick={() => saveTodayTask(item, { status: "done" })} aria-label="Mark done" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-sage disabled:opacity-40">✓</button>
-                        <button type="button" disabled={todaySavingId === item.id} onClick={() => saveTodayTask(item, { status: "dismissed" })} aria-label="Delete point" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-rust disabled:opacity-40">✕</button>
-                      </span>
-                    ) : item.entity === "activity" ? (
+                    {item.entity === "activity" ? (
                       <span className="flex items-center gap-1">
                         <Link href={item.href} className="rounded px-2 py-1 font-mono text-[0.52rem] uppercase text-muted hover:text-amber">review</Link>
                         <button type="button" disabled={todaySavingId === item.id} onClick={() => void resolveTodayActivity(item, "apply")} aria-label="Apply client update" title="Apply the saved CRM changes" className="rounded px-2 py-1 font-mono text-[0.68rem] text-muted hover:text-sage disabled:opacity-40">✓</button>
@@ -626,11 +582,7 @@ export default function DashboardPage() {
               </li>
             ))}
           </ol>
-        ) : (
-          <p className="mb-4 rounded-xl border border-sage/30 bg-sage/[0.06] p-3 font-sans text-sm text-sage">
-            Nothing urgent is waiting. You are clear to focus on planned work.
-          </p>
-        )}
+        ) : null}
         {!focusMode ? (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
             {todayGroups.map(([label, items, colour]) => (
@@ -823,28 +775,6 @@ export default function DashboardPage() {
       ) : null}
 
       {!focusMode ? <>
-      <div className="mb-3 rounded-xl border border-edge bg-panel/40 p-4">
-        <div className="mb-2.5 flex items-center justify-between">
-          <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-            {"→"} Do next
-          </p>
-          <Link
-            href="/crm/board?tab=tasks"
-            className="font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:text-amber"
-          >
-            see all ↗
-          </Link>
-        </div>
-        {/* Loose, client-less to-dos only - the client-linked ones are grouped
-            under Opportunities below. Tick to complete, click to act. */}
-        <TaskList
-          hideCommitments
-          clientlessOnly
-          allowBulk
-          emptyText="Nothing loose. Your client work is grouped below."
-        />
-      </div>
-
       {/* You promised: commitments YOU made (calls + emails), each with a draft
           to approve. Self-hides when empty. */}
       <Commitments showCompany allowBulk />

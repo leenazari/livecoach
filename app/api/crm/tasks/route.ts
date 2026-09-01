@@ -12,6 +12,10 @@ import { requireRequestScope } from "@/lib/request-scope";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 import { normaliseCompanyName } from "@/lib/company-identity";
 import { crmBlockerPayload } from "@/lib/crm-blocker";
+import {
+  activeSharedClientIds,
+  loadSafeSharedCompanies,
+} from "@/lib/team-client-sharing";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -189,16 +193,31 @@ export async function GET(req: NextRequest) {
           .filter(Boolean)
       ),
     ];
-    const { data: companies } = companyIds.length
-      ? await supabaseAdmin
-          .from("companies")
-          .select("id, name")
-          .eq("workspace_id", account.workspaceId)
-          .in("id", companyIds)
-      : { data: [] as any[] };
+    const [ownedCompaniesResult, assignedClientIds] = await Promise.all([
+      companyIds.length
+        ? supabaseAdmin
+            .from("companies")
+            .select("id, name")
+            .eq("workspace_id", account.workspaceId)
+            .eq("owner_id", account.userId)
+            .in("id", companyIds)
+        : Promise.resolve({ data: [] as any[], error: null }),
+      activeSharedClientIds(account.workspaceId, account.userId),
+    ]);
+    if (ownedCompaniesResult.error) throw ownedCompaniesResult.error;
+    const companyIdSet = new Set(companyIds);
+    const assignedCompanies = await loadSafeSharedCompanies(
+      assignedClientIds.filter((id) => companyIdSet.has(id)),
+      account.workspaceId
+    );
 
     const nameById = new Map<string, string>();
-    for (const c of companies || []) nameById.set(c.id, c.name);
+    for (const c of [
+      ...(ownedCompaniesResult.data || []),
+      ...assignedCompanies,
+    ]) {
+      nameById.set(c.id, c.name);
+    }
 
     // "Takes priority if within 48hrs of the call or the same day."
     const soonCutoff = Date.now() + 48 * 60 * 60 * 1000;
