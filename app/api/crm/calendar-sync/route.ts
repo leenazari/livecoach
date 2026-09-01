@@ -235,11 +235,19 @@ async function runCalendarSync() {
     // when the guest list is all we have - a brand-new client created from the
     // guest's WORK email (company name + website from the domain), added as
     // standard so the plan has context from the first invite.
-    const resolveCompanyForEvent = async (atts: any[]): Promise<string | null> => {
-      const link = inferLink(atts, attendeeConfig);
+    const resolveCompanyForEvent = async (
+      atts: any[],
+      title: string
+    ): Promise<string | null> => {
+      const eventContext = { title };
+      const link = inferLink(atts, attendeeConfig, eventContext);
       if (link.companyId) return link.companyId;
       if (link.isInternal) return null;
-      const spec = deriveNewClientFromAttendees(atts, attendeeConfig);
+      const spec = deriveNewClientFromAttendees(
+        atts,
+        attendeeConfig,
+        eventContext
+      );
       if (!spec) return null;
       const existingId = attendeeConfig.companyByDomain.get(spec.domain);
       if (existingId) return existingId;
@@ -315,7 +323,7 @@ async function runCalendarSync() {
       // auto-creating a second company from the same attendee domain.
       let company_id = outreachProspect
         ? outreachContext?.companyId || null
-        : await resolveCompanyForEvent(r.attendees);
+        : await resolveCompanyForEvent(r.attendees, r.title);
       let intent: string | null = null;
       if (outreachContext) intent = firstOutreachCallIntent(outreachContext);
       // Only fall back to inherited curation when the guest list gave us
@@ -441,7 +449,7 @@ async function runCalendarSync() {
         continue;
       }
       if (existingCompany.get(r.external_id)) continue;
-      const companyId = await resolveCompanyForEvent(r.attendees);
+      const companyId = await resolveCompanyForEvent(r.attendees, r.title);
       if (companyId) repairedCompany.set(r.external_id, companyId);
     }
 

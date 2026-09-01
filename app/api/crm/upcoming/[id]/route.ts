@@ -35,7 +35,7 @@ export async function GET(
     // access to the correct relationship history immediately.
     if (!data.company_id && Array.isArray(data.attendees)) {
       const config = await loadAttendeeConfig();
-      const link = inferLink(data.attendees, config);
+      const link = inferLink(data.attendees, config, { title: data.title });
       let repairedCompanyId = link.companyId;
       // Legacy calls did not always create a contact. Resolve the one lead
       // attendee first, then try their domain or prior history. Never scan every
