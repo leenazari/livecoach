@@ -50,6 +50,7 @@ const vercel = JSON.parse(read("vercel.json"));
 
 assert.match(sessionEnd, /waitUntil\(processing\)/);
 assert.match(sessionEnd, /runCallSummaryJob\(req, payload\)/);
+assert.match(sessionEnd, /canonicalizeCallSummaryPayload\(initialPayload\)/);
 assert.match(sessionEnd, /summaryQueued/);
 assert.match(callPage, /summaryRequest/);
 assert.match(callPage, /\/api\/interview\/summary-status\?sessionId=/);
@@ -60,7 +61,13 @@ assert.doesNotMatch(callPage, /fetch\("\/api\/interview\/summary",/);
 assert.match(summaryRoute, /withTransientSummaryRetry/);
 assert.match(retryRoute, /waitUntil\(processing\)/);
 assert.match(job, /summaryClaimIsFresh/);
+assert.match(job, /payload = await canonicalizeCallSummaryPayload\(payload\)/);
+assert.match(job, /company_id: payload\.companyId \|\| null/);
 assert.match(job, /\.eq\("owner_id", accountScope\.userId\)/);
+assert.match(
+  summaryRoute,
+  /let resolvedCompanyId: string \| null = exactUpcomingId\s*\? scheduledCompanyId/
+);
 assert.match(statusRoute, /\.eq\("owner_id", accountScope\.userId\)/);
 assert.match(backfillRoute, /listActiveAccountScopes\(\)/);
 assert.match(backfillRoute, /runWithServiceRecordScope/);

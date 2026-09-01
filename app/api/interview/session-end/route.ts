@@ -5,6 +5,7 @@ import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { completeUpcomingForCall } from "@/lib/calls";
 import { validMeetSessionId } from "@/lib/transcriber";
 import {
+  canonicalizeCallSummaryPayload,
   runCallSummaryJob,
   type CallSummaryPayload,
 } from "@/lib/call-summary-jobs";
@@ -164,7 +165,7 @@ export async function POST(req: NextRequest) {
       summaryRequest &&
       typeof summaryRequest === "object"
     ) {
-      const payload: CallSummaryPayload = {
+      const initialPayload: CallSummaryPayload = {
         ...summaryRequest,
         transcript,
         sessionId,
@@ -175,6 +176,7 @@ export async function POST(req: NextRequest) {
         cost:
           typeof totalCost === "number" ? totalCost : summaryRequest.cost || null,
       };
+      const payload = await canonicalizeCallSummaryPayload(initialPayload);
       const processing = runCallSummaryJob(req, payload)
         .then(async (result) => {
           if (result.landed && !result.alreadyDone && result.summary)

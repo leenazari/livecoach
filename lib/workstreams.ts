@@ -126,7 +126,15 @@ export async function resolveCallScope(opts: {
       .eq("id", opts.upcomingId)
       .maybeSingle();
     if (error) throw error;
-    if (upcoming?.company_id) companyId = upcoming.company_id;
+    // Once an exact scheduled call exists, its current client link is the
+    // authority. The browser may still be carrying the company selected when
+    // the call tab first opened, especially if the calendar event was corrected
+    // while the call was live. A deliberately unassigned event is authoritative
+    // too, so do not let that stale browser value leak into another client.
+    if (upcoming) {
+      companyId = uuid(upcoming.company_id) ? upcoming.company_id : null;
+      if (!companyId) return { companyId: null, workstream: null };
+    }
     if (upcoming?.workstream_id) {
       const workstream = await getWorkstreamScope(upcoming.workstream_id);
       return { companyId, workstream };

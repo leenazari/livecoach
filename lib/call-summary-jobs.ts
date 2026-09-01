@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 import { POST as buildCallSummary } from "@/app/api/interview/summary/route";
 import { resolveRecordScope } from "@/lib/record-scope";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveCallScope } from "@/lib/workstreams";
 
 export type CallSummaryPayload = {
   transcript: string;
@@ -51,6 +52,31 @@ const safeFailure = (value: unknown) => {
   return "the summary did not complete, automatic retry scheduled";
 };
 
+// A call can begin with one client link and be corrected while it is still in
+// progress. Re-read the exact scheduled call immediately before summarising so
+// the current CRM record wins over the stale company held by the browser tab.
+// This is deliberately shared by the live end-call path and recovery jobs.
+export async function canonicalizeCallSummaryPayload(
+  payload: CallSummaryPayload
+): Promise<CallSummaryPayload> {
+  const upcomingId =
+    typeof payload.upcomingId === "string" && payload.upcomingId
+      ? payload.upcomingId
+      : null;
+  if (!upcomingId) return payload;
+
+  const scope = await resolveCallScope({
+    companyId: payload.companyId,
+    upcomingId,
+    workstreamId: payload.workstreamId,
+  });
+  return {
+    ...payload,
+    companyId: scope.companyId,
+    workstreamId: scope.workstream?.id || null,
+  };
+}
+
 export async function runCallSummaryJob(
   req: Request,
   payload: CallSummaryPayload,
@@ -67,7 +93,23 @@ export async function runCallSummaryJob(
     };
   }
 
+  payload = await canonicalizeCallSummaryPayload(payload);
   const accountScope = await resolveRecordScope();
+
+  // Keep the captured session aligned as well. Otherwise a later retry or CRM
+  // timeline read can revive the client that was linked when the tab opened.
+  if (payload.upcomingId) {
+    const { error: scopeError } = await supabaseAdmin
+      .from("interview_sessions")
+      .update({
+        company_id: payload.companyId || null,
+        workstream_id: payload.workstreamId || null,
+      })
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
+      .eq("session_id", sessionId);
+    if (scopeError) throw scopeError;
+  }
 
   const { data: existing, error: existingError } = await supabaseAdmin
     .from("interview_summaries")
