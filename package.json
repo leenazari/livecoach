@@ -93,6 +93,7 @@
     "validate:email-otp": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-email-otp-login.mjs",
     "validate:public-privacy": "node scripts/validate-public-privacy.mjs",
     "validate:brain-direct-email": "node scripts/validate-brain-direct-email.mjs",
+    "validate:brain-email-answer": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-email-question-answer.mjs",
     "validate:outreach-demo-cta": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-demo-reply-cta.mjs",
     "validate:deal-intent": "node scripts/validate-opportunity-deal-intent.mjs",
     "validate:today-state": "node scripts/validate-today-state-transitions.mjs",

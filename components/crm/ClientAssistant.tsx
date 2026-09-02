@@ -27,6 +27,15 @@ function fullActionLabel(action: any): string {
   return String(action?.label || "CRM change");
 }
 
+function actionResultSummary(action: any, result: any): string | undefined {
+  if (action?.type !== "pull_emails") return undefined;
+  const answer =
+    typeof result?.emailAnswer?.answer === "string"
+      ? result.emailAnswer.answer.replace(/\s+/g, " ").trim()
+      : "";
+  return answer ? answer.slice(0, 1600) : undefined;
+}
+
 function actionConfirmationError(action: any, result: any): CrmRequestError | null {
   const url = action?.endpoint || "/api/crm/assistant";
   const method = action?.method || "PATCH";
@@ -49,6 +58,16 @@ function actionConfirmationError(action: any, result: any): CrmRequestError | nu
       url: action?.endpoint || "/api/crm/tasks",
       method: action?.method || "POST",
       reason: "LiveCoach did not return the saved to-do",
+    });
+  if (
+    action?.type === "pull_emails" &&
+    action?.body?.question &&
+    !String(result?.emailAnswer?.answer || "").trim()
+  )
+    return crmConfirmationError({
+      url,
+      method,
+      reason: "The mailbox search completed but did not answer your question",
     });
   if (action?.type === "add_intent") {
     const expectedCallId = String(action?.endpoint || "").match(
@@ -1116,6 +1135,7 @@ export default function ClientAssistant({
       label: string;
       status: "completed" | "not_completed";
       reason?: string;
+      resultSummary?: string;
       action?: any;
     }[]
   ) => {
@@ -1189,6 +1209,7 @@ export default function ClientAssistant({
           {
             label: fullActionLabel(a),
             status: "completed",
+            resultSummary: actionResultSummary(a, result),
             action: receiptAction(a, result),
           },
         ]);
@@ -1243,6 +1264,7 @@ export default function ClientAssistant({
         {
           label: `${fullActionLabel(a)}: ${c.label}`,
           status: "completed",
+          resultSummary: actionResultSummary(a, result),
           action: receiptAction(
             { ...a, ...c, label: `${fullActionLabel(a)}: ${c.label}` },
             result
@@ -1612,25 +1634,84 @@ export default function ClientAssistant({
                               {a.failureReason || "No change was made."}
                             </p>
                           ) : st === "done" ? (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
-                                {a.type === "send_email"
-                                  ? actionResults[a.key]?.status === "sent"
-                                    ? "✓ already sent"
-                                    : actionResults[a.key]?.status === "sending"
-                                      ? "✓ sending"
-                                      : "✓ approved and queued"
-                                  : "✓ done"}
-                              </span>
-                              {actionResults[a.key]?.links?.outreach ? (
-                                <Link href={actionResults[a.key].links.outreach} className="rounded-full border border-sky/45 px-2 py-1 font-mono text-[0.52rem] uppercase text-sky">
-                                  View recent outreach
-                                </Link>
-                              ) : null}
-                              {actionResults[a.key]?.links?.pipeline ? (
-                                <Link href={actionResults[a.key].links.pipeline} className="rounded-full border border-edge px-2 py-1 font-mono text-[0.52rem] uppercase text-muted">
-                                  View in pipeline
-                                </Link>
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
+                                  {a.type === "send_email"
+                                    ? actionResults[a.key]?.status === "sent"
+                                      ? "✓ already sent"
+                                      : actionResults[a.key]?.status === "sending"
+                                        ? "✓ sending"
+                                        : "✓ approved and queued"
+                                    : "✓ done"}
+                                </span>
+                                {actionResults[a.key]?.links?.outreach ? (
+                                  <Link href={actionResults[a.key].links.outreach} className="rounded-full border border-sky/45 px-2 py-1 font-mono text-[0.52rem] uppercase text-sky">
+                                    View recent outreach
+                                  </Link>
+                                ) : null}
+                                {actionResults[a.key]?.links?.pipeline ? (
+                                  <Link href={actionResults[a.key].links.pipeline} className="rounded-full border border-edge px-2 py-1 font-mono text-[0.52rem] uppercase text-muted">
+                                    View in pipeline
+                                  </Link>
+                                ) : null}
+                              </div>
+                              {a.type === "pull_emails" &&
+                              actionResults[a.key]?.emailAnswer?.answer ? (
+                                <div className="rounded-md border border-sage/35 bg-sage/[0.07] p-2.5 text-left">
+                                  <p className="font-mono text-[0.5rem] uppercase tracking-wider text-sage">
+                                    Mailbox answer
+                                  </p>
+                                  <p className="mt-1 whitespace-pre-wrap font-sans text-[0.75rem] leading-5 text-bone/90">
+                                    {actionResults[a.key].emailAnswer.answer}
+                                  </p>
+                                  {Array.isArray(
+                                    actionResults[a.key].emailAnswer.evidence
+                                  ) &&
+                                  actionResults[a.key].emailAnswer.evidence.length ? (
+                                    <details className="mt-2 border-t border-edge/70 pt-2">
+                                      <summary className="cursor-pointer font-mono text-[0.5rem] uppercase tracking-wider text-muted">
+                                        Message evidence
+                                      </summary>
+                                      <div className="mt-2 space-y-2">
+                                        {actionResults[
+                                          a.key
+                                        ].emailAnswer.evidence.map(
+                                          (item: any) => (
+                                            <div
+                                              key={item.messageId}
+                                              className="rounded border border-edge/70 bg-ink/35 px-2 py-1.5"
+                                            >
+                                              <p className="font-mono text-[0.5rem] uppercase text-muted">
+                                                {item.direction} ·{" "}
+                                                {item.date
+                                                  ? new Date(
+                                                      item.date
+                                                    ).toLocaleString("en-GB", {
+                                                      day: "2-digit",
+                                                      month: "short",
+                                                      year: "numeric",
+                                                      hour: "2-digit",
+                                                      minute: "2-digit",
+                                                      hour12: false,
+                                                    })
+                                                  : "Date unavailable"}
+                                              </p>
+                                              <p className="mt-0.5 text-[0.7rem] text-bone/85">
+                                                {item.subject || "(no subject)"}
+                                              </p>
+                                              {item.excerpt ? (
+                                                <p className="mt-1 text-[0.66rem] leading-4 text-muted">
+                                                  {item.excerpt}
+                                                </p>
+                                              ) : null}
+                                            </div>
+                                          )
+                                        )}
+                                      </div>
+                                    </details>
+                                  ) : null}
+                                </div>
                               ) : null}
                             </div>
                           ) : Array.isArray(a.choices) && a.choices.length ? (

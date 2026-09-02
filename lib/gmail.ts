@@ -190,6 +190,7 @@ export async function recentMessages(
       cc: header(headers, "Cc"),
       subject: header(headers, "Subject"),
       snippet: typeof m.snippet === "string" ? m.snippet : "",
+      labelIds: Array.isArray(m.labelIds) ? m.labelIds : [],
     };
   }));
   const out = fetched.filter((m): m is GmailMsg => !!m);
