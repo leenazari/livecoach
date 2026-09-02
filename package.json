@@ -72,6 +72,7 @@
     "validate:outreach-booking-link": "node scripts/validate-salesperson-outreach-booking.mjs",
     "validate:client-email-replies": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-client-email-reply-activity.mjs",
     "validate:cross-campaign-outreach": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-cross-campaign-outreach.mjs",
+    "validate:outreach-campaign-filter": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-campaign-filter.mjs",
     "validate:outreach-daily-limit": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-daily-limit.mjs",
     "validate:manual-outreach-calls": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-manual-outreach-calls.mjs",
     "validate:outreach-follow-up-reminders": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-follow-up-reminders.mjs",

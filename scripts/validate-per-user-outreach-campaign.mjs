@@ -55,7 +55,7 @@ assert.match(queue, /\.is\("assigned_to_user_id", null\)/);
 assert.match(prospects, /resolveOutreachCampaignSelection\(account\.userId, account\.workspaceId\)/);
 assert.match(prospects, /eq\("status", "paused"\)/);
 assert.match(readiness, /label: "Your active campaign"/);
-assert.match(page, /Choose campaign for new queue spaces/);
+assert.match(page, /Choose campaign to add next/);
 assert.match(page, /Your teammates keep their own selections/);
 assert.match(page, /const orderedCampaigns = useMemo/);
 assert.match(page, /open=\{expandedCampaignId === campaign\.id\}/);

@@ -9,12 +9,26 @@ type CampaignQueueRow = {
   campaign?: { id?: string | null; name?: string | null } | null;
 };
 
+export const OUTREACH_QUEUE_ALL_CAMPAIGNS = "all";
+
+export function outreachQueueCampaignId(row: CampaignQueueRow): string {
+  return String(row.campaign?.id || row.campaign_id || "unknown");
+}
+
+export function filterOutreachQueueByCampaign<T extends CampaignQueueRow>(
+  rows: T[],
+  campaignId: string
+): T[] {
+  if (!campaignId || campaignId === OUTREACH_QUEUE_ALL_CAMPAIGNS) return rows;
+  return rows.filter((row) => outreachQueueCampaignId(row) === campaignId);
+}
+
 export function outreachQueueCampaignCounts(
   rows: CampaignQueueRow[]
 ): OutreachQueueCampaignCount[] {
   const counts = new Map<string, OutreachQueueCampaignCount>();
   for (const row of rows) {
-    const id = String(row.campaign?.id || row.campaign_id || "unknown");
+    const id = outreachQueueCampaignId(row);
     const name = String(row.campaign?.name || "Campaign not recorded").trim();
     const current = counts.get(id);
     if (current) current.count += 1;

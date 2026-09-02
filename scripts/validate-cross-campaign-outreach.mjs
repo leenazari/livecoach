@@ -35,8 +35,8 @@ assert.match(page, /useState\("all"\)/);
 assert.match(page, /All campaigns is the combined priority list/);
 assert.match(page, /membershipCampaigns\.map/);
 assert.match(page, /Today’s assigned contacts/);
-assert.match(page, /Changing the campaign above never moves or rewrites anyone already queued/);
-assert.match(page, /Campaign for new queue spaces/);
+assert.match(page, /Filtering only changes what you can see and action/);
+assert.match(page, /Campaign to add next/);
 assert.match(page, /Campaign · \{row\.campaign\?\.name/);
 assert.match(page, /Today · \{campaign\.count\} · \{campaign\.name\}/);
 assert.match(page, /Selected for new spaces/);
@@ -54,6 +54,14 @@ const recruitmentQueue = Array.from({ length: 50 }, () => ({
   campaign: { id: "recruitment", name: "Interviewa recruitment leaders" },
 }));
 const counts = queueCopy.outreachQueueCampaignCounts(recruitmentQueue);
+assert.equal(
+  queueCopy.filterOutreachQueueByCampaign(recruitmentQueue, "all").length,
+  50
+);
+assert.equal(
+  queueCopy.filterOutreachQueueByCampaign(recruitmentQueue, "workable").length,
+  0
+);
 assert.deepEqual(counts, [
   {
     id: "recruitment",
