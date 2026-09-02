@@ -13,7 +13,6 @@ import {
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
 import { supabaseAdmin } from "@/lib/supabase";
-import { outreachEmailEndsWithDemoReplyCta } from "@/lib/outreach-demo-reply-cta";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -109,14 +108,6 @@ export async function POST(req: NextRequest) {
         title: "Email approval blocked",
         reason: "Cold outreach needs a simple do not follow up line",
         nextAction: "Add the opt-out sentence, then approve the revised email",
-      });
-    }
-    if (!outreachEmailEndsWithDemoReplyCta(bodyText)) {
-      return blockedResponse(400, {
-        code: "outreach_demo_reply_cta_missing",
-        title: "Email approval blocked",
-        reason: "The email does not end with the required reply-to-book demo request",
-        nextAction: "Add that final request before the signature, then approve it again",
       });
     }
     if (!requestKey) {

@@ -1630,6 +1630,9 @@ export default function OutreachTodayLane({
                                 className="mt-1 w-full rounded-lg border border-edge bg-panel px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60"
                               />
                             </label>
+                            <p className="text-[0.68rem] leading-5 text-muted">
+                              A sales call to action is optional. Keep it only when it helps this exact message.
+                            </p>
                             <OutreachVoiceNoteEditor
                               message={displayMessage}
                               script={edit.voiceScript}
