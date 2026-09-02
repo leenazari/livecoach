@@ -171,9 +171,9 @@ function escapeRe(s: string): string {
 // a jumping-off point: client names (passed in) link to the client's page, and
 // "to-do list", "drafts", "calls" etc link to those sections.
 const SECTION_LINKS: { src: string; href: string }[] = [
-  { src: "to-?do list", href: "/crm/board?tab=tasks" },
-  { src: "to-?dos?", href: "/crm/board?tab=tasks" },
-  { src: "tasks?", href: "/crm/board?tab=tasks" },
+  { src: "to-?do list", href: "/crm/tasks" },
+  { src: "to-?dos?", href: "/crm/tasks" },
+  { src: "tasks?", href: "/crm/tasks" },
   { src: "drafts?", href: "/crm/board?tab=drafts" },
   { src: "follow-?ups?", href: "/crm/board?tab=drafts" },
   { src: "call log", href: "/crm/calls" },

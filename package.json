@@ -94,6 +94,7 @@
     "validate:task-retention": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-task-retention.mjs",
     "validate:brain-task-confirmation": "node scripts/validate-brain-task-confirmation.mjs",
     "validate:unified-task-composer": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-unified-task-composer.mjs",
+    "validate:tasks-dashboard": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-tasks-dashboard.mjs",
     "validate:manual-contact-callback": "node scripts/validate-manual-contact-callback.mjs",
     "validate:brain-operating-system": "node scripts/validate-brain-operating-system.mjs",
     "validate:outreach-voice-notes": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-voice-notes.mjs",

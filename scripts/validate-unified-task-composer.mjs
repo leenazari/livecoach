@@ -24,6 +24,7 @@ const taskRoute = read("app/api/crm/tasks/route.ts");
 const tasks = read("lib/tasks.ts");
 const today = read("app/crm/page.tsx");
 const board = read("app/crm/board/page.tsx");
+const taskDashboardPage = read("app/crm/tasks/page.tsx");
 const client = read("app/crm/[id]/page.tsx");
 const opportunities = read("components/crm/OpportunityBoard.tsx");
 const outreach = read("app/crm/outreach/page.tsx");
@@ -54,7 +55,8 @@ assert.ok(
   "The task form must remain available when a task list is empty"
 );
 assert.match(today, /<TaskList[\s\S]*?showCompany[\s\S]*?allowBulk/);
-assert.match(board, /<TaskList showCompany allowBulk/);
+assert.match(taskDashboardPage, /<TaskDashboard \/>/);
+assert.match(board, /router\.replace\("\/crm\/tasks"\)/);
 assert.match(client, /<TaskList[\s\S]*?companyId=\{id\}[\s\S]*?companyName=\{company\.name\}/);
 assert.match(opportunities, /<TaskList[\s\S]*?companyId=\{o\.companyId\}[\s\S]*?companyName=\{o\.company\}/);
 assert.match(inbox, /import TaskComposer/);

@@ -321,7 +321,7 @@ async function runDigestForAccount(
       company: companyNames.get(task.company_id),
       href: task.company_id
         ? `/crm/${task.company_id}`
-        : "/crm/board?tab=tasks",
+        : "/crm/tasks",
     }));
     const attention = attentionRows.map((item: any) => {
       const colour = /overdue/i.test(String(item.reason || ""))

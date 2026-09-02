@@ -280,7 +280,7 @@ export async function GET() {
               : null,
         company,
         companyId: task.company_id || null,
-        href: task.company_id ? `/crm/${task.company_id}` : "/crm/board?tab=tasks",
+        href: task.company_id ? `/crm/${task.company_id}` : "/crm/tasks",
         priority,
         priorityLabel: priorityLabel(priority, waiting, done),
         dueAt: done ? task.done_at || null : task.due_at || null,

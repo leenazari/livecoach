@@ -231,7 +231,7 @@ export async function GET(req: NextRequest) {
         type: "task",
         label: t.text,
         detail: compact([companyName.get(t.company_id), t.kind].filter(Boolean).join(" · ")),
-        href: t.company_id ? `/crm/${t.company_id}` : "/crm/board?tab=tasks",
+        href: t.company_id ? `/crm/${t.company_id}` : "/crm/tasks",
       });
     for (const o of opportunityRows)
       results.push({

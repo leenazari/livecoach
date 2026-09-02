@@ -21,12 +21,8 @@ const tabLoading = () => (
 );
 
 // Each board tab has a substantial, independent editor. Only download the tab
-// the user opens instead of bundling tasks, close plans and the client sheet
-// into every visit.
-const TaskList = dynamic(() => import("@/components/crm/TaskList"), {
-  ssr: false,
-  loading: tabLoading,
-});
+// the user opens instead of bundling close plans and the client sheet into
+// every visit. Tasks have their own canonical workspace at /crm/tasks.
 const OpportunityClosePlan = dynamic(
   () => import("@/components/crm/OpportunityClosePlan"),
   { ssr: false, loading: tabLoading }
@@ -58,9 +54,8 @@ type EmailAssistantCapabilities = {
   provider: "google" | "microsoft" | null;
 };
 
-type Tab = "tasks" | "drafts" | "opportunities" | "clients";
+type Tab = "drafts" | "opportunities" | "clients";
 const TABS: { key: Tab; label: string }[] = [
-  { key: "tasks", label: "Tasks to do" },
   { key: "drafts", label: "Drafts" },
   { key: "opportunities", label: "Opportunities" },
   { key: "clients", label: "Clients" },
@@ -69,7 +64,7 @@ const TABS: { key: Tab; label: string }[] = [
 function BoardInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState<Tab>("tasks");
+  const [tab, setTab] = useState<Tab>("clients");
   const [drafts, setDrafts] = useState<any[]>([]);
   const [nextMoveDrafts, setNextMoveDrafts] = useState<any[]>([]);
   const [nextMoveCapabilities, setNextMoveCapabilities] =
@@ -111,10 +106,14 @@ function BoardInner() {
   // board), not only on first mount - that was the "drafts won't load" bug.
   useEffect(() => {
     const t = searchParams.get("tab");
-    if (t === "drafts" || t === "opportunities" || t === "clients" || t === "tasks") {
+    if (t === "tasks") {
+      router.replace("/crm/tasks");
+      return;
+    }
+    if (t === "drafts" || t === "opportunities" || t === "clients") {
       setTab(t as Tab);
     }
-  }, [searchParams]);
+  }, [router, searchParams]);
 
   const switchTab = (next: Tab) => {
     setTab(next);
@@ -125,10 +124,7 @@ function BoardInner() {
     setLoading(true);
     setSaveError("");
     try {
-      if (which === "tasks") {
-        // TaskList owns this request and its optimistic persistence. Avoid a
-        // second dashboard fetch for data this page never renders itself.
-      } else if (which === "drafts") {
+      if (which === "drafts") {
         // Drafts = emails already written (follow_ups, ready to send) PLUS the
         // email next steps that still need drafting (ready to be drafted).
         const [d, t, n] = await Promise.all([
@@ -634,13 +630,8 @@ function BoardInner() {
         ))}
       </nav>
 
-      {loading && tab !== "tasks" ? (
+      {loading ? (
         <MatrixRain size="panel" messages={["loading your CRM records"]} />
-      ) : tab === "tasks" ? (
-        <div className="rounded-xl border border-edge bg-panel/40 p-4">
-          {/* Tick to complete, click ticked to remove, click text to start. */}
-          <TaskList showCompany allowBulk emptyText="Nothing on your plate. Nice." />
-        </div>
       ) : tab === "drafts" ? (
         <div className="flex flex-col gap-3">
           {nextMoveDrafts.length > 0 && (

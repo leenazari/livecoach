@@ -687,7 +687,7 @@ export default function DashboardPage() {
                 // otherwise the to-do board so the segment is always actionable.
                 const href = p.companyId
                   ? `/crm/${p.companyId}`
-                  : "/crm/board?tab=tasks";
+                  : "/crm/tasks";
                 return (
                   <li
                     key={i}
@@ -744,7 +744,7 @@ export default function DashboardPage() {
             </p>
           </div>
           <Link
-            href="/crm/board?tab=tasks"
+            href="/crm/tasks"
             className="font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:text-amber"
           >
             full task board ↗
@@ -875,7 +875,7 @@ export default function DashboardPage() {
             open value ↗
           </div>
         </Link>
-        <Link href="/crm/board?tab=tasks" className={statCls}>
+        <Link href="/crm/tasks" className={statCls}>
           <div className="font-sans text-[1.2rem] text-bone">
             {dash?.kpis.tasks ?? "—"}
           </div>
