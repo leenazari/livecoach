@@ -16,6 +16,10 @@ import {
   prepareOutreachVoiceScriptForReview,
 } from "@/lib/outreach-voice-policy";
 import { outreachVoiceHasFalseSenderIdentity } from "@/lib/outreach-voice-policy";
+import {
+  ensureOutreachVoiceCampaignCta,
+  resolveOutreachCampaignCta,
+} from "@/lib/outreach-demo-reply-cta";
 import { getOptionalSalesProfile, salesProfileContextBlock } from "@/lib/sales-profile";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logModelUsage } from "@/lib/usage";
@@ -150,6 +154,12 @@ export async function POST(
     const existingWhyNow = clean(message.strategy?.voiceUrgency?.whyNow, 260);
     const profileContext = salesProfileContextBlock(personalProfile);
     const firstName = clean(prospect.first_name, 80) || "there";
+    const campaignCta = resolveOutreachCampaignCta({
+      campaignGoal: campaign.goal,
+      campaignOfferAngle: campaign.offer_angle,
+      sequencePurpose: sequenceStep?.purpose,
+      sequenceGuidance: sequenceStep?.guidance,
+    });
 
     const response = await openai.messages.create(
       {
@@ -168,7 +178,7 @@ This is a shared synthetic voice. It must never claim to be ${sender.senderName}
 
 Use the recipient's first name, exact company and the strongest relevant fact already present in the saved research or email. If no fact is verified, use an honest role and company specific hypothesis. Include one complete gentle why now sentence. Set urgencyType to verified_trigger only when the saved evidence proves a current trigger. Otherwise use natural_next_moment. The whyNow field must exactly copy that sentence from the script.
 
-Do not read out a URL, email address, opt out line or subject. Normally finish with a short, low pressure invitation to reply for a quick call or demo. This is recommended, not required. Omit it when the existing email or campaign direction deliberately has no CTA. A missing CTA must never invalidate the script or block approval. Finish with a complete sentence.`,
+Do not read out a URL, email address, opt out line or subject. ${campaignCta ? `The approved campaign asks the recipient to book a ${campaignCta.label}. Finish with that meaning once and invite them to reply to this email.` : "Normally finish with a short, low pressure invitation to reply for a quick call or demo. This is recommended, not required."} Omit it when the existing email or campaign direction deliberately has no CTA. A missing CTA must never invalidate the script or block approval. Finish with a complete sentence.`,
         messages: [
           {
             role: "user",
@@ -240,6 +250,14 @@ Existing approved why now sentence to preserve when useful ${existingWhyNow || "
     voiceScript = normaliseOutreachVoiceScript(
       includeWhyNow(voiceScript, generatedWhyNow)
     );
+    if (campaignCta) {
+      voiceScript = normaliseOutreachVoiceScript(
+        ensureOutreachVoiceCampaignCta({
+          script: voiceScript,
+          policy: campaignCta,
+        })
+      );
+    }
     const wordCount = voiceScript.split(/\s+/).filter(Boolean).length;
     if (
       wordCount > OUTREACH_VOICE_HARD_MAX_WORDS ||
@@ -271,6 +289,13 @@ Existing approved why now sentence to preserve when useful ${existingWhyNow || "
         evidence: clean(parsed.urgencyEvidence, 300),
         includedInScript: true,
       },
+      cta: campaignCta?.label || message.strategy?.cta || "",
+      campaignCta: campaignCta
+        ? {
+            label: campaignCta.label,
+            source: campaignCta.source,
+          }
+        : null,
     };
     const updatedAt = new Date().toISOString();
     const { data: saved, error: saveError } = await supabaseAdmin

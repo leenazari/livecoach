@@ -8,9 +8,16 @@ export const OUTREACH_SIMPLE_OPT_OUT =
   "If this is not relevant, tell me and I will not follow up.";
 
 const DEMO_REPLY_CTA =
-  /\bbook(?:ing)?\s+(?:a\s+)?quick\s+demo\b[\s\S]{0,180}\brepl(?:y|ying)\s+to\s+this\s+email\b|\brepl(?:y|ying)\s+to\s+this\s+email\b[\s\S]{0,180}\bbook(?:ing)?\s+(?:a\s+)?quick\s+demo\b/i;
+  /\bbook(?:ing)?\s+(?:a\s+)?(?:(?:quick|(?:\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins))\s+)?demo(?:nstration)?\b[\s\S]{0,180}\brepl(?:y|ying)\s+to\s+this\s+email\b|\brepl(?:y|ying)\s+to\s+this\s+email\b[\s\S]{0,180}\bbook(?:ing)?\s+(?:a\s+)?(?:(?:quick|(?:\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins))\s+)?demo(?:nstration)?\b/i;
 const GENERAL_SALES_CTA =
-  /\b(?:reply|email|message|get in touch|come back to (?:me|us)|let (?:me|us) know)\b[\s\S]{0,120}\b(?:quick\s+)?(?:call|demo|chat|conversation)\b|\b(?:book|arrange|schedule|set up|have|open to)\b[\s\S]{0,80}\b(?:quick\s+)?(?:call|demo|chat|conversation)\b|\b(?:quick\s+)?(?:call|demo|chat|conversation)\b[\s\S]{0,100}\b(?:reply|email|message|get in touch|book|arrange|schedule|interested)\b/i;
+  /\b(?:reply|email|message|get in touch|come back to (?:me|us)|let (?:me|us) know)\b[\s\S]{0,120}\b(?:(?:quick|(?:\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins))\s+)?(?:call|demo(?:nstration)?|chat|conversation)\b|\b(?:book|arrange|schedule|set up|have|open to)\b[\s\S]{0,100}\b(?:(?:quick|(?:\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins))\s+)?(?:call|demo(?:nstration)?|chat|conversation)\b|\b(?:(?:quick|(?:\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins))\s+)?(?:call|demo(?:nstration)?|chat|conversation)\b[\s\S]{0,100}\b(?:reply|email|message|get in touch|book|arrange|schedule|interested)\b/i;
+const CAMPAIGN_CTA_OMISSION =
+  /\b(?:no|without|omit|skip|avoid|exclude|do not|don[’']t|never)\b[\s\S]{0,55}\b(?:call to action|cta|invitation|demo(?:nstration)?|call|chat|conversation)\b/i;
+const CAMPAIGN_CTA_ACTION =
+  /\b(?:call to action|cta|book|booking|arrange|schedule|set up|invite|invitation|ask|reply|respond|get in touch|contact|offer)\b/i;
+const CAMPAIGN_CTA_TARGET = /\b(demo(?:nstration)?|call|chat|conversation)\b/i;
+const CAMPAIGN_CTA_DURATION =
+  /\b(\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins)\b/i;
 const SIMPLE_OPT_OUT = /(not|won't|will not|do not).{0,24}follow up/i;
 const COMMON_SIGN_OFF =
   /^(?:best|thanks|thank you|best regards|kind regards|regards|best wishes|cheers)[,!]?$/i;
@@ -35,6 +42,125 @@ const normalised = (value: unknown) =>
 
 const comparable = (value: unknown) =>
   normalised(value).replace(/\s+/g, " ").toLocaleLowerCase("en-GB");
+
+export type OutreachCampaignCtaPolicy = {
+  kind: "demo" | "call";
+  durationMinutes: number | null;
+  label: string;
+  emailText: string;
+  voiceText: string;
+  source:
+    | "sender_guidance"
+    | "sequence_guidance"
+    | "sequence_purpose"
+    | "campaign_goal"
+    | "campaign_offer";
+};
+
+type OutreachCampaignCtaInput = {
+  campaignGoal?: unknown;
+  campaignOfferAngle?: unknown;
+  sequencePurpose?: unknown;
+  sequenceGuidance?: unknown;
+  senderGuidance?: unknown;
+};
+
+const CAMPAIGN_CTA_NUMBER_WORDS: Record<string, number> = {
+  five: 5,
+  ten: 10,
+  fifteen: 15,
+  twenty: 20,
+};
+
+function campaignCtaDuration(value: string): number | null {
+  const match = value.match(CAMPAIGN_CTA_DURATION);
+  if (!match) return null;
+  const raw = match[1].toLocaleLowerCase("en-GB");
+  const minutes = Number(raw) || CAMPAIGN_CTA_NUMBER_WORDS[raw] || 0;
+  return minutes >= 1 && minutes <= 60 ? minutes : null;
+}
+
+function explicitCampaignCta(value: string, source: OutreachCampaignCtaPolicy["source"]): boolean {
+  const targetText = value.replace(/\bcall to action\b|\bcta\b/gi, " ");
+  if (!CAMPAIGN_CTA_TARGET.test(targetText) || CAMPAIGN_CTA_OMISSION.test(value)) {
+    return false;
+  }
+  if (CAMPAIGN_CTA_ACTION.test(value) || CAMPAIGN_CTA_DURATION.test(value)) {
+    return true;
+  }
+  return source === "campaign_goal";
+}
+
+/**
+ * Convert a campaign's approved wording into one deterministic next step.
+ * A sender or sequence can explicitly opt out. Otherwise campaigns that name a
+ * demo or call as their goal do not rely on the model remembering that detail.
+ */
+export function resolveOutreachCampaignCta(
+  input: OutreachCampaignCtaInput
+): OutreachCampaignCtaPolicy | null {
+  const senderGuidance = normalised(input.senderGuidance);
+  const sequenceGuidance = normalised(input.sequenceGuidance);
+  if (
+    (senderGuidance && CAMPAIGN_CTA_OMISSION.test(senderGuidance)) ||
+    (sequenceGuidance && CAMPAIGN_CTA_OMISSION.test(sequenceGuidance))
+  ) {
+    return null;
+  }
+
+  const candidates: Array<{
+    source: OutreachCampaignCtaPolicy["source"];
+    value: string;
+  }> = [
+    { source: "sender_guidance", value: senderGuidance },
+    { source: "sequence_guidance", value: sequenceGuidance },
+    { source: "sequence_purpose", value: normalised(input.sequencePurpose) },
+    { source: "campaign_goal", value: normalised(input.campaignGoal) },
+    { source: "campaign_offer", value: normalised(input.campaignOfferAngle) },
+  ];
+  const selected = candidates.find((candidate) =>
+    explicitCampaignCta(candidate.value, candidate.source)
+  );
+  if (!selected) return null;
+
+  const kind: OutreachCampaignCtaPolicy["kind"] = /\bdemo(?:nstration)?\b/i.test(
+    selected.value
+  )
+    ? "demo"
+    : "call";
+  const durationMinutes = campaignCtaDuration(selected.value);
+  const label = durationMinutes
+    ? `${durationMinutes} minute ${kind}`
+    : `quick ${kind}`;
+  return {
+    kind,
+    durationMinutes,
+    label,
+    emailText: `Would you be open to booking a ${label}? Just reply to this email and I will arrange it.`,
+    voiceText: `Would you be open to booking a ${label}? Just reply to this email and we will arrange it.`,
+    source: selected.source,
+  };
+}
+
+export function hasOutreachCampaignCta(
+  value: unknown,
+  policy: OutreachCampaignCtaPolicy | null
+): boolean {
+  if (!policy) return hasOutreachSalesCallToAction(value);
+  const source = normalised(value).slice(-700);
+  if (!hasOutreachSalesCallToAction(source)) return false;
+  const target = policy.kind === "demo"
+    ? /\bdemo(?:nstration)?\b/i
+    : /\b(?:call|chat|conversation)\b/i;
+  if (!target.test(source)) return false;
+  if (!policy.durationMinutes) return true;
+  const duration = new RegExp(
+    `\\b(?:${policy.durationMinutes}|${Object.entries(CAMPAIGN_CTA_NUMBER_WORDS)
+      .find(([, minutes]) => minutes === policy.durationMinutes)?.[0] || policy.durationMinutes})[\\s-]*(?:minute|minutes|min|mins)\\b`,
+    "i"
+  );
+  return duration.test(source);
+}
 
 export function hasOutreachDemoReplyCta(value: unknown): boolean {
   return DEMO_REPLY_CTA.test(normalised(value));
@@ -209,7 +335,7 @@ function formatOutreachEmailEnding(input: {
   body: unknown;
   signoff?: string | null;
   maximumCharacters?: number;
-}, includeDemoReplyCta: boolean): string {
+}, ctaText: string | null, replaceAnySalesCta = false): string {
   const maximumCharacters = Math.max(400, input.maximumCharacters || 4000);
   const ending = extractTrailingSignature(input.body, input.signoff);
   const paragraphs = ending.content
@@ -220,8 +346,13 @@ function formatOutreachEmailEnding(input: {
   let optOut = "";
 
   for (const paragraph of paragraphs) {
-    if (paragraph.length <= 260 && hasOutreachDemoReplyCta(paragraph)) {
-      if (!includeDemoReplyCta) content.push(paragraph);
+    if (
+      ctaText &&
+      paragraph.length <= 320 &&
+      (replaceAnySalesCta
+        ? hasOutreachSalesCallToAction(paragraph)
+        : hasOutreachDemoReplyCta(paragraph))
+    ) {
       continue;
     }
     if (paragraph.length <= 260 && SIMPLE_OPT_OUT.test(paragraph)) {
@@ -252,7 +383,7 @@ function formatOutreachEmailEnding(input: {
 
   const suffix = [
     optOut || OUTREACH_SIMPLE_OPT_OUT,
-    includeDemoReplyCta ? OUTREACH_EMAIL_DEMO_REPLY_CTA : "",
+    ctaText || "",
     signature,
   ].filter(Boolean);
   const suffixText = suffix.join("\n\n");
@@ -278,7 +409,7 @@ export function ensureOutreachEmailSimpleOptOut(input: {
   signoff?: string | null;
   maximumCharacters?: number;
 }): string {
-  return formatOutreachEmailEnding(input, false);
+  return formatOutreachEmailEnding(input, null);
 }
 
 /**
@@ -291,7 +422,21 @@ export function ensureOutreachEmailDemoReplyCta(input: {
   signoff?: string | null;
   maximumCharacters?: number;
 }): string {
-  return formatOutreachEmailEnding(input, true);
+  return formatOutreachEmailEnding(input, OUTREACH_EMAIL_DEMO_REPLY_CTA);
+}
+
+/**
+ * Apply an explicitly configured campaign CTA once while keeping ordinary
+ * campaigns advisory only. A short model generated CTA is replaced so the
+ * recipient never sees two competing next steps.
+ */
+export function ensureOutreachEmailCampaignCta(input: {
+  body: unknown;
+  policy: OutreachCampaignCtaPolicy;
+  signoff?: string | null;
+  maximumCharacters?: number;
+}): string {
+  return formatOutreachEmailEnding(input, input.policy.emailText, true);
 }
 
 /** The CTA must be the final message paragraph, with only a signature after it. */
@@ -314,6 +459,25 @@ export function ensureOutreachVoiceDemoReplyCta(value: unknown): string {
   if (!script) return OUTREACH_VOICE_DEMO_REPLY_CTA;
   if (outreachVoiceEndsWithDemoReplyCta(script)) return script;
   return `${script} ${OUTREACH_VOICE_DEMO_REPLY_CTA}`.replace(/\s+/g, " ").trim();
+}
+
+export function ensureOutreachVoiceCampaignCta(input: {
+  script: unknown;
+  policy: OutreachCampaignCtaPolicy;
+}): string {
+  const script = normalised(input.script).replace(/\s+/g, " ");
+  if (!script) return input.policy.voiceText;
+  if (hasOutreachCampaignCta(script, input.policy)) return script;
+  const sentences = script.match(/[^.!?]+(?:[.!?]+|$)/g) || [];
+  if (
+    sentences.length &&
+    hasOutreachSalesCallToAction(sentences.at(-1) || "")
+  ) {
+    sentences.pop();
+  }
+  return `${sentences.join(" ").trim()} ${input.policy.voiceText}`
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function outreachVoiceEndsWithDemoReplyCta(value: unknown): boolean {
