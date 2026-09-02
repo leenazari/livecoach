@@ -6,6 +6,7 @@ import { getWorkstreamScope, resolveCallScope } from "@/lib/workstreams";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { resolvePrimaryAttendeeForCall } from "@/lib/call-subject";
 import { calendarEmailDomain } from "@/lib/calendar-subject";
+import { appendBrainCallFocusNote } from "@/lib/brain-call-actions";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -160,7 +161,7 @@ export async function PATCH(
     const patch: Record<string, any> = {};
     const { data: current, error: currentError } = await supabaseAdmin
       .from("upcoming_calls")
-      .select("id, intent, prep, scheduled_at, completed_at")
+      .select("id, title, intent, prep, prepped, scheduled_at, completed_at")
       .eq("id", params.id)
       .eq("workspace_id", account.workspaceId)
       .eq("owner_id", account.userId)
@@ -260,6 +261,36 @@ export async function PATCH(
         patch.prep = body.prep ?? null;
       }
     }
+    const appendIntentNote =
+      typeof body.appendIntentNote === "string"
+        ? body.appendIntentNote.trim().slice(0, 1000)
+        : "";
+    let appendedFocus: ReturnType<typeof appendBrainCallFocusNote> | null = null;
+    if (appendIntentNote) {
+      appendedFocus = appendBrainCallFocusNote(
+        typeof patch.intent === "string" ? patch.intent : current.intent,
+        patch.prep && typeof patch.prep === "object" ? patch.prep : currentPrep,
+        appendIntentNote
+      );
+      if (!appendedFocus.intentChanged && !appendedFocus.focusAdded) {
+        return NextResponse.json({
+          ok: true,
+          call: current,
+          focusNoteAdded: false,
+          alreadyPresent: true,
+        });
+      }
+      patch.intent = appendedFocus.intent || null;
+      patch.prepped = true;
+      patch.prep = {
+        ...appendedFocus.prep,
+        intentMeta: {
+          ...(appendedFocus.prep as any).intentMeta,
+          source: "manual",
+          savedAt: new Date().toISOString(),
+        },
+      };
+    }
     if ("companyId" in body)
       patch.company_id =
         typeof body.companyId === "string" && body.companyId
@@ -298,7 +329,16 @@ export async function PATCH(
     if (error) throw error;
     if (!data)
       return NextResponse.json({ error: "call not found" }, { status: 404 });
-    return NextResponse.json({ ok: true, call: data });
+    return NextResponse.json({
+      ok: true,
+      call: data,
+      ...(appendedFocus
+        ? {
+            focusNoteAdded: appendedFocus.focusAdded,
+            intentNoteAdded: appendedFocus.intentChanged,
+          }
+        : {}),
+    });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to update" },

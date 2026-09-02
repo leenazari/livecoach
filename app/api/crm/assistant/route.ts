@@ -54,6 +54,7 @@ import {
   loadSafeSharedCompanies,
   loadSafeSharedCompany,
 } from "@/lib/team-client-sharing";
+import { resolveBrainCallActionCandidates } from "@/lib/brain-call-actions";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -69,22 +70,25 @@ export const maxDuration = 40;
 function likeTerm(s: string): string {
   return String(s || "").replace(/[%_]/g, "").trim().slice(0, 60);
 }
-async function findCalls(title: string): Promise<any[]> {
-  const term = likeTerm(title);
+async function findCalls(reference: string): Promise<any[]> {
+  const term = String(reference || "").trim().slice(0, 180);
   if (!term) return [];
   const requestScope = getRequestScope();
-  let query = supabaseAdmin
+  if (!requestScope) return [];
+  const query = supabaseAdmin
     .from("upcoming_calls")
-    .select("id, title, scheduled_at, intent")
-    .ilike("title", `%${term}%`)
+    .select("id, title, scheduled_at, intent, attendees")
+    .eq("workspace_id", requestScope.workspaceId)
+    .eq("owner_id", requestScope.userId)
     .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
+    .lte("scheduled_at", new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
-    .limit(4);
-  if (requestScope && requestScope.role !== "owner") {
-    query = query.eq("owner_id", requestScope.userId);
-  }
+    .limit(80);
   const { data } = await query;
-  return Array.isArray(data) ? data : [];
+  return resolveBrainCallActionCandidates(
+    Array.isArray(data) ? data : [],
+    term
+  ).slice(0, 4);
 }
 function callWhen(iso: string): string {
   if (!iso) return "no time set";
@@ -418,14 +422,15 @@ function callExec(call: any, type: string, x: any) {
   if (type === "set_intent")
     return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { intent: x.intent } };
   if (type === "add_intent") {
-    // Append to the call's existing focus rather than overwriting it. If the
-    // note is already there (the user is just re-confirming, or it was added
-    // before) leave it untouched, so confirming can never duplicate the text.
-    const cur = typeof call.intent === "string" ? call.intent.trim() : "";
     const note = String(x.note || "").trim();
-    const already = !!note && cur.toLowerCase().includes(note.toLowerCase());
-    const next = already ? cur : cur ? `${cur} ${note}` : note;
-    return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { intent: next } };
+    // The route merges against the latest saved call at confirmation time. It
+    // updates both the intent and an already-built focus without overwriting
+    // either with the stale snapshot that was visible when Brain replied.
+    return {
+      endpoint: `/api/crm/upcoming/${call.id}`,
+      method: "PATCH",
+      body: { appendIntentNote: note },
+    };
   }
   if (type === "link_call")
     return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { companyId: x.companyId } };
@@ -490,7 +495,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
         out.push({
           key,
           type: it.type,
-          label: `${verb.charAt(0).toUpperCase()}${verb.slice(1)} "${calls[0].title}"${detail}`,
+          label: `${verb.charAt(0).toUpperCase()}${verb.slice(1)} "${calls[0].title}" - ${callWhen(calls[0].scheduled_at)}${detail}`,
           endpoint: ex.endpoint,
           method: ex.method,
           body: ex.body,
@@ -1686,7 +1691,7 @@ CALL TRANSCRIPTS ON DEMAND: when an ON-DEMAND CALL TRANSCRIPT block is present, 
 
 ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, client stages, stakeholders and to-dos, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles, update opportunities, pull email context, remember durable rules, correct records, dismiss stale work, and queue one-off emails from the signed-in user's own connected mailbox. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
-[{"type":"set_meeting_link","call":"<call title or person from the context>","url":"<link>"},{"type":"set_intent","call":"<call title>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<call title>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<call title>","client":"<client name>"},{"type":"cancel_call","call":"<call title>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
+[{"type":"set_meeting_link","call":"<exact call title plus its UK date and time from the context>","url":"<link>"},{"type":"set_intent","call":"<exact call title plus its UK date and time from the context>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<exact call title plus its UK date and time from the context>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<exact call title plus its UK date and time from the context>","client":"<client name>"},{"type":"cancel_call","call":"<exact call title plus its UK date and time from the context>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
 ---END ACTIONS---
 Additional supported actions are:
 {"type":"create_document","title":"<finished document title>","documentType":"plan|agreement|handbook|proposal|report|brief|other","instructions":"<grounded scope, intended reader, required outcome and useful structure>","client":"<optional exact client name>","sourceTask":"<optional exact open to-do text from DOCUMENT STUDIO ON DEMAND>"}

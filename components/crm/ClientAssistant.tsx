@@ -50,7 +50,42 @@ function actionConfirmationError(action: any, result: any): CrmRequestError | nu
       method: action?.method || "POST",
       reason: "LiveCoach did not return the saved to-do",
     });
+  if (action?.type === "add_intent") {
+    const expectedCallId = String(action?.endpoint || "").match(
+      /\/api\/crm\/upcoming\/([^/]+)/
+    )?.[1];
+    if (!result?.call?.id || (expectedCallId && result.call.id !== expectedCallId))
+      return crmConfirmationError({
+        url,
+        method,
+        reason: "LiveCoach did not confirm the exact call that received the focus note",
+      });
+    if (
+      result?.focusNoteAdded !== true &&
+      result?.intentNoteAdded !== true &&
+      result?.alreadyPresent !== true
+    )
+      return crmConfirmationError({
+        url,
+        method,
+        reason: "LiveCoach did not confirm that the call focus was updated",
+      });
+  }
   return null;
+}
+
+function broadcastCompletedAction(action: any, result: any) {
+  window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+  window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+  if (result?.call?.id) {
+    window.dispatchEvent(
+      new CustomEvent("lc:upcoming-call-updated", {
+        detail: { call: result.call, actionType: action?.type || "" },
+      })
+    );
+  }
+  if (action?.type === "create_document")
+    window.dispatchEvent(new CustomEvent("lc:document-jobs-updated"));
 }
 
 const DEEP_HISTORY_REQUEST =
@@ -1133,10 +1168,7 @@ export default function ClientAssistant({
       if (confirmationError) throw confirmationError;
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       setActionResults((current) => ({ ...current, [a.key]: result }));
-      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-      window.dispatchEvent(new CustomEvent("lc:crm-updated"));
-      if (a.type === "create_document")
-        window.dispatchEvent(new CustomEvent("lc:document-jobs-updated"));
+      broadcastCompletedAction(a, result);
       if (recordReceipt)
         await persistActionReceipt([
           {
@@ -1191,10 +1223,7 @@ export default function ClientAssistant({
       if (confirmationError) throw confirmationError;
       setActionState((s) => ({ ...s, [a.key]: "done" }));
       setActionResults((current) => ({ ...current, [a.key]: result }));
-      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-      window.dispatchEvent(new CustomEvent("lc:crm-updated"));
-      if (a.type === "create_document")
-        window.dispatchEvent(new CustomEvent("lc:document-jobs-updated"));
+      broadcastCompletedAction(a, result);
       await persistActionReceipt([
         {
           label: `${fullActionLabel(a)}: ${c.label}`,

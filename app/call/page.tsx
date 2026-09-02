@@ -1040,6 +1040,21 @@ export default function CallPage() {
     }
   }, []);
 
+  // A confirmed Brain action can change this call while its prep screen is
+  // already open. Apply the canonical row returned by that action immediately
+  // so the new focus appears without a reload and local autosave uses it.
+  useEffect(() => {
+    const receiveUpdatedCall = (event: Event) => {
+      const call = (event as CustomEvent<{ call?: any }>).detail?.call;
+      if (!call?.id || call.id !== upcomingIdRef.current) return;
+      if (typeof call.intent === "string") setBrief(call.intent);
+      hydrateFromPrep(call.prep);
+    };
+    window.addEventListener("lc:upcoming-call-updated", receiveUpdatedCall);
+    return () =>
+      window.removeEventListener("lc:upcoming-call-updated", receiveUpdatedCall);
+  }, [hydrateFromPrep]);
+
   // Preload from a scheduled (upcoming) call:
   // /call?company=&companyName=&intent=&meetingUrl=&upcoming=  -> link the client,
   // fill the intent, set up the meeting link, and reload any saved prep plan so
