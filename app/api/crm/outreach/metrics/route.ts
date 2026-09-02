@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
       supabaseAdmin.from("outreach_messages").select("*").eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).eq("step_number", 10).in("status", ["draft", "approved", "sent"]).order("updated_at", { ascending: false }),
       supabaseAdmin.from("outreach_learnings").select("*").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).order("meeting_count", { ascending: false }).order("positive_reply_count", { ascending: false }).limit(100),
       supabaseAdmin.from("outreach_messages").select("id,prospect_id,subject,body_text,status,step_number,scheduled_at,sent_at,updated_at,from_email,message_source").eq("workspace_id", account.workspaceId).eq("sender_user_id", account.userId).in("status", ["approved", "sending", "sent"]).order("updated_at", { ascending: false }).limit(100),
-      supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,campaign_id,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe", "meeting_booked"]),
+      supabaseAdmin.from("outreach_events").select("prospect_id,kind,metadata,campaign_id,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe", "meeting_booked"]).order("created_at", { ascending: false }),
       supabaseAdmin.from("outreach_events").select("id,prospect_id,campaign_id,kind,metadata,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).in("kind", ["linkedin_enrolled", "linkedin_connection_sent", "linkedin_connection_accepted", "linkedin_message_sent", "sendpilot_status", "meeting_booked"]).order("created_at", { ascending: false }).limit(100),
       supabaseAdmin.from("outreach_events").select("prospect_id,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).contains("metadata", { provider: "sendpilot" }).in("kind", ["reply", "positive_reply", "objection", "later", "referral", "unsubscribe"]).order("created_at", { ascending: false }).limit(500),
       supabaseAdmin.from("outreach_events").select("id,prospect_id,metadata,created_at").eq("workspace_id", account.workspaceId).eq("owner_id", account.userId).eq("kind", "manual_call").order("created_at", { ascending: false }).limit(100),
@@ -88,6 +88,92 @@ export async function GET(req: NextRequest) {
       { data: sendpilotReplyEvents },
       { data: recentManualCalls },
     ] = detailResults;
+    const replyProspectIds = Array.from(
+      new Set((recentReplies || []).map((reply: any) => reply.id).filter(Boolean))
+    );
+    const [replyMessagesResult, replyTasksResult] = replyProspectIds.length
+      ? await Promise.all([
+          supabaseAdmin
+            .from("outreach_messages")
+            .select(
+              "id,prospect_id,campaign_id,subject,body_text,sent_at,step_number"
+            )
+            .eq("workspace_id", account.workspaceId)
+            .eq("sender_user_id", account.userId)
+            .eq("status", "sent")
+            .neq("step_number", 10)
+            .in("prospect_id", replyProspectIds)
+            .order("sent_at", { ascending: false })
+            .limit(250),
+          supabaseAdmin
+            .from("tasks")
+            .select("id,payload,due_at")
+            .eq("workspace_id", account.workspaceId)
+            .eq("owner_id", account.userId)
+            .in("kind", ["reply_alert", "email_alert"])
+            .eq("status", "open")
+            .limit(250),
+        ])
+      : [
+          { data: [] as any[], error: null },
+          { data: [] as any[], error: null },
+        ];
+    if (replyMessagesResult.error) throw replyMessagesResult.error;
+    if (replyTasksResult.error) throw replyTasksResult.error;
+
+    const previousMessageByProspect = new Map<string, any>();
+    for (const message of replyMessagesResult.data || []) {
+      if (!previousMessageByProspect.has(message.prospect_id)) {
+        previousMessageByProspect.set(message.prospect_id, message);
+      }
+    }
+    const openReplyTaskByProspect = new Map<string, any>();
+    for (const task of replyTasksResult.data || []) {
+      const prospectId = String(task.payload?.outreachProspectId || "");
+      if (replyProspectIds.includes(prospectId)) {
+        openReplyTaskByProspect.set(prospectId, task);
+      }
+    }
+    const replyEventKinds = new Set([
+      "reply",
+      "positive_reply",
+      "objection",
+      "later",
+      "referral",
+      "unsubscribe",
+    ]);
+    const latestReplyEventByProspect = new Map<string, any>();
+    for (const event of personalOutcomeEvents || []) {
+      if (
+        replyEventKinds.has(event.kind) &&
+        !latestReplyEventByProspect.has(event.prospect_id)
+      ) {
+        latestReplyEventByProspect.set(event.prospect_id, event);
+      }
+    }
+    const replyCampaignIds = Array.from(
+      new Set(
+        replyProspectIds
+          .map((prospectId) => {
+            const event = latestReplyEventByProspect.get(prospectId);
+            const previous = previousMessageByProspect.get(prospectId);
+            return event?.campaign_id || previous?.campaign_id || null;
+          })
+          .filter(Boolean)
+      )
+    );
+    const { data: replyCampaigns, error: replyCampaignsError } =
+      replyCampaignIds.length
+        ? await supabaseAdmin
+            .from("outreach_campaigns")
+            .select("id,name")
+            .eq("workspace_id", account.workspaceId)
+            .in("id", replyCampaignIds)
+        : { data: [] as any[], error: null };
+    if (replyCampaignsError) throw replyCampaignsError;
+    const replyCampaignById = new Map(
+      (replyCampaigns || []).map((campaign: any) => [campaign.id, campaign])
+    );
     const variants = ["A", "B"].map((variant) => {
       const sentCount = (variantMessages || []).filter((row: any) => (row.variant || "A") === variant).length;
       const replyCount = (variantReplies || []).filter((row: any) => row.kind !== "meeting_booked" && (row.metadata?.variant || "A") === variant).length;
@@ -162,6 +248,10 @@ export async function GET(req: NextRequest) {
           Math.abs(
             new Date(providerReplyAt).getTime() - new Date(reply.last_reply_at).getTime()
           ) < 1_000);
+      const replyEvent = latestReplyEventByProspect.get(reply.id) || null;
+      const previousMessage = previousMessageByProspect.get(reply.id) || null;
+      const campaignId = replyEvent?.campaign_id || previousMessage?.campaign_id || null;
+      const attentionTask = openReplyTaskByProspect.get(reply.id) || null;
       return {
         ...reply,
         replyChannel: isSendPilotReply ? "linkedin" : "email",
@@ -174,6 +264,25 @@ export async function GET(req: NextRequest) {
             }
           : null,
         bookedMeeting: bookingByProspect.get(reply.id) || null,
+        campaign: campaignId ? replyCampaignById.get(campaignId) || null : null,
+        previousMessage: previousMessage
+          ? {
+              id: previousMessage.id,
+              subject: previousMessage.subject,
+              bodyText: previousMessage.body_text,
+              sentAt: previousMessage.sent_at,
+            }
+          : null,
+        replyEvidence: replyEvent
+          ? {
+              kind: replyEvent.kind,
+              receivedAt: replyEvent.created_at,
+              returnDate: replyEvent.metadata?.return_date || null,
+              provider: replyEvent.metadata?.provider || null,
+            }
+          : null,
+        attentionOpen: Boolean(attentionTask),
+        attentionTaskId: attentionTask?.id || null,
       };
     });
     const positiveProspects = new Set((personalOutcomeEvents || []).filter((event: any) => event.kind === "positive_reply").map((event: any) => event.prospect_id));

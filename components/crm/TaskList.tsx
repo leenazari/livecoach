@@ -11,7 +11,10 @@ import {
   setCached,
 } from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
-import { outreachProspectHref } from "@/lib/crm-navigation";
+import {
+  outreachProspectHref,
+  outreachReplyHref,
+} from "@/lib/crm-navigation";
 
 type Task = {
   id: string;
@@ -372,7 +375,10 @@ export default function TaskList({
   const runAction = (t: Task, a: string) => {
     setChoosing(null);
     const prospectHref = t.payload?.outreachProspectId
-      ? outreachProspectHref({ id: t.payload.outreachProspectId })
+      ? t.kind === "reply_alert" ||
+        (t.kind === "email_alert" && t.payload?.replyRecommended === true)
+        ? outreachReplyHref(t.payload.outreachProspectId)
+        : outreachProspectHref({ id: t.payload.outreachProspectId })
       : null;
     if (a === "email") {
       if (!t.company_id && prospectHref) return router.push(prospectHref);

@@ -118,3 +118,59 @@ export async function ensureReplyAttentionTask(input: ReplyAttentionInput) {
       ])
   );
 }
+
+// A reply remains authoritative on outreach_prospects and outreach_events.
+// These rows are only the owner-specific attention receipts around it. Close
+// them together when that same owner has queued a reply, scheduled a follow up
+// or explicitly marked the reply reviewed.
+export async function resolveReplyAttention(input: {
+  workspaceId: string;
+  userId: string;
+  prospectId: string;
+}) {
+  if (
+    !UUID.test(input.workspaceId) ||
+    !UUID.test(input.userId) ||
+    !UUID.test(input.prospectId)
+  ) {
+    throw new Error("Reply attention scope is invalid");
+  }
+
+  const resolvedAt = new Date().toISOString();
+  const [tasksResult, notificationsResult] = await Promise.all([
+    supabaseService
+      .from("tasks")
+      .update({ status: "done", done_at: resolvedAt })
+      .eq("workspace_id", input.workspaceId)
+      .eq("owner_id", input.userId)
+      // Positive email replies created before Reply to Close used the generic
+      // email_alert kind. Keep that legacy receipt compatible without ever
+      // touching unrelated email tasks.
+      .in("kind", ["reply_alert", "email_alert"])
+      .eq("status", "open")
+      .contains("payload", { outreachProspectId: input.prospectId })
+      .select("id"),
+    supabaseService
+      .from("crm_notifications")
+      .update({
+        read_at: resolvedAt,
+        dismissed_at: resolvedAt,
+        snoozed_until: null,
+      })
+      .eq("workspace_id", input.workspaceId)
+      .eq("user_id", input.userId)
+      .eq("kind", "outreach_reply")
+      .eq("source_table", "outreach_prospects")
+      .eq("source_id", input.prospectId)
+      .is("dismissed_at", null)
+      .select("id"),
+  ]);
+  if (tasksResult.error) throw tasksResult.error;
+  if (notificationsResult.error) throw notificationsResult.error;
+
+  return {
+    resolvedAt,
+    completedTasks: tasksResult.data?.length || 0,
+    dismissedNotifications: notificationsResult.data?.length || 0,
+  };
+}

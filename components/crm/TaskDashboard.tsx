@@ -18,7 +18,10 @@ import {
   getCached,
   setCached,
 } from "@/lib/crm";
-import { outreachProspectHref } from "@/lib/crm-navigation";
+import {
+  outreachProspectHref,
+  outreachReplyHref,
+} from "@/lib/crm-navigation";
 import {
   followUpAtFromLocalParts,
   followUpAtIsPast,
@@ -123,7 +126,10 @@ const dueParts = (task: Task) => {
 
 const contextHref = (task: Task) =>
   task.payload?.outreachProspectId
-    ? outreachProspectHref({ id: task.payload.outreachProspectId })
+    ? task.kind === "reply_alert" ||
+      (task.kind === "email_alert" && task.payload?.replyRecommended === true)
+      ? outreachReplyHref(task.payload.outreachProspectId)
+      : outreachProspectHref({ id: task.payload.outreachProspectId })
     : task.company_id
       ? `/crm/${task.company_id}`
       : null;
@@ -375,7 +381,10 @@ export default function TaskDashboard() {
 
   const startTask = (task: Task) => {
     const prospectHref = task.payload?.outreachProspectId
-      ? outreachProspectHref({ id: task.payload.outreachProspectId })
+      ? task.kind === "reply_alert" ||
+        (task.kind === "email_alert" && task.payload?.replyRecommended === true)
+        ? outreachReplyHref(task.payload.outreachProspectId)
+        : outreachProspectHref({ id: task.payload.outreachProspectId })
       : null;
     if (task.link_kind === "email" || task.link_kind === "drafts") {
       if (!task.company_id && prospectHref) return router.push(prospectHref);

@@ -14,6 +14,7 @@ import {
   listVisibleClientGrants,
 } from "@/lib/team-client-sharing";
 import { companyPipelineExclusionIds } from "@/lib/company-pipeline-exclusion";
+import { outreachReplyHref } from "@/lib/crm-navigation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -204,6 +205,14 @@ export async function GET() {
         .filter(Boolean)
     );
     const items: WorkInboxItem[] = [];
+    const positiveReplyProspectIds = new Set(
+      (outreachProspectsResult.data || [])
+        .filter(
+          (prospect: any) =>
+            prospect.reply_category === "interested" && prospect.last_reply_at
+        )
+        .map((prospect: any) => prospect.id)
+    );
     const canonicalOpportunityActions = new Set(
       activeOpportunities
         .map((opportunity: any) =>
@@ -221,6 +230,17 @@ export async function GET() {
 
     for (const task of tasksResult.data || []) {
       const done = task.status === "done";
+      const replyProspectId = text(task.payload?.outreachProspectId, 80);
+      // The positive-reply workspace below is the single action surface for
+      // this alert. Keep other reply categories as tasks, but never show a
+      // completed receipt or duplicate the same positive reply twice.
+      if (
+        ["reply_alert", "email_alert"].includes(task.kind) &&
+        replyProspectId &&
+        (done || positiveReplyProspectIds.has(replyProspectId))
+      ) {
+        continue;
+      }
       // A deal's canonical next action is already shown as an opportunity card.
       // Hide an exact open task copy so the salesperson never performs or
       // counts the same move twice. Completed task history remains visible.
@@ -280,7 +300,12 @@ export async function GET() {
               : null,
         company,
         companyId: task.company_id || null,
-        href: task.company_id ? `/crm/${task.company_id}` : "/crm/tasks",
+        href:
+          task.kind === "reply_alert" && replyProspectId
+            ? outreachReplyHref(replyProspectId) || "/crm/outreach?tab=replies"
+            : task.company_id
+              ? `/crm/${task.company_id}`
+              : "/crm/tasks",
         priority,
         priorityLabel: priorityLabel(priority, waiting, done),
         dueAt: done ? task.done_at || null : task.due_at || null,
@@ -417,6 +442,20 @@ export async function GET() {
         .map((event: any) => event.prospect_id)
         .filter(Boolean)
     );
+    const resolvedReplyKeys = new Set(
+      (tasksResult.data || [])
+        .filter(
+          (task: any) =>
+            ["reply_alert", "email_alert"].includes(task.kind) &&
+            task.status === "done" &&
+            task.payload?.outreachProspectId &&
+            task.payload?.receivedAt
+        )
+        .map(
+          (task: any) =>
+            `${task.payload.outreachProspectId}:${task.payload.receivedAt}`
+        )
+    );
     const handledReplyRefs = new Set(
       (tasksResult.data || [])
         .map((task: any) => text(task.source_ref, 500))
@@ -450,7 +489,9 @@ export async function GET() {
         detail: text(message.subject, 180) || (isReply ? "Booking reply" : "Outreach draft"),
         company: text(prospect?.company_name, 160) || null,
         companyId: null,
-        href: isReply ? "/crm/outreach?tab=replies" : "/crm/outreach?tab=queue",
+        href: isReply
+          ? outreachReplyHref(message.prospect_id) || "/crm/outreach?tab=replies"
+          : "/crm/outreach?tab=queue",
         priority,
         priorityLabel: priorityLabel(priority, false, done),
         dueAt: null,
@@ -509,6 +550,7 @@ export async function GET() {
       if (
         !prospect.last_reply_at ||
         prospect.reply_category !== "interested" ||
+        resolvedReplyKeys.has(`${prospect.id}:${prospect.last_reply_at}`) ||
         handledReplyRefs.has(
           `outreach-reply:${prospect.id}:${prospect.last_reply_at}`
         ) ||
@@ -530,7 +572,8 @@ export async function GET() {
           : "Identity needs approval before a client profile is linked or created",
         company: text(prospect.company_name, 160) || null,
         companyId,
-        href: "/crm/outreach?tab=replies",
+        href:
+          outreachReplyHref(prospect.id) || "/crm/outreach?tab=replies",
         priority: 110,
         priorityLabel: "urgent",
         dueAt: prospect.last_reply_at || null,

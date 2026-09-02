@@ -30,3 +30,8 @@ export function outreachProspectHref(
   // the company only as a fallback for legacy activity without a prospect ID.
   return crmCompanyHref(prospect?.crm_company_id);
 }
+
+export function outreachReplyHref(prospectId: unknown): string | null {
+  const id = routePart(prospectId);
+  return id ? `/crm/outreach?tab=replies&reply=${id}` : null;
+}
