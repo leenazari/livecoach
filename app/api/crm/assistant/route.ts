@@ -77,7 +77,7 @@ async function findCalls(reference: string): Promise<any[]> {
   if (!requestScope) return [];
   const query = supabaseAdmin
     .from("upcoming_calls")
-    .select("id, title, scheduled_at, intent, attendees")
+    .select("id, title, scheduled_at, intent, attendees, completed_at")
     .eq("workspace_id", requestScope.workspaceId)
     .eq("owner_id", requestScope.userId)
     .gte("scheduled_at", new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString())
@@ -434,6 +434,8 @@ function callExec(call: any, type: string, x: any) {
   }
   if (type === "link_call")
     return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { companyId: x.companyId } };
+  if (type === "restore_call")
+    return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { completed: false } };
   // cancel_call
   return { endpoint: `/api/crm/upcoming/${call.id}/cancel`, method: "POST", body: { reason: x.reason } };
 }
@@ -446,12 +448,14 @@ function actionVerb(type: string): string {
     ? "add to the focus for"
     : type === "link_call"
     ? "link"
+    : type === "restore_call"
+    ? "restore"
     : "remove";
 }
 
 async function resolveActions(items: any[], defaultCompanyId: string | null = null): Promise<any[]> {
   const out: any[] = [];
-  const callTypes = ["set_meeting_link", "set_intent", "add_intent", "link_call", "cancel_call"];
+  const callTypes = ["set_meeting_link", "set_intent", "add_intent", "link_call", "restore_call", "cancel_call"];
   for (const it of Array.isArray(items) ? items : []) {
     if (out.length >= 6) break;
     if (!it || typeof it.type !== "string") continue;
@@ -1691,7 +1695,7 @@ CALL TRANSCRIPTS ON DEMAND: when an ON-DEMAND CALL TRANSCRIPT block is present, 
 
 ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, client stages, stakeholders and to-dos, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles, update opportunities, pull email context, remember durable rules, correct records, dismiss stale work, and queue one-off emails from the signed-in user's own connected mailbox. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
-[{"type":"set_meeting_link","call":"<exact call title plus its UK date and time from the context>","url":"<link>"},{"type":"set_intent","call":"<exact call title plus its UK date and time from the context>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<exact call title plus its UK date and time from the context>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<exact call title plus its UK date and time from the context>","client":"<client name>"},{"type":"cancel_call","call":"<exact call title plus its UK date and time from the context>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
+[{"type":"set_meeting_link","call":"<exact call title plus its UK date and time from the context>","url":"<link>"},{"type":"set_intent","call":"<exact call title plus its UK date and time from the context>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<exact call title plus its UK date and time from the context>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<exact call title plus its UK date and time from the context>","client":"<client name>"},{"type":"restore_call","call":"<exact future call title plus its UK date and time from the context>"},{"type":"cancel_call","call":"<exact call title plus its UK date and time from the context>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
 ---END ACTIONS---
 Additional supported actions are:
 {"type":"create_document","title":"<finished document title>","documentType":"plan|agreement|handbook|proposal|report|brief|other","instructions":"<grounded scope, intended reader, required outcome and useful structure>","client":"<optional exact client name>","sourceTask":"<optional exact open to-do text from DOCUMENT STUDIO ON DEMAND>"}
@@ -1723,6 +1727,7 @@ CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue on
 BATCH APPROVAL: when the user asks for several safe internal changes, emit them together. The interface shows every exact change and offers one approval for the safe subset. Destructive changes, mailbox pulls and any future external send stay separately confirmed.
 NO SILENT FAILURES: if a requested edit cannot be matched or completed, the action panel will mark it Not completed. Never imply that an edit happened merely because you described it in prose.
 When a call is cancelled or has moved off the calendar, use cancel_call (it removes the call and its prep to-do and records the reason). If there are also leftover to-dos or drafts about that call, propose dismissing those too. If you are not sure which call, client, draft or to-do the user means, ask them to clarify in your prose reply rather than guessing (the system will also offer a pick-list if more than one record matches the name).
+When the calendar context marks a future event as HIDDEN FROM CALLS LIST BY A STALE COMPLETION MARKER and the user asks why it is missing or asks to bring it back, use restore_call in the same reply. Do not tell them to refresh because refresh cannot repair that stored state.
 Refer to the call, client, draft or to-do by the exact name/title/text shown in the context so it can be matched. Each one is shown to the user with a Confirm button and nothing happens until they tap it, so never say it is done.
 
 NEW PEOPLE: when the user introduces or talks about a person or company who is a contact, prospect, partner or lead and is NOT already in the context, proactively OFFER to create their profile with create_client, capturing what you know in the brief, so future calls and notes track against them. Suggest it early rather than waiting to be asked twice.

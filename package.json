@@ -39,6 +39,7 @@
     "validate:digest-next-tasks": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-daily-digest-next-tasks.mjs",
     "validate:dashboard-call-window": "node scripts/validate-dashboard-call-window.mjs",
     "validate:upcoming-recovery": "node scripts/validate-upcoming-call-recovery.mjs",
+    "validate:calendar-reschedule-recovery": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-calendar-reschedule-recovery.mjs",
     "validate:opportunity-privacy": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-opportunity-privacy.mjs",
     "validate:sales-pipeline-core": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sales-desk-pipeline-core.mjs",
     "validate:quick-call": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-quick-call-workflow.mjs",
