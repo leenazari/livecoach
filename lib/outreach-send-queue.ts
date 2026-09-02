@@ -209,17 +209,12 @@ export async function dispatchDueOutreachMessage(messageId: string) {
 
   if (message.from_email !== sender.senderEmail)
     await stopClaim("Sender safety check failed", "failed");
-  if (
+  const hasReadyVoiceNote = Boolean(
     String(message.voice_script || "").trim() &&
-    (message.voice_status !== "ready" ||
-      !message.voice_audio_path ||
-      !message.voice_public_token)
-  ) {
-    await stopClaim(
-      "The personal voice note is not ready. Review and recreate its preview before sending.",
-      "failed"
-    );
-  }
+      message.voice_status === "ready" &&
+      message.voice_audio_path &&
+      message.voice_public_token
+  );
   const isBrainDirect = message.message_source === "brain_direct";
   const [{ data: prospect }, enrolmentResult, campaignResult] = await Promise.all([
     supabaseAdmin
@@ -398,9 +393,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     ownerId: sender.userId,
     senderName: sender.senderName,
     fromEmail: sender.senderEmail,
-    ...(message.voice_status === "ready" &&
-    message.voice_audio_path &&
-    message.voice_public_token
+    ...(hasReadyVoiceNote
       ? {
           voiceNote: {
             url: outreachVoicePublicUrl(message.voice_public_token),
@@ -507,6 +500,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         from: sender.senderEmail,
         senderUserId: sender.userId,
         messageType: isBrainDirect ? "brain_direct" : isReply ? "reply" : "sequence",
+        voiceNoteIncluded: hasReadyVoiceNote,
         tags: message.message_tags || {},
       },
     }),

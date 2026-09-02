@@ -606,7 +606,7 @@ export default function OutreachTodayLane({
           method: "POST",
           body: "{}",
         });
-        setNotice("Exact email approved and added to the spaced send queue.");
+        setNotice("Exact email approved and added to the spaced send queue. A ready voice note is included, while an unfinished one never delays the email.");
         setFocusedRowId("");
         setExpandedId("");
       } else {
@@ -1700,11 +1700,7 @@ export default function OutreachTodayLane({
                                 onClick={() => void saveDraft(displayMessage, true)}
                                 disabled={
                                   savingMessageId === displayMessage.id ||
-                                  Boolean(displayMessage.scheduled_at) ||
-                                  !edit.voiceScript.trim() ||
-                                  displayMessage.voice_status !== "ready" ||
-                                  edit.voiceScript.trim() !==
-                                    String(displayMessage.voice_script || "").trim()
+                                  Boolean(displayMessage.scheduled_at)
                                 }
                                 className={primary}
                               >
@@ -1716,7 +1712,7 @@ export default function OutreachTodayLane({
                               </button>
                             </div>
                             <p className="text-[0.68rem] leading-5 text-muted">
-                              Approval covers the exact email and ready voice note above. Optional CTA advice never blocks queueing. Delivery still uses the spaced send queue and daily limit.
+                              Approval covers the exact email above. A ready, unchanged voice note is included automatically, but the email can be queued without one. Optional CTA advice never blocks queueing. Delivery still uses the spaced send queue and daily limit.
                             </p>
                             {sender?.provider === "google" ? (
                               <p className="text-[0.68rem] leading-5 text-sky">

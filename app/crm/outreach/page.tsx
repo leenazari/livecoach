@@ -934,14 +934,14 @@ export default function OutreachPage() {
     setDraftEdits((all) => ({ ...all, [id]: { subject: all[id]?.subject || "", body_text: all[id]?.body_text || "", voice_script: all[id]?.voice_script || "", ...styled } }));
   };
 
-  const hasCurrentReadyVoice = (row: QueueRow): boolean => {
+  const hasApprovableEmail = (row: QueueRow): boolean => {
     const message = row.message;
-    if (!message || message.voice_status !== "ready") return false;
-    const savedScript = String(message.voice_script || "").trim();
-    const visibleScript = String(
-      draftEdits[message.id]?.voice_script ?? message.voice_script ?? ""
-    ).trim();
-    return Boolean(savedScript && visibleScript === savedScript);
+    if (!message || !["draft", "failed"].includes(message.status)) return false;
+    const visible = draftEdits[message.id];
+    return Boolean(
+      String(visible?.subject ?? message.subject ?? "").trim() &&
+      String(visible?.body_text ?? message.body_text ?? "").trim()
+    );
   };
 
   const buildQueue = async () => {
@@ -1174,8 +1174,6 @@ export default function OutreachPage() {
       const visible = draftEdits[messageId];
       if (!visible?.subject?.trim() || !visible?.body_text?.trim())
         throw new Error("Add a subject and email before sending");
-      if (!visible.voice_script?.trim())
-        throw new Error("Complete and generate the personal voice note before queueing this outreach");
       const { message } = await crmFetch<{ message: Record<string, any> }>(
         `/api/crm/outreach/messages/${messageId}`,
         {
@@ -1194,7 +1192,7 @@ export default function OutreachPage() {
         { method: "POST", body: "{}" }
       );
       setNotice(
-        `Exact draft approved and queued for ${formatActivityDate(result.scheduledAt)}. It will send automatically from ${sender?.senderEmail || "your connected mailbox"}.`
+        `Exact email approved and queued for ${formatActivityDate(result.scheduledAt)}. It will send automatically from ${sender?.senderEmail || "your connected mailbox"}. A ready voice note is included, while an unfinished one never delays the email.`
       );
       await Promise.all([loadCore(), tab === "replies" ? loadMetrics() : Promise.resolve()]);
     } catch (e: any) {
@@ -1309,12 +1307,7 @@ export default function OutreachPage() {
     }
   };
   const approveAllPrepared = async () => {
-    const readyDrafts = queue.filter(
-      (row) =>
-        row.message &&
-        ["draft", "failed"].includes(row.message.status) &&
-        hasCurrentReadyVoice(row)
-    );
+    const readyDrafts = queue.filter(hasApprovableEmail);
     const firstTouchDrafts = readyDrafts.filter(
       (row) => queueWaveRank(row) === 0
     );
@@ -1333,8 +1326,6 @@ export default function OutreachPage() {
         const visible = draftEdits[messageId];
         if (!visible?.subject?.trim() || !visible?.body_text?.trim())
           throw new Error(`The draft for ${row.prospect?.first_name || "this prospect"} is incomplete`);
-        if (!visible.voice_script?.trim())
-          throw new Error(`The voice note for ${row.prospect?.first_name || "this prospect"} is incomplete`);
         const { message } = await crmFetch<{ message: Record<string, any> }>(
           `/api/crm/outreach/messages/${messageId}`,
           { method: "PATCH", body: JSON.stringify({ ...visible, status: "approved" }) }
@@ -1351,7 +1342,7 @@ export default function OutreachPage() {
         );
         lastScheduledAt = queued.scheduledAt || lastScheduledAt;
       }
-      setNotice(`${drafts.length} reviewed drafts approved and queued five minutes apart${lastScheduledAt ? `. The last is scheduled for ${formatActivityDate(lastScheduledAt)}` : ""}.`);
+      setNotice(`${drafts.length} reviewed emails approved and queued five minutes apart${lastScheduledAt ? `. The last is scheduled for ${formatActivityDate(lastScheduledAt)}` : ""}. Ready voice notes are included, while unfinished ones do not delay delivery.`);
       await loadCore();
     } catch (e: any) {
       setError(e.message || "The prepared drafts could not all be queued");
@@ -1851,12 +1842,7 @@ export default function OutreachPage() {
         row.status
       )
   ).length;
-  const approvalReadyRows = queue.filter(
-    (row) =>
-      row.message &&
-      ["draft", "failed"].includes(row.message.status) &&
-      hasCurrentReadyVoice(row)
-  );
+  const approvalReadyRows = queue.filter(hasApprovableEmail);
   const firstTouchApprovalRows = approvalReadyRows.filter(
     (row) => queueWaveRank(row) === 0
   );
@@ -1915,7 +1901,7 @@ export default function OutreachPage() {
             <div>
               <h2 className="font-display text-lg text-bone">Today’s assigned contacts</h2>
               <p className="mt-1 text-sm text-muted">Each person keeps the campaign shown on their card. Changing the campaign above never moves or rewrites anyone already queued. New contacts use the selected campaign only when a space is available. Email drafts still require approval.</p>
-              <p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{newContactCount} new contacts · {followUpDueCount} follow ups due · {newEmailDraftCount} new emails to prepare · {missingVoiceScriptCount} voice scripts to complete · {manualStepsDue} LinkedIn or phone actions · {preparedToApprove} ready to approve · {scheduledToSend} scheduled</p>
+              <p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{newContactCount} new contacts · {followUpDueCount} follow ups due · {newEmailDraftCount} new emails to prepare · {missingVoiceScriptCount} optional voice scripts to prepare · {manualStepsDue} LinkedIn or phone actions · {preparedToApprove} ready to approve · {scheduledToSend} scheduled</p>
             </div>
             <button onClick={buildQueue} disabled={!!busy || queue.length >= dailyQueueLimit} className={button}>{busy === "queue" ? "Ranking…" : queue.length >= dailyQueueLimit ? "Today’s queue is full" : queue.length ? `Choose ${Math.max(0, dailyQueueLimit - queue.length)} more from ${activeCampaign?.name || "selected campaign"}` : `Choose today's contacts from ${activeCampaign?.name || "selected campaign"}`}</button>
           </div>
@@ -1923,7 +1909,7 @@ export default function OutreachPage() {
             <button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Research + draft current wave (${remainingToPrepare})` : "Current wave prepared"}</button>
             <button onClick={approveAllPrepared} disabled={!!busy || !preparedToApprove} className={primary}>{busy === "approve-all" ? "Approving and queueing…" : preparedToApprove ? `Approve current wave & queue (${preparedToApprove})` : "No drafts awaiting approval"}</button>
           </div>
-          <p className="mt-2 text-xs leading-5 text-muted">Choosing contacts is free and starts no research. Research + draft current wave prepares the email and voice script, but never generates paid audio or contacts anyone. Bulk approval applies only to the exact drafts already shown below.</p>
+          <p className="mt-2 text-xs leading-5 text-muted">Choosing contacts is free and starts no research. Research + draft current wave prepares the email and optional voice script, but never generates paid audio or contacts anyone. Bulk approval applies only to the exact emails already shown below.</p>
           <p className="mt-2 text-xs leading-5 text-sky">Overnight preparation keeps a maximum of {OVERNIGHT_RESEARCH_INVENTORY_LIMIT} unused researched leads per salesperson. Saved research and missing script repairs are reused before any new lead is researched.</p>
         </div>
         <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const isFollowUp = row.queueKind === "follow_up" || Boolean(lastSent); const followUpDue = isFollowUp && row.status === "queued" && Number(row.current_step) > 1 && row.sequenceStepDue !== false; const sequenceStep = row.sequenceStep as SequenceStep | null; const channel = sequenceStep?.channel || "email"; const manual = channel !== "email"; const manualDue = manual && row.sequenceStepDue !== false && !["completed", "paused", "replied", "booked", "suppressed"].includes(row.status); const needsVoiceScript = queueRowNeedsVoiceScript(row); const canPrepare = !manual && queueRowNeedsPreparation(row); const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = manualDue ? channel : followUpDue && !m ? "follow_up_due" : m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const displayStatusLabel = displayStatus === "sent" ? "✓ sent" : displayStatus === "follow_up_due" ? "Follow up due" : displayStatus; const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text, voice_script: m.voice_script || "" } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className={`rounded-xl border bg-panel p-4 ${isFollowUp ? "border-amber/45" : "border-edge"}`}>
@@ -2003,7 +1989,40 @@ export default function OutreachPage() {
           {rowErrors[p.id] ? <p className="mt-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm leading-5 text-rust">{rowErrors[p.id]}</p> : null}
           <RecommendationCard recommendation={row.recommendation || p.recommendation} compact actionLabel={followUpDue ? "Follow up today" : undefined} />
           {row.research ? <details className="mt-4 rounded-lg border border-edge bg-ink/30 p-3"><summary className="cursor-pointer font-mono text-[0.6rem] uppercase tracking-wider text-amber">Why this message {m?.quality_score ? `· quality ${m.quality_score}/100` : ""}</summary><p className="mt-2 text-sm leading-6 text-bone/80">{m?.strategy?.reasoning || row.research.summary}</p><div className="mt-2 flex flex-wrap gap-1.5">{row.research.fitDecision ? <span className="rounded-full border border-moss/40 bg-moss/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-moss">{row.research.fitDecision}</span> : null}{row.research.commercialPath ? <span className="rounded-full border border-sky/40 bg-sky/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-sky">{row.research.commercialPath}</span> : null}{row.research.volumeAssessment ? <span className="rounded-full border border-amber/40 bg-amber/10 px-2 py-0.5 font-mono text-[0.5rem] uppercase text-amber">{row.research.volumeAssessment} vacancy volume</span> : null}{row.research.freshness ? <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[0.5rem] uppercase text-muted">{row.research.freshness}</span> : null}</div><p className="mt-2 text-xs text-muted"><strong className="text-bone">Chosen angle:</strong> {m?.strategy?.angle || row.research.bestAngle}</p>{row.research.volumeReason ? <p className="mt-2 text-xs text-muted"><strong className="text-bone">Volume evidence:</strong> {row.research.volumeReason}</p> : null}{row.research.activeJobs?.length && !row.research.jobSignals?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Current jobs found</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{row.research.activeJobs.map((job: string) => <li key={job}>• {job}</li>)}</ul></div> : null}{m?.strategy?.evidenceUsed?.length ? <div className="mt-2"><p className="font-mono text-[0.53rem] uppercase text-muted">Evidence actually used</p><ul className="mt-1 space-y-1 text-xs text-bone/75">{m.strategy.evidenceUsed.map((fact: string) => <li key={fact}>• {fact}</li>)}</ul></div> : null}<ResearchEvidenceLinks research={row.research} sources={row.research_sources || []} prospect={p} /></details> : null}
-          {m && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-edge bg-ink/40 px-3 py-2 font-mono text-[0.58rem] text-muted">From: <span className="text-bone">{sender?.senderName || "Your account"} &lt;{m.from_email || sender?.senderEmail || "connected mailbox"}&gt;</span> · To: {p.email}</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(m.id, { subject: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Email</span><textarea className={`${input} min-h-44 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(m.id, { body_text: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} /></label><OutreachCtaAdvice emailBody={edit.body_text} voiceScript={edit.voice_script} workspaceId={sender?.workspaceId} userId={sender?.userId} /><OutreachVoiceNoteEditor message={m} script={edit.voice_script} disabled={Boolean(m.scheduled_at)} generating={generatingVoiceMessageId === m.id} onScriptChange={(value) => setMessage(m.id, { voice_script: value })} onGenerate={() => void generateVoiceNote(m.id)} />{!["sending", "sent"].includes(m.status) && !m.scheduled_at ? <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3"><p className="text-xs leading-5 text-bone/75">Test the real email appearance safely. The exact saved body and ready voice note go only to <strong className="text-bone">{sender?.mailboxEmail || "your connected mailbox"}</strong>. The prospect, sequence, daily allowance and results stay untouched.</p>{sender?.provider === "google" ? <p className="mt-2 text-xs leading-5 text-sky">Gmail keeps a rehearsal sent back to the same account under Sent or All Mail. It may not create a new Inbox message.</p> : null}<button onClick={() => rehearse(m.id)} disabled={!!busy} className={`${button} mt-2 w-full border-sky/45 text-sky sm:w-auto`}>{busy === `rehearse:${m.id}` ? "Sending rehearsal…" : "Send rehearsal to me"}</button></div> : null}<div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => prepare(p.id)} disabled={!!busy || prepareStatus === "queued" || prepareStatus === "researching" || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>{prepareStatus === "queued" || prepareStatus === "researching" ? "Refreshing draft…" : "Refresh draft"}</button><button onClick={() => saveDraft(m.id)} disabled={!!busy || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>Save changes</button>{m.status === "draft" || m.status === "failed" ? <button onClick={() => approveAndSend(m.id)} disabled={!!busy || Boolean(edit.voice_script) && (m.voice_status !== "ready" || edit.voice_script.trim() !== String(m.voice_script || "").trim())} className={primary}>{busy === `approve-send:${m.id}` ? "Approving and queueing…" : "Approve & queue"}</button> : null}{m.status === "approved" && !m.scheduled_at ? <button onClick={() => send(m.id)} disabled={!!busy} className={primary}>{busy === `send:${m.id}` ? "Queueing…" : "Queue approved email"}</button> : null}{m.status === "approved" && m.scheduled_at ? <span className="self-center rounded-lg border border-sky bg-sky px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-ink">✓ Queued for {formatActivityDate(m.scheduled_at)}</span> : null}{m.status === "sending" ? <span className="self-center rounded-lg border border-sky/60 bg-sky/10 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-sky">Sending now</span> : null}{m.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Sent safely</span> : null}</div><p className="text-right text-xs text-muted">Approved emails and their ready voice notes send automatically five minutes apart. Optional CTA advice never blocks this button. Safety issues still do.</p></div> : null}
+          {m && edit ? (
+            <div className="mt-4 space-y-3 border-t border-edge pt-4">
+              <div className="rounded-lg border border-edge bg-ink/40 px-3 py-2 font-mono text-[0.58rem] text-muted">
+                From: <span className="text-bone">{sender?.senderName || "Your account"} &lt;{m.from_email || sender?.senderEmail || "connected mailbox"}&gt;</span> · To: {p.email}
+              </div>
+              <label className="block">
+                <span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Subject</span>
+                <input className={input} value={edit.subject} onChange={(e) => setMessage(m.id, { subject: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} />
+              </label>
+              <label className="block">
+                <span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Email</span>
+                <textarea className={`${input} min-h-44 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(m.id, { body_text: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} />
+              </label>
+              <OutreachCtaAdvice emailBody={edit.body_text} voiceScript={edit.voice_script} workspaceId={sender?.workspaceId} userId={sender?.userId} />
+              <OutreachVoiceNoteEditor message={m} script={edit.voice_script} disabled={Boolean(m.scheduled_at)} generating={generatingVoiceMessageId === m.id} onScriptChange={(value) => setMessage(m.id, { voice_script: value })} onGenerate={() => void generateVoiceNote(m.id)} />
+              {!["sending", "sent"].includes(m.status) && !m.scheduled_at ? (
+                <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3">
+                  <p className="text-xs leading-5 text-bone/75">Test the real email appearance safely. The exact saved body and any ready voice note go only to <strong className="text-bone">{sender?.mailboxEmail || "your connected mailbox"}</strong>. The prospect, sequence, daily allowance and results stay untouched.</p>
+                  {sender?.provider === "google" ? <p className="mt-2 text-xs leading-5 text-sky">Gmail keeps a rehearsal sent back to the same account under Sent or All Mail. It may not create a new Inbox message.</p> : null}
+                  <button onClick={() => rehearse(m.id)} disabled={!!busy} className={`${button} mt-2 w-full border-sky/45 text-sky sm:w-auto`}>{busy === `rehearse:${m.id}` ? "Sending rehearsal…" : "Send rehearsal to me"}</button>
+                </div>
+              ) : null}
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <button onClick={() => prepare(p.id)} disabled={!!busy || prepareStatus === "queued" || prepareStatus === "researching" || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>{prepareStatus === "queued" || prepareStatus === "researching" ? "Refreshing draft…" : "Refresh draft"}</button>
+                <button onClick={() => saveDraft(m.id)} disabled={!!busy || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>Save changes</button>
+                {m.status === "draft" || m.status === "failed" ? <button onClick={() => approveAndSend(m.id)} disabled={!!busy} className={primary}>{busy === `approve-send:${m.id}` ? "Approving and queueing…" : "Approve & queue"}</button> : null}
+                {m.status === "approved" && !m.scheduled_at ? <button onClick={() => send(m.id)} disabled={!!busy} className={primary}>{busy === `send:${m.id}` ? "Queueing…" : "Queue approved email"}</button> : null}
+                {m.status === "approved" && m.scheduled_at ? <span className="self-center rounded-lg border border-sky bg-sky px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-ink">✓ Queued for {formatActivityDate(m.scheduled_at)}</span> : null}
+                {m.status === "sending" ? <span className="self-center rounded-lg border border-sky/60 bg-sky/10 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-sky">Sending now</span> : null}
+                {m.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Sent safely</span> : null}
+              </div>
+              <p className="text-right text-xs text-muted">The email can be queued without a voice note. Any ready, unchanged voice note is included automatically. Optional CTA advice never blocks this button. Safety issues still do.</p>
+            </div>
+          ) : null}
         </article>; })}{!queue.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">The morning queue can be selected and prepared automatically, or you can build it now. Nothing is approved or contacted automatically.</div> : null}</div>
       </section> : null}
 

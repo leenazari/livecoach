@@ -131,22 +131,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
     if (body.status === "approved") {
       if (!/(not|won't|will not|do not).{0,20}follow up/i.test(nextBody)) return NextResponse.json({ error: "Keep the simple opt-out line before approving" }, { status: 400 });
-      if (existing.voice_status === "generating")
-        return NextResponse.json(
-          { error: "Wait for the voice note to finish before approving" },
-          { status: 409 }
-        );
-      if (
-        nextVoiceScript &&
-        (voiceChanged || existing.voice_status !== "ready")
-      )
-        return NextResponse.json(
-          {
-            error:
-              "Generate and preview the personal voice note before approving this email",
-          },
-          { status: 409 }
-        );
       patch.status = "approved";
       patch.approved_at = new Date().toISOString();
       // Approval covers the exact visible words. If those words changed, any
