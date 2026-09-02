@@ -70,6 +70,10 @@ export async function GET(req: Request) {
       userId: requestScope.userId,
       workspaceId: requestScope.workspaceId,
     };
+    const dashboardNow = Date.now();
+    const sevenDayHorizon = new Date(
+      dashboardNow + 7 * 24 * 60 * 60 * 1000
+    ).toISOString();
     const [
       companiesRes,
       draftsRes,
@@ -126,7 +130,8 @@ export async function GET(req: Request) {
           .eq("workspace_id", accountScope.workspaceId)
           .eq("owner_id", accountScope.userId)
           .is("completed_at", null)
-          .gte("scheduled_at", new Date().toISOString())
+          .gte("scheduled_at", new Date(dashboardNow).toISOString())
+          .lte("scheduled_at", sevenDayHorizon)
           .order("scheduled_at", { ascending: true })
           .limit(50),
         supabaseAdmin
@@ -224,7 +229,7 @@ export async function GET(req: Request) {
     // Spend so far in calendar periods (London time): Monday-to-now for the
     // week and the 1st-to-now for the month. Exact boundaries are returned so
     // the dashboard never leaves the user guessing what "week" means.
-    const now = Date.now();
+    const now = dashboardNow;
     const londonDate = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Europe/London",
       year: "numeric",

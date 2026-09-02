@@ -33,8 +33,8 @@ assert.match(digest, /to:\s*recipient/);
 assert.match(digest, /sendConnectedMail\([\s\S]*?account\.userId\s*\)/);
 assert.equal(
   (digest.match(/\.eq\("owner_id", account\.userId\)/g) || []).length,
-  4,
-  "calls, completed tasks, open tasks and calendar events must stay personal"
+  5,
+  "calls, completed tasks, open tasks, tomorrow tasks and calendar events must stay personal"
 );
 assert.match(digest, /\.eq\("assigned_to_user_id", account\.userId\)/);
 assert.doesNotMatch(

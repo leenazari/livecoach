@@ -16,6 +16,13 @@ const task = (id, overrides = {}) => ({
   ...overrides,
 });
 
+const allTomorrow = Array.from({ length: 25 }, (_, index) =>
+  task(`tomorrow-${index + 1}`, {
+    due_at: new Date(
+      Date.parse("2026-09-03T08:00:00.000Z") + index * 60_000
+    ).toISOString(),
+  })
+);
 const selected = selectNextDayTasks(
   [
     task("tomorrow-late", {
@@ -23,6 +30,7 @@ const selected = selectNextDayTasks(
       payload: { scheduledTime: true },
     }),
     task("tomorrow-early", { due_at: "2026-09-03T08:00:00.000Z" }),
+    ...allTomorrow,
     task("carry-over", { due_at: "2026-09-01T09:00:00.000Z" }),
     task("pinned", { payload: { pinned: true } }),
     task("ordinary"),
@@ -33,25 +41,25 @@ const selected = selectNextDayTasks(
       due_at: "2026-09-03T09:00:00.000Z",
     }),
   ],
-  { now, timeZone: "Europe/London", limit: 5 }
+  { now, timeZone: "Europe/London" }
 );
 
-assert.equal(selected.length, 5, "the next-day task list must never exceed five");
-assert.deepEqual(
-  selected.slice(0, 2).map((item) => item.id),
-  ["tomorrow-early", "tomorrow-late"],
-  "tasks explicitly due tomorrow must lead in due-time order"
+assert.equal(selected.length, 27, "every task explicitly due tomorrow must be included");
+assert.equal(selected[0].id, "tomorrow-early");
+assert.match(
+  selected.find((item) => item.id === "tomorrow-late")?.digestReason || "",
+  /^Due tomorrow at 15:30$/
 );
-assert.match(selected[1].digestReason, /^Due tomorrow at 15:30$/);
-assert.ok(selected.some((item) => item.id === "carry-over"));
-assert.ok(selected.some((item) => item.id === "pinned"));
+assert.ok(!selected.some((item) => item.id === "carry-over"));
+assert.ok(!selected.some((item) => item.id === "pinned"));
+assert.ok(!selected.some((item) => item.id === "ordinary"));
 assert.ok(!selected.some((item) => item.id === "future"));
 assert.ok(!selected.some((item) => item.id === "waiting-on-them"));
 
 const digest = read("app/api/cron/daily-digest/route.ts");
-assert.match(digest, /selectNextDayTasks\(openTasks/);
-assert.match(digest, /limit:\s*5/);
-assert.match(digest, /Next five tasks for tomorrow/);
+assert.match(digest, /selectNextDayTasks\(tomorrowTasksRes\.data \|\| \[\]/);
+assert.doesNotMatch(digest, /selectNextDayTasks\([\s\S]{0,160}limit:\s*5/);
+assert.match(digest, /Tasks due tomorrow/);
 assert.match(digest, /nextDayTaskIds/);
 assert.match(digest, /\.filter\(\(task: any\) => !nextDayTaskIds\.has\(task\.id\)\)/);
 assert.match(
@@ -59,5 +67,6 @@ assert.match(
   /from\("tasks"\)[\s\S]{0,320}\.eq\("workspace_id", account\.workspaceId\)[\s\S]{0,120}\.eq\("owner_id", account\.userId\)/
 );
 assert.match(digest, /esc\(capitaliseSentenceStarts\(task\.text\)\)/);
+assert.match(digest, /\.lte\("due_at", tomorrowTaskHorizon\)/);
 
 console.log("Daily digest next-day task checks passed");

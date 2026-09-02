@@ -729,9 +729,9 @@ export default function DashboardPage() {
       )}
       </> : null}
 
-      {/* UPCOMING CALLS - what's ahead, schedule + prep + start preloaded. Shows
-          the soonest 10 with a "show all" expand to keep the dashboard condensed. */}
-      <UpcomingCalls limit={focusMode ? 5 : 10} />
+      {/* UPCOMING CALLS - the next seven days only, with schedule, prep and a
+          preloaded start. The dedicated Calls page retains the longer view. */}
+      <UpcomingCalls limit={focusMode ? 5 : 10} daysAhead={7} />
 
       <section className="mb-3 rounded-xl border border-amber/35 bg-panel/40 p-4">
         <div className="mb-2.5 flex flex-wrap items-start justify-between gap-2">

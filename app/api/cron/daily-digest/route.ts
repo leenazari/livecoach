@@ -161,8 +161,19 @@ async function runDigestForAccount(
 
     const since = new Date(now.getTime() - 36 * 60 * 60 * 1000).toISOString();
     const horizon = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000).toISOString();
+    const tomorrowTaskHorizon = new Date(
+      now.getTime() + 48 * 60 * 60 * 1000
+    ).toISOString();
     const appUrl = publicAppOrigin();
-    const [callsRes, completedRes, openRes, upcomingRes, oppsRes, salesProfile] = await Promise.all([
+    const [
+      callsRes,
+      completedRes,
+      openRes,
+      tomorrowTasksRes,
+      upcomingRes,
+      oppsRes,
+      salesProfile,
+    ] = await Promise.all([
       supabaseAdmin
         .from("interview_summaries")
         .select("ref, candidate, role, summary, created_at, company_id")
@@ -185,6 +196,19 @@ async function runDigestForAccount(
         .eq("status", "open")
         .order("due_at", { ascending: true, nullsFirst: false })
         .limit(200),
+      // Pull tomorrow's dated tasks separately so the complete list cannot be
+      // displaced by older overdue or undated work in the general task query.
+      supabaseAdmin
+        .from("tasks")
+        .select("id, text, company_id, kind, link_kind, due_at, created_at, payload")
+        .eq("workspace_id", account.workspaceId)
+        .eq("owner_id", account.userId)
+        .eq("status", "open")
+        .not("due_at", "is", null)
+        .gte("due_at", now.toISOString())
+        .lte("due_at", tomorrowTaskHorizon)
+        .order("due_at", { ascending: true })
+        .limit(1000),
       supabaseAdmin
         .from("upcoming_calls")
         .select("id, title, company_id, scheduled_at, intent, prepped")
@@ -193,7 +217,7 @@ async function runDigestForAccount(
         .gte("scheduled_at", now.toISOString())
         .lte("scheduled_at", horizon)
         .order("scheduled_at", { ascending: true })
-        .limit(100),
+        .limit(1000),
       supabaseAdmin
         .from("opportunities")
         .select("id, company_id, title, value, created_at, pipeline_stage, probability, next_action, next_action_due_at, next_action_owner, opportunity_type")
@@ -204,7 +228,14 @@ async function runDigestForAccount(
         .limit(200),
       getOptionalSalesProfile(),
     ]);
-    for (const result of [callsRes, completedRes, openRes, upcomingRes, oppsRes]) {
+    for (const result of [
+      callsRes,
+      completedRes,
+      openRes,
+      tomorrowTasksRes,
+      upcomingRes,
+      oppsRes,
+    ]) {
       if (result.error) throw result.error;
     }
 
@@ -224,7 +255,14 @@ async function runDigestForAccount(
 
     const companyIds = Array.from(
       new Set(
-        [...calls, ...completed, ...(openRes.data || []), ...tomorrowCalls, ...(oppsRes.data || [])]
+        [
+          ...calls,
+          ...completed,
+          ...(openRes.data || []),
+          ...(tomorrowTasksRes.data || []),
+          ...tomorrowCalls,
+          ...(oppsRes.data || []),
+        ]
           .map((row: any) => row.company_id)
           .filter(Boolean)
       )
@@ -288,17 +326,11 @@ async function runDigestForAccount(
       if (!opportunity.company_id || bestOpportunity.has(opportunity.company_id)) continue;
       bestOpportunity.set(opportunity.company_id, opportunity);
     }
-    const opportunityValueByCompany = new Map<string, number>();
-    for (const [companyId, opportunity] of bestOpportunity) {
-      opportunityValueByCompany.set(companyId, Number(opportunity?.value) || 0);
-    }
     // These are persisted owner-scoped tasks only. Calendar call-prep cards are
     // rendered separately below, so the email never repeats a meeting as a task.
-    const nextDayTasks = selectNextDayTasks(openTasks, {
+    const nextDayTasks = selectNextDayTasks(tomorrowTasksRes.data || [], {
       now,
       timeZone: TIME_ZONE,
-      limit: 5,
-      opportunityValueByCompany,
     });
     const nextDayTaskIds = new Set(nextDayTasks.map((task: any) => task.id));
     const nextDayTaskItems = nextDayTasks.map((task: any) => {
@@ -671,7 +703,7 @@ function renderEmail(data: {
     <h1 style="margin:0 0 6px;font-size:22px;">${data.isSunday ? "Your week-ahead brief" : "Your daily executive brief"}</h1>
     <p style="margin:0 0 25px;font-size:14px;color:#777168;">${esc(data.when)} · ${data.openCount} open actions · ${data.overdueCount} overdue · ${data.callCount} calls captured today</p>
     ${data.workingFocus.length ? section("Your working focus", list(data.workingFocus, "")) : ""}
-    ${section(`Next five tasks for tomorrow, ${data.tomorrowLabel}`, list(data.nextDayTaskItems, "No saved tasks are due or ready to carry into tomorrow."))}
+    ${section(`Tasks due tomorrow, ${data.tomorrowLabel}`, list(data.nextDayTaskItems, "No saved tasks are due tomorrow."))}
     ${section("Your dashboard priorities", list(data.attention, "No open actions need attention."))}
     ${section("Tomorrow’s call briefs", list(data.tomorrowItems, "No calls are currently scheduled for tomorrow."))}
     ${section("Tomorrow’s commercial opportunities", list(data.buyingOpportunities, "No genuine open revenue opportunity is attached to tomorrow’s calls."))}
