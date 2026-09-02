@@ -70,8 +70,10 @@ export function sameBrainAction(
     Array.isArray(left.words) ? left.words : [],
     Array.isArray(right.words) ? right.words : []
   );
-  if (left.target && right.target && left.target === right.target)
+  if (left.target && right.target) {
+    if (left.target !== right.target) return false;
     return wordOverlap >= 0.34;
+  }
   if (!left.target && !right.target) return wordOverlap >= 0.5;
   return wordOverlap >= 0.7;
 }
