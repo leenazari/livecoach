@@ -17,7 +17,7 @@ export async function PATCH(
     const body = await req.json();
     const { data: current, error: currentError } = await supabaseAdmin
       .from("tasks")
-      .select("id,company_id")
+      .select("id,company_id,payload")
       .eq("workspace_id", account.workspaceId)
       .eq("owner_id", account.userId)
       .eq("id", params.id)
@@ -44,13 +44,40 @@ export async function PATCH(
     }
     // Save an edited commitment draft, or the pinned flag (payload.pinned).
     if (body.payload && typeof body.payload === "object")
-      patch.payload = body.payload;
+      patch.payload = {
+        ...(current.payload && typeof current.payload === "object"
+          ? current.payload
+          : {}),
+        ...body.payload,
+      };
     if (typeof body.action === "string")
       patch.link_kind = actionToLinkKind(body.action);
     // Set or clear a deadline (sorts the list; "" / null clears it).
     if (typeof body.dueAt === "string")
       patch.due_at = body.dueAt.trim() || null;
     else if (body.dueAt === null) patch.due_at = null;
+
+    // Reset the 60-day retention clock whenever an open task is meaningfully
+    // edited or reopened. The tasks table deliberately has no updated_at, so
+    // this timestamp prevents a recently maintained old task being archived.
+    const touched =
+      body.status === "open" ||
+      (typeof body.text === "string" && body.text.trim()) ||
+      (body.payload && typeof body.payload === "object") ||
+      typeof body.action === "string" ||
+      typeof body.dueAt === "string" ||
+      body.dueAt === null;
+    if (touched) {
+      patch.payload = {
+        ...(current.payload && typeof current.payload === "object"
+          ? current.payload
+          : {}),
+        ...(patch.payload && typeof patch.payload === "object"
+          ? patch.payload
+          : {}),
+        retentionTouchedAt: new Date().toISOString(),
+      };
+    }
     if (Object.keys(patch).length === 0) return NextResponse.json({ ok: true });
 
     const { data, error } = await supabaseAdmin

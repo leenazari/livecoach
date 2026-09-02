@@ -1,10 +1,15 @@
 // Decide whether an open to-do has PASSED and should drop off the list. Kept
 // deliberately conservative and deterministic (no model): it only clears tasks
 // that are demonstrably about a moment that is gone, never a task that is merely
-// overdue or that someone might still want. Three signals:
+// overdue or that someone might still want. Four signals:
 //   A. a "prep for the call" task whose call has already happened,
 //   B. a "tomorrow / today" task whose day has passed,
-//   C. a prep/event task naming an explicit date that has passed (recent only).
+//   C. a prep/event task naming an explicit date that has passed (recent only),
+//   D. an untouched loose task that is at least 60 days old and has no explicit
+//      priority protection.
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const TASK_RETENTION_DAYS = 60;
 
 const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
@@ -61,9 +66,13 @@ function parsePastDate(txt: string, todayYMD: string): string | null {
 
 export type StaleTask = {
   company_id: string | null;
+  workstream_id?: string | null;
   text: string;
+  kind?: string | null;
   link_kind?: string | null;
   created_at: string;
+  due_at?: string | null;
+  payload?: Record<string, unknown> | null;
 };
 
 export type StaleCtx = {
@@ -72,7 +81,36 @@ export type StaleCtx = {
   // Latest recorded-call time (ms) per client, for the "call already happened" rule.
   lastCallMsByCompany: Map<string, number>;
   todayYMD: string;
+  // Canonical active CRM records. These are loaded once from stored data, not
+  // inferred by a model or rebuilt from historic transcripts.
+  activePriorityCompanyIds?: Set<string>;
+  activeWorkstreamIds?: Set<string>;
+  nowMs?: number;
 };
+
+function priorityProtectsRetention(task: StaleTask, ctx: StaleCtx): boolean {
+  const payload =
+    task.payload && typeof task.payload === "object" ? task.payload : {};
+  if (payload.pinned === true || payload.retentionProtected === true) return true;
+
+  const urgency = String(payload.urgency || "").toLowerCase();
+  if (urgency === "high" || urgency === "urgent") return true;
+
+  // A deadline is an explicit human/system commitment. Even when overdue, it
+  // must stay visible until someone completes, dismisses or reschedules it.
+  if (task.due_at && Number.isFinite(new Date(task.due_at).getTime())) return true;
+
+  if (
+    task.company_id &&
+    ctx.activePriorityCompanyIds?.has(task.company_id)
+  ) {
+    return true;
+  }
+  if (task.workstream_id && ctx.activeWorkstreamIds?.has(task.workstream_id)) {
+    return true;
+  }
+  return false;
+}
 
 export function isStaleTask(
   task: StaleTask,
@@ -123,6 +161,27 @@ export function isStaleTask(
         return { stale: true, reason: `the date (${d}) has passed` };
       }
     }
+  }
+
+  // D. Keep the active list lean without destroying history. A task is only
+  // auto-dismissed after 60 untouched days when it carries no explicit priority
+  // signal. A recent edit resets the clock through payload.retentionTouchedAt.
+  const nowMs = Number.isFinite(ctx.nowMs) ? Number(ctx.nowMs) : Date.now();
+  const touchedMs = new Date(
+    typeof task.payload?.retentionTouchedAt === "string"
+      ? task.payload.retentionTouchedAt
+      : task.created_at
+  ).getTime();
+  const lastTouchedMs = Number.isFinite(touchedMs) ? touchedMs : createdMs;
+  if (
+    Number.isFinite(lastTouchedMs) &&
+    nowMs - lastTouchedMs >= TASK_RETENTION_DAYS * DAY_MS &&
+    !priorityProtectsRetention(task, ctx)
+  ) {
+    return {
+      stale: true,
+      reason: `${TASK_RETENTION_DAYS} days old with no active priority`,
+    };
   }
 
   return { stale: false, reason: "" };
