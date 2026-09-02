@@ -23,6 +23,8 @@ import {
 } from "@/lib/outreach-sequence";
 import {
   explainOutreachCampaignSelection,
+  filterOutreachQueueByCampaign,
+  OUTREACH_QUEUE_ALL_CAMPAIGNS,
   outreachQueueCampaignCounts,
 } from "@/lib/outreach-campaign-queue-copy";
 import {
@@ -526,6 +528,9 @@ export default function OutreachPage() {
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [recommendationFilter, setRecommendationFilter] = useState<"all" | RecommendationAction>("all");
   const [prospectCampaignId, setProspectCampaignId] = useState("all");
+  const [queueCampaignFilterId, setQueueCampaignFilterId] = useState(
+    OUTREACH_QUEUE_ALL_CAMPAIGNS
+  );
   const [ownerFilter, setOwnerFilter] = useState(
     cachedProspects
       ? cachedProspects.canManageAssignments === true
@@ -988,6 +993,7 @@ export default function OutreachPage() {
         { method: "POST", body: JSON.stringify({ campaignId }) }
       );
       setSelectedCampaignId(result.selectedCampaignId);
+      setQueueCampaignFilterId(result.selectedCampaignId);
       const filled = await crmFetch<any>(OUTREACH_URLS.queue, {
         method: "POST",
         body: JSON.stringify({
@@ -1212,7 +1218,10 @@ export default function OutreachPage() {
     }
   };
   const prepareAllRemaining = () => {
-    const preparable = queue.filter(queueRowNeedsPreparation);
+    const preparable = filterOutreachQueueByCampaign(
+      queue,
+      queueCampaignFilterId
+    ).filter(queueRowNeedsPreparation);
     const firstTouches = preparable.filter((row) => queueWaveRank(row) === 0);
     const activeWave = firstTouches.length ? firstTouches : preparable;
     const selectedRows = activeWave.filter(
@@ -1317,7 +1326,10 @@ export default function OutreachPage() {
     }
   };
   const approveAllPrepared = async () => {
-    const readyDrafts = queue.filter(hasApprovableEmail);
+    const readyDrafts = filterOutreachQueueByCampaign(
+      queue,
+      queueCampaignFilterId
+    ).filter(hasApprovableEmail);
     const firstTouchDrafts = readyDrafts.filter(
       (row) => queueWaveRank(row) === 0
     );
@@ -1790,12 +1802,24 @@ export default function OutreachPage() {
   const queuedResearchCount = Object.values(prepareJobs).filter(
     (status) => status === "queued" || status === "adding"
   ).length;
+  const visibleQueue = useMemo(
+    () => filterOutreachQueueByCampaign(queue, queueCampaignFilterId),
+    [queue, queueCampaignFilterId]
+  );
+  const queueCampaignFilterName =
+    queueCampaignFilterId === OUTREACH_QUEUE_ALL_CAMPAIGNS
+      ? "All campaigns"
+      : queueCampaigns.find((campaign) => campaign.id === queueCampaignFilterId)
+          ?.name ||
+        campaigns.find((campaign) => campaign.id === queueCampaignFilterId)
+          ?.name ||
+        "Selected campaign";
   // Keep today's untouched work at the top. Sent prospects remain visible as
   // the audit trail, but rotate beneath every person who still needs action.
   // The API's priority order is preserved inside both groups.
   const orderedQueue = useMemo(
     () =>
-      queue
+      visibleQueue
         .map((row, originalIndex) => ({ row, originalIndex }))
         .sort((a, b) => {
           const needsAction = (item: QueueRow) => {
@@ -1819,9 +1843,9 @@ export default function OutreachPage() {
           );
         })
         .map(({ row }) => row),
-    [queue]
+    [visibleQueue]
   );
-  const preparableEmailRows = queue.filter(queueRowNeedsPreparation);
+  const preparableEmailRows = visibleQueue.filter(queueRowNeedsPreparation);
   const firstTouchEmailRows = preparableEmailRows.filter(
     (row) => queueWaveRank(row) === 0
   );
@@ -1833,17 +1857,17 @@ export default function OutreachPage() {
     queueRowNeedsVoiceScript
   ).length;
   const newEmailDraftCount = remainingToPrepare - missingVoiceScriptCount;
-  const newContactCount = queue.filter(
+  const newContactCount = visibleQueue.filter(
     (row) => row.queueKind !== "follow_up"
   ).length;
-  const followUpDueCount = queue.filter(
+  const followUpDueCount = visibleQueue.filter(
     (row) =>
       row.queueKind === "follow_up" &&
       row.status === "queued" &&
       Number(row.current_step) > 1 &&
       row.sequenceStepDue !== false
   ).length;
-  const manualStepsDue = queue.filter(
+  const manualStepsDue = visibleQueue.filter(
     (row) =>
       !row.message &&
       row.sequenceStepDue !== false &&
@@ -1852,14 +1876,14 @@ export default function OutreachPage() {
         row.status
       )
   ).length;
-  const approvalReadyRows = queue.filter(hasApprovableEmail);
+  const approvalReadyRows = visibleQueue.filter(hasApprovableEmail);
   const firstTouchApprovalRows = approvalReadyRows.filter(
     (row) => queueWaveRank(row) === 0
   );
   const preparedToApprove = (
     firstTouchApprovalRows.length ? firstTouchApprovalRows : approvalReadyRows
   ).length;
-  const scheduledToSend = queue.filter(
+  const scheduledToSend = visibleQueue.filter(
     (row) => row.message?.status === "approved" && row.message?.scheduled_at
   ).length;
 
@@ -1890,7 +1914,7 @@ export default function OutreachPage() {
         <div className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.06] p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="max-w-2xl">
-              <p className="font-mono text-[0.55rem] uppercase tracking-wider text-moss">Campaign for new queue spaces</p>
+              <p className="font-mono text-[0.55rem] uppercase tracking-wider text-moss">Campaign to add next</p>
               <h2 className="mt-1 font-display text-lg text-bone">{activeCampaign?.name || "No active campaign"}</h2>
               <p className="mt-1 text-sm leading-6 text-bone/75">{campaignSelectionExplanation}</p>
               {queueCampaigns.length ? (
@@ -1903,17 +1927,33 @@ export default function OutreachPage() {
                 </div>
               ) : null}
             </div>
-            {selectableCampaigns.length ? <label className="w-full sm:w-72"><span className="sr-only">Choose campaign for new queue spaces</span><select aria-label="Choose campaign for new queue spaces" className={`${input} min-h-11`} value={activeCampaign?.id || ""} onChange={(event) => void selectActiveCampaign(event.target.value)} disabled={!!busy}>{selectableCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select></label> : <button type="button" onClick={() => selectTab("campaign")} className={button}>Review campaigns</button>}
+            {selectableCampaigns.length ? <label className="w-full sm:w-72"><span className="mb-1 block font-mono text-[0.52rem] uppercase tracking-wider text-muted">Choose campaign to add next</span><select aria-label="Choose campaign to add next" className={`${input} min-h-11`} value={activeCampaign?.id || ""} onChange={(event) => void selectActiveCampaign(event.target.value)} disabled={!!busy}>{selectableCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}</select><span className="mt-1 block text-xs leading-5 text-muted">After it saves, the list below switches to that campaign too. Existing contacts stay where they are.</span></label> : <button type="button" onClick={() => selectTab("campaign")} className={button}>Review campaigns</button>}
           </div>
         </div>
         <div className="mb-4 rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="font-display text-lg text-bone">Today’s assigned contacts</h2>
-              <p className="mt-1 text-sm text-muted">Each person keeps the campaign shown on their card. Changing the campaign above never moves or rewrites anyone already queued. New contacts use the selected campaign only when a space is available. Email drafts still require approval.</p>
-              <p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">{newContactCount} new contacts · {followUpDueCount} follow ups due · {newEmailDraftCount} new emails to prepare · {missingVoiceScriptCount} optional voice scripts to prepare · {manualStepsDue} LinkedIn or phone actions · {preparedToApprove} ready to approve · {scheduledToSend} scheduled</p>
+              <p className="mt-1 text-sm text-muted">Each person keeps the campaign shown on their card. Filtering only changes what you can see and action. It never moves or rewrites anyone already queued. Email drafts still require approval.</p>
+              <p className="mt-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted">Showing {visibleQueue.length} of {queue.length} · {newContactCount} new contacts · {followUpDueCount} follow ups due · {newEmailDraftCount} new emails to prepare · {missingVoiceScriptCount} optional voice scripts to prepare · {manualStepsDue} LinkedIn or phone actions · {preparedToApprove} ready to approve · {scheduledToSend} scheduled</p>
             </div>
-            <button onClick={buildQueue} disabled={!!busy || queue.length >= dailyQueueLimit} className={button}>{busy === "queue" ? "Ranking…" : queue.length >= dailyQueueLimit ? "Today’s queue is full" : queue.length ? `Choose ${Math.max(0, dailyQueueLimit - queue.length)} more from ${activeCampaign?.name || "selected campaign"}` : `Choose today's contacts from ${activeCampaign?.name || "selected campaign"}`}</button>
+            <div className="grid w-full gap-2 sm:w-72">
+              <label>
+                <span className="mb-1 block font-mono text-[0.52rem] uppercase tracking-wider text-sky">Show campaign</span>
+                <select
+                  aria-label="Filter today's queue by campaign"
+                  className={`${input} min-h-11`}
+                  value={queueCampaignFilterId}
+                  onChange={(event) => setQueueCampaignFilterId(event.target.value)}
+                >
+                  <option value={OUTREACH_QUEUE_ALL_CAMPAIGNS}>All campaigns ({queue.length})</option>
+                  {queueCampaignFilterId !== OUTREACH_QUEUE_ALL_CAMPAIGNS && !queueCampaigns.some((campaign) => campaign.id === queueCampaignFilterId) ? <option value={queueCampaignFilterId}>{queueCampaignFilterName} (0)</option> : null}
+                  {queueCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name} ({campaign.count})</option>)}
+                </select>
+                <span className="mt-1 block text-xs leading-5 text-sky">Updates this list immediately. No Search button is needed.</span>
+              </label>
+              <button onClick={buildQueue} disabled={!!busy || queue.length >= dailyQueueLimit} className={button}>{busy === "queue" ? "Ranking…" : queue.length >= dailyQueueLimit ? "Today’s queue is full" : queue.length ? `Choose ${Math.max(0, dailyQueueLimit - queue.length)} more from ${activeCampaign?.name || "selected campaign"}` : `Choose today's contacts from ${activeCampaign?.name || "selected campaign"}`}</button>
+            </div>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <button onClick={prepareAllRemaining} disabled={!!busy || !remainingToPrepare} className={button}>{remainingToPrepare ? `Research + draft current wave (${remainingToPrepare})` : "Current wave prepared"}</button>
@@ -2033,7 +2073,7 @@ export default function OutreachPage() {
               <p className="text-right text-xs text-muted">The email can be queued without a voice note. Any ready, unchanged voice note is included automatically. Optional CTA advice never blocks this button. Safety issues still do.</p>
             </div>
           ) : null}
-        </article>; })}{!queue.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">The morning queue can be selected and prepared automatically, or you can build it now. Nothing is approved or contacted automatically.</div> : null}</div>
+        </article>; })}{!visibleQueue.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">{queue.length && queueCampaignFilterId !== OUTREACH_QUEUE_ALL_CAMPAIGNS ? <><p>No {queueCampaignFilterName} contacts are in today’s queue. This filter has not moved or removed anyone.</p><button type="button" onClick={() => setQueueCampaignFilterId(OUTREACH_QUEUE_ALL_CAMPAIGNS)} className={`${button} mt-3`}>Show all campaigns</button></> : "The morning queue can be selected and prepared automatically, or you can build it now. Nothing is approved or contacted automatically."}</div> : null}</div>
       </section> : null}
 
       {!loading && !tabLoading && tab === "prospects" ? <section data-sales-tour="prospect-pool">
