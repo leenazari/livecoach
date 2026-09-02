@@ -56,6 +56,7 @@ function actionConfirmationError(action: any, result: any): CrmRequestError | nu
 const DEEP_HISTORY_REQUEST =
   /\b(full history|all calls|previous calls|older calls|past conversations|detailed history|every scorecard|source history|source documents?|uploaded documents?|detailed notes?|email thread|what did .* say)\b/i;
 const HANDS_FREE_SILENCE_MS = 3000;
+const BRAIN_READ_ALOUD_STORAGE_KEY = "lc_brain_read_aloud";
 const CONTEXTUAL_CHIPS: Record<string, string[]> = {
   outreach: [
     "Create a campaign for my ideal customer",
@@ -357,6 +358,9 @@ export default function ClientAssistant({
   const [flushing, setFlushing] = useState(false); // waiting for the mic tail
   // Read replies aloud by default - the brain talks back.
   const [readAloud, setReadAloud] = useState(true);
+  // The ref is the immediate source of truth for async replies. It prevents a
+  // reply that started before the saved preference loaded from speaking later.
+  const readAloudRef = useRef(true);
   // Hands-free conversation: it listens, replies aloud, then listens again.
   const [convo, setConvo] = useState(false);
   const [savedDrafts, setSavedDrafts] = useState<Record<string, boolean>>({});
@@ -477,6 +481,53 @@ export default function ClientAssistant({
       /* ignore */
     }
   };
+
+  const applyReadAloudPreference = (
+    next: boolean,
+    persist = true
+  ) => {
+    readAloudRef.current = next;
+    setReadAloud(next);
+    if (!next) stopSpeaking();
+    if (!persist || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        BRAIN_READ_ALOUD_STORAGE_KEY,
+        next ? "1" : "0"
+      );
+    } catch {
+      /* The preference still works for this open panel. */
+    }
+  };
+
+  // Keep the last explicit read-aloud choice across panel closes, navigation,
+  // refreshes and new browser sessions. A storage event keeps another open tab
+  // in sync without introducing a server-side or cross-user data dependency.
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(
+        BRAIN_READ_ALOUD_STORAGE_KEY
+      );
+      if (saved === "0" || saved === "1") {
+        applyReadAloudPreference(saved === "1", false);
+      }
+    } catch {
+      /* Use the default for browsers that block local storage. */
+    }
+
+    const syncFromAnotherTab = (event: StorageEvent) => {
+      if (
+        event.key !== BRAIN_READ_ALOUD_STORAGE_KEY ||
+        (event.newValue !== "0" && event.newValue !== "1")
+      )
+        return;
+      applyReadAloudPreference(event.newValue === "1", false);
+    };
+    window.addEventListener("storage", syncFromAnotherTab);
+    return () => window.removeEventListener("storage", syncFromAnotherTab);
+    // The preference is intentionally hydrated once when this panel mounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Speak a reply with the ElevenLabs voice, in CHUNKS so the first sentence
   // starts almost immediately while the rest render behind it. Prefetches the
@@ -733,7 +784,7 @@ export default function ClientAssistant({
         actions: done?.proposedActions || [],
       }));
       if (n) window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
-      if (readAloud || convoRef.current) {
+      if (readAloudRef.current) {
         const spoken = done?.spoken;
         const say =
           spoken && String(spoken).trim()
@@ -747,6 +798,10 @@ export default function ClientAssistant({
         speak(say, () => {
           if (convoRef.current) startListening();
         });
+      } else if (convoRef.current) {
+        // Muting read-aloud must remain authoritative even in hands-free mode.
+        // Continue listening after the written answer without playing audio.
+        startListening();
       }
     } catch (e: any) {
       setLastAssistant((m) => ({
@@ -933,7 +988,8 @@ export default function ClientAssistant({
     setConvo(next);
     convoRef.current = next;
     if (next) {
-      setReadAloud(true);
+      // Starting hands-free is an explicit request for a spoken conversation.
+      applyReadAloudPreference(true);
       if (!listening) startListening();
     } else {
       stopSpeaking();
@@ -1264,11 +1320,9 @@ export default function ClientAssistant({
           <button
             type="button"
             onClick={() => {
-              const next = !readAloud;
-              if (!next) stopSpeaking(); // turning off stops it talking now
-              setReadAloud(next);
+              applyReadAloudPreference(!readAloudRef.current);
             }}
-            title="read answers aloud"
+            title="Read answers aloud. This choice is remembered."
             className={`rounded-full border px-2.5 py-1 font-mono text-[0.54rem] uppercase tracking-wider transition ${
               readAloud
                 ? "border-sky/60 bg-sky/15 text-sky"
