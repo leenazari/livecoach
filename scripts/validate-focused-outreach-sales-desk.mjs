@@ -44,6 +44,7 @@ assert.match(lane, /result\.campaignChanged !== false/);
 assert.match(rehearsal, /to: sender\.mailboxEmail/);
 assert.match(rehearsal, /\.eq\("workspace_id", sender\.workspaceId\)/);
 assert.match(rehearsal, /\.eq\("sender_user_id", sender\.userId\)/);
+assert.match(rehearsal, /voiceIncluded: voiceNoteIncluded/);
 assert.match(rehearsal, /campaignChanged: false/);
 
 // Queue reads remain owner-specific and preserve the existing mobile layout.

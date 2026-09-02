@@ -56,18 +56,31 @@ export async function POST(
       .filter(Boolean)
       .join(" at ");
     const rehearsalSubject = `[REHEARSAL${intendedFor ? ` · ${intendedFor}` : ""}] ${message.subject}`;
+    const voiceNoteIncluded = Boolean(
+      String(message.voice_script || "").trim() &&
+        message.voice_status === "ready" &&
+        message.voice_audio_path &&
+        message.voice_public_token
+    );
+    if (message.voice_status === "ready" && !voiceNoteIncluded)
+      return NextResponse.json(
+        {
+          error:
+            "The voice note is marked ready but its playback file is unavailable. Refresh the voice note before sending a rehearsal.",
+        },
+        { status: 409 }
+      );
     const sent = await sendConnectedOutreachMail({
       to: sender.mailboxEmail,
       subject: rehearsalSubject,
-      // Keep the body byte-for-byte equivalent to the saved draft so Lee sees
-      // the actual prospect experience. Only the subject carries the warning.
+      // Preserve the exact saved wording and append the same listening card
+      // used for the real prospect email. Reuse the stored audio and never
+      // call ElevenLabs again for a rehearsal.
       text: message.body_text,
       ownerId: sender.userId,
       senderName: sender.senderName,
       fromEmail: sender.senderEmail,
-      ...(message.voice_status === "ready" &&
-      message.voice_audio_path &&
-      message.voice_public_token
+      ...(voiceNoteIncluded
         ? {
             voiceNote: {
               url: outreachVoicePublicUrl(message.voice_public_token),
@@ -100,6 +113,7 @@ export async function POST(
       provider: sender.provider,
       messageId: message.id,
       deliveryLocation,
+      voiceNoteIncluded,
       campaignChanged: false,
     }));
 
@@ -119,6 +133,7 @@ export async function POST(
         metadata: {
           provider: sender.provider,
           message_id: message.id,
+          voice_note_included: voiceNoteIncluded,
           campaign_changed: false,
         },
       });
@@ -134,6 +149,7 @@ export async function POST(
       provider: sender.provider,
       deliveryLocation,
       intendedFor: intendedFor || null,
+      voiceIncluded: voiceNoteIncluded,
       campaignChanged: false,
     });
   } catch (error: any) {
