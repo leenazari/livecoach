@@ -517,29 +517,6 @@ export default function DashboardPage() {
             {todaySaveError}
           </p>
         )}
-        <div className="mb-4 rounded-xl border border-amber/35 bg-ink/50 p-3 sm:p-4">
-          <div className="mb-2.5 flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-                {"→"} Your task list
-              </p>
-              <p className="mt-1 font-sans text-[0.76rem] text-bone/65">
-                Tick to complete. Click a task to start it, or edit and pin it here.
-              </p>
-            </div>
-            <Link
-              href="/crm/board?tab=tasks"
-              className="font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:text-amber"
-            >
-              see all ↗
-            </Link>
-          </div>
-          <TaskList
-            showCompany
-            allowBulk
-            emptyText="Nothing is waiting on you."
-          />
-        </div>
         {otherTodayActions.length ? (
           <ol className="mb-4 grid gap-2 md:grid-cols-2 lg:grid-cols-3">
             {otherTodayActions.map((item, i) => (
@@ -755,6 +732,31 @@ export default function DashboardPage() {
       {/* UPCOMING CALLS - what's ahead, schedule + prep + start preloaded. Shows
           the soonest 10 with a "show all" expand to keep the dashboard condensed. */}
       <UpcomingCalls limit={focusMode ? 5 : 10} />
+
+      <section className="mb-3 rounded-xl border border-amber/35 bg-panel/40 p-4">
+        <div className="mb-2.5 flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
+              {"→"} Your task list
+            </p>
+            <p className="mt-1 font-sans text-[0.76rem] text-bone/65">
+              Your top ten are shown first. Tick to complete, or expand the rest here.
+            </p>
+          </div>
+          <Link
+            href="/crm/board?tab=tasks"
+            className="font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:text-amber"
+          >
+            full task board ↗
+          </Link>
+        </div>
+        <TaskList
+          showCompany
+          allowBulk
+          initialLimit={10}
+          emptyText="Nothing is waiting on you."
+        />
+      </section>
 
       {focusMode ? (
         <button

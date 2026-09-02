@@ -462,10 +462,6 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
     return `/call${qs.toString() ? `?${qs.toString()}` : ""}`;
   };
 
-  const openCall = (c: Upcoming) => {
-    router.push(callHref(c));
-  };
-
   // This is the deliberate, cost-bearing start action. Open the external
   // meeting directly inside the click handler so browser popup protection does
   // not block it, then move this tab into the matching LiveCoach session. The
@@ -479,13 +475,6 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
     }
     const armed = openAndArmCallLaunch(c.id, meetingUrl);
     router.push(callHref(c, armed));
-  };
-
-  // Preparation and the live call now share one canonical workspace. This keeps
-  // the correct scheduled-call identity, saved intent, research, focus and plan
-  // together instead of making the user cross a duplicate prep page.
-  const openPrep = (c: Upcoming) => {
-    openCall(c);
   };
 
   const inputCls =
@@ -786,9 +775,8 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
                     <span className="ml-1.5 font-mono text-[0.6rem] text-muted">· {c.company}</span>
                   ) : null}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => openPrep(c)}
+                <Link
+                  href={callHref(c)}
                   title={
                     c.prepped
                       ? "Prepped and ready. Tap to review the prep again."
@@ -801,7 +789,7 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
                   }`}
                 >
                   {c.prepped ? "prepped ✓" : "prep ▸"}
-                </button>
+                </Link>
                 <button
                   type="button"
                   onClick={() => launchCall(c)}

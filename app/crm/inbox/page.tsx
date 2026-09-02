@@ -1256,8 +1256,8 @@ export default function WorkInboxPage() {
                           ) : null}
                           <Link
                             href={item.href}
-                            target="_blank"
-                            rel="noreferrer"
+                            target={item.external ? "_blank" : undefined}
+                            rel={item.external ? "noreferrer" : undefined}
                             className="inline-flex min-h-10 items-center rounded-lg border border-amber/50 bg-amber/10 px-3 font-mono text-[0.52rem] uppercase text-amber"
                           >
                             {item.kind === "prep" ? "Prepare call" : item.approval ? "Review" : "Open"} ↗

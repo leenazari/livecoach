@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveRecordScope } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,15 +27,26 @@ export async function POST() {
 
 async function run() {
   try {
-    const [{ data: tasks }, { data: companies }] = await Promise.all([
+    const scope = await resolveRecordScope();
+    const [tasksResult, companiesResult] = await Promise.all([
       supabaseAdmin
         .from("tasks")
         .select("id, text")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .eq("status", "open")
         .is("company_id", null)
         .limit(300),
-      supabaseAdmin.from("companies").select("id, name, profile"),
+      supabaseAdmin
+        .from("companies")
+        .select("id, name, profile")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId),
     ]);
+    if (tasksResult.error) throw tasksResult.error;
+    if (companiesResult.error) throw companiesResult.error;
+    const tasks = tasksResult.data || [];
+    const companies = companiesResult.data || [];
 
     // Build each EXTERNAL client's matchable terms (name + aliases, >= 5 chars).
     const terms: { id: string; term: string }[] = [];
@@ -71,10 +83,15 @@ async function run() {
       byCompany.set(f.companyId, arr);
     }
     for (const [companyId, ids] of byCompany) {
-      await supabaseAdmin
+      const { error } = await supabaseAdmin
         .from("tasks")
         .update({ company_id: companyId })
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("status", "open")
+        .is("company_id", null)
         .in("id", ids);
+      if (error) throw error;
     }
 
     return NextResponse.json({ ok: true, folded: folded.length });

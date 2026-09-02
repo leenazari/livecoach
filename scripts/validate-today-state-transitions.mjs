@@ -16,6 +16,8 @@ const upcoming = read("components/crm/UpcomingCalls.tsx");
 const taskList = read("components/crm/TaskList.tsx");
 const workInbox = read("app/crm/inbox/page.tsx");
 const workInboxRoute = read("app/api/crm/inbox/route.ts");
+const sweepStale = read("app/api/crm/tasks/sweep-stale/route.ts");
+const foldLoose = read("app/api/crm/tasks/fold-loose/route.ts");
 const upcomingRoute = read("app/api/crm/upcoming/route.ts");
 const upcomingItem = read("app/api/crm/upcoming/[id]/route.ts");
 const calendarSync = read("app/api/crm/calendar-sync/route.ts");
@@ -78,22 +80,31 @@ assert.match(dashboardPage, /`\/api\/crm\/upcoming\/\$\{item\.id\}`/);
 assert.match(dashboardPage, /→"\} Your task list/);
 assert.match(
   dashboardPage,
-  /Your task list[\s\S]*?<TaskList[\s\S]*?showCompany[\s\S]*?allowBulk/
+  /Your task list[\s\S]*?<TaskList[\s\S]*?showCompany[\s\S]*?allowBulk[\s\S]*?initialLimit=\{10\}/
 );
-assert.match(dashboardPage, /Tick to complete\. Click a task to start it/);
+assert.match(dashboardPage, /Your top ten are shown first/);
 assert.doesNotMatch(dashboardPage, /clientlessOnly/);
 assert.ok(
-  dashboardPage.indexOf("Your task list") < dashboardPage.indexOf("<UpcomingCalls"),
-  "The complete task list must appear above upcoming calls on Today"
+  dashboardPage.indexOf("Your task list") > dashboardPage.indexOf("<UpcomingCalls"),
+  "The condensed task list must appear directly below upcoming calls"
 );
+assert.match(taskList, /initialLimit\?: number/);
+assert.match(taskList, /scheduleVisible\.slice\(0, safeLimit\)/);
+assert.match(taskList, /show \$\{hiddenByLimit\} more/);
 assert.match(taskList, /body: JSON\.stringify\(\{ status: "done" \}\)/);
 assert.match(taskList, /const runAction = \(t: Task, a: string\)/);
+assert.match(taskList, /aria-label=\{`\$\{c\.label\}: \$\{t\.text\}`\}/);
+assert.match(taskList, /onClick=\{\(\) => start\(t\)\}/);
 assert.match(taskList, /const saveEdit = async \(t: Task\)/);
 assert.match(taskList, /const togglePin = async \(t: Task\)/);
 assert.match(workInboxRoute, /kind: "prep"[\s\S]{0,1200}dismissible: true/);
 assert.match(workInbox, /const dismissedItemIds = useRef\(new Set<string>\(\)\)/);
 assert.match(workInbox, /item\.kind !== "prep"/);
 assert.match(workInbox, /`\/api\/crm\/upcoming\/\$\{item\.sourceId\}`/);
+assert.match(
+  workInbox,
+  /href=\{item\.href\}[\s\S]{0,120}target=\{item\.external \? "_blank" : undefined\}/
+);
 assert.match(upcomingRoute, /resolveRecordScope\(\)/);
 assert.match(upcomingRoute, /from\("upcoming_calls"\)[\s\S]{0,350}\.eq\("workspace_id", scope\.workspaceId\)[\s\S]{0,100}\.eq\("owner_id", scope\.userId\)/);
 assert.match(upcomingItem, /from\("calendar_event_exclusions"\)/);
@@ -105,6 +116,15 @@ assert.match(calendarSync, /from\("calendar_event_exclusions"\)/);
 assert.match(calendarSync, /from\("calendar_event_exclusions"\)[\s\S]{0,200}\.eq\("workspace_id", scope\.workspaceId\)[\s\S]{0,100}\.eq\("owner_id", scope\.userId\)/);
 assert.match(calendarSync, /excludedEventIds\.has\(externalId\)/);
 assert.match(supabase, /"calendar_event_exclusions"/);
+
+// Dashboard maintenance runs through the service client, so every read and
+// write must carry the exact signed-in owner and workspace. One salesperson's
+// dashboard can never sweep or re-link another salesperson's tasks.
+for (const route of [sweepStale, foldLoose]) {
+  assert.match(route, /const scope = await resolveRecordScope\(\)/);
+  assert.match(route, /from\("tasks"\)[\s\S]{0,260}\.eq\("workspace_id", scope\.workspaceId\)[\s\S]{0,100}\.eq\("owner_id", scope\.userId\)/);
+  assert.match(route, /update\([\s\S]{0,1200}\.eq\("workspace_id", scope\.workspaceId\)[\s\S]{0,100}\.eq\("owner_id", scope\.userId\)/);
+}
 
 // The exclusion store is private by construction and by RLS. These assertions
 // are the static two-user regression guard. One account can never match or
