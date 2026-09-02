@@ -201,7 +201,7 @@ export default function OutreachVoiceNoteEditor({
               : "Nothing is generated or charged until you press Generate voice. That one click approves the visible script and creates the preview."}
       </p>
       <p className="mt-1 text-xs leading-5 text-muted">
-        A sales call to action is optional. Urgency must come from a verified current trigger or the prospect&apos;s next natural business moment. Never from fake scarcity or an invented deadline.
+        A light invitation to reply for a quick call or demo is recommended when it fits. It remains optional. Urgency must come from a verified current trigger or the prospect&apos;s next natural business moment.
       </p>
       {message.voice_error && message.voice_status === "failed" ? (
         <p className="mt-2 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-xs leading-5 text-rust">

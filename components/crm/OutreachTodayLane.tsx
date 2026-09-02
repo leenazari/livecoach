@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MatrixRain from "@/components/MatrixRain";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
+import OutreachCtaAdvice from "@/components/crm/OutreachCtaAdvice";
 import OutreachVoiceNoteEditor from "@/components/crm/OutreachVoiceNoteEditor";
 import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { outreachProspectHref } from "@/lib/crm-navigation";
@@ -107,6 +108,8 @@ type QueueResponse = {
     followUps?: number;
   };
   sender?: {
+    userId?: string;
+    workspaceId?: string;
     senderName?: string;
     senderEmail?: string;
     mailboxEmail?: string;
@@ -1630,9 +1633,12 @@ export default function OutreachTodayLane({
                                 className="mt-1 w-full rounded-lg border border-edge bg-panel px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60"
                               />
                             </label>
-                            <p className="text-[0.68rem] leading-5 text-muted">
-                              A sales call to action is optional. Keep it only when it helps this exact message.
-                            </p>
+                            <OutreachCtaAdvice
+                              emailBody={edit.body}
+                              voiceScript={edit.voiceScript}
+                              workspaceId={sender?.workspaceId}
+                              userId={sender?.userId}
+                            />
                             <OutreachVoiceNoteEditor
                               message={displayMessage}
                               script={edit.voiceScript}
@@ -1710,7 +1716,7 @@ export default function OutreachTodayLane({
                               </button>
                             </div>
                             <p className="text-[0.68rem] leading-5 text-muted">
-                              Approval covers the exact email and ready voice note above. Delivery uses the existing spaced send queue and daily limit.
+                              Approval covers the exact email and ready voice note above. Optional CTA advice never blocks queueing. Delivery still uses the spaced send queue and daily limit.
                             </p>
                             {sender?.provider === "google" ? (
                               <p className="text-[0.68rem] leading-5 text-sky">

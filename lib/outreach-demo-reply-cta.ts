@@ -9,6 +9,8 @@ export const OUTREACH_SIMPLE_OPT_OUT =
 
 const DEMO_REPLY_CTA =
   /\bbook(?:ing)?\s+(?:a\s+)?quick\s+demo\b[\s\S]{0,180}\brepl(?:y|ying)\s+to\s+this\s+email\b|\brepl(?:y|ying)\s+to\s+this\s+email\b[\s\S]{0,180}\bbook(?:ing)?\s+(?:a\s+)?quick\s+demo\b/i;
+const GENERAL_SALES_CTA =
+  /\b(?:reply|email|message|get in touch|come back to (?:me|us)|let (?:me|us) know)\b[\s\S]{0,120}\b(?:quick\s+)?(?:call|demo|chat|conversation)\b|\b(?:book|arrange|schedule|set up|have|open to)\b[\s\S]{0,80}\b(?:quick\s+)?(?:call|demo|chat|conversation)\b|\b(?:quick\s+)?(?:call|demo|chat|conversation)\b[\s\S]{0,100}\b(?:reply|email|message|get in touch|book|arrange|schedule|interested)\b/i;
 const SIMPLE_OPT_OUT = /(not|won't|will not|do not).{0,24}follow up/i;
 const COMMON_SIGN_OFF =
   /^(?:best|thanks|thank you|kind regards|regards|best wishes|cheers)[,!]?$/i;
@@ -34,6 +36,17 @@ const comparable = (value: unknown) =>
 
 export function hasOutreachDemoReplyCta(value: unknown): boolean {
   return DEMO_REPLY_CTA.test(normalised(value));
+}
+
+/**
+ * Detect a useful low pressure next step without requiring the one standard
+ * phrase. This powers optional UI guidance only. It is never a send guard.
+ */
+export function hasOutreachSalesCallToAction(value: unknown): boolean {
+  const source = normalised(value);
+  if (!source) return false;
+  const trailingCopy = source.slice(-700);
+  return hasOutreachDemoReplyCta(trailingCopy) || GENERAL_SALES_CTA.test(trailingCopy);
 }
 
 function looksLikeSignature(paragraph: string, signoff?: string): boolean {
