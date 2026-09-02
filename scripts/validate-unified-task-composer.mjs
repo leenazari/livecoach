@@ -33,6 +33,16 @@ const calls = read("app/crm/calls/page.tsx");
 const upcoming = read("app/api/crm/upcoming/route.ts");
 
 assert.match(composer, /What needs to be done/);
+assert.match(composer, /foldDictationEvent/);
+assert.match(composer, /stabiliseLiveDictationPreview/);
+assert.match(composer, /webkitSpeechRecognition/);
+assert.match(composer, /interimResults = true/);
+assert.match(composer, /continuous = true/);
+assert.match(composer, /Keep the task mic open until the user deliberately taps Stop/);
+assert.match(composer, /keepListeningRef\.current && !recognitionRef\.current/);
+assert.match(composer, /aria-label=\{listening \? "Stop task dictation" : "Speak task"\}/);
+assert.match(composer, /rows=\{listening \? 4 : 2\}/);
+assert.match(composer, /Your words stay visible here/);
 assert.match(composer, /Task type/);
 assert.match(composer, /General task/);
 assert.match(composer, /Call or follow-up/);
