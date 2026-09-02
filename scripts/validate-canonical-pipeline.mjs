@@ -37,8 +37,10 @@ assert.doesNotMatch(
   synthesize,
   /from\("opportunities"\)[\s\S]{0,180}\.delete\(/
 );
-assert.match(commercialUpdate, /loadCanonicalOpenRevenueOpportunity/);
-assert.match(commercialUpdate, /context\.call\.workstream_id \|\| null/);
+assert.match(commercialUpdate, /chooseCanonicalOpenRevenueOpportunity/);
+assert.match(commercialUpdate, /context\.call\.workstream_id/);
+assert.match(commercialUpdate, /\.eq\("workspace_id", scope\.workspaceId\)/);
+assert.match(commercialUpdate, /assigned_to_user_id\.eq\.\$\{scope\.userId\}/);
 
 // Every primary sales read obeys an explicit company-level exclusion.
 assert.match(exclusion, /companyPipelineExclusionIds/);

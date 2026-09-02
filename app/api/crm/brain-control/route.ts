@@ -46,9 +46,16 @@ export async function POST(request: NextRequest) {
     const action = String(payload.action || "");
 
     if (action === "update_trust") {
+      if (scope.role !== "owner") {
+        return NextResponse.json(
+          { error: "Only the workspace owner can change Brain permissions" },
+          { status: 403, headers: noStore }
+        );
+      }
       const rule = await updateBrainTrustRule(scope, {
         actionKind: String(payload.actionKind || "") as BrainActionKind,
         mode: String(payload.mode || "") as BrainTrustMode,
+        targetUserId: String(payload.targetUserId || scope.userId),
       });
       return NextResponse.json({ ok: true, rule }, { headers: noStore });
     }

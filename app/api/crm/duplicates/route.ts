@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { findDuplicateCompanies } from "@/lib/crm-health";
+import { requireWorkspaceOwner } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,15 +11,20 @@ export const dynamic = "force-dynamic";
 // never mutates CRM records.
 export async function GET() {
   try {
+    const scope = requireWorkspaceOwner();
     const [{ data: companies, error: companyError }, { data: contacts, error: contactError }] =
       await Promise.all([
         supabaseAdmin
           .from("companies")
           .select("id, name, domain, website, profile, updated_at")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
           .limit(1000),
         supabaseAdmin
           .from("contacts")
           .select("company_id, email")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
           .not("company_id", "is", null)
           .not("email", "is", null)
           .limit(3000),

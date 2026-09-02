@@ -3,7 +3,12 @@ import "server-only";
 import { getRequestScope, isVerifiedServiceRequest } from "@/lib/request-scope";
 import { getServiceRecordScope } from "@/lib/service-scope";
 import { supabaseService } from "@/lib/supabase";
-import { microsoftUtcDateTime } from "@/lib/calendar-create";
+import {
+  microsoftCalendarRecurrence,
+  microsoftLondonDateTime,
+  microsoftUtcDateTime,
+  type CalendarRecurrence,
+} from "@/lib/calendar-create";
 import {
   freshReplyOnly,
   type GmailInboxDelta,
@@ -376,6 +381,7 @@ export type MicrosoftCalendarEventInput = {
   endIso: string;
   attendeeEmails: string[];
   meetingUrl: string | null;
+  recurrence?: CalendarRecurrence | null;
 };
 
 export async function createMicrosoftCalendarEvent(
@@ -389,14 +395,24 @@ export async function createMicrosoftCalendarEvent(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         subject: input.title,
-        start: {
-          dateTime: microsoftUtcDateTime(input.startIso),
-          timeZone: "UTC",
-        },
-        end: {
-          dateTime: microsoftUtcDateTime(input.endIso),
-          timeZone: "UTC",
-        },
+        start: input.recurrence
+          ? {
+              dateTime: microsoftLondonDateTime(input.startIso),
+              timeZone: "GMT Standard Time",
+            }
+          : {
+              dateTime: microsoftUtcDateTime(input.startIso),
+              timeZone: "UTC",
+            },
+        end: input.recurrence
+          ? {
+              dateTime: microsoftLondonDateTime(input.endIso),
+              timeZone: "GMT Standard Time",
+            }
+          : {
+              dateTime: microsoftUtcDateTime(input.endIso),
+              timeZone: "UTC",
+            },
         attendees: input.attendeeEmails.map((email) => ({
           emailAddress: { address: email, name: email },
           type: "required",
@@ -412,6 +428,9 @@ export async function createMicrosoftCalendarEvent(
           : {}),
         allowNewTimeProposals: true,
         transactionId: input.requestId,
+        ...(input.recurrence
+          ? { recurrence: microsoftCalendarRecurrence(input.recurrence, input.startIso) }
+          : {}),
       }),
     },
     ownerId
@@ -422,6 +441,79 @@ export async function createMicrosoftCalendarEvent(
     );
   }
   return response.json();
+}
+
+export async function getMicrosoftCalendarEvent(
+  eventId: string,
+  ownerId?: string
+): Promise<any> {
+  const response = await graphFetch(
+    `/me/events/${encodeURIComponent(
+      eventId
+    )}?$select=id,subject,start,end,attendees,location`,
+    { headers: { Prefer: 'outlook.timezone="UTC"' } },
+    ownerId
+  );
+  if (!response?.ok) {
+    throw new Error(
+      `Microsoft calendar event read failed (${response?.status || 0})`
+    );
+  }
+  return response.json();
+}
+
+export async function updateMicrosoftCalendarEvent(
+  eventId: string,
+  input: Omit<MicrosoftCalendarEventInput, "requestId">,
+  ownerId?: string
+): Promise<any> {
+  const response = await graphFetch(
+    `/me/events/${encodeURIComponent(eventId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject: input.title,
+        start: {
+          dateTime: microsoftUtcDateTime(input.startIso),
+          timeZone: "UTC",
+        },
+        end: {
+          dateTime: microsoftUtcDateTime(input.endIso),
+          timeZone: "UTC",
+        },
+        attendees: input.attendeeEmails.map((email) => ({
+          emailAddress: { address: email, name: email },
+          type: "required",
+        })),
+        location: { displayName: input.meetingUrl || "" },
+      }),
+    },
+    ownerId
+  );
+  if (!response?.ok) {
+    throw new Error(
+      `Microsoft calendar event update failed (${response?.status || 0})`
+    );
+  }
+  return response.status === 204 ? {} : response.json();
+}
+
+export async function deleteMicrosoftCalendarEvent(
+  eventId: string,
+  ownerId?: string
+): Promise<void> {
+  const response = await graphFetch(
+    `/me/events/${encodeURIComponent(eventId)}`,
+    { method: "DELETE" },
+    ownerId
+  );
+  if (response?.status === 404 || response?.status === 410) return;
+  if (!response?.ok) {
+    throw new Error(
+      `Microsoft calendar event cancellation failed (${response?.status || 0})`
+    );
+  }
 }
 
 async function listCalendarEvents(

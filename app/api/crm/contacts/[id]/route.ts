@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { requireRequestScope } from "@/lib/request-scope";
+import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 
 export const runtime = "nodejs";
 
@@ -13,7 +15,25 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
+    const { data: current, error: currentError } = await supabaseAdmin
+      .from("contacts")
+      .select("id,company_id,owner_id,workspace_id")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("id", params.id)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!current) {
+      return NextResponse.json({ error: "contact not found" }, { status: 404 });
+    }
+    const access = await loadAssignedClientAccess(current.company_id, scope);
+    if (!access) {
+      return NextResponse.json(
+        { error: "This contact is not owned by or assigned to your account" },
+        { status: 403 }
+      );
+    }
     const patch: Record<string, any> = {};
     for (const f of PATCHABLE) {
       if (typeof body[f] === "string") patch[f] = body[f].trim() || null;
@@ -33,17 +53,12 @@ export async function PATCH(
           ? body.departmentId
           : null;
       if (departmentId) {
-        const { data: contact, error: contactError } = await supabaseAdmin
-          .from("contacts")
-          .select("company_id")
-          .eq("id", params.id)
-          .maybeSingle();
-        if (contactError) throw contactError;
         const { data: department, error: departmentError } = await supabaseAdmin
           .from("departments")
           .select("id")
+          .eq("workspace_id", scope.workspaceId)
           .eq("id", departmentId)
-          .eq("company_id", contact?.company_id || "")
+          .eq("company_id", current.company_id)
           .maybeSingle();
         if (departmentError) throw departmentError;
         if (!department)
@@ -61,6 +76,7 @@ export async function PATCH(
     const { data, error } = await supabaseAdmin
       .from("contacts")
       .update(patch)
+      .eq("workspace_id", scope.workspaceId)
       .eq("id", params.id)
       .select()
       .single();
@@ -79,12 +95,14 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const { data, error } = await supabaseAdmin
+    const scope = requireRequestScope();
+    const deletion = supabaseAdmin
       .from("contacts")
       .delete()
-      .eq("id", params.id)
-      .select("id")
-      .maybeSingle();
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
+      .eq("id", params.id);
+    const { data, error } = await deletion.select("id").maybeSingle();
     if (error) throw error;
     if (!data)
       return NextResponse.json({ error: "contact not found" }, { status: 404 });

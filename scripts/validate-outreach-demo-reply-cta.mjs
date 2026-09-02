@@ -334,7 +334,10 @@ const messageRoute = read("app/api/crm/outreach/messages/[id]/route.ts");
 const voiceScriptRoute = read("app/api/crm/outreach/messages/[id]/voice-script/route.ts");
 const brain = read("app/api/crm/assistant/route.ts");
 const brainEmail = read("app/api/crm/assistant/email/route.ts");
-const replyDraft = read("app/api/crm/outreach/replies/[id]/draft/route.ts");
+const replyDraft = [
+  read("app/api/crm/outreach/replies/[id]/draft/route.ts"),
+  read("lib/outreach-positive-reply.ts"),
+].join("\n");
 const sendQueue = read("lib/outreach-send-queue.ts");
 const outreachPage = read("app/crm/outreach/page.tsx");
 const outreachToday = read("components/crm/OutreachTodayLane.tsx");

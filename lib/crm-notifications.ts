@@ -2,6 +2,7 @@ export type CrmNotificationKind =
   | "outreach_reply"
   | "important_email"
   | "lead_assigned"
+  | "work_assigned"
   | "chat_message";
 
 export type NotificationPreferences = {

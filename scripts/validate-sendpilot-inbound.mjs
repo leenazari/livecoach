@@ -141,7 +141,9 @@ const [
 ]);
 
 assert(apiClient.includes('method: "POST"'));
-assert(!apiClient.includes('method: "PATCH"'));
+assert(apiClient.includes('method: "PATCH"'));
+assert(apiClient.includes("updateSendPilotLeadStatus"));
+assert(apiClient.includes("updateSendPilotCampaign"));
 assert(!apiClient.includes('method: "PUT"'));
 assert(!apiClient.includes('method: "DELETE"'));
 assert(!apiClient.includes("/v1/inbox/messages"));

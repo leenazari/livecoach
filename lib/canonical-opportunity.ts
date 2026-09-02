@@ -175,12 +175,17 @@ export async function loadCanonicalOpenRevenueOpportunity(
   companyId: string,
   workstreamId: string | null = null
 ): Promise<Record<string, any> | null> {
+  const actor = await resolveRecordScope();
   let query = supabaseAdmin
     .from("opportunities")
     .select("*")
+    .eq("workspace_id", actor.workspaceId)
     .eq("company_id", companyId)
     .eq("status", "open")
     .eq("opportunity_type", "revenue")
+    .or(
+      `owner_id.eq.${actor.userId},assigned_to_user_id.eq.${actor.userId}`
+    )
     .order("updated_at", { ascending: false })
     .limit(20);
   query = workstreamId
@@ -299,6 +304,9 @@ export async function createCanonicalOpenRevenueOpportunity(
         clarification: null,
       };
     }
+    throw new Error(
+      "An active opportunity already exists for this client but is not assigned to this account"
+    );
   }
   throw error;
 }

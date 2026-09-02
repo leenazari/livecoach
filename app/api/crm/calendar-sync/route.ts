@@ -4,7 +4,6 @@ import { listConnectedCalendarSnapshot } from "@/lib/calendar-provider";
 import { supabaseAdmin } from "@/lib/supabase";
 import { setAppConfigValue } from "@/lib/app-config";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
-import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import {
   loadAttendeeConfig,
   inferLink,
@@ -17,7 +16,6 @@ import {
   loadOutreachProspectsForAttendees,
   matchOutreachProspectForAttendees,
 } from "@/lib/outreach-crm";
-import { resolveExistingCompany } from "@/lib/company-resolver";
 import {
   isNonMeetingCalendarBlock,
   scheduledCalendarSyncDecision,
@@ -28,51 +26,6 @@ import { shouldReopenScheduledCalendarCall } from "@/lib/calendar-sync-recovery"
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-// When a new event has no work-email guest to derive a client from, read the
-// TITLE to decide who the call is with, so a real client call still gets a
-// profile created and can be prepped before the first call. One cheap Luna
-// pass for the whole batch. Best-effort: returns nothing on any failure, so the
-// sync never breaks on this. Returns input title -> client name (or null).
-async function deriveClientsFromTitles(
-  titles: string[]
-): Promise<Map<string, string | null>> {
-  const out = new Map<string, string | null>();
-  const list = titles.filter(Boolean).slice(0, 40);
-  if (!list.length) return out;
-  try {
-    const system = `You file calendar events under a CLIENT. The user runs an AI interview product called "Interviewa" / "Interviewer" - those words always mean THEIR OWN product, never the client, so extract the OTHER party. For each event title, return the external company or client name to file it under, or null. Return null for internal team meetings (standup, sprint, retro, design review, 1:1, board, all hands), for personal or admin events (lunch, coffee, dentist, doctor, holiday, gym, birthday, school run), and for anything where no specific external party can be identified. Prefer a company name over a person's name. If a company is given in parentheses, use that. Return ONLY JSON in the SAME ORDER and SAME COUNT as the input: {"results":[{"client":"<name>" or null}, ...]}.`;
-    const user = `Event titles:\n${list
-      .map((t, i) => `${i + 1}. ${t}`)
-      .join("\n")}\n\nReturn the JSON array now, one entry per title in order.`;
-    const msg: any = await openai.messages.create({
-      model: OPENAI_MODEL_LIVE,
-      max_tokens: 800,
-      temperature: 0,
-      system,
-      messages: [{ role: "user", content: user }],
-    });
-    const text = (Array.isArray(msg?.content) ? msg.content : [])
-      .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
-      .map((b: any) => b.text)
-      .join("");
-    const a = text.indexOf("{");
-    const z = text.lastIndexOf("}");
-    const parsed = a >= 0 && z > a ? JSON.parse(text.slice(a, z + 1)) : {};
-    const results = Array.isArray(parsed.results) ? parsed.results : [];
-    list.forEach((t, i) => {
-      const r = results[i];
-      const c =
-        r && typeof r.client === "string" && r.client.trim()
-          ? r.client.trim()
-          : null;
-      out.set(t, c);
-    });
-  } catch {
-    /* best-effort: no title-based creation when this fails */
-  }
-  return out;
-}
 
 // POST /api/crm/calendar-sync -> pull the user's connected calendar (now to +30d)
 // into upcoming_calls. Adds new events, applies reschedules (time/title/link),
@@ -353,44 +306,10 @@ async function runCalendarSync() {
       resolved.push({ r, company_id, intent, outreachProspectId: outreachProspect?.id || null });
     }
 
-    // Pass 2: anything still without a client - create one from the TITLE, so a
-    // real client call gets a profile the moment it's booked and can be prepped
-    // before the first call. Find-or-reuse a company by name to avoid duplicates.
-    const unresolvedTitles = Array.from(
-      new Set(
-        resolved
-          .filter((x) => !x.company_id && !x.outreachProspectId)
-          .map((x) => x.r.title)
-          .filter((title) => !isNonMeetingCalendarBlock(title))
-          .filter(Boolean)
-      )
-    );
-    if (unresolvedTitles.length) {
-      const titleToClient = await deriveClientsFromTitles(unresolvedTitles);
-      const nameToCompanyId = new Map<string, string>();
-      const ensureCompany = async (name: string): Promise<string | null> => {
-        const key = name.toLowerCase();
-        if (nameToCompanyId.has(key)) return nameToCompanyId.get(key) || null;
-        let id: string | null = null;
-        const found = await resolveExistingCompany({ name });
-        if (found) id = found.id;
-        if (!id) {
-          const { data: created } = await supabaseAdmin
-            .from("companies")
-            .insert({ name, profile: { auto_created_from: "calendar-title" } })
-            .select("id")
-            .single();
-          id = ((created as any)?.id as string) || null;
-        }
-        if (id) nameToCompanyId.set(key, id);
-        return id;
-      };
-      for (const x of resolved) {
-        if (x.company_id || x.outreachProspectId) continue;
-        const name = titleToClient.get(x.r.title);
-        if (name) x.company_id = await ensureCompany(name);
-      }
-    }
+    // Never invent a CRM company from free-text event titles. A deterministic
+    // exact contact/domain match may link or create a company, while ambiguous
+    // meetings remain unlinked for review. This prevents a referrer, product
+    // name or meeting topic becoming the client by accident.
 
     // Reuse the compact next-call memory already produced after the last call.
     // This is a Supabase read, not another AI call.

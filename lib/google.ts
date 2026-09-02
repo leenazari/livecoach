@@ -1,7 +1,11 @@
 import { getRequestScope, isVerifiedServiceRequest } from "@/lib/request-scope";
 import { getServiceRecordScope } from "@/lib/service-scope";
 import { supabaseService } from "@/lib/supabase";
-import { googleEventIdForRequest } from "@/lib/calendar-create";
+import {
+  googleCalendarRecurrenceRule,
+  googleEventIdForRequest,
+  type CalendarRecurrence,
+} from "@/lib/calendar-create";
 
 // In-app Google Calendar connection. The deployed app reads/writes the user's
 // real calendar using OAuth tokens stored in a private, per-user google_oauth
@@ -335,6 +339,7 @@ export type GoogleCalendarEventInput = {
   endIso: string;
   attendeeEmails: string[];
   meetingUrl: string | null;
+  recurrence?: CalendarRecurrence | null;
 };
 
 export async function createGoogleCalendarEvent(
@@ -356,10 +361,19 @@ export async function createGoogleCalendarEvent(
     body: JSON.stringify({
       id: eventId,
       summary: input.title,
-      start: { dateTime: input.startIso },
-      end: { dateTime: input.endIso },
+      start: {
+        dateTime: input.startIso,
+        ...(input.recurrence ? { timeZone: "Europe/London" } : {}),
+      },
+      end: {
+        dateTime: input.endIso,
+        ...(input.recurrence ? { timeZone: "Europe/London" } : {}),
+      },
       attendees: input.attendeeEmails.map((email) => ({ email })),
       ...(input.meetingUrl ? { location: input.meetingUrl } : {}),
+      ...(input.recurrence
+        ? { recurrence: [googleCalendarRecurrenceRule(input.recurrence, input.startIso)] }
+        : {}),
       extendedProperties: {
         private: { livecoachRequestId: input.requestId },
       },
@@ -390,6 +404,90 @@ export async function createGoogleCalendarEvent(
     throw error;
   }
   return response.json();
+}
+
+export async function getGoogleCalendarEvent(
+  accessToken: string,
+  eventId: string
+): Promise<any> {
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(
+      eventId
+    )}`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    }
+  );
+  if (!response.ok) {
+    const error = new Error(
+      `Google calendar event read failed (${response.status})`
+    ) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function updateGoogleCalendarEvent(
+  accessToken: string,
+  eventId: string,
+  input: Omit<GoogleCalendarEventInput, "requestId">
+): Promise<any> {
+  const query = new URLSearchParams();
+  if (input.attendeeEmails.length) query.set("sendUpdates", "all");
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(
+      eventId
+    )}${query.size ? `?${query.toString()}` : ""}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        summary: input.title,
+        start: { dateTime: input.startIso },
+        end: { dateTime: input.endIso },
+        attendees: input.attendeeEmails.map((email) => ({ email })),
+        location: input.meetingUrl || "",
+      }),
+      cache: "no-store",
+    }
+  );
+  if (!response.ok) {
+    const error = new Error(
+      `Google calendar event update failed (${response.status})`
+    ) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export async function deleteGoogleCalendarEvent(
+  accessToken: string,
+  eventId: string
+): Promise<void> {
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(
+      eventId
+    )}?sendUpdates=all`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    }
+  );
+  if (response.status === 404 || response.status === 410) return;
+  if (!response.ok) {
+    const error = new Error(
+      `Google calendar event cancellation failed (${response.status})`
+    ) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
 }
 
 // The calendars this account can see (its calendar list). Used to read events
@@ -470,12 +568,23 @@ export async function listAllEventsSnapshot(
       failedCalendars.push(id === "primary" ? "primary calendar" : id);
     }
   }
-  // Dedupe: the same meeting can sit on the primary (as an invitee) AND a shared
-  // calendar. Keep the first seen (primary is read first), keyed by iCalUID.
+  // Dedupe the same meeting across primary and shared calendars. Recurring
+  // instances share one iCalUID, so include the original occurrence time or an
+  // entire series would collapse to its first event.
   const seen = new Set<string>();
   const out: any[] = [];
   for (const e of all) {
-    const key = String(e?.iCalUID || e?.id || "");
+    const baseKey = String(e?.iCalUID || e?.id || "");
+    const occurrenceKey = e?.recurringEventId
+      ? String(
+          e?.originalStartTime?.dateTime ||
+            e?.originalStartTime?.date ||
+            e?.start?.dateTime ||
+            e?.start?.date ||
+            ""
+        )
+      : "";
+    const key = occurrenceKey ? `${baseKey}|${occurrenceKey}` : baseKey;
     if (!key || seen.has(key)) continue;
     seen.add(key);
     out.push(e);

@@ -252,6 +252,8 @@ export async function dispatchDueOutreachMessage(messageId: string) {
   if (!isBrainDirect && (!enrolment || !campaign || campaign.status !== "active"))
     await stopClaim("Campaign or prospect is unavailable", "failed");
   const isReply = message.strategy?.messageType === "reply";
+  const ownerOverride =
+    isBrainDirect && message.strategy?.ownerOverride === true;
   if (
     !isReply &&
     (["replied", "qualified", "not_interested", "suppressed"].includes(
@@ -299,6 +301,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     if (activeError) await stopClaim("Could not verify active campaign safety", "failed");
     if (sentError) await stopClaim("Could not verify recent contact safety", "failed");
     if (
+      !ownerOverride &&
       (activeEnrolments || []).some((row: any) =>
         isActiveOutreachEnrolmentStatus(row.status)
       )
@@ -307,7 +310,11 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         "This recipient now has an active outreach campaign. Review that campaign before sending separately."
       );
     }
-    if (latestSent?.sent_at && isInsideCrossCampaignCooldown(latestSent.sent_at)) {
+    if (
+      !ownerOverride &&
+      latestSent?.sent_at &&
+      isInsideCrossCampaignCooldown(latestSent.sent_at)
+    ) {
       await stopClaim(
         "This recipient was emailed within the last 30 days, so the safety pause is still active."
       );
@@ -322,6 +329,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     await stopClaim("This person or company is on the do not contact list");
   if (
     !isReply &&
+    !ownerOverride &&
     prospectHasBlockedCrmRelationship(prospect, await outreachCrmGuard())
   )
     await stopClaim(

@@ -1166,24 +1166,33 @@ export default function ClientAssistant({
     }
   };
 
-  const receiptAction = (action: any, result?: any) =>
-    action?.type === "send_email"
-      ? {
-          key: action.key,
-          type: action.type,
-          label: fullActionLabel(action),
-          external: true,
-          messageId: result?.messageId || null,
-          prospectId: result?.prospectId || null,
-          status: result?.status || null,
-        }
-      : action;
+  const receiptAction = (action: any, result?: any) => {
+    if (action?.type === "send_email")
+      return {
+        key: action.key,
+        type: action.type,
+        label: fullActionLabel(action),
+        external: true,
+        executionId: result?.executionId || null,
+        messageId: result?.messageId || null,
+        prospectId: result?.prospectId || null,
+        status: result?.status || null,
+      };
+    const { executionToken: _token, choices, ...safe } = action || {};
+    return {
+      ...safe,
+      executionId: result?.executionId || null,
+      choices: Array.isArray(choices)
+        ? choices.map(({ executionToken: _choiceToken, ...choice }: any) => choice)
+        : undefined,
+    };
+  };
 
   const confirmAction = async (
     a: any,
     recordReceipt = true
   ): Promise<ActionOutcome> => {
-    if (!a || !a.endpoint)
+    if (!a || !a.endpoint || !a.executionToken)
       return { ok: false, error: "No safe CRM action was available." };
     if (actionInFlightRef.current.has(a.key))
       return { ok: false, error: "That change is already being saved." };
@@ -1195,9 +1204,12 @@ export default function ClientAssistant({
     });
     setActionState((s) => ({ ...s, [a.key]: "busy" }));
     try {
-      const result: any = await crmFetch(a.endpoint, {
-        method: a.method || "PATCH",
-        body: JSON.stringify(a.body || {}),
+      const result: any = await crmFetch("/api/crm/assistant/execute", {
+        method: "POST",
+        body: JSON.stringify({
+          token: a.executionToken,
+          confirmed: true,
+        }),
       });
       const confirmationError = actionConfirmationError(a, result);
       if (confirmationError) throw confirmationError;
@@ -1236,12 +1248,54 @@ export default function ClientAssistant({
       actionInFlightRef.current.delete(a.key);
     }
   };
+
+  const undoAction = async (a: any) => {
+    const executionId = actionResults[a.key]?.executionId;
+    if (!executionId || actionState[a.key] !== "done") return;
+    setActionErrors((errors) => {
+      const next = { ...errors };
+      delete next[a.key];
+      return next;
+    });
+    setActionState((state) => ({ ...state, [a.key]: "undoing" }));
+    try {
+      const result: any = await crmFetch(
+        `/api/crm/assistant/executions/${executionId}/undo`,
+        {
+          method: "POST",
+          body: JSON.stringify({ confirmed: true }),
+        }
+      );
+      if (!result?.undone) {
+        throw new Error("The CRM did not confirm the undo");
+      }
+      setActionResults((current) => ({
+        ...current,
+        [a.key]: { ...current[a.key], ...result },
+      }));
+      setActionState((state) => ({ ...state, [a.key]: "undone" }));
+      broadcastCompletedAction(a, result?.result || result);
+      await persistActionReceipt([
+        {
+          label: `Undo ${fullActionLabel(a)}`,
+          status: "completed",
+          action: receiptAction(a, result),
+        },
+      ]);
+    } catch (error: any) {
+      setActionState((state) => ({ ...state, [a.key]: "done" }));
+      setActionErrors((errors) => ({
+        ...errors,
+        [a.key]: error?.message || "The undo was not confirmed. Refresh the record before retrying.",
+      }));
+    }
+  };
   const cancelAction = (a: any) =>
     setActionState((s) => ({ ...s, [a.key]: "cancelled" }));
   // When the brain wasn't sure which record you meant, it offers options. Tap
   // one to run the action against exactly that record.
   const confirmChoice = async (a: any, c: any) => {
-    if (!c || !c.endpoint) return;
+    if (!c || !c.endpoint || !c.executionToken) return;
     if (actionInFlightRef.current.has(a.key)) return;
     actionInFlightRef.current.add(a.key);
     setActionErrors((errors) => {
@@ -1251,9 +1305,12 @@ export default function ClientAssistant({
     });
     setActionState((s) => ({ ...s, [a.key]: "busy" }));
     try {
-      const result: any = await crmFetch(c.endpoint, {
-        method: c.method || "PATCH",
-        body: JSON.stringify(c.body || {}),
+      const result: any = await crmFetch("/api/crm/assistant/execute", {
+        method: "POST",
+        body: JSON.stringify({
+          token: c.executionToken,
+          confirmed: true,
+        }),
       });
       const confirmationError = actionConfirmationError(a, result);
       if (confirmationError) throw confirmationError;
@@ -1304,6 +1361,7 @@ export default function ClientAssistant({
       (a) =>
         a?.batchSafe === true &&
         a?.endpoint &&
+        a?.executionToken &&
         !Array.isArray(a?.choices) &&
         (actionState[a.key] || "pending") === "pending"
     );
@@ -1326,7 +1384,7 @@ export default function ClientAssistant({
             ? ("completed" as const)
             : ("not_completed" as const),
           reason: outcomes[index].error,
-          action,
+          action: receiptAction(action),
         }))
       );
     } finally {
@@ -1550,6 +1608,7 @@ export default function ClientAssistant({
                       (a: any) =>
                         a?.batchSafe === true &&
                         a?.endpoint &&
+                        a?.executionToken &&
                         !Array.isArray(a?.choices) &&
                         (actionState[a.key] || "pending") === "pending"
                     ).length > 1 && (
@@ -1565,6 +1624,7 @@ export default function ClientAssistant({
                               (a: any) =>
                                 a?.batchSafe === true &&
                                 a?.endpoint &&
+                                a?.executionToken &&
                                 !Array.isArray(a?.choices) &&
                                 (actionState[a.key] || "pending") === "pending"
                             ).length})`}
@@ -1605,7 +1665,17 @@ export default function ClientAssistant({
                         >
                           <div className="mb-1.5 flex items-center justify-between gap-2">
                             <span className={`font-mono text-[0.5rem] uppercase tracking-wider ${a.needsInput ? "text-amber" : a.unavailable ? "text-rust" : "text-sky/80"}`}>
-                              {a.needsInput ? "Need one detail" : a.unavailable ? "Not completed" : a.external ? "External email" : "proposed change"}
+                              {a.needsInput
+                                ? "Need one detail"
+                                : a.unavailable
+                                  ? "Not completed"
+                                  : a.authority?.risk === "external_communication"
+                                    ? "External action"
+                                    : a.authority?.risk === "paid_generation"
+                                      ? "Paid generation"
+                                      : a.authority?.risk === "destructive"
+                                        ? "Destructive action"
+                                        : "Proposed change"}
                             </span>
                             {!a.unavailable ? <span
                               className={`rounded-full border px-2 py-0.5 font-mono text-[0.48rem] uppercase tracking-wider ${
@@ -1620,6 +1690,11 @@ export default function ClientAssistant({
                           <p className="mb-1.5 font-sans text-[0.78rem] leading-snug text-bone/90">
                             {"⚙"} {fullActionLabel(a)}
                           </p>
+                          {a.authority?.ownerOverrideRequested ? (
+                            <p className="mb-2 rounded-md border border-amber/35 bg-amber/[0.08] px-2 py-1.5 font-sans text-[0.68rem] leading-snug text-amber">
+                              Owner override requested for this exact action. Identity, privacy, do-not-contact and audit controls remain locked.
+                            </p>
+                          ) : null}
                           {a.type === "send_email" && a.emailPreview ? (
                             <div className="mb-2 rounded-md border border-edge bg-ink/45 p-2 text-left">
                               <p className="font-mono text-[0.5rem] uppercase text-muted">
@@ -1633,18 +1708,41 @@ export default function ClientAssistant({
                             <p className={`rounded-md border px-2 py-1.5 font-sans text-[0.68rem] leading-snug ${a.needsInput ? "border-amber/30 bg-amber/[0.06] text-amber" : "border-rust/30 bg-rust/[0.06] text-rust"}`}>
                               {a.failureReason || "No change was made."}
                             </p>
-                          ) : st === "done" ? (
+                          ) : ["done", "undoing", "undone"].includes(st) ? (
                             <div className="space-y-2">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="font-mono text-[0.56rem] uppercase tracking-wider text-sage">
-                                  {a.type === "send_email"
-                                    ? actionResults[a.key]?.status === "sent"
-                                      ? "✓ already sent"
-                                      : actionResults[a.key]?.status === "sending"
-                                        ? "✓ sending"
-                                        : "✓ approved and queued"
-                                    : "✓ done"}
+                                  {st === "undone"
+                                    ? "↶ undone"
+                                    : st === "undoing"
+                                      ? "undoing…"
+                                      : a.type === "send_email"
+                                        ? actionResults[a.key]?.status === "sent"
+                                          ? "✓ already sent"
+                                          : actionResults[a.key]?.status === "sending"
+                                            ? "✓ sending"
+                                            : "✓ approved and queued"
+                                        : "✓ done"}
                                 </span>
+                                {st === "done" && actionResults[a.key]?.recovery?.canUndo ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void undoAction(a)}
+                                    className="rounded-full border border-edge px-2 py-1 font-mono text-[0.49rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+                                  >
+                                    undo within 10 min
+                                  </button>
+                                ) : null}
+                                {actionResults[a.key]?.ownerOverrideApplied ? (
+                                  <span className="rounded-full border border-amber/40 bg-amber/10 px-2 py-1 font-mono text-[0.49rem] uppercase tracking-wider text-amber">
+                                    Owner override audited
+                                  </span>
+                                ) : null}
+                                {actionResults[a.key]?.auditConfirmed === false ? (
+                                  <span className="rounded-full border border-rust/40 bg-rust/10 px-2 py-1 font-mono text-[0.49rem] uppercase tracking-wider text-rust">
+                                    Action done, audit pending
+                                  </span>
+                                ) : null}
                                 {actionResults[a.key]?.links?.outreach ? (
                                   <Link href={actionResults[a.key].links.outreach} className="rounded-full border border-sky/45 px-2 py-1 font-mono text-[0.52rem] uppercase text-sky">
                                     View recent outreach
@@ -1674,9 +1772,7 @@ export default function ClientAssistant({
                                         Message evidence
                                       </summary>
                                       <div className="mt-2 space-y-2">
-                                        {actionResults[
-                                          a.key
-                                        ].emailAnswer.evidence.map(
+                                        {actionResults[a.key].emailAnswer.evidence.map(
                                           (item: any) => (
                                             <div
                                               key={item.messageId}
@@ -1685,9 +1781,7 @@ export default function ClientAssistant({
                                               <p className="font-mono text-[0.5rem] uppercase text-muted">
                                                 {item.direction} ·{" "}
                                                 {item.date
-                                                  ? new Date(
-                                                      item.date
-                                                    ).toLocaleString("en-GB", {
+                                                  ? new Date(item.date).toLocaleString("en-GB", {
                                                       day: "2-digit",
                                                       month: "short",
                                                       year: "numeric",
@@ -1744,7 +1838,13 @@ export default function ClientAssistant({
                                 onClick={() => confirmAction(a)}
                                 className="rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 disabled:opacity-50"
                               >
-                                {st === "busy" ? "doing…" : a.type === "send_email" ? "approve & queue email" : "confirm"}
+                                {st === "busy"
+                                  ? "doing…"
+                                  : actionErrors[a.key]
+                                    ? "retry exact action"
+                                    : a.type === "send_email"
+                                      ? "approve & queue email"
+                                      : "confirm"}
                               </button>
                               <button
                                 type="button"

@@ -3,9 +3,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { upsertTasks } from "@/lib/tasks";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import {
+  chooseCanonicalOpenRevenueOpportunity,
   createCanonicalOpenRevenueOpportunity,
-  loadCanonicalOpenRevenueOpportunity,
 } from "@/lib/canonical-opportunity";
+import { requireRequestScope, type RequestScope } from "@/lib/request-scope";
+import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,27 +35,38 @@ const suggestedAction = (summary: any): string => {
   return "";
 };
 
-async function callContext(callId: string) {
+async function callContext(callId: string, scope: RequestScope) {
   const { data: call, error } = await supabaseAdmin
     .from("interview_summaries")
     .select("id, session_id, company_id, workstream_id, candidate, summary")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("owner_id", scope.userId)
     .eq("id", callId)
-    .single();
+    .maybeSingle();
   if (error || !call?.company_id) return null;
-  const [{ data: company }, { data: opportunities }] = await Promise.all([
-    supabaseAdmin
-      .from("companies")
-      .select("id, name, workspace_id, owner_id, visibility")
-      .eq("id", call.company_id)
-      .single(),
-    supabaseAdmin
-      .from("opportunities")
-      .select("*")
-      .eq("company_id", call.company_id)
-      .eq("opportunity_type", "revenue")
-      .order("updated_at", { ascending: false })
-      .limit(20),
-  ]);
+  const access = await loadAssignedClientAccess(call.company_id, scope);
+  if (!access) return null;
+  const { data: company, error: companyError } = await supabaseAdmin
+    .from("companies")
+    .select("id, name, workspace_id, owner_id, visibility")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("id", call.company_id)
+    .maybeSingle();
+  if (companyError) throw companyError;
+  if (!company) return null;
+  let opportunityQuery = supabaseAdmin
+    .from("opportunities")
+    .select("*")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("company_id", call.company_id)
+    .eq("opportunity_type", "revenue")
+    .or(
+      `owner_id.eq.${scope.userId},assigned_to_user_id.eq.${scope.userId}`
+    )
+    .order("updated_at", { ascending: false })
+    .limit(20);
+  const { data: opportunities, error: opportunityError } = await opportunityQuery;
+  if (opportunityError) throw opportunityError;
   return {
     call,
     company,
@@ -70,7 +83,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const context = await callContext(params.id);
+    const scope = requireRequestScope();
+    const context = await callContext(params.id, scope);
     if (!context) return NextResponse.json({ error: "This call is not linked to a company" }, { status: 404 });
     return NextResponse.json({
       company: context.company,
@@ -87,8 +101,9 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
-    const context = await callContext(params.id);
+    const context = await callContext(params.id, scope);
     if (!context) return NextResponse.json({ error: "This call is not linked to a company" }, { status: 404 });
 
     const pipelineStage = STAGES.includes(body.pipelineStage) ? body.pipelineStage : "discovery";
@@ -141,9 +156,12 @@ export async function POST(
     let opportunityId = typeof body.opportunityId === "string" ? body.opportunityId : "";
     let opportunity: any;
     if (!opportunityId) {
-      const existing = await loadCanonicalOpenRevenueOpportunity(
-        context.call.company_id,
-        context.call.workstream_id || null
+      const existing = chooseCanonicalOpenRevenueOpportunity(
+        context.opportunities.filter((candidate: any) =>
+          context.call.workstream_id
+            ? candidate.workstream_id === context.call.workstream_id
+            : candidate.workstream_id == null
+        )
       );
       opportunityId = existing?.id || "";
     }
@@ -164,12 +182,16 @@ export async function POST(
       );
       opportunityId = String(created.opportunity.id);
     }
-    const { data, error } = await supabaseAdmin
+    let updateQuery = supabaseAdmin
       .from("opportunities")
       .update(patch)
       .eq("id", opportunityId)
+      .eq("workspace_id", scope.workspaceId)
       .eq("company_id", context.call.company_id)
-      .select()
+      .or(
+        `owner_id.eq.${scope.userId},assigned_to_user_id.eq.${scope.userId}`
+      );
+    const { data, error } = await updateQuery.select()
       .single();
     if (error) throw error;
     opportunity = data;

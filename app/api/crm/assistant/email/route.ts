@@ -14,6 +14,8 @@ import {
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
 import { supabaseAdmin } from "@/lib/supabase";
+import { verifyBrainOwnerOverride } from "@/lib/brain-authority";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,8 +80,17 @@ async function ensureApprovedEvent(input: {
 
 export async function POST(req: NextRequest) {
   try {
+    const requestScope = requireRequestScope();
     const sender = await resolveOutreachIdentity();
     const body = await req.json();
+    const ownerOverride = verifyBrainOwnerOverride({
+      token: req.headers.get("x-livecoach-brain-action") || "",
+      scope: requestScope,
+      actionType: "send_email",
+      endpoint: "/api/crm/assistant/email",
+      method: "POST",
+      body,
+    });
     const recipientEmail = clean(body.email, 320).toLowerCase();
     const recipientName = clean(body.recipientName, 240);
     const company = clean(body.company, 240);
@@ -225,7 +236,8 @@ export async function POST(req: NextRequest) {
     }
     if (
       prospect &&
-      prospectHasBlockedCrmRelationship(prospect, await outreachCrmGuard())
+      prospectHasBlockedCrmRelationship(prospect, await outreachCrmGuard()) &&
+      !ownerOverride
     ) {
       return blockedResponse(409, {
         code: "outreach_crm_relationship_ineligible",
@@ -259,7 +271,7 @@ export async function POST(req: NextRequest) {
       const blockingEnrolment = (activeEnrolments || []).find((row: any) =>
         isActiveOutreachEnrolmentStatus(row.status)
       );
-      if (blockingEnrolment) {
+      if (blockingEnrolment && !ownerOverride) {
         const paused = blockingEnrolment.status === "paused";
         return blockedResponse(
           409,
@@ -284,7 +296,11 @@ export async function POST(req: NextRequest) {
           }
         );
       }
-      if (latestSent?.sent_at && isInsideCrossCampaignCooldown(latestSent.sent_at)) {
+      if (
+        latestSent?.sent_at &&
+        isInsideCrossCampaignCooldown(latestSent.sent_at) &&
+        !ownerOverride
+      ) {
         return blockedResponse(409, {
           code: "outreach_cross_campaign_cooldown",
           title: "Email blocked",
@@ -371,6 +387,7 @@ export async function POST(req: NextRequest) {
           messageType: "brain_direct",
           source: "brain",
           campaignRequired: false,
+          ownerOverride,
         },
       })
       .select("*")
