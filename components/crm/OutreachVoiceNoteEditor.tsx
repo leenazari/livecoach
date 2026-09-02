@@ -106,7 +106,7 @@ export default function OutreachVoiceNoteEditor({
             Personal voice note
           </p>
           <p className="mt-1 text-xs leading-5 text-bone/75">
-            Your personalised script appears automatically. Edit it if needed, then generate one audio preview. That click confirms these exact words and creates the voice note.
+            Optional. Your personalised script appears automatically. Edit it if needed, then generate one audio preview. You can still queue the email without a voice note.
           </p>
         </div>
         <span
@@ -221,7 +221,7 @@ export default function OutreachVoiceNoteEditor({
           <div className="min-w-0 flex-1">
             <p className="text-sm text-bone">Voice note ready</p>
             <p className="mt-0.5 text-xs text-muted">
-              About {message.voice_estimated_seconds || seconds} seconds. Play it before queueing the email.
+              About {message.voice_estimated_seconds || seconds} seconds. Play it if you want to check it before queueing the email.
             </p>
           </div>
           <audio

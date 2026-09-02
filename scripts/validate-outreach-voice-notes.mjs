@@ -211,13 +211,18 @@ assert.match(
   patchRoute,
   /voice_estimated_cost_gbp = voiceApprovalBudget\.estimatedCostGbp/
 );
-assert.match(patchRoute, /Generate and preview the personal voice note before approving/);
+assert.doesNotMatch(
+  patchRoute,
+  /Generate and preview the personal voice note before approving/
+);
 assert.match(queue, /voice_public_token/);
 assert.match(queue, /voice_script_approved_at/);
 
 assert.match(sender, /outreachVoicePublicUrl/);
 assert.match(sender, /message\.voice_status === "ready"/);
-assert.match(sender, /The personal voice note is not ready/);
+assert.match(sender, /const hasReadyVoiceNote = Boolean/);
+assert.match(sender, /voiceNoteIncluded: hasReadyVoiceNote/);
+assert.doesNotMatch(sender, /The personal voice note is not ready/);
 assert.match(mail, /I’ve added a short personal voice message for you/);
 assert.match(mail, /voiceNote\?:/);
 
@@ -261,14 +266,21 @@ assert.doesNotMatch(outreachPage, /approveVoiceScript/);
 assert.match(outreachPage, /OutreachVoiceNoteEditor/);
 assert.match(outreachPage, /queueRowNeedsVoiceScript/);
 assert.match(outreachPage, /queueRowNeedsPreparation/);
-assert.match(outreachPage, /hasCurrentReadyVoice/);
-assert.match(outreachPage, /visibleScript === savedScript/);
-assert.match(outreachPage, /voice scripts to complete/);
+assert.match(outreachPage, /hasApprovableEmail/);
+assert.match(outreachPage, /visible\?\.subject/);
+assert.match(outreachPage, /visible\?\.body_text/);
+assert.match(outreachPage, /optional voice scripts to prepare/);
 assert.match(outreachPage, /Research \+ draft current wave/);
 assert.match(outreachPage, /Create voice script/);
 assert.match(outreachPage, /Refresh draft/);
 assert.match(outreachPage, /emailPreserved !== true/);
-assert.match(outreachPage, /Complete and generate the personal voice note before queueing/);
+assert.doesNotMatch(
+  outreachPage,
+  /Complete and generate the personal voice note before queueing/
+);
+assert.match(outreachPage, /The email can be queued without a voice note/);
+assert.match(today, /the email can be queued without one/);
+assert.doesNotMatch(today, /displayMessage\.voice_status !== "ready"/);
 assert.match(today, /generateVoiceNote/);
 assert.match(today, /approve_voice_script: true/);
 assert.doesNotMatch(today, /approveVoiceScript/);
