@@ -9,6 +9,14 @@ import {
   nextProspectStatus,
   type ManualOutreachCallOutcome,
 } from "@/lib/outreach-manual-call";
+import {
+  followUpAtIsPast,
+  normaliseFollowUpAt,
+} from "@/lib/follow-up-scheduling";
+import {
+  manualCallReminderText,
+  saveOutreachFollowUpTask,
+} from "@/lib/outreach-follow-up";
 import { outreachSequenceStepAt } from "@/lib/outreach-sequence";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -54,15 +62,23 @@ export async function POST(
       Math.min(480, Math.round(Number(body.durationMinutes) || 0))
     );
     const requestedCampaignId = String(body.campaignId || "").trim();
-    const followUpDate = String(body.followUpDate || "").trim();
+    const followUpAt = normaliseFollowUpAt(body.followUpAt);
     if (!UUID.test(requestId))
       return NextResponse.json({ error: "A valid call log request is required" }, { status: 400 });
     if (!MANUAL_OUTREACH_CALL_OUTCOMES.includes(outcome))
       return NextResponse.json({ error: "Choose what happened on the call" }, { status: 400 });
     if (note.length < 3)
       return NextResponse.json({ error: "Add a short factual note about the call" }, { status: 400 });
-    if (followUpDate && !/^\d{4}-\d{2}-\d{2}$/.test(followUpDate))
-      return NextResponse.json({ error: "Choose a valid next action date" }, { status: 400 });
+    if (!terminalOutcome(outcome) && !followUpAt)
+      return NextResponse.json(
+        { error: "Choose the follow-up date and time before saving this call" },
+        { status: 400 }
+      );
+    if (followUpAt && followUpAtIsPast(followUpAt))
+      return NextResponse.json(
+        { error: "Choose a follow-up time that has not already passed" },
+        { status: 400 }
+      );
 
     const { data: prospect, error: prospectError } = await supabaseAdmin
       .from("outreach_prospects")
@@ -113,7 +129,7 @@ export async function POST(
       : clean(body.nextAction, 360) || defaultManualCallNextAction(outcome);
     const nextActionAt = manualCallNextActionAt(
       outcome,
-      followUpDate || null,
+      followUpAt,
       occurredAtDate
     );
 
@@ -168,6 +184,17 @@ export async function POST(
       }
     }
 
+    const reminder = terminalOutcome(outcome) || !nextActionAt
+      ? null
+      : await saveOutreachFollowUpTask({
+          scope: { workspaceId: account.workspaceId, userId: account.userId },
+          prospect,
+          requestId,
+          text: manualCallReminderText(prospect, humanNextAction),
+          dueAt: nextActionAt,
+          source: "outreach_manual_call",
+        });
+
     const currentSource = prospect.source_metadata && typeof prospect.source_metadata === "object"
       ? prospect.source_metadata
       : {};
@@ -183,6 +210,7 @@ export async function POST(
       nextActionAt,
       campaignId: enrolment?.campaign_id || null,
       actorUserId: account.userId,
+      reminderTaskId: reminder?.task?.id || null,
       analysisStatus: "pending",
     };
     const { data: updatedProspect, error: updateError } = await supabaseAdmin
@@ -342,6 +370,9 @@ export async function POST(
       prospect: updatedProspect,
       nextAction: humanNextAction,
       nextActionAt,
+      reminder: reminder?.task || null,
+      reminderCreated: reminder?.created || false,
+      reminderRescheduled: reminder?.rescheduled || false,
       analysisPending: true,
     });
   } catch (error: any) {

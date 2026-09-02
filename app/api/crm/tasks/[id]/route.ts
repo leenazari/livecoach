@@ -40,7 +40,12 @@ export async function PATCH(
     if (typeof body.text === "string" && body.text.trim()) {
       const text = capitaliseSentenceStarts(body.text.trim());
       patch.text = text;
-      patch.fingerprint = fingerprintTask(current.company_id || null, text);
+      // Explicit manual reminders use a request-scoped fingerprint so the
+      // browser can retry safely and the same wording can be scheduled again
+      // after an older reminder is complete. Preserve that boundary on edits.
+      if (!current.payload?.lastRequestId) {
+        patch.fingerprint = fingerprintTask(current.company_id || null, text);
+      }
     }
     // Save an edited commitment draft, or the pinned flag (payload.pinned).
     if (body.payload && typeof body.payload === "object")

@@ -42,7 +42,10 @@ type Task = {
 };
 
 // "Fri 19", "today", "overdue" for a deadline.
-const dueLabel = (iso?: string | null): { text: string; over: boolean } | null => {
+const dueLabel = (
+  iso?: string | null,
+  includeTime = false
+): { text: string; over: boolean } | null => {
   if (!iso) return null;
   try {
     const d = new Date(iso);
@@ -56,15 +59,24 @@ const dueLabel = (iso?: string | null): { text: string; over: boolean } | null =
     const dDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     const over = dDay < startToday;
     let text: string;
-    if (dDay === startToday) text = "today";
-    else if (dDay === startToday + day) text = "tomorrow";
-    else if (over) text = "overdue";
-    else
-      text = d.toLocaleDateString("en-GB", {
+    const time = includeTime
+      ? ` ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+      : "";
+    if (dDay === startToday) text = `today${time}`;
+    else if (dDay === startToday + day) text = `tomorrow${time}`;
+    else if (over) {
+      const date = d.toLocaleDateString("en-GB", {
         weekday: "short",
         day: "2-digit",
         month: "short",
       });
+      text = includeTime ? `overdue · ${date}${time}` : "overdue";
+    } else
+      text = `${d.toLocaleDateString("en-GB", {
+        weekday: "short",
+        day: "2-digit",
+        month: "short",
+      })}${time}`;
     return { text, over };
   } catch {
     return null;
@@ -522,7 +534,9 @@ export default function TaskList({
         const multi = approaches.length > 1;
         const canClick = multi || actionable(t);
         const pinned = !!t.payload?.pinned;
-        const dl = !t.upcoming_id ? dueLabel(t.due_at) : null;
+        const dl = !t.upcoming_id
+          ? dueLabel(t.due_at, t.payload?.scheduledTime === true)
+          : null;
         return (
           <li
             key={t.id}
