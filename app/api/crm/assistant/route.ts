@@ -49,10 +49,6 @@ import {
 } from "@/lib/brain-self-name";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import {
-  ensureOutreachEmailDemoReplyCta,
-  OUTREACH_EMAIL_DEMO_REPLY_CTA,
-} from "@/lib/outreach-demo-reply-cta";
-import {
   activeSharedClientIds,
   loadSafeSharedCompanies,
   loadSafeSharedCompany,
@@ -987,10 +983,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       const rawBody = removeDashesFromProse(
         String(it.body || it.bodyText || "").trim()
       );
-      const body = ensureOutreachEmailDemoReplyCta({
-        body: rawBody,
-        maximumCharacters: 4000,
-      });
+      const body = rawBody.slice(0, 4000);
       const company = String(it.company || it.client || "").trim().slice(0, 240);
       const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!subject || !rawBody) continue;
@@ -1693,7 +1686,7 @@ Additional supported actions are:
 {"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":50}
 {"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":50,"status":"draft|active|paused|completed"}
 {"type":"build_outreach_queue","limit":50}
-{"type":"send_email","recipientName":"<person name>","email":"<exact recipient email when known>","company":"<optional company>","subject":"<exact approved subject>","body":"<exact approved body including a simple do not follow up line, then ${OUTREACH_EMAIL_DEMO_REPLY_CTA}, then the signature>"}
+{"type":"send_email","recipientName":"<person name>","email":"<exact recipient email when known>","company":"<optional company>","subject":"<exact approved subject>","body":"<exact approved body including a simple do not follow up line for cold outreach, plus an optional sales call to action only when requested>"}
 {"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","dealIntent":"<the commercial outcome this deal is pursuing>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","winOutlook":"not_assessed|at_risk|possible|likely|highly_likely|won","winOutlookConfidence":0,"winOutlookReasons":["<stored evidence only>"],"winOutlookQuestions":["<targeted next-call question>"],"engagementMotion":"cold_outreach_campaign|personal_relationship_led|existing_customer_expansion|inbound_enquiry|partner_referral","activeContactMethod":"automated_email|personal_email|phone|video_call|linkedin|event|in_person|other","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>","rationale":"<why this change is supported>"}
 {"type":"resolve_opportunity_clarification","clarificationId":"<exact id from PENDING PIPELINE CONFIRMATIONS>","decision":"same_deal|separate_workstream|not_an_opportunity","workstreamName":"<required only for a separate workstream>"}
 For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Lifecycle stage and win outlook are separate. Never raise win outlook without concise stored evidence. If evidence is missing, keep it not_assessed and add targeted winOutlookQuestions for the next call. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
@@ -1707,7 +1700,7 @@ Use create_document only for an explicit finished-document request. Do not emit 
 Use log_client_update when the user reports an off-system phone call, text message, voice note or relationship update. Keep the content factual and concise. It enters that client's timeline and commercial memory, updates any grounded next action, and refreshes future next-call intent after the user confirms it once. If the user names a client, use the exact known client name or saved alias. Never map a one-word first name to a different full-name client merely because part of the text matches.
 For update_campaign you may also include "voice":{"tone":"...","style":"...","rules":["..."],"signature":"Lee"}, "bannedPhrases":["..."], "bookingCtaMode":"interested_reply|final_step|always|never", and "sequence":[{"step":1,"channel":"email|linkedin|phone","actionType":"email|linkedin_view|linkedin_like|linkedin_connect|linkedin_message|manual_call","delayDays":0,"purpose":"...","contentType":"plain|insight|case_study|video|close_loop","guidance":"...","assetUrl":null}]. Booking links are never campaign settings. Each salesperson manages their own exact link in My Sales Setup. The campaign voice object controls writing tone only. It must never select or override the salesperson's audio voice, which belongs to their own My Sales Setup profile. LinkedIn and phone steps are always manual and must never be described as completed unless the salesperson confirms them. Only include settings the user asked for or approved in the conversation.
 
-ONE-OFF EMAILS: when the user explicitly asks to send an email you drafted in this conversation, use send_email in the same reply instead of sending them to another screen. A campaign is optional. The action card is the final approval and must visibly show the exact recipient, subject and body. Never invent an email address, choose a fuzzy name match or silently fill missing content. If the exact recipient cannot be matched, ask only for their email address and emit no send_email action. Company is optional and must not block the send. Include a simple do not follow up line for cold outreach. Immediately after it, finish the sales message with the exact sentence "${OUTREACH_EMAIL_DEMO_REPLY_CTA}", followed only by the sender's signature. Every send_email is an external action, remains separate from batch approval and uses only the signed-in user's own connected mailbox. Never claim it sent until the action receipt confirms it was queued.
+ONE-OFF EMAILS: when the user explicitly asks to send an email you drafted in this conversation, use send_email in the same reply instead of sending them to another screen. A campaign is optional. The action card is the final approval and must visibly show the exact recipient, subject and body. Never invent an email address, choose a fuzzy name match or silently fill missing content. If the exact recipient cannot be matched, ask only for their email address and emit no send_email action. Company is optional and must not block the send. Include a simple do not follow up line for cold outreach. A demo, booking, reply or other sales call to action is optional. Include one only when the user asks for it or it belongs in the exact draft they approved. Never add one merely to satisfy a format rule. Every send_email is an external action, remains separate from batch approval and uses only the signed-in user's own connected mailbox. Never claim it sent until the action receipt confirms it was queued.
 
 CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Campaign sequence mail stays in the dedicated Outreach approval flow. One-off send_email actions use the same protected outreach ledger, suppression rules, pacing and per-user limits without inventing a campaign.
 

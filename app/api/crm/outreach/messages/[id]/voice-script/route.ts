@@ -1,9 +1,5 @@
 import { NextResponse } from "next/server";
 
-import {
-  OUTREACH_VOICE_DEMO_REPLY_CTA,
-  outreachVoiceEndsWithDemoReplyCta,
-} from "@/lib/outreach-demo-reply-cta";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { modelText, parseObject } from "@/lib/outreach";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
@@ -56,18 +52,6 @@ const clean = (value: unknown, maximum: number): string =>
     .trim()
     .slice(0, maximum);
 
-function exactDemoReplyEnding(value: unknown): string {
-  const script = normaliseOutreachVoiceScript(value);
-  if (!script) return OUTREACH_VOICE_DEMO_REPLY_CTA;
-  if (script.endsWith(OUTREACH_VOICE_DEMO_REPLY_CTA)) return script;
-  if (!outreachVoiceEndsWithDemoReplyCta(script)) {
-    return `${script} ${OUTREACH_VOICE_DEMO_REPLY_CTA}`;
-  }
-  const sentences = script.match(/[^.!?]+(?:[.!?]+|$)/g) || [];
-  sentences.pop();
-  return `${sentences.join(" ").trim()} ${OUTREACH_VOICE_DEMO_REPLY_CTA}`.trim();
-}
-
 function includeWhyNow(script: string, whyNow: string): string {
   if (
     script.toLocaleLowerCase("en-GB").includes(
@@ -76,12 +60,7 @@ function includeWhyNow(script: string, whyNow: string): string {
   ) {
     return script;
   }
-  const withoutCta = script.endsWith(OUTREACH_VOICE_DEMO_REPLY_CTA)
-    ? script.slice(0, -OUTREACH_VOICE_DEMO_REPLY_CTA.length).trim()
-    : script;
-  return `${withoutCta} ${whyNow} ${OUTREACH_VOICE_DEMO_REPLY_CTA}`
-    .replace(/\s+/g, " ")
-    .trim();
+  return `${script} ${whyNow}`.replace(/\s+/g, " ").trim();
 }
 
 export async function POST(
@@ -189,7 +168,7 @@ This is a shared synthetic voice. It must never claim to be ${sender.senderName}
 
 Use the recipient's first name, exact company and the strongest relevant fact already present in the saved research or email. If no fact is verified, use an honest role and company specific hypothesis. Include one complete gentle why now sentence. Set urgencyType to verified_trigger only when the saved evidence proves a current trigger. Otherwise use natural_next_moment. The whyNow field must exactly copy that sentence from the script.
 
-Do not read out a URL, email address, opt out line or subject. Finish with this exact final sentence, "${OUTREACH_VOICE_DEMO_REPLY_CTA}".`,
+Do not read out a URL, email address, opt out line or subject. A demo, booking, reply or other sales call to action is optional. Keep one only when the existing email or campaign direction clearly uses it. Never add one merely to satisfy a format rule. Finish with a complete sentence.`,
         messages: [
           {
             role: "user",
@@ -251,7 +230,7 @@ Existing approved why now sentence to preserve when useful ${existingWhyNow || "
         { status: 422 }
       );
 
-    let voiceScript = exactDemoReplyEnding(
+    let voiceScript = normaliseOutreachVoiceScript(
       prepareOutreachVoiceScriptForReview({
         script: clean(parsed.script, 1800),
         recipientFirstName: prospect.first_name,
@@ -278,12 +257,6 @@ Existing approved why now sentence to preserve when useful ${existingWhyNow || "
         { error: "The generated script failed the sender identity check" },
         { status: 422 }
       );
-    if (!voiceScript.endsWith(OUTREACH_VOICE_DEMO_REPLY_CTA))
-      return NextResponse.json(
-        { error: "The generated script failed the demo reply check" },
-        { status: 422 }
-      );
-
     const urgencyType =
       parsed.urgencyType === "verified_trigger"
         ? "verified_trigger"

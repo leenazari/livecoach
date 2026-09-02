@@ -73,16 +73,11 @@ function trimAtSentenceBoundary(value: string, maximum: number): string {
   return candidate.slice(0, wordBoundary > 0 ? wordBoundary : maximum).trim();
 }
 
-/**
- * Campaign drafts always finish with the reply-to-book CTA immediately before
- * the sender's signature. Existing standalone opt-out and CTA paragraphs are
- * moved into one stable order so regeneration and saves cannot duplicate them.
- */
-export function ensureOutreachEmailDemoReplyCta(input: {
+function formatOutreachEmailEnding(input: {
   body: unknown;
   signoff?: string | null;
   maximumCharacters?: number;
-}): string {
+}, includeDemoReplyCta: boolean): string {
   const maximumCharacters = Math.max(400, input.maximumCharacters || 4000);
   const source = normalised(input.body);
   const paragraphs = source
@@ -93,7 +88,10 @@ export function ensureOutreachEmailDemoReplyCta(input: {
   let optOut = "";
 
   for (const paragraph of paragraphs) {
-    if (paragraph.length <= 260 && hasOutreachDemoReplyCta(paragraph)) continue;
+    if (paragraph.length <= 260 && hasOutreachDemoReplyCta(paragraph)) {
+      if (!includeDemoReplyCta) content.push(paragraph);
+      continue;
+    }
     if (paragraph.length <= 260 && SIMPLE_OPT_OUT.test(paragraph)) {
       if (!optOut) optOut = paragraph;
       continue;
@@ -111,7 +109,7 @@ export function ensureOutreachEmailDemoReplyCta(input: {
 
   const suffix = [
     optOut || OUTREACH_SIMPLE_OPT_OUT,
-    OUTREACH_EMAIL_DEMO_REPLY_CTA,
+    includeDemoReplyCta ? OUTREACH_EMAIL_DEMO_REPLY_CTA : "",
     signature,
   ].filter(Boolean);
   const suffixText = suffix.join("\n\n");
@@ -126,6 +124,31 @@ export function ensureOutreachEmailDemoReplyCta(input: {
   );
 
   return [contentText, suffixText].filter(Boolean).join("\n\n").trim();
+}
+
+/**
+ * Cold outreach keeps a simple opt out immediately before the sender's
+ * signature. A sales call to action is deliberately optional.
+ */
+export function ensureOutreachEmailSimpleOptOut(input: {
+  body: unknown;
+  signoff?: string | null;
+  maximumCharacters?: number;
+}): string {
+  return formatOutreachEmailEnding(input, false);
+}
+
+/**
+ * Add the standard reply to book call to action only when a campaign or sender
+ * has explicitly selected it. Existing ending paragraphs are normalised so a
+ * deliberate call to action is never duplicated.
+ */
+export function ensureOutreachEmailDemoReplyCta(input: {
+  body: unknown;
+  signoff?: string | null;
+  maximumCharacters?: number;
+}): string {
+  return formatOutreachEmailEnding(input, true);
 }
 
 /** The CTA must be the final message paragraph, with only a signature after it. */

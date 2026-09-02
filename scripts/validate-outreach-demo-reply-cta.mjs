@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   ensureOutreachEmailDemoReplyCta,
+  ensureOutreachEmailSimpleOptOut,
   ensureOutreachVoiceDemoReplyCta,
   hasOutreachDemoReplyCta,
   OUTREACH_EMAIL_DEMO_REPLY_CTA,
@@ -65,22 +66,58 @@ assert(outreachVoiceEndsWithDemoReplyCta(voice));
 assert.equal(ensureOutreachVoiceDemoReplyCta(voice), voice);
 assert(hasOutreachDemoReplyCta(voice));
 
+const withoutCta = ensureOutreachEmailSimpleOptOut({
+  body: `Hi Sam,\n\nYour current hiring round looks relevant.\n\nBest,\nLee`,
+  signoff: "Best,\nLee",
+});
+assert.equal(
+  withoutCta,
+  `Hi Sam,\n\nYour current hiring round looks relevant.\n\n${OUTREACH_SIMPLE_OPT_OUT}\n\nBest,\nLee`
+);
+assert.equal(hasOutreachDemoReplyCta(withoutCta), false);
+
+const optionalCtaPreserved = ensureOutreachEmailSimpleOptOut({
+  body: prepared,
+  signoff: "Best,\nLee",
+});
+assert.equal(
+  optionalCtaPreserved.match(/book a quick demo/gi)?.length,
+  1,
+  "A deliberately included CTA must be preserved"
+);
+
 const prepareRoute = read("app/api/crm/outreach/[id]/prepare/route.ts");
 const messageRoute = read("app/api/crm/outreach/messages/[id]/route.ts");
+const voiceScriptRoute = read("app/api/crm/outreach/messages/[id]/voice-script/route.ts");
 const brain = read("app/api/crm/assistant/route.ts");
 const brainEmail = read("app/api/crm/assistant/email/route.ts");
 const replyDraft = read("app/api/crm/outreach/replies/[id]/draft/route.ts");
 const sendQueue = read("lib/outreach-send-queue.ts");
+const outreachPage = read("app/crm/outreach/page.tsx");
+const outreachToday = read("components/crm/OutreachTodayLane.tsx");
+const voiceEditor = read("components/crm/OutreachVoiceNoteEditor.tsx");
 
-assert.match(prepareRoute, /ensureOutreachEmailDemoReplyCta/);
-assert.match(prepareRoute, /ensureOutreachVoiceDemoReplyCta/);
-assert.match(prepareRoute, /OUTREACH_EMAIL_DEMO_REPLY_CTA/);
-assert.match(prepareRoute, /OUTREACH_VOICE_DEMO_REPLY_CTA/);
-assert.match(messageRoute, /!isReply && !outreachEmailEndsWithDemoReplyCta/);
-assert.match(messageRoute, /!isReply && !outreachVoiceEndsWithDemoReplyCta/);
-assert.match(brain, /ensureOutreachEmailDemoReplyCta/);
-assert.match(brainEmail, /outreachEmailEndsWithDemoReplyCta/);
+assert.match(prepareRoute, /ensureOutreachEmailSimpleOptOut/);
+assert.match(prepareRoute, /sales call to action is optional/i);
+assert.doesNotMatch(prepareRoute, /ensureOutreachEmailDemoReplyCta/);
+assert.doesNotMatch(prepareRoute, /ensureOutreachVoiceDemoReplyCta/);
+assert.doesNotMatch(prepareRoute, /exact mandatory CTA/);
+assert.doesNotMatch(messageRoute, /outreachEmailEndsWithDemoReplyCta/);
+assert.doesNotMatch(messageRoute, /outreachVoiceEndsWithDemoReplyCta/);
+assert.match(messageRoute, /Keep the simple opt-out line before approving/);
+assert.match(messageRoute, /eq\("workspace_id", sender\.workspaceId\)/);
+assert.match(messageRoute, /eq\("sender_user_id", sender\.userId\)/);
+assert.match(voiceScriptRoute, /sales call to action is optional/i);
+assert.doesNotMatch(voiceScriptRoute, /failed the demo reply check/);
+assert.match(brain, /sales call to action is optional/i);
+assert.doesNotMatch(brain, /ensureOutreachEmailDemoReplyCta/);
+assert.doesNotMatch(brainEmail, /outreach_demo_reply_cta_missing/);
+assert.doesNotMatch(brainEmail, /outreachEmailEndsWithDemoReplyCta/);
+assert.match(brainEmail, /outreach_opt_out_missing/);
 assert.doesNotMatch(replyDraft, /outreach-demo-reply-cta/);
 assert.doesNotMatch(sendQueue, /ensureOutreachEmailDemoReplyCta/);
+assert.match(outreachPage, /A sales call to action is optional/);
+assert.match(outreachToday, /A sales call to action is optional/);
+assert.match(voiceEditor, /A sales call to action is optional/);
 
-console.log("Outbound quick demo reply CTA checks passed");
+console.log("Optional outreach call to action checks passed");
