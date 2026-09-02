@@ -83,6 +83,7 @@ export async function GET(
     const { data: privateCompany, error } = await supabaseAdmin
       .from("companies")
       .select("*")
+      .eq("workspace_id", scope.workspaceId)
       .eq("id", params.id)
       .maybeSingle();
     if (error) throw error;

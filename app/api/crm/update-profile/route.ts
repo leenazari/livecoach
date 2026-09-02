@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
 import { upsertTasks } from "@/lib/tasks";
 import { workspaceContextBlock } from "@/lib/workspace";
 import { activeCompanyPipelineExclusion } from "@/lib/company-pipeline-exclusion";
 import { createCanonicalOpenRevenueOpportunity } from "@/lib/canonical-opportunity";
+import { requireRequestScope } from "@/lib/request-scope";
+import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+import { privateRecordFields } from "@/lib/record-scope";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -20,28 +23,70 @@ export const maxDuration = 40;
 // session: re-running replaces this call's opportunities + follow-up draft.
 export async function POST(req: NextRequest) {
   try {
-    const { companyId, summary, sessionId, candidate, role } = await req.json();
+    const scope = requireRequestScope();
+    const { companyId, sessionId } = await req.json();
     if (typeof companyId !== "string" || !companyId) {
       return NextResponse.json(
         { error: "companyId is required" },
         { status: 400 }
       );
     }
-    if (!summary || typeof summary !== "object") {
-      return NextResponse.json({ error: "summary is required" }, { status: 400 });
+    if (typeof sessionId !== "string" || !sessionId.trim()) {
+      return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
     }
-
-    const { data: company } = await supabaseAdmin
-      .from("companies")
-      .select("id, name, profile, email_context_updated_at, workspace_id, owner_id, visibility")
-      .eq("id", companyId)
-      .single();
-    if (!company) {
+    const access = await loadAssignedClientAccess(companyId, scope);
+    if (!access) {
       return NextResponse.json({ error: "company not found" }, { status: 404 });
+    }
+    const companyResult =
+      access.mode === "owner"
+        ? await supabaseService
+            .from("companies")
+            .select(
+              "id, name, profile, email_context_updated_at, workspace_id, owner_id, visibility"
+            )
+            .eq("id", companyId)
+            .eq("workspace_id", scope.workspaceId)
+            .eq("owner_id", scope.userId)
+            .maybeSingle()
+        : {
+            data: {
+              ...access.company,
+              profile: {},
+              email_context_updated_at: null,
+              visibility: "team",
+            },
+            error: null,
+          };
+    const { data: savedCall, error: savedCallError } = await supabaseService
+      .from("interview_summaries")
+      .select("summary,candidate,role,company_id")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
+      .eq("session_id", sessionId)
+      .maybeSingle();
+    const { data: company, error: companyError } = companyResult;
+    if (companyError) throw companyError;
+    if (savedCallError) throw savedCallError;
+    if (!company || !savedCall) {
+      return NextResponse.json({ error: "company not found" }, { status: 404 });
+    }
+    if (savedCall.company_id !== companyId) {
+      return NextResponse.json(
+        { error: "The completed call is linked to a different client" },
+        { status: 409 }
+      );
+    }
+    const summary = savedCall.summary;
+    const candidate = savedCall.candidate;
+    const role = savedCall.role;
+    if (!summary || typeof summary !== "object") {
+      return NextResponse.json({ error: "Call summary is not ready" }, { status: 409 });
     }
     const pipelineExclusion = activeCompanyPipelineExclusion(company.profile);
 
     const existingBriefRaw =
+      access.mode === "owner" &&
       company.profile && typeof company.profile === "object"
         ? (company.profile as any).brief
         : "";
@@ -49,6 +94,7 @@ export async function POST(req: NextRequest) {
       ? existingBriefRaw.join("\n")
       : String(existingBriefRaw || "");
     const existingPlaybook: string[] =
+      access.mode === "owner" &&
       company.profile &&
       typeof company.profile === "object" &&
       Array.isArray((company.profile as any).playbook)
@@ -127,7 +173,13 @@ Return the JSON now.`;
           },
           { signal: controller.signal }
         );
-        await logModelUsage("update-profile", "pro", (msg as any).usage);
+        await logModelUsage(
+          "update-profile",
+          "pro",
+          (msg as any).usage,
+          { companyId, sessionId },
+          scope
+        );
         const raw = msg.content
           .filter((b: any) => b.type === "text")
           .map((b: any) => b.text)
@@ -201,32 +253,43 @@ Return the JSON now.`;
       company.profile && typeof company.profile === "object"
         ? (company.profile as any)
         : {};
-    await supabaseAdmin
-      .from("companies")
-      .update({
-        profile: {
-          ...existingProfile,
-          brief,
-          playbook,
-          next_call: nextCallIntent
-            ? {
-                intent: nextCallIntent,
-                rationale: nextCallRationale,
-                basedOnSessionId: sessionId || null,
-                basedOnEmailAt: (company as any).email_context_updated_at || null,
-                generatedAt: new Date().toISOString(),
-              }
-            : existingProfile.next_call,
-          updated: new Date().toISOString(),
-        },
-      })
-      .eq("id", companyId);
+    if (access.mode === "owner") {
+      const { error: profileUpdateError } = await supabaseAdmin
+        .from("companies")
+        .update({
+          profile: {
+            ...existingProfile,
+            brief,
+            playbook,
+            next_call: nextCallIntent
+              ? {
+                  intent: nextCallIntent,
+                  rationale: nextCallRationale,
+                  basedOnSessionId: sessionId || null,
+                  basedOnEmailAt:
+                    (company as any).email_context_updated_at || null,
+                  generatedAt: new Date().toISOString(),
+                }
+              : existingProfile.next_call,
+            updated: new Date().toISOString(),
+          },
+        })
+        .eq("id", companyId)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId);
+      if (profileUpdateError) throw profileUpdateError;
+    }
 
     // Idempotent per call. Follow-up drafts may be replaced, but opportunity
     // history is never deleted. The canonical helper reuses the one active
     // revenue opportunity for this company-wide relationship.
     if (sessionId) {
-      await supabaseAdmin.from("follow_ups").delete().eq("session_id", sessionId);
+      await supabaseAdmin
+        .from("follow_ups")
+        .delete()
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("session_id", sessionId);
     }
 
     let opportunityCreated = false;
@@ -240,6 +303,7 @@ Return the JSON now.`;
         sessionId: sessionId || null,
         source: "call",
         surfacedByAi: true,
+        assignedToUserId: scope.userId,
       });
       opportunityCreated = result.created;
       opportunityConfirmation = result.clarification;
@@ -293,13 +357,15 @@ Return the JSON now.`;
     );
 
     if (followUp && (followUp.subject || followUp.body)) {
-      await supabaseAdmin.from("follow_ups").insert({
+      const { error: followUpError } = await supabaseAdmin.from("follow_ups").insert({
         company_id: companyId,
         session_id: sessionId || null,
         draft_subject: followUp.subject || null,
         draft_body: followUp.body || null,
         status: "draft",
+        ...privateRecordFields(scope),
       });
+      if (followUpError) throw followUpError;
     }
 
     return NextResponse.json({
@@ -308,6 +374,7 @@ Return the JSON now.`;
       opportunityConfirmation,
       pipelineExcluded: !!pipelineExclusion,
       followUp: !!followUp,
+      profileUpdated: access.mode === "owner",
     });
   } catch (err: any) {
     return NextResponse.json(

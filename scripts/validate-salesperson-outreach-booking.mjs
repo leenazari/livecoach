@@ -9,7 +9,8 @@ const read = (file) => readFileSync(path.join(root, file), "utf8");
 const helper = read("lib/outreach-booking-link.ts");
 const profile = read("lib/sales-profile.ts");
 const prepare = read("app/api/crm/outreach/[id]/prepare/route.ts");
-const reply = read("app/api/crm/outreach/replies/[id]/draft/route.ts");
+const replyRoute = read("app/api/crm/outreach/replies/[id]/draft/route.ts");
+const reply = read("lib/outreach-positive-reply.ts");
 const readiness = read("app/api/crm/outreach/readiness/route.ts");
 const campaignRoute = read("app/api/crm/outreach/campaigns/[id]/route.ts");
 const assistantRoute = read("app/api/crm/assistant/route.ts");
@@ -34,14 +35,14 @@ assert.doesNotMatch(prepare, /campaign\.booking_url/);
 assert.match(prepare, /booking_link_included: includeBooking/);
 
 // Positive replies fail closed unless the signed-in salesperson has a link.
-assert.match(reply, /getPersonalOutreachBookingLink\(\{/);
-assert.match(reply, /userId: sender\.userId/);
-assert.match(reply, /workspaceId: sender\.workspaceId/);
-assert.match(reply, /\.eq\("owner_id", sender\.userId\)/);
+assert.match(replyRoute, /requireRequestScope\(\)/);
+assert.match(replyRoute, /preparePositiveReplyForApproval\(scope, params\.id\)/);
+assert.match(reply, /getPersonalOutreachBookingLink\(scope\)/);
+assert.match(reply, /\.eq\("owner_id", scope\.userId\)/);
+assert.match(reply, /\.eq\("workspace_id", scope\.workspaceId\)/);
 assert.match(reply, /Add your personal booking link in My Sales Setup first/);
 assert.match(reply, /campaign\.booking_cta_mode === "never"/);
 assert.doesNotMatch(reply, /getAppConfigValue|outreach_default_booking_url|campaign\?\.booking_url|campaign\.booking_url/);
-assert.match(reply, /\{ userId: sender\.userId, workspaceId: sender\.workspaceId \}/);
 
 // Readiness and the UI point to personal setup. Campaigns can select the
 // personal-link action, but never store the salesperson's actual URL.

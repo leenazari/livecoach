@@ -26,8 +26,9 @@ assert.match(page, /Sales <span className="italic text-amber">Desk<\/span>/);
 assert.match(page, /aria-label="End to end sales flow"/);
 assert.match(page, /Calls and actions that cannot wait/);
 
-// The next 20 retain exact-draft approval and the existing spaced send queue.
-assert.match(lane, /useState\(20\)/);
+// The user-configured hard limit retains exact-draft approval and the existing
+// spaced send queue.
+assert.match(lane, /useState\(OUTREACH_DAILY_HARD_LIMIT\)/);
 assert.match(lane, /Your outreach Sales Desk/);
 assert.match(lane, /View full queue/);
 assert.match(lane, /`\/api\/crm\/outreach\/\$\{prospectId\}\/prepare`/);
@@ -41,7 +42,10 @@ assert.match(queue, /assigned_to_user_id === userId/);
 // More, while owners retain their broader navigation.
 assert.match(nav, /const SALES_OUTREACH_ITEM: Item = \{[\s\S]*?href: "\/crm\/outreach\?tab=prospects"/);
 assert.match(nav, /const SALES_CORE_ITEMS: Item\[\] = \[[\s\S]*?SALES_OUTREACH_ITEM,[\s\S]*?PIPELINE_ITEM,[\s\S]*?CLIENTS_ITEM/);
-assert.match(nav, /\[homeItem, \.\.\.SALES_CORE_ITEMS, NOTIFICATIONS_ITEM\]/);
+assert.match(
+  nav,
+  /\[homeItem, TASKS_ITEM, CHAT_ITEM, \.\.\.SALES_CORE_ITEMS, NOTIFICATIONS_ITEM\]/
+);
 assert.match(nav, /\? \[CALLS_ITEM, PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM/);
 assert.match(nav, /salesHome\s*\? SALES_OUTREACH_ITEM\s*: OUTREACH_ITEM/);
 assert.doesNotMatch(nav, /CAMPAIGNS_ITEM/);

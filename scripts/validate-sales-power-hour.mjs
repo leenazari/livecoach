@@ -78,7 +78,7 @@ assert.match(inboxApi, /\.eq\("owner_id", account\.userId\)/);
 assert.match(inboxApi, /\.eq\("assigned_to_user_id", account\.userId\)/);
 assert.match(inboxApi, /\.eq\("sender_user_id", account\.userId\)/);
 assert.match(inboxApi, /loadSafeSharedCompanies/);
-assert.match(inboxApi, /buildOpportunityInboxItem/);
+assert.match(inboxApi, /buildWorkPipeline/);
 assert.match(inboxApi, /canonicalOpportunityActions/);
 assert.match(inboxApi, /viewer:/);
 assert.doesNotMatch(
@@ -93,7 +93,11 @@ for (const route of [cleanupApi, taskApi, followUpApi]) {
   assert.match(route, /\.eq\("owner_id", account\.userId\)/);
 }
 assert.match(opportunityApi, /\.eq\("workspace_id", account\.workspaceId\)/);
-assert.match(opportunityApi, /current\.visibility !== "team"/);
+assert.match(opportunityApi, /loadVisibleOpportunityById/);
+assert.match(
+  opportunityApi,
+  /current\.assigned_to_user_id !== account\.userId/
+);
 
 assert.match(inboxPage, /Sales Power Hour/);
 assert.match(inboxPage, /One action\. Finish it\. Move on\./);

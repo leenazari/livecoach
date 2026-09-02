@@ -1239,10 +1239,8 @@ export default function OutreachPage() {
     const preparable = filterOutreachQueueByCampaign(
       queue,
       queueCampaignFilterId
-    ).filter(
-      (row) =>
-        queueRowNeedsPreparation(row) && !ctaBlockedIds.includes(row.id)
-    );
+    ).filter(queueRowNeedsPreparation)
+      .filter((row) => !ctaBlockedIds.includes(row.id));
     const firstTouches = preparable.filter((row) => queueWaveRank(row) === 0);
     const activeWave = firstTouches.length ? firstTouches : preparable;
     const selectedRows = activeWave.filter(
@@ -1350,11 +1348,10 @@ export default function OutreachPage() {
     const readyDrafts = filterOutreachQueueByCampaign(
       queue,
       queueCampaignFilterId
-    ).filter(
-      (row) =>
-        hasApprovableEmail(row) &&
-        !ctaRefreshRequiredProspectIds.includes(row.prospect.id)
-    );
+    ).filter(hasApprovableEmail)
+      .filter(
+        (row) => !ctaRefreshRequiredProspectIds.includes(row.prospect.id)
+      );
     const firstTouchDrafts = readyDrafts.filter(
       (row) => queueWaveRank(row) === 0
     );

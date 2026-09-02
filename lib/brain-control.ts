@@ -409,6 +409,43 @@ export async function ensureBrainDefaults(scope: BrainScope) {
   }
 }
 
+async function ensureWorkspaceBrainTrustDefaults(scope: BrainScope) {
+  if (scope.role !== "owner") return;
+  const [{ data: members, error: memberError }, { data: current, error: ruleError }] =
+    await Promise.all([
+      supabaseService
+        .from("workspace_members")
+        .select("user_id")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("status", "active"),
+      supabaseService
+        .from("brain_trust_rules")
+        .select("owner_id,action_kind")
+        .eq("workspace_id", scope.workspaceId),
+    ]);
+  if (memberError) throw memberError;
+  if (ruleError) throw ruleError;
+  const existing = new Set(
+    (current || []).map((row: any) => `${row.owner_id}:${row.action_kind}`)
+  );
+  const missing = (members || []).flatMap((member: any) =>
+    TRUST_DEFAULTS.filter(
+      (rule) => !existing.has(`${member.user_id}:${rule.actionKind}`)
+    ).map((rule) => ({
+      workspace_id: scope.workspaceId,
+      owner_id: member.user_id,
+      visibility: "private",
+      action_kind: rule.actionKind,
+      mode: rule.mode,
+      hard_locked: rule.hardLocked,
+      reason: rule.reason,
+    }))
+  );
+  if (!missing.length) return;
+  const { error } = await supabaseService.from("brain_trust_rules").insert(missing);
+  if (error && error.code !== "23505") throw error;
+}
+
 function monthlyFrequency(scheduleMode: string) {
   if (scheduleMode === "daily") return 30.44;
   if (scheduleMode === "weekdays") return 21.74;
@@ -417,9 +454,31 @@ function monthlyFrequency(scheduleMode: string) {
 
 export async function getBrainControlSnapshot(scope: BrainScope) {
   await ensureBrainDefaults(scope);
+  await ensureWorkspaceBrainTrustDefaults(scope);
   const monthStart = new Date();
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
+
+  let executionQuery = supabaseService
+    .from("brain_action_executions")
+    .select(
+      "id,actor_user_id,actor_role,action_type,action_kind,label,status,policy_decision,owner_override_requested,owner_override_applied,attempt_count,estimated_cost_gbp,actual_cost_gbp,recovery,blocker_code,error,created_at,completed_at,undone_at"
+    )
+    .eq("workspace_id", scope.workspaceId)
+    .order("created_at", { ascending: false })
+    .limit(80);
+  if (scope.role !== "owner") {
+    executionQuery = executionQuery.eq("actor_user_id", scope.userId);
+  }
+  let actionCostQuery = supabaseService
+    .from("brain_action_executions")
+    .select("actual_cost_gbp")
+    .eq("workspace_id", scope.workspaceId)
+    .gte("created_at", monthStart.toISOString())
+    .limit(5000);
+  if (scope.role !== "owner") {
+    actionCostQuery = actionCostQuery.eq("actor_user_id", scope.userId);
+  }
 
   const [
     plays,
@@ -430,6 +489,9 @@ export async function getBrainControlSnapshot(scope: BrainScope) {
     learnings,
     receipts,
     monthCosts,
+    actionMonthCosts,
+    actionExecutions,
+    members,
   ] = await Promise.all([
     supabaseService
       .from("brain_sales_plays")
@@ -441,7 +503,7 @@ export async function getBrainControlSnapshot(scope: BrainScope) {
       .from("brain_trust_rules")
       .select("*")
       .eq("workspace_id", scope.workspaceId)
-      .eq("owner_id", scope.userId)
+      .match(scope.role === "owner" ? {} : { owner_id: scope.userId })
       .order("action_kind", { ascending: true }),
     supabaseService
       .from("brain_routines")
@@ -487,6 +549,14 @@ export async function getBrainControlSnapshot(scope: BrainScope) {
       .eq("owner_id", scope.userId)
       .gte("created_at", monthStart.toISOString())
       .limit(1000),
+    actionCostQuery,
+    executionQuery,
+    supabaseService
+      .from("workspace_members")
+      .select("user_id,role,status")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("status", "active")
+      .order("created_at", { ascending: true }),
   ]);
   for (const result of [
     plays,
@@ -497,6 +567,9 @@ export async function getBrainControlSnapshot(scope: BrainScope) {
     learnings,
     receipts,
     monthCosts,
+    actionMonthCosts,
+    actionExecutions,
+    members,
   ]) {
     if (result.error) throw result.error;
   }
@@ -508,14 +581,40 @@ export async function getBrainControlSnapshot(scope: BrainScope) {
         monthlyFrequency(routine.schedule_mode),
     0
   );
-  const actualThisMonth = (monthCosts.data || []).reduce(
+  const routineActualThisMonth = (monthCosts.data || []).reduce(
     (total: number, run: any) => total + Number(run.actual_cost_gbp || 0),
     0
+  );
+  const actionActualThisMonth = (actionMonthCosts.data || []).reduce(
+    (total: number, execution: any) =>
+      total + Number(execution.actual_cost_gbp || 0),
+    0
+  );
+  const actualThisMonth = routineActualThisMonth + actionActualThisMonth;
+  const memberIds = (members.data || []).map((member: any) => member.user_id);
+  const { data: memberProfiles, error: memberProfilesError } = memberIds.length
+    ? await supabaseService
+        .from("profiles")
+        .select("user_id,display_name,email")
+        .in("user_id", memberIds)
+    : { data: [], error: null };
+  if (memberProfilesError) throw memberProfilesError;
+  const profileByUser = new Map(
+    (memberProfiles || []).map((profile: any) => [profile.user_id, profile])
   );
   return {
     generatedAt: new Date().toISOString(),
     currentUserId: scope.userId,
     role: scope.role,
+    members: (members.data || []).map((member: any) => ({
+      userId: member.user_id,
+      role: member.role,
+      displayName:
+        profileByUser.get(member.user_id)?.display_name ||
+        profileByUser.get(member.user_id)?.email ||
+        "Workspace member",
+      email: profileByUser.get(member.user_id)?.email || null,
+    })),
     plays: plays.data || [],
     trustRules: trustRules.data || [],
     routines: routineRows,
@@ -529,6 +628,7 @@ export async function getBrainControlSnapshot(scope: BrainScope) {
         createdAt: message.created_at,
       }))
     ),
+    actionExecutions: actionExecutions.data || [],
     costs: {
       currency: "GBP",
       forecastThisMonth: Number(monthlyForecast.toFixed(4)),
@@ -553,8 +653,15 @@ export async function getBrainControlSnapshot(scope: BrainScope) {
 
 export async function updateBrainTrustRule(
   scope: BrainScope,
-  input: { actionKind: BrainActionKind; mode: BrainTrustMode }
+  input: {
+    actionKind: BrainActionKind;
+    mode: BrainTrustMode;
+    targetUserId?: string;
+  }
 ) {
+  if (scope.role !== "owner" || scope.status !== "active") {
+    throw new Error("Only the active workspace owner can change Brain permissions");
+  }
   if (!TRUST_DEFAULTS.some((rule) => rule.actionKind === input.actionKind)) {
     throw new Error("Choose a valid Brain action type");
   }
@@ -570,11 +677,21 @@ export async function updateBrainTrustRule(
       throw new Error("This action can never run automatically");
     }
   }
+  const targetUserId = clean(input.targetUserId || scope.userId, 80);
+  const { data: target, error: targetError } = await supabaseService
+    .from("workspace_members")
+    .select("user_id")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("user_id", targetUserId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (targetError) throw targetError;
+  if (!target) throw new Error("Choose an active workspace member");
   const { data, error } = await supabaseService
     .from("brain_trust_rules")
     .update({ mode: input.mode })
     .eq("workspace_id", scope.workspaceId)
-    .eq("owner_id", scope.userId)
+    .eq("owner_id", targetUserId)
     .eq("action_kind", input.actionKind)
     .select("*")
     .single();

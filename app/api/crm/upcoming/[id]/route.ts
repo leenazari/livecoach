@@ -7,6 +7,13 @@ import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { resolvePrimaryAttendeeForCall } from "@/lib/call-subject";
 import { calendarEmailDomain } from "@/lib/calendar-subject";
 import { appendBrainCallFocusNote } from "@/lib/brain-call-actions";
+import {
+  deleteConnectedCalendarEvent,
+  getConnectedCalendarEventState,
+  updateConnectedCalendarEvent,
+} from "@/lib/calendar-provider";
+import { calendarDurationMinutes } from "@/lib/calendar-create";
+import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -69,23 +76,24 @@ export async function GET(
           }
         }
       }
-      if (repairedCompanyId) {
+      const repairedAccess = repairedCompanyId
+        ? await loadAssignedClientAccess(repairedCompanyId, account)
+        : null;
+      if (repairedAccess) {
         data.company_id = repairedCompanyId;
         await supabaseAdmin
           .from("upcoming_calls")
           .update({ company_id: repairedCompanyId })
           .eq("id", params.id)
+          .eq("workspace_id", account.workspaceId)
+          .eq("owner_id", account.userId)
           .is("company_id", null);
       }
     }
     let company: string | null = null;
     if (data.company_id) {
-      const { data: co } = await supabaseAdmin
-        .from("companies")
-        .select("name")
-        .eq("id", data.company_id)
-        .maybeSingle();
-      company = co?.name || null;
+      const access = await loadAssignedClientAccess(data.company_id, account);
+      company = access?.company?.name || null;
     }
     const primaryAttendee = await resolvePrimaryAttendeeForCall(data);
     const scope = await resolveCallScope({
@@ -161,7 +169,7 @@ export async function PATCH(
     const patch: Record<string, any> = {};
     const { data: current, error: currentError } = await supabaseAdmin
       .from("upcoming_calls")
-      .select("id, title, intent, prep, prepped, scheduled_at, completed_at")
+      .select("id, title, intent, prep, prepped, scheduled_at, completed_at, meeting_url, source, external_id, attendees")
       .eq("id", params.id)
       .eq("workspace_id", account.workspaceId)
       .eq("owner_id", account.userId)
@@ -188,7 +196,16 @@ export async function PATCH(
       Boolean(canonicalIntent) &&
       incomingFocusBasis !== canonicalIntent;
     if (typeof body.title === "string") patch.title = body.title.trim() || null;
-    if ("scheduledAt" in body) patch.scheduled_at = body.scheduledAt || null;
+    if ("scheduledAt" in body) {
+      const requestedTime = body.scheduledAt ? new Date(body.scheduledAt) : null;
+      if (requestedTime && Number.isNaN(requestedTime.getTime())) {
+        return NextResponse.json(
+          { error: "Choose a valid date and time" },
+          { status: 400 }
+        );
+      }
+      patch.scheduled_at = requestedTime?.toISOString() || null;
+    }
     if (typeof body.meetingUrl === "string")
       patch.meeting_url = body.meetingUrl.trim() || null;
     if (typeof body.intent === "string")
@@ -291,11 +308,19 @@ export async function PATCH(
         },
       };
     }
-    if ("companyId" in body)
-      patch.company_id =
+    if ("companyId" in body) {
+      const companyId =
         typeof body.companyId === "string" && body.companyId
           ? body.companyId
           : null;
+      if (companyId && !(await loadAssignedClientAccess(companyId, account))) {
+        return NextResponse.json(
+          { error: "That client is not owned by or assigned to this account" },
+          { status: 403 }
+        );
+      }
+      patch.company_id = companyId;
+    }
     if ("workstreamId" in body) {
       const workstream = await getWorkstreamScope(body.workstreamId);
       if (workstream) {
@@ -318,6 +343,74 @@ export async function PATCH(
     if (Object.keys(patch).length === 0) {
       return NextResponse.json({ ok: true });
     }
+    const provider = current.source === "google" || current.source === "microsoft"
+      ? current.source
+      : null;
+    if (body.updateCalendar === true && (!provider || !current.external_id)) {
+      return NextResponse.json(
+        {
+          error:
+            "This call is not linked to an event in your connected calendar",
+          code: "calendar_event_not_linked",
+          nextAction:
+            "Create a connected calendar event or reschedule this CRM-only reminder without calendar updates",
+        },
+        { status: 409 }
+      );
+    }
+    let calendarRollback:
+      | {
+          provider: "google" | "microsoft";
+          externalId: string;
+          title: string;
+          startIso: string;
+          endIso: string;
+          attendeeEmails: string[];
+          meetingUrl: string | null;
+        }
+      | null = null;
+    if (body.updateCalendar === true && provider && current.external_id) {
+      const startIso = String(patch.scheduled_at || current.scheduled_at || "");
+      if (!startIso) {
+        return NextResponse.json(
+          { error: "Choose a date and time before updating the calendar event" },
+          { status: 400 }
+        );
+      }
+      const providerEvent = await getConnectedCalendarEventState(
+        { provider, externalId: current.external_id },
+        account.userId
+      );
+      const existingDurationMinutes = Math.max(
+        10,
+        Math.round(
+          (new Date(providerEvent.endIso).getTime() -
+            new Date(providerEvent.startIso).getTime()) /
+            60_000
+        )
+      );
+      const durationMinutes =
+        body.durationMinutes == null
+          ? existingDurationMinutes
+          : calendarDurationMinutes(body.durationMinutes);
+      const endIso = new Date(
+        new Date(startIso).getTime() + durationMinutes * 60_000
+      ).toISOString();
+      const attendeeEmails = providerEvent.attendeeEmails;
+      calendarRollback = providerEvent;
+      await updateConnectedCalendarEvent(
+        {
+          provider,
+          externalId: current.external_id,
+          title: String(patch.title || current.title || "Call"),
+          startIso,
+          endIso,
+          attendeeEmails,
+          meetingUrl: String(patch.meeting_url || current.meeting_url || "") || null,
+        },
+        account.userId
+      );
+    }
     const { data, error } = await supabaseAdmin
       .from("upcoming_calls")
       .update(patch)
@@ -326,9 +419,25 @@ export async function PATCH(
       .eq("owner_id", account.userId)
       .select("id, title, scheduled_at, meeting_url, intent, prepped, completed_at, company_id, workstream_id, prep")
       .maybeSingle();
-    if (error) throw error;
-    if (!data)
+    if (error || !data) {
+      if (calendarRollback) {
+        try {
+          await updateConnectedCalendarEvent(calendarRollback, account.userId);
+        } catch (rollbackError: any) {
+          throw Object.assign(
+            new Error(
+              "The calendar changed, but the CRM save and automatic rollback both failed. Refresh the event before trying again."
+            ),
+            {
+              code: "calendar_crm_partial_failure",
+              cause: rollbackError,
+            }
+          );
+        }
+      }
+      if (error) throw error;
       return NextResponse.json({ error: "call not found" }, { status: 404 });
+    }
     return NextResponse.json({
       ok: true,
       call: data,
@@ -341,7 +450,14 @@ export async function PATCH(
     });
   } catch (err: any) {
     return NextResponse.json(
-      { error: err?.message || "failed to update" },
+      {
+        error: err?.message || "failed to update",
+        code: err?.code || "calendar_update_failed",
+        nextAction:
+          err?.code === "calendar_crm_partial_failure"
+            ? "Refresh the CRM and connected calendar before making another change"
+            : "Check the event is still on your own connected calendar, then retry the exact action",
+      },
       { status: 500 }
     );
   }
@@ -356,6 +472,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  let calendarDeletionConfirmed = false;
   try {
     const account = await resolveRecordScope();
     const profileId = await ensureWorkspaceProfileId();
@@ -364,7 +481,7 @@ export async function POST(
       body && typeof body.reason === "string" ? body.reason.trim() : "";
     const { data: call, error: callError } = await supabaseAdmin
       .from("upcoming_calls")
-      .select("title, scheduled_at")
+      .select("title, scheduled_at, source, external_id")
       .eq("id", params.id)
       .eq("workspace_id", account.workspaceId)
       .eq("owner_id", account.userId)
@@ -372,6 +489,17 @@ export async function POST(
     if (callError) throw callError;
     if (!call)
       return NextResponse.json({ error: "call not found" }, { status: 404 });
+    if (
+      body.cancelCalendar === true &&
+      call.external_id &&
+      (call.source === "google" || call.source === "microsoft")
+    ) {
+      await deleteConnectedCalendarEvent(
+        { provider: call.source, externalId: call.external_id },
+        account.userId
+      );
+      calendarDeletionConfirmed = true;
+    }
     // Record the reason in the brain's learned memory so it sticks.
     try {
       const { data: prof } = await supabaseAdmin
@@ -407,13 +535,29 @@ export async function POST(
       .eq("owner_id", account.userId)
       .select("id")
       .maybeSingle();
-    if (error) throw error;
-    if (!data)
+    if (error || !data) {
+      if (calendarDeletionConfirmed) {
+        throw Object.assign(
+          new Error(
+            "The calendar event was cancelled, but the CRM record could not be removed. Refresh before trying again."
+          ),
+          { code: "calendar_cancel_partial_failure" }
+        );
+      }
+      if (error) throw error;
       return NextResponse.json({ error: "call not found" }, { status: 404 });
+    }
     return NextResponse.json({ ok: true });
   } catch (err: any) {
     return NextResponse.json(
-      { error: err?.message || "failed to cancel the call" },
+      {
+        error: err?.message || "failed to cancel the call",
+        code: err?.code || "calendar_cancel_failed",
+        nextAction:
+          err?.code === "calendar_cancel_partial_failure"
+            ? "Refresh the CRM. The external calendar cancellation has already been confirmed"
+            : "Check the event is still on your own connected calendar, then retry with a fresh approval",
+      },
       { status: 500 }
     );
   }

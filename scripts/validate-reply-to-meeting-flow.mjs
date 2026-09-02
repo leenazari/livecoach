@@ -10,6 +10,7 @@ const itemType = read("lib/work-inbox.ts");
 const inbox = read("app/api/crm/inbox/route.ts");
 const lane = read("components/crm/OutreachTodayLane.tsx");
 const draft = read("app/api/crm/outreach/replies/[id]/draft/route.ts");
+const draftEngine = read("lib/outreach-positive-reply.ts");
 const edit = read("app/api/crm/outreach/messages/[id]/route.ts");
 const rehearse = read("app/api/crm/outreach/messages/[id]/rehearse/route.ts");
 const sender = read("lib/outreach-send-queue.ts");
@@ -61,14 +62,18 @@ assert.match(sender, /prospect\.reply_category !== "interested"/);
 
 // Every reply and draft route fails closed to the signed in workspace and
 // salesperson. Raw IDs alone are never enough to access another user's data.
-for (const source of [draft, edit, rehearse, sender]) {
+for (const source of [edit, rehearse, sender]) {
   assert.match(source, /\.eq\("workspace_id", sender\.workspaceId\)/);
   assert.match(source, /\.eq\("sender_user_id", sender\.userId\)|\.eq\("assigned_to_user_id", sender\.userId\)/);
 }
-assert.match(draft, /owner_id: sender\.userId/);
-assert.match(draft, /visibility: "team"/);
-assert.match(draft, /existingReply\.sender_user_id !== sender\.userId/);
-assert.match(draft, /\["draft", "approved", "failed"\]\.includes\(existingReply\.status\)/);
-assert.match(draft, /reused: true/);
+assert.match(draft, /requireRequestScope\(\)/);
+assert.match(draft, /preparePositiveReplyForApproval\(scope, params\.id\)/);
+assert.match(draftEngine, /\.eq\("workspace_id", scope\.workspaceId\)/);
+assert.match(draftEngine, /\.eq\("assigned_to_user_id", scope\.userId\)/);
+assert.match(draftEngine, /sender_user_id: scope\.userId/);
+assert.match(draftEngine, /owner_id: scope\.userId/);
+assert.match(draftEngine, /visibility: "team"/);
+assert.match(draftEngine, /\["draft", "approved", "failed"\]\.includes\(existingReply\.status\)/);
+assert.match(draftEngine, /reused: true/);
 
 console.log("Reply to meeting flow checks passed");

@@ -32,6 +32,8 @@ export type SafeSharedCompany = {
   commercial_memory: null;
   created_at: string;
   updated_at: string;
+  workspace_id: string;
+  owner_id: string;
 };
 
 const uniqueIds = (ids: string[]) => [...new Set(ids.filter(Boolean))];
@@ -51,6 +53,8 @@ export function safeSharedCompany(row: any): SafeSharedCompany {
     commercial_memory: null,
     created_at: String(row.created_at || ""),
     updated_at: String(row.updated_at || ""),
+    workspace_id: String(row.workspace_id || ""),
+    owner_id: String(row.owner_id || ""),
   };
 }
 

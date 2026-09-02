@@ -4,8 +4,12 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import {
+  calendarRecurrence,
   calendarDurationMinutes,
+  googleCalendarRecurrenceRule,
   googleEventIdForRequest,
+  microsoftCalendarRecurrence,
+  microsoftLondonDateTime,
   microsoftUtcDateTime,
   parseCalendarAttendees,
   validCalendarRequestId,
@@ -35,6 +39,50 @@ assert.deepEqual(parseCalendarAttendees("valid@example.com wrong-address"), {
 assert.equal(calendarDurationMinutes(45), 45);
 assert.equal(calendarDurationMinutes(999), 30);
 assert.equal(microsoftUtcDateTime("2026-08-28T09:15:00.000Z"), "2026-08-28T09:15:00");
+assert.equal(
+  microsoftLondonDateTime("2026-08-28T09:15:00.000Z"),
+  "2026-08-28T10:15:00"
+);
+const recurrence = calendarRecurrence(
+  {
+    frequency: "weekly",
+    interval: 1,
+    count: 6,
+    weekdays: ["monday", "wednesday"],
+  },
+  "2026-08-31T09:00:00.000Z"
+);
+assert.deepEqual(recurrence, {
+  frequency: "weekly",
+  interval: 1,
+  count: 6,
+  weekdays: ["monday", "wednesday"],
+});
+assert.equal(
+  googleCalendarRecurrenceRule(recurrence, "2026-08-31T09:00:00.000Z"),
+  "RRULE:FREQ=WEEKLY;INTERVAL=1;COUNT=6;BYDAY=MO,WE"
+);
+assert.deepEqual(
+  microsoftCalendarRecurrence(recurrence, "2026-08-31T09:00:00.000Z"),
+  {
+    pattern: {
+      type: "weekly",
+      interval: 1,
+      daysOfWeek: ["monday", "wednesday"],
+      firstDayOfWeek: "monday",
+    },
+    range: {
+      type: "numbered",
+      startDate: "2026-08-31",
+      numberOfOccurrences: 6,
+      recurrenceTimeZone: "GMT Standard Time",
+    },
+  }
+);
+assert.throws(
+  () => calendarRecurrence({ frequency: "weekly", count: 53 }, "2026-08-31T09:00:00Z"),
+  /2 and 52/
+);
 
 const [google, microsoft, provider, route, component, supabase] = await Promise.all([
   read("lib/google.ts"),
@@ -51,9 +99,13 @@ assert.match(google, /query\.set\("sendUpdates", "all"\)/);
 assert.match(google, /id: eventId/);
 assert.match(google, /response\.status === 409/);
 assert.match(google, /livecoachRequestId/);
+assert.match(google, /googleCalendarRecurrenceRule/);
+assert.match(google, /originalStartTime/);
 
 assert.match(microsoft, /"\/me\/calendar\/events"/);
 assert.match(microsoft, /transactionId: input\.requestId/);
+assert.match(microsoft, /microsoftCalendarRecurrence/);
+assert.match(microsoft, /GMT Standard Time/);
 assert.match(microsoft, /"Calendars\.ReadWrite"/);
 assert.match(microsoft, /getMicrosoftAccessToken\(true, ownerId\)/);
 
@@ -67,6 +119,7 @@ assert.match(route, /resolveRecordScope\(\)/);
 assert.match(route, /privateRecordFields\(scope\)/);
 assert.match(route, /\.from\("companies"\)/);
 assert.match(route, /createConnectedCalendarEvent/);
+assert.match(route, /calendarRecurrence\(body\.recurrence/);
 assert.match(route, /source: calendarEvent\?\.provider \|\| "manual"/);
 assert.match(route, /external_id: calendarEvent\?\.externalId \|\| null/);
 assert.match(route, /attendees: calendarEvent\?\.attendees/);

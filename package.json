@@ -105,6 +105,7 @@
     "validate:tasks-dashboard": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-tasks-dashboard.mjs",
     "validate:manual-contact-callback": "node scripts/validate-manual-contact-callback.mjs",
     "validate:brain-operating-system": "node scripts/validate-brain-operating-system.mjs",
+    "validate:brain-controlled-authority": "node scripts/validate-brain-controlled-authority.mjs",
     "validate:outreach-voice-notes": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-voice-notes.mjs",
     "validate:canonical-navigation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-canonical-entity-navigation.mjs",
     "validate:clickable-performance": "node scripts/validate-clickable-metrics-performance.mjs"

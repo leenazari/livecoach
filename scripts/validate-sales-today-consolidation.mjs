@@ -23,10 +23,14 @@ assert.match(page, /attentionItems\.map/);
 assert.match(lane, /crmFetch<QueueResponse>\("\/api\/crm\/outreach\/queue"\)/);
 assert.match(lane, /method: "POST"[\s\S]*body: "\{\}"/);
 assert.match(lane, /`\/api\/crm\/outreach\/\$\{prospectId\}\/prepare`/);
-assert.match(lane, /const \[visible, setVisible\] = useState\(20\)/);
-assert.match(lane, /Next \{dailyLimit\} leads/);
-assert.match(lane, /Prepare, review, approve and queue each email here/);
-assert.match(lane, /Advanced outreach tools/);
+assert.match(
+  lane,
+  /const \[visible, setVisible\] = useState\(OUTREACH_DAILY_HARD_LIMIT\)/
+);
+assert.match(lane, /Choose more leads · \$\{queue\.length\}\/\$\{dailyLimit\}/);
+assert.match(lane, /Choose today's leads · up to \$\{dailyLimit\}/);
+assert.match(lane, /Use Research \+ write email \+ voice script on a contact/);
+assert.match(lane, /Manage campaign and prospect database/);
 assert.match(lane, /The rest of the CRM remains usable/);
 assert.match(lane, /contentVisibility: "auto"/);
 assert.match(lane, /href="\/crm\/outreach\?tab=prospects"/);
@@ -37,7 +41,7 @@ assert.doesNotMatch(lane, /approve-all|messages\/\$\{.*\}\/approve/);
 assert.match(nav, /const OUTREACH_ITEM/);
 assert.match(
   nav,
-  /salesHome\s*\?\s*\[homeItem, \.\.\.SALES_CORE_ITEMS, NOTIFICATIONS_ITEM\]/
+  /salesHome\s*\?\s*\[homeItem, TASKS_ITEM, CHAT_ITEM, \.\.\.SALES_CORE_ITEMS, NOTIFICATIONS_ITEM\]/
 );
 assert.match(nav, /const SALES_OUTREACH_ITEM: Item = \{[\s\S]*?href: "\/crm\/outreach\?tab=prospects"/);
 assert.match(nav, /const SALES_CORE_ITEMS: Item\[\] = \[[\s\S]*?SALES_OUTREACH_ITEM/);

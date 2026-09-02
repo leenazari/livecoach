@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { randomUUID } from "node:crypto";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import {
   openai,
   OPENAI_MODEL_LIVE,
@@ -55,6 +56,12 @@ import {
   loadSafeSharedCompany,
 } from "@/lib/team-client-sharing";
 import { resolveBrainCallActionCandidates } from "@/lib/brain-call-actions";
+import {
+  brainAuthorityProfile,
+  explicitOwnerOverrideRequested,
+  signBrainAction,
+} from "@/lib/brain-authority";
+import { calendarRecurrence } from "@/lib/calendar-create";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -116,8 +123,13 @@ async function findCompany(name: string) {
     }
   );
   const requestScope = getRequestScope();
-  if (!requestScope || requestScope.role === "owner") return company;
+  if (!requestScope) return null;
   if (company?.owner_id === requestScope.userId) return company;
+
+  // Workspace owners administer access, but that must not make another
+  // person's private client mutable through their Brain. Only an explicit
+  // safe client assignment grants a non-owner a projected client record.
+  if (requestScope.role === "owner") return null;
 
   const sharedIds = await activeSharedClientIds(
     requestScope.workspaceId,
@@ -139,15 +151,15 @@ async function findCompany(name: string) {
 async function findCompanyById(id: string) {
   if (!/^[0-9a-f-]{36}$/i.test(String(id || ""))) return null;
   const requestScope = getRequestScope();
+  if (!requestScope) return null;
   let query = supabaseAdmin
     .from("companies")
     .select("id, name")
+    .eq("workspace_id", requestScope.workspaceId)
+    .eq("owner_id", requestScope.userId)
     .eq("id", id);
-  if (requestScope && requestScope.role !== "owner") {
-    query = query.eq("owner_id", requestScope.userId);
-  }
   const { data } = await query.maybeSingle();
-  if (data || !requestScope || requestScope.role === "owner") return data || null;
+  if (data || requestScope.role === "owner") return data || null;
   const sharedIds = await activeSharedClientIds(
     requestScope.workspaceId,
     requestScope.userId
@@ -162,15 +174,15 @@ async function findTasks(
 ): Promise<any[]> {
   const term = likeTerm(text);
   if (!term) return [];
+  const requestScope = getRequestScope();
+  if (!requestScope) return [];
   let query = supabaseAdmin
     .from("tasks")
     .select("id, text, due_at, payload, company_id, link_kind")
+    .eq("workspace_id", requestScope.workspaceId)
+    .eq("owner_id", requestScope.userId)
     .in("status", statuses)
     .ilike("text", `%${term}%`);
-  const requestScope = getRequestScope();
-  if (requestScope && requestScope.role !== "owner") {
-    query = query.eq("owner_id", requestScope.userId);
-  }
   if (companyId) query = query.eq("company_id", companyId);
   const { data } = await query.limit(4);
   return data || [];
@@ -186,15 +198,15 @@ async function findContacts(name: string, companyId: string): Promise<any[]> {
   const term = likeTerm(name);
   if (!term || !companyId) return [];
   const requestScope = getRequestScope();
+  if (!requestScope) return [];
   let query = supabaseAdmin
     .from("contacts")
     .select("id, name, role, email, attributes")
+    .eq("workspace_id", requestScope.workspaceId)
+    .eq("owner_id", requestScope.userId)
     .eq("company_id", companyId)
     .ilike("name", `%${term}%`)
     .limit(4);
-  if (requestScope && requestScope.role !== "owner") {
-    query = query.eq("owner_id", requestScope.userId);
-  }
   const { data } = await query;
   return data || [];
 }
@@ -227,15 +239,15 @@ async function findDraft(subject: string) {
   const term = likeTerm(subject);
   if (!term) return null;
   const requestScope = getRequestScope();
+  if (!requestScope) return null;
   let query = supabaseAdmin
     .from("follow_ups")
     .select("id, draft_subject")
+    .eq("workspace_id", requestScope.workspaceId)
+    .eq("owner_id", requestScope.userId)
     .eq("status", "draft")
     .ilike("draft_subject", `%${term}%`)
     .limit(1);
-  if (requestScope && requestScope.role !== "owner") {
-    query = query.eq("owner_id", requestScope.userId);
-  }
   const { data } = await query;
   return data && data[0] ? data[0] : null;
 }
@@ -249,6 +261,7 @@ async function findCampaign(name: string) {
     .from("outreach_campaigns")
     .select("id, name, status")
     .eq("workspace_id", requestScope.workspaceId)
+    .eq("owner_id", requestScope.userId)
     .order("created_at", { ascending: false })
     .limit(1);
   if (wantsActive) q = q.eq("status", "active");
@@ -256,20 +269,28 @@ async function findCampaign(name: string) {
   const { data } = await q;
   return data && data[0] ? data[0] : null;
 }
-async function findOutreachRecipients(name: string): Promise<any[]> {
+async function findOutreachRecipients(
+  name: string,
+  options: { assignmentCandidate?: boolean } = {}
+): Promise<any[]> {
   const term = String(name || "").trim().toLowerCase();
   if (!term) return [];
   const requestScope = getRequestScope();
   if (!requestScope) return [];
   const fields =
-    "id,email,first_name,last_name,company_name,assigned_to_user_id,workspace_id";
+    "id,email,first_name,last_name,company_name,assigned_to_user_id,workspace_id,owner_id,status,reply_category,last_reply_at";
   const pattern = term.replace(/[\\%_]/g, (value) => `\\${value}`);
-  const available = (query: any) =>
-    query
-      .eq("workspace_id", requestScope.workspaceId)
-      .or(
-        `assigned_to_user_id.is.null,assigned_to_user_id.eq.${requestScope.userId}`
-      );
+  const available = (query: any) => {
+    const scoped = query.eq("workspace_id", requestScope.workspaceId);
+    if (options.assignmentCandidate && requestScope.role === "owner") {
+      return scoped
+        .eq("owner_id", requestScope.userId)
+        .or(
+          `assigned_to_user_id.is.null,assigned_to_user_id.eq.${requestScope.userId}`
+        );
+    }
+    return scoped.eq("assigned_to_user_id", requestScope.userId);
+  };
   const parts = term.split(/\s+/).filter(Boolean);
   let rows: any[] = [];
   if (term.includes("@")) {
@@ -318,6 +339,144 @@ async function findOutreachRecipients(name: string): Promise<any[]> {
     );
   });
 }
+
+async function findTeamMembers(reference: string): Promise<any[]> {
+  const scope = getRequestScope();
+  const term = String(reference || "").trim().toLowerCase();
+  if (!scope || !term) return [];
+  const { data: members, error: memberError } = await supabaseService
+    .from("workspace_members")
+    .select("user_id,role,status")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("status", "active");
+  if (memberError) throw memberError;
+  const ids = (members || []).map((member: any) => member.user_id);
+  const { data: profiles, error: profileError } = ids.length
+    ? await supabaseService
+        .from("profiles")
+        .select("user_id,display_name,email")
+        .in("user_id", ids)
+    : { data: [], error: null };
+  if (profileError) throw profileError;
+  const profileByUser = new Map(
+    (profiles || []).map((profile: any) => [profile.user_id, profile])
+  );
+  const directory = (members || []).map((member: any) => {
+    const profile = profileByUser.get(member.user_id) as any;
+    return {
+      userId: member.user_id,
+      role: member.role,
+      name: String(profile?.display_name || profile?.email || "Workspace member").trim(),
+      email: String(profile?.email || "").trim().toLowerCase(),
+    };
+  });
+  const exact = directory.filter((member: any) =>
+    member.name.toLowerCase() === term || member.email === term
+  );
+  if (exact.length) return exact;
+  return directory.filter((member: any) => {
+    const first = member.name.toLowerCase().split(/\s+/)[0] || "";
+    return first === term;
+  });
+}
+
+async function resolveExactTeamMembers(references: unknown): Promise<any[]> {
+  const names = Array.isArray(references)
+    ? references.map(String).map((value) => value.trim()).filter(Boolean)
+    : String(references || "").split(/\s*,\s*/).filter(Boolean);
+  if (!names.length || names.length > 49) return [];
+  const resolved: any[] = [];
+  for (const name of names) {
+    const matches = await findTeamMembers(name);
+    if (matches.length !== 1) return [];
+    if (!resolved.some((member) => member.userId === matches[0].userId)) {
+      resolved.push(matches[0]);
+    }
+  }
+  return resolved;
+}
+
+async function findLatestOutreachMessage(prospectId: string) {
+  const scope = getRequestScope();
+  if (!scope) return null;
+  const { data, error } = await supabaseAdmin
+    .from("outreach_messages")
+    .select("id,status,subject,voice_script,voice_status,voice_estimated_cost_gbp,created_at")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("sender_user_id", scope.userId)
+    .eq("prospect_id", prospectId)
+    .in("status", ["draft", "approved", "failed", "sending", "sent"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function findCurrentOutreachEnrolment(prospectId: string) {
+  const scope = getRequestScope();
+  if (!scope) return null;
+  const { data, error } = await supabaseAdmin
+    .from("outreach_enrolments")
+    .select("id,status,current_step,next_action_at,campaign_id")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("owner_id", scope.userId)
+    .eq("prospect_id", prospectId)
+    .in("status", ["queued", "researched", "drafted", "approved", "contacted"])
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function findChatConversation(reference: string) {
+  const scope = getRequestScope();
+  const term = String(reference || "").trim().toLowerCase();
+  if (!scope || !term) return null;
+  const { data: memberships, error: membershipError } = await supabaseService
+    .from("crm_chat_conversation_members")
+    .select("conversation_id")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("user_id", scope.userId);
+  if (membershipError) throw membershipError;
+  const ids = (memberships || []).map((row: any) => row.conversation_id);
+  if (!ids.length) return null;
+  const { data, error } = await supabaseService
+    .from("crm_chat_conversations")
+    .select("id,name,kind")
+    .eq("workspace_id", scope.workspaceId)
+    .in("id", ids)
+    .ilike("name", term)
+    .limit(3);
+  if (error) throw error;
+  return data?.length === 1 ? data[0] : null;
+}
+
+function exactIsoDateTime(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+async function exactOwnedCompany(name: string) {
+  const scope = getRequestScope();
+  const term = likeTerm(name);
+  if (!scope || scope.role !== "owner" || !term) return null;
+  const { data, error } = await supabaseAdmin
+    .from("companies")
+    .select("id,name,updated_at")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("owner_id", scope.userId)
+    .ilike("name", term)
+    .limit(3);
+  if (error) throw error;
+  const exact = (data || []).filter(
+    (company: any) => String(company.name || "").trim().toLowerCase() === term.toLowerCase()
+  );
+  return exact.length === 1 ? exact[0] : null;
+}
 async function findOpportunities(title: string, client: string): Promise<any[]> {
   const company = client ? await findCompany(client) : null;
   const term = likeTerm(title);
@@ -332,6 +491,11 @@ async function findOpportunities(title: string, client: string): Promise<any[]> 
     limit: 100,
   });
   return rows
+    .filter(
+      (row: any) =>
+        row.owner_id === requestScope.userId ||
+        row.assigned_to_user_id === requestScope.userId
+    )
     .filter((row: any) =>
       !term || String(row.title || "").toLowerCase().includes(term.toLowerCase())
     )
@@ -436,8 +600,22 @@ function callExec(call: any, type: string, x: any) {
     return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { companyId: x.companyId } };
   if (type === "restore_call")
     return { endpoint: `/api/crm/upcoming/${call.id}`, method: "PATCH", body: { completed: false } };
+  if (type === "reschedule_call")
+    return {
+      endpoint: `/api/crm/upcoming/${call.id}`,
+      method: "PATCH",
+      body: {
+        scheduledAt: x.scheduledAt,
+        durationMinutes: x.durationMinutes,
+        updateCalendar: true,
+      },
+    };
   // cancel_call
-  return { endpoint: `/api/crm/upcoming/${call.id}/cancel`, method: "POST", body: { reason: x.reason } };
+  return {
+    endpoint: `/api/crm/upcoming/${call.id}/cancel`,
+    method: "POST",
+    body: { reason: x.reason, cancelCalendar: true },
+  };
 }
 function actionVerb(type: string): string {
   return type === "set_meeting_link"
@@ -450,6 +628,8 @@ function actionVerb(type: string): string {
     ? "link"
     : type === "restore_call"
     ? "restore"
+    : type === "reschedule_call"
+    ? "move"
     : "remove";
 }
 
@@ -459,7 +639,15 @@ async function resolveActions(
   sourceQuestion = ""
 ): Promise<any[]> {
   const out: any[] = [];
-  const callTypes = ["set_meeting_link", "set_intent", "add_intent", "link_call", "restore_call", "cancel_call"];
+  const callTypes = [
+    "set_meeting_link",
+    "set_intent",
+    "add_intent",
+    "link_call",
+    "restore_call",
+    "reschedule_call",
+    "cancel_call",
+  ];
   for (const it of Array.isArray(items) ? items : []) {
     if (out.length >= 6) break;
     if (!it || typeof it.type !== "string") continue;
@@ -493,6 +681,14 @@ async function resolveActions(
         if (!company) continue;
         x.companyId = company.id;
         detail = ` to ${company.name}`;
+      } else if (it.type === "reschedule_call") {
+        x.scheduledAt = exactIsoDateTime(it.scheduledAt);
+        if (!x.scheduledAt) continue;
+        x.durationMinutes = Math.max(
+          10,
+          Math.min(240, Math.round(Number(it.durationMinutes) || 30))
+        );
+        detail = ` to ${callWhen(x.scheduledAt)}`;
       } else if (it.type === "cancel_call") {
         x.reason = typeof it.reason === "string" ? it.reason.trim() : "";
         detail = x.reason ? ` (reason: ${x.reason})` : " (off the calendar)";
@@ -526,6 +722,59 @@ async function resolveActions(
           }),
         });
       }
+      continue;
+    }
+
+    if (it.type === "create_calendar_event") {
+      const scheduledAt = exactIsoDateTime(it.scheduledAt);
+      const title = String(it.title || it.call || "").trim().slice(0, 240);
+      const requestedClient = String(it.client || "").trim();
+      const company = requestedClient ? await findCompany(requestedClient) : null;
+      if (!scheduledAt || (!title && !company) || (requestedClient && !company)) {
+        continue;
+      }
+      const attendeeEmails = (Array.isArray(it.attendeeEmails)
+        ? it.attendeeEmails
+        : String(it.attendeeEmail || "").split(/\s*,\s*/)
+      )
+        .map((value: unknown) => String(value || "").trim().toLowerCase())
+        .filter((value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))
+        .slice(0, 20);
+      const durationMinutes = Math.max(
+        10,
+        Math.min(240, Math.round(Number(it.durationMinutes) || 30))
+      );
+      const eventTitle = title || (company ? `Call with ${company.name}` : "");
+      if (!eventTitle) continue;
+      let recurrence = null;
+      try {
+        recurrence = calendarRecurrence(it.recurrence, scheduledAt);
+      } catch {
+        continue;
+      }
+      const recurrenceLabel = recurrence
+        ? `, repeated ${recurrence.frequency} for ${recurrence.count} occurrences`
+        : "";
+      out.push({
+        key,
+        type: it.type,
+        external: true,
+        label: `Create calendar event "${eventTitle}" for ${callWhen(scheduledAt)}${recurrenceLabel}`,
+        endpoint: "/api/crm/upcoming",
+        method: "POST",
+        body: {
+          requestId: randomUUID(),
+          title: eventTitle,
+          companyId: company?.id || null,
+          scheduledAt,
+          durationMinutes,
+          attendeeEmails,
+          meetingUrl: String(it.meetingUrl || "").trim() || null,
+          intent: String(it.intent || "").trim() || null,
+          addToCalendar: true,
+          recurrence,
+        },
+      });
       continue;
     }
 
@@ -853,8 +1102,10 @@ async function resolveActions(
           text: text.slice(0, 500),
           action: ["email", "call", "task"].includes(it.action) ? it.action : "task",
           dueAt:
-            typeof it.dueAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(it.dueAt)
-              ? it.dueAt
+            typeof it.dueAt === "string" &&
+            (/^\d{4}-\d{2}-\d{2}$/.test(it.dueAt) ||
+              /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(it.dueAt))
+              ? it.dueAt.slice(0, 40)
               : null,
           pinned: it.pinned === true,
         },
@@ -878,8 +1129,12 @@ async function resolveActions(
         if (it.status === "done" || it.status === "open") patch.status = it.status;
         if (typeof it.newText === "string" && it.newText.trim())
           patch.text = it.newText.trim().slice(0, 500);
-        if (typeof it.dueAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(it.dueAt))
-          patch.dueAt = it.dueAt.slice(0, 10);
+        if (
+          typeof it.dueAt === "string" &&
+          (/^\d{4}-\d{2}-\d{2}$/.test(it.dueAt) ||
+            /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(it.dueAt))
+        )
+          patch.dueAt = it.dueAt.slice(0, 40);
         else if (it.dueAt === null) patch.dueAt = null;
         if (typeof it.pinned === "boolean")
           patch.payload = { ...(task.payload || {}), pinned: it.pinned };
@@ -1000,6 +1255,310 @@ async function resolveActions(
       continue;
     }
 
+    if (
+      [
+        "prepare_outreach",
+        "prepare_reply",
+        "approve_outreach",
+        "create_voice_note",
+        "sendpilot_enrol",
+        "sendpilot_stop_lead",
+        "create_follow_up",
+        "log_sequence_action",
+      ].includes(it.type)
+    ) {
+      const reference = String(
+        it.prospect || it.person || it.email || it.recipientName || ""
+      ).trim();
+      const prospects = await findOutreachRecipients(reference);
+      if (prospects.length !== 1) continue;
+      const prospect = prospects[0];
+      const prospectName = `${prospect.first_name || ""} ${prospect.last_name || ""}`
+        .replace(/\s+/g, " ")
+        .trim() || prospect.email;
+
+      if (it.type === "prepare_outreach") {
+        out.push({
+          key,
+          type: it.type,
+          label: `Research ${prospectName} and prepare their email and voice script for review`,
+          endpoint: `/api/crm/outreach/${prospect.id}/prepare`,
+          method: "POST",
+          body: {
+            generationMode: "manual",
+            guidance: String(it.guidance || "").trim().slice(0, 1000),
+          },
+        });
+        continue;
+      }
+
+      if (it.type === "prepare_reply") {
+        if (prospect.reply_category !== "interested") continue;
+        out.push({
+          key,
+          type: it.type,
+          label: `Prepare a booking reply to ${prospectName} for approval`,
+          endpoint: `/api/crm/outreach/replies/${prospect.id}/draft`,
+          method: "POST",
+          body: {},
+        });
+        continue;
+      }
+
+      if (it.type === "sendpilot_enrol") {
+        const enrolment = await findCurrentOutreachEnrolment(prospect.id);
+        if (!enrolment) continue;
+        out.push({
+          key,
+          type: it.type,
+          external: true,
+          label: `Add ${prospectName} to the mapped SendPilot campaign`,
+          endpoint: `/api/crm/outreach/${prospect.id}/sendpilot`,
+          method: "POST",
+          body: {
+            requestId: randomUUID(),
+            enrolmentId: enrolment.id,
+            confirmed: true,
+          },
+        });
+        continue;
+      }
+
+      if (it.type === "sendpilot_stop_lead") {
+        out.push({
+          key,
+          type: it.type,
+          external: true,
+          label: `Stop ${prospectName}'s SendPilot outreach and mark it completed`,
+          endpoint: "/api/crm/sendpilot/control",
+          method: "POST",
+          body: {
+            action: "stop_lead",
+            prospectId: prospect.id,
+            requestId: randomUUID(),
+            confirmed: true,
+            note: String(it.note || "").trim().slice(0, 500),
+          },
+        });
+        continue;
+      }
+
+      if (it.type === "create_follow_up") {
+        const followUpAt = exactIsoDateTime(it.followUpAt || it.dueAt);
+        const text = String(it.text || it.reminder || "").trim().slice(0, 500);
+        if (!followUpAt || !text) continue;
+        out.push({
+          key,
+          type: it.type,
+          label: `Set ${prospectName} follow-up for ${callWhen(followUpAt)}: ${text}`,
+          endpoint: `/api/crm/outreach/${prospect.id}/follow-up`,
+          method: "POST",
+          body: { requestId: randomUUID(), followUpAt, text },
+        });
+        continue;
+      }
+
+      if (it.type === "log_sequence_action") {
+        const actionType = String(it.actionType || "").trim();
+        const allowed = new Set([
+          "linkedin_view",
+          "linkedin_like",
+          "linkedin_connect",
+          "linkedin_message",
+        ]);
+        const enrolment = await findCurrentOutreachEnrolment(prospect.id);
+        if (!allowed.has(actionType) || !enrolment) continue;
+        out.push({
+          key,
+          type: it.type,
+          label: `Record ${actionType.replace(/_/g, " ")} completed for ${prospectName}`,
+          endpoint: `/api/crm/outreach/${prospect.id}/sequence-action`,
+          method: "POST",
+          body: {
+            requestId: randomUUID(),
+            enrolmentId: enrolment.id,
+            actionType,
+            note: String(it.note || "").trim().slice(0, 1000),
+          },
+        });
+        continue;
+      }
+
+      const message = await findLatestOutreachMessage(prospect.id);
+      if (!message) continue;
+      if (it.type === "approve_outreach") {
+        out.push({
+          key,
+          type: it.type,
+          external: true,
+          label: `Approve and queue "${message.subject || "outreach email"}" to ${prospectName}`,
+          endpoint: "/api/crm/brain/outreach-approve",
+          method: "POST",
+          body: { messageId: message.id },
+        });
+        continue;
+      }
+      if (it.type === "create_voice_note" && String(message.voice_script || "").trim()) {
+        out.push({
+          key,
+          type: it.type,
+          label: `Create ${prospectName}'s approved voice note with your personal voice`,
+          endpoint: "/api/crm/brain/outreach-voice",
+          method: "POST",
+          body: { messageId: message.id },
+          estimatedCostGbp: Number(message.voice_estimated_cost_gbp || 0),
+        });
+        continue;
+      }
+    }
+
+    if (
+      ["sendpilot_pause_campaign", "sendpilot_resume_campaign"].includes(it.type)
+    ) {
+      const campaign = await findCampaign(String(it.campaign || ""));
+      if (!campaign) continue;
+      const action =
+        it.type === "sendpilot_pause_campaign" ? "pause" : "resume";
+      out.push({
+        key,
+        type: it.type,
+        external: true,
+        label: `${action === "pause" ? "Pause" : "Resume"} mapped SendPilot campaign for "${campaign.name}"`,
+        endpoint: "/api/crm/sendpilot/control",
+        method: "POST",
+        body: {
+          action,
+          livecoachCampaignId: campaign.id,
+          requestId: randomUUID(),
+          confirmed: true,
+        },
+      });
+      continue;
+    }
+
+    if (it.type === "assign_work") {
+      const assignees = await findTeamMembers(
+        String(it.assignee || it.teamMember || it.salesperson || "")
+      );
+      if (assignees.length !== 1) continue;
+      const assignee = assignees[0];
+      const kind = String(it.kind || it.recordKind || "").trim().toLowerCase();
+      const reference = String(it.item || it.prospect || it.client || it.opportunity || "").trim();
+      if (["task", "todo", "to-do", "reminder"].includes(kind)) {
+        const tasks = await findOpenTasks(reference);
+        if (tasks.length !== 1) continue;
+        const task = tasks[0];
+        out.push({
+          key,
+          type: it.type,
+          label: `Transfer task "${task.text}" to ${assignee.name}`,
+          endpoint: "/api/crm/brain/assign-work",
+          method: "POST",
+          body: {
+            kind: "task",
+            recordId: task.id,
+            assignedToUserId: assignee.userId,
+          },
+        });
+        continue;
+      }
+      if (["call", "meeting", "calendar call"].includes(kind)) {
+        const calls = await findCalls(reference);
+        if (calls.length !== 1) continue;
+        const call = calls[0];
+        out.push({
+          key,
+          type: it.type,
+          label: `Assign ${call.title || "call"} at ${callWhen(call.scheduled_at)} to ${assignee.name} as a dated call task`,
+          endpoint: "/api/crm/brain/assign-work",
+          method: "POST",
+          body: {
+            kind: "call",
+            recordId: call.id,
+            assignedToUserId: assignee.userId,
+          },
+        });
+        continue;
+      }
+      if (
+        ["research", "prospect research", "draft", "outreach draft"].includes(
+          kind
+        )
+      ) {
+        const prospects = await findOutreachRecipients(reference, {
+          assignmentCandidate: true,
+        });
+        if (prospects.length !== 1) continue;
+        const prospect = prospects[0];
+        const name =
+          `${prospect.first_name || ""} ${prospect.last_name || ""}`.trim() ||
+          prospect.email;
+        out.push({
+          key,
+          type: it.type,
+          label: `Assign ${name} to ${assignee.name} for ${kind.includes("draft") ? "outreach drafting" : "research"}`,
+          endpoint: "/api/crm/outreach/assign",
+          method: "POST",
+          body: {
+            assignedToUserId: assignee.userId,
+            prospectIds: [prospect.id],
+          },
+        });
+        continue;
+      }
+      if (kind === "prospect" || kind === "lead") {
+        const prospects = await findOutreachRecipients(reference, {
+          assignmentCandidate: true,
+        });
+        if (prospects.length !== 1) continue;
+        const prospect = prospects[0];
+        const name = `${prospect.first_name || ""} ${prospect.last_name || ""}`.trim() || prospect.email;
+        out.push({
+          key,
+          type: it.type,
+          label: `Assign lead ${name} to ${assignee.name}`,
+          endpoint: "/api/crm/outreach/assign",
+          method: "POST",
+          body: { assignedToUserId: assignee.userId, prospectIds: [prospect.id] },
+        });
+        continue;
+      }
+      if (kind === "client" || kind === "company") {
+        const company = await findCompany(reference);
+        if (!company) continue;
+        out.push({
+          key,
+          type: it.type,
+          label: `Safely share and assign client ${company.name} to ${assignee.name}`,
+          endpoint: "/api/crm/team/sharing",
+          method: "PATCH",
+          body: {
+            companyId: company.id,
+            shared: true,
+            assignedToUserId: assignee.userId,
+          },
+        });
+        continue;
+      }
+      if (kind === "opportunity" || kind === "deal") {
+        const opportunities = await findOpportunities(
+          String(it.opportunity || reference),
+          String(it.client || "")
+        );
+        if (opportunities.length !== 1) continue;
+        const opportunity = opportunities[0];
+        out.push({
+          key,
+          type: it.type,
+          label: `Assign opportunity ${opportunity.title} to ${assignee.name}`,
+          endpoint: `/api/crm/opportunities/${opportunity.id}`,
+          method: "PATCH",
+          body: { assignedToUserId: assignee.userId },
+        });
+        continue;
+      }
+    }
+
     if (it.type === "send_email") {
       const recipientName = String(it.recipientName || it.person || it.name || "").trim();
       const suppliedEmail = String(it.email || "").trim().toLowerCase();
@@ -1087,6 +1646,127 @@ async function resolveActions(
           }),
         });
       }
+      continue;
+    }
+
+    if (it.type === "create_chat") {
+      const scope = getRequestScope();
+      const members = await resolveExactTeamMembers(
+        it.members || it.member || it.people
+      );
+      const otherMembers = scope
+        ? members.filter((member) => member.userId !== scope.userId)
+        : [];
+      const groupName = String(it.groupName || it.name || "").trim().slice(0, 80);
+      if (!otherMembers.length || (otherMembers.length > 1 && !groupName)) continue;
+      out.push({
+        key,
+        type: it.type,
+        label:
+          otherMembers.length === 1 && !groupName
+            ? `Open a private CRM chat with ${otherMembers[0].name}`
+            : `Create CRM group "${groupName}" with ${otherMembers.map((member) => member.name).join(", ")}`,
+        endpoint: "/api/crm/chat",
+        method: "POST",
+        body: {
+          kind: otherMembers.length === 1 && !groupName ? "direct" : "group",
+          name: groupName || undefined,
+          memberIds: otherMembers.map((member) => member.userId),
+        },
+      });
+      continue;
+    }
+
+    if (it.type === "share_in_chat") {
+      const scope = getRequestScope();
+      const members = await resolveExactTeamMembers(
+        it.members || it.member || it.people
+      );
+      const otherMembers = scope
+        ? members.filter((member) => member.userId !== scope.userId)
+        : [];
+      const conversation = it.conversation
+        ? await findChatConversation(String(it.conversation))
+        : null;
+      const message = String(it.message || it.text || "").trim().slice(0, 5000);
+      const groupName = String(it.groupName || "").trim().slice(0, 80);
+      let recordKind = "";
+      let recordId = "";
+      let recordLabel = "";
+      const clientName = String(it.client || "").trim();
+      const personName = String(it.person || it.contact || "").trim();
+      if (personName && clientName) {
+        const company = await findCompany(clientName);
+        const contacts = company ? await findContacts(personName, company.id) : [];
+        const exact = contacts.filter(
+          (contact: any) =>
+            String(contact.name || "").trim().toLowerCase() === personName.toLowerCase()
+        );
+        if (exact.length === 1) {
+          recordKind = "contact";
+          recordId = exact[0].id;
+          recordLabel = `${exact[0].name} at ${company?.name || clientName}`;
+        }
+      } else if (clientName) {
+        const company = await findCompany(clientName);
+        if (company) {
+          recordKind = "company";
+          recordId = company.id;
+          recordLabel = company.name;
+        }
+      }
+      if (
+        (!conversation && !otherMembers.length) ||
+        (!message && !recordId) ||
+        (!conversation && otherMembers.length > 1 && !groupName)
+      ) {
+        continue;
+      }
+      const recipients = conversation
+        ? String(it.conversation)
+        : otherMembers.map((member) => member.name).join(", ");
+      out.push({
+        key,
+        type: it.type,
+        label: `Share ${recordLabel || "a message"} with ${recipients} in CRM chat`,
+        endpoint: "/api/crm/brain/share",
+        method: "POST",
+        body: {
+          requestId: randomUUID(),
+          message,
+          conversationId: conversation?.id || null,
+          memberIds: conversation ? [] : otherMembers.map((member) => member.userId),
+          groupName: conversation ? "" : groupName,
+          recordKind,
+          recordId,
+        },
+      });
+      continue;
+    }
+
+    if (it.type === "merge_duplicate_clients") {
+      const keep = await exactOwnedCompany(
+        String(it.keepClient || it.keep || "")
+      );
+      const merge = await exactOwnedCompany(
+        String(it.mergeClient || it.merge || "")
+      );
+      if (!keep || !merge || keep.id === merge.id) continue;
+      out.push({
+        key,
+        type: it.type,
+        label: `Merge duplicate client "${merge.name}" into "${keep.name}" and keep ${keep.name}`,
+        endpoint: "/api/crm/duplicates/merge",
+        method: "POST",
+        body: {
+          keepId: keep.id,
+          mergeId: merge.id,
+          confirmed: true,
+          confirmName: keep.name,
+          expectedKeepUpdatedAt: keep.updated_at,
+          expectedMergeUpdatedAt: merge.updated_at,
+        },
+      });
       continue;
     }
 
@@ -1369,6 +2049,59 @@ function flagUnresolvedActions(requested: any[], resolved: any[]): any[] {
     });
   }
   return unresolved;
+}
+
+function authoriseResolvedActions(
+  actions: any[],
+  scope: NonNullable<ReturnType<typeof getRequestScope>>,
+  ownerOverrideRequested: boolean
+) {
+  return actions.map((action) => {
+    if (!action?.endpoint && !Array.isArray(action?.choices)) return action;
+    const profile = brainAuthorityProfile(String(action.type || ""));
+    const authority = {
+      actionKind: profile.actionKind,
+      risk: profile.risk,
+      requiresSeparateApproval: profile.requiresSeparateApproval,
+      ownerOverrideRequested:
+        scope.role === "owner" && ownerOverrideRequested && profile.canOwnerOverride,
+    };
+    if (Array.isArray(action.choices)) {
+      return {
+        ...action,
+        batchSafe: false,
+        authority,
+        choices: action.choices.map((choice: any) => {
+          const choiceAction = {
+            ...action,
+            ...choice,
+            label: `${action.label}: ${choice.label}`,
+            choices: undefined,
+            batchSafe: false,
+          };
+          return {
+            ...choice,
+            executionToken: signBrainAction({
+              scope,
+              action: choiceAction,
+              ownerOverrideRequested: authority.ownerOverrideRequested,
+            }),
+          };
+        }),
+      };
+    }
+    return {
+      ...action,
+      batchSafe:
+        action.batchSafe === true && !profile.requiresSeparateApproval,
+      authority,
+      executionToken: signBrainAction({
+        scope,
+        action,
+        ownerOverrideRequested: authority.ownerOverrideRequested,
+      }),
+    };
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -1700,15 +2433,15 @@ FINISHED BUSINESS DOCUMENTS: when the user explicitly asks you to produce, creat
 
 TO-DOS: when the user asks you to arrange, remember, chase, follow up, add, draft, prep, or otherwise CREATE actions to do later, propose each as a to-do. It is shown in the visible action plan and is only created after approval. In ADDITION to your normal prose reply, put ONLY a JSON array between these exact markers:
 ---TASKS---
-[{"text":"short imperative to-do","client":"optional exact client name","action":"email|call|task","dueAt":"YYYY-MM-DD","pinned":true}]
+[{"text":"short imperative to-do","client":"optional exact client name","action":"email|call|task","dueAt":"YYYY-MM-DD or full ISO date-time with timezone","pinned":true}]
 ---END TASKS---
-Use "client" whenever the task names or clearly belongs to a client. If that named client is different from the client page currently open, the named client always wins. Never omit it and let the open page take over. Use "action" = "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Set "dueAt" to the deadline DATE when the user gives one, working out the real date from today's date in the context (e.g. "by Friday" becomes that Friday's YYYY-MM-DD, "by end of month" the last day of this month). Set "pinned" to true when the user says to keep it at the top, make it top priority, do it first, or that it is urgent. OMIT client when the task is genuinely global. OMIT dueAt and pinned when the user did not give a deadline or priority. Only propose to-dos the user actually wants tracked, and do not repeat ones already outstanding in the context. Keep these markers out of your prose, and still answer naturally.
+Use "client" whenever the task names or clearly belongs to a client. If that named client is different from the client page currently open, the named client always wins. Never omit it and let the open page take over. Use "action" = "email" for anything to write or send, "call" to prep or schedule a call, "task" for anything else. Set "dueAt" to the deadline date when the user gives only a date. Preserve the exact time in a full ISO date-time with a timezone whenever the user gives a time. Work out the real date from today's date in the context. Set "pinned" to true when the user says to keep it at the top, make it top priority, do it first, or that it is urgent. OMIT client when the task is genuinely global. OMIT dueAt and pinned when the user did not give a deadline or priority. Only propose to-dos the user actually wants tracked, and do not repeat ones already outstanding in the context. Keep these markers out of your prose, and still answer naturally.
 
-CALENDAR AND SAVED PREP: the user's upcoming calls, synced from their calendar, are in the context below. For a schedule or call list, always include the time and make the full time plus call title clickable to its supplied prep page using exactly [time, call title](/supplied/prep/path). This is the one permitted Markdown pattern. Never link the client name separately inside a schedule item. Never show raw URLs, never say a prep page is unavailable when a prep page is supplied, and never link straight to Google Meet, Teams or Zoom unless the user explicitly asks for the join link. If the context specifies the exact requested date, obey it, including the user's before 02:00 definition of "tomorrow". Flag overlapping meetings prominently. When they ask about a particular call's questions, focus, intent or battle plan, use the ON-DEMAND SAVED CALL PREP block when present. That block is the authoritative saved plan and was fetched specifically for this question, so never say you cannot see it. If the block says the plan is not built, say that plainly. You cannot edit their Google calendar itself, but you CAN, with their confirmation, attach or change the meeting link, set or clear the intent, or link a call to a client on the in-app call record (see ACTIONS). If they tell you a call moved or was cancelled, note it or add a to-do, and remind them the synced view refreshes from their calendar.
+CALENDAR AND SAVED PREP: the user's upcoming calls, synced from their calendar, are in the context below. For a schedule or call list, always include the time and make the full time plus call title clickable to its supplied prep page using exactly [time, call title](/supplied/prep/path). This is the one permitted Markdown pattern. Never link the client name separately inside a schedule item. Never show raw URLs, never say a prep page is unavailable when a prep page is supplied, and never link straight to Google Meet, Teams or Zoom unless the user explicitly asks for the join link. If the context specifies the exact requested date, obey it, including the user's before 02:00 definition of "tomorrow". Flag overlapping meetings prominently. When they ask about a particular call's questions, focus, intent or battle plan, use the ON-DEMAND SAVED CALL PREP block when present. That block is the authoritative saved plan and was fetched specifically for this question, so never say you cannot see it. If the block says the plan is not built, say that plainly. With confirmation, you can create a real event in the signed-in user's connected Google or Microsoft calendar, reschedule an owned event, cancel an owned event, attach or change the meeting link, set or clear the intent, or link a call to a client. A recurring event must have an explicit frequency, interval and a finite total of 2 to 52 occurrences. Never create an indefinite series. Calendar creates, moves and cancellations are always shown as separate external approvals because guests may be notified. Never alter another user's calendar or a private connection.
 
 CALL TRANSCRIPTS ON DEMAND: when an ON-DEMAND CALL TRANSCRIPT block is present, it was fetched only because the user explicitly asked about a specific recorded conversation. Treat the matched transcript source as authoritative for that question. Never combine it with another call, never substitute a generic scorecard for missing words, and never imply that you checked a raw transcript when the block says it is unavailable. If the block reports several close matches, ask the user which exact call they mean. If it contains bounded excerpts and the answer is not present, say that plainly and ask for the topic or phrase to search rather than guessing.
 
-ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, client stages, stakeholders and to-dos, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles, update opportunities, pull email context, remember durable rules, correct records, dismiss stale work, and queue one-off emails from the signed-in user's own connected mailbox. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
+ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, create and move owned calendar events, manage client stages, stakeholders and to-dos, assign permitted sales work, create or update internal CRM records, create and configure outreach campaigns, prepare research, email and personal voice-note assets, enrol assigned leads in SendPilot, record manual LinkedIn steps, create follow-ups, prepare positive-reply drafts, create and share in CRM chat, update opportunities, pull email context, remember durable rules, correct records, merge verified duplicates when the owner explicitly approves, dismiss stale work, and queue one-off emails from the signed-in user's own connected mailbox. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
 [{"type":"set_meeting_link","call":"<exact call title plus its UK date and time from the context>","url":"<link>"},{"type":"set_intent","call":"<exact call title plus its UK date and time from the context>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<exact call title plus its UK date and time from the context>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<exact call title plus its UK date and time from the context>","client":"<client name>"},{"type":"restore_call","call":"<exact future call title plus its UK date and time from the context>"},{"type":"cancel_call","call":"<exact call title plus its UK date and time from the context>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>","question":"<the user's exact factual mailbox question, when they asked one>"}]
 ---END ACTIONS---
@@ -1717,10 +2450,26 @@ Additional supported actions are:
 {"type":"update_client","client":"<client name, omit on their profile>","name":"<optional corrected name>","stage":"New|Discovery|Qualified|Proposal|Negotiation|Partner|Customer|Product Trial|In House|Dormant","sector":"<optional>","website":"<optional>","domain":"<optional>","notes":"<optional, null to clear>","emailContext":"<optional, null to clear>","removeFromPipeline":true,"rationale":"<only when the user explicitly says this is not a prospect, client or buyer>"}
 {"type":"upsert_stakeholder","client":"<client name, omit on their profile>","person":"<contact name>","buyingRole":"decision_maker|champion|user|influencer|blocker|unknown","influence":"high|medium|low","engagement":"warm|neutral|cold","jobTitle":"<optional>","email":"<optional>"}
 {"type":"update_contact","client":"<client name, omit on their profile>","person":"<existing contact name>","newName":"<optional corrected name>","role":"<optional, null to clear>","email":"<optional, null to clear>","sector":"<optional, null to clear>","notes":"<optional, null to clear>"}
-{"type":"update_task","client":"<client name, omit on their profile>","item":"<existing to-do text>","status":"done|open","newText":"<optional replacement>","dueAt":"YYYY-MM-DD or null","pinned":true,"action":"email|call|task"}
+{"type":"update_task","client":"<client name, omit on their profile>","item":"<existing to-do text>","status":"done|open","newText":"<optional replacement>","dueAt":"YYYY-MM-DD, full ISO date-time with timezone, or null","pinned":true,"action":"email|call|task"}
+{"type":"create_calendar_event","title":"<event title>","client":"<optional exact client>","scheduledAt":"<full ISO date-time with timezone>","durationMinutes":30,"attendeeEmails":["<exact email>"],"meetingUrl":"<optional Meet, Teams or Zoom URL>","intent":"<optional call focus>","recurrence":{"frequency":"daily|weekly|monthly","interval":1,"count":2,"weekdays":["monday"]}}
+{"type":"reschedule_call","call":"<exact call title plus its UK date and time>","scheduledAt":"<full ISO date-time with timezone>","durationMinutes":30}
+{"type":"assign_work","kind":"lead|client|opportunity|task|call|research|outreach draft","item":"<exact record name>","client":"<client name when identifying an opportunity>","assignee":"<exact active team member name or email>"}
 {"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":50,"cta":{"type":"reply_demo|reply_call|personal_booking_link|link|video|voice_note|custom|none","label":"<next step wording>","url":"<secure shared URL only when needed>"}}
 {"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":50,"status":"draft|active|paused|completed","cta":{"type":"reply_demo|reply_call|personal_booking_link|link|video|voice_note|custom|none","label":"<next step wording>","url":"<secure shared URL only when needed>"}}
 {"type":"build_outreach_queue","limit":50}
+{"type":"prepare_outreach","prospect":"<exact prospect name or email>","guidance":"<optional grounded direction>"}
+{"type":"prepare_reply","prospect":"<exact prospect name or email with an interested reply>"}
+{"type":"approve_outreach","prospect":"<exact prospect name or email>"}
+{"type":"create_voice_note","prospect":"<exact prospect name or email>"}
+{"type":"sendpilot_enrol","prospect":"<exact assigned prospect name or email>"}
+{"type":"sendpilot_stop_lead","prospect":"<exact assigned prospect name or email>","note":"<optional reason>"}
+{"type":"sendpilot_pause_campaign","campaign":"<exact mapped LiveCoach campaign name>"}
+{"type":"sendpilot_resume_campaign","campaign":"<exact mapped LiveCoach campaign name>"}
+{"type":"create_follow_up","prospect":"<exact prospect name or email>","text":"<follow-up reminder>","followUpAt":"<full ISO date-time with timezone>"}
+{"type":"log_sequence_action","prospect":"<exact prospect name or email>","actionType":"linkedin_view|linkedin_like|linkedin_connect|linkedin_message","note":"<optional factual note>"}
+{"type":"create_chat","members":["<exact team member name or email>"],"groupName":"<required for a group>"}
+{"type":"share_in_chat","members":["<exact team member name or email>"],"groupName":"<required for a new group>","message":"<message>","client":"<optional exact client>","person":"<optional exact contact, client also required>"}
+{"type":"merge_duplicate_clients","keepClient":"<exact owner-held client name to keep>","mergeClient":"<exact verified duplicate name to merge>"}
 {"type":"send_email","recipientName":"<person name>","email":"<exact recipient email when known>","company":"<optional company>","subject":"<exact approved subject>","body":"<exact approved body including a simple do not follow up line for cold outreach, plus an optional sales call to action only when requested>"}
 {"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","dealIntent":"<the commercial outcome this deal is pursuing>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","winOutlook":"not_assessed|at_risk|possible|likely|highly_likely|won","winOutlookConfidence":0,"winOutlookReasons":["<stored evidence only>"],"winOutlookQuestions":["<targeted next-call question>"],"engagementMotion":"cold_outreach_campaign|personal_relationship_led|existing_customer_expansion|inbound_enquiry|partner_referral","activeContactMethod":"automated_email|personal_email|phone|video_call|linkedin|event|in_person|other","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>","rationale":"<why this change is supported>"}
 {"type":"resolve_opportunity_clarification","clarificationId":"<exact id from PENDING PIPELINE CONFIRMATIONS>","decision":"same_deal|separate_workstream|not_an_opportunity","workstreamName":"<required only for a separate workstream>"}
@@ -1738,6 +2487,10 @@ For update_campaign you may also include "voice":{"tone":"...","style":"...","ru
 ONE-OFF EMAILS: when the user explicitly asks to send an email you drafted in this conversation, use send_email in the same reply instead of sending them to another screen. A campaign is optional. The action card is the final approval and must visibly show the exact recipient, subject and body. Never invent an email address, choose a fuzzy name match or silently fill missing content. If the exact recipient cannot be matched, ask only for their email address and emit no send_email action. Company is optional and must not block the send. Include a simple do not follow up line for cold outreach. A demo, booking, reply or other sales call to action is optional. Include one only when the user asks for it or it belongs in the exact draft they approved. Never add one merely to satisfy a format rule. Every send_email is an external action, remains separate from batch approval and uses only the signed-in user's own connected mailbox. Never claim it sent until the action receipt confirms it was queued.
 
 CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Campaign sequence mail stays in the dedicated Outreach approval flow. One-off send_email actions use the same protected outreach ledger, suppression rules, pacing and per-user limits without inventing a campaign.
+
+SENDPILOT AND REPLIES: only enrol or stop a lead assigned to the signed-in salesperson, and only in that salesperson's connected and mapped SendPilot account. A SendPilot reply is canonical CRM activity and stops competing sequence work. Use prepare_reply only for an interested reply. It creates a review draft with that salesperson's booking link and never sends automatically. sendpilot_stop_lead marks one exact remote lead Done after separate approval. SendPilot only supports pause and resume at whole-campaign level, so never claim one lead was paused or resumed. Pausing or resuming a mapped campaign always needs its own external approval. Use log_sequence_action only after the salesperson says they completed that exact manual LinkedIn step.
+
+AUTHORITY BOUNDARY: staff may use the safe actions above only on records they own, claimed unassigned work, or work deliberately assigned to them. They cannot change Brain permissions, workspace roles, access rules, application code, audit history, another person's private client records, calendar, mailbox, SendPilot connection, voice identity or booking link. Only the workspace owner can change Brain trust settings for the team. If the signed-in workspace owner explicitly says owner override, do it anyway, force this action or bypass the normal workflow, the exact signed action may retry only an allowlisted ordinary workflow blocker. An owner override never bypasses identity, authentication, workspace isolation, another user's assignment or private connection, do-not-contact suppression, exact content approval, cost approval, immutable audit history, or code and database security controls. Never claim a universal bypass.
 
 BATCH APPROVAL: when the user asks for several safe internal changes, emit them together. The interface shows every exact change and offers one approval for the safe subset. Destructive changes, mailbox pulls and any future external send stay separately confirmed.
 NO SILENT FAILURES: if a requested edit cannot be matched or completed, the action panel will mark it Not completed. Never imply that an edit happened merely because you described it in prose.
@@ -1895,9 +2648,10 @@ ALWAYS end the spoken version with your closing question whenever your reply has
                         : undefined,
                     action: x.action,
                     dueAt:
-                      typeof x.dueAt === "string" &&
-                      /^\d{4}-\d{2}-\d{2}/.test(x.dueAt)
-                        ? x.dueAt
+                            typeof x.dueAt === "string" &&
+                            (/^\d{4}-\d{2}-\d{2}$/.test(x.dueAt) ||
+                              /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(x.dueAt))
+                        ? x.dueAt.slice(0, 40)
                         : undefined,
                     pinned: x.pinned === true,
                   }));
@@ -1942,6 +2696,14 @@ ALWAYS end the spoken version with your closing question whenever your reply has
               (pa) => !actionWasAlreadyProposed(pa, priorSigs)
             );
           proposedActions = [...proposedActions, ...unresolvedActions];
+          if (!requestScope) {
+            throw new Error("verified workspace access is required");
+          }
+          proposedActions = authoriseResolvedActions(
+            proposedActions,
+            requestScope,
+            explicitOwnerOverrideRequested(rawMessage)
+          );
 
           // --- SPOKEN summary (tolerant of a malformed close) ---
           let spoken = "";

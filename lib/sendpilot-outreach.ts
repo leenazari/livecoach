@@ -5,6 +5,8 @@ import {
   listSendPilotCampaigns,
   listSendPilotLeads,
   SendPilotApiError,
+  updateSendPilotCampaign,
+  updateSendPilotLeadStatus,
   type SendPilotCampaign,
   type SendPilotLead,
 } from "@/lib/sendpilot-api";
@@ -39,6 +41,8 @@ import {
   ensureReplyAttentionTask,
   type ReplyAttentionCategory,
 } from "@/lib/reply-attention";
+import { runWithServiceRecordScope } from "@/lib/service-scope";
+import { preparePositiveReplyForApproval } from "@/lib/outreach-positive-reply";
 
 type OwnerScope = { userId: string; workspaceId: string };
 
@@ -93,6 +97,10 @@ const clean = (value: unknown, maximum = 1_000) =>
 
 const safeError = (error: any) =>
   String(error?.message || "SendPilot outreach failed").slice(0, 500);
+
+function sendPilotBlock(code: string, message: string, status = 409) {
+  return Object.assign(new Error(message), { code, status });
+}
 
 async function writeAudit(
   scope: OwnerScope,
@@ -390,6 +398,253 @@ export async function loadSendPilotOutreachContext(
   };
 }
 
+export async function stopSendPilotLead(
+  scope: OwnerScope,
+  input: {
+    prospectId: unknown;
+    requestId: unknown;
+    confirmed: unknown;
+    note?: unknown;
+  }
+) {
+  const prospectId = clean(input.prospectId, 80);
+  const requestId = clean(input.requestId, 80);
+  if (!UUID.test(prospectId) || !UUID.test(requestId) || input.confirmed !== true) {
+    throw Object.assign(
+      new Error("Confirm one exact prospect before stopping their SendPilot outreach"),
+      { status: 400 }
+    );
+  }
+  const integration = await requireActiveIntegration(scope);
+  const [{ data: prospect, error: prospectError }, { data: link, error: linkError }] =
+    await Promise.all([
+      supabaseService
+        .from("outreach_prospects")
+        .select("id,first_name,last_name,email,assigned_to_user_id")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("assigned_to_user_id", scope.userId)
+        .eq("id", prospectId)
+        .maybeSingle(),
+      supabaseService
+        .from("sendpilot_lead_links")
+        .select(LEAD_LINK_SELECT)
+        .eq("integration_id", integration.id)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("outreach_prospect_id", prospectId)
+        .not("sendpilot_lead_id", "is", null)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+  if (prospectError) throw prospectError;
+  if (linkError) throw linkError;
+  if (!prospect || !link?.sendpilot_lead_id) {
+    throw Object.assign(
+      new Error("This prospect is not linked to your SendPilot account"),
+      { status: 404 }
+    );
+  }
+  if (link.external_status === "DONE" && link.sync_status === "completed") {
+    return { alreadyStopped: true, link };
+  }
+
+  const apiKey = decryptSendPilotApiKey(integration);
+  const remote = await updateSendPilotLeadStatus(apiKey, {
+    leadId: link.sendpilot_lead_id,
+    status: "DONE",
+    note:
+      clean(input.note, 500) ||
+      "Stopped from LiveCoach after explicit salesperson approval",
+  });
+  const now = new Date().toISOString();
+  const results = await Promise.all([
+    supabaseService
+      .from("sendpilot_lead_links")
+      .update({
+        external_status: "DONE",
+        sync_status: "completed",
+        last_event_type: "livecoach.lead.stopped",
+        last_event_at: now,
+        last_error: null,
+        updated_at: now,
+      })
+      .eq("id", link.id)
+      .eq("integration_id", integration.id)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId),
+    supabaseService
+      .from("outreach_enrolments")
+      .update({ status: "completed", next_action_at: null, updated_at: now })
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
+      .eq("prospect_id", prospectId)
+      .in("status", ["queued", "researched", "drafted", "approved", "contacted", "paused"]),
+    supabaseService
+      .from("outreach_messages")
+      .update({ status: "cancelled", scheduled_at: null, updated_at: now })
+      .eq("workspace_id", scope.workspaceId)
+      .eq("sender_user_id", scope.userId)
+      .eq("prospect_id", prospectId)
+      .in("status", ["draft", "approved"]),
+  ]);
+  const localError = results.find((result) => result.error)?.error;
+  if (localError) {
+    throw Object.assign(
+      new Error(
+        "SendPilot confirmed the lead stop, but LiveCoach could not finish its local update"
+      ),
+      {
+        status: 409,
+        code: "sendpilot_stop_local_update_failed",
+        nextAction:
+          "Refresh the prospect to reconcile SendPilot before preparing another action",
+      }
+    );
+  }
+  const { data: existingEvent, error: existingEventError } = await supabaseService
+    .from("outreach_events")
+    .select("id")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("owner_id", scope.userId)
+    .contains("metadata", { source: "brain", requestId })
+    .limit(1)
+    .maybeSingle();
+  if (existingEventError) throw existingEventError;
+  if (!existingEvent) {
+    const { error } = await supabaseService.from("outreach_events").insert({
+      workspace_id: scope.workspaceId,
+      owner_id: scope.userId,
+      visibility: "team",
+      campaign_id: link.livecoach_campaign_id,
+      prospect_id: prospectId,
+      kind: "sendpilot_status",
+      metadata: {
+        source: "brain",
+        provider: "sendpilot",
+        requestId,
+        action: "stop_lead",
+        sendpilotLeadId: link.sendpilot_lead_id,
+      },
+      created_at: now,
+    });
+    if (error) throw error;
+  }
+  await writeAudit(scope, {
+    action: "sendpilot_lead_stopped",
+    targetTable: "sendpilot_lead_links",
+    targetId: link.id,
+    previous: { externalStatus: link.external_status, syncStatus: link.sync_status },
+    next: { externalStatus: remote.status, syncStatus: "completed" },
+  });
+  return {
+    alreadyStopped: false,
+    leadId: remote.leadId,
+    status: remote.status,
+    prospect: {
+      id: prospect.id,
+      name: `${prospect.first_name || ""} ${prospect.last_name || ""}`.trim(),
+    },
+  };
+}
+
+export async function controlSendPilotCampaign(
+  scope: OwnerScope,
+  input: {
+    livecoachCampaignId: unknown;
+    action: unknown;
+    requestId: unknown;
+    confirmed: unknown;
+  }
+) {
+  const livecoachCampaignId = clean(input.livecoachCampaignId, 80);
+  const requestId = clean(input.requestId, 80);
+  const action = clean(input.action, 20);
+  if (
+    !UUID.test(livecoachCampaignId) ||
+    !UUID.test(requestId) ||
+    !["pause", "resume"].includes(action) ||
+    input.confirmed !== true
+  ) {
+    throw Object.assign(
+      new Error("Confirm one exact mapped SendPilot campaign and action"),
+      { status: 400 }
+    );
+  }
+  const integration = await requireActiveIntegration(scope);
+  const { data: mapping, error: mappingError } = await supabaseService
+    .from("sendpilot_campaign_links")
+    .select("*")
+    .eq("integration_id", integration.id)
+    .eq("workspace_id", scope.workspaceId)
+    .eq("owner_id", scope.userId)
+    .eq("livecoach_campaign_id", livecoachCampaignId)
+    .maybeSingle();
+  if (mappingError) throw mappingError;
+  if (!mapping) {
+    throw Object.assign(
+      new Error("This campaign is not mapped to your SendPilot account"),
+      { status: 404 }
+    );
+  }
+  const alreadyInState =
+    (action === "pause" && mapping.sendpilot_campaign_status === "paused") ||
+    (action === "resume" && mapping.sendpilot_campaign_status === "started");
+  if (alreadyInState) {
+    return { alreadyApplied: true, action, mapping };
+  }
+  const apiKey = decryptSendPilotApiKey(integration);
+  const remote = await updateSendPilotCampaign(apiKey, {
+    campaignId: mapping.sendpilot_campaign_id,
+    action: action as "pause" | "resume",
+  });
+  const normalisedStatus = action === "pause" ? "paused" : "started";
+  const now = new Date().toISOString();
+  const { data: updated, error: updateError } = await supabaseService
+    .from("sendpilot_campaign_links")
+    .update({
+      sendpilot_campaign_status: normalisedStatus,
+      active: action === "resume",
+      last_refreshed_at: now,
+      updated_at: now,
+    })
+    .eq("id", mapping.id)
+    .eq("integration_id", integration.id)
+    .eq("workspace_id", scope.workspaceId)
+    .eq("owner_id", scope.userId)
+    .select("*")
+    .single();
+  if (updateError) {
+    throw Object.assign(
+      new Error(
+        `SendPilot confirmed the campaign ${action}, but LiveCoach could not finish its local update`
+      ),
+      {
+        status: 409,
+        code: "sendpilot_campaign_local_update_failed",
+        nextAction:
+          "Refresh the SendPilot campaign mapping before preparing another action",
+      }
+    );
+  }
+  await writeAudit(scope, {
+    action: `sendpilot_campaign_${action}d`,
+    targetTable: "sendpilot_campaign_links",
+    targetId: mapping.id,
+    previous: {
+      status: mapping.sendpilot_campaign_status,
+      active: mapping.active,
+    },
+    next: { status: normalisedStatus, active: action === "resume", requestId },
+  });
+  return {
+    alreadyApplied: false,
+    action,
+    remoteStatus: remote.newStatus,
+    mapping: updated,
+  };
+}
+
 async function findExactSendPilotLead(
   apiKey: string,
   campaignId: string,
@@ -445,6 +700,7 @@ export async function enrolProspectInSendPilot(
     requestId: unknown;
     enrolmentId: unknown;
     confirmed: unknown;
+    ownerOverride?: boolean;
   }
 ) {
   const requestId = clean(input.requestId, 80);
@@ -644,21 +900,35 @@ export async function enrolProspectInSendPilot(
     });
   }
   if (prospectHasBlockedCrmRelationship(prospect, crmGuard)) {
-    throw Object.assign(
-      new Error("This CRM relationship is engaged, dormant or not confirmed as a new lead"),
-      { status: 409 }
+    if (!input.ownerOverride) {
+      throw sendPilotBlock(
+        "outreach_crm_relationship_ineligible",
+        "This CRM relationship is engaged, dormant or not confirmed as a new lead"
+      );
+    }
+  }
+  const otherActiveEnrolment = (otherEnrolments || []).find((row: any) =>
+    isActiveOutreachEnrolmentStatus(row.status)
+  );
+  if (otherActiveEnrolment && !input.ownerOverride) {
+    throw sendPilotBlock(
+      otherActiveEnrolment.status === "paused"
+        ? "outreach_paused_campaign_enrolment"
+        : "outreach_existing_campaign_enrolment",
+      otherActiveEnrolment.status === "paused"
+        ? "This person is still enrolled in a paused LiveCoach campaign"
+        : "This person is already active in another LiveCoach campaign"
     );
   }
-  if ((otherEnrolments || []).some((row: any) => isActiveOutreachEnrolmentStatus(row.status))) {
-    throw Object.assign(
-      new Error("This person is already active in another LiveCoach campaign"),
-      { status: 409 }
-    );
-  }
-  if ((otherEnrolments || []).some((row: any) => isInsideCrossCampaignCooldown(row.last_sent_at))) {
-    throw Object.assign(
-      new Error("This person is still inside the 30 day cross-campaign safety pause"),
-      { status: 409 }
+  if (
+    !input.ownerOverride &&
+    (otherEnrolments || []).some((row: any) =>
+      isInsideCrossCampaignCooldown(row.last_sent_at)
+    )
+  ) {
+    throw sendPilotBlock(
+      "outreach_cross_campaign_cooldown",
+      "This person is still inside the 30 day cross-campaign safety pause"
     );
   }
 
@@ -1200,6 +1470,73 @@ async function applySendPilotReplyConsequences(
   }
 }
 
+async function ensureSendPilotReplyTask(
+  integration: SendPilotIntegrationRow,
+  prospect: any,
+  classification: ReturnType<typeof classifyLinkedInReply>,
+  sourceRef: string,
+  receivedAt: string
+) {
+  await ensureReplyAttentionTask({
+    workspaceId: integration.workspace_id,
+    userId: integration.owner_id,
+    companyId: UUID.test(String(prospect.crm_company_id || ""))
+      ? String(prospect.crm_company_id)
+      : null,
+    prospectId: String(prospect.id),
+    prospectName: [prospect.first_name, prospect.last_name]
+      .map((value: unknown) => clean(value, 100))
+      .filter(Boolean)
+      .join(" "),
+    companyName: clean(prospect.company_name, 160),
+    channel: "linkedin",
+    category: classification.category,
+    summary: classification.summary,
+    sourceRef,
+    receivedAt,
+  });
+}
+
+async function prepareInterestedReplyPackage(
+  integration: SendPilotIntegrationRow,
+  prospect: any,
+  receivedAt: string
+) {
+  const scope = {
+    userId: integration.owner_id,
+    workspaceId: integration.workspace_id,
+  };
+  return runWithServiceRecordScope(scope, async () => {
+    const taskCreated = true;
+    let draftPrepared = false;
+    const errors: string[] = [];
+    try {
+      await preparePositiveReplyForApproval(scope, prospect.id);
+      draftPrepared = true;
+    } catch (error: any) {
+      errors.push(`draft: ${safeError(error)}`);
+    }
+    if (errors.length) {
+      const { error } = await supabaseService.from("outreach_events").insert({
+        workspace_id: scope.workspaceId,
+        owner_id: scope.userId,
+        visibility: "private",
+        prospect_id: prospect.id,
+        kind: "failed",
+        metadata: {
+          source: "sendpilot_positive_reply_package",
+          receivedAt,
+          errors,
+          taskCreated,
+          draftPrepared,
+        },
+      });
+      if (error) console.error("Positive reply package audit failed", error.message);
+    }
+    return { taskCreated, draftPrepared, errors };
+  });
+}
+
 async function insertOutreachEvent(
   integration: SendPilotIntegrationRow,
   link: SendPilotLeadLink,
@@ -1297,24 +1634,13 @@ export async function recordSendPilotReplyInCrm(
       channel: "linkedin",
     }
   );
-  await ensureReplyAttentionTask({
-    workspaceId: integration.workspace_id,
-    userId: integration.owner_id,
-    companyId: UUID.test(String(prospect.crm_company_id || ""))
-      ? String(prospect.crm_company_id)
-      : null,
-    prospectId: String(prospect.id),
-    prospectName: [prospect.first_name, prospect.last_name]
-      .map((value) => clean(value, 100))
-      .filter(Boolean)
-      .join(" "),
-    companyName: clean(prospect.company_name, 160),
-    channel: "linkedin",
-    category: classification.category,
-    summary: classification.summary,
-    sourceRef: `sendpilot_reply:${providerMessageId}`,
-    receivedAt: event.timestamp,
-  });
+  await ensureSendPilotReplyTask(
+    integration,
+    prospect,
+    classification,
+    `sendpilot_reply:${providerMessageId}`,
+    event.timestamp
+  );
   await updateLeadLink(integration, link.id, {
     sync_status: classification.suppress ? "suppressed" : "replied",
     external_status: "REPLY_RECEIVED",
@@ -1323,7 +1649,11 @@ export async function recordSendPilotReplyInCrm(
     last_reply_at: event.timestamp,
     last_error: null,
   });
-  return { leadLinkId: link.id, outreachEventId };
+  const replyPackage =
+    classification.category === "interested"
+      ? await prepareInterestedReplyPackage(integration, prospect, event.timestamp)
+      : null;
+  return { leadLinkId: link.id, outreachEventId, replyPackage };
 }
 
 export async function recordSendPilotBackfillReplyInCrm(
@@ -1341,6 +1671,25 @@ export async function recordSendPilotBackfillReplyInCrm(
   if (!profileUrl) return { outreachEventId: null, matched: false };
   const prospect = await exactAssignedProspect(integration, profileUrl);
   if (!prospect) return { outreachEventId: null, matched: false };
+  const classification = classifyLinkedInReply(message.body);
+  const lastBackfillAt = new Date(integration.last_backfill_at || "").getTime();
+  const receivedAt = new Date(message.receivedAt).getTime();
+  // The first connector backfill establishes history without flooding Today
+  // with old tasks or drafts. Later passes package only replies that arrived
+  // after the last successful owner-scoped backfill.
+  const isNewSinceLastBackfill =
+    Number.isFinite(lastBackfillAt) &&
+    Number.isFinite(receivedAt) &&
+    receivedAt > lastBackfillAt;
+  if (isNewSinceLastBackfill) {
+    await ensureSendPilotReplyTask(
+      integration,
+      prospect,
+      classification,
+      `sendpilot_reply:${message.messageId}`,
+      message.receivedAt
+    );
+  }
 
   const { data: existing, error: existingError } = await supabaseService
     .from("outreach_events")
@@ -1355,9 +1704,22 @@ export async function recordSendPilotBackfillReplyInCrm(
     .limit(1)
     .maybeSingle();
   if (existingError) throw existingError;
-  if (existing) return { outreachEventId: existing.id as string, matched: true };
+  if (existing) {
+    const replyPackage =
+      isNewSinceLastBackfill && classification.category === "interested"
+        ? await prepareInterestedReplyPackage(
+            integration,
+            prospect,
+            message.receivedAt
+          )
+        : null;
+    return {
+      outreachEventId: existing.id as string,
+      matched: true,
+      replyPackage,
+    };
+  }
 
-  const classification = classifyLinkedInReply(message.body);
   await applySendPilotReplyConsequences(integration, prospect, {
     reply: message.body,
     receivedAt: message.receivedAt,
@@ -1411,39 +1773,30 @@ export async function recordSendPilotBackfillReplyInCrm(
       .limit(1)
       .maybeSingle();
     if (racedError) throw racedError;
-    return { outreachEventId: raced?.id || null, matched: true };
+    const replyPackage =
+      isNewSinceLastBackfill && classification.category === "interested"
+        ? await prepareInterestedReplyPackage(
+            integration,
+            prospect,
+            message.receivedAt
+          )
+        : null;
+    return {
+      outreachEventId: raced?.id || null,
+      matched: true,
+      replyPackage,
+    };
   }
   if (createError) throw createError;
-  const lastBackfillAt = new Date(integration.last_backfill_at || "").getTime();
-  const receivedAt = new Date(message.receivedAt).getTime();
-  // The first connector backfill establishes history without flooding Today
-  // with old work. Later safety passes create a task only for replies newer
-  // than the last successful owner-scoped backfill.
-  if (
-    Number.isFinite(lastBackfillAt) &&
-    Number.isFinite(receivedAt) &&
-    receivedAt > lastBackfillAt
-  ) {
-    await ensureReplyAttentionTask({
-      workspaceId: integration.workspace_id,
-      userId: integration.owner_id,
-      companyId: UUID.test(String(prospect.crm_company_id || ""))
-        ? String(prospect.crm_company_id)
-        : null,
-      prospectId: String(prospect.id),
-      prospectName: [prospect.first_name, prospect.last_name]
-        .map((value: unknown) => clean(value, 100))
-        .filter(Boolean)
-        .join(" "),
-      companyName: clean(prospect.company_name, 160),
-      channel: "linkedin",
-      category: classification.category,
-      summary: classification.summary,
-      sourceRef: `sendpilot_reply:${message.messageId}`,
-      receivedAt: message.receivedAt,
-    });
-  }
-  return { outreachEventId: created.id as string, matched: true };
+  const replyPackage =
+    isNewSinceLastBackfill && classification.category === "interested"
+      ? await prepareInterestedReplyPackage(integration, prospect, message.receivedAt)
+      : null;
+  return {
+    outreachEventId: created.id as string,
+    matched: true,
+    replyPackage,
+  };
 }
 
 export async function recordSendPilotOperationalEvent(

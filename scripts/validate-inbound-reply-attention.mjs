@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260902230045_add_important_email_notification_kind.sql"
+  "supabase/migrations/20260902230718_add_important_email_notification_kind.sql"
 );
 const notificationWriter = read("lib/crm-notification-writes.ts");
 const notificationHelpers = read("lib/crm-notifications.ts");
@@ -79,8 +79,8 @@ assert.match(sendPilot, /\.eq\("workspace_id", integration\.workspace_id\)/g);
 assert.match(sendPilot, /\.eq\("assigned_to_user_id", integration\.owner_id\)/g);
 assert.match(sendPilot, /workspaceId: integration\.workspace_id/g);
 assert.match(sendPilot, /userId: integration\.owner_id/g);
-assert.match(sendPilot, /sourceRef: `sendpilot_reply:\$\{providerMessageId\}`/);
-assert.match(sendPilot, /sourceRef: `sendpilot_reply:\$\{message\.messageId\}`/);
+assert.match(sendPilot, /`sendpilot_reply:\$\{providerMessageId\}`/);
+assert.match(sendPilot, /`sendpilot_reply:\$\{message\.messageId\}`/);
 assert.match(sendPilot, /integration\.last_backfill_at/);
 assert.match(sendPilot, /receivedAt > lastBackfillAt/);
 

@@ -102,7 +102,7 @@ const string = (value: unknown, maximum = 1_000) =>
 async function sendPilotRequest(
   path: string,
   apiKey: string,
-  input: { method?: "GET" | "POST"; body?: unknown } = {}
+  input: { method?: "GET" | "POST" | "PATCH"; body?: unknown } = {}
 ): Promise<any> {
   if (!path.startsWith("/v1/")) throw new Error("SendPilot API path is invalid");
   const method = input.method || "GET";
@@ -114,10 +114,10 @@ async function sendPilotRequest(
       headers: {
         "X-API-Key": apiKey,
         Accept: "application/json",
-        ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+        ...(method !== "GET" ? { "Content-Type": "application/json" } : {}),
         "User-Agent": "LiveCoach-SendPilot-CRM/1.0",
       },
-      ...(method === "POST" ? { body: JSON.stringify(input.body || {}) } : {}),
+      ...(method !== "GET" ? { body: JSON.stringify(input.body || {}) } : {}),
       cache: "no-store",
       signal: controller.signal,
     });
@@ -384,6 +384,70 @@ export async function addSendPilotLeads(
     duplicatesSkipped: wholeNumber(body?.duplicatesSkipped),
     invalidEntries: wholeNumber(body?.invalidEntries),
     errors,
+  };
+}
+
+export async function updateSendPilotLeadStatus(
+  apiKey: string,
+  input: {
+    leadId: string;
+    status: "DONE" | "NOT_INTERESTED" | "MEETING_BOOKED" | "OPPORTUNITY";
+    note?: string;
+  }
+): Promise<{ leadId: string; status: string; message: string }> {
+  const leadId = string(input.leadId, 240);
+  const note = string(input.note, 500);
+  if (!leadId) {
+    throw new SendPilotApiError("A valid SendPilot lead is required", 400, null);
+  }
+  const body = await sendPilotRequest(
+    `/v1/leads/${encodeURIComponent(leadId)}/status`,
+    apiKey,
+    {
+      method: "PATCH",
+      body: { status: input.status, ...(note ? { note } : {}) },
+    }
+  );
+  if (body?.success !== true || string(body?.leadId, 240) !== leadId) {
+    throw new SendPilotApiError(
+      "SendPilot did not confirm the lead status change",
+      502,
+      null
+    );
+  }
+  return {
+    leadId,
+    status: string(body?.status, 80) || input.status,
+    message: string(body?.message, 500) || "SendPilot lead status updated",
+  };
+}
+
+export async function updateSendPilotCampaign(
+  apiKey: string,
+  input: { campaignId: string; action: "pause" | "resume" }
+): Promise<{ campaignId: string; action: "pause" | "resume"; newStatus: string }> {
+  const campaignId = string(input.campaignId, 240);
+  if (!campaignId) {
+    throw new SendPilotApiError("A valid SendPilot campaign is required", 400, null);
+  }
+  const body = await sendPilotRequest(
+    `/v1/campaigns/${encodeURIComponent(campaignId)}`,
+    apiKey,
+    { method: "PATCH", body: { action: input.action } }
+  );
+  if (body?.success !== true || string(body?.campaignId, 240) !== campaignId) {
+    throw new SendPilotApiError(
+      "SendPilot did not confirm the campaign change",
+      502,
+      null
+    );
+  }
+  return {
+    campaignId,
+    action: input.action,
+    newStatus:
+      string(body?.newStatus, 40) ||
+      (input.action === "pause" ? "paused" : "started"),
   };
 }
 

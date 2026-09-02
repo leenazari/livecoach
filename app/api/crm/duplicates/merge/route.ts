@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findDuplicateCompanies } from "@/lib/crm-health";
+import { requireWorkspaceOwner, type RequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -54,7 +55,11 @@ function validateIds(keepId: string, mergeId: string) {
   }
 }
 
-async function loadPair(keepId: string, mergeId: string) {
+async function loadPair(
+  scope: Pick<RequestScope, "userId" | "workspaceId">,
+  keepId: string,
+  mergeId: string
+) {
   validateIds(keepId, mergeId);
   const [{ data: companies, error: companyError }, { data: contacts, error: contactError }] =
     await Promise.all([
@@ -63,10 +68,14 @@ async function loadPair(keepId: string, mergeId: string) {
         .select(
           "id,name,domain,website,sector,stage,notes,profile,attributes,email_context,commercial_memory,created_at,updated_at"
         )
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .in("id", [keepId, mergeId]),
       supabaseAdmin
         .from("contacts")
         .select("company_id,email")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .in("company_id", [keepId, mergeId])
         .limit(1000),
     ]);
@@ -98,12 +107,17 @@ async function loadPair(keepId: string, mergeId: string) {
   };
 }
 
-async function recordCounts(companyId: string) {
+async function recordCounts(
+  scope: Pick<RequestScope, "userId" | "workspaceId">,
+  companyId: string
+) {
   const rows = await Promise.all(
     COUNT_SOURCES.map(async (source) => {
       let query = supabaseAdmin
         .from(source.table)
         .select("*", { count: "exact", head: true })
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .eq(source.column, companyId);
       if ("extra" in source) query = query.eq(source.extra[0], source.extra[1]);
       const { count, error } = await query;
@@ -137,12 +151,13 @@ function reviewRecord(company: PairCompany, counts: Awaited<ReturnType<typeof re
 
 export async function GET(req: NextRequest) {
   try {
+    const scope = requireWorkspaceOwner();
     const keepId = req.nextUrl.searchParams.get("keepId") || "";
     const mergeId = req.nextUrl.searchParams.get("mergeId") || "";
-    const pair = await loadPair(keepId, mergeId);
+    const pair = await loadPair(scope, keepId, mergeId);
     const [keepCounts, mergeCounts] = await Promise.all([
-      recordCounts(keepId),
-      recordCounts(mergeId),
+      recordCounts(scope, keepId),
+      recordCounts(scope, mergeId),
     ]);
 
     return NextResponse.json(
@@ -163,10 +178,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const scope = requireWorkspaceOwner();
     const body = await req.json();
     const keepId = String(body.keepId || "");
     const mergeId = String(body.mergeId || "");
-    const pair = await loadPair(keepId, mergeId);
+    const pair = await loadPair(scope, keepId, mergeId);
 
     if (body.confirmed !== true || String(body.confirmName || "") !== pair.keep.name) {
       return NextResponse.json(

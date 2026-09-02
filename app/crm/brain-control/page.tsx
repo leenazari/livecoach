@@ -22,6 +22,12 @@ type BrainSnapshot = {
   generatedAt: string;
   currentUserId: string;
   role: "owner" | "manager" | "sales";
+  members: Array<{
+    userId: string;
+    role: "owner" | "manager" | "sales";
+    displayName: string;
+    email: string | null;
+  }>;
   plays: any[];
   trustRules: any[];
   routines: any[];
@@ -29,6 +35,7 @@ type BrainSnapshot = {
   pages: any[];
   learnings: any[];
   actionReceipts: any[];
+  actionExecutions: any[];
   costs: {
     currency: "GBP";
     forecastThisMonth: number;
@@ -159,12 +166,18 @@ export default function BrainControlPage() {
     instruction: "",
     expectedImpact: "",
   });
+  const [trustUserId, setTrustUserId] = useState("");
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const next = await crmFetch<BrainSnapshot>(API);
       setData(next);
+      setTrustUserId((current) =>
+        current && next.members.some((member) => member.userId === current)
+          ? current
+          : next.currentUserId
+      );
       setRoutineDrafts(
         Object.fromEntries(
           next.routines.map((routine) => [
@@ -633,10 +646,28 @@ export default function BrainControlPage() {
         <section>
           <h2 className="font-display text-xl text-bone">Action Trust Centre</h2>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">
-            These rules are enforced on the server. Hard-locked actions cannot be made autonomous through this screen or an AI prompt.
+            These rules are enforced on the server. Only the workspace owner can change them. Staff can use their approved day-to-day actions but cannot change Brain authority, application code or workspace permissions.
           </p>
+          {data.role === "owner" ? (
+            <label className="mt-4 block max-w-sm text-xs text-muted">
+              Brain permissions for
+              <select
+                value={trustUserId || data.currentUserId}
+                onChange={(event) => setTrustUserId(event.target.value)}
+                className={`${field} mt-1`}
+              >
+                {data.members.map((member) => (
+                  <option key={member.userId} value={member.userId}>
+                    {member.displayName} · {label(member.role)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            {data.trustRules.map((rule) => {
+            {data.trustRules
+              .filter((rule) => rule.owner_id === (trustUserId || data.currentUserId))
+              .map((rule) => {
               const choices = rule.action_kind === "destructive_action"
                 ? ["blocked"]
                 : rule.hard_locked
@@ -655,7 +686,7 @@ export default function BrainControlPage() {
                   </div>
                   <select
                     value={rule.mode}
-                    disabled={!!saving}
+                    disabled={!!saving || data.role !== "owner"}
                     onChange={(event) =>
                       void mutate(
                         `trust:${rule.id}`,
@@ -663,6 +694,7 @@ export default function BrainControlPage() {
                           action: "update_trust",
                           actionKind: rule.action_kind,
                           mode: event.target.value,
+                          targetUserId: rule.owner_id,
                         },
                         "Trust rule updated."
                       )
@@ -673,6 +705,9 @@ export default function BrainControlPage() {
                       <option key={choice} value={choice}>{label(choice)}</option>
                     ))}
                   </select>
+                  {data.role !== "owner" ? (
+                    <p className="mt-2 text-xs text-muted">Owner controlled</p>
+                  ) : null}
                 </article>
               );
             })}
@@ -738,6 +773,48 @@ export default function BrainControlPage() {
             }) : (
               <p className="rounded-xl border border-edge bg-panel p-4 text-sm text-muted">No routines have run yet.</p>
             )}
+          </div>
+          <div className="mt-6">
+            <h3 className="font-display text-lg text-bone">Audited Brain actions</h3>
+            <p className="mt-1 text-sm leading-6 text-muted">
+              Every confirmed action is bound to one account, one exact request and one retry key. Lee can see the workspace audit. Other users see only their own actions.
+            </p>
+            <div className="mt-3 grid gap-2">
+              {data.actionExecutions?.length ? data.actionExecutions.slice(0, 25).map((execution) => (
+                <article key={execution.id} className="rounded-xl border border-edge bg-panel p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm text-bone">{execution.label || label(execution.action_type)}</p>
+                        <Status value={execution.undone_at ? "undone" : execution.status} />
+                        {execution.owner_override_applied ? (
+                          <span className="rounded-full border border-amber/45 bg-amber/10 px-2 py-1 font-mono text-[0.47rem] uppercase tracking-wider text-amber">Owner override used</span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 font-mono text-[0.47rem] uppercase tracking-wider text-muted">
+                        {label(execution.action_kind)} · {label(execution.actor_role)} · Attempt {execution.attempt_count} · {when(execution.created_at)}
+                      </p>
+                      {Number(execution.estimated_cost_gbp || 0) > 0 ||
+                      Number(execution.actual_cost_gbp || 0) > 0 ? (
+                        <p className="mt-1 font-mono text-[0.47rem] uppercase tracking-wider text-muted">
+                          Estimated {gbp(execution.estimated_cost_gbp)} · Recorded {gbp(execution.actual_cost_gbp)}
+                        </p>
+                      ) : null}
+                    </div>
+                    {execution.recovery?.canRetry ? (
+                      <span className="font-mono text-[0.48rem] uppercase tracking-wider text-amber">Retry available on the action card</span>
+                    ) : null}
+                    {execution.recovery?.canUndo ? (
+                      <span className="font-mono text-[0.48rem] uppercase tracking-wider text-sky">Ten minute undo available on the action card</span>
+                    ) : null}
+                  </div>
+                  {execution.error ? <p className="mt-2 text-sm text-rust">{execution.error}</p> : null}
+                  {execution.recovery?.nextAction ? <p className="mt-1 text-xs text-muted">{execution.recovery.nextAction}</p> : null}
+                </article>
+              )) : (
+                <p className="rounded-xl border border-edge bg-panel p-4 text-sm text-muted">No audited Brain actions yet.</p>
+              )}
+            </div>
           </div>
         </section>
       ) : null}

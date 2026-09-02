@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import {
+  calendarRecurrence,
   calendarDurationMinutes,
   parseCalendarAttendees,
   validCalendarRequestId,
@@ -10,6 +11,7 @@ import { createConnectedCalendarEvent } from "@/lib/calendar-provider";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { validMeetingUrl } from "@/lib/meeting-url";
 import { crmBlockerPayload } from "@/lib/crm-blocker";
+import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 
 export const runtime = "nodejs";
 // Keep this a dynamic function: a no-arg GET would otherwise be statically
@@ -179,19 +181,14 @@ export async function POST(req: NextRequest) {
 
     let companyName = "";
     if (companyId) {
-      const { data: company, error: companyError } = await supabaseAdmin
-        .from("companies")
-        .select("id,name")
-        .eq("id", companyId)
-        .maybeSingle();
-      if (companyError) throw companyError;
-      if (!company?.id) {
+      const access = await loadAssignedClientAccess(companyId, scope);
+      if (!access?.company?.id) {
         return NextResponse.json(
           { error: "That client is not available to this account" },
           { status: 400 }
         );
       }
-      companyName = String(company.name || "").trim();
+      companyName = String(access.company.name || "").trim();
     }
 
     const addToCalendar = body.addToCalendar === true;
@@ -247,6 +244,10 @@ export async function POST(req: NextRequest) {
     const endIso = startIso
       ? new Date(new Date(startIso).getTime() + durationMinutes * 60_000).toISOString()
       : null;
+    const recurrence =
+      addToCalendar && startIso
+        ? calendarRecurrence(body.recurrence, startIso)
+        : null;
     const calendarEvent =
       addToCalendar && startIso && endIso
         ? await createConnectedCalendarEvent({
@@ -256,6 +257,7 @@ export async function POST(req: NextRequest) {
             endIso,
             attendeeEmails: attendeeResult.emails,
             meetingUrl: meetingUrl || null,
+            recurrence,
           })
         : null;
 
@@ -289,11 +291,12 @@ export async function POST(req: NextRequest) {
       if (calendarEvent?.externalId) {
         const { data: existing } = await supabaseAdmin
           .from("upcoming_calls")
-          .select(
-            "id,company_id,title,scheduled_at,meeting_url,intent,prepped,source,external_id,attendees"
-          )
-          .eq("owner_id", scope.userId)
-          .eq("external_id", calendarEvent.externalId)
+            .select(
+              "id,company_id,title,scheduled_at,meeting_url,intent,prepped,source,external_id,attendees"
+            )
+            .eq("workspace_id", scope.workspaceId)
+            .eq("owner_id", scope.userId)
+            .eq("external_id", calendarEvent.externalId)
           .maybeSingle();
         if (existing?.id) {
           return NextResponse.json({
