@@ -82,9 +82,18 @@ const newCalendarRequestId = () => {
     .join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
 };
 
-export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
+export default function UpcomingCalls({
+  limit = 10,
+  daysAhead,
+}: {
+  limit?: number;
+  daysAhead?: number;
+}) {
   const router = useRouter();
-  const cached = getCached<UpcomingFeed>("/api/crm/upcoming");
+  const feedUrl = daysAhead
+    ? `/api/crm/upcoming?days=${encodeURIComponent(daysAhead)}`
+    : "/api/crm/upcoming";
+  const cached = getCached<UpcomingFeed>(feedUrl);
   const [calls, setCalls] = useState<Upcoming[]>(cached?.calls || []);
   const [callReminders, setCallReminders] = useState<CallReminder[]>(
     cached?.callReminders || []
@@ -122,7 +131,7 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   const load = async () => {
     const seq = ++loadSeq.current;
     try {
-      const d = await crmFetch<UpcomingFeed>("/api/crm/upcoming");
+      const d = await crmFetch<UpcomingFeed>(feedUrl);
       if (seq !== loadSeq.current) return;
       setCalls(
         (d.calls || []).filter((call) => !dismissedIds.current.has(call.id))
@@ -189,7 +198,7 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
       window.removeEventListener("focus", onRefresh);
       document.removeEventListener("visibilitychange", onRefresh);
     };
-  }, []);
+  }, [feedUrl]);
 
   const create = async () => {
     if (!title.trim() && !company) return;
@@ -482,9 +491,9 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
   const inputCls =
     "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-[0.72rem] text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
 
-  // Default to the soonest 10 calls, with the rest behind an expand button, so
-  // the dashboard stays condensed once the calendar fills up. The list arrives
-  // already sorted soonest-first.
+  // Default to the soonest calls, with the rest behind an expand button. The
+  // home dashboard supplies a seven-day feed while the Calls page deliberately
+  // keeps the full future schedule available.
   const shown = showAll ? calls : calls.slice(0, limit);
   const hiddenCount = calls.length - shown.length;
 

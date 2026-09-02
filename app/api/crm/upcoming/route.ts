@@ -18,9 +18,21 @@ export const dynamic = "force-dynamic";
 
 // GET /api/crm/upcoming -> scheduled calls, soonest first, with the linked
 // company name. Powers the dashboard's Upcoming Calls card.
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const scope = await resolveRecordScope();
+    const requestedDays = Number.parseInt(
+      req.nextUrl.searchParams.get("days") || "",
+      10
+    );
+    const daysAhead = Number.isInteger(requestedDays) &&
+      requestedDays >= 1 &&
+      requestedDays <= 31
+      ? requestedDays
+      : null;
+    const horizonIso = daysAhead
+      ? new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString()
+      : null;
     // Hide calls whose time has passed by more than a short grace window (3h),
     // so a just-finished call sticks around long enough to open/recap, then
     // drops off on its own. Calls with no set time are always kept.
@@ -32,6 +44,23 @@ export async function GET() {
       Date.now() - 14 * 24 * 60 * 60 * 1000
     ).toISOString();
     const nowIso = new Date().toISOString();
+    let callsQuery = supabaseAdmin
+      .from("upcoming_calls")
+      .select(
+        "id, company_id, title, scheduled_at, meeting_url, intent, prepped, source, created_at"
+      )
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
+      .is("completed_at", null)
+      .or(`scheduled_at.is.null,scheduled_at.gte.${pastCutoff}`)
+      .order("scheduled_at", { ascending: true, nullsFirst: false })
+      .limit(200);
+    if (horizonIso) {
+      callsQuery = callsQuery
+        .not("scheduled_at", "is", null)
+        .lte("scheduled_at", horizonIso);
+    }
+
     const [
       companiesResult,
       callsResult,
@@ -43,18 +72,9 @@ export async function GET() {
         .select("id, name")
         .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId),
-      supabaseAdmin
-        .from("upcoming_calls")
-        .select(
-          "id, company_id, title, scheduled_at, meeting_url, intent, prepped, source, created_at"
-        )
-        .eq("workspace_id", scope.workspaceId)
-        .eq("owner_id", scope.userId)
-        // A finished call (completed_at set on end) drops off here at once.
-        .is("completed_at", null)
-        .or(`scheduled_at.is.null,scheduled_at.gte.${pastCutoff}`)
-        .order("scheduled_at", { ascending: true, nullsFirst: false })
-        .limit(200),
+      // A finished call drops off at once. A dashboard request may additionally
+      // constrain this personal feed to its requested future window.
+      callsQuery,
       supabaseAdmin
         .from("upcoming_calls")
         .select(
