@@ -453,7 +453,11 @@ function actionVerb(type: string): string {
     : "remove";
 }
 
-async function resolveActions(items: any[], defaultCompanyId: string | null = null): Promise<any[]> {
+async function resolveActions(
+  items: any[],
+  defaultCompanyId: string | null = null,
+  sourceQuestion = ""
+): Promise<any[]> {
   const out: any[] = [];
   const callTypes = ["set_meeting_link", "set_intent", "add_intent", "link_call", "restore_call", "cancel_call"];
   for (const it of Array.isArray(items) ? items : []) {
@@ -1183,6 +1187,14 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
           ? it.client
           : ""
       ).trim();
+      const question = (
+        typeof it.question === "string" && it.question.trim()
+          ? it.question
+          : sourceQuestion
+      )
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 800);
       let em = typeof it.email === "string" ? it.email.trim().toLowerCase() : "";
       if (!person && !em) continue;
       const contacts = await findOwnContacts(person, em);
@@ -1202,12 +1214,15 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       out.push({
         key,
         type: it.type,
-        label: `Pull ${person || em}'s emails and build their client profile`,
+        label: question
+          ? `Check ${person || em}'s emails and answer the question`
+          : `Pull ${person || em}'s emails and build their client profile`,
         endpoint: `/api/crm/email-pull`,
         method: "POST",
         body: {
           ...(person ? { name: person } : {}),
           ...(em ? { email: em } : {}),
+          ...(question ? { question } : {}),
           ...(matchedContact?.id ? { contactId: matchedContact.id } : {}),
           ...(matchedContact?.company_id
             ? { companyId: matchedContact.company_id }
@@ -1695,7 +1710,7 @@ CALL TRANSCRIPTS ON DEMAND: when an ON-DEMAND CALL TRANSCRIPT block is present, 
 
 ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, client stages, stakeholders and to-dos, create or update internal CRM records, create and configure outreach campaigns, select a review queue, create profiles, update opportunities, pull email context, remember durable rules, correct records, dismiss stale work, and queue one-off emails from the signed-in user's own connected mailbox. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
-[{"type":"set_meeting_link","call":"<exact call title plus its UK date and time from the context>","url":"<link>"},{"type":"set_intent","call":"<exact call title plus its UK date and time from the context>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<exact call title plus its UK date and time from the context>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<exact call title plus its UK date and time from the context>","client":"<client name>"},{"type":"restore_call","call":"<exact future call title plus its UK date and time from the context>"},{"type":"cancel_call","call":"<exact call title plus its UK date and time from the context>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>"}]
+[{"type":"set_meeting_link","call":"<exact call title plus its UK date and time from the context>","url":"<link>"},{"type":"set_intent","call":"<exact call title plus its UK date and time from the context>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<exact call title plus its UK date and time from the context>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<exact call title plus its UK date and time from the context>","client":"<client name>"},{"type":"restore_call","call":"<exact future call title plus its UK date and time from the context>"},{"type":"cancel_call","call":"<exact call title plus its UK date and time from the context>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>","question":"<the user's exact factual mailbox question, when they asked one>"}]
 ---END ACTIONS---
 Additional supported actions are:
 {"type":"create_document","title":"<finished document title>","documentType":"plan|agreement|handbook|proposal|report|brief|other","instructions":"<grounded scope, intended reader, required outcome and useful structure>","client":"<optional exact client name>","sourceTask":"<optional exact open to-do text from DOCUMENT STUDIO ON DEMAND>"}
@@ -1732,7 +1747,7 @@ Refer to the call, client, draft or to-do by the exact name/title/text shown in 
 
 NEW PEOPLE: when the user introduces or talks about a person or company who is a contact, prospect, partner or lead and is NOT already in the context, proactively OFFER to create their profile with create_client, capturing what you know in the brief, so future calls and notes track against them. Suggest it early rather than waiting to be asked twice.
 
-PULL EMAILS: you CAN read the user's email thread with a person through their own connected Google or Microsoft account and build their client from it. When the user asks you to pull, fetch, check or look at someone's email, or to add a client from an email thread, emit a "pull_emails" action with their name and their email if it is in the context or the message. This reads the recent thread with them, distils it into their client context, and creates or refreshes their profile and contact, ready for prep. Do not say you cannot access email. If no mailbox is connected or email reading was not granted, the action will report that back and the user can connect their own account in Settings. When the user mentions emailing someone new from a company address, offer to pull the thread and set them up.
+PULL EMAILS: you CAN read the user's email thread with a person through their own connected Google or Microsoft account and build their client from it. When the user asks you to pull, fetch, check or look at someone's email, or to add a client from an email thread, emit a "pull_emails" action with their name and their email if it is in the context or the message. When they ask a factual question such as whether they sent a follow-up, include their exact question in the action's "question" field. After confirmation, the mailbox result answers that question directly with grounded message evidence and persists it in the Brain conversation. The read is bounded to a small recent set and never sends a whole mailbox or quoted history to the model. It also distils the relationship into their client context and creates or refreshes their profile and contact, ready for prep. Do not say you cannot access email. If no mailbox is connected or email reading was not granted, the action will report that back and the user can connect their own account in Settings. When the user mentions emailing someone new from a company address, offer to pull the thread and set them up.
 
 FIX WRONG RECORDS: when the user corrects a fact about a client (for example the records say someone was ill and they tell you it was actually a colleague, or a name, role, date, stage or detail is wrong), do NOT just acknowledge it in prose and move on. The records do not update themselves from chat. Emit a "correct" action naming the client and the corrected fact, so the stored "what we know", playbook, to-dos and call summary all get fixed. Acknowledge briefly in one line AND emit the action.
 
@@ -1911,7 +1926,11 @@ ALWAYS end the spoken version with your closing question whenever your reply has
             ...taskActionItems,
             ...(Array.isArray(writeActionItems) ? writeActionItems : []),
           ];
-          proposedActions = await resolveActions(requestedActions, focus);
+          proposedActions = await resolveActions(
+            requestedActions,
+            focus,
+            rawMessage
+          );
           const unresolvedActions = flagUnresolvedActions(
             requestedActions,
             proposedActions

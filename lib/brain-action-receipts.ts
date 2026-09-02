@@ -2,6 +2,7 @@ export type BrainActionReceiptResult = {
   label: string;
   status: "completed" | "not_completed";
   reason?: string;
+  resultSummary?: string;
   action?: {
     type: string;
     label: string;
@@ -31,6 +32,7 @@ export function normaliseBrainActionReceiptResults(
             ? ("completed" as const)
             : ("not_completed" as const),
         reason: clean(item?.reason, 300) || undefined,
+        resultSummary: clean(item?.resultSummary, 1600) || undefined,
         action:
           action && typeof action.type === "string"
             ? {
@@ -71,7 +73,10 @@ export function formatBrainActionReceipt(
   ];
   if (completed.length) {
     lines.push("", `✓ Completed (${completed.length})`);
-    for (const item of completed) lines.push(`• ${item.label}`);
+    for (const item of completed) {
+      lines.push(`• ${item.label}`);
+      if (item.resultSummary) lines.push(`  Result. ${item.resultSummary}`);
+    }
   }
   if (notCompleted.length) {
     lines.push("", `⚠ Not completed (${notCompleted.length})`);
