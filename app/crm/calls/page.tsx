@@ -7,6 +7,7 @@ import NavMenu from "@/components/crm/NavMenu";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import UpcomingCalls from "@/components/crm/UpcomingCalls";
+import TaskComposer from "@/components/crm/TaskComposer";
 import MatrixRain from "@/components/MatrixRain";
 import { crmCompanyHref } from "@/lib/crm-navigation";
 
@@ -162,6 +163,8 @@ export default function CallsPage() {
           ◂ dashboard
         </Link>
       </header>
+
+      <TaskComposer />
 
       {broken > 0 && (
         <div className="mb-3 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] text-rust">
