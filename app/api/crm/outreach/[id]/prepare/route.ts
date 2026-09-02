@@ -7,6 +7,7 @@ import { logModelUsage } from "@/lib/usage";
 import { londonDate, modelSources, modelText, parseObject } from "@/lib/outreach";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import {
+  effectiveOutreachCtaConfig,
   ensureOutreachEmailCampaignCta,
   ensureOutreachEmailSimpleOptOut,
   ensureOutreachEmailWithoutSalesCta,
@@ -250,16 +251,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       goal: clean(campaign.goal, 700),
       offerAngle: clean(campaign.offer_angle, 1_200),
     };
+    const selectedCta = effectiveOutreachCtaConfig({
+      enrolmentCtaConfig: enrolment.cta_config,
+      campaignCtaConfig: campaign.cta_config,
+    });
     const campaignCta = resolveOutreachCampaignCta({
       campaignGoal: campaign.goal,
       campaignOfferAngle: campaign.offer_angle,
       sequencePurpose: sequenceStep.purpose,
       sequenceGuidance: sequenceStep.guidance,
       senderGuidance,
-      campaignCtaConfig: campaign.cta_config,
+      campaignCtaConfig: selectedCta.config,
+      configuredSource: selectedCta.source,
       personalBookingUrl,
     });
-    const configuredCtaType = String(campaign.cta_config?.type || "auto");
+    const configuredCtaType = selectedCta.config.type;
     const lastStep = Math.max(
       1,
       ...sequence.map((row: any) => Number(row?.step) || 0)
@@ -275,10 +281,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             lastStep,
           });
     const campaignCtaInstruction = campaignCta
-      ? `EXPLICIT CAMPAIGN NEXT STEP: use this approved email action once: "${campaignCta.emailText}" Use this spoken next step once in the voice note: "${campaignCta.voiceText}" Do not invent a second CTA. This is a campaign content instruction, not a send blocker.`
+      ? `APPROVED OUTREACH NEXT STEP: use this approved email action once: "${campaignCta.emailText}" Use this spoken next step once in the voice note: "${campaignCta.voiceText}" Do not invent a second CTA. This is a content instruction, not a send blocker.`
       : configuredCtaType === "none"
-        ? "CAMPAIGN NEXT STEP: this campaign deliberately has no CTA. Do not add one and do not treat its absence as a problem."
-        : "CAMPAIGN NEXT STEP: no explicit CTA is configured for this step. A low pressure invitation remains optional.";
+        ? "APPROVED OUTREACH NEXT STEP: this person deliberately has no CTA. Do not add one and do not treat its absence as a problem."
+        : "APPROVED OUTREACH NEXT STEP: no explicit CTA is configured for this step. A low pressure invitation remains optional.";
     const candidatePreparationCampaign = isCandidatePreparationCampaign(campaignContract);
     const candidatePreparationVacancyPriority = candidatePreparationCampaign
       ? `CANDIDATE PREPARATION VACANCY PRIORITY: do not simply take the first vacancies returned by the jobs page. Compare the verified live roles and select the four with the highest preparation value. Rank technical and interview intensive roles first, especially software engineering, data, cyber security, cloud, infrastructure, product and technical leadership. Then consider seniority, complexity, the consequence of a weak interview and any explicitly published annual compensation. Higher compensation is supporting evidence of a high stakes interview, not a reason on its own. Prefer a technically complex role over a generic role even when the generic role has a slightly higher salary. Keep the exact published compensation in jobSignals.compensation or use an empty string when it is not stated. For a recruitment company, say the company is advertising or recruiting for the role on behalf of a client. Never claim the named prospect personally posted it or that the recruitment company itself is hiring.`
@@ -577,8 +583,14 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
             label: campaignCta.label,
             source: campaignCta.source,
             delivery: campaignCta.delivery || "reply",
+            inherited: selectedCta.inherited,
           }
-        : null,
+        : {
+            label: "",
+            source: selectedCta.source,
+            delivery: configuredCtaType === "none" ? "none" : "optional",
+            inherited: selectedCta.inherited,
+          },
       voiceUrgencyType,
       generationMode,
     };

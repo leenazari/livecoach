@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MatrixRain from "@/components/MatrixRain";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import OutreachCtaAdvice from "@/components/crm/OutreachCtaAdvice";
+import ProspectCtaSelector from "@/components/crm/ProspectCtaSelector";
 import OutreachVoiceNoteEditor from "@/components/crm/OutreachVoiceNoteEditor";
 import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { outreachProspectHref } from "@/lib/crm-navigation";
@@ -13,6 +14,7 @@ import {
   clampOutreachDailyLimit,
 } from "@/lib/outreach-limits";
 import { prepareOutreachVoiceScriptForReview } from "@/lib/outreach-voice-policy";
+import type { OutreachCampaignCtaConfig } from "@/lib/outreach-demo-reply-cta";
 import type { WorkInboxItem } from "@/lib/work-inbox";
 
 type PrepareStatus = "queued" | "researching" | "done" | "error";
@@ -75,6 +77,7 @@ type OutreachMessage = {
 type QueueRow = {
   id: string;
   status: string;
+  cta_config?: OutreachCampaignCtaConfig | null;
   current_step?: number;
   queueKind?: "new_contact" | "follow_up";
   prospect: {
@@ -91,7 +94,7 @@ type QueueRow = {
   campaign?: {
     name?: string;
     daily_limit?: number;
-    cta_config?: { type?: string } | null;
+    cta_config?: OutreachCampaignCtaConfig | null;
   };
   message?: OutreachMessage | null;
   lastSentMessage?: OutreachMessage | null;
@@ -303,6 +306,9 @@ export default function OutreachTodayLane({
   const [replyDrafts, setReplyDrafts] = useState<Record<string, OutreachMessage>>({});
   const [preparingReplyId, setPreparingReplyId] = useState("");
   const [handledReplyIds, setHandledReplyIds] = useState<string[]>([]);
+  const [ctaBlockedIds, setCtaBlockedIds] = useState<string[]>([]);
+  const [ctaRefreshRequiredProspectIds, setCtaRefreshRequiredProspectIds] =
+    useState<string[]>([]);
   const prepareJobsRef = useRef<Record<string, PrepareStatus>>({});
   const pendingRef = useRef<string[]>([]);
   const activeRef = useRef<Set<string>>(new Set());
@@ -374,6 +380,9 @@ export default function OutreachTodayLane({
       })
         .then(() => {
           updatePrepareJob(prospectId, "done");
+          setCtaRefreshRequiredProspectIds((current) =>
+            current.filter((id) => id !== prospectId)
+          );
           setNotice("Research and draft completed. Review the exact email before anything is sent.");
           window.dispatchEvent(
             new CustomEvent("lc:tasks-updated", {
@@ -954,7 +963,10 @@ export default function OutreachTodayLane({
     ? actionableQueue.filter((row) => row.id !== focusedRow.id).slice(0, 5)
     : [];
 
-  const allUnprepared = queue.filter(queueRowNeedsPreparation);
+  const allUnprepared = queue.filter(
+    (row) =>
+      queueRowNeedsPreparation(row) && !ctaBlockedIds.includes(row.id)
+  );
   const firstTouchUnprepared = allUnprepared.filter(
     (row) => queueWaveRank(row) === 0
   );
@@ -1422,6 +1434,15 @@ export default function OutreachTodayLane({
               displayMessage &&
                 ["draft", "failed", "approved"].includes(displayMessage.status)
             );
+            const canEditCta = Boolean(
+              canPrepare ||
+                (displayMessage && ["draft", "failed"].includes(displayMessage.status))
+            );
+            const ctaBlocked = ctaBlockedIds.includes(row.id);
+            const ctaRefreshRequired =
+              ctaRefreshRequiredProspectIds.includes(row.prospect.id);
+            const effectiveCtaConfig =
+              row.cta_config || row.campaign?.cta_config || null;
             const research = row.savedResearch || {};
             const hasResearch = Boolean(
               research.summary ||
@@ -1512,7 +1533,11 @@ export default function OutreachTodayLane({
                             ? void createVoiceScript(row.message, row.prospect.id)
                             : enqueuePrepare(row.prospect.id)
                         }
-                        disabled={job === "queued" || job === "researching"}
+                        disabled={
+                          job === "queued" ||
+                          job === "researching" ||
+                          ctaBlocked
+                        }
                         className={primary}
                       >
                         {job === "researching"
@@ -1570,6 +1595,52 @@ export default function OutreachTodayLane({
                     ) : null}
                   </div>
                 </div>
+
+                {canEditCta ? (
+                  <div className="mt-3">
+                    <ProspectCtaSelector
+                      enrolmentId={row.id}
+                      value={row.cta_config}
+                      campaignValue={row.campaign?.cta_config}
+                      disabled={
+                        job === "queued" ||
+                        job === "researching" ||
+                        Boolean(displayMessage?.scheduled_at)
+                      }
+                      hasEditableDraft={Boolean(
+                        displayMessage &&
+                          ["draft", "failed"].includes(displayMessage.status)
+                      )}
+                      onBlockingChange={(blocked) =>
+                        setCtaBlockedIds((current) =>
+                          blocked
+                            ? [...new Set([...current, row.id])]
+                            : current.filter((id) => id !== row.id)
+                        )
+                      }
+                      onSaved={(ctaConfig, result) => {
+                        setQueue((current) =>
+                          current.map((item) =>
+                            item.id === row.id
+                              ? { ...item, cta_config: ctaConfig }
+                              : item
+                          )
+                        );
+                        setCtaRefreshRequiredProspectIds((current) =>
+                          result.draftNeedsRefresh
+                            ? [...new Set([...current, row.prospect.id])]
+                            : current.filter((id) => id !== row.prospect.id)
+                        );
+                      }}
+                    />
+                  </div>
+                ) : null}
+
+                {ctaRefreshRequired ? (
+                  <p className="mt-2 rounded-lg border border-amber/45 bg-amber/10 px-3 py-2 text-xs leading-5 text-amber">
+                    The action changed. Refresh the draft before approval so the email and voice script use the same next step.
+                  </p>
+                ) : null}
 
                 {rowOpen && displayMessage ? (
                   <div className="mt-4 grid gap-3 border-t border-edge pt-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(17rem,0.8fr)]">
@@ -1647,13 +1718,13 @@ export default function OutreachTodayLane({
                                 displayMessage.voice_public_token
                               )}
                               campaignHasCta={Boolean(
-                                row.campaign?.cta_config?.type &&
+                                effectiveCtaConfig?.type &&
                                 !["auto", "none"].includes(
-                                  row.campaign.cta_config.type
+                                  effectiveCtaConfig.type
                                 )
                               )}
                               campaignOptedOut={
-                                row.campaign?.cta_config?.type === "none"
+                                effectiveCtaConfig?.type === "none"
                               }
                               workspaceId={sender?.workspaceId}
                               userId={sender?.userId}
@@ -1663,7 +1734,8 @@ export default function OutreachTodayLane({
                               script={edit.voiceScript}
                               disabled={
                                 Boolean(displayMessage.scheduled_at) ||
-                                displayMessage.status === "approved"
+                                displayMessage.status === "approved" ||
+                                ctaRefreshRequired
                               }
                               generating={
                                 generatingVoiceMessageId === displayMessage.id
@@ -1684,6 +1756,7 @@ export default function OutreachTodayLane({
                                 disabled={
                                   job === "queued" ||
                                   job === "researching" ||
+                                  ctaBlocked ||
                                   Boolean(displayMessage.scheduled_at)
                                 }
                                 className={button}
@@ -1698,6 +1771,7 @@ export default function OutreachTodayLane({
                                 disabled={
                                   savingMessageId === displayMessage.id ||
                                   rehearsingMessageId === displayMessage.id ||
+                                  ctaRefreshRequired ||
                                   Boolean(displayMessage.scheduled_at)
                                 }
                                 className="inline-flex min-h-10 items-center justify-center rounded-lg border border-sky/45 bg-sky/[0.06] px-3 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-sky disabled:opacity-40"
@@ -1719,6 +1793,7 @@ export default function OutreachTodayLane({
                                 onClick={() => void saveDraft(displayMessage, true)}
                                 disabled={
                                   savingMessageId === displayMessage.id ||
+                                  ctaRefreshRequired ||
                                   Boolean(displayMessage.scheduled_at)
                                 }
                                 className={primary}

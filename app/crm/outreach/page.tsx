@@ -7,6 +7,7 @@ import NavMenu from "@/components/crm/NavMenu";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import CampaignCtaEditor from "@/components/crm/CampaignCtaEditor";
 import OutreachCtaAdvice from "@/components/crm/OutreachCtaAdvice";
+import ProspectCtaSelector from "@/components/crm/ProspectCtaSelector";
 import RevenueToday from "@/components/crm/RevenueToday";
 import MatrixRain from "@/components/MatrixRain";
 import { crmConfirmationError, crmFetch, getCached } from "@/lib/crm";
@@ -520,6 +521,9 @@ export default function OutreachPage() {
   const [error, setError] = useState("");
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [prepareJobs, setPrepareJobs] = useState<Record<string, PrepareStatus>>({});
+  const [ctaBlockedIds, setCtaBlockedIds] = useState<string[]>([]);
+  const [ctaRefreshRequiredProspectIds, setCtaRefreshRequiredProspectIds] =
+    useState<string[]>([]);
   const prepareJobsRef = useRef<Record<string, PrepareStatus>>({});
   const prepareQueueRef = useRef<string[]>([]);
   const activePrepareRef = useRef<Set<string>>(new Set());
@@ -684,6 +688,9 @@ export default function OutreachPage() {
       })
         .then((result) => {
           updatePrepareJob(prospectId, "done");
+          setCtaRefreshRequiredProspectIds((current) =>
+            current.filter((id) => id !== prospectId)
+          );
           setNotice(
             result.formatRepaired
               ? "A queued research draft completed after an automatic format repair. Review it carefully before sending."
@@ -1232,7 +1239,10 @@ export default function OutreachPage() {
     const preparable = filterOutreachQueueByCampaign(
       queue,
       queueCampaignFilterId
-    ).filter(queueRowNeedsPreparation);
+    ).filter(
+      (row) =>
+        queueRowNeedsPreparation(row) && !ctaBlockedIds.includes(row.id)
+    );
     const firstTouches = preparable.filter((row) => queueWaveRank(row) === 0);
     const activeWave = firstTouches.length ? firstTouches : preparable;
     const selectedRows = activeWave.filter(
@@ -1340,7 +1350,11 @@ export default function OutreachPage() {
     const readyDrafts = filterOutreachQueueByCampaign(
       queue,
       queueCampaignFilterId
-    ).filter(hasApprovableEmail);
+    ).filter(
+      (row) =>
+        hasApprovableEmail(row) &&
+        !ctaRefreshRequiredProspectIds.includes(row.prospect.id)
+    );
     const firstTouchDrafts = readyDrafts.filter(
       (row) => queueWaveRank(row) === 0
     );
@@ -1860,7 +1874,10 @@ export default function OutreachPage() {
         .map(({ row }) => row),
     [visibleQueue]
   );
-  const preparableEmailRows = visibleQueue.filter(queueRowNeedsPreparation);
+  const preparableEmailRows = visibleQueue.filter(
+    (row) =>
+      queueRowNeedsPreparation(row) && !ctaBlockedIds.includes(row.id)
+  );
   const firstTouchEmailRows = preparableEmailRows.filter(
     (row) => queueWaveRank(row) === 0
   );
@@ -1891,7 +1908,11 @@ export default function OutreachPage() {
         row.status
       )
   ).length;
-  const approvalReadyRows = visibleQueue.filter(hasApprovableEmail);
+  const approvalReadyRows = visibleQueue.filter(
+    (row) =>
+      hasApprovableEmail(row) &&
+      !ctaRefreshRequiredProspectIds.includes(row.prospect.id)
+  );
   const firstTouchApprovalRows = approvalReadyRows.filter(
     (row) => queueWaveRank(row) === 0
   );
@@ -1977,7 +1998,7 @@ export default function OutreachPage() {
           <p className="mt-2 text-xs leading-5 text-muted">Choosing contacts is free and starts no research. Research + draft current wave prepares the email and optional voice script, but never generates paid audio or contacts anyone. Bulk approval applies only to the exact emails already shown below.</p>
           <p className="mt-2 text-xs leading-5 text-sky">Overnight preparation keeps a maximum of {OVERNIGHT_RESEARCH_INVENTORY_LIMIT} unused researched leads per salesperson. Saved research and missing script repairs are reused before any new lead is researched.</p>
         </div>
-        <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const isFollowUp = row.queueKind === "follow_up" || Boolean(lastSent); const followUpDue = isFollowUp && row.status === "queued" && Number(row.current_step) > 1 && row.sequenceStepDue !== false; const sequenceStep = row.sequenceStep as SequenceStep | null; const channel = sequenceStep?.channel || "email"; const manual = channel !== "email"; const manualDue = manual && row.sequenceStepDue !== false && !["completed", "paused", "replied", "booked", "suppressed"].includes(row.status); const needsVoiceScript = queueRowNeedsVoiceScript(row); const canPrepare = !manual && queueRowNeedsPreparation(row); const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const displayStatus = manualDue ? channel : followUpDue && !m ? "follow_up_due" : m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const displayStatusLabel = displayStatus === "sent" ? "✓ sent" : displayStatus === "follow_up_due" ? "Follow up due" : displayStatus; const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text, voice_script: m.voice_script || "" } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className={`rounded-xl border bg-panel p-4 ${isFollowUp ? "border-amber/45" : "border-edge"}`}>
+        <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const isFollowUp = row.queueKind === "follow_up" || Boolean(lastSent); const followUpDue = isFollowUp && row.status === "queued" && Number(row.current_step) > 1 && row.sequenceStepDue !== false; const sequenceStep = row.sequenceStep as SequenceStep | null; const channel = sequenceStep?.channel || "email"; const manual = channel !== "email"; const manualDue = manual && row.sequenceStepDue !== false && !["completed", "paused", "replied", "booked", "suppressed"].includes(row.status); const needsVoiceScript = queueRowNeedsVoiceScript(row); const canPrepare = !manual && queueRowNeedsPreparation(row); const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const ctaBlocked = ctaBlockedIds.includes(row.id); const ctaRefreshRequired = ctaRefreshRequiredProspectIds.includes(p.id); const effectiveCtaConfig = row.cta_config || row.campaign?.cta_config || null; const canEditCta = !manual && (canPrepare || ["draft", "failed"].includes(m?.status)); const displayStatus = manualDue ? channel : followUpDue && !m ? "follow_up_due" : m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const displayStatusLabel = displayStatus === "sent" ? "✓ sent" : displayStatus === "follow_up_due" ? "Follow up due" : displayStatus; const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text, voice_script: m.voice_script || "" } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className={`rounded-xl border bg-panel p-4 ${isFollowUp ? "border-amber/45" : "border-edge"}`}>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
               <p className={`font-mono text-[0.55rem] uppercase ${isFollowUp ? "text-amber" : "text-sky"}`}>#{index + 1} · {followUpDue ? "follow up due" : isFollowUp ? "previously contacted" : "new contact"} · step {row.current_step}{sequenceStep ? ` · ${sequenceStep.purpose}` : ""}</p>
@@ -1994,7 +2015,7 @@ export default function OutreachPage() {
               {!m && row.next_action_at && row.sequenceStepDue === false ? <p className="mt-2 text-xs text-muted">Next step becomes ready {formatActivityDate(row.next_action_at)}.</p> : null}
             </div>
             {canPrepare ? (
-              <button onClick={() => needsVoiceScript && m?.id ? void createVoiceScript(m.id, p.id) : prepare(p.id)} disabled={preparePending} className={`${primary} w-full sm:w-auto`}>
+              <button onClick={() => needsVoiceScript && m?.id ? void createVoiceScript(m.id, p.id) : prepare(p.id)} disabled={preparePending || ctaBlocked} className={`${primary} w-full sm:w-auto`}>
                 {prepareStatus === "researching" ? needsVoiceScript ? "Creating voice script…" : "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? needsVoiceScript ? "Voice script ready" : "Draft ready" : needsVoiceScript ? "Create voice script" : isFollowUp ? `Prepare step ${row.current_step} follow up` : "Research + write email + voice script"}
               </button>
             ) : manual && channel === "linkedin" ? (
@@ -2049,6 +2070,8 @@ export default function OutreachPage() {
               </button>
             ) : null}
           </div>
+          {canEditCta ? <div className="mt-3"><ProspectCtaSelector enrolmentId={row.id} value={row.cta_config} campaignValue={row.campaign?.cta_config} disabled={preparePending || Boolean(m?.scheduled_at)} hasEditableDraft={Boolean(m && ["draft", "failed"].includes(m.status))} onBlockingChange={(blocked) => setCtaBlockedIds((current) => blocked ? [...new Set([...current, row.id])] : current.filter((id) => id !== row.id))} onSaved={(ctaConfig, result) => { setQueue((current) => current.map((item) => item.id === row.id ? { ...item, cta_config: ctaConfig } : item)); setCtaRefreshRequiredProspectIds((current) => result.draftNeedsRefresh ? [...new Set([...current, p.id])] : current.filter((id) => id !== p.id)); }} /></div> : null}
+          {ctaRefreshRequired ? <p className="mt-2 rounded-lg border border-amber/45 bg-amber/10 px-3 py-2 text-xs leading-5 text-amber">The action changed. Refresh the draft before approval so the email and voice script use the same next step.</p> : null}
           {manual && sequenceStep?.guidance ? <p className="mt-3 rounded-lg border border-sky/35 bg-sky/[0.05] px-3 py-2 text-xs leading-5 text-sky">{sequenceStep.guidance}</p> : null}
           {manual && channel === "phone" && manualCallProspectId === p.id ? <div className="mt-3"><ProspectManualCall prospect={p} campaignId={row.campaign_id} onCancel={() => setManualCallProspectId("")} onSaved={async () => { setManualCallProspectId(""); setNotice("Call saved. The sequence now follows the outcome you logged."); await Promise.all([loadCore(), loadMetrics()]); }} /></div> : null}
           {rowErrors[p.id] ? <p className="mt-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm leading-5 text-rust">{rowErrors[p.id]}</p> : null}
@@ -2076,25 +2099,25 @@ export default function OutreachPage() {
                   m.voice_public_token
                 )}
                 campaignHasCta={Boolean(
-                  row.campaign?.cta_config?.type &&
-                  !["auto", "none"].includes(row.campaign.cta_config.type)
+                  effectiveCtaConfig?.type &&
+                  !["auto", "none"].includes(effectiveCtaConfig.type)
                 )}
-                campaignOptedOut={row.campaign?.cta_config?.type === "none"}
+                campaignOptedOut={effectiveCtaConfig?.type === "none"}
                 workspaceId={sender?.workspaceId}
                 userId={sender?.userId}
               />
-              <OutreachVoiceNoteEditor message={m} script={edit.voice_script} disabled={Boolean(m.scheduled_at)} generating={generatingVoiceMessageId === m.id} onScriptChange={(value) => setMessage(m.id, { voice_script: value })} onGenerate={() => void generateVoiceNote(m.id)} />
+              <OutreachVoiceNoteEditor message={m} script={edit.voice_script} disabled={Boolean(m.scheduled_at) || ctaRefreshRequired} generating={generatingVoiceMessageId === m.id} onScriptChange={(value) => setMessage(m.id, { voice_script: value })} onGenerate={() => void generateVoiceNote(m.id)} />
               {!["sending", "sent"].includes(m.status) && !m.scheduled_at ? (
                 <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3">
                   <p className="text-xs leading-5 text-bone/75">Test the real email appearance safely. The exact saved body and any ready voice note go only to <strong className="text-bone">{sender?.mailboxEmail || "your connected mailbox"}</strong>. The prospect, sequence, daily allowance and results stay untouched.</p>
                   {sender?.provider === "google" ? <p className="mt-2 text-xs leading-5 text-sky">Gmail keeps a rehearsal sent back to the same account under Sent or All Mail. It may not create a new Inbox message.</p> : null}
-                  <button onClick={() => rehearse(m.id)} disabled={!!busy} className={`${button} mt-2 w-full border-sky/45 text-sky sm:w-auto`}>{busy === `rehearse:${m.id}` ? "Sending rehearsal…" : "Send rehearsal to me"}</button>
+                  <button onClick={() => rehearse(m.id)} disabled={!!busy || ctaRefreshRequired} className={`${button} mt-2 w-full border-sky/45 text-sky sm:w-auto`}>{busy === `rehearse:${m.id}` ? "Sending rehearsal…" : "Send rehearsal to me"}</button>
                 </div>
               ) : null}
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                <button onClick={() => prepare(p.id)} disabled={!!busy || prepareStatus === "queued" || prepareStatus === "researching" || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>{prepareStatus === "queued" || prepareStatus === "researching" ? "Refreshing draft…" : "Refresh draft"}</button>
+                <button onClick={() => prepare(p.id)} disabled={!!busy || prepareStatus === "queued" || prepareStatus === "researching" || ctaBlocked || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>{prepareStatus === "queued" || prepareStatus === "researching" ? "Refreshing draft…" : "Refresh draft"}</button>
                 <button onClick={() => saveDraft(m.id)} disabled={!!busy || ["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} className={button}>Save changes</button>
-                {m.status === "draft" || m.status === "failed" ? <button onClick={() => approveAndSend(m.id)} disabled={!!busy} className={primary}>{busy === `approve-send:${m.id}` ? "Approving and queueing…" : "Approve & queue"}</button> : null}
+                {m.status === "draft" || m.status === "failed" ? <button onClick={() => approveAndSend(m.id)} disabled={!!busy || ctaRefreshRequired} className={primary}>{busy === `approve-send:${m.id}` ? "Approving and queueing…" : "Approve & queue"}</button> : null}
                 {m.status === "approved" && !m.scheduled_at ? <button onClick={() => send(m.id)} disabled={!!busy} className={primary}>{busy === `send:${m.id}` ? "Queueing…" : "Queue approved email"}</button> : null}
                 {m.status === "approved" && m.scheduled_at ? <span className="self-center rounded-lg border border-sky bg-sky px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-ink">✓ Queued for {formatActivityDate(m.scheduled_at)}</span> : null}
                 {m.status === "sending" ? <span className="self-center rounded-lg border border-sky/60 bg-sky/10 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-sky">Sending now</span> : null}
