@@ -136,8 +136,10 @@ assert.match(page, /data-sales-tour="campaign-sequence"/);
 for (const route of [updateRoute, createRoute]) {
   assert.match(route, /requireRequestScope/);
   assert.match(route, /sanitizeOutreachSequence/);
-  assert.match(route, /owner.*manager|manager.*owner/s);
 }
+assert.match(updateRoute, /outreachCampaignPermissions/);
+assert.match(updateRoute, /canEditCampaignContent/);
+assert.match(createRoute, /owner.*manager|manager.*owner/s);
 assert.match(updateRoute, /eq\("workspace_id", account\.workspaceId\)/);
 assert.match(createRoute, /workspace_id: account\.workspaceId/);
 

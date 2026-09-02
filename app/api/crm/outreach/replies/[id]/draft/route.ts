@@ -6,6 +6,8 @@ import { modelText, parseObject } from "@/lib/outreach";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { getPersonalOutreachBookingLink } from "@/lib/outreach-booking-link";
+import { ensureOutreachEmailSimpleOptOut } from "@/lib/outreach-demo-reply-cta";
+import { getOptionalSalesProfile } from "@/lib/sales-profile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +46,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       { data: lastSent },
       { data: existingReply },
       bookingUrl,
+      personalProfile,
     ] = await Promise.all([
       supabaseAdmin
         .from("outreach_campaigns")
@@ -69,6 +72,10 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         .eq("step_number", 10)
         .maybeSingle(),
       getPersonalOutreachBookingLink({
+        userId: sender.userId,
+        workspaceId: sender.workspaceId,
+      }),
+      getOptionalSalesProfile({
         userId: sender.userId,
         workspaceId: sender.workspaceId,
       }),
@@ -102,10 +109,12 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         { status: 400 }
       );
     const voice = campaign?.voice && typeof campaign.voice === "object" ? campaign.voice : {};
+    const emailSignoff =
+      personalProfile.emailSignoff || sender.senderName.split(" ")[0];
     const msg = await openai.messages.create({
       model: OPENAI_MODEL_PRO,
       max_tokens: 500,
-      system: `Draft ${sender.senderName}'s reply to a positive B2B response about Interviewa. The purpose is to acknowledge what they actually said and make booking easy, without restarting the pitch. British English. Tone: ${voice.tone || "warm, commercially curious and concise"}. Style: ${voice.style || "natural and commercially curious"}. Use the exact booking link once. Keep it 35 to 90 words, short paragraphs, one clear next step, signed "${voice.signature || sender.senderName.split(" ")[0]}". Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Write "better prepared", never "better-prepared". End gently with "If the timing is not right, no problem and I won't follow up." Never invent what they said or claim a need they did not state. Return ONLY JSON: {"subject":"...","bodyText":"...","reasoning":"why this reply fits, max 35 words"}.`,
+      system: `Draft ${sender.senderName}'s reply to a positive B2B response about Interviewa. The purpose is to acknowledge what they actually said and make booking easy, without restarting the pitch. British English. Tone: ${voice.tone || "warm, commercially curious and concise"}. Style: ${voice.style || "natural and commercially curious"}. Use the exact booking link once. Keep it 35 to 90 words, short paragraphs, one clear next step, signed exactly "${emailSignoff}". Never repeat the sign off or sender name. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Write "better prepared", never "better-prepared". End gently with "If the timing is not right, no problem and I won't follow up." Never invent what they said or claim a need they did not state. Return ONLY JSON: {"subject":"...","bodyText":"...","reasoning":"why this reply fits, max 35 words"}.`,
       messages: [{ role: "user", content: `PERSON: ${prospect.first_name || ""} ${prospect.last_name || ""}, ${prospect.job_title || ""} at ${prospect.company_name}\nTHEIR REPLY:\n${prospect.last_reply_text || prospect.reply_summary || "Positive reply received."}\nOUR PREVIOUS SUBJECT: ${lastSent?.subject || "Interviewa"}\nSAVED RESEARCH: ${JSON.stringify(enrolment.research || prospect.research || {}).slice(0, 2200)}\nBOOKING LINK: ${bookingUrl}` }],
     }, { timeout: 35_000 });
     await logModelUsage(
@@ -117,7 +126,11 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     );
     const parsed = parseObject(modelText(msg));
     const subject = removeDashesFromProse(String(parsed?.subject || `Re: ${lastSent?.subject || "Interviewa"}`).trim()).slice(0, 120);
-    const bodyText = removeDashesFromProse(String(parsed?.bodyText || "").trim()).slice(0, 4000);
+    const bodyText = ensureOutreachEmailSimpleOptOut({
+      body: removeDashesFromProse(String(parsed?.bodyText || "").trim()),
+      signoff: emailSignoff,
+      maximumCharacters: 4000,
+    });
     if (!bodyText || !bodyText.includes(bookingUrl)) return NextResponse.json({ error: "The booking reply did not pass its link check, try again" }, { status: 502 });
     const strategy = { messageType: "reply", reasoning: String(parsed?.reasoning || "Positive reply with a simple booking next step.").slice(0, 500), angle: "booking", tone: String(voice.tone || "warm and concise"), cta: "book a suitable time", persona: prospect.job_title || "buyer" };
     const { data: draft, error } = await supabaseAdmin.from("outreach_messages").upsert({

@@ -73,12 +73,12 @@ assert.match(page, /Your results only/);
 assert.match(page, /data confidence/);
 assert.match(page, /Earlier email sent/);
 assert.match(page, /This is a scheduled follow up, not a new prospect/);
-assert.match(page, /Step one is prioritised across the active campaign/);
+assert.match(page, /supplies only new contacts added to available Today spaces/i);
 assert.match(page, /queueWaveRank/);
 assert.match(salesToday, /queueWaveRank/);
 assert.match(page, /Open LinkedIn/);
 assert.match(page, /Mark .* done/);
-assert.match(page, /SendPilot handoffs and manual actions are confirmed one person at a time/);
+assert.match(page, /SendPilot requires confirmation of the exact person and mapped campaign/);
 assert.match(page, /\(row\.sequenceStep\?\.channel \|\| "email"\) === "email"/);
 
 assert.match(manualCallRoute, /currentStep\.actionType === "manual_call"/);

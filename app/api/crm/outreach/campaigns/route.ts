@@ -152,8 +152,10 @@ export async function GET(req: NextRequest) {
       campaigns: selection.campaigns,
       ...(campaignStats ? { campaignStats, statsScope: "personal" } : {}),
       selectedCampaignId: selection.selectedCampaignId,
+      canEditCampaignContent: account.status === "active",
       canManageCampaigns:
-        account.role === "owner" || account.role === "manager",
+        account.status === "active" &&
+        (account.role === "owner" || account.role === "manager"),
     });
   } catch (error: any) {
     return NextResponse.json(

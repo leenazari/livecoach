@@ -494,6 +494,9 @@ export default function OutreachPage() {
   );
   const [expandedCampaignId, setExpandedCampaignId] = useState("");
   const [campaignEditorView, setCampaignEditorView] = useState<CampaignEditorView>("setup");
+  const [canEditCampaignContent, setCanEditCampaignContent] = useState(
+    cachedCampaigns?.canEditCampaignContent === true
+  );
   const [canManageCampaigns, setCanManageCampaigns] = useState(cachedCampaigns?.canManageCampaigns === true);
   const [metrics, setMetrics] = useState<any>(cachedMetrics?.metrics || cachedSummary?.metrics || {});
   const [replies, setReplies] = useState<any[]>(cachedMetrics?.replies || []);
@@ -578,6 +581,7 @@ export default function OutreachPage() {
       setCampaigns(c.campaigns || []);
       if (c.campaignStats) setCampaignStats(c.campaignStats);
       setSelectedCampaignId(selectedId);
+      setCanEditCampaignContent(c.canEditCampaignContent === true);
       setCanManageCampaigns(c.canManageCampaigns === true);
       setLoading(false);
       // Queue selection is free. Fill the user's working day on first entry so
@@ -868,6 +872,11 @@ export default function OutreachPage() {
   const activeCampaign = orderedCampaigns.find(
     (campaign) => campaign.id === selectedCampaignId
   ) || orderedCampaigns.find((campaign) => campaign.status === "active");
+  const canEditActiveCampaignContent = Boolean(
+    activeCampaign &&
+    canEditCampaignContent &&
+    (canManageCampaigns || activeCampaign.visibility === "team")
+  );
   const dailyQueueLimit = clampOutreachDailyLimit(activeCampaign?.daily_limit);
   const queueCampaigns = useMemo(
     () => outreachQueueCampaignCounts(queue),
@@ -1489,22 +1498,24 @@ export default function OutreachPage() {
   const saveCampaign = async (campaign: Campaign) => {
     setBusy(`campaign:${campaign.id}`); setError("");
     try {
-      if (!Number.isFinite(campaign.daily_limit) || campaign.daily_limit < 1 || campaign.daily_limit > OUTREACH_DAILY_HARD_LIMIT) throw new Error(`Daily maximum must be between 1 and ${OUTREACH_DAILY_HARD_LIMIT}`);
+      if (canManageCampaigns && (!Number.isFinite(campaign.daily_limit) || campaign.daily_limit < 1 || campaign.daily_limit > OUTREACH_DAILY_HARD_LIMIT)) throw new Error(`Daily maximum must be between 1 and ${OUTREACH_DAILY_HARD_LIMIT}`);
       const sequenceError = outreachSequenceValidationError(campaign.sequence || []);
       if (sequenceError) throw new Error(sequenceError);
       const { campaign: saved } = await crmFetch<{ campaign: Campaign }>(`/api/crm/outreach/campaigns/${campaign.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          name: campaign.name,
           goal: campaign.goal,
           audience: campaign.audience,
           offer_angle: campaign.offer_angle,
-          status: campaign.status,
-          daily_limit: campaign.daily_limit,
           sequence: campaign.sequence,
           voice: campaign.voice,
           banned_phrases: campaign.banned_phrases,
           booking_cta_mode: campaign.booking_cta_mode,
+          ...(canManageCampaigns ? {
+            name: campaign.name,
+            status: campaign.status,
+            daily_limit: campaign.daily_limit,
+          } : {}),
         }),
       });
       if (!saved?.id)
@@ -1514,7 +1525,7 @@ export default function OutreachPage() {
           reason: "LiveCoach did not return the saved campaign settings",
         });
       setCampaigns((all) => all.map((item) => item.id === saved.id ? { ...item, ...saved } : item));
-      setNotice("Campaign settings saved.");
+      setNotice(canManageCampaigns ? "Campaign settings saved." : "Shared campaign content saved for the team.");
     }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
@@ -2367,6 +2378,9 @@ export default function OutreachPage() {
           const isCurrent = campaign.id === selectedCampaignId;
           const personalStats = campaignStats[campaign.id];
           const sequenceCount = campaign.sequence?.length || 0;
+          const canEditThisCampaign =
+            canEditCampaignContent &&
+            (canManageCampaigns || campaign.visibility === "team");
           return <details id={`campaign-card-${campaign.id}`} key={campaign.id} open={expandedCampaignId === campaign.id} onToggle={(event) => {
             const isOpen = event.currentTarget.open;
             if (isOpen) setCampaignEditorView("setup");
@@ -2389,19 +2403,22 @@ export default function OutreachPage() {
               </div>
 
               {campaignEditorView === "setup" ? <div role="tabpanel" className="rounded-xl border border-amber/35 bg-amber/[0.035] p-4">
-                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><p className="font-mono text-[0.52rem] uppercase text-amber">Campaign setup</p><h4 className="mt-1 font-display text-lg text-bone">Who is this for and why should they care?</h4></div>{!canManageCampaigns ? <span className="self-start rounded-full border border-edge px-3 py-1 font-mono text-[0.5rem] uppercase text-muted">Shared · view only</span> : null}</div>
-                <fieldset disabled={!canManageCampaigns} className="grid gap-3">
+                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><p className="font-mono text-[0.52rem] uppercase text-amber">Campaign setup</p><h4 className="mt-1 font-display text-lg text-bone">Who is this for and why should they care?</h4></div>{!canManageCampaigns && canEditThisCampaign ? <span className="self-start rounded-full border border-moss/45 bg-moss/10 px-3 py-1 font-mono text-[0.5rem] uppercase text-moss">Shared · copy editable</span> : !canEditThisCampaign ? <span className="self-start rounded-full border border-edge px-3 py-1 font-mono text-[0.5rem] uppercase text-muted">View only</span> : null}</div>
+                <fieldset disabled={!canEditThisCampaign} className="grid gap-3">
                   <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign goal</span><input className={input} value={campaign.goal} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, goal: e.target.value } : c))} /></label>
                   <div className="grid gap-3 lg:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Target audience</span><textarea className={`${input} min-h-28`} value={campaign.audience} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, audience: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Interviewa reason to respond</span><textarea className={`${input} min-h-28`} value={campaign.offer_angle} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, offer_angle: e.target.value } : c))} /></label></div>
+                </fieldset>
+                <fieldset disabled={!canManageCampaigns} className="mt-3 grid gap-3">
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max={OUTREACH_DAILY_HARD_LIMIT} className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : clampOutreachDailyLimit(e.target.value, OUTREACH_DEFAULT_DAILY_LIMIT) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active and available</option><option value="paused">Paused</option><option value="draft">Draft</option><option value="completed">Completed</option></select></label></div>
                 </fieldset>
-                {canManageCampaigns ? <div className="mt-4 flex flex-col-reverse gap-2 border-t border-amber/20 pt-4 sm:flex-row sm:justify-end">{!isCurrent && campaign.status === "active" ? <button type="button" onClick={() => void selectActiveCampaign(campaign.id)} disabled={!!busy} className={button}>{busy === "select-campaign" ? "Switching…" : "Use for my Today queue"}</button> : null}<button type="button" onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : "Save campaign setup"}</button></div> : null}
+                {!canManageCampaigns && canEditThisCampaign ? <p className="mt-3 rounded-lg border border-edge bg-ink/35 px-3 py-2 text-xs leading-5 text-muted">Your copy and sequence edits update this shared team campaign. Only Lee or a manager can change its status or daily maximum.</p> : null}
+                {canEditThisCampaign ? <div className="mt-4 flex flex-col-reverse gap-2 border-t border-amber/20 pt-4 sm:flex-row sm:justify-end">{!isCurrent && campaign.status === "active" ? <button type="button" onClick={() => void selectActiveCampaign(campaign.id)} disabled={!!busy} className={button}>{busy === "select-campaign" ? "Switching…" : "Use for my Today queue"}</button> : null}<button type="button" onClick={() => saveCampaign(campaign)} disabled={!!busy} className={primary}>{busy === `campaign:${campaign.id}` ? "Saving…" : canManageCampaigns ? "Save campaign setup" : "Save shared campaign copy"}</button></div> : null}
               </div> : null}
 
               {campaignEditorView === "sequence" ? <div role="tabpanel"><CampaignSequenceBuilder
                 campaignId={campaign.id}
                 sequence={campaign.sequence || []}
-                disabled={!canManageCampaigns}
+                disabled={!canEditThisCampaign}
                 saving={busy === `campaign:${campaign.id}`}
                 onChange={(sequence) => setCampaigns((all) => all.map((item) => item.id === campaign.id ? { ...item, sequence } : item))}
                 onSave={() => saveCampaign(campaign)}
@@ -2420,9 +2437,9 @@ export default function OutreachPage() {
       </section> : null}
 
       {!loading && !tabLoading && tab === "intelligence" && activeCampaign ? <section className="space-y-4">
-        <fieldset disabled={!canManageCampaigns} className="contents">
+        <fieldset disabled={!canEditActiveCampaignContent} className="contents">
         <div className="rounded-xl border border-amber/40 bg-amber/[0.06] p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Message intelligence</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-muted">Set the campaign writing tone and guardrails once. The salesperson&apos;s audio voice always comes from My Sales Setup and cannot be changed by a campaign. For every person, Terra must show the evidence, chosen angle and quality score before you approve the exact words.</p></div>{canManageCampaigns ? <button onClick={() => saveCampaign(activeCampaign)} disabled={!!busy} className={primary}>{busy === `campaign:${activeCampaign.id}` ? "Saving…" : "Save intelligence"}</button> : <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted">Shared · view only</span>}</div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Message intelligence</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-muted">Set the campaign writing tone and guardrails once. The salesperson&apos;s audio voice always comes from My Sales Setup and cannot be changed by a campaign. For every person, Terra must show the evidence, chosen angle and quality score before you approve the exact words.</p></div>{canEditActiveCampaignContent ? <button onClick={() => saveCampaign(activeCampaign)} disabled={!!busy} className={primary}>{busy === `campaign:${activeCampaign.id}` ? "Saving…" : "Save intelligence"}</button> : <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted">View only</span>}</div>
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
             <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign writing tone</span><select className={input} value={activeCampaign.voice?.tone || "warm, commercially curious and concise"} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, voice: { ...(campaign.voice || {}), tone: e.target.value } } : campaign))}><option value="warm, commercially curious and concise">Warm, commercially curious</option><option value="direct, credible and concise">Direct and credible</option><option value="peer-to-peer founder, thoughtful and natural">Founder to founder</option><option value="consultative, challenging and evidence-led">Consultative challenger</option></select></label>
             <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign writing style</span><input className={input} value={activeCampaign.voice?.style || "founder-to-founder, plain English and respectful"} onChange={(e) => setCampaigns((all) => all.map((campaign) => campaign.id === activeCampaign.id ? { ...campaign, voice: { ...(campaign.voice || {}), style: e.target.value } } : campaign))} /></label>

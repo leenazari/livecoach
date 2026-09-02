@@ -7,6 +7,7 @@ import {
 import { emailDomain, outreachCrmGuard, prospectHasBlockedCrmRelationship } from "@/lib/outreach";
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { queueApprovedOutreachMessage } from "@/lib/outreach-send-queue";
+import { deduplicateOutreachEmailSignoff } from "@/lib/outreach-demo-reply-cta";
 import {
   isActiveOutreachEnrolmentStatus,
   isInsideCrossCampaignCooldown,
@@ -83,7 +84,9 @@ export async function POST(req: NextRequest) {
     const recipientName = clean(body.recipientName, 240);
     const company = clean(body.company, 240);
     const subject = clean(body.subject, 160);
-    const bodyText = clean(body.body, 4000);
+    const bodyText = deduplicateOutreachEmailSignoff({
+      body: clean(body.body, 4000),
+    }).slice(0, 4000);
     const requestKey = clean(body.idempotencyKey, 160);
 
     if (!EMAIL.test(recipientEmail)) {

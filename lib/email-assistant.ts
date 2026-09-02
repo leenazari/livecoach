@@ -15,6 +15,7 @@ import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import type { ClientEmailTarget } from "@/lib/client-email-activity";
 import { resolveRecordScope, type RecordScope } from "@/lib/record-scope";
 import { getSalesProfile } from "@/lib/sales-profile";
+import { deduplicateOutreachEmailSignoff } from "@/lib/outreach-demo-reply-cta";
 import {
   GMAIL_COMPOSE_SCOPE,
   GMAIL_SEND_SCOPE,
@@ -496,7 +497,13 @@ The voiceScript is a separate natural spoken reply from the signed-in salesperso
       ? originalSubject
       : `Re: ${originalSubject}`
     : suggestedSubject || "Reply";
-  const body = includeBookingLinkOnce(clean(parsed.body, 10_000), bookingUrl);
+  const body = includeBookingLinkOnce(
+    deduplicateOutreachEmailSignoff({
+      body: clean(parsed.body, 10_000),
+      signoff: salesProfile.emailSignoff || null,
+    }),
+    bookingUrl
+  );
   if (!body || body.length < 20) {
     throw new Error("The suggested reply was empty, so no draft was saved");
   }
@@ -697,7 +704,9 @@ export async function updateEmailAssistantDraft(
       changed = true;
     }
     if (typeof input.body === "string") {
-      const body = clean(input.body, 10_000);
+      const body = deduplicateOutreachEmailSignoff({
+        body: clean(input.body, 10_000),
+      });
       if (!body) throw Object.assign(new Error("The email body is required"), { status: 400 });
       if (
         draft.booking_url &&
