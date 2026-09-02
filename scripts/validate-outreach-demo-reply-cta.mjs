@@ -5,9 +5,12 @@ import { fileURLToPath } from "node:url";
 
 import {
   deduplicateOutreachEmailSignoff,
+  ensureOutreachEmailCampaignCta,
   ensureOutreachEmailDemoReplyCta,
   ensureOutreachEmailSimpleOptOut,
+  ensureOutreachVoiceCampaignCta,
   ensureOutreachVoiceDemoReplyCta,
+  hasOutreachCampaignCta,
   hasOutreachDemoReplyCta,
   hasOutreachSalesCallToAction,
   OUTREACH_EMAIL_DEMO_REPLY_CTA,
@@ -15,6 +18,7 @@ import {
   OUTREACH_VOICE_DEMO_REPLY_CTA,
   outreachEmailEndsWithDemoReplyCta,
   outreachVoiceEndsWithDemoReplyCta,
+  resolveOutreachCampaignCta,
 } from "../lib/outreach-demo-reply-cta.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -129,6 +133,82 @@ assert.equal(
   false,
   "Past call references must not be mistaken for a call to action"
 );
+assert.equal(
+  hasOutreachSalesCallToAction(
+    "If you would like to book a 10 minute demo, just reply to this email and I will arrange it."
+  ),
+  true,
+  "A timed demo invitation must satisfy the CTA advice"
+);
+
+const workableCta = resolveOutreachCampaignCta({
+  campaignGoal:
+    "Book a focused Interviewa screening demonstration or start a free trial using the existing Workable integration",
+  campaignOfferAngle:
+    "Interviewa connects directly with Workable to screen candidates consistently before human review.",
+  sequencePurpose:
+    "Lead with their existing Workable workflow and always invite a quick screening demonstration",
+  sequenceGuidance:
+    "End with a clear invitation to reply for a quick 10 minute demonstration or a free trial on one current Workable vacancy.",
+});
+assert.deepEqual(
+  workableCta,
+  {
+    kind: "demo",
+    durationMinutes: 10,
+    label: "10 minute demo",
+    emailText:
+      "Would you be open to booking a 10 minute demo? Just reply to this email and I will arrange it.",
+    voiceText:
+      "Would you be open to booking a 10 minute demo? Just reply to this email and we will arrange it.",
+    source: "sequence_guidance",
+  },
+  "The Workable campaign wording must become one deterministic CTA policy"
+);
+const workableEmail = ensureOutreachEmailCampaignCta({
+  body: `Hi Sam,\n\nYour Workable workflow looks relevant. Would reducing screening admin help?\n\nIf a quick chat would help, reply and I can arrange one.\n\nBest regards,\nKamm`,
+  signoff: "Best regards,\nKamm",
+  policy: workableCta,
+});
+assert.equal(
+  workableEmail,
+  `Hi Sam,\n\nYour Workable workflow looks relevant. Would reducing screening admin help?\n\n${OUTREACH_SIMPLE_OPT_OUT}\n\n${workableCta.emailText}\n\nBest regards,\nKamm`,
+  "The campaign CTA must replace a weaker model CTA instead of appearing twice"
+);
+assert.equal(hasOutreachCampaignCta(workableEmail, workableCta), true);
+assert.equal(outreachEmailEndsWithDemoReplyCta(workableEmail), true);
+const workableVoice = ensureOutreachVoiceCampaignCta({
+  script:
+    "Hi Sam, I hope you are doing well today. We are Interviewa. The easiest way to judge the integration is on one live role. If a quick call would help, reply and we can arrange one.",
+  policy: workableCta,
+});
+assert.equal(
+  workableVoice.endsWith(workableCta.voiceText),
+  true,
+  "The voice script must inherit the same campaign next step"
+);
+assert.equal(
+  workableVoice.match(/reply/gi)?.length,
+  1,
+  "The voice script must not retain two competing CTAs"
+);
+assert.equal(hasOutreachCampaignCta(workableVoice, workableCta), true);
+assert.equal(
+  resolveOutreachCampaignCta({
+    campaignGoal: "Book a 10 minute demo",
+    sequenceGuidance: "Do not include a CTA in this exact step",
+  }),
+  null,
+  "A deliberate sequence opt out must still take precedence"
+);
+assert.equal(
+  resolveOutreachCampaignCta({
+    campaignGoal: "Build a useful relationship with recruitment leaders",
+    campaignOfferAngle: "Candidate preparation without extra admin",
+  }),
+  null,
+  "Campaigns without an explicit next step must keep CTA guidance optional"
+);
 
 const optionalCtaPreserved = ensureOutreachEmailSimpleOptOut({
   body: prepared,
@@ -157,6 +237,9 @@ assert.match(prepareRoute, /preferred default, not a validity rule/i);
 assert.match(prepareRoute, /missing call to action must never make the draft invalid or stop it being approved/i);
 assert.doesNotMatch(prepareRoute, /ensureOutreachEmailDemoReplyCta/);
 assert.doesNotMatch(prepareRoute, /ensureOutreachVoiceDemoReplyCta/);
+assert.match(prepareRoute, /resolveOutreachCampaignCta/);
+assert.match(prepareRoute, /ensureOutreachEmailCampaignCta/);
+assert.match(prepareRoute, /ensureOutreachVoiceCampaignCta/);
 assert.doesNotMatch(prepareRoute, /exact mandatory CTA/);
 assert.doesNotMatch(messageRoute, /outreachEmailEndsWithDemoReplyCta/);
 assert.doesNotMatch(messageRoute, /outreachVoiceEndsWithDemoReplyCta/);
