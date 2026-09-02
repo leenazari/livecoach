@@ -13,6 +13,7 @@ export const OUTREACH_CAMPAIGN_CONTENT_FIELDS = [
   "voice",
   "banned_phrases",
   "booking_cta_mode",
+  "cta_config",
 ] as const;
 
 export const OUTREACH_CAMPAIGN_CONTROL_FIELDS = [

@@ -9,10 +9,12 @@ import { removeDashesFromProse } from "@/lib/outreach-voice";
 import {
   ensureOutreachEmailCampaignCta,
   ensureOutreachEmailSimpleOptOut,
+  ensureOutreachEmailWithoutSalesCta,
   ensureOutreachVoiceCampaignCta,
   hasOutreachCampaignCta,
   outreachEmailEndsWithDemoReplyCta,
   outreachVoiceEndsWithDemoReplyCta,
+  removeOutreachVoiceSalesCta,
   resolveOutreachCampaignCta,
 } from "@/lib/outreach-demo-reply-cta";
 import {
@@ -240,14 +242,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         { status: 409 }
       );
     }
-    const lastStep = Math.max(1, ...sequence.map((row: any) => Number(row?.step) || 0));
     const personalBookingUrl = String(personalProfile.bookingUrl || "").trim();
-    const includeBooking = shouldIncludePersonalOutreachBookingLink({
-      bookingUrl: personalBookingUrl,
-      mode: campaign.booking_cta_mode,
-      step,
-      lastStep,
-    });
     const jobSearchDomains = officialJobSearchDomains(prospect);
     const campaignContract = {
       name: clean(campaign.name, 180),
@@ -261,10 +256,29 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       sequencePurpose: sequenceStep.purpose,
       sequenceGuidance: sequenceStep.guidance,
       senderGuidance,
+      campaignCtaConfig: campaign.cta_config,
+      personalBookingUrl,
     });
+    const configuredCtaType = String(campaign.cta_config?.type || "auto");
+    const lastStep = Math.max(
+      1,
+      ...sequence.map((row: any) => Number(row?.step) || 0)
+    );
+    const includeBooking = campaignCta?.delivery === "personal_booking_link"
+      ? Boolean(campaignCta.url)
+      : configuredCtaType !== "auto"
+        ? false
+        : shouldIncludePersonalOutreachBookingLink({
+            bookingUrl: personalBookingUrl,
+            mode: campaign.booking_cta_mode,
+            step,
+            lastStep,
+          });
     const campaignCtaInstruction = campaignCta
-      ? `EXPLICIT CAMPAIGN NEXT STEP: the approved campaign asks the recipient to book a ${campaignCta.label}. Include this exact meaning once in both the email and voice note, with a simple invitation to reply to this email. This is a campaign content instruction, not a send blocker.`
-      : "CAMPAIGN NEXT STEP: no explicit demo or call CTA is configured for this step. A low pressure invitation remains optional.";
+      ? `EXPLICIT CAMPAIGN NEXT STEP: use this approved email action once: "${campaignCta.emailText}" Use this spoken next step once in the voice note: "${campaignCta.voiceText}" Do not invent a second CTA. This is a campaign content instruction, not a send blocker.`
+      : configuredCtaType === "none"
+        ? "CAMPAIGN NEXT STEP: this campaign deliberately has no CTA. Do not add one and do not treat its absence as a problem."
+        : "CAMPAIGN NEXT STEP: no explicit CTA is configured for this step. A low pressure invitation remains optional.";
     const candidatePreparationCampaign = isCandidatePreparationCampaign(campaignContract);
     const candidatePreparationVacancyPriority = candidatePreparationCampaign
       ? `CANDIDATE PREPARATION VACANCY PRIORITY: do not simply take the first vacancies returned by the jobs page. Compare the verified live roles and select the four with the highest preparation value. Rank technical and interview intensive roles first, especially software engineering, data, cyber security, cloud, infrastructure, product and technical leadership. Then consider seniority, complexity, the consequence of a weak interview and any explicitly published annual compensation. Higher compensation is supporting evidence of a high stakes interview, not a reason on its own. Prefer a technically complex role over a generic role even when the generic role has a slightly higher salary. Keep the exact published compensation in jobSignals.compensation or use an empty string when it is not stated. For a recruitment company, say the company is advertising or recruiting for the role on behalf of a client. Never claim the named prospect personally posted it or that the recruitment company itself is hiring.`
@@ -295,9 +309,9 @@ PERSONAL DELIVERY: write in a ${personalProfile.emailTone.replace(/_/g, " ")} st
 COACHING RULES: ${Array.isArray(voice.rules) ? voice.rules.join(" | ").slice(0, 1000) : "Lead with one verified relevance signal | make one useful commercial observation | ask one easy question | never pretend familiarity"}
 EMAIL BANNED PHRASES: ${banned.join(" | ") || "quick question | hope you are well | reaching out"}. These apply to the email body. The required welcoming voice note opening below is allowed.
 
-The email must be plain text, 90 to 135 words, use short mobile friendly paragraphs, ask one easy question, and be signed exactly "${emailSignoff}". Keep a natural one line opt out such as "If this is not relevant, tell me and I will not follow up." immediately before the signature. ${campaignCta ? `Use the explicit campaign next step above. Phrase it naturally and do not add a second CTA.` : "Normally include one short, low pressure final call to action inviting the person to reply for a quick call or demo. This is the preferred default, not a validity rule."} Omit it when this campaign step or the sender's guidance says not to use one. A missing call to action must never make the draft invalid or stop it being approved. It must sound individually written by ${sender.senderName}, not like a template or a faceless product message. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Subject under 45 characters. Select one supported benefit and one approved next step from the campaign contract. Do not list unrelated Interviewa capabilities. Use a verified current vacancy only when it is relevant to this campaign. Use approved proof only when it appears in product truth and directly supports the selected angle. Be commercially vivid without hype. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? `This is a follow up. Do not repeat ${sender.senderName}'s full introduction or the opening email, and make it easy to close the loop.` : `This is the first email. After the personalised opening, introduce the sender naturally with: I’m ${sender.senderName} from Interviewa. Then explain Interviewa only through the selected campaign angle.`} ${includeBooking ? `Include this salesperson's personal booking link once, naturally, as the optional next step: ${personalBookingUrl}` : "Do not include a calendar or booking link. Earn interest first."}
+The email must be plain text, 90 to 135 words, use short mobile friendly paragraphs, ask one easy question, and be signed exactly "${emailSignoff}". Keep a natural one line opt out such as "If this is not relevant, tell me and I will not follow up." immediately before the signature. ${campaignCta ? `Use the explicit campaign next step above with the same meaning and do not add a second CTA.` : configuredCtaType === "none" ? "Do not add a CTA because the campaign deliberately disabled it." : "Normally include one short, low pressure final call to action inviting the person to reply for a quick call or demo. This is the preferred default, not a validity rule."} Omit it when this campaign step or the sender's guidance says not to use one. A missing call to action must never make the draft invalid or stop it being approved. It must sound individually written by ${sender.senderName}, not like a template or a faceless product message. Never use a hyphen, dash or em dash in prose, even when grammar normally calls for one. Subject under 45 characters. Select one supported benefit and one approved next step from the campaign contract. Do not list unrelated Interviewa capabilities. Use a verified current vacancy only when it is relevant to this campaign. Use approved proof only when it appears in product truth and directly supports the selected angle. Be commercially vivid without hype. This prospect is variant ${variant}, ${variant === "A" ? "use a direct relevance or benefit led subject" : "use a short natural question led subject"}. Do not use any banned phrase or fake familiarity. This is sequence step ${step}. ${step > 1 ? `This is a follow up. Do not repeat ${sender.senderName}'s full introduction or the opening email, and make it easy to close the loop.` : `This is the first email. After the personalised opening, introduce the sender naturally with: I’m ${sender.senderName} from Interviewa. Then explain Interviewa only through the selected campaign angle.`} ${includeBooking ? `Include this salesperson's personal booking link once, naturally, as the optional next step: ${personalBookingUrl}` : "Do not include a calendar or booking link."}
 
-VOICE NOTE: also write a separate spoken pitch. Aim for about ${OUTREACH_VOICE_TARGET_WORDS} words and normally stay between ${OUTREACH_VOICE_PREFERRED_MIN_WORDS} and ${OUTREACH_VOICE_PREFERRED_MAX_WORDS} words so it lands at roughly 45 seconds. This is a naturalness target, not permission to cut a sentence. Always finish the final sentence cleanly. Personalisation matters more than hitting an exact word count. The delivery must feel welcoming, upbeat and positive, with genuine conversational enthusiasm and varied sentence rhythm. Write as if the speaker is smiling and pleased to speak to this person. The opening must be steady and conversational, never rushed or overexcited. Avoid flat corporate phrasing, forced excitement, hype and repeated exclamation marks. Start exactly with "Hi ${prospect.first_name || "there"}, I hope you are doing well today." Do not use an exclamation mark in that opening. Then use "We are Interviewa" when the brand needs introducing. This is a shared or synthetic voice, so it must never impersonate the salesperson. Never say "I am ${sender.senderName}", "I'm ${sender.senderName}", "This is ${sender.senderName}", "My name is ${sender.senderName}" or claim the voice is the sender. Keep the correct Interviewa spelling in the visible script. The audio layer handles its pronunciation as "Interviewer". Use the recipient's first name, their exact company, and the single strongest current verified fact from the research, such as a relevant live vacancy or recent hiring signal. If no current fact is verified, use a clearly framed role and company specific hypothesis rather than inventing one. It must use the same campaign contract, sequence purpose, approved offer and verified prospect evidence as the email. Explain one campaign approved outcome and one supported next step. ${campaignCta ? `Finish with the explicit ${campaignCta.label} campaign next step once.` : "Normally finish with a short, low pressure invitation to reply for a quick call or demo. This remains optional and may be omitted for the exact message."} Its absence must never block approval or queueing. Do not use an offer, use case or CTA from another campaign. Do not read out a URL, email address, opt out line or subject. Do not copy the email word for word. Use British English, contractions where natural, short spoken sentences, and no hyphens, dashes or semicolons.
+VOICE NOTE: also write a separate spoken pitch. Aim for about ${OUTREACH_VOICE_TARGET_WORDS} words and normally stay between ${OUTREACH_VOICE_PREFERRED_MIN_WORDS} and ${OUTREACH_VOICE_PREFERRED_MAX_WORDS} words so it lands at roughly 45 seconds. This is a naturalness target, not permission to cut a sentence. Always finish the final sentence cleanly. Personalisation matters more than hitting an exact word count. The delivery must feel welcoming, upbeat and positive, with genuine conversational enthusiasm and varied sentence rhythm. Write as if the speaker is smiling and pleased to speak to this person. The opening must be steady and conversational, never rushed or overexcited. Avoid flat corporate phrasing, forced excitement, hype and repeated exclamation marks. Start exactly with "Hi ${prospect.first_name || "there"}, I hope you are doing well today." Do not use an exclamation mark in that opening. Then use "We are Interviewa" when the brand needs introducing. This is a shared or synthetic voice, so it must never impersonate the salesperson. Never say "I am ${sender.senderName}", "I'm ${sender.senderName}", "This is ${sender.senderName}", "My name is ${sender.senderName}" or claim the voice is the sender. Keep the correct Interviewa spelling in the visible script. The audio layer handles its pronunciation as "Interviewer". Use the recipient's first name, their exact company, and the single strongest current verified fact from the research, such as a relevant live vacancy or recent hiring signal. If no current fact is verified, use a clearly framed role and company specific hypothesis rather than inventing one. It must use the same campaign contract, sequence purpose, approved offer and verified prospect evidence as the email. Explain one campaign approved outcome and one supported next step. ${campaignCta ? `Finish with this approved spoken next step once: "${campaignCta.voiceText}"` : configuredCtaType === "none" ? "Do not add a CTA because the campaign deliberately disabled it." : "Normally finish with a short, low pressure invitation to reply for a quick call or demo. This remains optional and may be omitted for the exact message."} Its absence must never block approval or queueing. Do not use an offer, use case or CTA from another campaign. Do not read out a URL, email address, opt out line or subject. Do not copy the email word for word. Use British English, contractions where natural, short spoken sentences, and no hyphens, dashes or semicolons.
 
 TRUTHFUL MOMENTUM RULE: the voice note must create gentle urgency without sounding pushy. Include one short, complete why now sentence in the script and return that exact sentence as voiceNote.whyNow. Use urgencyType verified_trigger only when a current primary source or saved current interaction proves a real time sensitive trigger, such as a live vacancy, active hiring round, dated event, current candidate cohort or agreed follow up. Put that supporting fact in urgencyEvidence. Otherwise use urgencyType natural_next_moment and connect the invitation to the prospect's next natural operating moment, such as their next live role, interview round or candidate group, without claiming it is scheduled. The preferred pattern is "With those roles open now, this is a good point to test it on one live vacancy" or "The easiest way to judge it is on your next live role". Keep the action small and low risk. Never invent urgency, deadlines, scarcity, availability, business pressure, familiarity, a customer result or a case study. Never use "act now", "today only", "last chance", "limited availability", "slots are filling" or "do not miss out".
 
@@ -369,7 +383,7 @@ ${senderGuidance ? `SENDER'S EXTRA GUIDANCE:\n${senderGuidance}` : ""}`;
         model: OPENAI_MODEL_LIVE,
         max_tokens: 2200,
         response_format: OUTREACH_DRAFT_FORMAT,
-        system: `Repair an incomplete structured outreach result and return ONLY the required JSON. Preserve every supplied research fact. Never invent facts about the person, company, vacancies, customers, savings or results. If a research field is missing, use an empty array, empty string, unknown volume, or low confidence as appropriate. companyOverview must be empty unless the incomplete result contains facts from the official company website. jobSignals must be an empty array unless the incomplete result contains an exact primary company or applicant tracking system vacancy URL. For every retained job signal, copy an explicitly published annual compensation or set compensation to an empty string. Never use LinkedIn or a job aggregator. You may complete the email and voiceNote using only the supplied facts and approved Interviewa truth. Use British English, short mobile friendly email paragraphs, one email question, no semicolons, and no hyphens or dashes in prose. The first email must naturally introduce: I’m ${sender.senderName} from Interviewa. Include a natural opt out in the email immediately before the signature. ${campaignCta ? `The campaign explicitly asks the recipient to book a ${campaignCta.label}. Include that meaning once in both the email and voice note with an invitation to reply to this email.` : "Normally include a low pressure invitation to reply for a quick call or demo in both the email and voice note. It remains optional."} Preserve a deliberate omission and never make a missing CTA invalidate or block the draft. voiceNote.script must be a distinct natural spoken pitch aiming for ${OUTREACH_VOICE_TARGET_WORDS} words and normally between ${OUTREACH_VOICE_PREFERRED_MIN_WORDS} and ${OUTREACH_VOICE_PREFERRED_MAX_WORDS} words. It must never cut a sentence to meet the target. It must sound welcoming, upbeat and positive, with natural enthusiasm and varied spoken rhythm rather than flat corporate phrasing. The opening must be steady and conversational, never rushed or overexcited. It must start exactly "Hi ${prospect.first_name || "there"}, I hope you are doing well today.", name their exact company, use "We are Interviewa" when introducing the brand, use the strongest current verified relevance signal, and finish with a complete sentence. The synthetic voice must never say it is ${sender.senderName}, introduce itself using the sender's name, or claim to be the sender. Keep Interviewa spelled correctly in the visible script because the audio layer supplies the pronunciation. It must not read out a URL or the opt out line.`,
+        system: `Repair an incomplete structured outreach result and return ONLY the required JSON. Preserve every supplied research fact. Never invent facts about the person, company, vacancies, customers, savings or results. If a research field is missing, use an empty array, empty string, unknown volume, or low confidence as appropriate. companyOverview must be empty unless the incomplete result contains facts from the official company website. jobSignals must be an empty array unless the incomplete result contains an exact primary company or applicant tracking system vacancy URL. For every retained job signal, copy an explicitly published annual compensation or set compensation to an empty string. Never use LinkedIn or a job aggregator. You may complete the email and voiceNote using only the supplied facts and approved Interviewa truth. Use British English, short mobile friendly email paragraphs, one email question, no semicolons, and no hyphens or dashes in prose. The first email must naturally introduce: I’m ${sender.senderName} from Interviewa. Include a natural opt out in the email immediately before the signature. ${campaignCta ? `Use this approved email action once: "${campaignCta.emailText}" Use this approved spoken next step once: "${campaignCta.voiceText}"` : configuredCtaType === "none" ? "The campaign deliberately disabled its CTA. Do not add one." : "Normally include a low pressure invitation to reply for a quick call or demo in both the email and voice note. It remains optional."} Preserve a deliberate omission and never make a missing CTA invalidate or block the draft. voiceNote.script must be a distinct natural spoken pitch aiming for ${OUTREACH_VOICE_TARGET_WORDS} words and normally between ${OUTREACH_VOICE_PREFERRED_MIN_WORDS} and ${OUTREACH_VOICE_PREFERRED_MAX_WORDS} words. It must never cut a sentence to meet the target. It must sound welcoming, upbeat and positive, with natural enthusiasm and varied spoken rhythm rather than flat corporate phrasing. The opening must be steady and conversational, never rushed or overexcited. It must start exactly "Hi ${prospect.first_name || "there"}, I hope you are doing well today.", name their exact company, use "We are Interviewa" when introducing the brand, use the strongest current verified relevance signal, and finish with a complete sentence. The synthetic voice must never say it is ${sender.senderName}, introduce itself using the sender's name, or claim to be the sender. Keep Interviewa spelled correctly in the visible script because the audio layer supplies the pronunciation. It must not read out a URL or the opt out line.`,
         messages: [{ role: "user", content: `PERSON: ${prospect.first_name || ""} ${prospect.last_name || ""}, ${prospect.job_title || ""} at ${prospect.company_name || ""}
 CAMPAIGN GOAL: ${campaign.goal || ""}
 CAMPAIGN ANGLE: ${campaign.offer_angle || ""}
@@ -447,6 +461,12 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
           signoff: emailSignoff,
           maximumCharacters: 4000,
         })
+      : configuredCtaType === "none"
+        ? ensureOutreachEmailWithoutSalesCta({
+            body: cleanedEmailBody,
+            signoff: emailSignoff,
+            maximumCharacters: 4000,
+          })
       : ensureOutreachEmailSimpleOptOut({
           body: cleanedEmailBody,
           signoff: emailSignoff,
@@ -470,6 +490,8 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
             script: preparedVoiceScript,
             policy: campaignCta,
           })
+        : configuredCtaType === "none"
+          ? removeOutreachVoiceSalesCta(preparedVoiceScript)
         : preparedVoiceScript
     );
     const voiceWhyNow = normaliseOutreachVoiceScript(parsed.voiceNote.whyNow);
@@ -554,6 +576,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
         ? {
             label: campaignCta.label,
             source: campaignCta.source,
+            delivery: campaignCta.delivery || "reply",
           }
         : null,
       voiceUrgencyType,

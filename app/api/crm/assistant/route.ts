@@ -23,6 +23,7 @@ import {
 import { logModelUsage } from "@/lib/usage";
 import { RELATIONSHIP_STAGE_BY_KEY } from "@/lib/relationship-stages";
 import { clampOutreachDailyLimit } from "@/lib/outreach-limits";
+import { sanitizeOutreachCampaignCtaConfig } from "@/lib/outreach-demo-reply-cta";
 import { resolveExistingCompany } from "@/lib/company-resolver";
 import {
   callTranscriptRequested,
@@ -236,11 +237,14 @@ async function findDraft(subject: string) {
 }
 async function findCampaign(name: string) {
   const term = likeTerm(name);
+  const requestScope = getRequestScope();
+  if (!requestScope) return null;
   const wantsActive =
     !term || ["active", "current", "active campaign", "current campaign"].includes(term.toLowerCase());
   let q = supabaseAdmin
     .from("outreach_campaigns")
     .select("id, name, status")
+    .eq("workspace_id", requestScope.workspaceId)
     .order("created_at", { ascending: false })
     .limit(1);
   if (wantsActive) q = q.eq("status", "active");
@@ -917,6 +921,8 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       const audience = typeof it.audience === "string" ? it.audience.trim() : "";
       const offerAngle = typeof it.offerAngle === "string" ? it.offerAngle.trim() : "";
       if (!name || !goal || !audience || !offerAngle || (await findCampaign(name))) continue;
+      const cta = sanitizeOutreachCampaignCtaConfig(it.cta, "reply_demo");
+      if (cta.error) continue;
       out.push({
         key,
         type: it.type,
@@ -929,6 +935,7 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
           audience,
           offer_angle: offerAngle,
           daily_limit: clampOutreachDailyLimit(it.dailyLimit),
+          cta_config: cta.config,
         },
       });
       continue;
@@ -947,6 +954,10 @@ async function resolveActions(items: any[], defaultCompanyId: string | null = nu
       if (Array.isArray(it.bannedPhrases)) patch.banned_phrases = it.bannedPhrases;
       if (["interested_reply", "final_step", "always", "never"].includes(it.bookingCtaMode))
         patch.booking_cta_mode = it.bookingCtaMode;
+      if (Object.prototype.hasOwnProperty.call(it, "cta")) {
+        const cta = sanitizeOutreachCampaignCtaConfig(it.cta, "auto");
+        if (!cta.error) patch.cta_config = cta.config;
+      }
       if (Array.isArray(it.sequence)) patch.sequence = it.sequence;
       if (!Object.keys(patch).length) continue;
       const summaryFields = Object.keys(patch).map((field) => field.replace(/_/g, " "));
@@ -1683,8 +1694,8 @@ Additional supported actions are:
 {"type":"upsert_stakeholder","client":"<client name, omit on their profile>","person":"<contact name>","buyingRole":"decision_maker|champion|user|influencer|blocker|unknown","influence":"high|medium|low","engagement":"warm|neutral|cold","jobTitle":"<optional>","email":"<optional>"}
 {"type":"update_contact","client":"<client name, omit on their profile>","person":"<existing contact name>","newName":"<optional corrected name>","role":"<optional, null to clear>","email":"<optional, null to clear>","sector":"<optional, null to clear>","notes":"<optional, null to clear>"}
 {"type":"update_task","client":"<client name, omit on their profile>","item":"<existing to-do text>","status":"done|open","newText":"<optional replacement>","dueAt":"YYYY-MM-DD or null","pinned":true,"action":"email|call|task"}
-{"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":50}
-{"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":50,"status":"draft|active|paused|completed"}
+{"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":50,"cta":{"type":"reply_demo|reply_call|personal_booking_link|link|video|voice_note|custom|none","label":"<next step wording>","url":"<secure shared URL only when needed>"}}
+{"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":50,"status":"draft|active|paused|completed","cta":{"type":"reply_demo|reply_call|personal_booking_link|link|video|voice_note|custom|none","label":"<next step wording>","url":"<secure shared URL only when needed>"}}
 {"type":"build_outreach_queue","limit":50}
 {"type":"send_email","recipientName":"<person name>","email":"<exact recipient email when known>","company":"<optional company>","subject":"<exact approved subject>","body":"<exact approved body including a simple do not follow up line for cold outreach, plus an optional sales call to action only when requested>"}
 {"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","dealIntent":"<the commercial outcome this deal is pursuing>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","winOutlook":"not_assessed|at_risk|possible|likely|highly_likely|won","winOutlookConfidence":0,"winOutlookReasons":["<stored evidence only>"],"winOutlookQuestions":["<targeted next-call question>"],"engagementMotion":"cold_outreach_campaign|personal_relationship_led|existing_customer_expansion|inbound_enquiry|partner_referral","activeContactMethod":"automated_email|personal_email|phone|video_call|linkedin|event|in_person|other","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>","rationale":"<why this change is supported>"}
@@ -1698,7 +1709,7 @@ Use upsert_stakeholder when the user identifies a decision-maker, champion, infl
 Use update_task when the user explicitly asks to complete, rename, pin, unpin or reschedule an existing to-do. If several match, the interface will ask which one.
 Use create_document only for an explicit finished-document request. Do not emit create_task for the same request. If a matching sourceTask is used, it is completed only after the private Word file is successfully created. A queued request is not the same as a completed file, so tell the user it will continue in the background and appear in Documents.
 Use log_client_update when the user reports an off-system phone call, text message, voice note or relationship update. Keep the content factual and concise. It enters that client's timeline and commercial memory, updates any grounded next action, and refreshes future next-call intent after the user confirms it once. If the user names a client, use the exact known client name or saved alias. Never map a one-word first name to a different full-name client merely because part of the text matches.
-For update_campaign you may also include "voice":{"tone":"...","style":"...","rules":["..."],"signature":"Lee"}, "bannedPhrases":["..."], "bookingCtaMode":"interested_reply|final_step|always|never", and "sequence":[{"step":1,"channel":"email|linkedin|phone","actionType":"email|linkedin_view|linkedin_like|linkedin_connect|linkedin_message|manual_call","delayDays":0,"purpose":"...","contentType":"plain|insight|case_study|video|close_loop","guidance":"...","assetUrl":null}]. Booking links are never campaign settings. Each salesperson manages their own exact link in My Sales Setup. The campaign voice object controls writing tone only. It must never select or override the salesperson's audio voice, which belongs to their own My Sales Setup profile. LinkedIn and phone steps are always manual and must never be described as completed unless the salesperson confirms them. Only include settings the user asked for or approved in the conversation.
+For update_campaign you may also include "voice":{"tone":"...","style":"...","rules":["..."],"signature":"Lee"}, "bannedPhrases":["..."], "bookingCtaMode":"interested_reply|final_step|always|never", "cta":{"type":"reply_demo|reply_call|personal_booking_link|link|video|voice_note|custom|none","label":"...","url":"https://..."}, and "sequence":[{"step":1,"channel":"email|linkedin|phone","actionType":"email|linkedin_view|linkedin_like|linkedin_connect|linkedin_message|manual_call","delayDays":0,"purpose":"...","contentType":"plain|insight|case_study|video|close_loop","guidance":"...","assetUrl":null}]. New campaigns normally start with reply_demo and a ten minute demo unless the user chooses another action. Use voice_note when the email player should be the main next step. Shared link and video actions require a secure URL. Personal booking links are never stored in campaigns. They are resolved from the exact signed in salesperson's My Sales Setup profile when their draft is generated. The campaign voice object controls writing tone only. It must never select or override the salesperson's audio voice, which belongs to their own My Sales Setup profile. LinkedIn and phone steps are always manual and must never be described as completed unless the salesperson confirms them. Only include settings the user asked for or approved in the conversation.
 
 ONE-OFF EMAILS: when the user explicitly asks to send an email you drafted in this conversation, use send_email in the same reply instead of sending them to another screen. A campaign is optional. The action card is the final approval and must visibly show the exact recipient, subject and body. Never invent an email address, choose a fuzzy name match or silently fill missing content. If the exact recipient cannot be matched, ask only for their email address and emit no send_email action. Company is optional and must not block the send. Include a simple do not follow up line for cold outreach. A demo, booking, reply or other sales call to action is optional. Include one only when the user asks for it or it belongs in the exact draft they approved. Never add one merely to satisfy a format rule. Every send_email is an external action, remains separate from batch approval and uses only the signed-in user's own connected mailbox. Never claim it sent until the action receipt confirms it was queued.
 

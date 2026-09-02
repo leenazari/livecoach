@@ -11,8 +11,10 @@ const DEMO_REPLY_CTA =
   /\bbook(?:ing)?\s+(?:a\s+)?(?:(?:quick|(?:\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins))\s+)?demo(?:nstration)?\b[\s\S]{0,180}\brepl(?:y|ying)\s+to\s+this\s+email\b|\brepl(?:y|ying)\s+to\s+this\s+email\b[\s\S]{0,180}\bbook(?:ing)?\s+(?:a\s+)?(?:(?:quick|(?:\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins))\s+)?demo(?:nstration)?\b/i;
 const GENERAL_SALES_CTA =
   /\b(?:reply|email|message|get in touch|come back to (?:me|us)|let (?:me|us) know)\b[\s\S]{0,120}\b(?:(?:quick|(?:\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins))\s+)?(?:call|demo(?:nstration)?|chat|conversation)\b|\b(?:book|arrange|schedule|set up|have|open to)\b[\s\S]{0,100}\b(?:(?:quick|(?:\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins))\s+)?(?:call|demo(?:nstration)?|chat|conversation)\b|\b(?:(?:quick|(?:\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:minute|minutes|min|mins))\s+)?(?:call|demo(?:nstration)?|chat|conversation)\b[\s\S]{0,100}\b(?:reply|email|message|get in touch|book|arrange|schedule|interested)\b/i;
+const CONTENT_SALES_CTA =
+  /\b(?:listen|play|watch|open|view|visit|click|tap)\b[\s\S]{0,100}\b(?:voice\s+(?:note|message)|video|demo|link|page|guide|case study)\b|\b(?:voice\s+(?:note|message)|video|demo|link|page|guide|case study)\b[\s\S]{0,100}\b(?:listen|play|watch|open|view|visit|click|tap)\b/i;
 const CAMPAIGN_CTA_OMISSION =
-  /\b(?:no|without|omit|skip|avoid|exclude|do not|don[’']t|never)\b[\s\S]{0,55}\b(?:call to action|cta|invitation|demo(?:nstration)?|call|chat|conversation)\b/i;
+  /\b(?:no|without|omit|skip|avoid|exclude|do not|don[’']t|never)\b[\s\S]{0,55}\b(?:call to action|cta|invitation|demo(?:nstration)?|call|chat|conversation|reply|link|video|voice\s+(?:note|message))\b/i;
 const CAMPAIGN_CTA_ACTION =
   /\b(?:call to action|cta|book|booking|arrange|schedule|set up|invite|invitation|ask|reply|respond|get in touch|contact|offer)\b/i;
 const CAMPAIGN_CTA_TARGET = /\b(demo(?:nstration)?|call|chat|conversation)\b/i;
@@ -43,13 +45,122 @@ const normalised = (value: unknown) =>
 const comparable = (value: unknown) =>
   normalised(value).replace(/\s+/g, " ").toLocaleLowerCase("en-GB");
 
+export const OUTREACH_CAMPAIGN_CTA_TYPES = [
+  "auto",
+  "reply_demo",
+  "reply_call",
+  "personal_booking_link",
+  "link",
+  "video",
+  "voice_note",
+  "custom",
+  "none",
+] as const;
+
+export type OutreachCampaignCtaType =
+  (typeof OUTREACH_CAMPAIGN_CTA_TYPES)[number];
+
+export type OutreachCampaignCtaConfig = {
+  type: OutreachCampaignCtaType;
+  label: string;
+  url: string;
+};
+
+const CAMPAIGN_CTA_DEFAULT_LABELS: Record<OutreachCampaignCtaType, string> = {
+  auto: "",
+  reply_demo: "Book a 10 minute demo",
+  reply_call: "Arrange a quick call",
+  personal_booking_link: "Choose a suitable demo time",
+  link: "Open the campaign link",
+  video: "Watch the short video",
+  voice_note: "Listen to the personal voice note",
+  custom: "",
+  none: "",
+};
+
+export function defaultOutreachCampaignCtaConfig(
+  type: OutreachCampaignCtaType = "reply_demo"
+): OutreachCampaignCtaConfig {
+  return {
+    type,
+    label: CAMPAIGN_CTA_DEFAULT_LABELS[type],
+    url: "",
+  };
+}
+
+function safeCampaignCtaUrl(value: unknown): string {
+  const raw = normalised(value).slice(0, 1200);
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+      return "";
+    }
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+export function sanitizeOutreachCampaignCtaConfig(
+  value: unknown,
+  defaultType: OutreachCampaignCtaType = "auto"
+): { config: OutreachCampaignCtaConfig; error: string | null } {
+  const source = value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+  const requestedType = normalised(source.type || defaultType);
+  if (!(OUTREACH_CAMPAIGN_CTA_TYPES as readonly string[]).includes(requestedType)) {
+    return {
+      config: defaultOutreachCampaignCtaConfig(defaultType),
+      error: "Choose a valid campaign call to action",
+    };
+  }
+  const type = requestedType as OutreachCampaignCtaType;
+  const rawLabel = normalised(source.label).slice(0, 180);
+  const rawUrl = normalised(source.url).slice(0, 1200);
+  const url = safeCampaignCtaUrl(rawUrl);
+  if (rawUrl && !url) {
+    return {
+      config: defaultOutreachCampaignCtaConfig(type),
+      error: "Campaign call to action links must use a complete secure HTTPS address",
+    };
+  }
+  if (["link", "video"].includes(type) && !url) {
+    return {
+      config: defaultOutreachCampaignCtaConfig(type),
+      error: "Add the secure link for this campaign call to action",
+    };
+  }
+  if (type === "custom" && !rawLabel) {
+    return {
+      config: defaultOutreachCampaignCtaConfig(type),
+      error: "Write the custom campaign call to action",
+    };
+  }
+  return {
+    config: {
+      type,
+      label:
+        type === "auto" || type === "none"
+          ? ""
+          : rawLabel || CAMPAIGN_CTA_DEFAULT_LABELS[type],
+      url: ["link", "video", "custom"].includes(type) ? url : "",
+    },
+    error: null,
+  };
+}
+
 export type OutreachCampaignCtaPolicy = {
-  kind: "demo" | "call";
+  kind: "demo" | "call" | "link" | "video" | "voice_note" | "custom";
   durationMinutes: number | null;
   label: string;
   emailText: string;
   voiceText: string;
+  url?: string;
+  delivery?: "reply" | "personal_booking_link" | "shared_link" | "voice_note";
   source:
+    | "campaign_config"
     | "sender_guidance"
     | "sequence_guidance"
     | "sequence_purpose"
@@ -63,6 +174,8 @@ type OutreachCampaignCtaInput = {
   sequencePurpose?: unknown;
   sequenceGuidance?: unknown;
   senderGuidance?: unknown;
+  campaignCtaConfig?: unknown;
+  personalBookingUrl?: unknown;
 };
 
 const CAMPAIGN_CTA_NUMBER_WORDS: Record<string, number> = {
@@ -91,6 +204,107 @@ function explicitCampaignCta(value: string, source: OutreachCampaignCtaPolicy["s
   return source === "campaign_goal";
 }
 
+function sentence(value: string): string {
+  const clean = normalised(value);
+  if (!clean) return "";
+  return /[.!?]$/.test(clean) ? clean : `${clean}.`;
+}
+
+function lowerFirst(value: string): string {
+  const clean = normalised(value).replace(/[.!?]+$/, "");
+  return clean ? `${clean.charAt(0).toLocaleLowerCase("en-GB")}${clean.slice(1)}` : "";
+}
+
+function configuredCampaignCtaPolicy(input: {
+  config: OutreachCampaignCtaConfig;
+  personalBookingUrl?: unknown;
+}): OutreachCampaignCtaPolicy | null {
+  const { config } = input;
+  if (config.type === "auto" || config.type === "none") return null;
+
+  if (config.type === "reply_demo" || config.type === "reply_call") {
+    const kind = config.type === "reply_demo" ? "demo" : "call";
+    const durationMinutes = campaignCtaDuration(config.label);
+    const label = durationMinutes
+      ? `${durationMinutes} minute ${kind}`
+      : `quick ${kind}`;
+    return {
+      kind,
+      durationMinutes,
+      label,
+      emailText: `Would you be open to booking a ${label}? Just reply to this email and I will arrange it.`,
+      voiceText: `Would you be open to booking a ${label}? Just reply to this email and we will arrange it.`,
+      delivery: "reply",
+      source: "campaign_config",
+    };
+  }
+
+  if (config.type === "personal_booking_link") {
+    const personalBookingUrl = safeCampaignCtaUrl(input.personalBookingUrl);
+    if (!personalBookingUrl) {
+      return {
+        kind: "call",
+        durationMinutes: null,
+        label: "quick call",
+        emailText: "Would you be open to a quick call? Just reply to this email and I will arrange it.",
+        voiceText: "Would you be open to a quick call? Just reply to this email and we will arrange it.",
+        delivery: "reply",
+        source: "campaign_config",
+      };
+    }
+    return {
+      kind: "call",
+      durationMinutes: campaignCtaDuration(config.label),
+      label: config.label,
+      emailText: `${sentence(config.label)}\n${personalBookingUrl}`,
+      voiceText: "You can use the booking link in this email to choose a suitable time.",
+      url: personalBookingUrl,
+      delivery: "personal_booking_link",
+      source: "campaign_config",
+    };
+  }
+
+  if (config.type === "link" || config.type === "video") {
+    const isVideo = config.type === "video";
+    return {
+      kind: isVideo ? "video" : "link",
+      durationMinutes: null,
+      label: config.label,
+      emailText: `${sentence(config.label)}\n${config.url}`,
+      voiceText: isVideo
+        ? "You can watch the short video from the link in this email."
+        : `You can use the link in this email to ${lowerFirst(config.label)}.`,
+      url: config.url,
+      delivery: "shared_link",
+      source: "campaign_config",
+    };
+  }
+
+  if (config.type === "voice_note") {
+    return {
+      kind: "voice_note",
+      durationMinutes: null,
+      label: config.label,
+      emailText: "I’ve added a short personal voice note below. Tap play to listen.",
+      voiceText: "If this sounds useful, just reply to this email and we can arrange a quick demo.",
+      delivery: "voice_note",
+      source: "campaign_config",
+    };
+  }
+
+  return {
+    kind: "custom",
+    durationMinutes: campaignCtaDuration(config.label),
+    label: config.label,
+    emailText: [sentence(config.label), config.url].filter(Boolean).join("\n"),
+    voiceText: config.url
+      ? `You can use the link in this email to ${lowerFirst(config.label)}.`
+      : sentence(config.label),
+    ...(config.url ? { url: config.url, delivery: "shared_link" as const } : { delivery: "reply" as const }),
+    source: "campaign_config",
+  };
+}
+
 /**
  * Convert a campaign's approved wording into one deterministic next step.
  * A sender or sequence can explicitly opt out. Otherwise campaigns that name a
@@ -106,6 +320,18 @@ export function resolveOutreachCampaignCta(
     (sequenceGuidance && CAMPAIGN_CTA_OMISSION.test(sequenceGuidance))
   ) {
     return null;
+  }
+
+  const configured = sanitizeOutreachCampaignCtaConfig(
+    input.campaignCtaConfig,
+    "auto"
+  );
+  if (!configured.error && configured.config.type === "none") return null;
+  if (!configured.error && configured.config.type !== "auto") {
+    return configuredCampaignCtaPolicy({
+      config: configured.config,
+      personalBookingUrl: input.personalBookingUrl,
+    });
   }
 
   const candidates: Array<{
@@ -148,6 +374,14 @@ export function hasOutreachCampaignCta(
 ): boolean {
   if (!policy) return hasOutreachSalesCallToAction(value);
   const source = normalised(value).slice(-700);
+  if (
+    comparable(source).includes(comparable(policy.emailText)) ||
+    comparable(source).includes(comparable(policy.voiceText))
+  ) {
+    return true;
+  }
+  if (policy.url && source.includes(policy.url)) return true;
+  if (!["demo", "call"].includes(policy.kind)) return false;
   if (!hasOutreachSalesCallToAction(source)) return false;
   const target = policy.kind === "demo"
     ? /\bdemo(?:nstration)?\b/i
@@ -174,7 +408,11 @@ export function hasOutreachSalesCallToAction(value: unknown): boolean {
   const source = normalised(value);
   if (!source) return false;
   const trailingCopy = source.slice(-700);
-  return hasOutreachDemoReplyCta(trailingCopy) || GENERAL_SALES_CTA.test(trailingCopy);
+  return (
+    hasOutreachDemoReplyCta(trailingCopy) ||
+    GENERAL_SALES_CTA.test(trailingCopy) ||
+    CONTENT_SALES_CTA.test(trailingCopy)
+  );
 }
 
 function looksLikeSignature(paragraph: string, signoff?: string): boolean {
@@ -347,7 +585,7 @@ function formatOutreachEmailEnding(input: {
 
   for (const paragraph of paragraphs) {
     if (
-      ctaText &&
+      (ctaText || replaceAnySalesCta) &&
       paragraph.length <= 320 &&
       (replaceAnySalesCta
         ? hasOutreachSalesCallToAction(paragraph)
@@ -412,6 +650,14 @@ export function ensureOutreachEmailSimpleOptOut(input: {
   return formatOutreachEmailEnding(input, null);
 }
 
+export function ensureOutreachEmailWithoutSalesCta(input: {
+  body: unknown;
+  signoff?: string | null;
+  maximumCharacters?: number;
+}): string {
+  return formatOutreachEmailEnding(input, null, true);
+}
+
 /**
  * Add the standard reply to book call to action only when a campaign or sender
  * has explicitly selected it. Existing ending paragraphs are normalised so a
@@ -467,7 +713,7 @@ export function ensureOutreachVoiceCampaignCta(input: {
 }): string {
   const script = normalised(input.script).replace(/\s+/g, " ");
   if (!script) return input.policy.voiceText;
-  if (hasOutreachCampaignCta(script, input.policy)) return script;
+  if (comparable(script).includes(comparable(input.policy.voiceText))) return script;
   const sentences = script.match(/[^.!?]+(?:[.!?]+|$)/g) || [];
   if (
     sentences.length &&
@@ -478,6 +724,18 @@ export function ensureOutreachVoiceCampaignCta(input: {
   return `${sentences.join(" ").trim()} ${input.policy.voiceText}`
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function removeOutreachVoiceSalesCta(value: unknown): string {
+  const script = normalised(value).replace(/\s+/g, " ");
+  const sentences = script.match(/[^.!?]+(?:[.!?]+|$)/g) || [];
+  if (
+    sentences.length &&
+    hasOutreachSalesCallToAction(sentences.at(-1) || "")
+  ) {
+    sentences.pop();
+  }
+  return sentences.join(" ").replace(/\s+/g, " ").trim();
 }
 
 export function outreachVoiceEndsWithDemoReplyCta(value: unknown): boolean {
