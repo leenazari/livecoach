@@ -35,6 +35,10 @@ import {
   pauseLiveCoachEmailOutreachForSendPilot,
 } from "@/lib/sendpilot-reconciliation";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
+import {
+  ensureReplyAttentionTask,
+  type ReplyAttentionCategory,
+} from "@/lib/reply-attention";
 
 type OwnerScope = { userId: string; workspaceId: string };
 
@@ -1043,7 +1047,16 @@ async function loadEventLeadLink(
   return created as SendPilotLeadLink;
 }
 
-function classifyLinkedInReply(text: string) {
+type LinkedInReplyClassification = {
+  category: ReplyAttentionCategory;
+  summary: string;
+  prospectStatus: string;
+  enrolmentStatus: string;
+  eventKind: string;
+  suppress: boolean;
+};
+
+function classifyLinkedInReply(text: string): LinkedInReplyClassification {
   const lower = text.toLowerCase();
   if (/unsubscribe|remove me|do not contact|don't contact|stop messaging|opt out/.test(lower)) {
     return {
@@ -1253,7 +1266,9 @@ export async function recordSendPilotReplyInCrm(
   const classification = classifyLinkedInReply(event.data.reply);
   const { data: prospect, error: prospectError } = await supabaseService
     .from("outreach_prospects")
-    .select("id,email,last_reply_at,last_reply_text,status")
+    .select(
+      "id,email,first_name,last_name,company_name,crm_company_id,last_reply_at,last_reply_text,status"
+    )
     .eq("workspace_id", integration.workspace_id)
     .eq("assigned_to_user_id", integration.owner_id)
     .eq("id", link.outreach_prospect_id)
@@ -1282,6 +1297,24 @@ export async function recordSendPilotReplyInCrm(
       channel: "linkedin",
     }
   );
+  await ensureReplyAttentionTask({
+    workspaceId: integration.workspace_id,
+    userId: integration.owner_id,
+    companyId: UUID.test(String(prospect.crm_company_id || ""))
+      ? String(prospect.crm_company_id)
+      : null,
+    prospectId: String(prospect.id),
+    prospectName: [prospect.first_name, prospect.last_name]
+      .map((value) => clean(value, 100))
+      .filter(Boolean)
+      .join(" "),
+    companyName: clean(prospect.company_name, 160),
+    channel: "linkedin",
+    category: classification.category,
+    summary: classification.summary,
+    sourceRef: `sendpilot_reply:${providerMessageId}`,
+    receivedAt: event.timestamp,
+  });
   await updateLeadLink(integration, link.id, {
     sync_status: classification.suppress ? "suppressed" : "replied",
     external_status: "REPLY_RECEIVED",
@@ -1381,6 +1414,35 @@ export async function recordSendPilotBackfillReplyInCrm(
     return { outreachEventId: raced?.id || null, matched: true };
   }
   if (createError) throw createError;
+  const lastBackfillAt = new Date(integration.last_backfill_at || "").getTime();
+  const receivedAt = new Date(message.receivedAt).getTime();
+  // The first connector backfill establishes history without flooding Today
+  // with old work. Later safety passes create a task only for replies newer
+  // than the last successful owner-scoped backfill.
+  if (
+    Number.isFinite(lastBackfillAt) &&
+    Number.isFinite(receivedAt) &&
+    receivedAt > lastBackfillAt
+  ) {
+    await ensureReplyAttentionTask({
+      workspaceId: integration.workspace_id,
+      userId: integration.owner_id,
+      companyId: UUID.test(String(prospect.crm_company_id || ""))
+        ? String(prospect.crm_company_id)
+        : null,
+      prospectId: String(prospect.id),
+      prospectName: [prospect.first_name, prospect.last_name]
+        .map((value: unknown) => clean(value, 100))
+        .filter(Boolean)
+        .join(" "),
+      companyName: clean(prospect.company_name, 160),
+      channel: "linkedin",
+      category: classification.category,
+      summary: classification.summary,
+      sourceRef: `sendpilot_reply:${message.messageId}`,
+      receivedAt: message.receivedAt,
+    });
+  }
   return { outreachEventId: created.id as string, matched: true };
 }
 

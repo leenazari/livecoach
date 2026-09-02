@@ -22,6 +22,8 @@ import {
 import { detectOutOfOffice } from "@/lib/email-reply-signals";
 import { processOutreachReplyMessage } from "@/lib/outreach-replies";
 import { generateEmailAssistantDraft } from "@/lib/email-assistant";
+import { createImportantEmailNotification } from "@/lib/crm-notification-writes";
+import { ensureReplyAttentionTask } from "@/lib/reply-attention";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -182,6 +184,7 @@ async function runAccount() {
     let checked = 0;
     let modelChecks = 0;
     let alerts = 0;
+    let notifications = 0;
     let immediateDrafts = 0;
     let overnightDraftsQueued = 0;
     let calendarSignals = 0;
@@ -283,7 +286,10 @@ async function runAccount() {
                     replyRecommended: true,
                     draftMode: plan.draftMode,
                     calendarRelated: false,
+                    outreachProspectId: target.outreachProspectId,
                   },
+                  fingerprintKey: `${identity.provider}:${message.id}`,
+                  distinctSourceEvent: true,
                 },
               ]);
               alerts += created.length;
@@ -307,6 +313,21 @@ async function runAccount() {
               } else {
                 overnightDraftsQueued += created.length;
               }
+            } else if (!outreach.outOfOffice && outreach.category) {
+              const created = await ensureReplyAttentionTask({
+                workspaceId: identity.workspaceId,
+                userId: identity.userId,
+                companyId: outreach.companyId || target.companyId,
+                prospectId: target.outreachProspectId,
+                prospectName: nameFromHeader(message.from) || senderEmail,
+                companyName: "",
+                channel: "email",
+                category: outreach.category,
+                summary: outreach.summary || "Outreach reply received.",
+                sourceRef: `${identity.provider}:${message.id}`,
+                receivedAt: message.date || new Date().toISOString(),
+              });
+              alerts += created.length;
             }
             // Outreach processing already classifies the reply, stops the
             // sequence, records the event and emits the assignee notification.
@@ -393,10 +414,45 @@ async function runAccount() {
               replyRecommended: result.replyRecommended,
               draftMode,
               calendarRelated: result.calendarRelated || calendarSignal,
+              outreachProspectId: target.outreachProspectId,
             },
+            fingerprintKey: `${identity.provider}:${message.id}`,
+            distinctSourceEvent: true,
           },
         ]);
         alerts += created.length;
+        const notificationSource = target.companyId
+          ? {
+              sourceTable: "companies" as const,
+              sourceId: target.companyId,
+              href: `/crm/${target.companyId}`,
+            }
+          : target.outreachProspectId
+            ? {
+                sourceTable: "outreach_prospects" as const,
+                sourceId: target.outreachProspectId,
+                href: `/crm/outreach?tab=prospects&prospect=${target.outreachProspectId}`,
+              }
+            : null;
+        if (notificationSource) {
+          const notification = await createImportantEmailNotification({
+            workspaceId: identity.workspaceId,
+            userId: identity.userId,
+            title:
+              result.urgency === "urgent"
+                ? `Urgent email from ${senderName}`
+                : `Important email from ${senderName}`,
+            body: [
+              result.summary || clean(message.subject, 240),
+              result.action ? `Task added. ${result.action}` : "Follow-up task added.",
+            ]
+              .filter(Boolean)
+              .join(" "),
+            ...notificationSource,
+            sourceEventKey: `important_email:${identity.provider}:${message.id}`,
+          });
+          if (notification.created) notifications += 1;
+        }
         if (shouldDraft && draftMode === "immediate") {
           const generated = await generateEmailAssistantDraft({
             provider: identity.provider,
@@ -452,6 +508,7 @@ async function runAccount() {
       checked,
       modelChecks,
       alerts,
+      notifications,
       immediateDrafts,
       overnightDraftsQueued,
       calendarSignals,
