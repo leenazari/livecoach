@@ -168,7 +168,7 @@ This is a shared synthetic voice. It must never claim to be ${sender.senderName}
 
 Use the recipient's first name, exact company and the strongest relevant fact already present in the saved research or email. If no fact is verified, use an honest role and company specific hypothesis. Include one complete gentle why now sentence. Set urgencyType to verified_trigger only when the saved evidence proves a current trigger. Otherwise use natural_next_moment. The whyNow field must exactly copy that sentence from the script.
 
-Do not read out a URL, email address, opt out line or subject. A demo, booking, reply or other sales call to action is optional. Keep one only when the existing email or campaign direction clearly uses it. Never add one merely to satisfy a format rule. Finish with a complete sentence.`,
+Do not read out a URL, email address, opt out line or subject. Normally finish with a short, low pressure invitation to reply for a quick call or demo. This is recommended, not required. Omit it when the existing email or campaign direction deliberately has no CTA. A missing CTA must never invalidate the script or block approval. Finish with a complete sentence.`,
         messages: [
           {
             role: "user",

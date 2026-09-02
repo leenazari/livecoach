@@ -8,6 +8,7 @@ import {
   ensureOutreachEmailSimpleOptOut,
   ensureOutreachVoiceDemoReplyCta,
   hasOutreachDemoReplyCta,
+  hasOutreachSalesCallToAction,
   OUTREACH_EMAIL_DEMO_REPLY_CTA,
   OUTREACH_SIMPLE_OPT_OUT,
   OUTREACH_VOICE_DEMO_REPLY_CTA,
@@ -75,6 +76,21 @@ assert.equal(
   `Hi Sam,\n\nYour current hiring round looks relevant.\n\n${OUTREACH_SIMPLE_OPT_OUT}\n\nBest,\nLee`
 );
 assert.equal(hasOutreachDemoReplyCta(withoutCta), false);
+assert.equal(hasOutreachSalesCallToAction(withoutCta), false);
+assert.equal(
+  hasOutreachSalesCallToAction(
+    "If a quick call would help, reply and we can arrange one."
+  ),
+  true,
+  "Natural call or demo invitations should satisfy the optional guidance"
+);
+assert.equal(
+  hasOutreachSalesCallToAction(
+    "We reviewed the call notes and the demonstration results yesterday."
+  ),
+  false,
+  "Past call references must not be mistaken for a call to action"
+);
 
 const optionalCtaPreserved = ensureOutreachEmailSimpleOptOut({
   body: prepared,
@@ -96,9 +112,11 @@ const sendQueue = read("lib/outreach-send-queue.ts");
 const outreachPage = read("app/crm/outreach/page.tsx");
 const outreachToday = read("components/crm/OutreachTodayLane.tsx");
 const voiceEditor = read("components/crm/OutreachVoiceNoteEditor.tsx");
+const ctaAdvice = read("components/crm/OutreachCtaAdvice.tsx");
 
 assert.match(prepareRoute, /ensureOutreachEmailSimpleOptOut/);
-assert.match(prepareRoute, /sales call to action is optional/i);
+assert.match(prepareRoute, /preferred default, not a validity rule/i);
+assert.match(prepareRoute, /missing call to action must never make the draft invalid or stop it being approved/i);
 assert.doesNotMatch(prepareRoute, /ensureOutreachEmailDemoReplyCta/);
 assert.doesNotMatch(prepareRoute, /ensureOutreachVoiceDemoReplyCta/);
 assert.doesNotMatch(prepareRoute, /exact mandatory CTA/);
@@ -107,7 +125,8 @@ assert.doesNotMatch(messageRoute, /outreachVoiceEndsWithDemoReplyCta/);
 assert.match(messageRoute, /Keep the simple opt-out line before approving/);
 assert.match(messageRoute, /eq\("workspace_id", sender\.workspaceId\)/);
 assert.match(messageRoute, /eq\("sender_user_id", sender\.userId\)/);
-assert.match(voiceScriptRoute, /sales call to action is optional/i);
+assert.match(voiceScriptRoute, /recommended, not required/i);
+assert.match(voiceScriptRoute, /missing CTA must never invalidate the script or block approval/i);
 assert.doesNotMatch(voiceScriptRoute, /failed the demo reply check/);
 assert.match(brain, /sales call to action is optional/i);
 assert.doesNotMatch(brain, /ensureOutreachEmailDemoReplyCta/);
@@ -116,8 +135,17 @@ assert.doesNotMatch(brainEmail, /outreachEmailEndsWithDemoReplyCta/);
 assert.match(brainEmail, /outreach_opt_out_missing/);
 assert.doesNotMatch(replyDraft, /outreach-demo-reply-cta/);
 assert.doesNotMatch(sendQueue, /ensureOutreachEmailDemoReplyCta/);
-assert.match(outreachPage, /A sales call to action is optional/);
-assert.match(outreachToday, /A sales call to action is optional/);
-assert.match(voiceEditor, /A sales call to action is optional/);
+assert.match(outreachPage, /OutreachCtaAdvice/);
+assert.match(outreachToday, /OutreachCtaAdvice/);
+assert.match(voiceEditor, /recommended when it fits/);
+assert.match(ctaAdvice, /role="note"/);
+assert.match(ctaAdvice, /can still be queued without it/);
+assert.match(ctaAdvice, /Do not show CTA tips again/);
+assert.match(ctaAdvice, /workspaceId/);
+assert.match(ctaAdvice, /userId/);
+assert.match(ctaAdvice, /window\.localStorage\.setItem/);
+assert.doesNotMatch(ctaAdvice, /window\.confirm|role="alert"/);
+assert.doesNotMatch(outreachPage, /call to action[^\n]{0,160}throw new Error/i);
+assert.doesNotMatch(outreachToday, /call to action[^\n]{0,160}setError/i);
 
 console.log("Optional outreach call to action checks passed");
