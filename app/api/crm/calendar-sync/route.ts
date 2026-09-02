@@ -3,7 +3,7 @@ import { meetingUrlOf, titleOf } from "@/lib/google";
 import { listConnectedCalendarSnapshot } from "@/lib/calendar-provider";
 import { supabaseAdmin } from "@/lib/supabase";
 import { setAppConfigValue } from "@/lib/app-config";
-import { resolveRecordScope } from "@/lib/record-scope";
+import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { openai, OPENAI_MODEL_LIVE } from "@/lib/openai";
 import {
   loadAttendeeConfig,
@@ -24,6 +24,7 @@ import {
 } from "@/lib/calendar-events";
 import { listActiveAccountScopes } from "@/lib/automation-accounts";
 import { runWithServiceRecordScope } from "@/lib/service-scope";
+import { shouldReopenScheduledCalendarCall } from "@/lib/calendar-sync-recovery";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -162,6 +163,8 @@ async function runCalendarSync() {
       const { data: storedCalendarRows, error: storedError } = await supabaseAdmin
         .from("upcoming_calls")
         .select("id, external_id, title, scheduled_at")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .eq("source", source)
         .is("completed_at", null)
         .gte("scheduled_at", timeMin)
@@ -182,7 +185,9 @@ async function runCalendarSync() {
           const { error } = await supabaseAdmin
             .from("upcoming_calls")
             .update({ external_id: replacement.external_id })
-            .eq("id", stored.id);
+            .eq("id", stored.id)
+            .eq("workspace_id", scope.workspaceId)
+            .eq("owner_id", scope.userId);
           if (error) throw error;
           storedLiveIds.add(replacement.external_id);
           relinked += 1;
@@ -195,6 +200,8 @@ async function runCalendarSync() {
           .from("upcoming_calls")
           .delete()
           .in("id", staleIds)
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
           .eq("source", source)
           .select("id");
         if (error) throw error;
@@ -207,16 +214,22 @@ async function runCalendarSync() {
     const existing = new Set<string>();
     const existingCompany = new Map<string, string | null>();
     const existingId = new Map<string, string>();
+    const existingCompleted = new Map<string, string>();
     if (ids.length) {
-      const { data } = await supabaseAdmin
+      const { data, error } = await supabaseAdmin
         .from("upcoming_calls")
-        .select("id, external_id, company_id")
+        .select("id, external_id, company_id, completed_at")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .in("external_id", ids);
+      if (error) throw error;
       for (const d of data || []) {
         if (!d.external_id) continue;
         existing.add(d.external_id);
         existingId.set(d.external_id, d.id);
         existingCompany.set(d.external_id, d.company_id || null);
+        if (d.completed_at)
+          existingCompleted.set(d.external_id, d.completed_at);
       }
     }
 
@@ -290,11 +303,14 @@ async function runCalendarSync() {
       { company_id: string | null }
     >();
     if (inheritTitles.length) {
-      const { data: priors } = await supabaseAdmin
+      const { data: priors, error: priorsError } = await supabaseAdmin
         .from("upcoming_calls")
         .select("title, company_id, created_at")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .in("title", inheritTitles)
         .order("created_at", { ascending: false });
+      if (priorsError) throw priorsError;
       for (const p of priors || []) {
         const t = (p as any).title as string;
         if (!t || curationByTitle.has(t)) continue; // most recent wins
@@ -403,10 +419,13 @@ async function runCalendarSync() {
     const dupKey = (title: string, at: string) =>
       `${String(title || "").toLowerCase().trim()}|${at}`;
     const seenKeys = new Set<string>();
-    const { data: liveRows } = await supabaseAdmin
+    const { data: liveRows, error: liveRowsError } = await supabaseAdmin
       .from("upcoming_calls")
       .select("title, scheduled_at")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
       .is("completed_at", null);
+    if (liveRowsError) throw liveRowsError;
     for (const lr of liveRows || [])
       if ((lr as any).title && (lr as any).scheduled_at)
         seenKeys.add(dupKey((lr as any).title, (lr as any).scheduled_at));
@@ -417,6 +436,7 @@ async function runCalendarSync() {
       if (seenKeys.has(key)) continue; // duplicate of an existing/just-added row
       seenKeys.add(key);
       toInsert.push({
+        ...privateRecordFields(scope),
         external_id: x.r.external_id,
         title: x.r.title,
         scheduled_at: x.r.scheduled_at,
@@ -455,10 +475,11 @@ async function runCalendarSync() {
 
     let added = 0;
     if (toInsert.length) {
-      const { data } = await supabaseAdmin
+      const { data, error } = await supabaseAdmin
         .from("upcoming_calls")
         .insert(toInsert)
         .select("id,external_id,scheduled_at");
+      if (error) throw error;
       added = data?.length || 0;
       const resolvedByExternal = new Map(resolved.map((item) => [item.r.external_id, item]));
       for (const inserted of data || []) {
@@ -475,7 +496,14 @@ async function runCalendarSync() {
 
     // Reschedules: only the calendar-owned fields (now including the guest list),
     // never the user's own client link, intent or prep.
-    await Promise.all(
+    const reopened = toUpdate.filter(
+      (row) => shouldReopenScheduledCalendarCall({
+        scheduledAt: row.scheduled_at,
+        completedAt: existingCompleted.get(row.external_id),
+        nowMs: now,
+      })
+    ).length;
+    const updateResults = await Promise.all(
       toUpdate.map((r) =>
         supabaseAdmin
           .from("upcoming_calls")
@@ -484,13 +512,28 @@ async function runCalendarSync() {
             title: r.title,
             meeting_url: r.meeting_url,
             attendees: r.attendees,
+            // A live future provider event cannot remain completed. This
+            // repairs events that were finished and later rescheduled without
+            // reopening past calls. Explicit X dismissals stay excluded above.
+            ...(shouldReopenScheduledCalendarCall({
+              scheduledAt: r.scheduled_at,
+              completedAt: existingCompleted.get(r.external_id),
+              nowMs: now,
+            })
+              ? { completed_at: null }
+              : {}),
             ...(repairedCompany.has(r.external_id)
               ? { company_id: repairedCompany.get(r.external_id) }
               : {}),
           })
           .eq("external_id", r.external_id)
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
       )
     );
+    for (const result of updateResults) {
+      if (result.error) throw result.error;
+    }
 
     let outreachLinked = 0;
     for (const repair of outreachRepairs) {
@@ -524,6 +567,7 @@ async function runCalendarSync() {
       updated: toUpdate.length,
       removed,
       relinked,
+      reopened,
       reconciled: snapshot.complete,
       calendarReconnectRequired,
       warning: calendarReconnectRequired

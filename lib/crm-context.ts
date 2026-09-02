@@ -628,16 +628,19 @@ export async function gatherGlobalContext(
     lines.push(line);
   }
 
-  // Upcoming calls across everyone, synced from the calendar, so "what's on my
-  // calendar" / "what's next" works without picking a client first.
+  // Upcoming calls for the signed-in account, synced from its own calendar, so
+  // "what's on my calendar" works without picking a client first. Even the
+  // workspace owner gets their personal schedule here, never another user's.
   let upcomingQuery = supabaseAdmin
     .from("upcoming_calls")
-    .select("id, company_id, title, scheduled_at, prepped, meeting_url")
+    .select("id, company_id, title, scheduled_at, prepped, meeting_url, completed_at")
     .gte("scheduled_at", new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString())
     .order("scheduled_at", { ascending: true })
     .limit(40);
-  if (requestScope && requestScope.role !== "owner") {
-    upcomingQuery = upcomingQuery.eq("owner_id", requestScope.userId);
+  if (requestScope) {
+    upcomingQuery = upcomingQuery
+      .eq("workspace_id", requestScope.workspaceId)
+      .eq("owner_id", requestScope.userId);
   }
   const { data: upAll } = await upcomingQuery;
   const allEligible = (upAll || []).filter((call: any) =>
@@ -688,6 +691,9 @@ export async function gatherGlobalContext(
     for (const u of up as any[]) {
       const ms = u.scheduled_at ? new Date(u.scheduled_at).getTime() : null;
       const past = ms != null && ms < nowMs;
+      const hiddenByStaleCompletion = Boolean(
+        u.completed_at && ms != null && ms > nowMs
+      );
       const when = u.scheduled_at
         ? new Date(u.scheduled_at).toLocaleString("en-GB", {
             timeZone: "Europe/London",
@@ -705,7 +711,11 @@ export async function gatherGlobalContext(
       lines.push(
         `• ${when}${past ? " [ALREADY PASSED]" : ""}: ${u.title || "call"}${
           who ? ` (${who})` : ""
-        }${u.prepped ? " [prepped]" : ""} - prep page: ${prepUrl}${
+        }${u.prepped ? " [prepped]" : ""}${
+          hiddenByStaleCompletion
+            ? " [HIDDEN FROM CALLS LIST BY A STALE COMPLETION MARKER]"
+            : ""
+        } - prep page: ${prepUrl}${
           asksForJoinLink && u.meeting_url
             ? ` - requested join link: ${u.meeting_url}`
             : ""

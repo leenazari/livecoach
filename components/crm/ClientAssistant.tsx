@@ -71,6 +71,21 @@ function actionConfirmationError(action: any, result: any): CrmRequestError | nu
         reason: "LiveCoach did not confirm that the call focus was updated",
       });
   }
+  if (action?.type === "restore_call") {
+    const expectedCallId = String(action?.endpoint || "").match(
+      /\/api\/crm\/upcoming\/([^/]+)/
+    )?.[1];
+    if (
+      !result?.call?.id ||
+      (expectedCallId && result.call.id !== expectedCallId) ||
+      result.call.completed_at !== null
+    )
+      return crmConfirmationError({
+        url,
+        method,
+        reason: "LiveCoach did not confirm that the exact call was restored",
+      });
+  }
   return null;
 }
 
