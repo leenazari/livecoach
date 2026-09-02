@@ -103,6 +103,7 @@ export default function TaskList({
   hideCommitments = false,
   clientlessOnly = false,
   allowBulk = false,
+  initialLimit,
 }: {
   companyId?: string;
   showCompany?: boolean;
@@ -116,6 +117,9 @@ export default function TaskList({
   // Dashboard and full-list views can enter a selection mode and remove many
   // stale tasks in one recoverable, owner-scoped save.
   allowBulk?: boolean;
+  // Condensed surfaces show the highest-priority records first, then reveal the
+  // remaining canonical list in place without sending the user to another page.
+  initialLimit?: number;
 }) {
   const router = useRouter();
   const url = `/api/crm/tasks${companyId ? `?companyId=${companyId}` : ""}`;
@@ -126,6 +130,7 @@ export default function TaskList({
   // Prep calls more than a week out are collapsed behind an expand, so the list
   // stays focused on the week ahead instead of a wall of future recurring preps.
   const [showLater, setShowLater] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -418,7 +423,16 @@ export default function TaskList({
     new Date(t.scheduled_at).getTime() > weekAhead;
   const later = shown.filter(isLaterPrep);
   const near = shown.filter((t) => !isLaterPrep(t));
-  const visible = showLater ? [...near, ...later] : near;
+  const scheduleVisible = initialLimit
+    ? shown
+    : showLater
+      ? [...near, ...later]
+      : near;
+  const safeLimit = Math.max(1, Math.floor(initialLimit || 0));
+  const visible = initialLimit && !showAll
+    ? scheduleVisible.slice(0, safeLimit)
+    : scheduleVisible;
+  const hiddenByLimit = Math.max(0, scheduleVisible.length - visible.length);
   const selectable = visible.filter(
     (task) => !task.upcoming_id && task.status === "open"
   );
@@ -628,12 +642,16 @@ export default function TaskList({
               </span>
             )}
             {!multi && c && !done && (
-              <span
-                className="flex-none rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider"
+              <button
+                type="button"
+                onClick={() => start(t)}
+                disabled={savingId === t.id}
+                aria-label={`${c.label}: ${t.text}`}
+                className="flex-none rounded-full px-2 py-0.5 font-mono text-[0.54rem] uppercase tracking-wider transition hover:brightness-125 disabled:opacity-40"
                 style={{ background: c.bg, color: c.fg }}
               >
                 <i className={`ti ${c.icon}`} aria-hidden="true" /> {c.label}
-              </span>
+              </button>
             )}
             {showCompany && t.company && (
               <Link
@@ -684,7 +702,15 @@ export default function TaskList({
         );
       })}
     </ul>
-      {later.length > 0 && (
+      {initialLimit && shown.length > safeLimit ? (
+        <button
+          type="button"
+          onClick={() => setShowAll((value) => !value)}
+          className="mt-2 w-full rounded-lg border border-edge px-3 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+        >
+          {showAll ? `show top ${safeLimit}` : `show ${hiddenByLimit} more`}
+        </button>
+      ) : later.length > 0 ? (
         <button
           type="button"
           onClick={() => setShowLater((v) => !v)}
@@ -694,7 +720,7 @@ export default function TaskList({
             ? "show less"
             : `+ ${later.length} more prep beyond this week`}
         </button>
-      )}
+      ) : null}
     </>
   );
 }

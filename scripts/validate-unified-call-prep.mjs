@@ -24,7 +24,11 @@ assert.match(prepRedirect, /query\.append\(key, item\)/);
 assert.match(prepRedirect, /redirect\(`\/call/);
 assert.doesNotMatch(prepRedirect, /"use client"|\/api\/interview\/plan/);
 
-assert.match(upcoming, /const openPrep = \(c: Upcoming\) => \{\s*openCall\(c\);\s*\}/);
+assert.match(upcoming, /<Link\s+href=\{callHref\(c\)\}/);
+assert.doesNotMatch(
+  upcoming,
+  /href=\{callHref\(c\)\}[\s\S]{0,260}target="_blank"/
+);
 assert.doesNotMatch(routeSurfaces, /\/crm\/prep\?/);
 assert.match(routeSurfaces, /\/call\?upcoming=/);
 
