@@ -728,6 +728,7 @@ export default function OutreachTodayLane({
         from: string;
         provider: "google" | "microsoft";
         deliveryLocation: "sent_or_all_mail" | "inbox_or_sent";
+        voiceIncluded: boolean;
         campaignChanged: boolean;
       }>(`/api/crm/outreach/messages/${message.id}/rehearse`, {
         method: "POST",
@@ -746,8 +747,8 @@ export default function OutreachTodayLane({
         });
       setNotice(
         result.provider === "google"
-          ? "Gmail accepted the rehearsal. Find it in Sent or All Mail. The prospect and campaign were untouched."
-          : "Microsoft accepted the rehearsal. Check Inbox or Sent. The prospect and campaign were untouched."
+          ? `Gmail accepted the rehearsal. ${result.voiceIncluded ? "The ready voice note is included." : "No generated voice note was included."} Find it in Sent or All Mail. The prospect and campaign were untouched.`
+          : `Microsoft accepted the rehearsal. ${result.voiceIncluded ? "The ready voice note is included." : "No generated voice note was included."} Check Inbox or Sent. The prospect and campaign were untouched.`
       );
       await load(true);
     } catch (err: any) {

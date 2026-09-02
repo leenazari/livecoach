@@ -1407,6 +1407,7 @@ export default function OutreachPage() {
         from: string;
         provider: "google" | "microsoft";
         deliveryLocation: "sent_or_all_mail" | "inbox_or_sent";
+        voiceIncluded: boolean;
         campaignChanged: boolean;
       }>(`/api/crm/outreach/messages/${messageId}/rehearse`, { method: "POST", body: "{}" });
       if (!result.ok || !result.accepted || (sender?.mailboxEmail && result.sentTo !== sender.mailboxEmail) || result.campaignChanged !== false)
@@ -1417,8 +1418,8 @@ export default function OutreachPage() {
         });
       setNotice(
         result.provider === "google" && result.deliveryLocation === "sent_or_all_mail"
-          ? `Gmail accepted the rehearsal from ${result.from} to ${result.sentTo}. Because this is the same Gmail account, look in Sent or All Mail rather than waiting for a new Inbox message. No prospect was contacted and campaign results did not change.`
-          : `The mailbox accepted the rehearsal from ${result.from} to ${result.sentTo}. Check Inbox or Sent. No prospect was contacted and campaign results did not change.`
+          ? `Gmail accepted the rehearsal from ${result.from} to ${result.sentTo}. ${result.voiceIncluded ? "The ready voice note is included." : "No generated voice note was included."} Because this is the same Gmail account, look in Sent or All Mail rather than waiting for a new Inbox message. No prospect was contacted and campaign results did not change.`
+          : `The mailbox accepted the rehearsal from ${result.from} to ${result.sentTo}. ${result.voiceIncluded ? "The ready voice note is included." : "No generated voice note was included."} Check Inbox or Sent. No prospect was contacted and campaign results did not change.`
       );
     }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }

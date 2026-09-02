@@ -317,7 +317,8 @@ assert.match(salesProfilePage, /Email Assistant audio still stops safely/);
 assert.match(salesProfilePage, /Neither can borrow Brain&apos;s voice or the other product&apos;s setting/);
 assert.match(salesProfilePage, /voice\.previewUrl/);
 assert.match(campaignRoute, /legacy field describes campaign writing only/);
-assert.match(campaignRoute, /tone:[\s\S]*style:[\s\S]*rules:[\s\S]*signature:/);
+assert.match(campaignRoute, /tone:[\s\S]*style:[\s\S]*rules:/);
+assert.doesNotMatch(campaignRoute, /signature:/);
 assert.doesNotMatch(
   campaignRoute,
   /(?:outreach_voice_id|voice_provider_voice_id|providerVoiceId|elevenlabsVoiceId)/
