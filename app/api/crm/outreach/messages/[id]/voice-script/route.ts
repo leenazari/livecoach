@@ -17,6 +17,7 @@ import {
 } from "@/lib/outreach-voice-policy";
 import { outreachVoiceHasFalseSenderIdentity } from "@/lib/outreach-voice-policy";
 import {
+  effectiveOutreachCtaConfig,
   ensureOutreachVoiceCampaignCta,
   removeOutreachVoiceSalesCta,
   resolveOutreachCampaignCta,
@@ -158,15 +159,20 @@ export async function POST(
     const existingWhyNow = clean(message.strategy?.voiceUrgency?.whyNow, 260);
     const profileContext = salesProfileContextBlock(personalProfile);
     const firstName = clean(prospect.first_name, 80) || "there";
+    const selectedCta = effectiveOutreachCtaConfig({
+      enrolmentCtaConfig: enrolment.cta_config,
+      campaignCtaConfig: campaign.cta_config,
+    });
     const campaignCta = resolveOutreachCampaignCta({
       campaignGoal: campaign.goal,
       campaignOfferAngle: campaign.offer_angle,
       sequencePurpose: sequenceStep?.purpose,
       sequenceGuidance: sequenceStep?.guidance,
-      campaignCtaConfig: campaign.cta_config,
+      campaignCtaConfig: selectedCta.config,
+      configuredSource: selectedCta.source,
       personalBookingUrl: personalProfile.bookingUrl,
     });
-    const configuredCtaType = String(campaign.cta_config?.type || "auto");
+    const configuredCtaType = selectedCta.config.type;
 
     const response = await openai.messages.create(
       {

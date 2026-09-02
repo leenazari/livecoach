@@ -161,6 +161,7 @@ export type OutreachCampaignCtaPolicy = {
   delivery?: "reply" | "personal_booking_link" | "shared_link" | "voice_note";
   source:
     | "campaign_config"
+    | "enrolment_config"
     | "sender_guidance"
     | "sequence_guidance"
     | "sequence_purpose"
@@ -175,8 +176,51 @@ type OutreachCampaignCtaInput = {
   sequenceGuidance?: unknown;
   senderGuidance?: unknown;
   campaignCtaConfig?: unknown;
+  configuredSource?: "campaign_config" | "enrolment_config";
   personalBookingUrl?: unknown;
 };
+
+export type EffectiveOutreachCtaConfig = {
+  config: OutreachCampaignCtaConfig;
+  source: "campaign_config" | "enrolment_config";
+  inherited: boolean;
+};
+
+/**
+ * Resolve the single saved CTA config for a prospect and campaign. A null
+ * enrolment value inherits the campaign setting, so there is no duplicated
+ * campaign default to become stale.
+ */
+export function effectiveOutreachCtaConfig(input: {
+  enrolmentCtaConfig?: unknown;
+  campaignCtaConfig?: unknown;
+}): EffectiveOutreachCtaConfig {
+  if (input.enrolmentCtaConfig && typeof input.enrolmentCtaConfig === "object") {
+    const override = sanitizeOutreachCampaignCtaConfig(
+      input.enrolmentCtaConfig,
+      "auto"
+    );
+    if (!override.error && override.config.type !== "auto") {
+      return {
+        config: override.config,
+        source: "enrolment_config",
+        inherited: false,
+      };
+    }
+  }
+
+  const campaign = sanitizeOutreachCampaignCtaConfig(
+    input.campaignCtaConfig,
+    "auto"
+  );
+  return {
+    config: campaign.error
+      ? defaultOutreachCampaignCtaConfig("auto")
+      : campaign.config,
+    source: "campaign_config",
+    inherited: true,
+  };
+}
 
 const CAMPAIGN_CTA_NUMBER_WORDS: Record<string, number> = {
   five: 5,
@@ -218,8 +262,10 @@ function lowerFirst(value: string): string {
 function configuredCampaignCtaPolicy(input: {
   config: OutreachCampaignCtaConfig;
   personalBookingUrl?: unknown;
+  source?: "campaign_config" | "enrolment_config";
 }): OutreachCampaignCtaPolicy | null {
   const { config } = input;
+  const source = input.source || "campaign_config";
   if (config.type === "auto" || config.type === "none") return null;
 
   if (config.type === "reply_demo" || config.type === "reply_call") {
@@ -235,7 +281,7 @@ function configuredCampaignCtaPolicy(input: {
       emailText: `Would you be open to booking a ${label}? Just reply to this email and I will arrange it.`,
       voiceText: `Would you be open to booking a ${label}? Just reply to this email and we will arrange it.`,
       delivery: "reply",
-      source: "campaign_config",
+      source,
     };
   }
 
@@ -249,7 +295,7 @@ function configuredCampaignCtaPolicy(input: {
         emailText: "Would you be open to a quick call? Just reply to this email and I will arrange it.",
         voiceText: "Would you be open to a quick call? Just reply to this email and we will arrange it.",
         delivery: "reply",
-        source: "campaign_config",
+        source,
       };
     }
     return {
@@ -257,10 +303,10 @@ function configuredCampaignCtaPolicy(input: {
       durationMinutes: campaignCtaDuration(config.label),
       label: config.label,
       emailText: `${sentence(config.label)}\n${personalBookingUrl}`,
-      voiceText: "You can use the booking link in this email to choose a suitable time.",
+      voiceText: "Click the booking link in this email to choose a suitable time for a quick demo.",
       url: personalBookingUrl,
       delivery: "personal_booking_link",
-      source: "campaign_config",
+      source,
     };
   }
 
@@ -276,7 +322,7 @@ function configuredCampaignCtaPolicy(input: {
         : `You can use the link in this email to ${lowerFirst(config.label)}.`,
       url: config.url,
       delivery: "shared_link",
-      source: "campaign_config",
+      source,
     };
   }
 
@@ -288,7 +334,7 @@ function configuredCampaignCtaPolicy(input: {
       emailText: "I’ve added a short personal voice note below. Tap play to listen.",
       voiceText: "If this sounds useful, just reply to this email and we can arrange a quick demo.",
       delivery: "voice_note",
-      source: "campaign_config",
+      source,
     };
   }
 
@@ -301,7 +347,7 @@ function configuredCampaignCtaPolicy(input: {
       ? `You can use the link in this email to ${lowerFirst(config.label)}.`
       : sentence(config.label),
     ...(config.url ? { url: config.url, delivery: "shared_link" as const } : { delivery: "reply" as const }),
-    source: "campaign_config",
+    source,
   };
 }
 
@@ -313,6 +359,27 @@ function configuredCampaignCtaPolicy(input: {
 export function resolveOutreachCampaignCta(
   input: OutreachCampaignCtaInput
 ): OutreachCampaignCtaPolicy | null {
+  const configured = sanitizeOutreachCampaignCtaConfig(
+    input.campaignCtaConfig,
+    "auto"
+  );
+
+  // A person level choice is the most specific human instruction. It wins
+  // over inherited campaign or sequence prose, including broad opt out text.
+  if (
+    input.configuredSource === "enrolment_config" &&
+    !configured.error
+  ) {
+    if (configured.config.type === "none") return null;
+    if (configured.config.type !== "auto") {
+      return configuredCampaignCtaPolicy({
+        config: configured.config,
+        personalBookingUrl: input.personalBookingUrl,
+        source: "enrolment_config",
+      });
+    }
+  }
+
   const senderGuidance = normalised(input.senderGuidance);
   const sequenceGuidance = normalised(input.sequenceGuidance);
   if (
@@ -322,15 +389,12 @@ export function resolveOutreachCampaignCta(
     return null;
   }
 
-  const configured = sanitizeOutreachCampaignCtaConfig(
-    input.campaignCtaConfig,
-    "auto"
-  );
   if (!configured.error && configured.config.type === "none") return null;
   if (!configured.error && configured.config.type !== "auto") {
     return configuredCampaignCtaPolicy({
       config: configured.config,
       personalBookingUrl: input.personalBookingUrl,
+      source: input.configuredSource || "campaign_config",
     });
   }
 

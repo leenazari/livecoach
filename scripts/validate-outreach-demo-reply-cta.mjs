@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   defaultOutreachCampaignCtaConfig,
   deduplicateOutreachEmailSignoff,
+  effectiveOutreachCtaConfig,
   ensureOutreachEmailCampaignCta,
   ensureOutreachEmailDemoReplyCta,
   ensureOutreachEmailSimpleOptOut,
@@ -254,6 +255,33 @@ const personalBookingCta = resolveOutreachCampaignCta({
 assert.equal(personalBookingCta?.delivery, "personal_booking_link");
 assert.equal(personalBookingCta?.url, "https://calendar.example/kamm");
 assert.match(personalBookingCta?.emailText || "", /calendar\.example\/kamm/);
+assert.match(personalBookingCta?.voiceText || "", /click the booking link/i);
+
+const personSelection = effectiveOutreachCtaConfig({
+  enrolmentCtaConfig: defaultOutreachCampaignCtaConfig("personal_booking_link"),
+  campaignCtaConfig: defaultOutreachCampaignCtaConfig("voice_note"),
+});
+assert.equal(personSelection.source, "enrolment_config");
+assert.equal(personSelection.inherited, false);
+assert.equal(personSelection.config.type, "personal_booking_link");
+const personCta = resolveOutreachCampaignCta({
+  campaignGoal: "Build a useful relationship",
+  sequenceGuidance: "Do not include a CTA in this broad sequence",
+  campaignCtaConfig: personSelection.config,
+  configuredSource: personSelection.source,
+  personalBookingUrl: "https://calendar.example/lee",
+});
+assert.equal(personCta?.source, "enrolment_config");
+assert.equal(personCta?.delivery, "personal_booking_link");
+assert.match(personCta?.emailText || "", /calendar\.example\/lee/);
+assert.match(personCta?.voiceText || "", /click the booking link/i);
+
+const inheritedSelection = effectiveOutreachCtaConfig({
+  campaignCtaConfig: defaultOutreachCampaignCtaConfig("reply_demo"),
+});
+assert.equal(inheritedSelection.source, "campaign_config");
+assert.equal(inheritedSelection.inherited, true);
+assert.equal(inheritedSelection.config.type, "reply_demo");
 
 const voiceNoteCta = resolveOutreachCampaignCta({
   campaignCtaConfig: defaultOutreachCampaignCtaConfig("voice_note"),
@@ -313,9 +341,12 @@ const outreachToday = read("components/crm/OutreachTodayLane.tsx");
 const voiceEditor = read("components/crm/OutreachVoiceNoteEditor.tsx");
 const ctaAdvice = read("components/crm/OutreachCtaAdvice.tsx");
 const ctaEditor = read("components/crm/CampaignCtaEditor.tsx");
+const prospectCtaSelector = read("components/crm/ProspectCtaSelector.tsx");
 const campaignCreate = read("app/api/crm/outreach/campaigns/route.ts");
 const campaignUpdate = read("app/api/crm/outreach/campaigns/[id]/route.ts");
 const migration = read("supabase/migrations/20260902163027_campaign_call_to_action.sql");
+const prospectCtaRoute = read("app/api/crm/outreach/enrolments/[id]/cta/route.ts");
+const prospectCtaMigration = read("supabase/migrations/20260902171606_prospect_cta_overrides.sql");
 
 assert.match(prepareRoute, /ensureOutreachEmailSimpleOptOut/);
 assert.match(prepareRoute, /preferred default, not a validity rule/i);
@@ -325,7 +356,9 @@ assert.doesNotMatch(prepareRoute, /ensureOutreachVoiceDemoReplyCta/);
 assert.match(prepareRoute, /resolveOutreachCampaignCta/);
 assert.match(prepareRoute, /ensureOutreachEmailCampaignCta/);
 assert.match(prepareRoute, /ensureOutreachVoiceCampaignCta/);
-assert.match(prepareRoute, /campaignCtaConfig: campaign\.cta_config/);
+assert.match(prepareRoute, /enrolmentCtaConfig: enrolment\.cta_config/);
+assert.match(prepareRoute, /campaignCtaConfig: selectedCta\.config/);
+assert.match(prepareRoute, /configuredSource: selectedCta\.source/);
 assert.match(prepareRoute, /personalBookingUrl/);
 assert.doesNotMatch(prepareRoute, /exact mandatory CTA/);
 assert.doesNotMatch(messageRoute, /outreachEmailEndsWithDemoReplyCta/);
@@ -335,7 +368,8 @@ assert.match(messageRoute, /eq\("workspace_id", sender\.workspaceId\)/);
 assert.match(messageRoute, /eq\("sender_user_id", sender\.userId\)/);
 assert.match(voiceScriptRoute, /recommended, not required/i);
 assert.match(voiceScriptRoute, /missing CTA must never invalidate the script or block approval/i);
-assert.match(voiceScriptRoute, /campaignCtaConfig: campaign\.cta_config/);
+assert.match(voiceScriptRoute, /enrolmentCtaConfig: enrolment\.cta_config/);
+assert.match(voiceScriptRoute, /campaignCtaConfig: selectedCta\.config/);
 assert.doesNotMatch(voiceScriptRoute, /failed the demo reply check/);
 assert.match(brain, /sales call to action is optional/i);
 assert.doesNotMatch(brain, /ensureOutreachEmailDemoReplyCta/);
@@ -365,12 +399,24 @@ assert.match(ctaEditor, /Watch a video/);
 assert.match(ctaEditor, /Listen to the voice note/);
 assert.match(ctaEditor, /No CTA/);
 assert.match(outreachPage, /CampaignCtaEditor/);
+assert.match(outreachPage, /ProspectCtaSelector/);
 assert.match(outreachPage, /cta_config: campaign\.cta_config/);
+assert.match(outreachToday, /ProspectCtaSelector/);
 assert.match(campaignCreate, /sanitizeOutreachCampaignCtaConfig/);
 assert.match(campaignCreate, /"reply_demo"/);
 assert.match(campaignUpdate, /patch\.cta_config = result\.config/);
 assert.match(migration, /add column if not exists cta_config jsonb not null/);
 assert.match(migration, /lower\(name\) = 'workable'/);
+assert.match(prospectCtaRoute, /assigned_to_user_id !== account\.userId/);
+assert.match(prospectCtaRoute, /cta_config: ctaConfig/);
+assert.match(prospectCtaRoute, /draftNeedsRefresh/);
+assert.doesNotMatch(prospectCtaRoute, /bookingUrl/);
+assert.match(prospectCtaSelector, /Recommended ·/);
+assert.match(prospectCtaSelector, /Click my demo booking link/);
+assert.match(prospectCtaSelector, /Refresh the draft to apply it/);
+assert.match(prospectCtaMigration, /add column if not exists cta_config jsonb/);
+assert.match(prospectCtaMigration, /cta_config is null/);
+assert.doesNotMatch(prospectCtaMigration, /personalBookingUrl/);
 assert.match(brain, /\.eq\("workspace_id", requestScope\.workspaceId\)/);
 assert.match(brain, /cta_config/);
 assert.doesNotMatch(outreachPage, /call to action[^\n]{0,160}throw new Error/i);
