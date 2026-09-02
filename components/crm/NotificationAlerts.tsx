@@ -231,7 +231,11 @@ export default function NotificationAlerts({
               <p className="font-mono text-[0.52rem] uppercase tracking-wider text-amber">
                 {notification.kind === "chat_message"
                   ? "New team message"
-                  : "New CRM notification"}
+                  : notification.kind === "important_email"
+                    ? "Important pipeline email"
+                    : notification.kind === "outreach_reply"
+                      ? "New outreach reply"
+                      : "New CRM notification"}
               </p>
               <p className="mt-1 text-sm font-medium text-bone">{notification.title}</p>
               <p className="mt-1 line-clamp-3 text-xs leading-5 text-muted">

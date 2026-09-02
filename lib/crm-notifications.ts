@@ -1,5 +1,6 @@
 export type CrmNotificationKind =
   | "outreach_reply"
+  | "important_email"
   | "lead_assigned"
   | "chat_message";
 
@@ -61,7 +62,8 @@ export const notificationKindEnabled = (
   preferences: NotificationPreferences,
   kind: CrmNotificationKind
 ) => {
-  if (kind === "outreach_reply") return preferences.replyAlerts;
+  if (kind === "outreach_reply" || kind === "important_email")
+    return preferences.replyAlerts;
   if (kind === "chat_message") return preferences.chatAlerts;
   return preferences.assignmentAlerts;
 };

@@ -174,8 +174,10 @@ export default function NotificationsPage() {
     const notifications = feed?.notifications || [];
     return {
       all: notifications.length,
-      replies: notifications.filter((item) => item.kind === "outreach_reply")
-        .length,
+      replies: notifications.filter(
+        (item) =>
+          item.kind === "outreach_reply" || item.kind === "important_email"
+      ).length,
       assignments: notifications.filter(
         (item) => item.kind === "lead_assigned"
       ).length,
@@ -191,7 +193,9 @@ export default function NotificationsPage() {
         filter === "all" ||
         (filter === "unread" && !item.readAt && !snoozed) ||
         (filter === "chats" && item.kind === "chat_message") ||
-        (filter === "replies" && item.kind === "outreach_reply") ||
+        (filter === "replies" &&
+          (item.kind === "outreach_reply" ||
+            item.kind === "important_email")) ||
         (filter === "assignments" && item.kind === "lead_assigned") ||
         (filter === "snoozed" && snoozed);
       if (!matchesFilter) return false;
@@ -730,6 +734,8 @@ export default function NotificationsPage() {
                           <p className="font-mono text-[0.52rem] uppercase tracking-wider text-muted">
                             {notification.kind === "outreach_reply"
                               ? "Outreach reply"
+                              : notification.kind === "important_email"
+                                ? "Important email"
                               : notification.kind === "chat_message"
                                 ? "Team message"
                                 : "Lead assignment"}

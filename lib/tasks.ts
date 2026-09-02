@@ -36,6 +36,10 @@ export type NewTask = {
   // genuinely new reminder with the same wording after the old one is done.
   // A stable request-scoped key supplies that idempotency boundary.
   fingerprintKey?: string | null;
+  // A new inbound event must retain its own actionable receipt even when the
+  // wording resembles an older task. The source fingerprint still prevents a
+  // retry of the same event from creating a duplicate.
+  distinctSourceEvent?: boolean;
 };
 
 // Map a spoken/loose action word to the to-do's link_kind, which drives the
@@ -237,6 +241,10 @@ export async function upsertTasks(
   const rows = candidates
     .filter((i) => {
       const text = capitaliseSentenceStarts(i.text.trim());
+      if (i.distinctSourceEvent) {
+        keptTexts.push(text);
+        return true;
+      }
       // Drop if it near-duplicates anything already open OR an earlier kept
       // candidate from this very batch.
       const dup = keptTexts.some((t) => isNearDuplicateTask(text, t));

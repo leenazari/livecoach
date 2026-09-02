@@ -34,6 +34,7 @@
     "validate:brain-sales-scope": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-sales-scope.mjs",
     "validate:brain-self-name": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-self-name.mjs",
     "validate:crm-notifications": "node scripts/validate-crm-notifications.mjs",
+    "validate:inbound-reply-attention": "node scripts/validate-inbound-reply-attention.mjs",
     "validate:crm-chat": "node scripts/validate-crm-chat.mjs",
     "validate:user-scoped-digest": "node scripts/validate-user-scoped-digest.mjs",
     "validate:digest-next-tasks": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-daily-digest-next-tasks.mjs",
