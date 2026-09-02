@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clampOutreachDailyLimit } from "@/lib/outreach-limits";
 import { sanitizeOutreachSequence } from "@/lib/outreach-sequence";
+import { sanitizeOutreachCampaignCtaConfig } from "@/lib/outreach-demo-reply-cta";
 import {
   OUTREACH_CAMPAIGN_CONTENT_FIELDS,
   OUTREACH_CAMPAIGN_CONTROL_FIELDS,
@@ -46,6 +47,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
       patch.sequence = result.sequence;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "cta_config")) {
+      const result = sanitizeOutreachCampaignCtaConfig(body.cta_config, "auto");
+      if (result.error) {
+        return NextResponse.json({ error: result.error }, { status: 400 });
+      }
+      patch.cta_config = result.config;
     }
     if (body.voice && typeof body.voice === "object") {
       // This legacy field describes campaign writing only. Keep an explicit

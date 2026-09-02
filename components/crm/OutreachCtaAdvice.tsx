@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { hasOutreachSalesCallToAction } from "@/lib/outreach-demo-reply-cta";
 
-const CTA_ADVICE_EVENT = "livecoach:outreach-cta-advice-changed";
 const CTA_ADVICE_KEY = "livecoach:outreach-cta-advice-dismissed:v1";
 
 export function outreachCtaAdviceStorageKey(input: {
@@ -21,34 +20,60 @@ export function outreachCtaAdviceStorageKey(input: {
 export default function OutreachCtaAdvice({
   emailBody,
   voiceScript,
+  voiceNoteReady = false,
+  campaignHasCta = false,
+  campaignOptedOut = false,
   workspaceId,
   userId,
 }: {
   emailBody: string;
   voiceScript?: string | null;
+  voiceNoteReady?: boolean;
+  campaignHasCta?: boolean;
+  campaignOptedOut?: boolean;
   workspaceId?: string | null;
   userId?: string | null;
 }) {
   const storageKey = outreachCtaAdviceStorageKey({ workspaceId, userId });
-  const [ready, setReady] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
+  const emailHasCta =
+    voiceNoteReady || hasOutreachSalesCallToAction(emailBody);
+  const hasVoiceScript = Boolean(String(voiceScript || "").trim());
+  const voiceHasCta =
+    voiceNoteReady ||
+    !hasVoiceScript ||
+    hasOutreachSalesCallToAction(voiceScript);
+  const needsAdvice =
+    !campaignOptedOut && !campaignHasCta && (!emailHasCta || !voiceHasCta);
+  const [visible, setVisible] = useState(false);
+  const claimedThisMount = useRef(false);
 
   useEffect(() => {
-    const refresh = () => {
-      setDismissed(
-        Boolean(storageKey) && window.localStorage.getItem(storageKey) === "1"
-      );
-      setReady(true);
-    };
-    refresh();
-    window.addEventListener(CTA_ADVICE_EVENT, refresh);
-    return () => window.removeEventListener(CTA_ADVICE_EVENT, refresh);
-  }, [storageKey]);
+    if (!needsAdvice || !storageKey) {
+      setVisible(false);
+      return;
+    }
+    if (claimedThisMount.current) {
+      setVisible(true);
+      return;
+    }
+    try {
+      if (window.localStorage.getItem(storageKey) === "1") {
+        setVisible(false);
+        return;
+      }
+      // Claim the one permitted coaching note immediately. Other draft rows on
+      // this page, and every later visit for this exact user, stay quiet.
+      window.localStorage.setItem(storageKey, "1");
+      claimedThisMount.current = true;
+      setVisible(true);
+    } catch {
+      // Optional coaching must never interrupt outreach when browser storage is
+      // unavailable. It is safer to stay quiet than repeat on every attempt.
+      setVisible(false);
+    }
+  }, [needsAdvice, storageKey]);
 
-  const emailHasCta = hasOutreachSalesCallToAction(emailBody);
-  const hasVoiceScript = Boolean(String(voiceScript || "").trim());
-  const voiceHasCta = !hasVoiceScript || hasOutreachSalesCallToAction(voiceScript);
-  if (!ready || dismissed || (emailHasCta && voiceHasCta)) return null;
+  if (!visible) return null;
 
   const missingFrom = !emailHasCta && !voiceHasCta
     ? "email and voice note"
@@ -57,10 +82,7 @@ export default function OutreachCtaAdvice({
       : "voice note";
 
   const dismiss = () => {
-    if (!storageKey) return;
-    window.localStorage.setItem(storageKey, "1");
-    setDismissed(true);
-    window.dispatchEvent(new Event(CTA_ADVICE_EVENT));
+    setVisible(false);
   };
 
   return (
@@ -71,15 +93,13 @@ export default function OutreachCtaAdvice({
       <p className="mt-1 text-xs leading-5 text-bone/80">
         The {missingFrom} has no invitation to reply for a quick call or demo. We normally recommend one, but this exact outreach can still be queued without it.
       </p>
-      {storageKey ? (
-        <button
-          type="button"
-          onClick={dismiss}
-          className="mt-2 min-h-9 rounded-md border border-edge px-2.5 py-1.5 font-mono text-[0.48rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
-        >
-          Do not show CTA tips again
-        </button>
-      ) : null}
+      <button
+        type="button"
+        onClick={dismiss}
+        className="mt-2 min-h-9 rounded-md border border-edge px-2.5 py-1.5 font-mono text-[0.48rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
+      >
+        Got it
+      </button>
     </aside>
   );
 }

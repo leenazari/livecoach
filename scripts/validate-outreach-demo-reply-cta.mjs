@@ -4,10 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  defaultOutreachCampaignCtaConfig,
   deduplicateOutreachEmailSignoff,
   ensureOutreachEmailCampaignCta,
   ensureOutreachEmailDemoReplyCta,
   ensureOutreachEmailSimpleOptOut,
+  ensureOutreachEmailWithoutSalesCta,
   ensureOutreachVoiceCampaignCta,
   ensureOutreachVoiceDemoReplyCta,
   hasOutreachCampaignCta,
@@ -19,6 +21,8 @@ import {
   outreachEmailEndsWithDemoReplyCta,
   outreachVoiceEndsWithDemoReplyCta,
   resolveOutreachCampaignCta,
+  removeOutreachVoiceSalesCta,
+  sanitizeOutreachCampaignCtaConfig,
 } from "../lib/outreach-demo-reply-cta.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -210,6 +214,83 @@ assert.equal(
   "Campaigns without an explicit next step must keep CTA guidance optional"
 );
 
+const structuredWorkableCta = resolveOutreachCampaignCta({
+  campaignGoal: "Build a useful relationship",
+  campaignCtaConfig: {
+    type: "reply_demo",
+    label: "Book a 10 minute demo",
+    url: "",
+  },
+});
+assert.equal(structuredWorkableCta?.source, "campaign_config");
+assert.equal(structuredWorkableCta?.durationMinutes, 10);
+assert.equal(structuredWorkableCta?.delivery, "reply");
+assert.match(structuredWorkableCta?.emailText || "", /10 minute demo/i);
+
+const linkCta = resolveOutreachCampaignCta({
+  campaignCtaConfig: {
+    type: "video",
+    label: "Watch the two minute overview",
+    url: "https://interviewa.com/demo",
+  },
+});
+assert.equal(linkCta?.kind, "video");
+assert.equal(linkCta?.delivery, "shared_link");
+assert.equal(linkCta?.url, "https://interviewa.com/demo");
+const linkEmail = ensureOutreachEmailCampaignCta({
+  body: "Hi Sam,\n\nThis looks relevant.\n\nBest,\nLee",
+  signoff: "Best,\nLee",
+  policy: linkCta,
+});
+assert.equal(linkEmail.match(/https:\/\/interviewa\.com\/demo/g)?.length, 1);
+assert.equal(hasOutreachCampaignCta(linkEmail, linkCta), true);
+
+const personalBookingCta = resolveOutreachCampaignCta({
+  campaignCtaConfig: defaultOutreachCampaignCtaConfig(
+    "personal_booking_link"
+  ),
+  personalBookingUrl: "https://calendar.example/kamm",
+});
+assert.equal(personalBookingCta?.delivery, "personal_booking_link");
+assert.equal(personalBookingCta?.url, "https://calendar.example/kamm");
+assert.match(personalBookingCta?.emailText || "", /calendar\.example\/kamm/);
+
+const voiceNoteCta = resolveOutreachCampaignCta({
+  campaignCtaConfig: defaultOutreachCampaignCtaConfig("voice_note"),
+});
+assert.equal(voiceNoteCta?.delivery, "voice_note");
+assert.equal(hasOutreachSalesCallToAction(voiceNoteCta?.emailText), true);
+assert.equal(
+  resolveOutreachCampaignCta({
+    campaignCtaConfig: defaultOutreachCampaignCtaConfig("none"),
+  }),
+  null
+);
+assert.equal(
+  hasOutreachSalesCallToAction(
+    ensureOutreachEmailWithoutSalesCta({
+      body: "Hi Sam.\n\nWould you be open to a quick demo? Reply and I will arrange it.\n\nBest,\nLee",
+      signoff: "Best,\nLee",
+    })
+  ),
+  false,
+  "A campaign that deliberately selects no CTA must remove a generated sales CTA"
+);
+assert.equal(
+  removeOutreachVoiceSalesCta(
+    "This is relevant to your next hiring round. Would you be open to a quick demo?"
+  ),
+  "This is relevant to your next hiring round.",
+  "A no CTA campaign must remove the generated final spoken invitation"
+);
+assert.equal(
+  sanitizeOutreachCampaignCtaConfig(
+    { type: "link", label: "Open this", url: "http://unsafe.example" },
+    "auto"
+  ).error,
+  "Campaign call to action links must use a complete secure HTTPS address"
+);
+
 const optionalCtaPreserved = ensureOutreachEmailSimpleOptOut({
   body: prepared,
   signoff: "Best,\nLee",
@@ -231,6 +312,10 @@ const outreachPage = read("app/crm/outreach/page.tsx");
 const outreachToday = read("components/crm/OutreachTodayLane.tsx");
 const voiceEditor = read("components/crm/OutreachVoiceNoteEditor.tsx");
 const ctaAdvice = read("components/crm/OutreachCtaAdvice.tsx");
+const ctaEditor = read("components/crm/CampaignCtaEditor.tsx");
+const campaignCreate = read("app/api/crm/outreach/campaigns/route.ts");
+const campaignUpdate = read("app/api/crm/outreach/campaigns/[id]/route.ts");
+const migration = read("supabase/migrations/20260902163027_campaign_call_to_action.sql");
 
 assert.match(prepareRoute, /ensureOutreachEmailSimpleOptOut/);
 assert.match(prepareRoute, /preferred default, not a validity rule/i);
@@ -240,6 +325,8 @@ assert.doesNotMatch(prepareRoute, /ensureOutreachVoiceDemoReplyCta/);
 assert.match(prepareRoute, /resolveOutreachCampaignCta/);
 assert.match(prepareRoute, /ensureOutreachEmailCampaignCta/);
 assert.match(prepareRoute, /ensureOutreachVoiceCampaignCta/);
+assert.match(prepareRoute, /campaignCtaConfig: campaign\.cta_config/);
+assert.match(prepareRoute, /personalBookingUrl/);
 assert.doesNotMatch(prepareRoute, /exact mandatory CTA/);
 assert.doesNotMatch(messageRoute, /outreachEmailEndsWithDemoReplyCta/);
 assert.doesNotMatch(messageRoute, /outreachVoiceEndsWithDemoReplyCta/);
@@ -248,6 +335,7 @@ assert.match(messageRoute, /eq\("workspace_id", sender\.workspaceId\)/);
 assert.match(messageRoute, /eq\("sender_user_id", sender\.userId\)/);
 assert.match(voiceScriptRoute, /recommended, not required/i);
 assert.match(voiceScriptRoute, /missing CTA must never invalidate the script or block approval/i);
+assert.match(voiceScriptRoute, /campaignCtaConfig: campaign\.cta_config/);
 assert.doesNotMatch(voiceScriptRoute, /failed the demo reply check/);
 assert.match(brain, /sales call to action is optional/i);
 assert.doesNotMatch(brain, /ensureOutreachEmailDemoReplyCta/);
@@ -261,11 +349,30 @@ assert.match(outreachToday, /OutreachCtaAdvice/);
 assert.match(voiceEditor, /recommended when it fits/);
 assert.match(ctaAdvice, /role="note"/);
 assert.match(ctaAdvice, /can still be queued without it/);
-assert.match(ctaAdvice, /Do not show CTA tips again/);
+assert.match(ctaAdvice, /Got it/);
 assert.match(ctaAdvice, /workspaceId/);
 assert.match(ctaAdvice, /userId/);
 assert.match(ctaAdvice, /window\.localStorage\.setItem/);
+assert.match(ctaAdvice, /voiceNoteReady/);
+assert.match(ctaAdvice, /campaignHasCta/);
+assert.match(ctaAdvice, /campaignOptedOut/);
+assert.doesNotMatch(ctaAdvice, /Do not show CTA tips again/);
 assert.doesNotMatch(ctaAdvice, /window\.confirm|role="alert"/);
+assert.match(ctaEditor, /What should the prospect do next\?/);
+assert.match(ctaEditor, /Reply to book a demo/);
+assert.match(ctaEditor, /Use my booking link/);
+assert.match(ctaEditor, /Watch a video/);
+assert.match(ctaEditor, /Listen to the voice note/);
+assert.match(ctaEditor, /No CTA/);
+assert.match(outreachPage, /CampaignCtaEditor/);
+assert.match(outreachPage, /cta_config: campaign\.cta_config/);
+assert.match(campaignCreate, /sanitizeOutreachCampaignCtaConfig/);
+assert.match(campaignCreate, /"reply_demo"/);
+assert.match(campaignUpdate, /patch\.cta_config = result\.config/);
+assert.match(migration, /add column if not exists cta_config jsonb not null/);
+assert.match(migration, /lower\(name\) = 'workable'/);
+assert.match(brain, /\.eq\("workspace_id", requestScope\.workspaceId\)/);
+assert.match(brain, /cta_config/);
 assert.doesNotMatch(outreachPage, /call to action[^\n]{0,160}throw new Error/i);
 assert.doesNotMatch(outreachToday, /call to action[^\n]{0,160}setError/i);
 

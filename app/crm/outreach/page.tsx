@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
+import CampaignCtaEditor from "@/components/crm/CampaignCtaEditor";
 import OutreachCtaAdvice from "@/components/crm/OutreachCtaAdvice";
 import RevenueToday from "@/components/crm/RevenueToday";
 import MatrixRain from "@/components/MatrixRain";
@@ -33,6 +34,7 @@ import {
   clampOutreachDailyLimit,
 } from "@/lib/outreach-limits";
 import { OVERNIGHT_RESEARCH_INVENTORY_LIMIT } from "@/lib/outreach-overnight-preparation";
+import type { OutreachCampaignCtaConfig } from "@/lib/outreach-demo-reply-cta";
 
 const CampaignSequenceBuilder = dynamic(
   () => import("@/components/crm/CampaignSequenceBuilder"),
@@ -78,7 +80,7 @@ type Prospect = Record<string, any> & {
 };
 type QueueRow = Record<string, any> & { id: string; prospect: Prospect; campaign: Record<string, any>; message: Record<string, any> | null; recommendation: Recommendation };
 type SequenceStep = OutreachSequenceStep;
-type Campaign = Record<string, any> & { id: string; name: string; goal: string; audience: string; offer_angle: string; status: string; daily_limit: number; sequence: SequenceStep[] };
+type Campaign = Record<string, any> & { id: string; name: string; goal: string; audience: string; offer_angle: string; status: string; daily_limit: number; sequence: SequenceStep[]; cta_config?: OutreachCampaignCtaConfig };
 type CampaignEditorView = "setup" | "sequence" | "results";
 type CampaignStats = {
   enrolled: number;
@@ -1508,6 +1510,7 @@ export default function OutreachPage() {
           goal: campaign.goal,
           audience: campaign.audience,
           offer_angle: campaign.offer_angle,
+          cta_config: campaign.cta_config,
           sequence: campaign.sequence,
           voice: campaign.voice,
           banned_phrases: campaign.banned_phrases,
@@ -2064,7 +2067,22 @@ export default function OutreachPage() {
                 <span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Email</span>
                 <textarea className={`${input} min-h-44 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(m.id, { body_text: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} />
               </label>
-              <OutreachCtaAdvice emailBody={edit.body_text} voiceScript={edit.voice_script} workspaceId={sender?.workspaceId} userId={sender?.userId} />
+              <OutreachCtaAdvice
+                emailBody={edit.body_text}
+                voiceScript={edit.voice_script}
+                voiceNoteReady={Boolean(
+                  m.voice_status === "ready" &&
+                  m.voice_audio_path &&
+                  m.voice_public_token
+                )}
+                campaignHasCta={Boolean(
+                  row.campaign?.cta_config?.type &&
+                  !["auto", "none"].includes(row.campaign.cta_config.type)
+                )}
+                campaignOptedOut={row.campaign?.cta_config?.type === "none"}
+                workspaceId={sender?.workspaceId}
+                userId={sender?.userId}
+              />
               <OutreachVoiceNoteEditor message={m} script={edit.voice_script} disabled={Boolean(m.scheduled_at)} generating={generatingVoiceMessageId === m.id} onScriptChange={(value) => setMessage(m.id, { voice_script: value })} onGenerate={() => void generateVoiceNote(m.id)} />
               {!["sending", "sent"].includes(m.status) && !m.scheduled_at ? (
                 <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3">
@@ -2408,6 +2426,19 @@ export default function OutreachPage() {
                 <fieldset disabled={!canEditThisCampaign} className="grid gap-3">
                   <label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign goal</span><input className={input} value={campaign.goal} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, goal: e.target.value } : c))} /></label>
                   <div className="grid gap-3 lg:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Target audience</span><textarea className={`${input} min-h-28`} value={campaign.audience} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, audience: e.target.value } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Interviewa reason to respond</span><textarea className={`${input} min-h-28`} value={campaign.offer_angle} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, offer_angle: e.target.value } : c))} /></label></div>
+                  <CampaignCtaEditor
+                    value={campaign.cta_config}
+                    disabled={!canEditThisCampaign}
+                    onChange={(ctaConfig) =>
+                      setCampaigns((all) =>
+                        all.map((item) =>
+                          item.id === campaign.id
+                            ? { ...item, cta_config: ctaConfig }
+                            : item
+                        )
+                      )
+                    }
+                  />
                 </fieldset>
                 <fieldset disabled={!canManageCampaigns} className="mt-3 grid gap-3">
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Daily maximum</span><input type="number" min="1" max={OUTREACH_DAILY_HARD_LIMIT} className={input} value={Number.isNaN(campaign.daily_limit) ? "" : campaign.daily_limit} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, daily_limit: e.target.value === "" ? Number.NaN : clampOutreachDailyLimit(e.target.value, OUTREACH_DEFAULT_DAILY_LIMIT) } : c))} /></label><label><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Campaign status</span><select className={`${input} min-h-11`} value={campaign.status} onChange={(e) => setCampaigns((all) => all.map((c) => c.id === campaign.id ? { ...c, status: e.target.value } : c))}><option value="active">Active and available</option><option value="paused">Paused</option><option value="draft">Draft</option><option value="completed">Completed</option></select></label></div>

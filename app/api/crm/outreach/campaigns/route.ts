@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sanitizeOutreachSequence } from "@/lib/outreach-sequence";
 import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
 import { clampOutreachDailyLimit } from "@/lib/outreach-limits";
+import { sanitizeOutreachCampaignCtaConfig } from "@/lib/outreach-demo-reply-cta";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -187,6 +188,13 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    const ctaResult = sanitizeOutreachCampaignCtaConfig(
+      body.cta_config,
+      "reply_demo"
+    );
+    if (ctaResult.error) {
+      return NextResponse.json({ error: ctaResult.error }, { status: 400 });
+    }
     const { data, error } = await supabaseAdmin.from("outreach_campaigns").insert({
       name,
       goal,
@@ -195,6 +203,7 @@ export async function POST(req: NextRequest) {
       daily_limit: clampOutreachDailyLimit(body.daily_limit),
       approval_mode: true,
       sequence: sequenceResult.sequence,
+      cta_config: ctaResult.config,
       workspace_id: account.workspaceId,
       owner_id: account.userId,
       visibility: "team",

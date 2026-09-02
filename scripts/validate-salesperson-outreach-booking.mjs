@@ -43,7 +43,8 @@ assert.match(reply, /campaign\.booking_cta_mode === "never"/);
 assert.doesNotMatch(reply, /getAppConfigValue|outreach_default_booking_url|campaign\?\.booking_url|campaign\.booking_url/);
 assert.match(reply, /\{ userId: sender\.userId, workspaceId: sender\.workspaceId \}/);
 
-// Readiness and the UI point to personal setup. Campaigns retain only timing.
+// Readiness and the UI point to personal setup. Campaigns can select the
+// personal-link action, but never store the salesperson's actual URL.
 assert.match(readiness, /getPersonalOutreachBookingLink/);
 assert.match(readiness, /label: "Your booking link"/);
 assert.match(readiness, /href: "\/settings\/sales-profile"/);
@@ -52,7 +53,7 @@ assert.doesNotMatch(campaignRoute, /patch\.booking_url/);
 assert.match(campaignRoute, /Campaign booking links are legacy data/);
 assert.match(campaignRoute, /booking_cta_mode/);
 assert.doesNotMatch(assistantRoute, /patch\.booking_url|"bookingUrl":"https:\/\//);
-assert.match(assistantRoute, /Booking links are never campaign settings/);
+assert.match(assistantRoute, /Personal booking links are never stored in campaigns/);
 assert.match(outreachPage, /Personal calendar handoff/);
 assert.match(outreachPage, /Open My Sales Setup/);
 assert.match(outreachPage, /booking_cta_mode/);

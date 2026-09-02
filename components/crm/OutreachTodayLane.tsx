@@ -88,7 +88,11 @@ type QueueRow = {
     website?: string;
     email?: string;
   };
-  campaign?: { name?: string; daily_limit?: number };
+  campaign?: {
+    name?: string;
+    daily_limit?: number;
+    cta_config?: { type?: string } | null;
+  };
   message?: OutreachMessage | null;
   lastSentMessage?: OutreachMessage | null;
   messageHistory?: OutreachMessage[];
@@ -1637,6 +1641,20 @@ export default function OutreachTodayLane({
                             <OutreachCtaAdvice
                               emailBody={edit.body}
                               voiceScript={edit.voiceScript}
+                              voiceNoteReady={Boolean(
+                                displayMessage.voice_status === "ready" &&
+                                displayMessage.voice_audio_path &&
+                                displayMessage.voice_public_token
+                              )}
+                              campaignHasCta={Boolean(
+                                row.campaign?.cta_config?.type &&
+                                !["auto", "none"].includes(
+                                  row.campaign.cta_config.type
+                                )
+                              )}
+                              campaignOptedOut={
+                                row.campaign?.cta_config?.type === "none"
+                              }
                               workspaceId={sender?.workspaceId}
                               userId={sender?.userId}
                             />
