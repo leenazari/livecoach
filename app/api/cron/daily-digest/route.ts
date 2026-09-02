@@ -12,6 +12,7 @@ import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { POST as runCalendarSync } from "@/app/api/crm/calendar-sync/route";
 import { getAppConfigValue, setAppConfigValue } from "@/lib/app-config";
 import { getOptionalSalesProfile } from "@/lib/sales-profile";
+import { selectNextDayTasks } from "@/lib/daily-digest-tasks";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -178,7 +179,8 @@ async function runDigestForAccount(
         .limit(100),
       supabaseAdmin
         .from("tasks")
-        .select("id, text, company_id, kind, due_at, created_at")
+        .select("id, text, company_id, kind, link_kind, due_at, created_at, payload")
+        .eq("workspace_id", account.workspaceId)
         .eq("owner_id", account.userId)
         .eq("status", "open")
         .order("due_at", { ascending: true, nullsFirst: false })
@@ -286,6 +288,26 @@ async function runDigestForAccount(
       if (!opportunity.company_id || bestOpportunity.has(opportunity.company_id)) continue;
       bestOpportunity.set(opportunity.company_id, opportunity);
     }
+    const opportunityValueByCompany = new Map<string, number>();
+    for (const [companyId, opportunity] of bestOpportunity) {
+      opportunityValueByCompany.set(companyId, Number(opportunity?.value) || 0);
+    }
+    // These are persisted owner-scoped tasks only. Calendar call-prep cards are
+    // rendered separately below, so the email never repeats a meeting as a task.
+    const nextDayTasks = selectNextDayTasks(openTasks, {
+      now,
+      timeZone: TIME_ZONE,
+      limit: 5,
+      opportunityValueByCompany,
+    });
+    const nextDayTaskIds = new Set(nextDayTasks.map((task: any) => task.id));
+    const nextDayTaskItems = nextDayTasks.map((task: any) => {
+      const company = companyNames.get(task.company_id);
+      const href = task.company_id
+        ? `${appUrl}/crm/${task.company_id}`
+        : `${appUrl}/crm/tasks`;
+      return `<a href="${esc(href)}" style="color:inherit;text-decoration:none;"><strong style="color:#9a7b12;">${esc(task.digestReason)}</strong><br>${esc(capitaliseSentenceStarts(task.text))}${company ? ` <span style="color:#858078;">(${esc(company)})</span>` : ""}</a>`;
+    });
     const nowMs = now.getTime();
     const tomorrowEnd = nowMs + 48 * 60 * 60 * 1000;
     const scoredTasks = openTasks
@@ -316,13 +338,16 @@ async function runDigestForAccount(
         return { ...task, score, reason, opportunity };
       })
       .sort((a: any, b: any) => b.score - a.score);
-    const attentionRows = scoredTasks.slice(0, 5).map((task: any) => ({
+    const attentionRows = scoredTasks
+      .filter((task: any) => !nextDayTaskIds.has(task.id))
+      .slice(0, 5)
+      .map((task: any) => ({
       ...task,
       company: companyNames.get(task.company_id),
       href: task.company_id
         ? `/crm/${task.company_id}`
         : "/crm/tasks",
-    }));
+      }));
     const attention = attentionRows.map((item: any) => {
       const colour = /overdue/i.test(String(item.reason || ""))
         ? "#a34b35"
@@ -471,6 +496,13 @@ async function runDigestForAccount(
       month: "long",
       year: "numeric",
     });
+    const tomorrowLabel = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+      .toLocaleDateString("en-GB", {
+        timeZone: TIME_ZONE,
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      });
     const dashboardUrl = `${appUrl}/crm`;
     const workingFocus = salesProfile.completedAt
       ? [
@@ -495,6 +527,8 @@ async function runDigestForAccount(
       completedCount: completed.length,
       progress,
       attention,
+      nextDayTaskItems,
+      tomorrowLabel,
       tomorrowItems,
       buyingOpportunities,
       weekAhead,
@@ -531,6 +565,7 @@ async function runDigestForAccount(
       calls: calls.length,
       completed: completed.length,
       tomorrow: tomorrowCalls.length,
+      nextDayTasks: nextDayTasks.length,
       attention: attention.length,
       buyingOpportunities: buyingOpportunities.length,
       weekly: isSunday,
@@ -613,6 +648,8 @@ function renderEmail(data: {
   completedCount: number;
   progress: string[];
   attention: string[];
+  nextDayTaskItems: string[];
+  tomorrowLabel: string;
   tomorrowItems: string[];
   buyingOpportunities: string[];
   weekAhead: { weekday: string; items: string[] }[];
@@ -634,6 +671,7 @@ function renderEmail(data: {
     <h1 style="margin:0 0 6px;font-size:22px;">${data.isSunday ? "Your week-ahead brief" : "Your daily executive brief"}</h1>
     <p style="margin:0 0 25px;font-size:14px;color:#777168;">${esc(data.when)} · ${data.openCount} open actions · ${data.overdueCount} overdue · ${data.callCount} calls captured today</p>
     ${data.workingFocus.length ? section("Your working focus", list(data.workingFocus, "")) : ""}
+    ${section(`Next five tasks for tomorrow, ${data.tomorrowLabel}`, list(data.nextDayTaskItems, "No saved tasks are due or ready to carry into tomorrow."))}
     ${section("Your dashboard priorities", list(data.attention, "No open actions need attention."))}
     ${section("Tomorrow’s call briefs", list(data.tomorrowItems, "No calls are currently scheduled for tomorrow."))}
     ${section("Tomorrow’s commercial opportunities", list(data.buyingOpportunities, "No genuine open revenue opportunity is attached to tomorrow’s calls."))}
