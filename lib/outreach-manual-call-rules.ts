@@ -57,11 +57,18 @@ export function defaultManualCallDueDays(
 
 export function manualCallNextActionAt(
   outcome: ManualOutreachCallOutcome,
-  requestedDate?: string | null,
+  requestedDateOrTime?: string | null,
   now = new Date()
 ): string | null {
-  if (requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
-    return `${requestedDate}T12:00:00.000Z`;
+  if (
+    requestedDateOrTime &&
+    /^\d{4}-\d{2}-\d{2}$/.test(requestedDateOrTime)
+  ) {
+    return `${requestedDateOrTime}T12:00:00.000Z`;
+  }
+  if (requestedDateOrTime) {
+    const requested = new Date(requestedDateOrTime);
+    if (Number.isFinite(requested.getTime())) return requested.toISOString();
   }
   const days = defaultManualCallDueDays(outcome);
   if (days == null) return null;

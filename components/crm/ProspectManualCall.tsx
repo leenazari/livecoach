@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { crmFetch } from "@/lib/crm";
 import { foldDictationEvent } from "@/lib/dictation";
+import {
+  followUpAtFromLocalParts,
+  followUpAtIsPast,
+  localDateInputValue,
+} from "@/lib/follow-up-scheduling";
 
 const OUTCOMES = [
   ["connected", "Connected"],
@@ -49,13 +54,16 @@ export default function ProspectManualCall({
   const [note, setNote] = useState("");
   const [nextAction, setNextAction] = useState(NEXT_ACTIONS.connected);
   const [followUpDate, setFollowUpDate] = useState("");
+  const [followUpTime, setFollowUpTime] = useState("09:00");
   const [durationMinutes, setDurationMinutes] = useState("");
   const [listening, setListening] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const recognitionRef = useRef<any>(null);
+  const requestIdRef = useRef("");
   const noteRef = useRef("");
   const baseRef = useRef("");
+  const minimumDate = useMemo(() => localDateInputValue(), []);
 
   useEffect(() => {
     noteRef.current = note;
@@ -77,6 +85,9 @@ export default function ProspectManualCall({
     setNextAction(NEXT_ACTIONS[value]);
     if (value === "not_interested" || value === "do_not_contact") {
       setFollowUpDate("");
+      setFollowUpTime("");
+    } else if (!followUpTime) {
+      setFollowUpTime("09:00");
     }
   };
 
@@ -122,24 +133,38 @@ export default function ProspectManualCall({
 
   const save = async () => {
     if (saving || note.trim().length < 3) return;
+    const terminal = outcome === "not_interested" || outcome === "do_not_contact";
+    const followUpAt = terminal
+      ? null
+      : followUpAtFromLocalParts(followUpDate, followUpTime);
+    if (!terminal && !followUpAt) {
+      setError("Choose the follow-up date and time before saving this call.");
+      return;
+    }
+    if (followUpAt && followUpAtIsPast(followUpAt)) {
+      setError("Choose a follow-up time that has not already passed.");
+      return;
+    }
+    if (!requestIdRef.current) requestIdRef.current = crypto.randomUUID();
     setSaving(true);
     setError("");
     try {
       await crmFetch(`/api/crm/outreach/${prospect.id}/manual-call`, {
         method: "POST",
         body: JSON.stringify({
-          requestId: crypto.randomUUID(),
+          requestId: requestIdRef.current,
           campaignId: campaignId || null,
           outcome,
           note: note.trim(),
           nextAction: nextAction.trim(),
-          followUpDate: followUpDate || null,
+          followUpAt,
           durationMinutes: durationMinutes === "" ? null : Number(durationMinutes),
           occurredAt: new Date().toISOString(),
         }),
       });
       window.dispatchEvent(new CustomEvent("lc:outreach-updated"));
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
       await onSaved();
     } catch (caught: any) {
       setError(caught?.message || "That call did not save. Please try again.");
@@ -162,7 +187,7 @@ export default function ProspectManualCall({
             {name || prospect.company_name}
           </h4>
           <p className="mt-1 text-xs leading-5 text-muted">
-            The call saves immediately. A short intelligence pass runs in the background and never replaces your factual note or chosen next action.
+            The call saves immediately. Its dated next step becomes one reminder in Today, To-dos and Calls. A short intelligence pass runs in the background and never replaces your factual note.
           </p>
         </div>
         <button type="button" onClick={onCancel} className="min-h-10 px-2 font-mono text-[0.55rem] uppercase text-muted">
@@ -178,14 +203,18 @@ export default function ProspectManualCall({
               {OUTCOMES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid gap-2 sm:grid-cols-3">
             <label>
               <span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Minutes</span>
               <input type="number" min="0" max="480" inputMode="numeric" value={durationMinutes} onChange={(event) => setDurationMinutes(event.target.value)} placeholder="Optional" className={input} />
             </label>
             <label>
-              <span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Next date</span>
-              <input type="date" value={followUpDate} onChange={(event) => setFollowUpDate(event.target.value)} disabled={terminal} className={input} />
+              <span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Follow-up date</span>
+              <input type="date" min={minimumDate} value={followUpDate} onChange={(event) => setFollowUpDate(event.target.value)} disabled={terminal} className={input} />
+            </label>
+            <label>
+              <span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Follow-up time</span>
+              <input type="time" value={followUpTime} onChange={(event) => setFollowUpTime(event.target.value)} disabled={terminal} className={input} />
             </label>
           </div>
         </div>
@@ -210,7 +239,7 @@ export default function ProspectManualCall({
       {error ? <p role="alert" className="mt-3 text-sm text-rust">{error}</p> : null}
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
         <button type="button" onClick={onCancel} disabled={saving} className="min-h-11 rounded-lg border border-edge px-4 font-mono text-[0.58rem] uppercase text-muted">Cancel</button>
-        <button type="button" onClick={save} disabled={saving || note.trim().length < 3} className="min-h-11 rounded-lg border border-sky/60 bg-sky/15 px-4 font-mono text-[0.58rem] uppercase text-sky disabled:opacity-40">
+        <button type="button" onClick={save} disabled={saving || note.trim().length < 3 || (!terminal && (!followUpDate || !followUpTime))} className="min-h-11 rounded-lg border border-sky/60 bg-sky/15 px-4 font-mono text-[0.58rem] uppercase text-sky disabled:opacity-40">
           {saving ? "Saving call…" : "Save call and next step"}
         </button>
       </div>

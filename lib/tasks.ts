@@ -32,6 +32,10 @@ export type NewTask = {
   payload?: Record<string, any> | null;
   dueAt?: string | null; // ISO; parsed from "by Friday" etc.
   pinned?: boolean; // keep at the top of the to-do list until done
+  // Explicit user actions need retry safety without permanently preventing a
+  // genuinely new reminder with the same wording after the old one is done.
+  // A stable request-scoped key supplies that idempotency boundary.
+  fingerprintKey?: string | null;
 };
 
 // Map a spoken/loose action word to the to-do's link_kind, which drives the
@@ -257,7 +261,9 @@ export async function upsertTasks(
       due_at: i.dueAt || null,
       fingerprint: fingerprintTask(
         companyId,
-        capitaliseSentenceStarts(i.text),
+        i.fingerprintKey
+          ? `request ${i.fingerprintKey}`
+          : capitaliseSentenceStarts(i.text),
         workstreamId
       ),
       status: "open",

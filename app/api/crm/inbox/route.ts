@@ -474,6 +474,7 @@ export async function GET() {
       if (
         latestManualCall &&
         manualNextAction &&
+        !latestManualCall.reminderTaskId &&
         !["not_interested", "do_not_contact"].includes(latestManualCall.outcome)
       ) {
         const person = [prospect.first_name, prospect.last_name].filter(Boolean).join(" ");

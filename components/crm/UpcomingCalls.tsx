@@ -52,10 +52,12 @@ const fmtWhen = (iso: string | null) => {
 
 const fmtReminderDate = (iso: string) => {
   try {
-    return new Date(iso).toLocaleDateString(undefined, {
+    return new Date(iso).toLocaleString(undefined, {
       weekday: "short",
       day: "2-digit",
       month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   } catch {
     return iso;
