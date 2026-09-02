@@ -532,7 +532,16 @@ export default function TaskList({
               <button
                 type="button"
                 onClick={() => togglePin(t)}
-                title={pinned ? "unpin from top" : "pin to top"}
+                title={
+                  pinned
+                    ? "Unpin and allow automatic cleanup after 60 days"
+                    : "Pin as a priority and protect from automatic cleanup"
+                }
+                aria-label={
+                  pinned
+                    ? `Unpin ${t.text} and allow automatic cleanup`
+                    : `Pin ${t.text} as a protected priority`
+                }
                 className={`flex-none font-mono text-[0.82rem] leading-none transition ${
                   pinned ? "text-amber" : "text-muted/40 hover:text-amber"
                 }`}

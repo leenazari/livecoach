@@ -90,6 +90,7 @@
     "validate:outreach-demo-cta": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-demo-reply-cta.mjs",
     "validate:deal-intent": "node scripts/validate-opportunity-deal-intent.mjs",
     "validate:today-state": "node scripts/validate-today-state-transitions.mjs",
+    "validate:task-retention": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-task-retention.mjs",
     "validate:brain-task-confirmation": "node scripts/validate-brain-task-confirmation.mjs",
     "validate:manual-contact-callback": "node scripts/validate-manual-contact-callback.mjs",
     "validate:brain-operating-system": "node scripts/validate-brain-operating-system.mjs",
