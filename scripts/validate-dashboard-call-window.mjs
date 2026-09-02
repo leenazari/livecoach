@@ -16,6 +16,7 @@ assert.match(upcomingRoute, /requestedDays >= 1/);
 assert.match(upcomingRoute, /requestedDays <= 31/);
 assert.match(upcomingRoute, /\.eq\("workspace_id", scope\.workspaceId\)/);
 assert.match(upcomingRoute, /\.eq\("owner_id", scope\.userId\)/);
+assert.match(upcomingRoute, /\.gte\("scheduled_at", nowIso\)/);
 assert.match(upcomingRoute, /\.lte\("scheduled_at", horizonIso\)/);
 assert.match(dashboardRoute, /dashboardNow \+ 7 \* 24 \* 60 \* 60 \* 1000/);
 assert.match(dashboardRoute, /\.lte\("scheduled_at", sevenDayHorizon\)/);

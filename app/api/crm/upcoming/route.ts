@@ -51,15 +51,20 @@ export async function GET(req: NextRequest) {
       )
       .eq("workspace_id", scope.workspaceId)
       .eq("owner_id", scope.userId)
-      .is("completed_at", null)
-      .or(`scheduled_at.is.null,scheduled_at.gte.${pastCutoff}`)
-      .order("scheduled_at", { ascending: true, nullsFirst: false })
-      .limit(200);
+      .is("completed_at", null);
     if (horizonIso) {
       callsQuery = callsQuery
         .not("scheduled_at", "is", null)
+        .gte("scheduled_at", nowIso)
         .lte("scheduled_at", horizonIso);
+    } else {
+      callsQuery = callsQuery.or(
+        `scheduled_at.is.null,scheduled_at.gte.${pastCutoff}`
+      );
     }
+    callsQuery = callsQuery
+      .order("scheduled_at", { ascending: true, nullsFirst: false })
+      .limit(200);
 
     const [
       companiesResult,
