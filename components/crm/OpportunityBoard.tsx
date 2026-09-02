@@ -231,7 +231,11 @@ function OppRow({
       {open && (
         <div className="border-t border-edge/60 px-3 pb-2 pt-1">
           {/* Reuse the full to-do behaviour (tick / dismiss / click-to-act). */}
-          <TaskList companyId={o.companyId} emptyText="No open to-dos here." />
+          <TaskList
+            companyId={o.companyId}
+            companyName={o.company}
+            emptyText="No open to-dos here."
+          />
           <Link
             href="/crm/board?tab=opportunities"
             className="mt-2 inline-block font-mono text-[0.52rem] uppercase tracking-wider text-amber hover:text-bone"

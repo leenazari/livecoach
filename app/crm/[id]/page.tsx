@@ -789,6 +789,7 @@ export default function CompanyDetailPage() {
         </p>
         <TaskList
           companyId={id}
+          companyName={company.name}
           emptyText="No next steps yet. Log an update above or build from context."
         />
       </div> : null}

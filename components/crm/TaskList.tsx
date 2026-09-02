@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import TaskComposer from "@/components/crm/TaskComposer";
 import {
   crmConfirmationError,
   crmFetch,
@@ -10,6 +11,7 @@ import {
   setCached,
 } from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import { outreachProspectHref } from "@/lib/crm-navigation";
 
 type Task = {
   id: string;
@@ -37,6 +39,7 @@ type Task = {
     crossRelationship?: boolean;
     sourceCallId?: string;
     sourceLabel?: string;
+    outreachProspectId?: string | null;
     [k: string]: any;
   } | null;
 };
@@ -110,6 +113,7 @@ const whenLabel = (iso?: string | null) => {
 //   it, call -> starts a preloaded call, anything else -> opens the client.
 export default function TaskList({
   companyId,
+  companyName,
   showCompany = false,
   emptyText = "Nothing on your plate. Nice.",
   hideCommitments = false,
@@ -118,6 +122,7 @@ export default function TaskList({
   initialLimit,
 }: {
   companyId?: string;
+  companyName?: string;
   showCompany?: boolean;
   emptyText?: string;
   // On the dashboard, commitments are shown in "You promised" above, so the
@@ -366,7 +371,11 @@ export default function TaskList({
   // Run a specific action for a task.
   const runAction = (t: Task, a: string) => {
     setChoosing(null);
+    const prospectHref = t.payload?.outreachProspectId
+      ? outreachProspectHref({ id: t.payload.outreachProspectId })
+      : null;
     if (a === "email") {
+      if (!t.company_id && prospectHref) return router.push(prospectHref);
       window.dispatchEvent(
         new CustomEvent("lc:draft-email", {
           detail: {
@@ -380,6 +389,7 @@ export default function TaskList({
       return;
     }
     if (a === "call") {
+      if (!t.company_id && prospectHref) return router.push(prospectHref);
       const q = new URLSearchParams();
       if (t.company_id) q.set("company", t.company_id);
       if (t.company) q.set("companyName", t.company);
@@ -397,6 +407,7 @@ export default function TaskList({
     if (t.company_id && t.company_id !== companyId) {
       return router.push(`/crm/${t.company_id}`);
     }
+    if (prospectHref) return router.push(prospectHref);
   };
 
   const chip = (a: string | null) => {
@@ -412,7 +423,10 @@ export default function TaskList({
   const actionable = (t: Task) => {
     const a = t.link_kind || "task";
     if (a === "email" || a === "call" || a === "drafts") return true;
-    return !!(t.company_id && t.company_id !== companyId);
+    return !!(
+      (t.company_id && t.company_id !== companyId) ||
+      t.payload?.outreachProspectId
+    );
   };
 
   // Commitments live in "You promised"; drop them here when asked so the same
@@ -491,16 +505,30 @@ export default function TaskList({
     }
   };
 
+  const taskComposer = (
+    <TaskComposer
+      fixedCompany={
+        companyId
+          ? { id: companyId, name: companyName || "This client" }
+          : null
+      }
+    />
+  );
+
   if (shown.length === 0) {
     return (
-      <p className="font-mono text-[0.62rem] leading-relaxed text-muted">
-        {emptyText}
-      </p>
+      <>
+        {taskComposer}
+        <p className="font-mono text-[0.62rem] leading-relaxed text-muted">
+          {emptyText}
+        </p>
+      </>
     );
   }
 
   return (
     <>
+    {taskComposer}
     {saveError ? (
       <p className="mb-2 rounded-md border border-rust/50 bg-rust/10 px-2 py-1.5 font-sans text-[0.76rem] text-rust">
         {saveError}

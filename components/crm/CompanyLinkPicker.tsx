@@ -3,16 +3,22 @@
 import { useEffect, useRef, useState } from "react";
 import { crmFetch, type Company } from "@/lib/crm";
 
-// Compact picker to LINK the current call to a CRM company. Search + select, or
-// create on the fly. Shows the linked company as a chip with a link to open it.
+// Compact picker to link a call or task to an accessible CRM company. Callers
+// can disable company creation when a new record would be an unsafe side effect.
 export default function CompanyLinkPicker({
   value,
   onChange,
   suggestedName,
+  allowCreate = true,
+  placeholder = "Find an existing client…",
+  createContext = "call",
 }: {
   value: { id: string; name: string } | null;
   onChange: (v: { id: string; name: string } | null) => void;
   suggestedName?: string | null;
+  allowCreate?: boolean;
+  placeholder?: string;
+  createContext?: "call" | "task";
 }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Company[]>([]);
@@ -58,6 +64,7 @@ export default function CompanyLinkPicker({
   };
 
   const createAndPick = async () => {
+    if (!allowCreate) return;
     const name = (creating ? newName : q).trim();
     if (!name) return;
     setBusy(true);
@@ -108,7 +115,7 @@ export default function CompanyLinkPicker({
       {creating ? (
         <div className="rounded-lg border border-sage/40 bg-sage/[0.06] p-2.5">
           <p className="mb-2 font-mono text-[0.55rem] uppercase tracking-wider text-sage">
-            Add new client and attach this call
+            Add new client and attach this {createContext}
           </p>
           <input
             autoFocus
@@ -154,21 +161,24 @@ export default function CompanyLinkPicker({
               setOpen(true);
             }}
             onFocus={() => setOpen(true)}
-            placeholder="Find an existing client…"
+            placeholder={placeholder}
+            aria-label="Find an existing client"
             className="min-w-0 flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-sky/60"
           />
-          <button
-            type="button"
-            onClick={() => {
-              setNewName((suggestedName || q).trim());
-              setCreating(true);
-              setOpen(false);
-              setError("");
-            }}
-            className="shrink-0 rounded-lg border border-sage/50 bg-sage/10 px-2.5 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/20"
-          >
-            + new client
-          </button>
+          {allowCreate ? (
+            <button
+              type="button"
+              onClick={() => {
+                setNewName((suggestedName || q).trim());
+                setCreating(true);
+                setOpen(false);
+                setError("");
+              }}
+              className="shrink-0 rounded-lg border border-sage/50 bg-sage/10 px-2.5 py-2 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/20"
+            >
+              + new client
+            </button>
+          ) : null}
         </div>
       )}
       {open && q.trim() && (
@@ -188,18 +198,20 @@ export default function CompanyLinkPicker({
               </span>
             </button>
           ))}
-          <button
-            type="button"
-            onClick={() => {
-              setNewName(q.trim());
-              setCreating(true);
-              setOpen(false);
-              setError("");
-            }}
-            className="flex w-full items-center gap-2 border-t border-edge px-3 py-2 text-left font-mono text-[0.62rem] uppercase tracking-wider text-sage transition hover:bg-ink/60 disabled:opacity-40"
-          >
-            {`+ add "${q.trim()}" as a new client`}
-          </button>
+          {allowCreate ? (
+            <button
+              type="button"
+              onClick={() => {
+                setNewName(q.trim());
+                setCreating(true);
+                setOpen(false);
+                setError("");
+              }}
+              className="flex w-full items-center gap-2 border-t border-edge px-3 py-2 text-left font-mono text-[0.62rem] uppercase tracking-wider text-sage transition hover:bg-ink/60 disabled:opacity-40"
+            >
+              {`+ add "${q.trim()}" as a new client`}
+            </button>
+          ) : null}
         </div>
       )}
     </div>

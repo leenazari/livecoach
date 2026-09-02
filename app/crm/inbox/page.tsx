@@ -9,6 +9,7 @@ import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import MatrixRain from "@/components/MatrixRain";
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
+import TaskComposer from "@/components/crm/TaskComposer";
 import type {
   WorkCleanupSuggestion,
   WorkInboxItem,
@@ -1111,6 +1112,7 @@ export default function WorkInboxPage() {
               </button>
             </div>
           </div>
+          <TaskComposer />
           <p className="mt-3 rounded-lg border border-sage/30 bg-sage/[0.06] px-3 py-2 text-xs leading-5 text-sage">
             Opening Sales Today has no extra AI cost. Research runs only when you press Prepare, and every email still opens for exact review before it can be sent.
           </p>
