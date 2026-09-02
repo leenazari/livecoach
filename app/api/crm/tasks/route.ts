@@ -319,7 +319,9 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     const account = await resolveRecordScope();
-    const companyId = new URL(req.url).searchParams.get("companyId");
+    const searchParams = new URL(req.url).searchParams;
+    const companyId = searchParams.get("companyId");
+    const dashboardView = searchParams.get("view") === "dashboard";
 
     let q = supabaseAdmin
       .from("tasks")
@@ -356,10 +358,34 @@ export async function GET(req: NextRequest) {
       .limit(200);
     if (companyId) uq = uq.eq("company_id", companyId);
 
-    const [{ data: rows }, { data: ucals }] = await Promise.all([q, uq]);
+    let completedQuery = supabaseAdmin
+      .from("tasks")
+      .select(
+        "id, company_id, text, kind, link_kind, status, done_at, created_at, payload, due_at"
+      )
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
+      .eq("status", "done")
+      .order("done_at", { ascending: false })
+      .limit(dashboardView ? 500 : 0);
+    if (companyId) completedQuery = completedQuery.eq("company_id", companyId);
+
+    const [taskResult, upcomingResult, completedResult] = await Promise.all([
+      q,
+      uq,
+      dashboardView
+        ? completedQuery
+        : Promise.resolve({ data: [] as any[], error: null }),
+    ]);
+    if (taskResult.error) throw taskResult.error;
+    if (upcomingResult.error) throw upcomingResult.error;
+    if (completedResult.error) throw completedResult.error;
+    const rows = taskResult.data || [];
+    const ucals = upcomingResult.data || [];
+    const completedRows = completedResult.data || [];
     const companyIds = [
       ...new Set(
-        [...(rows || []), ...(ucals || [])]
+        [...rows, ...ucals, ...completedRows]
           .map((row: any) => row.company_id)
           .filter(Boolean)
       ),
@@ -393,7 +419,7 @@ export async function GET(req: NextRequest) {
     // "Takes priority if within 48hrs of the call or the same day."
     const soonCutoff = Date.now() + 48 * 60 * 60 * 1000;
 
-    const real = (rows || []).map((t: any) => ({
+    const real = rows.map((t: any) => ({
         ...t,
         text: cleanText(t.text),
         company: t.company_id ? nameById.get(t.company_id) || null : null,
@@ -427,7 +453,7 @@ export async function GET(req: NextRequest) {
     // a wall of identical items stretching weeks out. ucals is already ordered
     // soonest-first, so the first time we see a title is the next occurrence.
     const seenPrepTitles = new Set<string>();
-    const uniqueUcals = (ucals || [])
+    const uniqueUcals = ucals
       .filter((u: any) => isPrepEligibleCalendarEvent(u))
       .filter((u: any) => {
         const key = String(u.title || "").toLowerCase().trim();
@@ -461,9 +487,26 @@ export async function GET(req: NextRequest) {
     const dueSoonPrep = prep.filter((p) => p.due_soon);
     const laterPrep = prep.filter((p) => !p.due_soon);
 
+    const completed = completedRows.map((t: any) => ({
+      ...t,
+      text: cleanText(t.text),
+      company: t.company_id ? nameById.get(t.company_id) || null : null,
+      upcoming_id: null,
+      scheduled_at: null,
+      meeting_url: null,
+      intent: null,
+      due_soon: false,
+      payload: t.payload ?? null,
+      due_at: t.due_at ?? null,
+    }));
+
     // Order: imminent prep first, then open work, then later prep. Completed or
-    // dismissed work is never returned, so it cannot resurrect on refresh.
-    const tasks = [...dueSoonPrep, ...real, ...laterPrep];
+    // dismissed work is never returned to the compact lists. The dedicated
+    // dashboard deliberately appends owner-scoped completed work so the user
+    // can audit or reopen it without creating a second task store.
+    const tasks = dashboardView
+      ? [...dueSoonPrep, ...real, ...laterPrep, ...completed]
+      : [...dueSoonPrep, ...real, ...laterPrep];
 
     return NextResponse.json(
       { tasks },

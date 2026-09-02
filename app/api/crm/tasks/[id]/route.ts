@@ -3,8 +3,14 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { actionToLinkKind, fingerprintTask } from "@/lib/tasks";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import { requireRequestScope } from "@/lib/request-scope";
+import {
+  followUpAtIsPast,
+  normaliseFollowUpAt,
+} from "@/lib/follow-up-scheduling";
 
 export const runtime = "nodejs";
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 // PATCH /api/crm/tasks/:id -> tick complete or re-open. Stamps done_at so the
 // task lingers for the rest of today then auto-clears.
@@ -17,7 +23,7 @@ export async function PATCH(
     const body = await req.json();
     const { data: current, error: currentError } = await supabaseAdmin
       .from("tasks")
-      .select("id,company_id,payload")
+      .select("id,company_id,payload,status")
       .eq("workspace_id", account.workspaceId)
       .eq("owner_id", account.userId)
       .eq("id", params.id)
@@ -57,10 +63,55 @@ export async function PATCH(
       };
     if (typeof body.action === "string")
       patch.link_kind = actionToLinkKind(body.action);
-    // Set or clear a deadline (sorts the list; "" / null clears it).
-    if (typeof body.dueAt === "string")
-      patch.due_at = body.dueAt.trim() || null;
-    else if (body.dueAt === null) patch.due_at = null;
+    // Set or clear a deadline. Browser date-time controls send a zoned value,
+    // while a date without a time remains an all-day deadline.
+    if (typeof body.dueAt === "string") {
+      const rawDueAt = body.dueAt.trim();
+      const scheduledTime = Boolean(rawDueAt && !DATE_ONLY.test(rawDueAt));
+      const dueAt = rawDueAt
+        ? DATE_ONLY.test(rawDueAt)
+          ? rawDueAt
+          : normaliseFollowUpAt(rawDueAt)
+        : null;
+      if (rawDueAt && !dueAt) {
+        return NextResponse.json(
+          { error: "Choose a valid due date and time" },
+          { status: 400 }
+        );
+      }
+      if (
+        current.status === "open" &&
+        dueAt &&
+        scheduledTime &&
+        followUpAtIsPast(dueAt)
+      ) {
+        return NextResponse.json(
+          { error: "Choose a due time that has not already passed" },
+          { status: 400 }
+        );
+      }
+      patch.due_at = dueAt;
+      patch.payload = {
+        ...(current.payload && typeof current.payload === "object"
+          ? current.payload
+          : {}),
+        ...(patch.payload && typeof patch.payload === "object"
+          ? patch.payload
+          : {}),
+        scheduledTime,
+      };
+    } else if (body.dueAt === null) {
+      patch.due_at = null;
+      patch.payload = {
+        ...(current.payload && typeof current.payload === "object"
+          ? current.payload
+          : {}),
+        ...(patch.payload && typeof patch.payload === "object"
+          ? patch.payload
+          : {}),
+        scheduledTime: false,
+      };
+    }
 
     // Reset the 60-day retention clock whenever an open task is meaningfully
     // edited or reopened. The tasks table deliberately has no updated_at, so
@@ -91,7 +142,9 @@ export async function PATCH(
       .eq("workspace_id", account.workspaceId)
       .eq("owner_id", account.userId)
       .eq("id", params.id)
-      .select("id, company_id, text, kind, link_kind, status, due_at, payload")
+      .select(
+        "id, company_id, text, kind, link_kind, status, done_at, created_at, due_at, payload"
+      )
       .maybeSingle();
     if (error) throw error;
     if (!data)

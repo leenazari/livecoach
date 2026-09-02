@@ -607,7 +607,7 @@ export default function UpcomingCalls({ limit = 10 }: { limit?: number }) {
                   {reminder.text}
                 </span>
                 <Link
-                  href="/crm/board?tab=tasks"
+                  href="/crm/tasks"
                   className="rounded-full border border-edge px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-muted transition hover:border-amber/50 hover:text-amber"
                 >
                   open reminder ↗

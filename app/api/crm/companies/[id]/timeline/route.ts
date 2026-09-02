@@ -222,7 +222,7 @@ export async function GET(
             : due
             ? `${owner ? `${owner} · ` : ""}due ${new Date(due).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "2-digit", month: "short" })}`
             : owner || undefined,
-        href: "/crm/board?tab=tasks",
+        href: "/crm/tasks",
       });
     }
 

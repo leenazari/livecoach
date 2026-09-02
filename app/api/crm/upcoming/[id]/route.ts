@@ -21,12 +21,15 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const account = await resolveRecordScope();
     const { data, error } = await supabaseAdmin
       .from("upcoming_calls")
       .select(
         "id, company_id, workstream_id, title, scheduled_at, meeting_url, intent, prepped, prep, research, attendees"
       )
       .eq("id", params.id)
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -152,18 +155,19 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    const account = await resolveRecordScope();
     const body = await req.json();
     const patch: Record<string, any> = {};
-    let current: any = null;
-    if ("intent" in body || "prep" in body || body.completed === true) {
-      const { data, error } = await supabaseAdmin
-        .from("upcoming_calls")
-        .select("intent, prep, scheduled_at, completed_at")
-        .eq("id", params.id)
-        .maybeSingle();
-      if (error) throw error;
-      current = data;
-    }
+    const { data: current, error: currentError } = await supabaseAdmin
+      .from("upcoming_calls")
+      .select("id, intent, prep, scheduled_at, completed_at")
+      .eq("id", params.id)
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!current)
+      return NextResponse.json({ error: "call not found" }, { status: 404 });
     const currentPrep =
       current?.prep && typeof current.prep === "object" ? current.prep : {};
     const currentIntentMeta = (currentPrep as any).intentMeta;
@@ -287,6 +291,8 @@ export async function PATCH(
       .from("upcoming_calls")
       .update(patch)
       .eq("id", params.id)
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .select("id, title, scheduled_at, meeting_url, intent, prepped, completed_at, company_id, workstream_id, prep")
       .maybeSingle();
     if (error) throw error;
@@ -311,15 +317,21 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const account = await resolveRecordScope();
     const profileId = await ensureWorkspaceProfileId();
     const body = await req.json().catch(() => ({}));
     const reason =
       body && typeof body.reason === "string" ? body.reason.trim() : "";
-    const { data: call } = await supabaseAdmin
+    const { data: call, error: callError } = await supabaseAdmin
       .from("upcoming_calls")
       .select("title, scheduled_at")
       .eq("id", params.id)
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .maybeSingle();
+    if (callError) throw callError;
+    if (!call)
+      return NextResponse.json({ error: "call not found" }, { status: 404 });
     // Record the reason in the brain's learned memory so it sticks.
     try {
       const { data: prof } = await supabaseAdmin
@@ -351,6 +363,8 @@ export async function POST(
       .from("upcoming_calls")
       .delete()
       .eq("id", params.id)
+      .eq("workspace_id", account.workspaceId)
+      .eq("owner_id", account.userId)
       .select("id")
       .maybeSingle();
     if (error) throw error;

@@ -339,12 +339,12 @@ export async function GET() {
           title: "Possible duplicate to-dos",
           detail: `${duplicateTasks.length} open pair${duplicateTasks.length === 1 ? "" : "s"} look like the same action.`,
           why: "Duplicate actions create noise and can make finished work appear unfinished.",
-          href: "/crm/board?tab=tasks",
+          href: "/crm/tasks",
           examples: duplicateTasks.slice(0, 3).map((pair) =>
             `${String(pair.first.text)} / ${String(pair.second.text)}`
           ),
         },
-        { detail: "No likely duplicate open to-dos found.", href: "/crm/board?tab=tasks" }
+        { detail: "No likely duplicate open to-dos found.", href: "/crm/tasks" }
       )
     );
 
@@ -381,7 +381,7 @@ export async function GET() {
           title: "Unlinked to-dos",
           detail: `${looseTasks.length} open to-do${looseTasks.length === 1 ? " is" : "s are"} not filed under a client.`,
           why: "Filing obvious actions under a client keeps the full relationship history together.",
-          href: "/crm/board?tab=tasks",
+          href: "/crm/tasks",
           action: {
             label: "Link obvious ones",
             endpoint: "/api/crm/tasks/fold-loose",
@@ -389,7 +389,7 @@ export async function GET() {
           },
           examples: looseTasks.slice(0, 3).map((task) => String(task.text || "Untitled to-do")),
         },
-        { detail: "Every open to-do is filed under a client.", href: "/crm/board?tab=tasks" }
+        { detail: "Every open to-do is filed under a client.", href: "/crm/tasks" }
       )
     );
 

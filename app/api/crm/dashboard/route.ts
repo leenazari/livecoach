@@ -292,7 +292,7 @@ export async function GET(req: Request) {
     const taskClientHref = (companyId: string | null | undefined, taskId: string) =>
       companyId
         ? `/crm/${companyId}?completeTask=${encodeURIComponent(taskId)}#sec-quick-update`
-        : "/crm/board?tab=tasks";
+        : "/crm/tasks";
     const callsToPrep = eligibleUpcoming
       .filter(
         (u: any) =>
@@ -606,7 +606,7 @@ export async function GET(req: Request) {
         key: "overdue",
         label: "Overdue promises",
         count: allOverduePromises.length,
-        href: "/crm/board?tab=tasks",
+        href: "/crm/tasks",
       },
       {
         key: "cooling",
