@@ -205,7 +205,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const salesProfile = salesProfileContextBlock(personalProfile);
     const emailSignoff = clean(
       personalProfile.emailSignoff ||
-        voice.signature ||
         sender.senderName.split(" ")[0],
       160
     );

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
+import { ensureOutreachEmailSimpleOptOut } from "@/lib/outreach-demo-reply-cta";
 import {
   assertOutreachVoiceWithinBudget,
   estimatedVoiceSeconds,
@@ -12,10 +13,15 @@ import {
 import { resolveOutreachIdentity } from "@/lib/outreach-identity";
 import { outreachSafetyError } from "@/lib/outreach-team-safety";
 import { outreachVoiceHasFalseSenderIdentity } from "@/lib/outreach-voice-policy";
+import { getOptionalSalesProfile } from "@/lib/sales-profile";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const sender = await resolveOutreachIdentity();
+    const personalProfile = await getOptionalSalesProfile({
+      userId: sender.userId,
+      workspaceId: sender.workspaceId,
+    });
     const body = await req.json();
     const { data: existing } = await supabaseAdmin
       .from("outreach_messages")
@@ -34,9 +40,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const nextSubject = typeof body.subject === "string" && body.subject.trim()
       ? removeDashesFromProse(body.subject.trim()).slice(0, 120)
       : removeDashesFromProse(existing.subject);
-    const nextBody = typeof body.body_text === "string" && body.body_text.trim()
-      ? removeDashesFromProse(body.body_text.trim()).slice(0, 4000)
-      : removeDashesFromProse(existing.body_text);
+    const nextBody = ensureOutreachEmailSimpleOptOut({
+      body: typeof body.body_text === "string" && body.body_text.trim()
+        ? removeDashesFromProse(body.body_text.trim())
+        : removeDashesFromProse(existing.body_text),
+      signoff:
+        personalProfile.emailSignoff || sender.senderName.split(" ")[0],
+      maximumCharacters: 4000,
+    });
     const nextVoiceScript = typeof body.voice_script === "string"
       ? normaliseOutreachVoiceScript(body.voice_script)
       : normaliseOutreachVoiceScript(existing.voice_script);

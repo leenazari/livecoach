@@ -13,7 +13,9 @@ const GENERAL_SALES_CTA =
   /\b(?:reply|email|message|get in touch|come back to (?:me|us)|let (?:me|us) know)\b[\s\S]{0,120}\b(?:quick\s+)?(?:call|demo|chat|conversation)\b|\b(?:book|arrange|schedule|set up|have|open to)\b[\s\S]{0,80}\b(?:quick\s+)?(?:call|demo|chat|conversation)\b|\b(?:quick\s+)?(?:call|demo|chat|conversation)\b[\s\S]{0,100}\b(?:reply|email|message|get in touch|book|arrange|schedule|interested)\b/i;
 const SIMPLE_OPT_OUT = /(not|won't|will not|do not).{0,24}follow up/i;
 const COMMON_SIGN_OFF =
-  /^(?:best|thanks|thank you|kind regards|regards|best wishes|cheers)[,!]?$/i;
+  /^(?:best|thanks|thank you|best regards|kind regards|regards|best wishes|cheers)[,!]?$/i;
+const COMMON_SIGN_OFF_WITH_NAME =
+  /^(?:best|thanks|thank you|best regards|kind regards|regards|best wishes|cheers)[,!]\s+[\p{L}'’.]+(?:\s+[\p{L}'’.]+){0,3}[.!]?$/iu;
 const PERSON_NAME =
   /^[\p{Lu}][\p{L}'’.]+(?:\s+[\p{Lu}][\p{L}'’.]+){0,3}$/u;
 
@@ -52,11 +54,10 @@ export function hasOutreachSalesCallToAction(value: unknown): boolean {
 function looksLikeSignature(paragraph: string, signoff?: string): boolean {
   const compact = comparable(paragraph);
   const exactSignoff = comparable(signoff);
-  if (
-    exactSignoff &&
-    (compact === exactSignoff || compact.endsWith(` ${exactSignoff}`)) &&
-    paragraph.length <= 220
-  ) {
+  if (exactSignoff && compact === exactSignoff && paragraph.length <= 220) {
+    return true;
+  }
+  if (COMMON_SIGN_OFF_WITH_NAME.test(paragraph.trim()) && paragraph.length <= 160) {
     return true;
   }
 
@@ -68,6 +69,124 @@ function looksLikeSignature(paragraph: string, signoff?: string): boolean {
   if (lines.length >= 2 && COMMON_SIGN_OFF.test(lines[0])) return true;
   if (lines.length >= 2 && PERSON_NAME.test(lines[0])) return true;
   return lines.length === 1 && PERSON_NAME.test(lines[0]);
+}
+
+function looksLikeSignatureFragment(paragraph: string, signoff?: string): boolean {
+  if (looksLikeSignature(paragraph, signoff)) return true;
+  const lines = paragraph
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.length === 1 && COMMON_SIGN_OFF.test(lines[0]);
+}
+
+function normaliseOutreachEmailSignoff(value: unknown): string {
+  const source = normalised(value);
+  if (!source) return "";
+  const uniqueLines: string[] = [];
+  for (const line of source.split("\n").map((item) => item.trim()).filter(Boolean)) {
+    if (comparable(uniqueLines.at(-1)) === comparable(line)) continue;
+    uniqueLines.push(line);
+  }
+  return uniqueLines
+    .join("\n")
+    .replace(
+      /^((?:best wishes|best regards|kind regards|regards|best|thanks|thank you|cheers)[,!]?)(?:\s+\1)+/i,
+      "$1"
+    )
+    .trim();
+}
+
+function splitTrailingSignature(
+  paragraph: string,
+  signoff?: string
+): { content: string; signature: string } {
+  const lines = paragraph
+    .split("\n")
+    .map((line) => line.trimEnd());
+  for (let index = 0; index < lines.length; index += 1) {
+    const signature = lines.slice(index).join("\n").trim();
+    if (!looksLikeSignatureFragment(signature, signoff)) continue;
+    return {
+      content: lines.slice(0, index).join("\n").trim(),
+      signature,
+    };
+  }
+  return { content: paragraph.trim(), signature: "" };
+}
+
+function extractTrailingSignature(value: unknown, signoff?: string | null) {
+  const configured = normaliseOutreachEmailSignoff(signoff);
+  const paragraphs = normalised(value)
+    .split(/\n\s*\n/)
+    .map(cleanParagraph)
+    .filter(Boolean);
+  if (!paragraphs.length) return { content: "", signature: configured };
+
+  const lastIndex = paragraphs.length - 1;
+  const last = splitTrailingSignature(
+    paragraphs[lastIndex],
+    configured || undefined
+  );
+  if (!last.signature) {
+    return {
+      content: paragraphs.join("\n\n").trim(),
+      signature: configured,
+    };
+  }
+
+  let inferred = normaliseOutreachEmailSignoff(last.signature);
+  if (last.content) paragraphs[lastIndex] = last.content;
+  else paragraphs.pop();
+
+  // Remove only repeats of the signature already found. Do not keep walking
+  // backwards through arbitrary one line paragraphs, because a normal final
+  // sentence such as "Hello" can also resemble a person's first name.
+  while (paragraphs.length) {
+    const candidateIndex = paragraphs.length - 1;
+    const candidate = splitTrailingSignature(
+      paragraphs[candidateIndex],
+      configured || inferred || undefined
+    );
+    if (!candidate.signature) break;
+    const sameSignature =
+      comparable(candidate.signature) === comparable(inferred) ||
+      (configured && comparable(candidate.signature) === comparable(configured));
+    const precedingSignOffForName =
+      !candidate.content &&
+      PERSON_NAME.test(inferred) &&
+      COMMON_SIGN_OFF.test(candidate.signature);
+    if (!sameSignature && !precedingSignOffForName) break;
+    if (precedingSignOffForName) {
+      inferred = `${candidate.signature}\n${inferred}`;
+    }
+    if (candidate.content) {
+      paragraphs[candidateIndex] = candidate.content;
+      break;
+    }
+    paragraphs.pop();
+  }
+
+  return {
+    content: paragraphs.join("\n\n").trim(),
+    signature: configured || normaliseOutreachEmailSignoff(inferred),
+  };
+}
+
+/**
+ * Keep one canonical signature at the end of an email. This also repairs the
+ * common model output where an opt out and the first signature share one
+ * paragraph before the same signature is added again.
+ */
+export function deduplicateOutreachEmailSignoff(input: {
+  body: unknown;
+  signoff?: string | null;
+}): string {
+  const ending = extractTrailingSignature(input.body, input.signoff);
+  return [ending.content, ending.signature]
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
 }
 
 function trimAtSentenceBoundary(value: string, maximum: number): string {
@@ -92,8 +211,8 @@ function formatOutreachEmailEnding(input: {
   maximumCharacters?: number;
 }, includeDemoReplyCta: boolean): string {
   const maximumCharacters = Math.max(400, input.maximumCharacters || 4000);
-  const source = normalised(input.body);
-  const paragraphs = source
+  const ending = extractTrailingSignature(input.body, input.signoff);
+  const paragraphs = ending.content
     .split(/\n\s*\n/)
     .map(cleanParagraph)
     .filter(Boolean);
@@ -112,12 +231,23 @@ function formatOutreachEmailEnding(input: {
     content.push(paragraph);
   }
 
-  let signature = "";
-  const last = content.at(-1) || "";
-  if (last && looksLikeSignature(last, input.signoff || undefined)) {
-    signature = content.pop() || "";
-  } else if (String(input.signoff || "").trim()) {
-    signature = normalised(input.signoff);
+  let signature = ending.signature;
+  while (content.length) {
+    const lastIndex = content.length - 1;
+    const split = splitTrailingSignature(
+      content[lastIndex],
+      signature || input.signoff || undefined
+    );
+    if (!split.signature) break;
+    signature =
+      normaliseOutreachEmailSignoff(input.signoff) ||
+      normaliseOutreachEmailSignoff(split.signature) ||
+      signature;
+    if (split.content) {
+      content[lastIndex] = split.content;
+      break;
+    }
+    content.pop();
   }
 
   const suffix = [

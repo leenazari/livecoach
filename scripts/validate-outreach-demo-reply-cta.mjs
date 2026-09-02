@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  deduplicateOutreachEmailSignoff,
   ensureOutreachEmailDemoReplyCta,
   ensureOutreachEmailSimpleOptOut,
   ensureOutreachVoiceDemoReplyCta,
@@ -77,6 +78,43 @@ assert.equal(
 );
 assert.equal(hasOutreachDemoReplyCta(withoutCta), false);
 assert.equal(hasOutreachSalesCallToAction(withoutCta), false);
+
+const repeatedSignoff = ensureOutreachEmailSimpleOptOut({
+  body: `Hi Sam,\n\nWould it be useful to see this on one live role?\n\n${OUTREACH_SIMPLE_OPT_OUT}\nBest regards, Kamm.\n\nBest regards, Kamm.`,
+  signoff: "Best regards, Kamm.",
+});
+assert.equal(
+  repeatedSignoff,
+  `Hi Sam,\n\nWould it be useful to see this on one live role?\n\n${OUTREACH_SIMPLE_OPT_OUT}\n\nBest regards, Kamm.`,
+  "A sign off joined to the opt out and repeated afterwards must be repaired"
+);
+assert.equal(
+  repeatedSignoff.match(/Best regards, Kamm\./gi)?.length,
+  1,
+  "The final email must contain the salesperson sign off exactly once"
+);
+assert.equal(
+  deduplicateOutreachEmailSignoff({
+    body: "Thanks for coming back to me.\n\nBest wishes,\nLee\n\nBest wishes,\nLee",
+    signoff: "Best wishes,\nLee",
+  }),
+  "Thanks for coming back to me.\n\nBest wishes,\nLee",
+  "Non campaign email drafts must also remove a repeated sign off"
+);
+assert.equal(
+  deduplicateOutreachEmailSignoff({
+    body: "Thanks for coming back to me.\n\nBest wishes, Lee\n\nBest wishes, Lee",
+  }),
+  "Thanks for coming back to me.\n\nBest wishes, Lee",
+  "Same line sign offs must be repaired even when no profile sign off is supplied"
+);
+assert.equal(
+  deduplicateOutreachEmailSignoff({
+    body: "Thanks for coming back to me.\n\nBest regards, Kamm.\n\nBest regards, Kamm.",
+  }),
+  "Thanks for coming back to me.\n\nBest regards, Kamm.",
+  "Best regards must also appear only once without an explicit profile sign off"
+);
 assert.equal(
   hasOutreachSalesCallToAction(
     "If a quick call would help, reply and we can arrange one."
@@ -133,7 +171,7 @@ assert.doesNotMatch(brain, /ensureOutreachEmailDemoReplyCta/);
 assert.doesNotMatch(brainEmail, /outreach_demo_reply_cta_missing/);
 assert.doesNotMatch(brainEmail, /outreachEmailEndsWithDemoReplyCta/);
 assert.match(brainEmail, /outreach_opt_out_missing/);
-assert.doesNotMatch(replyDraft, /outreach-demo-reply-cta/);
+assert.match(replyDraft, /ensureOutreachEmailSimpleOptOut/);
 assert.doesNotMatch(sendQueue, /ensureOutreachEmailDemoReplyCta/);
 assert.match(outreachPage, /OutreachCtaAdvice/);
 assert.match(outreachToday, /OutreachCtaAdvice/);

@@ -78,6 +78,7 @@
     "validate:outreach-follow-up-reminders": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-follow-up-reminders.mjs",
     "validate:official-job-research": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-official-job-research.mjs",
     "validate:campaign-sequence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-campaign-sequence-builder.mjs",
+    "validate:sales-campaign-editing": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sales-campaign-editing.mjs",
     "validate:native-outreach-sequence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-native-outreach-sequence.mjs",
     "validate:calendar-primary-attendee": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-calendar-primary-attendee.mjs",
     "validate:calendar-event-create": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-crm-calendar-event-create.mjs",
