@@ -5,11 +5,13 @@ import type { AttendeeConfig } from "@/lib/attendee-linking";
 export {
   deriveNewClientFromAttendees,
   inferLink,
+  shouldRepairStaleCalendarCompanyLink,
 } from "@/lib/attendee-linking";
 export type {
   Attendee,
   AttendeeConfig,
   AttendeeEventContext,
+  ExistingCalendarCompany,
 } from "@/lib/attendee-linking";
 
 // Load the config once per sync. Every query uses the signed-in request scope,
@@ -23,7 +25,7 @@ export async function loadAttendeeConfig(): Promise<AttendeeConfig> {
         .select("internal_domains")
         .eq("id", profileId)
         .maybeSingle(),
-      supabaseAdmin.from("companies").select("id, profile, domain"),
+      supabaseAdmin.from("companies").select("id, name, profile, domain"),
       supabaseAdmin
         .from("contacts")
         .select("company_id, email")
@@ -59,9 +61,11 @@ export async function loadAttendeeConfig(): Promise<AttendeeConfig> {
   }
 
   const companyByDomain = new Map<string, string>();
+  const companyById = new Map<string, any>();
   for (const company of companies || []) {
     const domain = String((company as any).domain || "").toLowerCase().trim();
     if (domain) companyByDomain.set(domain, (company as any).id as string);
+    companyById.set(String((company as any).id), company as any);
   }
 
   return {
@@ -69,5 +73,6 @@ export async function loadAttendeeConfig(): Promise<AttendeeConfig> {
     internalCompanyId,
     contactEmailToCompany,
     companyByDomain,
+    companyById,
   };
 }

@@ -2,6 +2,8 @@ import "server-only";
 
 import { normaliseCompanyDomain } from "@/lib/company-identity";
 import {
+  calendarEmailDomain,
+  calendarHasExternalGuest,
   DEFAULT_PROTECTED_INTENT_DOMAINS,
   emailMayInfluenceCompanyIntent,
   pickPrimaryAttendee,
@@ -82,20 +84,33 @@ export async function resolvePrimaryAttendeeForCall(
   );
   const companyInternal =
     (companyResult.data as any)?.profile?.internal === true;
-  // When a call is already linked to a client, protected supporting attendees
-  // are not eligible lead candidates unless this is their own company or an
-  // explicit internal record. The real lead can still win by name, contact or
-  // company domain, regardless of calendar ordering or RSVP status.
+  const hasExternalGuest = calendarHasExternalGuest(
+    call.attendees,
+    internalDomains
+  );
+  // When any outside guest is present, protected internal attendees are only
+  // supporting participants and cannot become the lead. With an entirely
+  // internal guest list, the named internal person remains selectable. The real
+  // external lead can still win by name, contact or company domain regardless
+  // of calendar ordering or RSVP status.
   const eligibleAttendees = companyResult.data
     ? (call.attendees || []).filter(
         (attendee) =>
           attendee?.self === true ||
           !attendee?.email ||
-          emailMayInfluenceCompanyIntent(attendee.email, {
-            companyDomain,
-            companyInternal,
-            protectedDomains: internalDomains,
-          })
+          (!(
+            hasExternalGuest &&
+            internalDomains.some(
+              (domain) =>
+                String(domain || "").toLowerCase().trim() ===
+                calendarEmailDomain(attendee.email as string)
+            )
+          ) &&
+            emailMayInfluenceCompanyIntent(attendee.email, {
+              companyDomain,
+              companyInternal: companyInternal && !hasExternalGuest,
+              protectedDomains: internalDomains,
+            }))
       )
     : call.attendees;
   const primary = pickPrimaryAttendee(eligibleAttendees, {

@@ -8,6 +8,7 @@ import {
   loadAttendeeConfig,
   inferLink,
   deriveNewClientFromAttendees,
+  shouldRepairStaleCalendarCompanyLink,
 } from "@/lib/attendees";
 import {
   attachOutreachMeeting,
@@ -29,8 +30,10 @@ export const maxDuration = 60;
 
 // POST /api/crm/calendar-sync -> pull the user's connected calendar (now to +30d)
 // into upcoming_calls. Adds new events, applies reschedules (time/title/link),
-// skips cancelled and self-declined events, and never touches the client link,
-// intent or prep on an existing row. Supports Google and Microsoft accounts.
+// skips cancelled and self-declined events, and preserves curated client links,
+// intent and prep on existing rows. The narrow exception is an internal/test
+// placeholder contradicted by one clear external work domain. Supports Google
+// and Microsoft accounts.
 async function runCalendarSync() {
   try {
     const scope = await resolveRecordScope();
@@ -220,6 +223,7 @@ async function runCalendarSync() {
       const { data: created } = await supabaseAdmin
         .from("companies")
         .insert({
+          ...privateRecordFields(scope),
           name: spec.name,
           domain: spec.domain,
           website: spec.website,
@@ -230,10 +234,20 @@ async function runCalendarSync() {
       const newId = (created as any)?.id as string | undefined;
       if (!newId) return null;
       attendeeConfig.companyByDomain.set(spec.domain, newId);
+      attendeeConfig.companyById?.set(newId, {
+        id: newId,
+        name: spec.name,
+        domain: spec.domain,
+        profile: { auto_created_from: "calendar" },
+      });
       try {
         await supabaseAdmin
           .from("contacts")
-          .insert({ company_id: newId, email: spec.email });
+          .insert({
+            ...privateRecordFields(scope),
+            company_id: newId,
+            email: spec.email,
+          });
       } catch {
         /* the contact is best-effort */
       }
@@ -387,9 +401,22 @@ async function runCalendarSync() {
         });
         continue;
       }
-      if (existingCompany.get(r.external_id)) continue;
+      const currentCompanyId = existingCompany.get(r.external_id) || null;
+      const currentCompany = currentCompanyId
+        ? attendeeConfig.companyById?.get(currentCompanyId)
+        : null;
+      if (
+        currentCompanyId &&
+        !shouldRepairStaleCalendarCompanyLink(
+          currentCompany,
+          r.attendees,
+          attendeeConfig
+        )
+      )
+        continue;
       const companyId = await resolveCompanyForEvent(r.attendees, r.title);
-      if (companyId) repairedCompany.set(r.external_id, companyId);
+      if (companyId && companyId !== currentCompanyId)
+        repairedCompany.set(r.external_id, companyId);
     }
 
     let added = 0;
@@ -413,8 +440,9 @@ async function runCalendarSync() {
       }
     }
 
-    // Reschedules: only the calendar-owned fields (now including the guest list),
-    // never the user's own client link, intent or prep.
+    // Reschedules update calendar-owned fields and the narrowly validated stale
+    // internal/test link repair above. Normal client links, intent and prep stay
+    // untouched.
     const reopened = toUpdate.filter(
       (row) => shouldReopenScheduledCalendarCall({
         scheduledAt: row.scheduled_at,
@@ -442,7 +470,16 @@ async function runCalendarSync() {
               ? { completed_at: null }
               : {}),
             ...(repairedCompany.has(r.external_id)
-              ? { company_id: repairedCompany.get(r.external_id) }
+              ? {
+                  company_id: repairedCompany.get(r.external_id),
+                  // Prep built against the placeholder is contaminated context,
+                  // not user curation. Clear it so the corrected client starts
+                  // from verified history instead of carrying the wrong person.
+                  intent: null,
+                  prep: null,
+                  prepped: false,
+                  workstream_id: null,
+                }
               : {}),
           })
           .eq("external_id", r.external_id)
