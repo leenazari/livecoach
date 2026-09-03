@@ -6,6 +6,7 @@ import {
   crmCallHref,
   crmCompanyHref,
   outreachProspectHref,
+  outreachReplyHref,
 } from "../lib/crm-navigation.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -29,6 +30,11 @@ assert.equal(
   "legacy activity without a prospect ID can still fall back to its client"
 );
 assert.equal(outreachProspectHref(null), null);
+assert.equal(
+  outreachReplyHref("prospect 1"),
+  "/crm/outreach?tab=replies&reply=prospect%201"
+);
+assert.equal(outreachReplyHref(null), null);
 
 const outreachPage = source("app/crm/outreach/page.tsx");
 assert.match(outreachPage, /Opened from linked activity/);

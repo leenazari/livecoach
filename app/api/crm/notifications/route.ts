@@ -6,6 +6,7 @@ import {
   parseNotificationSnoozeUntil,
 } from "@/lib/crm-notifications";
 import { crmBlockerPayload } from "@/lib/crm-blocker";
+import { outreachReplyHref } from "@/lib/crm-navigation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,13 @@ const mapNotification = (row: Record<string, any>) => ({
   kind: row.kind,
   title: row.title,
   body: row.body,
-  href: row.href,
+  // Older database triggers stored a generic Replies tab link. Resolve the
+  // canonical prospect here so old and new alerts both open the exact reply.
+  href:
+    row.kind === "outreach_reply" &&
+    row.source_table === "outreach_prospects"
+      ? outreachReplyHref(row.source_id) || row.href
+      : row.href,
   sourceTable: row.source_table,
   sourceId: row.source_id,
   readAt: row.read_at,

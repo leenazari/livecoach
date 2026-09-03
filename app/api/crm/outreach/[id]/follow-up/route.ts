@@ -6,6 +6,7 @@ import {
 } from "@/lib/follow-up-scheduling";
 import { saveOutreachFollowUpTask } from "@/lib/outreach-follow-up";
 import { requireRequestScope } from "@/lib/request-scope";
+import { resolveReplyAttention } from "@/lib/reply-attention";
 import { supabaseAdmin } from "@/lib/supabase";
 import { capitaliseSentenceStarts } from "@/lib/text";
 
@@ -85,7 +86,20 @@ export async function POST(
       source: "outreach_manual_follow_up",
     });
 
-    return NextResponse.json({ ok: true, ...result });
+    let attentionResolved = true;
+    try {
+      await resolveReplyAttention({
+        workspaceId: scope.workspaceId,
+        userId: scope.userId,
+        prospectId: prospect.id,
+      });
+    } catch {
+      // The dated reminder is already canonical and safe to retry. Do not make
+      // a successful save look failed because an attention receipt lagged.
+      attentionResolved = false;
+    }
+
+    return NextResponse.json({ ok: true, ...result, attentionResolved });
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "The follow-up reminder could not be saved" },

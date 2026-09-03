@@ -288,6 +288,51 @@ function sendPilotActivityLabel(kind: string, metadata: any) {
   return labels[kind] || "SendPilot activity";
 }
 
+function replyCategoryLabel(category?: string | null) {
+  const labels: Record<string, string> = {
+    interested: "Interested",
+    objection: "Objection",
+    later: "Follow up later",
+    referral: "Referral",
+    unsubscribe: "Do not contact",
+    irrelevant: "Not relevant",
+    unclassified: "Needs review",
+  };
+  return labels[String(category || "unclassified")] || "Needs review";
+}
+
+function replyCategoryTone(category?: string | null) {
+  if (category === "interested" || category === "referral")
+    return "border-moss/50 bg-moss/10 text-moss";
+  if (category === "objection" || category === "later")
+    return "border-amber/50 bg-amber/10 text-amber";
+  if (category === "unsubscribe")
+    return "border-rust/50 bg-rust/10 text-rust";
+  return "border-edge bg-ink/40 text-muted";
+}
+
+function replyNextMove(reply: Record<string, any>) {
+  const person = [reply.first_name, reply.last_name].filter(Boolean).join(" ");
+  const subject = person || reply.company_name || "this prospect";
+  if (reply.reply_category === "interested")
+    return `Reply while the interest is warm and agree a short meeting with ${subject}.`;
+  if (reply.reply_category === "referral")
+    return `Thank ${subject}, confirm the recommended contact and ask for a direct introduction.`;
+  if (reply.reply_category === "objection")
+    return `Acknowledge the exact concern, answer only with saved evidence and ask one low friction question.`;
+  if (reply.reply_category === "later") {
+    const returnDate = reply.replyEvidence?.returnDate;
+    return returnDate
+      ? `Set one reminder for ${returnDate}. The outreach sequence is already paused.`
+      : "Agree one specific follow up date. The outreach sequence is already paused.";
+  }
+  if (reply.reply_category === "unsubscribe")
+    return "No further sales contact. The address is suppressed and the sequence is stopped.";
+  if (reply.reply_category === "irrelevant")
+    return "Close this outcome unless the reply identifies a better contact.";
+  return "Read the exact reply and choose whether to respond, follow up later or close it.";
+}
+
 function linkedinTarget(prospect: Prospect) {
   const saved = String(prospect.person_linkedin_url || "").trim();
   if (/^https:\/\/(www\.)?linkedin\.com\//i.test(saved)) return saved;
@@ -531,6 +576,7 @@ export default function OutreachPage() {
   const initialQueueFillAttemptedRef = useRef(false);
   const [q, setQ] = useState("");
   const [focusedProspectId, setFocusedProspectId] = useState("");
+  const [focusedReplyId, setFocusedReplyId] = useState("");
   const [priority, setPriority] = useState<"all" | Priority>("all");
   const [stageFilter, setStageFilter] = useState("active");
   const [prospectSort, setProspectSort] = useState<ProspectSort>("priority");
@@ -757,6 +803,9 @@ export default function OutreachPage() {
       const requestedProspect = params.get("prospect") || "";
       setFocusedProspectId(requestedProspect);
       if (requestedProspect) setTab("prospects");
+      const requestedReply = params.get("reply") || "";
+      setFocusedReplyId(requestedReply);
+      if (requestedReply) setTab("replies");
       if (params.get("sort") === "activity") {
         setProspectSort("activity");
         setSortDirection("desc");
@@ -878,6 +927,22 @@ export default function OutreachPage() {
     }),
     [campaigns, selectedCampaignId]
   );
+  const displayedReplies = useMemo(
+    () =>
+      replies
+        .slice()
+        .sort((left, right) => {
+          if (left.id === focusedReplyId) return -1;
+          if (right.id === focusedReplyId) return 1;
+          if (left.attentionOpen !== right.attentionOpen)
+            return left.attentionOpen ? -1 : 1;
+          return (
+            new Date(right.last_reply_at || 0).getTime() -
+            new Date(left.last_reply_at || 0).getTime()
+          );
+        }),
+    [focusedReplyId, replies]
+  );
   const activeCampaign = orderedCampaigns.find(
     (campaign) => campaign.id === selectedCampaignId
   ) || orderedCampaigns.find((campaign) => campaign.status === "active");
@@ -914,8 +979,10 @@ export default function OutreachPage() {
   const selectTab = (next: Tab) => {
     setTab(next);
     setFocusedProspectId("");
+    setFocusedReplyId("");
     const url = new URL(window.location.href);
     url.searchParams.delete("prospect");
+    url.searchParams.delete("reply");
     if (next === "queue") url.searchParams.delete("tab");
     else url.searchParams.set("tab", next);
     window.history.replaceState({}, "", `${url.pathname}${url.search}`);
@@ -960,6 +1027,16 @@ export default function OutreachPage() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [focusedProspectId, prospects.length, tab]);
+  useEffect(() => {
+    if (tab !== "replies" || !focusedReplyId) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`reply-${focusedReplyId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedReplyId, replies.length, tab]);
   const setMessage = (id: string, patch: Partial<{ subject: string; body_text: string; voice_script: string }>) => {
     const styled = Object.fromEntries(
       Object.entries(patch).map(([key, value]) => [key, removeDashesFromProse(value)])
@@ -1198,7 +1275,12 @@ export default function OutreachPage() {
     try {
       const result = await crmFetch<any>(`/api/crm/outreach/messages/${messageId}/send`, { method: "POST", body: "{}" });
       setNotice(`Queued safely for ${formatActivityDate(result.scheduledAt)}. Approved emails send five minutes apart.`);
-      await loadCore();
+      await Promise.all([
+        loadCore(),
+        tab === "replies" ? loadMetrics() : Promise.resolve(),
+      ]);
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      window.dispatchEvent(new CustomEvent("lc:notifications-updated"));
     }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
@@ -1229,6 +1311,8 @@ export default function OutreachPage() {
         `Exact email approved and queued for ${formatActivityDate(result.scheduledAt)}. It will send automatically from ${sender?.senderEmail || "your connected mailbox"}. A ready voice note is included, while an unfinished one never delays the email.`
       );
       await Promise.all([loadCore(), tab === "replies" ? loadMetrics() : Promise.resolve()]);
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      window.dispatchEvent(new CustomEvent("lc:notifications-updated"));
     } catch (e: any) {
       setError(e.message || "The email was not queued");
     } finally {
@@ -1553,6 +1637,33 @@ export default function OutreachPage() {
     setBusy(`booking:${prospectId}`); setError(""); setNotice("");
     try { await crmFetch(`/api/crm/outreach/replies/${prospectId}/draft`, { method: "POST", body: "{}" }); setNotice("Booking reply ready. Review and approve the exact wording before sending."); await loadMetrics(); }
     catch (e: any) { setError(e.message); } finally { setBusy(""); }
+  };
+  const markReplyHandled = async (prospectId: string) => {
+    setBusy(`resolve-reply:${prospectId}`); setError(""); setNotice("");
+    try {
+      const result = await crmFetch<{ ok: boolean }>(
+        `/api/crm/outreach/replies/${prospectId}/resolve`,
+        { method: "POST", body: "{}" }
+      );
+      if (!result.ok)
+        throw crmConfirmationError({
+          url: `/api/crm/outreach/replies/${prospectId}/resolve`,
+          method: "POST",
+          reason: "LiveCoach did not confirm that the reply was reviewed",
+        });
+      setReplies((all) =>
+        all.map((reply) =>
+          reply.id === prospectId ? { ...reply, attentionOpen: false } : reply
+        )
+      );
+      setNotice("Reply marked reviewed. Its source history remains available here.");
+      window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+      window.dispatchEvent(new CustomEvent("lc:notifications-updated"));
+    } catch (e: any) {
+      setError(e.message || "The reply could not be marked reviewed");
+    } finally {
+      setBusy("");
+    }
   };
   const reviewHandover = async (prospectId: string) => {
     setBusy(`handover-check:${prospectId}`); setError(""); setNotice("");
@@ -2515,10 +2626,15 @@ export default function OutreachPage() {
 
       {!loading && !tabLoading && tab === "replies" ? <section data-sales-tour="reply-handover">
         <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Email and SendPilot replies meet here. Every reply stops the sequence. Deal value still waits until a real conversation.</p></div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking email…" : "Check email replies"}</button></div>
-        <div className="space-y-2">{replies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; const handover = handoverReviews[reply.id]; return <article key={reply.id} className="rounded-xl border border-edge bg-panel p-4">
-          <div className="flex flex-wrap items-start justify-between gap-2"><CanonicalRecordLink href={outreachProspectHref(reply)} onNavigate={(event) => openProspectFromThisPage(reply, event)} className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${`${reply.first_name || ""} ${reply.last_name || ""}`.trim() || reply.email || "prospect"}`}><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></CanonicalRecordLink><div className="flex flex-wrap gap-2"><span className="rounded-full border border-sky/50 px-2 py-1 font-mono text-[0.55rem] uppercase text-sky">{reply.replyChannel === "linkedin" ? "LinkedIn" : "Email"}</span><span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${reply.reply_category === "interested" ? "border-moss/50 text-moss" : "border-edge text-muted"}`}>{reply.reply_category}</span></div></div>
+        {focusedReplyId ? <div className="mb-3 flex flex-col gap-2 rounded-xl border border-moss/50 bg-moss/[0.08] p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.52rem] uppercase tracking-wider text-moss">Reply to close</p><p className="mt-1 text-sm text-bone/80">The exact reply that brought you here is first. Read it, decide the next move and clear its alert without losing the history.</p></div><button type="button" onClick={() => { setFocusedReplyId(""); const url = new URL(window.location.href); url.searchParams.delete("reply"); window.history.replaceState({}, "", `${url.pathname}${url.search}`); }} className={button}>Show all replies</button></div> : null}
+        <div className="space-y-2">{displayedReplies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; const handover = handoverReviews[reply.id]; const isFocusedReply = focusedReplyId === reply.id; const canScheduleFollowUp = ["later", "objection", "referral", "unclassified"].includes(reply.reply_category || "unclassified"); return <article id={`reply-${reply.id}`} key={reply.id} className={`rounded-xl border bg-panel p-4 ${isFocusedReply ? "border-moss/65 shadow-[inset_3px_0_0_rgba(112,177,125,0.8)]" : "border-edge"}`}>
+          <div className="flex flex-wrap items-start justify-between gap-2"><CanonicalRecordLink href={outreachProspectHref(reply)} onNavigate={(event) => openProspectFromThisPage(reply, event)} className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${`${reply.first_name || ""} ${reply.last_name || ""}`.trim() || reply.email || "prospect"}`}><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></CanonicalRecordLink><div className="flex flex-wrap gap-2"><span className="rounded-full border border-sky/50 px-2 py-1 font-mono text-[0.55rem] uppercase text-sky">{reply.replyChannel === "linkedin" ? "LinkedIn" : "Email"}</span>{reply.campaign?.name ? <span className="rounded-full border border-edge px-2 py-1 font-mono text-[0.55rem] uppercase text-muted">{reply.campaign.name}</span> : null}<span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${replyCategoryTone(reply.reply_category)}`}>{replyCategoryLabel(reply.reply_category)}</span>{reply.attentionOpen ? <span className="rounded-full border border-rust/45 bg-rust/10 px-2 py-1 font-mono text-[0.55rem] uppercase text-rust">Action needed</span> : <span className="rounded-full border border-moss/40 bg-moss/10 px-2 py-1 font-mono text-[0.55rem] uppercase text-moss">Reviewed</span>}</div></div>
           <p className="mt-3 text-sm leading-6 text-bone/80">{reply.reply_summary}</p>
-          {reply.last_reply_text ? <div className="mt-3 rounded-lg border border-edge bg-ink/35 p-3"><p className="font-mono text-[0.5rem] uppercase tracking-wider text-muted">Latest reply</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-bone/85">{reply.last_reply_text}</p></div> : null}
+          {reply.last_reply_text ? <div className="mt-3 rounded-lg border border-moss/35 bg-moss/[0.04] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-mono text-[0.5rem] uppercase tracking-wider text-moss">Their exact reply</p><span className="font-mono text-[0.48rem] uppercase text-muted">{formatActivityDate(reply.last_reply_at)}</span></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-bone/90">{reply.last_reply_text}</p></div> : <div className="mt-3 rounded-lg border border-amber/35 bg-amber/[0.04] p-3 text-sm text-amber">The reply was detected, but its exact text is unavailable. Check the connected mailbox before responding.</div>}
+          <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)]">
+            <div className="rounded-lg border border-amber/35 bg-amber/[0.04] p-3"><p className="font-mono text-[0.5rem] uppercase tracking-wider text-amber">Recommended next move</p><p className="mt-2 text-sm leading-6 text-bone/85">{replyNextMove(reply)}</p></div>
+            <details className="rounded-lg border border-edge bg-ink/35 p-3" open={isFocusedReply}><summary className="cursor-pointer font-mono text-[0.5rem] uppercase tracking-wider text-sky">Campaign and previous message</summary>{reply.campaign?.name ? <p className="mt-3 text-xs text-muted">Campaign · <span className="text-bone">{reply.campaign.name}</span></p> : null}{reply.previousMessage ? <div className="mt-2 text-sm leading-6 text-bone/80"><p className="font-medium text-bone">{reply.previousMessage.subject || "Previous outreach email"}</p><p className="mt-2 whitespace-pre-wrap">{reply.previousMessage.bodyText || "The previous message body is unavailable."}</p><p className="mt-2 font-mono text-[0.46rem] uppercase text-muted">Sent {formatActivityDate(reply.previousMessage.sentAt)}</p></div> : <p className="mt-3 text-xs leading-5 text-muted">The previous sent message is not stored in this mailbox history. The exact inbound reply remains above.</p>}</details>
+          </div>
           {reply.reply_category === "interested" ? <div className="mt-3 rounded-lg border border-edge bg-ink/35 p-3">
             {reply.crmCompany ? <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase text-moss">✓ CRM handover complete</p><p className="mt-1 text-sm text-bone/80">Linked to {reply.crmCompany.name}{reply.bookedMeeting ? " · meeting booked" : " · sequence stopped"}</p></div><Link href={`/crm/${reply.crmCompany.id}`} className={`${button} inline-flex items-center justify-center`}>Open client</Link></div> : <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.55rem] uppercase text-amber">CRM match needs approval</p><p className="mt-1 text-sm text-muted">No client record will be guessed or duplicated.</p></div><button onClick={() => reviewHandover(reply.id)} disabled={!!busy} className={button}>{busy === `handover-check:${reply.id}` ? "Checking…" : handover ? "Refresh choices" : "Review match"}</button></div>
@@ -2527,6 +2643,12 @@ export default function OutreachPage() {
           </div> : null}
           {reply.reply_category === "interested" && reply.replyChannel === "email" && !draft ? <button onClick={() => prepareBookingReply(reply.id)} disabled={!!busy} className={`${primary} mt-3 w-full sm:w-auto`}>{busy === `booking:${reply.id}` ? "Drafting…" : "Prepare booking reply"}</button> : null}
           {draft && edit ? <div className="mt-4 space-y-3 border-t border-edge pt-4"><div className="rounded-lg border border-moss/35 bg-moss/[0.06] px-3 py-2 text-sm text-moss">Review the exact words and calendar link. Once approved, the reply joins the same paced send queue.</div><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Reply subject</span><input className={input} value={edit.subject} onChange={(e) => setMessage(draft.id, { subject: e.target.value })} disabled={["sending", "sent"].includes(draft.status) || Boolean(draft.scheduled_at)} /></label><label className="block"><span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Reply</span><textarea className={`${input} min-h-40 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(draft.id, { body_text: e.target.value })} disabled={["sending", "sent"].includes(draft.status) || Boolean(draft.scheduled_at)} /></label><div className="flex flex-col gap-2 sm:flex-row sm:justify-end"><button onClick={() => saveDraft(draft.id)} disabled={!!busy || ["sending", "sent"].includes(draft.status) || Boolean(draft.scheduled_at)} className={button}>Save changes</button>{draft.status === "draft" || draft.status === "failed" ? <button onClick={() => approveAndSend(draft.id)} disabled={!!busy} className={primary}>{busy === `approve-send:${draft.id}` ? "Approving and queueing…" : "Approve & queue reply"}</button> : null}{draft.status === "approved" && !draft.scheduled_at ? <button onClick={() => send(draft.id)} disabled={!!busy} className={primary}>{busy === `send:${draft.id}` ? "Queueing…" : "Queue booking reply"}</button> : null}{draft.status === "approved" && draft.scheduled_at ? <span className="self-center rounded-lg border border-sky bg-sky px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-ink">✓ Queued for {formatActivityDate(draft.scheduled_at)}</span> : null}{draft.status === "sending" ? <span className="self-center rounded-lg border border-sky/60 bg-sky/10 px-3 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-sky">Sending now</span> : null}{draft.status === "sent" ? <span className="self-center font-mono text-xs uppercase text-moss">✓ Booking link sent</span> : null}</div></div> : null}
+          {followUpProspectId === reply.id ? <div className="mt-3"><ProspectFollowUpReminder prospect={reply} onCancel={() => setFollowUpProspectId("")} onSaved={async (result) => { setFollowUpProspectId(""); setNotice(result.rescheduled ? "Follow up rescheduled. The reply alert is cleared and the new time is in Today." : "Follow up saved. The reply alert is cleared and the new time is in Today."); await loadMetrics(); window.dispatchEvent(new CustomEvent("lc:notifications-updated")); }} /></div> : null}
+          <div className="mt-3 flex flex-col gap-2 border-t border-edge pt-3 sm:flex-row sm:flex-wrap sm:items-center">
+            {canScheduleFollowUp && followUpProspectId !== reply.id ? <button type="button" onClick={() => setFollowUpProspectId(reply.id)} disabled={!!busy} className={button}>Set dated follow up</button> : null}
+            {reply.attentionOpen ? <button type="button" onClick={() => void markReplyHandled(reply.id)} disabled={!!busy} className={button}>{busy === `resolve-reply:${reply.id}` ? "Saving…" : reply.reply_category === "unsubscribe" || reply.reply_category === "irrelevant" ? "Mark reviewed and close" : "I handled this elsewhere"}</button> : null}
+            <span className="text-xs leading-5 text-muted">The original reply and campaign history are never deleted.</span>
+          </div>
           {reply.replyChannel === "linkedin" ? <a href={linkedinTarget(reply)} target="_blank" rel="noreferrer" className="mt-3 inline-block font-mono text-xs text-sky">Reply in LinkedIn or SendPilot ↗</a> : <a href={`mailto:${reply.email}`} className="mt-3 inline-block font-mono text-xs text-amber">Open in email ↗</a>}
         </article>; })}{!replies.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">No replies detected yet.</div> : null}</div>
       </section> : null}

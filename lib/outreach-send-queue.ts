@@ -19,6 +19,7 @@ import {
   isSenderSlotConflict,
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
+import { resolveReplyAttention } from "@/lib/reply-attention";
 
 export const OUTREACH_SEND_SPACING_MINUTES = 5;
 const SEND_SPACING_MS = OUTREACH_SEND_SPACING_MINUTES * 60 * 1000;
@@ -91,8 +92,25 @@ export async function queueApprovedOutreachMessage(messageId: string) {
     throw new Error("Approve this exact draft before queueing it");
   if (message.from_email !== sender.senderEmail)
     throw new Error("Sender safety check failed");
+  const isReply = message.strategy?.messageType === "reply";
   if (message.scheduled_at) {
-    return { queued: true, scheduledAt: message.scheduled_at };
+    let attentionResolved = true;
+    if (isReply) {
+      try {
+        await resolveReplyAttention({
+          workspaceId: sender.workspaceId,
+          userId: sender.userId,
+          prospectId: message.prospect_id,
+        });
+      } catch {
+        attentionResolved = false;
+      }
+    }
+    return {
+      queued: true,
+      scheduledAt: message.scheduled_at,
+      attentionResolved,
+    };
   }
 
   const now = new Date();
@@ -128,7 +146,23 @@ export async function queueApprovedOutreachMessage(messageId: string) {
       .single();
     if (!current?.scheduled_at)
       throw new Error("The database did not confirm the send queue");
-    return { queued: true, scheduledAt: current.scheduled_at };
+    let attentionResolved = true;
+    if (isReply) {
+      try {
+        await resolveReplyAttention({
+          workspaceId: sender.workspaceId,
+          userId: sender.userId,
+          prospectId: message.prospect_id,
+        });
+      } catch {
+        attentionResolved = false;
+      }
+    }
+    return {
+      queued: true,
+      scheduledAt: current.scheduled_at,
+      attentionResolved,
+    };
   }
   const scheduledAt = queued.scheduled_at;
   await supabaseAdmin.from("outreach_events").insert({
@@ -147,7 +181,19 @@ export async function queueApprovedOutreachMessage(messageId: string) {
         message.message_source === "brain_direct" ? "brain_direct" : "sequence",
     },
   });
-  return { queued: true, scheduledAt };
+  let attentionResolved = true;
+  if (isReply) {
+    try {
+      await resolveReplyAttention({
+        workspaceId: sender.workspaceId,
+        userId: sender.userId,
+        prospectId: message.prospect_id,
+      });
+    } catch {
+      attentionResolved = false;
+    }
+  }
+  return { queued: true, scheduledAt, attentionResolved };
 }
 
 export async function dispatchDueOutreachMessage(messageId: string) {

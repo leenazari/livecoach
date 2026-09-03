@@ -250,9 +250,14 @@ async function runAccount() {
           if (outreach.processed) {
             outreachReplies += 1;
             if (outreach.outOfOffice) outOfOfficeReplies += 1;
-            const plan = outreach.outOfOffice
-              ? null
-              : outreachReplyDraftPlan(outreach.category);
+            // A positive outreach reply has one canonical action surface in
+            // Reply to Close. Do not also create an assistant draft in the
+            // generic email workflow, which would split the same response
+            // across two queues and spend model tokens before it is opened.
+            const plan =
+              outreach.category === "interested" || outreach.outOfOffice
+                ? null
+                : outreachReplyDraftPlan(outreach.category);
             if (plan) {
               const senderName = nameFromHeader(message.from) || senderEmail;
               const draftTarget = {
