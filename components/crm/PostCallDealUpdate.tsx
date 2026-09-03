@@ -17,7 +17,7 @@ const probabilityByStage: Record<string, number> = {
 };
 const input = "min-h-11 w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 text-sm text-bone outline-none focus:border-amber/60";
 
-export default function PostCallDealUpdate({ callId }: { callId: string }) {
+export default function PostCallDealUpdate({ callId, embedded = false }: { callId: string; embedded?: boolean }) {
   const [data, setData] = useState<DealData | null>(null);
   const [opportunityId, setOpportunityId] = useState("");
   const [title, setTitle] = useState("");
@@ -80,10 +80,10 @@ export default function PostCallDealUpdate({ callId }: { callId: string }) {
   };
 
   return (
-    <section className="mt-4 rounded-xl border border-amber/45 bg-amber/[0.06] p-4">
+    <section className={embedded ? "rounded-lg border border-edge bg-ink/35 p-3" : "mt-4 rounded-xl border border-amber/45 bg-amber/[0.06] p-4"}>
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">◆ Close the commercial loop</p>
+          <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">◆ Confirm the commercial outcome</p>
           <p className="mt-1 text-sm leading-5 text-bone/70">Confirm what changed, then create the one follow-up that progresses this relationship.</p>
         </div>
         <Link href="/crm/revenue" className="rounded-full border border-edge px-3 py-1.5 font-mono text-[0.54rem] uppercase text-muted hover:text-amber">Open revenue</Link>

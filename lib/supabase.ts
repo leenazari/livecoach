@@ -24,6 +24,7 @@ const SCOPED_RECORD_TABLES = new Set([
   "ai_cache", "app_config", "assistant_messages", "call_feedback",
   "brain_action_executions", "brain_learnings", "brain_pages", "brain_routine_runs", "brain_routines",
   "brain_sales_plays", "brain_trust_rules",
+  "crm_import_batches",
   "calendar_event_exclusions", "client_context", "coaching_points", "companies", "company_priority",
   "contact_company_overrides", "contacts", "crm_company_redirects",
   "daily_briefs", "departments", "document_jobs", "external_refs",

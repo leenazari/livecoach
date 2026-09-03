@@ -315,6 +315,7 @@ export async function GET(req: NextRequest) {
       team,
       currentUser: account.userId,
       canManageAssignments,
+      canStageImports: account.role === "owner",
       selectedCampaignId: selection.selectedCampaignId,
     });
   } catch (err: any) {

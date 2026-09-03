@@ -981,6 +981,79 @@ async function resolveActions(
       continue;
     }
 
+    if (it.type === "link_contact_to_client") {
+      const person = String(it.person || "").trim();
+      const email = String(it.email || "").trim().toLowerCase();
+      const client = String(it.client || "").trim();
+      if ((!person && !email) || !client) continue;
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+      const company = await findCompany(client);
+      if (
+        !company ||
+        String(company.name || "").trim().toLowerCase() !== client.toLowerCase()
+      ) continue;
+      let contacts = await findOwnContacts(person, email);
+      if (!email && person) {
+        contacts = contacts.filter(
+          (contact: any) =>
+            String(contact.name || "").trim().toLowerCase() ===
+            person.toLowerCase()
+        );
+      }
+      const actionFor = (contact: any) => ({
+        label: `${contact.name || contact.email || "Contact"} → ${company.name}`,
+        endpoint: `/api/crm/contacts/${contact.id}`,
+        method: "PATCH",
+        body: { companyId: company.id },
+      });
+      if (contacts.length === 1) {
+        const action = actionFor(contacts[0]);
+        out.push({
+          key,
+          type: it.type,
+          label: `Link ${action.label} without creating another company`,
+          endpoint: action.endpoint,
+          method: action.method,
+          body: action.body,
+        });
+      } else if (contacts.length > 1) {
+        out.push({
+          key,
+          type: it.type,
+          label: `Which exact ${person || email} should I link to ${company.name}?`,
+          choices: contacts.map(actionFor),
+        });
+      }
+      continue;
+    }
+
+    if (it.type === "stage_outreach_import") {
+      const scope = getRequestScope();
+      if (!scope || scope.role !== "owner" || !Array.isArray(it.rows)) continue;
+      const rows = it.rows
+        .filter((row: unknown) => row && typeof row === "object" && !Array.isArray(row))
+        .slice(0, 50);
+      if (!rows.length) continue;
+      const assigneeReference = String(it.assignee || "").trim();
+      const assignees = assigneeReference
+        ? await findTeamMembers(assigneeReference)
+        : [];
+      if (assigneeReference && assignees.length !== 1) continue;
+      out.push({
+        key,
+        type: it.type,
+        label: `Stage and check ${rows.length} lead rows from ${String(it.sourceName || "Brain lead list").slice(0, 120)}`,
+        endpoint: "/api/crm/imports/outreach/stage",
+        method: "POST",
+        body: {
+          sourceName: String(it.sourceName || "Brain lead list").slice(0, 240),
+          assignedToUserId: assignees[0]?.userId || null,
+          rows,
+        },
+      });
+      continue;
+    }
+
     if (it.type === "log_client_update") {
       const content = typeof it.content === "string" ? it.content.trim() : "";
       if (!content) continue;
@@ -2450,10 +2523,12 @@ Additional supported actions are:
 {"type":"update_client","client":"<client name, omit on their profile>","name":"<optional corrected name>","stage":"New|Discovery|Qualified|Proposal|Negotiation|Partner|Customer|Product Trial|In House|Dormant","sector":"<optional>","website":"<optional>","domain":"<optional>","notes":"<optional, null to clear>","emailContext":"<optional, null to clear>","removeFromPipeline":true,"rationale":"<only when the user explicitly says this is not a prospect, client or buyer>"}
 {"type":"upsert_stakeholder","client":"<client name, omit on their profile>","person":"<contact name>","buyingRole":"decision_maker|champion|user|influencer|blocker|unknown","influence":"high|medium|low","engagement":"warm|neutral|cold","jobTitle":"<optional>","email":"<optional>"}
 {"type":"update_contact","client":"<client name, omit on their profile>","person":"<existing contact name>","newName":"<optional corrected name>","role":"<optional, null to clear>","email":"<optional, null to clear>","sector":"<optional, null to clear>","notes":"<optional, null to clear>"}
+{"type":"link_contact_to_client","person":"<exact existing contact name>","email":"<exact email when known>","client":"<exact existing CRM company>"}
 {"type":"update_task","client":"<client name, omit on their profile>","item":"<existing to-do text>","status":"done|open","newText":"<optional replacement>","dueAt":"YYYY-MM-DD, full ISO date-time with timezone, or null","pinned":true,"action":"email|call|task"}
 {"type":"create_calendar_event","title":"<event title>","client":"<optional exact client>","scheduledAt":"<full ISO date-time with timezone>","durationMinutes":30,"attendeeEmails":["<exact email>"],"meetingUrl":"<optional Meet, Teams or Zoom URL>","intent":"<optional call focus>","recurrence":{"frequency":"daily|weekly|monthly","interval":1,"count":2,"weekdays":["monday"]}}
 {"type":"reschedule_call","call":"<exact call title plus its UK date and time>","scheduledAt":"<full ISO date-time with timezone>","durationMinutes":30}
 {"type":"assign_work","kind":"lead|client|opportunity|task|call|research|outreach draft","item":"<exact record name>","client":"<client name when identifying an opportunity>","assignee":"<exact active team member name or email>"}
+{"type":"stage_outreach_import","sourceName":"<source list name>","assignee":"<optional exact active team member>","rows":[{"Email":"person@example.com","First Name":"...","Last Name":"...","Company":"...","Status":"optional source status"}]}
 {"type":"create_campaign","name":"<campaign name>","goal":"<commercial outcome>","audience":"<specific ideal customer profile>","offerAngle":"<one grounded Interviewa angle>","dailyLimit":50,"cta":{"type":"reply_demo|reply_call|personal_booking_link|link|video|voice_note|custom|none","label":"<next step wording>","url":"<secure shared URL only when needed>"}}
 {"type":"update_campaign","campaign":"<existing campaign name or active campaign>","goal":"<optional>","audience":"<optional>","offerAngle":"<optional>","dailyLimit":50,"status":"draft|active|paused|completed","cta":{"type":"reply_demo|reply_call|personal_booking_link|link|video|voice_note|custom|none","label":"<next step wording>","url":"<secure shared URL only when needed>"}}
 {"type":"build_outreach_queue","limit":50}
@@ -2478,6 +2553,7 @@ For a PENDING PIPELINE CONFIRMATION, ask the user the exact three-way question b
 Use update_client for the relationship-level client stage and core facts. Use update_opportunity for a real revenue deal stage. When "move this client to qualified" clearly refers to a deal, update the opportunity. When it refers to the overall relationship or there is no deal, update the client stage. Never update both unless the user explicitly asks.
 When the user explicitly says a company is a partner, supplier, internal organisation or other non-buyer and should not appear in prospecting or the sales pipeline, include removeFromPipeline:true with update_client. Do not include it merely because the relationship stage is Partner, because a partner can still have a genuine expansion deal. This action dismisses active revenue opportunities but preserves the client, calls, tasks and immutable deal history.
 Use update_contact to correct or clear an existing person's core details. Use upsert_stakeholder when the change is specifically about their buying role or when the named contact may need to be created.
+Use link_contact_to_client only to repair one existing contact with one exact existing CRM company. It must never invent or fuzzy-create a company. Exact email duplicates at the target company are blocked for review.
 Use upsert_stakeholder when the user identifies a decision-maker, champion, influencer, user or blocker. It updates an existing contact or clearly proposes creating the named contact when none exists. Do not guess buying roles from a job title alone.
 Use update_task when the user explicitly asks to complete, rename, pin, unpin or reschedule an existing to-do. If several match, the interface will ask which one.
 Use create_document only for an explicit finished-document request. Do not emit create_task for the same request. If a matching sourceTask is used, it is completed only after the private Word file is successfully created. A queued request is not the same as a completed file, so tell the user it will continue in the background and appear in Documents.
@@ -2487,6 +2563,8 @@ For update_campaign you may also include "voice":{"tone":"...","style":"...","ru
 ONE-OFF EMAILS: when the user explicitly asks to send an email you drafted in this conversation, use send_email in the same reply instead of sending them to another screen. A campaign is optional. The action card is the final approval and must visibly show the exact recipient, subject and body. Never invent an email address, choose a fuzzy name match or silently fill missing content. If the exact recipient cannot be matched, ask only for their email address and emit no send_email action. Company is optional and must not block the send. Include a simple do not follow up line for cold outreach. A demo, booking, reply or other sales call to action is optional. Include one only when the user asks for it or it belongs in the exact draft they approved. Never add one merely to satisfy a format rule. Every send_email is an external action, remains separate from batch approval and uses only the signed-in user's own connected mailbox. Never claim it sent until the action receipt confirms it was queued.
 
 CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Campaign sequence mail stays in the dedicated Outreach approval flow. One-off send_email actions use the same protected outreach ledger, suppression rules, pacing and per-user limits without inventing a campaign.
+
+IMPORT SAFETY: only the workspace owner can stage a lead list. stage_outreach_import accepts at most 50 rows through Brain and creates a private review batch only. Exact email duplicates, invalid emails and missing companies stay out. Staging does not create prospects, start research, enrol a sequence or contact anyone. The owner must review and apply the clean rows in Outreach.
 
 SENDPILOT AND REPLIES: only enrol or stop a lead assigned to the signed-in salesperson, and only in that salesperson's connected and mapped SendPilot account. A SendPilot reply is canonical CRM activity and stops competing sequence work. Use prepare_reply only for an interested reply. It creates a review draft with that salesperson's booking link and never sends automatically. sendpilot_stop_lead marks one exact remote lead Done after separate approval. SendPilot only supports pause and resume at whole-campaign level, so never claim one lead was paused or resumed. Pausing or resuming a mapped campaign always needs its own external approval. Use log_sequence_action only after the salesperson says they completed that exact manual LinkedIn step.
 
