@@ -51,6 +51,13 @@ const PostCallSummary = dynamic(
 );
 
 type Line = { role: string; text: string; speaker?: string };
+const lineSpeakerLabel = (line: Line, fallback = "Them") => {
+  if (line.role === "interviewer") return "You";
+  if (line.role === "teammate")
+    return `Team member ${line.speaker || "colleague"}`;
+  if (line.role === "candidate") return line.speaker || fallback;
+  return line.speaker || line.role;
+};
 type Suggestion = {
   id: number;
   text: string;
@@ -1513,20 +1520,11 @@ export default function CallPage() {
     if (inFlightRef.current) return;
 
     const labelled = linesRef.current
-      .map(
-        (l) =>
-          `${
-            l.role === "interviewer"
-              ? "Interviewer"
-              : l.role === "candidate"
-              ? l.speaker || "Candidate"
-              : l.role
-          }: ${l.text}`
-      )
+      .map((l) => `${lineSpeakerLabel(l, "Candidate")}: ${l.text}`)
       .join("\n");
 
     const interviewerTurns = linesRef.current.filter(
-      (l) => l.role === "interviewer"
+      (l) => l.role === "interviewer" || l.role === "teammate"
     );
     const askedQuestions = interviewerTurns.map((l) => l.text);
     const lastQuestion = interviewerTurns.length
@@ -1671,10 +1669,7 @@ export default function CallPage() {
   const updateRunningSummary = useCallback(async () => {
     if (summaryInFlightRef.current) return;
     const labelled = linesRef.current
-      .map(
-        (l) =>
-          `${l.role === "candidate" ? l.speaker || personLabelRef.current : "You"}: ${l.text}`
-      )
+      .map((l) => `${lineSpeakerLabel(l, personLabelRef.current)}: ${l.text}`)
       .join("\n");
     if (!labelled.trim()) return;
     summaryInFlightRef.current = true;
@@ -1749,12 +1744,7 @@ export default function CallPage() {
     if (lines.length < 2 || lines.length <= lastInsightLenRef.current) return;
 
     const labelled = lines
-      .map(
-        (l) =>
-          `${
-            l.role === "candidate" ? l.speaker || personLabelRef.current : "You"
-          }: ${l.text}`
-      )
+      .map((l) => `${lineSpeakerLabel(l, personLabelRef.current)}: ${l.text}`)
       .join("\n")
       .slice(-3000);
     if (!labelled.trim()) return;
@@ -2484,16 +2474,7 @@ export default function CallPage() {
   // questions raised but not yet answered. Reads the transcript so far.
   const summarizeNow = useCallback(async () => {
     const labelled = linesRef.current
-      .map(
-        (l) =>
-          `${
-            l.role === "interviewer"
-              ? "Interviewer"
-              : l.role === "candidate"
-              ? l.speaker || "Candidate"
-              : l.role
-          }: ${l.text}`
-      )
+      .map((l) => `${lineSpeakerLabel(l, "Candidate")}: ${l.text}`)
       .join("\n");
     if (labelled.trim().length < 30) {
       setStatus("not enough conversation yet for a wrap-up");
@@ -2534,16 +2515,7 @@ export default function CallPage() {
     }).catch(() => {});
 
     const transcriptLabelled = linesRef.current
-      .map(
-        (l) =>
-          `${
-            l.role === "interviewer"
-              ? "Interviewer"
-              : l.role === "candidate"
-              ? l.speaker || "Candidate"
-              : l.role
-          }: ${l.text}`
-      )
+      .map((l) => `${lineSpeakerLabel(l, "Candidate")}: ${l.text}`)
       .join("\n");
     // In recap mode (bot couldn't join), summarise from what the user said
     // happened instead of a live transcript.
@@ -4587,6 +4559,7 @@ export default function CallPage() {
               onCandidateTurnEnd={handleCandidateTurnEnd}
               meetingUrl={meetingUrl}
               onMeetingUrlChange={setMeetingUrl}
+              upcomingId={upcomingId}
               startRequest={botStartRequest}
               onSilenceTimeout={() => {
                 setStatus(
@@ -4927,16 +4900,14 @@ export default function CallPage() {
                         className={
                           l.role === "interviewer"
                             ? "text-amber"
+                            : l.role === "teammate"
+                            ? "text-sky"
                             : l.role === "candidate"
                             ? "text-sage"
                             : "text-muted"
                         }
                       >
-                        {l.role === "interviewer"
-                          ? "You"
-                          : l.role === "candidate"
-                          ? l.speaker || personLabel
-                          : l.role}
+                        {lineSpeakerLabel(l, personLabel)}
                         :
                       </span>{" "}
                       <span className="text-bone/90">{l.text}</span>

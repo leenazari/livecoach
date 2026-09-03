@@ -64,6 +64,7 @@ export async function POST(req: NextRequest) {
 You are given the current bullets and the conversation so far. Return an UPDATED set that folds in anything new from the latest exchange.
 
 Rules:
+- A speaker label beginning "Team member" means an internal colleague. Keep their contribution distinct and never treat it as a buyer, candidate or client signal.
 - Keep it tight: max 5 bullets per theme. Merge and dedupe; never repeat the same point twice.
 - Each bullet is a short phrase (no trailing full stop), specific to THIS conversation - not generic.
 - Preserve still-valid earlier bullets; refine rather than churn them.

@@ -94,6 +94,9 @@ assert.equal(
 const migration = read(
   "supabase/migrations/20260821183209_transcriber_cost_controls.sql"
 );
+const sharedMigration = read(
+  "supabase/migrations/20260903165256_shared_meeting_capture_fanout.sql"
+);
 const startRoute = read("app/api/meet/start/route.ts");
 const teamRoute = read("app/api/crm/team/route.ts");
 const teamPage = read("app/settings/team/page.tsx");
@@ -101,6 +104,9 @@ const teamPage = read("app/settings/team/page.tsx");
 assert.match(migration, /transcriber_daily_minutes_limit/i);
 assert.match(migration, /meet_bots_one_active_per_owner_uidx/i);
 assert.match(migration, /created_at \+ interval '3 hours'/i);
+assert.match(sharedMigration, /drop index if exists public\.meet_bots_one_active_per_owner_uidx/i);
+assert.match(sharedMigration, /meet_capture_subscribers_one_active_owner_uidx/i);
+assert.match(sharedMigration, /meet_bots_one_active_instance_uidx/i);
 assert.match(startRoute, /transcriber_daily_limit_reached/);
 assert.match(startRoute, /transcriber_already_active/);
 assert.match(startRoute, /botHardLimitSeconds/);
@@ -108,6 +114,8 @@ assert.match(startRoute, /reconcileRecallBotState/);
 assert.match(startRoute, /currentRecallBotState/);
 assert.match(teamRoute, /update_transcriber_limit/);
 assert.match(teamRoute, /access_audit_events/);
+assert.match(teamRoute, /activeCaptureSubscriberIds/);
+assert.match(teamRoute, /physical capture owner/);
 assert.match(teamPage, /Notetaker today/);
 assert.match(teamPage, /Resets at midnight UK time/);
 

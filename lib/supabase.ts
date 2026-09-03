@@ -32,7 +32,7 @@ const SCOPED_RECORD_TABLES = new Set([
   "linkedin_inbox_connectors", "linkedin_inbox_messages", "linkedin_oauth",
   "microsoft_oauth", "interview_sessions",
   "interview_summaries", "knowledge_base", "knowledge_docs", "lessons",
-  "meet_bots", "meet_utterances", "opportunities", "opportunity_events",
+  "meet_bots", "meet_capture_subscribers", "meet_utterances", "opportunities", "opportunity_events",
   "opportunity_signal_receipts", "outreach_campaigns", "outreach_enrolments",
   "outreach_events", "outreach_learnings", "outreach_messages",
   "outreach_prospects", "outreach_signals", "outreach_suppressions",
