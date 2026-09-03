@@ -54,10 +54,30 @@ export type ClientTeamMember = {
   name: string;
 };
 
+export type NewClientInput = {
+  companyName: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  jobTitle: string;
+  recordType: "prospect" | "relationship";
+  relationshipStage: string;
+};
+
 export type ClientPortfolioTotals = Record<ClientHealth, number> & {
   all: number;
   opportunities: number;
   archived: number;
+};
+
+const EMPTY_NEW_CLIENT: NewClientInput = {
+  companyName: "",
+  firstName: "",
+  lastName: "",
+  email: "",
+  jobTitle: "",
+  recordType: "prospect",
+  relationshipStage: "Discovery",
 };
 
 const HEALTH = {
@@ -320,8 +340,6 @@ export default function ClientPortfolio({
   team,
   currentUser,
   canManageAssignments,
-  newName,
-  setNewName,
   onCreate,
   onDelete,
   onStageChange,
@@ -332,9 +350,7 @@ export default function ClientPortfolio({
   team: ClientTeamMember[];
   currentUser: string;
   canManageAssignments: boolean;
-  newName: string;
-  setNewName: (value: string) => void;
-  onCreate: () => void;
+  onCreate: (input: NewClientInput) => Promise<boolean>;
   onDelete: (id: string, name: string) => void;
   onStageChange: (id: string, stage: string) => void;
   savingId: string;
@@ -348,12 +364,43 @@ export default function ClientPortfolio({
     canManageAssignments ? "all" : "mine"
   );
   const [showAdd, setShowAdd] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newClient, setNewClient] = useState<NewClientInput>(EMPTY_NEW_CLIENT);
   const effectiveOwnerFilter = canManageAssignments ? ownerFilter : "mine";
   const [sort, setSort] = useState<{
     key: "priority" | "health" | "name" | "owner" | "contact" | "stage" | "added" | "lastActivity" | "nextMeeting" | "commercial" | "nextMove";
     direction: "asc" | "desc";
   }>({ key: "priority", direction: "asc" });
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
+
+  const updateNewClient = <K extends keyof NewClientInput>(
+    key: K,
+    value: NewClientInput[K]
+  ) => setNewClient((current) => ({ ...current, [key]: value }));
+
+  const closeAdd = () => {
+    if (creating) return;
+    setShowAdd(false);
+    setNewClient(EMPTY_NEW_CLIENT);
+  };
+
+  const createClient = async () => {
+    if (
+      !newClient.companyName.trim() ||
+      !newClient.firstName.trim() ||
+      !newClient.email.trim()
+    ) return;
+    setCreating(true);
+    try {
+      const created = await onCreate(newClient);
+      if (created) {
+        setShowAdd(false);
+        setNewClient(EMPTY_NEW_CLIENT);
+      }
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const teamNameById = useMemo(
     () => new Map(team.map((member) => [member.userId, member.name])),
@@ -545,30 +592,120 @@ export default function ClientPortfolio({
           )}
           <button
             type="button"
-            onClick={() => setShowAdd((open) => !open)}
+            onClick={() => showAdd ? closeAdd() : setShowAdd(true)}
+            disabled={creating}
             className="rounded-lg border border-amber/55 bg-amber/10 px-3 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/20"
           >
             {showAdd ? "Cancel" : "+ Add client"}
           </button>
         </div>
         {showAdd ? (
-          <div className="mt-2 flex gap-2 border-t border-edge/50 pt-2">
-            <input
-              autoFocus
-              value={newName}
-              onChange={(event) => setNewName(event.target.value)}
-              onKeyDown={(event) => event.key === "Enter" && onCreate()}
-              placeholder="New client name"
-              className="min-w-0 flex-1 rounded-lg border border-edge bg-ink/70 px-3 py-2 font-sans text-sm text-bone outline-none focus:border-amber/60"
-            />
-            <button
-              type="button"
-              onClick={onCreate}
-              disabled={!newName.trim()}
-              className="rounded-lg border border-amber/55 bg-amber/15 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-amber disabled:opacity-40"
-            >
-              Add
-            </button>
+          <div className="mt-3 border-t border-edge/50 pt-3">
+            <div className="mb-3">
+              <h3 className="font-display text-base text-bone">Company and primary contact</h3>
+              <p className="mt-1 text-xs leading-5 text-muted">
+                Manual client records need a real person and exact work email. Choose whether this is a new sales prospect or an existing relationship before saving.
+              </p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="grid gap-1 text-xs text-muted">
+                Company name
+                <input
+                  autoFocus
+                  value={newClient.companyName}
+                  onChange={(event) => updateNewClient("companyName", event.target.value)}
+                  placeholder="Required"
+                  className="rounded-lg border border-edge bg-ink/70 px-3 py-2.5 font-sans text-sm text-bone outline-none placeholder:text-muted/60 focus:border-amber/60"
+                />
+              </label>
+              <label className="grid gap-1 text-xs text-muted">
+                Contact first name
+                <input
+                  value={newClient.firstName}
+                  onChange={(event) => updateNewClient("firstName", event.target.value)}
+                  placeholder="Required"
+                  className="rounded-lg border border-edge bg-ink/70 px-3 py-2.5 font-sans text-sm text-bone outline-none placeholder:text-muted/60 focus:border-amber/60"
+                />
+              </label>
+              <label className="grid gap-1 text-xs text-muted">
+                Contact last name
+                <input
+                  value={newClient.lastName}
+                  onChange={(event) => updateNewClient("lastName", event.target.value)}
+                  placeholder="Optional"
+                  className="rounded-lg border border-edge bg-ink/70 px-3 py-2.5 font-sans text-sm text-bone outline-none placeholder:text-muted/60 focus:border-amber/60"
+                />
+              </label>
+              <label className="grid gap-1 text-xs text-muted">
+                Exact work email
+                <input
+                  type="email"
+                  value={newClient.email}
+                  onChange={(event) => updateNewClient("email", event.target.value)}
+                  placeholder="Required for duplicate checks"
+                  className="rounded-lg border border-edge bg-ink/70 px-3 py-2.5 font-sans text-sm text-bone outline-none placeholder:text-muted/60 focus:border-amber/60"
+                />
+              </label>
+              <label className="grid gap-1 text-xs text-muted">
+                Job title
+                <input
+                  value={newClient.jobTitle}
+                  onChange={(event) => updateNewClient("jobTitle", event.target.value)}
+                  placeholder="Optional"
+                  className="rounded-lg border border-edge bg-ink/70 px-3 py-2.5 font-sans text-sm text-bone outline-none placeholder:text-muted/60 focus:border-amber/60"
+                />
+              </label>
+              <label className="grid gap-1 text-xs text-muted">
+                What are you adding
+                <select
+                  value={newClient.recordType}
+                  onChange={(event) => updateNewClient("recordType", event.target.value as NewClientInput["recordType"])}
+                  className="rounded-lg border border-edge bg-ink/70 px-3 py-2.5 font-sans text-sm text-bone outline-none focus:border-amber/60"
+                >
+                  <option value="prospect">New sales prospect</option>
+                  <option value="relationship">Existing client or relationship</option>
+                </select>
+              </label>
+              {newClient.recordType === "relationship" ? (
+                <label className="grid gap-1 text-xs text-muted">
+                  Relationship stage
+                  <select
+                    value={newClient.relationshipStage}
+                    onChange={(event) => updateNewClient("relationshipStage", event.target.value)}
+                    className="rounded-lg border border-edge bg-ink/70 px-3 py-2.5 font-sans text-sm text-bone outline-none focus:border-amber/60"
+                  >
+                    {RELATIONSHIP_STAGE_OPTIONS.filter((option) => option !== "New").map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </div>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="max-w-3xl text-xs leading-5 text-muted">
+                {newClient.recordType === "prospect"
+                  ? "The company and contact will appear in Clients and the person will also appear in Outreach. Nothing is researched, enrolled, or sent automatically."
+                  : "The company and contact will appear in Clients only. Existing relationships are not silently added to cold Outreach."}
+              </p>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={closeAdd}
+                  disabled={creating}
+                  className="rounded-lg border border-edge px-3 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-bone disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={createClient}
+                  disabled={creating || !newClient.companyName.trim() || !newClient.firstName.trim() || !newClient.email.trim()}
+                  className="rounded-lg border border-amber/55 bg-amber/15 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-amber disabled:opacity-40"
+                >
+                  {creating ? "Checking and saving…" : "Save client"}
+                </button>
+              </div>
+            </div>
           </div>
         ) : null}
       </div>

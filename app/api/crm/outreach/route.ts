@@ -500,6 +500,62 @@ export async function POST(req: NextRequest) {
           responsible: "manager",
         });
       }
+      if (
+        requestedCompanyId &&
+        existing.crm_company_id &&
+        existing.crm_company_id !== requestedCompanyId
+      ) {
+        return manualProspectBlocker(409, {
+          code: "manual_prospect_existing_company_mismatch",
+          title: "Duplicate prospect prevented",
+          reason: "That exact work email is already linked to a different CRM client",
+          nextAction: "Open the existing prospect and correct its company instead of creating another copy",
+          responsible: "user",
+        });
+      }
+      if (requestedCompanyId && !existing.crm_company_id) {
+        if (
+          existing.owner_id !== account.userId &&
+          existing.assigned_to_user_id !== account.userId
+        ) {
+          return manualProspectBlocker(409, {
+            code: "manual_prospect_existing_link_owner",
+            title: "Existing prospect needs its owner",
+            reason: "The existing shared prospect is not assigned to your account",
+            nextAction: "Ask a workspace owner or manager to assign it before linking a CRM client",
+            responsible: "manager",
+          });
+        }
+        const access = await loadAssignedClientAccess(requestedCompanyId, account);
+        if (!access) {
+          return manualProspectBlocker(404, {
+            code: "manual_prospect_client_not_assigned",
+            title: "Prospect not linked",
+            reason: "The selected CRM client is not owned by or assigned to your account",
+            nextAction: "Ask a workspace owner to assign the client, then try again",
+            responsible: "owner",
+          });
+        }
+        const { data: linkedProspect, error: linkError } = await supabaseAdmin
+          .from("outreach_prospects")
+          .update({
+            crm_company_id: requestedCompanyId,
+            company_name: cleanManualField(access.company.name, 200),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id)
+          .eq("workspace_id", account.workspaceId)
+          .select(PROSPECT_LIST_FIELDS)
+          .single();
+        if (linkError) throw linkError;
+        return NextResponse.json({
+          ok: true,
+          prospect: linkedProspect,
+          created: false,
+          duplicatePrevented: true,
+          linkedExisting: true,
+        });
+      }
       return NextResponse.json({
         ok: true,
         prospect: existing,

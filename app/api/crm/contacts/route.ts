@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
 import { privateRecordFields } from "@/lib/record-scope";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
@@ -10,6 +10,10 @@ export const runtime = "nodejs";
 // keeps serving a stale snapshot even after the database has changed (a
 // recovered call stayed invisible on the client page for exactly this reason).
 export const dynamic = "force-dynamic";
+
+function exactIlikePattern(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
 
 // GET  /api/crm/contacts?companyId=...  -> contacts for a company
 // POST /api/crm/contacts                -> create ({ company_id, name, ... })
@@ -91,13 +95,46 @@ export async function POST(req: NextRequest) {
     }
     const email =
       typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (email && (email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+      return NextResponse.json(
+        crmBlockerPayload({
+          code: "contact_email_invalid",
+          title: "Contact email is not valid",
+          reason: "LiveCoach needs an exact email address to prevent duplicate records",
+          nextAction: "Correct the email address, then add the contact again",
+          responsible: "user",
+        }),
+        { status: 400 }
+      );
+    }
+    if (email) {
+      const { data: workspaceMatches, error: workspaceMatchError } = await supabaseService
+        .from("contacts")
+        .select("id,owner_id")
+        .eq("workspace_id", scope.workspaceId)
+        .ilike("email", exactIlikePattern(email))
+        .limit(3);
+      if (workspaceMatchError) throw workspaceMatchError;
+      if ((workspaceMatches || []).some((contact: any) => contact.owner_id !== scope.userId)) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "contact_email_owned_by_teammate",
+            title: "Duplicate contact prevented",
+            reason: "That exact work email is already held by another teammate in this workspace",
+            nextAction: "Ask a workspace owner or manager to confirm the relationship owner instead of creating another copy",
+            responsible: "manager",
+          }),
+          { status: 409 }
+        );
+      }
+    }
     let duplicateQuery = supabaseAdmin
       .from("contacts")
       .select("*")
       .eq("workspace_id", scope.workspaceId)
       .eq("owner_id", scope.userId);
     duplicateQuery = email
-      ? duplicateQuery.ilike("email", email)
+      ? duplicateQuery.ilike("email", exactIlikePattern(email))
       : (companyId
           ? duplicateQuery.eq("company_id", companyId)
           : duplicateQuery.is("company_id", null)

@@ -116,7 +116,8 @@
     "validate:outreach-voice-notes": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-voice-notes.mjs",
     "validate:canonical-navigation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-canonical-entity-navigation.mjs",
     "validate:clickable-performance": "node scripts/validate-clickable-metrics-performance.mjs",
-    "validate:staff-mcp": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-staff-mcp.mjs"
+    "validate:staff-mcp": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-staff-mcp.mjs",
+    "validate:complete-client-entry": "node scripts/validate-complete-client-entry.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

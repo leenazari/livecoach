@@ -31,7 +31,11 @@ assert.match(entry, /A client is a company record\. An outreach prospect is a na
 assert.match(entry, /Recent clients waiting for a person/);
 assert.match(entry, /This creates a private prospect assigned to you/);
 assert.match(entry, /It does not research the person, enrol them in a campaign, or send anything/);
-assert.match(clients, /was saved under Clients\. To add a person to Outreach/);
-assert.match(clients, /already existed under Clients\. No duplicate was created/);
+assert.match(clients, /const createCompany = async \(input: NewClientInput\): Promise<boolean>/);
+assert.match(clients, /input\.recordType === "prospect"[\s\S]*?\? "New"/);
+assert.match(clients, /"\/api\/crm\/outreach"[\s\S]*?"\/api\/crm\/contacts"/);
+assert.match(clients, /are now linked in Clients and Outreach/);
+assert.match(clients, /Nothing was researched, enrolled, or sent/);
+assert.match(clients, /Existing matching records were reused, so no duplicate was created/);
 
 console.log("Manual Outreach prospect entry validation passed");
