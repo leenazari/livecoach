@@ -98,6 +98,38 @@ export async function GET(req: NextRequest) {
       }
     );
 
+    // Active team members can connect Google after their account has already
+    // been activated. Bootstrap the verified outreach identity at that point
+    // so the database can prove that future drafts belong to this mailbox.
+    // Never overwrite an existing sender because owners may intentionally use
+    // a verified Gmail send-as alias.
+    if (membership.status === "active" && email) {
+      const normalizedEmail = email.trim().toLowerCase();
+      const { data: senderProfile, error: senderReadError } = await supabaseService
+        .from("profiles")
+        .select("display_name,outreach_sender_name,outreach_sender_email")
+        .eq("user_id", oauthState.userId)
+        .maybeSingle();
+      if (senderReadError) throw senderReadError;
+      if (!senderProfile) throw new Error("LiveCoach account profile is unavailable");
+
+      if (!senderProfile.outreach_sender_email) {
+        const { error: senderUpdateError } = await supabaseService
+          .from("profiles")
+          .update({
+            outreach_sender_name:
+              senderProfile.outreach_sender_name ||
+              senderProfile.display_name ||
+              normalizedEmail,
+            outreach_sender_email: normalizedEmail,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", oauthState.userId)
+          .is("outreach_sender_email", null);
+        if (senderUpdateError) throw senderUpdateError;
+      }
+    }
+
     const { error: auditError } = await supabaseService
       .from("access_audit_events")
       .insert({
