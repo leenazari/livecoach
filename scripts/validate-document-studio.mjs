@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 const [migration, worker, context, route, assistant, tray] = await Promise.all([
-  read("supabase/migrations/20260819180000_brain_document_studio.sql"),
+  read("supabase/migrations/20260819163856_brain_document_studio.sql"),
   read("lib/document-jobs.ts"),
   read("lib/document-context.ts"),
   read("app/api/crm/documents/route.ts"),

@@ -7,10 +7,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260831183616_brain_operating_system.sql"
+  "supabase/migrations/20260831191238_brain_operating_system.sql"
 );
 const hardening = read(
-  "supabase/migrations/20260831191324_brain_operating_system_advisor_hardening.sql"
+  "supabase/migrations/20260831191427_brain_operating_system_advisor_hardening.sql"
 );
 const control = read("lib/brain-control.ts");
 const shared = read("lib/brain-control-shared.ts");

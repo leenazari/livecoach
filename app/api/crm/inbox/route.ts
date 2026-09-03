@@ -121,10 +121,10 @@ export async function GET() {
         .limit(300),
       supabaseAdmin
         .from("outreach_messages")
-        .select("id,prospect_id,subject,body_text,status,step_number,created_at,updated_at,sent_at,scheduled_at")
+        .select("id,prospect_id,subject,body_text,status,step_number,created_at,updated_at,sent_at,scheduled_at,error,strategy")
         .eq("workspace_id", account.workspaceId)
         .eq("sender_user_id", account.userId)
-        .in("status", ["draft", "approved", "sent", "failed"])
+        .in("status", ["draft", "approved", "sending", "sent", "failed"])
         .order("updated_at", { ascending: false })
         .limit(300),
       supabaseAdmin
@@ -136,7 +136,7 @@ export async function GET() {
         .limit(2000),
       supabaseAdmin
         .from("outreach_events")
-        .select("prospect_id")
+        .select("prospect_id,created_at")
         .eq("workspace_id", account.workspaceId)
         .eq("kind", "meeting_booked")
         .limit(5000),
@@ -426,6 +426,9 @@ export async function GET() {
         jobTitle: text(prospect.job_title, 240) || null,
         messageId: message?.id || null,
         messageStatus: message?.status || null,
+        messageScheduledAt: message?.scheduled_at || null,
+        messageSentAt: message?.sent_at || null,
+        messageError: text(message?.error, 500) || null,
         draftSubject: text(message?.subject, 180) || null,
         draftBody: text(message?.body_text, 4000) || null,
         replyText: text(prospect.last_reply_text, 4000) || null,
@@ -437,11 +440,16 @@ export async function GET() {
       };
     };
     const replyDraftProspects = new Set<string>();
-    const handledReplyProspects = new Set<string>(
-      (outreachMeetingsResult.data || [])
-        .map((event: any) => event.prospect_id)
-        .filter(Boolean)
-    );
+    const handledReplyProspects = new Set<string>();
+    const latestMeetingAtByProspect = new Map<string, number>();
+    for (const event of outreachMeetingsResult.data || []) {
+      const eventAt = dateMs(event.created_at);
+      if (!event.prospect_id || eventAt == null) continue;
+      latestMeetingAtByProspect.set(
+        event.prospect_id,
+        Math.max(latestMeetingAtByProspect.get(event.prospect_id) || 0, eventAt)
+      );
+    }
     const resolvedReplyKeys = new Set(
       (tasksResult.data || [])
         .filter(
@@ -456,37 +464,74 @@ export async function GET() {
             `${task.payload.outreachProspectId}:${task.payload.receivedAt}`
         )
     );
-    const handledReplyRefs = new Set(
-      (tasksResult.data || [])
-        .map((task: any) => text(task.source_ref, 500))
-        .filter((sourceRef) => sourceRef.startsWith("outreach-reply:"))
-    );
     for (const message of outreachMessagesResult.data || []) {
       const prospect: any = prospects.get(message.prospect_id);
       const done = message.status === "sent";
-      const isReply = Number(message.step_number) === 10;
-      if (isReply && message.status === "approved" && message.scheduled_at) {
-        handledReplyProspects.add(message.prospect_id);
+      const isReply =
+        message.strategy?.messageType === "reply" ||
+        Number(message.step_number) === 10;
+      const currentReplyAt = dateMs(prospect?.last_reply_at);
+      const explicitReplyAt = dateMs(message.strategy?.replyReceivedAt);
+      const legacyMessageAt =
+        dateMs(message.sent_at) ||
+        dateMs(message.updated_at) ||
+        dateMs(message.created_at);
+      const matchesCurrentReply =
+        !isReply ||
+        (currentReplyAt != null &&
+          (explicitReplyAt != null
+            ? Math.abs(explicitReplyAt - currentReplyAt) < 1_000
+            : legacyMessageAt != null && legacyMessageAt >= currentReplyAt));
+      if (!isReply && message.status === "approved" && message.scheduled_at)
         continue;
-      }
-      if (message.status === "approved" && message.scheduled_at) continue;
       const sentMs = dateMs(message.sent_at);
-      if (isReply && !done) replyDraftProspects.add(message.prospect_id);
-      if (isReply && done) handledReplyProspects.add(message.prospect_id);
+      if (isReply && !done && matchesCurrentReply)
+        replyDraftProspects.add(message.prospect_id);
+      if (isReply && done && matchesCurrentReply)
+        handledReplyProspects.add(message.prospect_id);
       if (done && (!sentMs || sentMs < nowMs - 7 * DAY_MS)) continue;
       const person = [prospect?.first_name, prospect?.last_name].filter(Boolean).join(" ");
-      const priority = done ? 0 : message.status === "approved" ? 106 : isReply ? 103 : 92;
+      const queuedReply =
+        isReply && message.status === "approved" && Boolean(message.scheduled_at);
+      const sendingReply = isReply && message.status === "sending";
+      const failedReply = isReply && message.status === "failed";
+      const priority = done
+        ? 0
+        : failedReply
+          ? 112
+          : sendingReply
+            ? 105
+            : queuedReply
+              ? 104
+              : message.status === "approved"
+                ? 106
+                : isReply
+                  ? 103
+                  : 92;
       items.push({
         id: isReply ? `reply-draft:${message.id}` : `outreach:${message.id}`,
         sourceId: isReply ? message.prospect_id : message.id,
         kind: isReply ? "reply" : "outreach",
         title:
-          message.status === "approved"
-            ? `Send approved email to ${person || prospect?.company_name || "prospect"}`
-            : isReply
-              ? `Reply to ${person || prospect?.company_name || "prospect"}`
-              : `Review email for ${person || prospect?.company_name || "prospect"}`,
-        detail: text(message.subject, 180) || (isReply ? "Booking reply" : "Outreach draft"),
+          failedReply
+            ? `Retry reply to ${person || prospect?.company_name || "prospect"}`
+            : sendingReply
+              ? `Sending reply to ${person || prospect?.company_name || "prospect"}`
+              : queuedReply
+                ? `Reply queued for ${person || prospect?.company_name || "prospect"}`
+                : message.status === "approved"
+                  ? `Send approved email to ${person || prospect?.company_name || "prospect"}`
+                  : isReply
+                    ? `Reply to ${person || prospect?.company_name || "prospect"}`
+                    : `Review email for ${person || prospect?.company_name || "prospect"}`,
+        detail: failedReply
+          ? text(message.error, 300) || "The connected mailbox did not accept this reply"
+          : sendingReply
+            ? "Waiting for the connected mailbox to confirm delivery"
+            : queuedReply
+              ? `Awaiting provider delivery${message.scheduled_at ? ` at ${message.scheduled_at}` : ""}`
+              : text(message.subject, 180) ||
+                (isReply ? "Booking reply" : "Outreach draft"),
         company: text(prospect?.company_name, 160) || null,
         companyId: null,
         href: isReply
@@ -494,11 +539,11 @@ export async function GET() {
           : "/crm/outreach?tab=queue",
         priority,
         priorityLabel: priorityLabel(priority, false, done),
-        dueAt: null,
+        dueAt: isReply ? prospect?.last_reply_at || null : null,
         createdAt: message.updated_at || message.created_at || message.sent_at || null,
         revenue: true,
-        approval: !done,
-        waiting: false,
+        approval: !done && !queuedReply && !sendingReply,
+        waiting: queuedReply || sendingReply,
         done,
         editable: false,
         dismissible: false,
@@ -547,15 +592,17 @@ export async function GET() {
           dismissible: false,
         });
       }
+      const lastReplyMs = dateMs(prospect.last_reply_at);
+      const meetingHandlesCurrentReply =
+        lastReplyMs != null &&
+        (latestMeetingAtByProspect.get(prospect.id) || 0) >= lastReplyMs;
       if (
         !prospect.last_reply_at ||
         prospect.reply_category !== "interested" ||
         resolvedReplyKeys.has(`${prospect.id}:${prospect.last_reply_at}`) ||
-        handledReplyRefs.has(
-          `outreach-reply:${prospect.id}:${prospect.last_reply_at}`
-        ) ||
         replyDraftProspects.has(prospect.id) ||
-        handledReplyProspects.has(prospect.id)
+        handledReplyProspects.has(prospect.id) ||
+        meetingHandlesCurrentReply
       )
         continue;
       const person = [prospect.first_name, prospect.last_name].filter(Boolean).join(" ");

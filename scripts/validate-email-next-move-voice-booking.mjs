@@ -28,8 +28,8 @@ const [
   audio,
   overnight,
 ] = await Promise.all([
-  read("supabase/migrations/20260829004508_email_next_move_voice_booking.sql"),
-  read("supabase/migrations/20260829083628_separate_email_assistant_reply_voice.sql"),
+  read("supabase/migrations/20260829010031_email_next_move_voice_booking.sql"),
+  read("supabase/migrations/20260829085157_separate_email_assistant_reply_voice.sql"),
   read("lib/email-assistant.ts"),
   read("lib/email-assistant-voice.ts"),
   read("lib/email-assistant-voice-note.ts"),

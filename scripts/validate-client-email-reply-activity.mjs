@@ -46,7 +46,7 @@ assert.deepEqual(
 );
 
 const migration = read(
-  "supabase/migrations/20260828142225_client_email_reply_activity.sql"
+  "supabase/migrations/20260828143406_client_email_reply_activity.sql"
 );
 const kindMigration = read(
   "supabase/migrations/20260831135749_allow_client_email_reply_context.sql"

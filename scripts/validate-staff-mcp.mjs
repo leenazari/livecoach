@@ -24,16 +24,16 @@ const callback = read("app/auth/callback/route.ts");
 const outreach = read("app/crm/outreach/page.tsx");
 const prepare = read("app/api/crm/outreach/[id]/prepare/route.ts");
 const migration = read(
-  "supabase/migrations/20260903002647_staff_chatgpt_mcp.sql"
+  "supabase/migrations/20260903004101_staff_chatgpt_mcp.sql"
 );
 const receiptPrivileges = read(
-  "supabase/migrations/20260903004500_restrict_staff_mcp_receipt_privileges.sql"
+  "supabase/migrations/20260903004148_restrict_staff_mcp_receipt_privileges.sql"
 );
 const receiptActorIndex = read(
-  "supabase/migrations/20260903004300_staff_chatgpt_mcp_actor_index.sql"
+  "supabase/migrations/20260903004121_staff_chatgpt_mcp_actor_index.sql"
 );
 const receiptFinality = read(
-  "supabase/migrations/20260903004700_lock_completed_staff_mcp_receipts.sql"
+  "supabase/migrations/20260903004229_lock_completed_staff_mcp_receipts.sql"
 );
 
 const registeredTools = [...tools.matchAll(/server\.registerTool\(\s*"([^"]+)"/g)].map(

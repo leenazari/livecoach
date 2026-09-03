@@ -26,7 +26,7 @@ assert.equal(clampOutreachDailyLimit(-4), 1);
 assert.equal(OVERNIGHT_RESEARCH_INVENTORY_LIMIT, 20);
 
 const migration = read(
-  "supabase/migrations/20260901095601_raise_outreach_daily_limit_to_50.sql"
+  "supabase/migrations/20260901100530_raise_outreach_daily_limit_to_50.sql"
 );
 assert.match(migration, /daily_limit between 1 and 50/);
 assert.match(migration, /daily_limit set default 50/);

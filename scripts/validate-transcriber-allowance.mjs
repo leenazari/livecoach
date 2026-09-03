@@ -92,7 +92,7 @@ assert.equal(
 );
 
 const migration = read(
-  "supabase/migrations/20260821192645_transcriber_cost_controls.sql"
+  "supabase/migrations/20260821183209_transcriber_cost_controls.sql"
 );
 const startRoute = read("app/api/meet/start/route.ts");
 const teamRoute = read("app/api/crm/team/route.ts");

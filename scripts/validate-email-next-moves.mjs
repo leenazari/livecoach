@@ -23,7 +23,7 @@ const [
   draftsRoute,
   vercel,
 ] = await Promise.all([
-  read("supabase/migrations/20260828235614_next_moves_email_sendpilot_guard.sql"),
+  read("supabase/migrations/20260829003504_next_moves_email_sendpilot_guard.sql"),
   read("lib/email-assistant.ts"),
   read("app/api/cron/important-email-monitor/route.ts"),
   read("app/api/cron/email-next-moves/route.ts"),

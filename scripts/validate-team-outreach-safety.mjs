@@ -7,19 +7,19 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260821222044_team_outreach_contact_safety.sql"
+  "supabase/migrations/20260821224228_team_outreach_contact_safety.sql"
 );
 const assignmentFix = read(
-  "supabase/migrations/20260821224415_fix_outreach_assignment_trigger_polymorphism.sql"
+  "supabase/migrations/20260821224454_fix_outreach_assignment_trigger_polymorphism.sql"
 );
 const relationshipScope = read(
-  "supabase/migrations/20260821224750_harden_outreach_relationship_scope.sql"
+  "supabase/migrations/20260821224823_harden_outreach_relationship_scope.sql"
 );
 const frozenDeliveryIdentity = read(
-  "supabase/migrations/20260821224937_freeze_inflight_outreach_identity.sql"
+  "supabase/migrations/20260821224959_freeze_inflight_outreach_identity.sql"
 );
 const emailOnlyDedup = read(
-  "supabase/migrations/20260821225550_email_only_outreach_dedup.sql"
+  "supabase/migrations/20260821230218_email_only_outreach_dedup.sql"
 );
 const helper = read("lib/outreach-team-safety.ts");
 const queue = read("app/api/crm/outreach/queue/route.ts");

@@ -7,19 +7,19 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260824002148_crm_user_notifications.sql"
+  "supabase/migrations/20260824002900_crm_user_notifications.sql"
 );
 const indexMigration = read(
-  "supabase/migrations/20260824002943_index_crm_notifications_workspace.sql"
+  "supabase/migrations/20260824003001_index_crm_notifications_workspace.sql"
 );
 const sharedClientMigration = read(
-  "supabase/migrations/20260824003124_notify_shared_client_assignments.sql"
+  "supabase/migrations/20260824003412_notify_shared_client_assignments.sql"
 );
 const standardUpgradeMigration = read(
-  "supabase/migrations/20260824054534_notification_standard_upgrades.sql"
+  "supabase/migrations/20260824055933_notification_standard_upgrades.sql"
 );
 const notificationGrantMigration = read(
-  "supabase/migrations/20260901132902_fix_crm_notification_authenticated_grants.sql"
+  "supabase/migrations/20260901133003_fix_crm_notification_authenticated_grants.sql"
 );
 const feedRoute = read("app/api/crm/notifications/route.ts");
 const itemRoute = read("app/api/crm/notifications/[id]/route.ts");

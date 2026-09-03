@@ -40,7 +40,8 @@ assert.doesNotMatch(lane, /research_sources|https?:\/\//);
 
 // Positive replies become one scoped, dated task. They never create a client
 // or opportunity implicitly, and the exact reply receipt hides only once that
-// canonical task is confirmed.
+// canonical task is confirmed. Queueing a reply remains visible until provider
+// delivery, and a later inbound reply cannot be hidden by an older send.
 assert.match(page, /replyItems=\{\(data\?\.items \|\| \[\]\)\.filter/);
 assert.match(nextAction, /requireRequestScope\(\)/);
 assert.match(nextAction, /\.eq\("workspace_id", account\.workspaceId\)/);
@@ -51,7 +52,10 @@ assert.match(nextAction, /await upsertTasks\(companyId/);
 assert.doesNotMatch(nextAction, /from\("companies"\)\s*\.insert/);
 assert.doesNotMatch(nextAction, /from\("opportunities"\)\s*\.insert/);
 assert.match(inbox, /source_ref/);
-assert.match(inbox, /handledReplyRefs/);
+assert.match(inbox, /resolvedReplyKeys/);
+assert.match(inbox, /matchesCurrentReply/);
+assert.match(inbox, /Reply queued for/);
+assert.match(inbox, /Awaiting provider delivery/);
 assert.match(tasks, /\.eq\("workspace_id", accountScope\.workspaceId\)[\s\S]*\.eq\("owner_id", accountScope\.userId\)/);
 assert.match(taskRoute, /const account = await resolveRecordScope\(\)/);
 assert.match(taskRoute, /from\("tasks"\)[\s\S]*\.eq\("workspace_id", account\.workspaceId\)[\s\S]*\.eq\("owner_id", account\.userId\)/);

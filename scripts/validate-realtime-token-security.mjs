@@ -7,10 +7,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260822105657_realtime_token_security.sql"
+  "supabase/migrations/20260822111651_realtime_token_security.sql"
 );
 const indexMigration = read(
-  "supabase/migrations/20260822111743_realtime_token_security_indexes.sql"
+  "supabase/migrations/20260822111810_realtime_token_security_indexes.sql"
 );
 const middleware = read("middleware.ts");
 const security = read("lib/realtime-token-security.ts");

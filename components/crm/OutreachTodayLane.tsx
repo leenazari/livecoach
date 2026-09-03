@@ -253,6 +253,9 @@ const replyMessageFromItem = (item: WorkInboxItem): OutreachMessage | null => {
     step_number: 10,
     subject: context.draftSubject || "",
     body_text: context.draftBody || "",
+    scheduled_at: context.messageScheduledAt,
+    sent_at: context.messageSentAt,
+    error: context.messageError,
     updated_at: item.createdAt,
   };
 };
@@ -305,7 +308,6 @@ export default function OutreachTodayLane({
   const [replyActions, setReplyActions] = useState<Record<string, ReplyAction>>({});
   const [replyDrafts, setReplyDrafts] = useState<Record<string, OutreachMessage>>({});
   const [preparingReplyId, setPreparingReplyId] = useState("");
-  const [handledReplyIds, setHandledReplyIds] = useState<string[]>([]);
   const [ctaBlockedIds, setCtaBlockedIds] = useState<string[]>([]);
   const [ctaRefreshRequiredProspectIds, setCtaRefreshRequiredProspectIds] =
     useState<string[]>([]);
@@ -905,9 +907,8 @@ export default function OutreachTodayLane({
           scheduled_at: queued.scheduledAt || null,
         },
       }));
-      setHandledReplyIds((current) => [...new Set([...current, item.sourceId])]);
       setNotice(
-        "Reply approved and safely queued. The dated CRM next step is saved and the next action is ready."
+        "Reply approved and safely queued. It stays visible here until the connected mailbox confirms delivery."
       );
       await load(true);
       window.dispatchEvent(
@@ -993,10 +994,7 @@ export default function OutreachTodayLane({
   const actionableReplies = useMemo(
     () =>
       replyItems
-        .filter(
-          (item) =>
-            item.kind === "reply" && !handledReplyIds.includes(item.sourceId)
-        )
+        .filter((item) => item.kind === "reply")
         .sort(
           (a, b) =>
             (new Date(a.outreach?.lastReplyAt || a.createdAt || 0).getTime() ||
@@ -1004,10 +1002,13 @@ export default function OutreachTodayLane({
             (new Date(b.outreach?.lastReplyAt || b.createdAt || 0).getTime() ||
               0)
         ),
-    [handledReplyIds, replyItems]
+    [replyItems]
   );
   const focusedReply = actionableReplies[0] || null;
   const nextReplies = actionableReplies.slice(1, 4);
+  const overdueReplyCount = actionableReplies.filter((item) =>
+    replyAge(item.outreach?.lastReplyAt || item.createdAt).urgent
+  ).length;
 
   if (loading) {
     return (
@@ -1167,8 +1168,8 @@ export default function OutreachTodayLane({
                 Read what they said, check your previous email, approve the exact reply and save the dated next step in one flow.
               </p>
             </div>
-            <span className="rounded-full border border-moss/45 px-2 py-1 font-mono text-[0.48rem] uppercase text-moss">
-              {actionableReplies.length} to handle
+            <span className={`rounded-full border px-2 py-1 font-mono text-[0.48rem] uppercase ${overdueReplyCount ? "border-rust/55 bg-rust/10 text-rust" : "border-moss/45 text-moss"}`}>
+              {actionableReplies.length} unanswered{overdueReplyCount ? ` · ${overdueReplyCount} over 2 hours` : ""}
             </span>
           </div>
           {(() => {
@@ -1184,6 +1185,10 @@ export default function OutreachTodayLane({
                 }
               : null;
             const age = replyAge(context?.lastReplyAt || item.createdAt);
+            const queuedForDelivery =
+              draft?.status === "approved" && Boolean(draft.scheduled_at);
+            const sendingForDelivery = draft?.status === "sending";
+            const deliveryFailed = draft?.status === "failed";
             const busy =
               preparingReplyId === item.sourceId ||
               Boolean(draft && savingMessageId === draft.id) ||
@@ -1212,7 +1217,13 @@ export default function OutreachTodayLane({
                         : "border-moss/45 bg-moss/10 text-moss"
                     }`}
                   >
-                    {age.urgent ? "Respond now · " : ""}{age.label}
+                    {deliveryFailed
+                      ? "Delivery failed"
+                      : sendingForDelivery
+                        ? "Sending now"
+                      : queuedForDelivery
+                        ? "Queued · awaiting delivery"
+                        : `${age.urgent ? "Respond now · " : ""}${age.label}`}
                   </span>
                 </div>
 
@@ -1255,6 +1266,22 @@ export default function OutreachTodayLane({
                   </details>
                 </div>
 
+                {queuedForDelivery ? (
+                  <div className="mt-3 rounded-lg border border-sky/45 bg-sky/[0.08] px-3 py-2 text-sm text-sky" role="status">
+                    Queued for {formatHistoryDate(draft?.scheduled_at)}. This reply stays open until the email provider confirms delivery.
+                  </div>
+                ) : null}
+                {sendingForDelivery ? (
+                  <div className="mt-3 rounded-lg border border-sky/45 bg-sky/[0.08] px-3 py-2 text-sm text-sky" role="status">
+                    The connected mailbox is confirming delivery. This reply remains open until confirmation is stored.
+                  </div>
+                ) : null}
+                {deliveryFailed ? (
+                  <div className="mt-3 rounded-lg border border-rust/55 bg-rust/10 px-3 py-2 text-sm text-rust" role="alert">
+                    Delivery failed. {draft?.error || "The connected mailbox did not accept this reply."} Review it and try again.
+                  </div>
+                ) : null}
+
                 {!draft ? (
                   <div className="mt-3 rounded-lg border border-amber/35 bg-amber/[0.05] p-3">
                     <p className="text-xs leading-5 text-muted">
@@ -1275,7 +1302,13 @@ export default function OutreachTodayLane({
                   <section className="mt-3 rounded-lg border border-amber/35 bg-amber/[0.04] p-3" aria-label="Exact booking reply">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="font-mono text-[0.48rem] uppercase tracking-wider text-amber">
-                        Exact reply awaiting approval
+                      {queuedForDelivery
+                        ? "Reply queued and awaiting delivery"
+                        : sendingForDelivery
+                          ? "Reply delivery in progress"
+                        : deliveryFailed
+                          ? "Reply delivery failed"
+                          : "Exact reply awaiting approval"}
                       </p>
                       <span className="rounded-full border border-edge px-2 py-1 font-mono text-[0.45rem] uppercase text-muted">
                         {draft.status}
@@ -1293,6 +1326,7 @@ export default function OutreachTodayLane({
                           )
                         }
                         className="mt-1 min-h-11 w-full rounded-lg border border-edge bg-panel px-3 text-sm text-bone outline-none focus:border-amber/60"
+                        disabled={queuedForDelivery || draft.status === "sending"}
                       />
                     </label>
                     <label className="mt-2 block">
@@ -1308,6 +1342,7 @@ export default function OutreachTodayLane({
                           )
                         }
                         className="mt-1 w-full rounded-lg border border-edge bg-panel px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60"
+                        disabled={queuedForDelivery || draft.status === "sending"}
                       />
                     </label>
                   </section>
@@ -1326,6 +1361,7 @@ export default function OutreachTodayLane({
                           updateReplyAction(item, { text: event.target.value })
                         }
                         className="min-h-11 w-full rounded-lg border border-edge bg-panel px-3 text-sm text-bone outline-none focus:border-sky/60"
+                        disabled={queuedForDelivery || draft?.status === "sending"}
                       />
                     </label>
                     <label>
@@ -1337,6 +1373,7 @@ export default function OutreachTodayLane({
                           updateReplyAction(item, { dueAt: event.target.value })
                         }
                         className="min-h-11 w-full rounded-lg border border-edge bg-panel px-3 text-sm text-bone outline-none focus:border-sky/60"
+                        disabled={queuedForDelivery || draft?.status === "sending"}
                       />
                     </label>
                   </div>
@@ -1357,7 +1394,7 @@ export default function OutreachTodayLane({
                     <button
                       type="button"
                       onClick={() => void saveReplyDraft(item)}
-                      disabled={busy}
+                      disabled={busy || queuedForDelivery || draft.status === "sending"}
                       className={button}
                     >
                       {savingMessageId === draft.id ? "Saving…" : "Save changes"}
@@ -1374,6 +1411,11 @@ export default function OutreachTodayLane({
                           ? "Approving…"
                           : "Approve reply + queue"}
                     </button>
+                    {draft.status === "sending" ? (
+                      <span className="inline-flex min-h-10 items-center rounded-lg border border-sky/45 bg-sky/[0.08] px-3 font-mono text-[0.5rem] uppercase text-sky">
+                        Provider delivery in progress
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
                 <p className="mt-2 text-[0.68rem] leading-5 text-muted">

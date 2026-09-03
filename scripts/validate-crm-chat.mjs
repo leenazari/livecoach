@@ -6,12 +6,12 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
-const migration = read("supabase/migrations/20260829120000_workspace_chat.sql");
+const migration = read("supabase/migrations/20260829181352_workspace_chat.sql");
 const advisorMigration = read(
-  "supabase/migrations/20260829121500_workspace_chat_advisor_hardening.sql"
+  "supabase/migrations/20260829181535_workspace_chat_advisor_hardening.sql"
 );
 const attachmentLimitMigration = read(
-  "supabase/migrations/20260830083924_chat_20mb_attachments.sql"
+  "supabase/migrations/20260830085235_chat_20mb_attachments.sql"
 );
 const chatRoute = read("app/api/crm/chat/route.ts");
 const messagesRoute = read(

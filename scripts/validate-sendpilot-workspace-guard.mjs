@@ -8,7 +8,7 @@ const read = (file) => readFile(path.join(root, file), "utf8");
 
 const [migration, reconciliation, orchestration, integration, reviewsRoute, settings] =
   await Promise.all([
-    read("supabase/migrations/20260828235614_next_moves_email_sendpilot_guard.sql"),
+    read("supabase/migrations/20260829003504_next_moves_email_sendpilot_guard.sql"),
     read("lib/sendpilot-reconciliation.ts"),
     read("lib/sendpilot-outreach.ts"),
     read("lib/sendpilot.ts"),

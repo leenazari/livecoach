@@ -43,6 +43,9 @@ export type WorkInboxItem = {
     jobTitle: string | null;
     messageId: string | null;
     messageStatus: string | null;
+    messageScheduledAt: string | null;
+    messageSentAt: string | null;
+    messageError: string | null;
     draftSubject: string | null;
     draftBody: string | null;
     replyText: string | null;

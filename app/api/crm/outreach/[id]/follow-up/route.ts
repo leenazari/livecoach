@@ -63,7 +63,7 @@ export async function POST(
     const { data: prospect, error: prospectError } = await supabaseAdmin
       .from("outreach_prospects")
       .select(
-        "id,first_name,last_name,company_name,crm_company_id,assigned_to_user_id"
+        "id,first_name,last_name,company_name,crm_company_id,assigned_to_user_id,last_reply_at"
       )
       .eq("workspace_id", scope.workspaceId)
       .eq("assigned_to_user_id", scope.userId)
@@ -92,6 +92,7 @@ export async function POST(
         workspaceId: scope.workspaceId,
         userId: scope.userId,
         prospectId: prospect.id,
+        receivedAt: prospect.last_reply_at,
       });
     } catch {
       // The dated reminder is already canonical and safe to retry. Do not make

@@ -20,6 +20,8 @@ const sender = read("lib/outreach-send-queue.ts");
 for (const field of [
   "prospectId",
   "messageId",
+  "messageScheduledAt",
+  "messageError",
   "draftSubject",
   "draftBody",
   "replyText",
@@ -34,7 +36,12 @@ assert.match(inbox, /last_reply_text/);
 assert.match(inbox, /previousSentByProspect/);
 assert.match(inbox, /kind: isReply \? "reply" : "outreach"/);
 assert.match(inbox, /outreach: replyContext\(prospect\)/);
-assert.match(inbox, /handledReplyProspects\.add\(message\.prospect_id\)[\s\S]*?continue/);
+assert.match(inbox, /Reply queued for/);
+assert.match(inbox, /Awaiting provider delivery/);
+assert.doesNotMatch(
+  inbox,
+  /isReply && message\.status === "approved" && message\.scheduled_at[\s\S]{0,120}handledReplyProspects\.add/
+);
 
 // The focused Sales Desk handles one positive reply before cold outreach and
 // shows the evidence needed to answer without opening the legacy workspace.

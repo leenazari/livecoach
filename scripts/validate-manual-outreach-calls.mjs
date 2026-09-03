@@ -26,7 +26,7 @@ const component = read("components/crm/ProspectManualCall.tsx");
 const page = read("app/crm/outreach/page.tsx");
 const inbox = read("app/api/crm/inbox/route.ts");
 const metrics = read("app/api/crm/outreach/metrics/route.ts");
-const migration = read("supabase/migrations/20260827070513_manual_outreach_call_events.sql");
+const migration = read("supabase/migrations/20260827072217_manual_outreach_call_events.sql");
 
 assert.match(route, /requireRequestScope\(\)/);
 assert.match(route, /assigned_to_user_id !== account\.userId/);

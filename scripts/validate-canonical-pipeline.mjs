@@ -15,7 +15,7 @@ const revenue = read("app/api/crm/revenue/route.ts");
 const inbox = read("app/api/crm/inbox/route.ts");
 const dashboard = read("app/api/crm/dashboard/route.ts");
 const migration = read(
-  "supabase/migrations/20260828172339_canonical_open_revenue_opportunity_per_workstream.sql"
+  "supabase/migrations/20260828173307_canonical_open_revenue_opportunity_per_workstream.sql"
 );
 
 // All creation paths reuse the canonical company or workstream deal instead of

@@ -129,7 +129,7 @@ const revenuePage = read("app/crm/revenue/page.tsx");
 const searchRoute = read("app/api/crm/search/route.ts");
 const healthRoute = read("app/api/crm/health/route.ts");
 const migration = read(
-  "supabase/migrations/20260824153321_enforce_owner_only_non_revenue_opportunities.sql"
+  "supabase/migrations/20260824154422_enforce_owner_only_non_revenue_opportunities.sql"
 );
 
 assert.match(accessHelper, /loadVisibleOpportunities/);
