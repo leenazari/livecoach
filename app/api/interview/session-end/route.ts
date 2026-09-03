@@ -129,6 +129,21 @@ export async function POST(req: NextRequest) {
       .eq("session_id", sessionId)
       .is("revoked_at", null);
 
+    // The Recall capture may be shared with another authorised teammate. End
+    // only this user's private subscription here. /api/meet/stop removes the
+    // physical bot once the final subscriber has finished.
+    await supabaseService
+      .from("meet_capture_subscribers")
+      .update({
+        status: "ended",
+        ended_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("owner_id", accountScope.userId)
+      .eq("session_id", sessionId)
+      .eq("status", "active");
+
     await supabaseService
       .from("livekit_join_invites")
       .update({

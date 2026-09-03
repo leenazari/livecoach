@@ -23,6 +23,32 @@ const ROLES = new Set(["manager", "sales"]);
 const normalizeEmail = (value: unknown) =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
 
+async function leaveRecallCapture(botId: string) {
+  const key = process.env.RECALL_API_KEY;
+  const region = process.env.RECALL_REGION;
+  if (!key || !region || !botId) return false;
+  const endpoint = `https://${region}.recall.ai/api/v1/bot/${encodeURIComponent(
+    botId
+  )}/leave_call/`;
+  const call = (authorization: string) =>
+    fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: authorization, Accept: "application/json" },
+      signal: AbortSignal.timeout(5000),
+    });
+  try {
+    let response = await call(key);
+    if (response.status === 401 || response.status === 403) {
+      response = await call(`Token ${key}`);
+    }
+    // A missing provider bot is already safely off air.
+    return response.ok || response.status === 404;
+  } catch (error) {
+    console.error("Could not remove the final suspended user's notetaker", error);
+    return false;
+  }
+}
+
 async function workspaceOwnerIdentities(workspaceId: string) {
   const { data: ownerMember, error: ownerError } = await supabaseService
     .from("workspace_members")
@@ -170,6 +196,7 @@ export async function GET() {
       { data: microsoftRows, error: microsoftError },
       { data: linkedinRows, error: linkedinError },
       { data: botRows, error: botRowsError },
+      { data: captureSubscriberRows, error: captureSubscriberRowsError },
       { data: salesProfileRows, error: salesProfilesError },
     ] =
       memberIds.length
@@ -199,6 +226,12 @@ export async function GET() {
               .gte("created_at", usageWindowStart.toISOString())
               .lt("created_at", todayEnd.toISOString()),
             supabaseService
+              .from("meet_capture_subscribers")
+              .select("owner_id")
+              .eq("workspace_id", scope.workspaceId)
+              .eq("status", "active")
+              .in("owner_id", memberIds),
+            supabaseService
               .from("salesperson_profiles")
               .select("user_id,completed_at")
               .eq("workspace_id", scope.workspaceId)
@@ -211,12 +244,14 @@ export async function GET() {
             { data: [], error: null },
             { data: [], error: null },
             { data: [], error: null },
+            { data: [], error: null },
           ];
     if (profilesError) throw profilesError;
     if (googleError) throw googleError;
     if (microsoftError) throw microsoftError;
     if (linkedinError) throw linkedinError;
     if (botRowsError) throw botRowsError;
+    if (captureSubscriberRowsError) throw captureSubscriberRowsError;
     if (salesProfilesError) throw salesProfilesError;
 
     const nonOwnerIds = (membersResult.data || [])
@@ -264,6 +299,9 @@ export async function GET() {
         .filter((row: any) => !!row.completed_at)
         .map((row: any) => row.user_id)
     );
+    const activeCaptureSubscriberIds = new Set(
+      (captureSubscriberRows || []).map((row: any) => row.owner_id)
+    );
     const latestPrivacyEventByUser = new Map<string, any>();
     for (const event of privacyEventsResult.data || []) {
       if (event.target_id && !latestPrivacyEventByUser.has(event.target_id)) {
@@ -305,12 +343,21 @@ export async function GET() {
         : Number.NaN;
       const linkedinConnected =
         Number.isFinite(linkedinExpiry) && linkedinExpiry > Date.now();
-      const transcriberUsage = calculateTranscriberUsage(
+      const calculatedTranscriberUsage = calculateTranscriberUsage(
         botRows || [],
         member.user_id,
         member.transcriber_daily_minutes_limit,
         now
       );
+      // Provider minutes are charged once to the physical capture owner. A
+      // teammate attached to the same capture is still shown as live without
+      // double-counting the shared transcription cost.
+      const transcriberUsage = {
+        ...calculatedTranscriberUsage,
+        activeBot:
+          calculatedTranscriberUsage.activeBot ||
+          activeCaptureSubscriberIds.has(member.user_id),
+      };
       return {
         ...member,
         displayName: profile?.display_name || null,
@@ -663,10 +710,20 @@ export async function PATCH(req: NextRequest) {
         .eq("user_id", userId);
       if (profileUpdateError) throw profileUpdateError;
     } else {
+      const endedAt = new Date().toISOString();
+      const { data: activeSubscriptions, error: activeSubscriptionsError } =
+        await supabaseService
+          .from("meet_capture_subscribers")
+          .select("capture_id")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", userId)
+          .eq("status", "active");
+      if (activeSubscriptionsError) throw activeSubscriptionsError;
+
       await Promise.all([
         supabaseService
           .from("meet_stream_tokens")
-          .update({ revoked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .update({ revoked_at: endedAt, updated_at: endedAt })
           .eq("workspace_id", scope.workspaceId)
           .eq("owner_id", userId)
           .is("revoked_at", null),
@@ -683,12 +740,45 @@ export async function PATCH(req: NextRequest) {
           .eq("owner_id", userId)
           .is("revoked_at", null),
         supabaseService
-          .from("meet_bots")
-          .update({ status: "left", ended_at: new Date().toISOString() })
+          .from("meet_capture_subscribers")
+          .update({ status: "ended", ended_at: endedAt, updated_at: endedAt })
           .eq("workspace_id", scope.workspaceId)
           .eq("owner_id", userId)
           .eq("status", "active"),
       ]);
+
+      // Suspending one teammate must not end a bot another authorised
+      // teammate is still using. Close only captures with nobody left.
+      for (const captureId of Array.from(
+        new Set((activeSubscriptions || []).map((row) => row.capture_id))
+      )) {
+        const { count, error: remainingError } = await supabaseService
+          .from("meet_capture_subscribers")
+          .select("id", { count: "exact", head: true })
+          .eq("workspace_id", scope.workspaceId)
+          .eq("capture_id", captureId)
+          .eq("status", "active");
+        if (remainingError) throw remainingError;
+        if ((count || 0) === 0) {
+          const { data: capture, error: captureError } = await supabaseService
+            .from("meet_bots")
+            .select("bot_id")
+            .eq("workspace_id", scope.workspaceId)
+            .eq("id", captureId)
+            .eq("status", "active")
+            .maybeSingle();
+          if (captureError) throw captureError;
+          if (capture?.bot_id) await leaveRecallCapture(capture.bot_id);
+
+          const { error: closeCaptureError } = await supabaseService
+            .from("meet_bots")
+            .update({ status: "left", ended_at: endedAt })
+            .eq("workspace_id", scope.workspaceId)
+            .eq("id", captureId)
+            .eq("status", "active");
+          if (closeCaptureError) throw closeCaptureError;
+        }
+      }
     }
 
     const nextStatus = action === "activate" ? "active" : "suspended";

@@ -3,7 +3,13 @@ import { createHash, randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { currentRecallBotState } from "@/lib/recall-bot-status";
-import { supabaseAdmin } from "@/lib/supabase";
+import {
+  meetingInstanceKey,
+  meetingUrlsMatch,
+  shareableCalendarSource,
+  validUuid,
+} from "@/lib/shared-meet-capture";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import {
   getTranscriberIdentity,
   validMeetingUrl,
@@ -66,15 +72,64 @@ async function leaveUntrackedBot(
 }
 
 type ActiveBotRow = {
+  id: string;
   bot_id: string;
   bot_name: string | null;
   session_id: string;
+  owner_id: string;
+  meeting_instance_key: string | null;
 };
+
+type ActiveSubscriptionRow = {
+  id: string;
+  capture_id: string;
+  session_id: string;
+  upcoming_id: string | null;
+};
+
+async function finishCapture(
+  bot: ActiveBotRow,
+  workspaceId: string,
+  endedAt: string
+) {
+  const { data: subscribers, error: subscribersError } = await supabaseService
+    .from("meet_capture_subscribers")
+    .select("owner_id,session_id")
+    .eq("workspace_id", workspaceId)
+    .eq("capture_id", bot.id);
+  if (subscribersError) throw subscribersError;
+
+  const { error: botError } = await supabaseService
+    .from("meet_bots")
+    .update({ status: "left", ended_at: endedAt })
+    .eq("workspace_id", workspaceId)
+    .eq("id", bot.id)
+    .eq("status", "active");
+  if (botError) throw botError;
+
+  const { error: subscriberError } = await supabaseService
+    .from("meet_capture_subscribers")
+    .update({ status: "ended", ended_at: endedAt, updated_at: endedAt })
+    .eq("workspace_id", workspaceId)
+    .eq("capture_id", bot.id)
+    .eq("status", "active");
+  if (subscriberError) throw subscriberError;
+
+  for (const subscriber of subscribers || []) {
+    const { error: tokenError } = await supabaseService
+      .from("meet_stream_tokens")
+      .update({ revoked_at: endedAt, updated_at: endedAt })
+      .eq("workspace_id", workspaceId)
+      .eq("owner_id", subscriber.owner_id)
+      .eq("session_id", subscriber.session_id)
+      .is("revoked_at", null);
+    if (tokenError) throw tokenError;
+  }
+}
 
 async function reconcileRecallBotState(
   bots: ActiveBotRow[],
   workspaceId: string,
-  ownerId: string,
   region: string,
   key: string
 ) {
@@ -93,14 +148,7 @@ async function reconcileRecallBotState(
       );
       if (response.status === 404) {
         const endedAt = new Date().toISOString();
-        const { error } = await supabaseAdmin
-          .from("meet_bots")
-          .update({ status: "left", ended_at: endedAt })
-          .eq("workspace_id", workspaceId)
-          .eq("owner_id", ownerId)
-          .eq("bot_id", bot.bot_id)
-          .eq("status", "active");
-        if (error) throw error;
+        await finishCapture(bot, workspaceId, endedAt);
         continue;
       }
       if (!response.ok) {
@@ -113,21 +161,7 @@ async function reconcileRecallBotState(
         continue;
       }
       const endedAt = providerState.endedAt || new Date().toISOString();
-      const { error } = await supabaseAdmin
-        .from("meet_bots")
-        .update({ status: "left", ended_at: endedAt })
-        .eq("workspace_id", workspaceId)
-        .eq("owner_id", ownerId)
-        .eq("bot_id", bot.bot_id)
-        .eq("status", "active");
-      if (error) throw error;
-      await supabaseAdmin
-        .from("meet_stream_tokens")
-        .update({ revoked_at: endedAt, updated_at: endedAt })
-        .eq("workspace_id", workspaceId)
-        .eq("owner_id", ownerId)
-        .eq("session_id", bot.session_id)
-        .is("revoked_at", null);
+      await finishCapture(bot, workspaceId, endedAt);
     } catch (error) {
       console.error("Could not reconcile Recall bot state", error);
       active.push(bot);
@@ -136,14 +170,58 @@ async function reconcileRecallBotState(
   return active;
 }
 
+async function attachSubscriber(input: {
+  captureId: string;
+  workspaceId: string;
+  ownerId: string;
+  sessionId: string;
+  upcomingId: string;
+}) {
+  return supabaseService.from("meet_capture_subscribers").upsert(
+    {
+      capture_id: input.captureId,
+      workspace_id: input.workspaceId,
+      owner_id: input.ownerId,
+      session_id: input.sessionId,
+      upcoming_id: input.upcomingId,
+      status: "active",
+      visibility: "private",
+      ended_at: null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "owner_id,session_id" }
+  );
+}
+
 export async function POST(req: NextRequest) {
   try {
     const accountScope = await resolveRecordScope();
-    const { meetingUrl, sessionId } = await req.json();
+    const { meetingUrl, sessionId, upcomingId } = await req.json();
     if (!validMeetingUrl(meetingUrl) || !validMeetSessionId(sessionId)) {
       return NextResponse.json(
         { error: "A supported meeting link and LiveCoach session are required" },
         { status: 400 }
+      );
+    }
+    if (upcomingId != null && !validUuid(upcomingId)) {
+      return NextResponse.json(
+        { error: "The scheduled call reference is invalid" },
+        { status: 400 }
+      );
+    }
+
+    const key = process.env.RECALL_API_KEY;
+    const region = process.env.RECALL_REGION;
+    if (!key) {
+      return NextResponse.json(
+        { error: "RECALL_API_KEY is not set in Vercel env" },
+        { status: 500 }
+      );
+    }
+    if (!region) {
+      return NextResponse.json(
+        { error: "RECALL_REGION is not set in Vercel env (e.g. us-west-2)" },
+        { status: 500 }
       );
     }
 
@@ -152,65 +230,176 @@ export async function POST(req: NextRequest) {
     const staleBefore = new Date(
       now.getTime() - TRANSCRIBER_HARD_LIMIT_SECONDS * 1000
     );
+
+    let verifiedUpcomingId: string | null = null;
+    let sharedInstanceKey: string | null = null;
+    if (upcomingId) {
+      // A meeting URL alone never grants another person's transcript. RLS must
+      // first prove that this exact synced occurrence belongs to this account.
+      const { data: call, error: callError } = await supabaseAdmin
+        .from("upcoming_calls")
+        .select(
+          "id,scheduled_at,meeting_url,source,external_id,completed_at,workspace_id,owner_id"
+        )
+        .eq("workspace_id", accountScope.workspaceId)
+        .eq("owner_id", accountScope.userId)
+        .eq("id", upcomingId)
+        .maybeSingle();
+      if (callError) throw callError;
+      if (!call) {
+        return NextResponse.json(
+          { error: "This scheduled call is not available to this account" },
+          { status: 403 }
+        );
+      }
+      verifiedUpcomingId = call.id;
+      if (
+        !call.completed_at &&
+        shareableCalendarSource(call.source, call.external_id) &&
+        meetingUrlsMatch(call.meeting_url, meetingUrl)
+      ) {
+        sharedInstanceKey = meetingInstanceKey(
+          call.meeting_url,
+          call.scheduled_at
+        );
+      }
+    }
+
     // Provider-side automatic leave already enforces this ceiling. Reconcile
-    // any old row left active by a lost browser or historic webhook so it
-    // cannot block a later call forever.
-    const { error: staleBotError } = await supabaseAdmin
+    // any old capture left active by a lost browser or historic webhook so it
+    // cannot block a teammate's private session forever.
+    const { data: staleCaptureRows, error: staleBotError } = await supabaseService
       .from("meet_bots")
-      .update({ status: "left", ended_at: now.toISOString() })
+      .select(
+        "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key"
+      )
       .eq("workspace_id", accountScope.workspaceId)
-      .eq("owner_id", accountScope.userId)
       .eq("status", "active")
       .lt("created_at", staleBefore.toISOString());
     if (staleBotError) throw staleBotError;
+    for (const staleCapture of (staleCaptureRows || []) as ActiveBotRow[]) {
+      await finishCapture(
+        staleCapture,
+        accountScope.workspaceId,
+        now.toISOString()
+      );
+    }
 
-    // Deliberately enforce concurrency per signed-in coach, never per meeting
-    // URL or workspace. Lee and a salesperson can join the same customer call
-    // with one personal bot each because their intent, live coaching, transcript
-    // stream and summary belong to different private account scopes.
-    const { data: activeBotRows, error: existingError } = await supabaseAdmin
-      .from("meet_bots")
-      .select("bot_id,bot_name,session_id")
-      .eq("workspace_id", accountScope.workspaceId)
-      .eq("owner_id", accountScope.userId)
-      .eq("status", "active")
-      .gte("created_at", staleBefore.toISOString())
-      .limit(2);
-    if (existingError) throw existingError;
-    const key = process.env.RECALL_API_KEY;
-    const region = process.env.RECALL_REGION;
-    const activeBots =
-      activeBotRows?.length && key && region
-        ? await reconcileRecallBotState(
-            activeBotRows as ActiveBotRow[],
-            accountScope.workspaceId,
-            accountScope.userId,
-            region,
-            key
-          )
-        : (activeBotRows || []);
-    const existing = activeBots.find(
-      (bot: any) => bot.session_id === sessionId
+    // Concurrency belongs to the user's private subscription, not the capture
+    // owner. The first teammate may end while another remains on the same bot.
+    const { data: subscriptionRows, error: subscriptionError } =
+      await supabaseService
+        .from("meet_capture_subscribers")
+        .select("id,capture_id,session_id,upcoming_id")
+        .eq("workspace_id", accountScope.workspaceId)
+        .eq("owner_id", accountScope.userId)
+        .eq("status", "active")
+        .limit(2);
+    if (subscriptionError) throw subscriptionError;
+    const subscriptions = (subscriptionRows || []) as ActiveSubscriptionRow[];
+    const captureIds = subscriptions.map((row) => row.capture_id);
+    const { data: subscribedCaptureRows, error: subscribedCaptureError } =
+      captureIds.length
+        ? await supabaseService
+            .from("meet_bots")
+            .select(
+              "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key"
+            )
+            .eq("workspace_id", accountScope.workspaceId)
+            .eq("status", "active")
+            .in("id", captureIds)
+        : { data: [], error: null };
+    if (subscribedCaptureError) throw subscribedCaptureError;
+    const activeSubscribedCaptures = await reconcileRecallBotState(
+      (subscribedCaptureRows || []) as ActiveBotRow[],
+      accountScope.workspaceId,
+      region,
+      key
     );
-    if (existing?.bot_id) {
+    const activeCaptureById = new Map(
+      activeSubscribedCaptures.map((capture) => [capture.id, capture])
+    );
+    const activeSubscriptions = subscriptions.filter((subscription) =>
+      activeCaptureById.has(subscription.capture_id)
+    );
+    const existingSubscription = activeSubscriptions.find(
+      (subscription) => subscription.session_id === sessionId
+    );
+    if (existingSubscription) {
+      const capture = activeCaptureById.get(existingSubscription.capture_id)!;
       return NextResponse.json(
         {
-          botId: existing.bot_id,
-          botName: existing.bot_name || identity.botName,
+          botId: capture.bot_id,
+          botName: capture.bot_name || identity.botName,
           status: "already_active",
+          sharedCapture: Boolean(capture.meeting_instance_key),
         },
         { headers: { "Cache-Control": "private, no-store" } }
       );
     }
-    if (activeBots.length) {
+    if (activeSubscriptions.length) {
       return NextResponse.json(
         {
           error:
-            "Your notetaker is already active on another call. End that call before starting a new one.",
+            "Your LiveCoach session is already active on another call. End that session before starting a new one.",
           code: "transcriber_already_active",
         },
         { status: 409, headers: { "Cache-Control": "private, no-store" } }
       );
+    }
+
+    // Only an exact Google or Microsoft calendar occurrence can share an
+    // existing capture. Ad hoc URLs remain private and create their own bot.
+    if (sharedInstanceKey && verifiedUpcomingId) {
+      const { data: matchingCaptureRows, error: matchingCaptureError } =
+        await supabaseService
+          .from("meet_bots")
+          .select(
+            "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key"
+          )
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("meeting_instance_key", sharedInstanceKey)
+          .eq("status", "active")
+          .limit(2);
+      if (matchingCaptureError) throw matchingCaptureError;
+      const matchingCaptures = await reconcileRecallBotState(
+        (matchingCaptureRows || []) as ActiveBotRow[],
+        accountScope.workspaceId,
+        region,
+        key
+      );
+      const sharedCapture = matchingCaptures[0];
+      if (sharedCapture) {
+        const { error: attachError } = await attachSubscriber({
+          captureId: sharedCapture.id,
+          workspaceId: accountScope.workspaceId,
+          ownerId: accountScope.userId,
+          sessionId,
+          upcomingId: verifiedUpcomingId,
+        });
+        if (attachError) {
+          if (attachError.code === "23505") {
+            return NextResponse.json(
+              {
+                error:
+                  "Your LiveCoach session is already active on another call. End that session before starting a new one.",
+                code: "transcriber_already_active",
+              },
+              { status: 409, headers: { "Cache-Control": "private, no-store" } }
+            );
+          }
+          throw attachError;
+        }
+        return NextResponse.json(
+          {
+            botId: sharedCapture.bot_id,
+            botName: sharedCapture.bot_name || "LiveCoach Notetaker",
+            status: "shared_active",
+            sharedCapture: true,
+          },
+          { headers: { "Cache-Control": "private, no-store" } }
+        );
+      }
     }
 
     const { data: membership, error: membershipError } = await supabaseAdmin
@@ -258,20 +447,10 @@ export async function POST(req: NextRequest) {
       usage.remainingSeconds
     );
 
-    if (!key) {
-      return NextResponse.json(
-        { error: "RECALL_API_KEY is not set in Vercel env" },
-        { status: 500 }
-      );
-    }
-    if (!region) {
-      return NextResponse.json(
-        { error: "RECALL_REGION is not set in Vercel env (e.g. us-west-2)" },
-        { status: 500 }
-      );
-    }
-
     const endpoint = `https://${region}.recall.ai/api/v1/bot/`;
+    const captureBotName = sharedInstanceKey
+      ? "LiveCoach Notetaker"
+      : identity.botName;
     const webhookToken = randomBytes(32).toString("base64url");
     const webhookTokenHash = createHash("sha256")
       .update(webhookToken)
@@ -283,7 +462,7 @@ export async function POST(req: NextRequest) {
     realtimeEndpoint.searchParams.set("token", webhookToken);
     const body = {
       meeting_url: meetingUrl,
-      bot_name: identity.botName,
+      bot_name: captureBotName,
       // Provider-side protection against abandoned bots. This runs inside
       // Recall, so it still works if the LiveCoach tab is closed, asleep or
       // offline. `everyone_left_timeout` handles the normal case. The two bot
@@ -381,8 +560,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const data = JSON.parse(raw);
-    if (!data?.id || typeof data.id !== "string") {
+    const recallBot = JSON.parse(raw);
+    if (!recallBot?.id || typeof recallBot.id !== "string") {
       throw new Error("Recall returned a bot without an identifier");
     }
 
@@ -392,21 +571,55 @@ export async function POST(req: NextRequest) {
       .from("meet_bots")
       .insert({
         session_id: String(sessionId),
-        bot_id: data.id,
-        bot_name: identity.botName,
+        bot_id: recallBot.id,
+        bot_name: captureBotName,
         provider: "recall",
         webhook_token_hash: webhookTokenHash,
         webhook_token_expires_at: webhookTokenExpiresAt.toISOString(),
+        meeting_instance_key: sharedInstanceKey,
+        source_upcoming_id: verifiedUpcomingId,
         status: "active",
         ...privateRecordFields(accountScope),
       });
     if (botInsertError) {
-      await leaveUntrackedBot(region, key, data.id);
+      await leaveUntrackedBot(region, key, recallBot.id);
       if (botInsertError.code === "23505") {
+        // Two teammates can press Start at almost the same instant. The unique
+        // instance index chooses one capture. Remove this losing provider bot,
+        // then attach this private session to the winner.
+        if (sharedInstanceKey && verifiedUpcomingId) {
+          const { data: winner } = await supabaseService
+            .from("meet_bots")
+            .select("id,bot_id,bot_name")
+            .eq("workspace_id", accountScope.workspaceId)
+            .eq("meeting_instance_key", sharedInstanceKey)
+            .eq("status", "active")
+            .maybeSingle();
+          if (winner) {
+            const { error: attachError } = await attachSubscriber({
+              captureId: winner.id,
+              workspaceId: accountScope.workspaceId,
+              ownerId: accountScope.userId,
+              sessionId,
+              upcomingId: verifiedUpcomingId,
+            });
+            if (!attachError) {
+              return NextResponse.json(
+                {
+                  botId: winner.bot_id,
+                  botName: winner.bot_name || "LiveCoach Notetaker",
+                  status: "shared_active",
+                  sharedCapture: true,
+                },
+                { headers: { "Cache-Control": "private, no-store" } }
+              );
+            }
+          }
+        }
         return NextResponse.json(
           {
             error:
-              "Your notetaker is already active on another call. End that call before starting a new one.",
+              "Your LiveCoach session is already active on another call. End that session before starting a new one.",
             code: "transcriber_already_active",
           },
           { status: 409, headers: { "Cache-Control": "private, no-store" } }
@@ -417,9 +630,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       {
-        botId: data.id,
-        botName: identity.botName,
+        botId: recallBot.id,
+        botName: captureBotName,
         status: "joining",
+        sharedCapture: Boolean(sharedInstanceKey),
         autoStop: {
           everyoneLeftSeconds: 30,
           silentFallbackMinutes: 5,

@@ -1,7 +1,7 @@
 // FIRST LINE MARKER (route): app/api/meet/stop/route.ts  — exports POST, no JSX
 import { NextRequest, NextResponse } from "next/server";
 import { resolveRecordScope } from "@/lib/record-scope";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseService } from "@/lib/supabase";
 import { validMeetSessionId } from "@/lib/transcriber";
 
 // Stop a Meet bot. Accepts EITHER { botId } (direct) or { sessionId } (look up
@@ -32,28 +32,78 @@ export async function POST(req: NextRequest) {
     }
 
     // Never call Recall with a browser-supplied bot id directly. First resolve
-    // it through the signed-in person's private meet_bots rows.
-    let ownedBotsQuery = supabaseAdmin
-      .from("meet_bots")
-      .select("bot_id,session_id")
+    // the user's private subscription, then the canonical capture behind it.
+    let subscriptionsQuery = supabaseService
+      .from("meet_capture_subscribers")
+      .select("id,capture_id,session_id,status")
       .eq("workspace_id", accountScope.workspaceId)
-      .eq("owner_id", accountScope.userId)
-      .eq("status", "active");
-    ownedBotsQuery = requestedBotId
-      ? ownedBotsQuery.eq("bot_id", requestedBotId)
-      : ownedBotsQuery.eq("session_id", requestedSessionId as string);
-    const { data: ownedBots, error: ownedBotsError } = await ownedBotsQuery;
-    if (ownedBotsError) {
+      .eq("owner_id", accountScope.userId);
+    if (requestedSessionId) {
+      subscriptionsQuery = subscriptionsQuery.eq(
+        "session_id",
+        requestedSessionId
+      );
+    }
+    const { data: subscriptions, error: subscriptionsError } =
+      await subscriptionsQuery;
+    if (subscriptionsError) {
       return NextResponse.json(
-        { error: ownedBotsError.message },
+        { error: subscriptionsError.message },
         { status: 500 }
       );
     }
-    const botIds = (ownedBots || []).map((row: any) => String(row.bot_id));
-
-    if (botIds.length === 0) {
+    const captureIds = Array.from(
+      new Set((subscriptions || []).map((row: any) => String(row.capture_id)))
+    );
+    if (!captureIds.length) {
       // Nothing active to stop - treat as success so the UI stays clean.
-      return NextResponse.json({ ok: true, stopped: 0 });
+      return NextResponse.json({ ok: true, detached: 0, stopped: 0 });
+    }
+
+    const { data: captures, error: capturesError } = await supabaseService
+      .from("meet_bots")
+      .select("id,bot_id")
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("status", "active")
+      .in("id", captureIds);
+    if (capturesError) {
+      return NextResponse.json({ error: capturesError.message }, { status: 500 });
+    }
+    const selectedCaptures = requestedBotId
+      ? (captures || []).filter((capture: any) => capture.bot_id === requestedBotId)
+      : captures || [];
+    const selectedCaptureIds = new Set(
+      selectedCaptures.map((capture: any) => String(capture.id))
+    );
+    const selectedSubscriptions = (subscriptions || []).filter((row: any) =>
+      selectedCaptureIds.has(String(row.capture_id))
+    );
+    if (!selectedSubscriptions.length) {
+      return NextResponse.json({ ok: true, detached: 0, stopped: 0 });
+    }
+
+    const endedAt = new Date().toISOString();
+    const activeSelectedSubscriptions = selectedSubscriptions.filter(
+      (subscription: any) => subscription.status === "active"
+    );
+    for (const subscription of activeSelectedSubscriptions) {
+      const { error: endError } = await supabaseService
+        .from("meet_capture_subscribers")
+        .update({ status: "ended", ended_at: endedAt, updated_at: endedAt })
+        .eq("workspace_id", accountScope.workspaceId)
+        .eq("owner_id", accountScope.userId)
+        .eq("id", subscription.id)
+        .eq("status", "active");
+      if (endError) throw endError;
+
+      const { error: tokenError } = await supabaseService
+        .from("meet_stream_tokens")
+        .update({ revoked_at: endedAt, updated_at: endedAt })
+        .eq("workspace_id", accountScope.workspaceId)
+        .eq("owner_id", accountScope.userId)
+        .eq("session_id", subscription.session_id)
+        .is("revoked_at", null);
+      if (tokenError) throw tokenError;
     }
 
     const leave = async (id: string) => {
@@ -71,25 +121,38 @@ export async function POST(req: NextRequest) {
     };
 
     let stopped = 0;
-    for (const id of botIds) {
-      const ok = await leave(id);
-      if (ok) {
-        stopped += 1;
-        try {
-          await supabaseAdmin
-            .from("meet_bots")
-            .update({ status: "left", ended_at: new Date().toISOString() })
-            .eq("workspace_id", accountScope.workspaceId)
-            .eq("owner_id", accountScope.userId)
-            .eq("bot_id", id);
-        } catch (e) {
-          console.error("meet_bots update failed:", e);
-        }
+    let remainingSubscribers = 0;
+    for (const capture of selectedCaptures) {
+      const { count, error: countError } = await supabaseService
+        .from("meet_capture_subscribers")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", accountScope.workspaceId)
+        .eq("capture_id", capture.id)
+        .eq("status", "active");
+      if (countError) throw countError;
+      if ((count || 0) > 0) {
+        remainingSubscribers += count || 0;
+        continue;
       }
+      const ok = await leave(capture.bot_id);
+      if (!ok) continue;
+      stopped += 1;
+      const { error: updateError } = await supabaseService
+        .from("meet_bots")
+        .update({ status: "left", ended_at: endedAt })
+        .eq("workspace_id", accountScope.workspaceId)
+        .eq("id", capture.id)
+        .eq("status", "active");
+      if (updateError) throw updateError;
     }
 
     return NextResponse.json(
-      { ok: true, stopped },
+      {
+        ok: true,
+        detached: activeSelectedSubscriptions.length,
+        stopped,
+        remainingSubscribers,
+      },
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (e: any) {

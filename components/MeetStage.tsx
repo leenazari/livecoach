@@ -18,6 +18,7 @@ type Props = {
   // to internal state if not provided.
   meetingUrl?: string;
   onMeetingUrlChange?: (v: string) => void;
+  upcomingId?: string | null;
   // Incremented by the parent when the user presses the single Start call
   // action. This lets one button start the workspace and send the notetaker.
   startRequest?: number;
@@ -33,6 +34,7 @@ type StreamAccess = {
   workerWs: string;
   botName: string;
   coachHints: string[];
+  teamHints: string[];
 };
 
 // How we decide a candidate "turn" ended (so cues/summary fire):
@@ -66,6 +68,7 @@ export default function MeetStage({
   onCandidateTurnEnd,
   meetingUrl: meetingUrlProp,
   onMeetingUrlChange,
+  upcomingId = null,
   startRequest = 0,
   onSilenceTimeout,
 }: Props) {
@@ -112,6 +115,7 @@ export default function MeetStage({
   const streamAccessRef = useRef<StreamAccess | null>(null);
   const accessPromiseRef = useRef<Promise<StreamAccess> | null>(null);
   const coachHintsRef = useRef<string[]>([]);
+  const teamHintsRef = useRef<string[]>([]);
   const roomRef = useRef(room);
   const joinWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastUtterAtRef = useRef(0); // when the last utterance landed (stall check)
@@ -139,8 +143,9 @@ export default function MeetStage({
   // the person being coached.
   const mapRole = useCallback((speaker: string, recallRole: string) => {
     const c = coachRef.current;
-    if (c) return speaker === c ? "interviewer" : "candidate";
+    if (c && speaker === c) return "interviewer";
     if (looksLikeCoach(speaker, coachHintsRef.current)) return "interviewer";
+    if (looksLikeCoach(speaker, teamHintsRef.current)) return "teammate";
     return "candidate";
   }, []);
 
@@ -297,9 +302,13 @@ export default function MeetStage({
           coachHints: Array.isArray(data.coachHints)
             ? data.coachHints.filter((hint: unknown) => typeof hint === "string")
             : [],
+          teamHints: Array.isArray(data.teamHints)
+            ? data.teamHints.filter((hint: unknown) => typeof hint === "string")
+            : [],
         };
         streamAccessRef.current = access;
         coachHintsRef.current = access.coachHints;
+        teamHintsRef.current = access.teamHints;
         setBotName(access.botName);
         return access;
       })
@@ -315,6 +324,7 @@ export default function MeetStage({
     streamAccessRef.current = null;
     accessPromiseRef.current = null;
     coachHintsRef.current = [];
+    teamHintsRef.current = [];
   }, [room]);
 
   const connect = useCallback(async () => {
@@ -528,7 +538,11 @@ export default function MeetStage({
       const r = await fetch("/api/meet/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meetingUrl: meetingUrl.trim(), sessionId: room }),
+        body: JSON.stringify({
+          meetingUrl: meetingUrl.trim(),
+          sessionId: room,
+          upcomingId,
+        }),
       });
       const d = await r.json();
       if (!r.ok) {
@@ -558,8 +572,15 @@ export default function MeetStage({
       botIdRef.current = d.botId;
       setTranscribing(false);
       setJoinWarn(false);
-      setStatus("bot requested, waiting for it to join");
+      setStatus(
+        d.sharedCapture
+          ? d.status === "shared_active"
+            ? "shared notetaker connected, loading this call"
+            : "notetaker requested for both private coaching sessions"
+          : "bot requested, waiting for it to join"
+      );
       if (wsState !== "on") connect();
+      if (d.sharedCapture) void deliverBackfill(0);
       // Join watchdog: if no transcript arrives within ~90s, the bot almost
       // certainly never got into the room - most often it is sitting in the
       // meeting's waiting room un-admitted. Surface that, instead of leaving a
@@ -574,7 +595,7 @@ export default function MeetStage({
     } finally {
       sendingRef.current = false;
     }
-  }, [meetingUrl, room, wsState, connect]);
+  }, [meetingUrl, room, upcomingId, wsState, connect, deliverBackfill]);
 
   const handledStartRequestRef = useRef(0);
   useEffect(() => {
