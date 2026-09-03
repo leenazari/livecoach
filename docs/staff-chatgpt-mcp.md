@@ -33,6 +33,10 @@ member's OAuth access token so Postgres RLS remains the final authority.
    - `https://www.livecoachcrm.com/.well-known/oauth-protected-resource/mcp`
    - `https://www.livecoachcrm.com/.well-known/oauth-authorization-server`
 
+The protected-resource metadata advertises `offline_access`. Supabase issues
+rotating refresh tokens so ChatGPT can keep the connection active without
+asking staff to sign in again whenever the short-lived access token expires.
+
 `LIVECOACH_MCP_ALLOWED_CLIENT_IDS` is optional. Once ChatGPT has dynamically
 registered and its UUID is known, setting this comma-separated allowlist adds
 another fail-closed client check. The consent page already allows only HTTPS

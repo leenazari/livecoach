@@ -84,6 +84,7 @@ assert.match(handler, /Cache-Control", "private, no-store"/);
 assert.match(protectedResource, /staffMcpProtectedResourceMetadata/);
 assert.match(authorizationServer, /staffMcpAuthorizationServerMetadata/);
 assert.match(metadata, /authorization_servers: \[staffMcpIssuer\(\)\]/);
+assert.match(metadata, /"offline_access"/);
 assert.match(metadata, /Supabase OAuth server metadata is invalid/);
 
 assert.match(consent, /isAllowedChatGptOAuthClient/);

@@ -2,7 +2,12 @@ import "server-only";
 
 import { staffMcpDiscoveryUrl, staffMcpIssuer, staffMcpResourceUrl } from "@/lib/staff-mcp-auth";
 
-export const STAFF_MCP_SCOPES = ["openid", "email", "profile"] as const;
+export const STAFF_MCP_SCOPES = [
+  "openid",
+  "email",
+  "profile",
+  "offline_access",
+] as const;
 
 export function staffMcpProtectedResourceMetadata() {
   return {
