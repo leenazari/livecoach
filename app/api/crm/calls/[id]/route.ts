@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { requireRequestScope } from "@/lib/request-scope";
+import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -13,23 +15,40 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = requireRequestScope();
     const { data: call, error } = await supabaseAdmin
       .from("interview_summaries")
       .select("id, candidate, role, company_id, created_at, cost, summary, session_id, ref")
       .eq("id", params.id)
-      .single();
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
+      .maybeSingle();
     if (error) throw error;
+    if (!call) {
+      return NextResponse.json({ error: "call not found" }, { status: 404 });
+    }
 
     let company: string | null = null;
     let companyInternal = false;
     if (call?.company_id) {
-      const { data: c } = await supabaseAdmin
-        .from("companies")
-        .select("name, profile")
-        .eq("id", call.company_id)
-        .single();
-      company = c?.name || null;
-      companyInternal = (c?.profile as any)?.internal === true;
+      const access = await loadAssignedClientAccess(call.company_id, scope);
+      if (!access) {
+        return NextResponse.json(
+          { error: "The linked company is not available to your account" },
+          { status: 403 }
+        );
+      }
+      company = access.company.name || null;
+      if (access.mode === "owner") {
+        const { data: owned } = await supabaseAdmin
+          .from("companies")
+          .select("profile")
+          .eq("id", call.company_id)
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
+          .maybeSingle();
+        companyInternal = (owned?.profile as any)?.internal === true;
+      }
     }
 
     // Richer call-event data from interview_sessions (the call record linked by
@@ -42,6 +61,8 @@ export async function GET(
         .from("interview_sessions")
         .select("started_at, ended_at, transcript")
         .eq("session_id", call.session_id)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();

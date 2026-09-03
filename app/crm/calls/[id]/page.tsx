@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { crmFetch } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
-import PostCallDealUpdate from "@/components/crm/PostCallDealUpdate";
+import PostCallCompletionPackage from "@/components/crm/PostCallCompletionPackage";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import MatrixRain from "@/components/MatrixRain";
 
@@ -279,7 +279,7 @@ export default function CallDetailPage() {
             )}
           </div>
 
-          {call.company_id ? <PostCallDealUpdate callId={call.id} /> : null}
+          {call.company_id ? <PostCallCompletionPackage callId={call.id} /> : null}
 
           {/* Competencies */}
           {Array.isArray(s.competencies) && s.competencies.length > 0 && (
@@ -323,21 +323,6 @@ export default function CallDetailPage() {
           <Bullets
             title="◈ Pain points they raised"
             items={list(s.painPoints)}
-            tone="text-amber"
-          />
-          <Bullets
-            title="→ Your next actions"
-            items={list(s.myNextActions)}
-            tone="text-amber"
-          />
-          <Bullets
-            title="Their next actions"
-            items={list(s.theirNextActions)}
-            tone="text-sky"
-          />
-          <Bullets
-            title="Suggested next moves"
-            items={list(s.suggestedNextActions)}
             tone="text-amber"
           />
           <Bullets

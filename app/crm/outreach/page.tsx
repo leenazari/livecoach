@@ -61,6 +61,10 @@ const OutreachVoiceNoteEditor = dynamic(
   () => import("@/components/crm/OutreachVoiceNoteEditor"),
   { ssr: false, loading: () => <MatrixRain size="inline" messages={["loading voice note"]} /> }
 );
+const StagedOutreachImports = dynamic(
+  () => import("@/components/crm/StagedOutreachImports"),
+  { ssr: false, loading: () => <MatrixRain size="inline" messages={["loading clean importer"]} /> }
+);
 
 type Tab = "queue" | "prospects" | "signals" | "activity" | "replies" | "campaign" | "intelligence" | "safety";
 type Priority = "high" | "medium" | "low";
@@ -533,6 +537,7 @@ export default function OutreachPage() {
   const [team, setTeam] = useState<TeamMember[]>(cachedProspects?.team || []);
   const [currentUser, setCurrentUser] = useState(cachedProspects?.currentUser || "");
   const [canManageAssignments, setCanManageAssignments] = useState(cachedProspects?.canManageAssignments === true);
+  const [canStageImports, setCanStageImports] = useState(cachedProspects?.canStageImports === true);
   const [campaigns, setCampaigns] = useState<Campaign[]>(cachedCampaigns?.campaigns || []);
   const [campaignStats, setCampaignStats] = useState<Record<string, CampaignStats>>(
     cachedCampaignStats?.campaignStats || cachedCampaigns?.campaignStats || {}
@@ -674,6 +679,7 @@ export default function OutreachPage() {
     setTeam(data.team || []);
     setCurrentUser(data.currentUser || "");
     setCanManageAssignments(data.canManageAssignments === true);
+    setCanStageImports(data.canStageImports === true);
     if (!ownerFilterInitialisedRef.current) {
       // A salesperson's useful default is work they can act on now. Include
       // their own prospects and the unassigned shared pool, but never another
@@ -2239,6 +2245,7 @@ export default function OutreachPage() {
 
       {!loading && !tabLoading && tab === "prospects" ? <section data-sales-tour="prospect-pool">
         {focusedProspectId ? <div className="mb-3 flex flex-col gap-2 rounded-xl border border-sky/45 bg-sky/[0.07] p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.54rem] uppercase tracking-wider text-sky">Opened from linked activity</p><p className="mt-1 text-sm text-bone/80">Showing the exact prospect record. Its email, history and actions remain together here.</p></div><button type="button" onClick={clearProspectFocus} className={`${button} shrink-0`}>Back to all prospects</button></div> : null}
+        {canStageImports ? <StagedOutreachImports team={team} onApplied={loadProspects} /> : null}
         <div className="mb-3 rounded-xl border border-edge bg-panel p-3">
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_repeat(6,minmax(0,9rem))]">
             <input className={input} value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search person, company, role or email…" />

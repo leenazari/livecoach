@@ -202,6 +202,16 @@ const ACTION_PROFILES: Record<string, BrainAuthorityProfile> = {
     canOwnerOverride: true,
     canRetry: true,
   },
+  stage_outreach_import: {
+    actionKind: "update_internal_crm",
+    risk: "reversible_internal",
+    requiresSeparateApproval: false,
+    ownerOnly: true,
+    managerAllowed: false,
+    salesAllowed: false,
+    canOwnerOverride: false,
+    canRetry: true,
+  },
   merge_duplicate_clients: {
     actionKind: "destructive_action",
     risk: "destructive",
@@ -234,6 +244,7 @@ const ACTION_ENDPOINTS: Record<string, RegExp[]> = {
   create_client: [/^\/api\/crm\/companies$/],
   update_client: [/^\/api\/crm\/companies\/[0-9a-f-]+$/i],
   update_contact: [/^\/api\/crm\/contacts\/[0-9a-f-]+$/i],
+  link_contact_to_client: [/^\/api\/crm\/contacts\/[0-9a-f-]+$/i],
   upsert_stakeholder: [
     /^\/api\/crm\/contacts$/,
     /^\/api\/crm\/contacts\/[0-9a-f-]+$/i,
@@ -263,6 +274,7 @@ const ACTION_ENDPOINTS: Record<string, RegExp[]> = {
     /^\/api\/crm\/team\/sharing$/,
     /^\/api\/crm\/opportunities\/[0-9a-f-]+$/i,
   ],
+  stage_outreach_import: [/^\/api\/crm\/imports\/outreach\/stage$/],
   sendpilot_enrol: [/^\/api\/crm\/outreach\/[0-9a-f-]+\/sendpilot$/i],
   sendpilot_stop_lead: [/^\/api\/crm\/sendpilot\/control$/],
   sendpilot_pause_campaign: [/^\/api\/crm\/sendpilot\/control$/],

@@ -13,6 +13,66 @@ import { privateRecordFields } from "@/lib/record-scope";
 export const runtime = "nodejs";
 export const maxDuration = 40;
 
+type CompletionCommitment = {
+  text: string;
+  ownerType: "me" | "counterparty" | "joint";
+  ownerName: string;
+  dueAt: string | null;
+};
+
+function validCommitmentDueAt(value: unknown, sourceCommitment: string) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  if (!/\b(?:by|before|due|deadline|on|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|next week)\b|\b\d{1,2}[\/. -]\d{1,2}|\b20\d{2}-\d{2}-\d{2}/i.test(sourceCommitment)) {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+}
+
+const commitmentTokens = (value: string) =>
+  new Set(
+    String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 2 && !["the", "and", "for", "with", "from", "that", "this", "will"].includes(word))
+  );
+
+function commitmentMatch(left: string, right: string) {
+  const a = commitmentTokens(left);
+  const b = commitmentTokens(right);
+  if (!a.size || !b.size) return false;
+  let shared = 0;
+  for (const word of a) if (b.has(word)) shared += 1;
+  return shared >= 2 && shared / Math.min(a.size, b.size) >= 0.5;
+}
+
+function fallbackCommitments(summary: any): CompletionCommitment[] {
+  const mine = (Array.isArray(summary?.myNextActions) ? summary.myNextActions : [])
+    .filter((value: unknown) => typeof value === "string" && value.trim())
+    .slice(0, 6)
+    .map((value: string) => ({
+      text: value.trim(),
+      ownerType: "me" as const,
+      ownerName: "You",
+      dueAt: null,
+    }));
+  const theirs = (Array.isArray(summary?.theirNextActions) ? summary.theirNextActions : [])
+    .filter((value: unknown) => typeof value === "string" && value.trim())
+    .slice(0, 8)
+    .map((raw: string) => {
+      const value = raw.trim();
+      const colon = value.indexOf(":");
+      return {
+        text: colon > 0 && colon < 80 ? value.slice(colon + 1).trim() || value : value,
+        ownerType: "counterparty" as const,
+        ownerName: colon > 0 && colon < 80 ? value.slice(0, colon).trim() : "They",
+        dueAt: null,
+      };
+    });
+  return [...mine, ...theirs];
+}
+
 // PHASE 3 - the post-call CRM pass. After a LINKED call is summarised, ONE
 // Terra pass turns the scorecard + the client's existing profile into three
 // things, which we then store against the company:
@@ -60,7 +120,7 @@ export async function POST(req: NextRequest) {
           };
     const { data: savedCall, error: savedCallError } = await supabaseService
       .from("interview_summaries")
-      .select("summary,candidate,role,company_id")
+      .select("id,summary,candidate,role,company_id,created_at")
       .eq("workspace_id", scope.workspaceId)
       .eq("owner_id", scope.userId)
       .eq("session_id", sessionId)
@@ -126,6 +186,7 @@ export async function POST(req: NextRequest) {
   "playbook": [ "3-6 short, punchy strategic plays - the MAIN moves to advance THIS specific client toward the outcome the host wants (win the deal, land the project, get the yes). Ordered most important first. Each is ONE short sentence, practical and specific to this client and the open threads - not generic sales advice. This is the host's game plan for the relationship." ],
   "nextCallIntent": "1-2 concise first-person sentences for the NEXT conversation, based on this call's outcome, unresolved commitments and the most valuable next step",
   "nextCallRationale": "one short sentence explaining which unresolved thread or action makes that the priority",
+  "commitments": [ { "text": "one explicit commitment", "ownerType": "me|counterparty|joint", "ownerName": "the named owner, You, They or Joint", "dueAt": "ISO date-time only when an explicit deadline appears in the input, otherwise null" } ],
   "opportunities": [ { "title": "short name for a concrete CUSTOMER REVENUE opportunity for Interviewa", "detail": "one line grounding it in a buyer need or commercial commitment", "value": <rough GBP number or null> } ],
   "followUp": { "subject": "email subject", "body": "a warm, ready-to-review DRAFT follow-up email to the client referencing what was discussed and the sensible next steps" }
 }
@@ -134,6 +195,7 @@ Rules:
 - Ground everything ONLY in the inputs - never invent facts, names, numbers or promises.
 - opportunities: 0-1. Return at most ONE active buying decision for this company-wide relationship. Combine different product use cases into its detail instead of creating separate deals. Only return a genuine customer revenue deal clearly implied by the call. Do NOT return investment, fundraising, internal product work, vendor savings, general ideas, partnerships without a buyer, or future possibilities without a current commercial conversation. Empty array if none. value is a rough number or null - never a string.
 - nextCallIntent must move the existing relationship forward. Never reset to a first-meeting discovery objective unless this genuinely was the first interaction.
+- commitments must be grounded in the supplied next actions. Never turn a suggestion into a promise. Never invent a deadline. Resolve an explicit relative deadline against CALL DATE and otherwise use null.
 - followUp: warm and human, not pushy; reference the actual discussion and any agreed next steps; sign off generically (the host reviews and sends it themselves). It is a DRAFT, never sent automatically.`;
 
     const userMsg = `CLIENT: ${company.name}${candidate ? ` | spoke with: ${candidate}` : ""}${
@@ -142,6 +204,8 @@ Rules:
 
 EXISTING PROFILE BRIEF (may be empty):
 ${existingBrief || "(none yet)"}
+
+CALL DATE: ${savedCall.created_at}
 
 THIS CALL:
 ${callText || "(little of note)"}
@@ -158,6 +222,8 @@ Return the JSON now.`;
     let followUp: { subject: string; body: string } | null = null;
     let nextCallIntent = "";
     let nextCallRationale = "";
+    const sourceCommitments = fallbackCommitments(s);
+    let commitments: CompletionCommitment[] = sourceCommitments;
 
     try {
       const controller = new AbortController();
@@ -234,6 +300,42 @@ Return the JSON now.`;
             nextCallIntent = parsed.nextCallIntent.trim();
           if (typeof parsed.nextCallRationale === "string")
             nextCallRationale = parsed.nextCallRationale.trim();
+          if (Array.isArray(parsed.commitments)) {
+            const proposed: CompletionCommitment[] = parsed.commitments
+              .filter((item: any) => item && typeof item.text === "string" && item.text.trim())
+              .slice(0, 14)
+              .map((item: any) => {
+                const ownerType = ["me", "counterparty", "joint"].includes(item.ownerType)
+                  ? item.ownerType
+                  : "counterparty";
+                return {
+                  text: item.text.trim().slice(0, 500),
+                  ownerType,
+                  ownerName: String(
+                    item.ownerName ||
+                      (ownerType === "me" ? "You" : ownerType === "joint" ? "Joint" : "They")
+                  ).trim().slice(0, 160),
+                  dueAt: typeof item.dueAt === "string" ? item.dueAt : null,
+                } as CompletionCommitment;
+              });
+            if (proposed.length && sourceCommitments.length) {
+              commitments = sourceCommitments.map((source) => {
+                const match = proposed.find((item: CompletionCommitment) =>
+                  commitmentMatch(source.text, item.text)
+                );
+                return match
+                  ? {
+                      ...source,
+                      ownerName:
+                        source.ownerType === "counterparty" && match.ownerName
+                          ? match.ownerName
+                          : source.ownerName,
+                      dueAt: validCommitmentDueAt(match.dueAt, source.text),
+                    }
+                  : source;
+              });
+            }
+          }
         }
       } finally {
         clearTimeout(timer);
@@ -311,47 +413,49 @@ Return the JSON now.`;
 
     // The host's own commitments from this call become trackable tasks
     // (deduped, so re-summarising the same call never duplicates them).
-    const myActions = Array.isArray(s.myNextActions) ? s.myNextActions : [];
+    const myActions = commitments.filter(
+      (commitment) => commitment.ownerType === "me" || commitment.ownerType === "joint"
+    );
     await upsertTasks(
       companyId,
       myActions
-        .filter((a: any) => typeof a === "string" && a.trim())
         .slice(0, 6)
-        .map((a: string) => ({
-          text: a,
+        .map((commitment) => ({
+          text: commitment.text,
           kind: "commitment",
           linkKind: "client",
           source: "call",
           sourceRef: sessionId || null,
-          payload: { ownerType: "me", ownerName: "You" },
+          dueAt: commitment.dueAt,
+          payload: {
+            ownerType: commitment.ownerType,
+            ownerName: commitment.ownerName,
+          },
         }))
     );
 
     // Track what the other party explicitly promised as well. These are not
     // placed in the user's ordinary to-do list; they live in Commitments so the
     // user can see what to wait for/chase and mark it received.
-    const theirActions = Array.isArray(s.theirNextActions)
-      ? s.theirNextActions
-      : [];
+    const theirActions = commitments.filter(
+      (commitment) => commitment.ownerType === "counterparty"
+    );
     await upsertTasks(
       companyId,
       theirActions
-        .filter((a: any) => typeof a === "string" && a.trim())
         .slice(0, 8)
-        .map((raw: string) => {
-          const value = raw.trim();
-          const colon = value.indexOf(":");
-          const ownerName =
-            colon > 0 && colon < 80 ? value.slice(0, colon).trim() : "They";
-          const action =
-            colon > 0 && colon < 80 ? value.slice(colon + 1).trim() : value;
+        .map((commitment) => {
           return {
-            text: action || value,
+            text: commitment.text,
             kind: "counterparty_commitment",
             linkKind: "client",
             source: "call",
             sourceRef: sessionId || null,
-            payload: { ownerType: "counterparty", ownerName },
+            dueAt: commitment.dueAt,
+            payload: {
+              ownerType: "counterparty",
+              ownerName: commitment.ownerName,
+            },
           };
         })
     );
@@ -368,6 +472,31 @@ Return the JSON now.`;
       if (followUpError) throw followUpError;
     }
 
+    const completionPackage = {
+      relationship: { brief, playbook },
+      commercial: {
+        suggestion: opportunities[0] || null,
+        opportunityCreated,
+        clarification: opportunityConfirmation,
+        pipelineExcluded: !!pipelineExclusion,
+      },
+      commitments,
+      nextFocus: {
+        intent: nextCallIntent || null,
+        rationale: nextCallRationale || null,
+      },
+      followUp,
+      generatedAt: new Date().toISOString(),
+    };
+    const { error: packageError } = await supabaseAdmin
+      .from("interview_summaries")
+      .update({ post_call_package: completionPackage })
+      .eq("id", savedCall.id)
+      .eq("session_id", sessionId)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId);
+    if (packageError) throw packageError;
+
     return NextResponse.json({
       ok: true,
       opportunities: opportunityCreated ? 1 : 0,
@@ -375,6 +504,7 @@ Return the JSON now.`;
       pipelineExcluded: !!pipelineExclusion,
       followUp: !!followUp,
       profileUpdated: access.mode === "owner",
+      completionPackage,
     });
   } catch (err: any) {
     return NextResponse.json(

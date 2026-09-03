@@ -170,6 +170,7 @@ function deriveUndo(action: any, beforeState: Record<string, any>) {
     for (const key of ["name", "role", "email", "sector", "notes"]) {
       if (key in action.body) body[key] = row[key] ?? "";
     }
+    if ("companyId" in action.body) body.companyId = row.company_id;
   } else if (/^\/api\/crm\/outreach\/campaigns\//.test(action.endpoint)) {
     for (const key of [
       "name",

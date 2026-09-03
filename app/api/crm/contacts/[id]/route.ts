@@ -19,7 +19,7 @@ export async function PATCH(
     const body = await req.json();
     const { data: current, error: currentError } = await supabaseAdmin
       .from("contacts")
-      .select("id,company_id,owner_id,workspace_id")
+      .select("id,company_id,owner_id,workspace_id,name,email")
       .eq("workspace_id", scope.workspaceId)
       .eq("id", params.id)
       .maybeSingle();
@@ -27,12 +27,20 @@ export async function PATCH(
     if (!current) {
       return NextResponse.json({ error: "contact not found" }, { status: 404 });
     }
-    const access = await loadAssignedClientAccess(current.company_id, scope);
-    if (!access) {
+    if (current.owner_id !== scope.userId) {
       return NextResponse.json(
-        { error: "This contact is not owned by or assigned to your account" },
+        { error: "Only the person who owns this contact can change its company" },
         { status: 403 }
       );
+    }
+    if (current.company_id) {
+      const access = await loadAssignedClientAccess(current.company_id, scope);
+      if (!access) {
+        return NextResponse.json(
+          { error: "This contact's current company is not available to your account" },
+          { status: 403 }
+        );
+      }
     }
     const patch: Record<string, any> = {};
     for (const f of PATCHABLE) {
@@ -47,18 +55,76 @@ export async function PATCH(
     if (body.attributes && typeof body.attributes === "object") {
       patch.attributes = body.attributes;
     }
+    if ("companyId" in body) {
+      const companyId =
+        body.companyId === null
+          ? null
+          : typeof body.companyId === "string"
+            ? body.companyId.trim()
+            : "";
+      if (companyId !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(companyId)) {
+        return NextResponse.json(
+          { error: "Choose one exact CRM company for this contact" },
+          { status: 400 }
+        );
+      }
+      const targetAccess = companyId
+        ? await loadAssignedClientAccess(companyId, scope)
+        : null;
+      if (companyId && !targetAccess) {
+        return NextResponse.json(
+          { error: "The selected company is not owned by or assigned to your account" },
+          { status: 403 }
+        );
+      }
+      if (companyId && current.email) {
+        const { data: duplicate, error: duplicateError } = await supabaseAdmin
+          .from("contacts")
+          .select("id,name")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("company_id", companyId)
+          .ilike("email", String(current.email).trim())
+          .neq("id", current.id)
+          .limit(1)
+          .maybeSingle();
+        if (duplicateError) throw duplicateError;
+        if (duplicate) {
+          return NextResponse.json(
+            {
+              error: `${duplicate.name || "Another contact"} already uses this exact email at the selected company. Review the duplicate before linking.`,
+              code: "contact_company_exact_email_duplicate",
+            },
+            { status: 409 }
+          );
+        }
+      }
+      patch.company_id = companyId;
+      patch.department_id = null;
+    }
     if ("departmentId" in body) {
       const departmentId =
         typeof body.departmentId === "string" && body.departmentId
           ? body.departmentId
           : null;
       if (departmentId) {
+        const departmentCompanyId = Object.prototype.hasOwnProperty.call(
+          patch,
+          "company_id"
+        )
+          ? patch.company_id
+          : current.company_id;
+        if (!departmentCompanyId) {
+          return NextResponse.json(
+            { error: "Link the contact to a company before choosing a department" },
+            { status: 409 }
+          );
+        }
         const { data: department, error: departmentError } = await supabaseAdmin
           .from("departments")
           .select("id")
           .eq("workspace_id", scope.workspaceId)
           .eq("id", departmentId)
-          .eq("company_id", current.company_id)
+          .eq("company_id", departmentCompanyId)
           .maybeSingle();
         if (departmentError) throw departmentError;
         if (!department)
@@ -83,9 +149,10 @@ export async function PATCH(
     if (error) throw error;
     return NextResponse.json({ contact: data });
   } catch (err: any) {
+    const message = err?.message || "failed to update contact";
     return NextResponse.json(
-      { error: err?.message || "failed to update contact" },
-      { status: 500 }
+      { error: message },
+      { status: /access|owned by|assigned to/i.test(message) ? 403 : 500 }
     );
   }
 }
