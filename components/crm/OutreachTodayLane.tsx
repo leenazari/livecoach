@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MatrixRain from "@/components/MatrixRain";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
-import OutreachCtaAdvice from "@/components/crm/OutreachCtaAdvice";
 import ProspectCtaSelector from "@/components/crm/ProspectCtaSelector";
 import OutreachVoiceNoteEditor from "@/components/crm/OutreachVoiceNoteEditor";
 import { crmConfirmationError, crmFetch } from "@/lib/crm";
@@ -1483,8 +1482,6 @@ export default function OutreachTodayLane({
             const ctaBlocked = ctaBlockedIds.includes(row.id);
             const ctaRefreshRequired =
               ctaRefreshRequiredProspectIds.includes(row.prospect.id);
-            const effectiveCtaConfig =
-              row.cta_config || row.campaign?.cta_config || null;
             const research = row.savedResearch || {};
             const hasResearch = Boolean(
               research.summary ||
@@ -1751,26 +1748,6 @@ export default function OutreachTodayLane({
                                 className="mt-1 w-full rounded-lg border border-edge bg-panel px-3 py-2 text-sm leading-6 text-bone outline-none focus:border-amber/60"
                               />
                             </label>
-                            <OutreachCtaAdvice
-                              emailBody={edit.body}
-                              voiceScript={edit.voiceScript}
-                              voiceNoteReady={Boolean(
-                                displayMessage.voice_status === "ready" &&
-                                displayMessage.voice_audio_path &&
-                                displayMessage.voice_public_token
-                              )}
-                              campaignHasCta={Boolean(
-                                effectiveCtaConfig?.type &&
-                                !["auto", "none"].includes(
-                                  effectiveCtaConfig.type
-                                )
-                              )}
-                              campaignOptedOut={
-                                effectiveCtaConfig?.type === "none"
-                              }
-                              workspaceId={sender?.workspaceId}
-                              userId={sender?.userId}
-                            />
                             <OutreachVoiceNoteEditor
                               message={displayMessage}
                               script={edit.voiceScript}
