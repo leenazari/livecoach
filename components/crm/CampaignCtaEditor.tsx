@@ -209,7 +209,7 @@ export default function CampaignCtaEditor({
           ) : null}
           {config.type === "none" ? (
             <p className="rounded-lg border border-edge bg-ink/35 px-3 py-2 text-xs leading-5 text-muted">
-              LiveCoach will not add a CTA warning for drafts in this campaign. Safety checks still apply.
+              Drafts in this campaign can be prepared and sent without a call to action. Delivery safety checks still apply.
             </p>
           ) : null}
           {validation.error && config.type !== "auto" ? (

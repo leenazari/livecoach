@@ -6,7 +6,6 @@ import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import CampaignCtaEditor from "@/components/crm/CampaignCtaEditor";
-import OutreachCtaAdvice from "@/components/crm/OutreachCtaAdvice";
 import ProspectCtaSelector from "@/components/crm/ProspectCtaSelector";
 import RevenueToday from "@/components/crm/RevenueToday";
 import MatrixRain from "@/components/MatrixRain";
@@ -2148,7 +2147,7 @@ export default function OutreachPage() {
           <p className="mt-2 text-xs leading-5 text-muted">Choosing contacts is free and starts no research. Research + draft current wave prepares the email and optional voice script, but never generates paid audio or contacts anyone. Bulk approval applies only to the exact emails already shown below.</p>
           <p className="mt-2 text-xs leading-5 text-sky">Overnight preparation keeps a maximum of {OVERNIGHT_RESEARCH_INVENTORY_LIMIT} unused researched leads per salesperson. Saved research and missing script repairs are reused before any new lead is researched.</p>
         </div>
-        <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const isFollowUp = row.queueKind === "follow_up" || Boolean(lastSent); const followUpDue = isFollowUp && row.status === "queued" && Number(row.current_step) > 1 && row.sequenceStepDue !== false; const sequenceStep = row.sequenceStep as SequenceStep | null; const channel = sequenceStep?.channel || "email"; const manual = channel !== "email"; const manualDue = manual && row.sequenceStepDue !== false && !["completed", "paused", "replied", "booked", "suppressed"].includes(row.status); const needsVoiceScript = queueRowNeedsVoiceScript(row); const canPrepare = !manual && queueRowNeedsPreparation(row); const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const ctaBlocked = ctaBlockedIds.includes(row.id); const ctaRefreshRequired = ctaRefreshRequiredProspectIds.includes(p.id); const effectiveCtaConfig = row.cta_config || row.campaign?.cta_config || null; const canEditCta = !manual && (canPrepare || ["draft", "failed"].includes(m?.status)); const displayStatus = manualDue ? channel : followUpDue && !m ? "follow_up_due" : m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const displayStatusLabel = displayStatus === "sent" ? "✓ sent" : displayStatus === "follow_up_due" ? "Follow up due" : displayStatus; const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text, voice_script: m.voice_script || "" } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className={`rounded-xl border bg-panel p-4 ${isFollowUp ? "border-amber/45" : "border-edge"}`}>
+        <div className="space-y-3">{orderedQueue.map((row, index) => { const p = row.prospect; const m = row.message; const lastSent = row.lastSentMessage; const isFollowUp = row.queueKind === "follow_up" || Boolean(lastSent); const followUpDue = isFollowUp && row.status === "queued" && Number(row.current_step) > 1 && row.sequenceStepDue !== false; const sequenceStep = row.sequenceStep as SequenceStep | null; const channel = sequenceStep?.channel || "email"; const manual = channel !== "email"; const manualDue = manual && row.sequenceStepDue !== false && !["completed", "paused", "replied", "booked", "suppressed"].includes(row.status); const needsVoiceScript = queueRowNeedsVoiceScript(row); const canPrepare = !manual && queueRowNeedsPreparation(row); const prepareStatus = prepareJobs[p.id]; const preparePending = prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done"; const ctaBlocked = ctaBlockedIds.includes(row.id); const ctaRefreshRequired = ctaRefreshRequiredProspectIds.includes(p.id); const canEditCta = !manual && (canPrepare || ["draft", "failed"].includes(m?.status)); const displayStatus = manualDue ? channel : followUpDue && !m ? "follow_up_due" : m?.status === "approved" && m?.scheduled_at ? "scheduled" : m?.status || (lastSent ? "sent" : row.status || "queued"); const displayStatusLabel = displayStatus === "sent" ? "✓ sent" : displayStatus === "follow_up_due" ? "Follow up due" : displayStatus; const edit = m ? draftEdits[m.id] || { subject: m.subject, body_text: m.body_text, voice_script: m.voice_script || "" } : null; return <article key={row.id} style={{ contentVisibility: "auto" }} className={`rounded-xl border bg-panel p-4 ${isFollowUp ? "border-amber/45" : "border-edge"}`}>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0">
               <p className={`font-mono text-[0.55rem] uppercase ${isFollowUp ? "text-amber" : "text-sky"}`}>#{index + 1} · {followUpDue ? "follow up due" : isFollowUp ? "previously contacted" : "new contact"} · step {row.current_step}{sequenceStep ? ` · ${sequenceStep.purpose}` : ""}</p>
@@ -2240,22 +2239,6 @@ export default function OutreachPage() {
                 <span className="mb-1 block font-mono text-[0.55rem] uppercase text-muted">Email</span>
                 <textarea className={`${input} min-h-44 resize-y leading-6`} value={edit.body_text} onChange={(e) => setMessage(m.id, { body_text: e.target.value })} disabled={["sending", "sent"].includes(m.status) || Boolean(m.scheduled_at)} />
               </label>
-              <OutreachCtaAdvice
-                emailBody={edit.body_text}
-                voiceScript={edit.voice_script}
-                voiceNoteReady={Boolean(
-                  m.voice_status === "ready" &&
-                  m.voice_audio_path &&
-                  m.voice_public_token
-                )}
-                campaignHasCta={Boolean(
-                  effectiveCtaConfig?.type &&
-                  !["auto", "none"].includes(effectiveCtaConfig.type)
-                )}
-                campaignOptedOut={effectiveCtaConfig?.type === "none"}
-                workspaceId={sender?.workspaceId}
-                userId={sender?.userId}
-              />
               <OutreachVoiceNoteEditor message={m} script={edit.voice_script} disabled={Boolean(m.scheduled_at) || ctaRefreshRequired} generating={generatingVoiceMessageId === m.id} onScriptChange={(value) => setMessage(m.id, { voice_script: value })} onGenerate={() => void generateVoiceNote(m.id)} />
               {!["sending", "sent"].includes(m.status) && !m.scheduled_at ? (
                 <div className="rounded-lg border border-sky/35 bg-sky/[0.06] p-3">
