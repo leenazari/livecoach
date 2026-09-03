@@ -53,7 +53,7 @@ export default function CallDetailPage() {
         method: "POST",
         body: JSON.stringify({ callId: id, mode }),
       });
-      setPlaybookNote("Added. The reusable lesson is now in your pitching playbook.");
+      setPlaybookNote("Added. The reusable lesson is now in your sales knowledge base.");
     } catch (error: any) {
       setPlaybookNote(error?.message || "Could not add this call.");
     } finally {
@@ -371,14 +371,14 @@ export default function CallDetailPage() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="font-mono text-[0.6rem] uppercase tracking-[0.2em] text-sage">
-                    Pitching playbook
+                    Sales knowledge base
                   </p>
                   <p className="mt-1 max-w-xl text-[0.82rem] leading-snug text-bone/75">
                     Add only calls worth teaching from. Internal calls are blocked, and partner calls need their own explicit choice.
                   </p>
                 </div>
                 <Link href="/crm/pitch-playbook" className="shrink-0 font-mono text-[0.56rem] uppercase text-sky hover:text-amber">
-                  Open playbook ↗
+                  Open knowledge base ↗
                 </Link>
               </div>
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">

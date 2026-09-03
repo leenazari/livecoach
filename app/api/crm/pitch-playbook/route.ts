@@ -1,13 +1,40 @@
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { supabaseAdmin } from "@/lib/supabase";
 import { logModelUsage } from "@/lib/usage";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 45;
 
 const MODES = new Set(["prospect_demo", "commercial_partner"]);
+const MANAGER_ROLES = new Set(["owner", "manager"]);
+const FIELD_NOTE_MAX_CHARS = 16_000;
+
+const clean = (value: unknown, max: number): string =>
+  typeof value === "string"
+    ? value.replace(/\s+/g, " ").trim().slice(0, max)
+    : "";
+
+const externalUrl = (value: unknown): string | null => {
+  const raw = clean(value, 1_500);
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "https:" || parsed.protocol === "http:"
+      ? parsed.toString()
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const sourceFingerprint = (sourceUrl: string | null, source: string): string =>
+  createHash("sha256")
+    .update(`${sourceUrl || "no-url"}\n${source.toLowerCase().replace(/\s+/g, " ").trim()}`)
+    .digest("hex");
 
 const parseContent = (value: unknown) => {
   try {
@@ -34,6 +61,46 @@ const salesQuestions = (value: unknown): string[] =>
     .filter((item) => item.length <= 280 && !internalMechanicsQuestion.test(item))
     .slice(0, 6);
 
+const boundedList = (value: unknown, limit: number, max = 360): string[] =>
+  textList(value)
+    .map((item) => clean(item, max))
+    .filter(Boolean)
+    .slice(0, limit);
+
+const calibrationLevels = (value: unknown) =>
+  Array.isArray(value)
+    ? value
+        .map((item) => ({
+          level: clean(item?.level, 80),
+          signals: boundedList(item?.signals, 4, 220),
+          sellerMove: clean(item?.sellerMove, 320),
+        }))
+        .filter((item) => item.level && item.signals.length && item.sellerMove)
+        .slice(0, 4)
+    : [];
+
+const knowledgeChecks = (value: unknown) =>
+  Array.isArray(value)
+    ? value
+        .map((item) => ({
+          question: clean(item?.question, 280),
+          answer: clean(item?.answer, 500),
+        }))
+        .filter((item) => item.question && item.answer)
+        .slice(0, 4)
+    : [];
+
+const objectionPairs = (value: unknown) =>
+  Array.isArray(value)
+    ? value
+        .map((item) => ({
+          signal: clean(item?.signal, 280),
+          response: clean(item?.response, 500),
+        }))
+        .filter((item) => item.signal && item.response)
+        .slice(0, 5)
+    : [];
+
 const validMs = (value: unknown): number | null => {
   if (typeof value !== "string" || !value) return null;
   const ms = new Date(value).getTime();
@@ -55,6 +122,7 @@ const isInternalCompany = (company: any): boolean =>
 // marks it as a useful prospect/demo or commercial-partner lesson.
 export async function GET() {
   try {
+    const scope = requireRequestScope();
     const since = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
     const [
       { data: lessonRows, error: lessonError },
@@ -64,23 +132,32 @@ export async function GET() {
     ] = await Promise.all([
       supabaseAdmin
         .from("lessons")
-        .select("id, title, content, source_url, created_at")
+        .select("id, title, content, source_url, source_label, kind, status, visibility, owner_id, created_at, updated_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("topic", "pitching")
+        .neq("status", "archived")
+        .or(`owner_id.eq.${scope.userId},and(visibility.eq.team,status.eq.approved)`)
         .order("created_at", { ascending: false })
         .limit(100),
       supabaseAdmin
         .from("interview_summaries")
         .select("id, session_id, candidate, role, company_id, summary, created_at")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .limit(150),
       supabaseAdmin
         .from("companies")
         .select("id, name, sector, stage, profile")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .limit(1000),
       supabaseAdmin
         .from("interview_sessions")
         .select("session_id, started_at, ended_at")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .limit(300),
@@ -193,6 +270,8 @@ export async function GET() {
       ? await supabaseAdmin
           .from("interview_sessions")
           .select("session_id, transcript")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
           .in("session_id", shortlistIds)
       : { data: [], error: null } as any;
     if (transcriptError) throw transcriptError;
@@ -210,10 +289,17 @@ export async function GET() {
           id: row.id,
           title: row.title,
           sourceUrl: row.source_url,
+          sourceLabel: row.source_label,
+          kind: row.kind || "principle",
+          status: row.status || "approved",
+          visibility: row.visibility || "private",
+          canEdit: row.owner_id === scope.userId,
           createdAt: row.created_at,
+          updatedAt: row.updated_at,
           ...parseContent(row.content),
         })),
         reviewQueue,
+        canManageTeamKnowledge: MANAGER_ROLES.has(scope.role),
         reviewRules: {
           modelCost: false,
           minimumTranscriptChars: 1000,
@@ -224,15 +310,197 @@ export async function GET() {
     );
   } catch (error: any) {
     return NextResponse.json(
-      { error: error?.message || "Could not load the pitching playbook" },
+      { error: error?.message || "Could not load the sales knowledge base" },
       { status: 500 }
     );
   }
 }
 
+async function createFieldNote(
+  body: Record<string, unknown>,
+  scope: { userId: string; workspaceId: string; role: string }
+) {
+  if (!MANAGER_ROLES.has(scope.role)) {
+    return NextResponse.json(
+      {
+        error:
+          "Only a workspace owner or manager can add external material to the team sales knowledge base",
+      },
+      { status: 403 }
+    );
+  }
+
+  const source = typeof body.sourceContent === "string"
+    ? body.sourceContent.trim().slice(0, FIELD_NOTE_MAX_CHARS)
+    : "";
+  const sourceTitle = clean(body.sourceTitle, 180);
+  const sourceLabel = clean(body.sourceLabel, 200) || sourceTitle || "External sales field note";
+  const suppliedUrl = clean(body.sourceUrl, 1_500);
+  const sourceUrl = externalUrl(suppliedUrl);
+  if (suppliedUrl && !sourceUrl) {
+    return NextResponse.json(
+      { error: "Use a complete http or https source link" },
+      { status: 400 }
+    );
+  }
+  if (source.length < 120) {
+    return NextResponse.json(
+      { error: "Paste enough source material to build a reliable training lesson" },
+      { status: 422 }
+    );
+  }
+
+  const fingerprint = sourceFingerprint(sourceUrl, source);
+  const { data: existing, error: existingError } = await supabaseAdmin
+    .from("lessons")
+    .select("id")
+    .eq("workspace_id", scope.workspaceId)
+    .eq("source_fingerprint", fingerprint)
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing) {
+    return NextResponse.json(
+      {
+        error: "This exact source has already been turned into a sales knowledge lesson",
+        existingId: existing.id,
+      },
+      { status: 409 }
+    );
+  }
+
+  const system = `You create a practical sales-training lesson from an external field observation. The source is evidence for an idea, not proof that the idea works in every situation.
+
+Return ONLY valid JSON in this exact shape:
+{
+  "title":"short practical title",
+  "sourceSummary":"one concise paraphrase of what the source argues",
+  "principle":"one memorable operating principle",
+  "scenario":"when a salesperson should use this",
+  "audience":"which buyers or conversations it applies to",
+  "liveCoachSafeguard":"one limitation or false inference the salesperson must avoid",
+  "calibrationLevels":[{"level":"short label","signals":["observable signal"],"sellerMove":"how to adapt"}],
+  "diagnosticQuestions":["4-6 exact questions a salesperson can ask"],
+  "pitchMoves":["2-5 practical adaptation moves"],
+  "objections":[{"signal":"buyer phrase or behaviour","response":"warm response or check"}],
+  "buyingSignals":["observable evidence relevant to this lesson"],
+  "avoid":["2-5 mistakes to avoid"],
+  "script":["4-8 ordered lines for a reusable conversation path"],
+  "knowledgeChecks":[{"question":"short training question","answer":"clear model answer"}]
+}
+
+Rules:
+- Paraphrase. Do not reproduce a passage or sentence from the source.
+- Separate real-use evidence from claimed familiarity. Naming a product alone is weak evidence. Verify the workflow, direct user, result and limitation before concluding that a buyer is experienced.
+- Never present politeness, nodding, brand recall or fluent terminology as a buying signal.
+- Make calibrationLevels cover genuinely experienced, experimented but vague, theory-only and politely confused buyers when the source supports that distinction.
+- Questions must feel curious and respectful, never like a test.
+- Preserve useful uncertainty. Do not invent research, statistics, results, products or claims.
+- Use plain British English. Do not use em dashes, en dashes or semicolons.
+- Provide 2-4 knowledgeChecks that test application, not memorisation.`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 36_000);
+  let rawContent: any;
+  try {
+    const message = await openai.messages.create(
+      {
+        model: OPENAI_MODEL_PRO,
+        max_tokens: 2_200,
+        temperature: 0.2,
+        system,
+        messages: [
+          {
+            role: "user",
+            content: `SOURCE TITLE: ${sourceTitle || "Not supplied"}\nSOURCE LABEL: ${sourceLabel}\nSOURCE LINK: ${sourceUrl || "Not supplied"}\n\nSOURCE MATERIAL:\n${source}`,
+          },
+        ],
+      },
+      { signal: controller.signal }
+    );
+    await logModelUsage("sales-knowledge-field-note", "pro", (message as any).usage);
+    const raw = message.content
+      .filter((part: any) => part.type === "text")
+      .map((part: any) => part.text)
+      .join("")
+      .replace(/```json|```/gi, "")
+      .trim();
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    rawContent = start >= 0 && end > start
+      ? JSON.parse(raw.slice(start, end + 1))
+      : null;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const content = rawContent
+    ? {
+        sourceKind: "field_note",
+        sourceSummary: clean(rawContent.sourceSummary, 700),
+        principle: clean(rawContent.principle, 360),
+        scenario: clean(rawContent.scenario, 500),
+        audience: clean(rawContent.audience, 360),
+        liveCoachSafeguard: clean(rawContent.liveCoachSafeguard, 600),
+        calibrationLevels: calibrationLevels(rawContent.calibrationLevels),
+        diagnosticQuestions: salesQuestions(rawContent.diagnosticQuestions),
+        pitchMoves: boundedList(rawContent.pitchMoves, 5),
+        objections: objectionPairs(rawContent.objections),
+        buyingSignals: boundedList(rawContent.buyingSignals, 6),
+        avoid: boundedList(rawContent.avoid, 5),
+        script: boundedList(rawContent.script, 8),
+        knowledgeChecks: knowledgeChecks(rawContent.knowledgeChecks),
+      }
+    : null;
+  if (
+    !content?.principle ||
+    !content.scenario ||
+    content.diagnosticQuestions.length < 3 ||
+    content.calibrationLevels.length < 2 ||
+    content.script.length < 4
+  ) {
+    return NextResponse.json(
+      { error: "The source did not produce a reliable, usable training lesson" },
+      { status: 422 }
+    );
+  }
+
+  const title = clean(rawContent.title, 180) || sourceTitle || "Sales field lesson";
+  const { data: lesson, error } = await supabaseAdmin
+    .from("lessons")
+    .insert({
+      workspace_id: scope.workspaceId,
+      owner_id: scope.userId,
+      visibility: "private",
+      topic: "pitching",
+      kind: "field_note",
+      status: "draft",
+      title,
+      content: JSON.stringify(content),
+      source_url: sourceUrl,
+      source_label: sourceLabel,
+      source_fingerprint: fingerprint,
+    })
+    .select("id, title, status, visibility")
+    .single();
+  if (error) {
+    if (error.code === "23505") {
+      return NextResponse.json(
+        { error: "This exact source already exists in the workspace knowledge base" },
+        { status: 409 }
+      );
+    }
+    throw error;
+  }
+  return NextResponse.json({ ok: true, id: lesson.id, lesson }, { status: 201 });
+}
+
 export async function POST(req: NextRequest) {
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
+    if (body?.kind === "field_note") {
+      return createFieldNote(body, scope);
+    }
     const callId = typeof body.callId === "string" ? body.callId : "";
     const mode = typeof body.mode === "string" ? body.mode : "";
     if (!callId || !MODES.has(mode)) {
@@ -246,12 +514,13 @@ export async function POST(req: NextRequest) {
     const { data: existing } = await supabaseAdmin
       .from("lessons")
       .select("id")
+      .eq("workspace_id", scope.workspaceId)
       .eq("topic", "pitching")
       .eq("source_url", sourceUrl)
       .maybeSingle();
     if (existing) {
       return NextResponse.json(
-        { error: "This call is already in the pitching playbook" },
+        { error: "This call is already in the sales knowledge base" },
         { status: 409 }
       );
     }
@@ -260,6 +529,8 @@ export async function POST(req: NextRequest) {
       .from("interview_summaries")
       .select("id, session_id, candidate, role, company_id, summary, created_at")
       .eq("id", callId)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
       .single();
     if (callError || !call) {
       return NextResponse.json({ error: "Call not found" }, { status: 404 });
@@ -271,6 +542,8 @@ export async function POST(req: NextRequest) {
             .from("companies")
             .select("name, profile")
             .eq("id", call.company_id)
+            .eq("workspace_id", scope.workspaceId)
+            .eq("owner_id", scope.userId)
             .maybeSingle()
         : Promise.resolve({ data: null } as any),
       call.session_id
@@ -278,6 +551,8 @@ export async function POST(req: NextRequest) {
             .from("interview_sessions")
             .select("transcript")
             .eq("session_id", call.session_id)
+            .eq("workspace_id", scope.workspaceId)
+            .eq("owner_id", scope.userId)
             .order("created_at", { ascending: false })
             .limit(1)
             .maybeSingle()
@@ -286,7 +561,7 @@ export async function POST(req: NextRequest) {
 
     if ((company as any)?.profile?.internal === true) {
       return NextResponse.json(
-        { error: "Internal and in house calls cannot enter the pitching playbook" },
+        { error: "Internal and in house calls cannot enter the sales knowledge base" },
         { status: 422 }
       );
     }
@@ -376,10 +651,16 @@ ${transcript.slice(-18000)}`;
     const { data: lesson, error } = await supabaseAdmin
       .from("lessons")
       .insert({
+        workspace_id: scope.workspaceId,
+        owner_id: scope.userId,
+        visibility: "private",
         topic: "pitching",
+        kind: "sales_call",
+        status: "approved",
         title,
         content: JSON.stringify({
           ...content,
+          sourceKind: "sales_call",
           mode,
           callId,
           callDate: call.created_at,
@@ -387,6 +668,8 @@ ${transcript.slice(-18000)}`;
           candidate: call.candidate || null,
         }),
         source_url: sourceUrl,
+        source_label: "Approved LiveCoach sales call",
+        source_fingerprint: createHash("sha256").update(sourceUrl).digest("hex"),
       })
       .select("id")
       .single();
@@ -394,7 +677,7 @@ ${transcript.slice(-18000)}`;
     return NextResponse.json({ ok: true, id: lesson.id });
   } catch (error: any) {
     return NextResponse.json(
-      { error: error?.message || "Could not add this call to the pitching playbook" },
+      { error: error?.message || "Could not add this call to the sales knowledge base" },
       { status: 500 }
     );
   }
