@@ -10,6 +10,7 @@ import {
 } from "@/lib/crm";
 import NavMenu from "@/components/crm/NavMenu";
 import InitialCalendarSync from "@/components/InitialCalendarSync";
+import McpChatGptConnection from "@/components/McpChatGptConnection";
 
 type Lesson = {
   id: string;
@@ -1147,6 +1148,8 @@ export default function SettingsPage() {
           </div>
         ) : null}
       </div>
+
+      <McpChatGptConnection />
 
       <div
         className={`mb-5 rounded-xl border p-5 ${

@@ -13,6 +13,7 @@ import {
   emailOtpRedirect,
   normalizeEmailOtp,
 } from "@/lib/email-otp";
+import { safeLocalRedirect } from "@/lib/safe-local-redirect";
 
 type LoginMethod = "email" | "password";
 const EMAIL_RESEND_WAIT_SECONDS = 60;
@@ -32,6 +33,7 @@ export default function LoginPage() {
   const [notice, setNotice] = useState("");
   const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
+  const [postLoginPath, setPostLoginPath] = useState("/crm");
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -39,6 +41,7 @@ export default function LoginPage() {
       setChecked(true);
     });
     const params = new URLSearchParams(window.location.search);
+    setPostLoginPath(safeLocalRedirect(params.get("redirect"), "/crm"));
     if (params.get("invite") === "error") {
       setError(
         "That invitation link has expired or was already used. Ask Lee to resend it, then open the newest email. Do not use this login form until account setup is complete."
@@ -78,7 +81,7 @@ export default function LoginPage() {
       });
       if (error) throw error;
       clearCrmCache();
-      router.push("/crm");
+      router.push(postLoginPath);
       router.refresh();
     } catch (e: any) {
       setError(e.message || "Authentication failed");
@@ -102,7 +105,7 @@ export default function LoginPage() {
         email: normalizedEmail,
         options: {
           shouldCreateUser: false,
-          emailRedirectTo: emailOtpRedirect(window.location.origin),
+          emailRedirectTo: emailOtpRedirect(window.location.origin, postLoginPath),
         },
       });
       if (otpError) throw otpError;
@@ -137,7 +140,7 @@ export default function LoginPage() {
       });
       if (otpError) throw otpError;
       clearCrmCache();
-      router.replace("/crm");
+      router.replace(postLoginPath);
       router.refresh();
     } catch (caught) {
       setError(emailOtpErrorMessage(caught));
@@ -174,7 +177,7 @@ export default function LoginPage() {
           {error && <p className="font-mono text-xs text-rust">! {error}</p>}
           <div className="flex gap-2">
             <button
-              onClick={() => router.push("/crm")}
+              onClick={() => router.push(postLoginPath)}
               className="rounded-full bg-amber px-6 py-2.5 font-mono text-sm font-medium uppercase tracking-wider text-ink transition hover:bg-amberglow"
             >
               Open LiveCoach

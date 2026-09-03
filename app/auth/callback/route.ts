@@ -2,6 +2,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { safeLocalRedirect } from "@/lib/safe-local-redirect";
 
 export const runtime = "nodejs";
 
@@ -12,11 +13,7 @@ export async function GET(req: NextRequest) {
   const verificationType = url.searchParams.get("type");
   const authenticationMethod = url.searchParams.get("method");
   const fallbackNext = verificationType === "recovery" ? "/reset-password" : "/login";
-  const requestedNext = url.searchParams.get("next") || fallbackNext;
-  const next =
-    requestedNext.startsWith("/") && !requestedNext.startsWith("//")
-      ? requestedNext
-      : "/login";
+  const next = safeLocalRedirect(url.searchParams.get("next"), fallbackNext);
 
   const cookieStore = cookies();
   const supabase = createServerClient(
@@ -66,12 +63,17 @@ export async function GET(req: NextRequest) {
     error = new Error("The authentication link is incomplete");
   }
 
-  const errorDestination =
+  let errorDestination =
     verificationType === "recovery" || next === "/reset-password"
       ? "/forgot-password?reset=error"
       : authenticationMethod === "email"
         ? "/login?email=error"
       : "/login?invite=error";
+  if (authenticationMethod === "email" && next !== "/login") {
+    const errorUrl = new URL(errorDestination, url.origin);
+    errorUrl.searchParams.set("redirect", next);
+    errorDestination = `${errorUrl.pathname}${errorUrl.search}`;
+  }
 
   return NextResponse.redirect(new URL(error ? errorDestination : next, url.origin));
 }
