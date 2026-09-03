@@ -478,11 +478,16 @@ function BoardInner() {
   };
   const createCompany = async () => {
     if (!newName.trim()) return;
+    setSaveError("");
+    setSaveNotice("");
     try {
-      const { company } = await crmFetch<{ company: Company }>("/api/crm/companies", {
-        method: "POST",
-        body: JSON.stringify({ name: newName.trim() }),
-      });
+      const { company, existing } = await crmFetch<{
+        company: Company;
+        existing?: boolean;
+      }>("/api/crm/companies", {
+          method: "POST",
+          body: JSON.stringify({ name: newName.trim() }),
+        });
       if (!company?.id)
         throw crmConfirmationError({
           url: "/api/crm/companies",
@@ -491,6 +496,11 @@ function BoardInner() {
         });
       setNewName("");
       await load("clients");
+      setSaveNotice(
+        existing
+          ? `${company.name} already existed under Clients. No duplicate was created. To add a person to Outreach, use Add prospect and enter their exact work email.`
+          : `${company.name} was saved under Clients. To add a person to Outreach, use Add prospect and enter their exact work email.`
+      );
     } catch (error: any) {
       setSaveError(error?.message || "That client could not be created. Please try again.");
     }

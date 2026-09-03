@@ -84,6 +84,7 @@
     "validate:outreach-campaign-filter": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-campaign-filter.mjs",
     "validate:outreach-daily-limit": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-daily-limit.mjs",
     "validate:manual-outreach-calls": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-manual-outreach-calls.mjs",
+    "validate:manual-outreach-prospect": "node scripts/validate-manual-outreach-prospect-entry.mjs",
     "validate:outreach-follow-up-reminders": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-follow-up-reminders.mjs",
     "validate:official-job-research": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-official-job-research.mjs",
     "validate:campaign-sequence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-campaign-sequence-builder.mjs",
