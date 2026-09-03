@@ -6,6 +6,9 @@ import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import CanonicalRecordLink from "@/components/crm/CanonicalRecordLink";
 import CampaignCtaEditor from "@/components/crm/CampaignCtaEditor";
+import ManualProspectEntry, {
+  type CrmProspectCandidate,
+} from "@/components/crm/ManualProspectEntry";
 import ProspectCtaSelector from "@/components/crm/ProspectCtaSelector";
 import RevenueToday from "@/components/crm/RevenueToday";
 import MatrixRain from "@/components/MatrixRain";
@@ -575,6 +578,9 @@ export default function OutreachPage() {
   }), []);
   const [tab, setTab] = useState<Tab>("queue");
   const [prospects, setProspects] = useState<Prospect[]>(cachedProspects?.prospects || []);
+  const [crmCandidates, setCrmCandidates] = useState<CrmProspectCandidate[]>(
+    cachedProspects?.crmCandidates || []
+  );
   const [queue, setQueue] = useState<QueueRow[]>(cachedQueue?.queue || []);
   const [sender, setSender] = useState<{
     userId: string;
@@ -736,6 +742,7 @@ export default function OutreachPage() {
   const loadProspects = useCallback(async () => {
     const data = await crmFetch<any>(OUTREACH_URLS.prospects);
     setProspects(data.prospects || []);
+    setCrmCandidates(data.crmCandidates || []);
     setTeam(data.team || []);
     setCurrentUser(data.currentUser || "");
     setCanManageAssignments(data.canManageAssignments === true);
@@ -749,6 +756,25 @@ export default function OutreachPage() {
     }
     loadedResourcesRef.current.prospects = true;
   }, []);
+
+  const handleManualProspectSaved = async (result: {
+    prospect: {
+      id: string;
+      first_name?: string | null;
+      email?: string | null;
+    };
+    created: boolean;
+    duplicatePrevented: boolean;
+  }) => {
+    setError("");
+    setNotice(
+      result.created
+        ? `${result.prospect.first_name || result.prospect.email} was added to your Prospects. No research, campaign enrolment or message was started.`
+        : "That exact work email was already in your accessible Prospects. LiveCoach opened the existing record and did not create a duplicate."
+    );
+    await loadProspects();
+    setFocusedProspectId(result.prospect.id);
+  };
 
   const loadMetrics = useCallback(async () => {
     const data = await crmFetch<any>(OUTREACH_URLS.metrics);
@@ -2348,6 +2374,10 @@ export default function OutreachPage() {
 
       {!loading && !tabLoading && tab === "prospects" ? <section data-sales-tour="prospect-pool">
         {focusedProspectId ? <div className="mb-3 flex flex-col gap-2 rounded-xl border border-sky/45 bg-sky/[0.07] p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.54rem] uppercase tracking-wider text-sky">Opened from linked activity</p><p className="mt-1 text-sm text-bone/80">Showing the exact prospect record. Its email, history and actions remain together here.</p></div><button type="button" onClick={clearProspectFocus} className={`${button} shrink-0`}>Back to all prospects</button></div> : null}
+        <ManualProspectEntry
+          candidates={crmCandidates}
+          onSaved={handleManualProspectSaved}
+        />
         {canStageImports ? <StagedOutreachImports team={team} onApplied={loadProspects} /> : null}
         <div className="mb-3 rounded-xl border border-edge bg-panel p-3">
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_repeat(6,minmax(0,9rem))]">
