@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260825180000_allow_shared_unassigned_outreach_pool.sql"
+  "supabase/migrations/20260825170244_allow_shared_unassigned_outreach_pool.sql"
 );
 const prospectRoute = read("app/api/crm/outreach/[id]/route.ts");
 const queueRoute = read("app/api/crm/outreach/queue/route.ts");

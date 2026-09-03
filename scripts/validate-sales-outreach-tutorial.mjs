@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260825171022_salesperson_outreach_tutorial_progress.sql"
+  "supabase/migrations/20260826090206_salesperson_outreach_tutorial_progress.sql"
 );
 const route = read("app/api/crm/tutorial/route.ts");
 const tutorial = read("components/crm/SalesOutreachTutorial.tsx");

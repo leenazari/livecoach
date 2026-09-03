@@ -23,7 +23,7 @@ const upcomingItem = read("app/api/crm/upcoming/[id]/route.ts");
 const calendarSync = read("app/api/crm/calendar-sync/route.ts");
 const supabase = read("lib/supabase.ts");
 const migration = read(
-  "supabase/migrations/20260828201920_calendar_event_exclusions.sql"
+  "supabase/migrations/20260828203019_calendar_event_exclusions.sql"
 );
 
 // Review-client-update rows carry the canonical company and source note ids.

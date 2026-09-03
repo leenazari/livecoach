@@ -49,7 +49,7 @@ assert.match(replyAttention, /\.contains\("payload", \{ outreachProspectId: inpu
 assert.match(replyAttention, /\.eq\("source_id", input\.prospectId\)/);
 assert.doesNotMatch(
   replyAttention,
-  /from\("outreach_prospects"\)|from\("outreach_events"\)/,
+  /from\("outreach_prospects"\)\s*\.update|from\("outreach_events"\)\s*\.update/,
   "Resolving attention must never overwrite the reply or immutable event history"
 );
 
@@ -88,10 +88,17 @@ assert.match(workInbox, /resolvedReplyKeys/);
 assert.match(workInbox, /`\$\{prospect\.id\}:\$\{prospect\.last_reply_at\}`/);
 assert.match(workInbox, /outreachReplyHref\(prospect\.id\)/);
 
-// Queueing a reply or scheduling its next step clears only the same owner's
-// matching receipt. The reply itself stays in the canonical history.
+// A dated follow up clears the receipt immediately. A reply entering the send
+// queue stays open until the provider confirms delivery.
+assert.match(followUp, /resolveReplyAttention/);
+const queueSection = sendQueue.slice(
+  sendQueue.indexOf("export async function queueApprovedOutreachMessage"),
+  sendQueue.indexOf("export async function dispatchDueOutreachMessage")
+);
+assert.doesNotMatch(queueSection, /resolveReplyAttention/);
+assert.match(queueSection, /attentionPendingDelivery/);
+assert.match(sendQueue, /sendConnectedOutreachMail[\s\S]*resolveReplyAttention/);
 for (const source of [followUp, sendQueue]) {
-  assert.match(source, /resolveReplyAttention/);
   assert.match(source, /workspaceId:/);
   assert.match(source, /userId:/);
   assert.match(source, /prospectId:/);

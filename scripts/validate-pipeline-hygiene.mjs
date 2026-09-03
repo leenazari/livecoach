@@ -20,7 +20,7 @@ const tasks = read("components/crm/TaskList.tsx");
 const commitments = read("components/crm/Commitments.tsx");
 const inboxPage = read("app/crm/inbox/page.tsx");
 const scopedHistoryMigration = read(
-  "supabase/migrations/20260827183000_scope_opportunity_history_events.sql"
+  "supabase/migrations/20260827170251_scope_opportunity_history_events.sql"
 );
 
 // A confirmed Brain relationship change can explicitly reconcile stale deals,

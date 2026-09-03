@@ -14,7 +14,7 @@ const prospects = read("app/crm/outreach/page.tsx");
 const revenueRoute = read("app/api/crm/revenue/route.ts");
 const revenuePage = read("app/crm/revenue/page.tsx");
 const migration = read(
-  "supabase/migrations/20260828153401_brain_direct_outreach_messages.sql"
+  "supabase/migrations/20260828155047_brain_direct_outreach_messages.sql"
 );
 
 // The Brain proposes the exact external email, but it can never be included in

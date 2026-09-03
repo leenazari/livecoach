@@ -347,9 +347,9 @@ const ctaEditor = read("components/crm/CampaignCtaEditor.tsx");
 const prospectCtaSelector = read("components/crm/ProspectCtaSelector.tsx");
 const campaignCreate = read("app/api/crm/outreach/campaigns/route.ts");
 const campaignUpdate = read("app/api/crm/outreach/campaigns/[id]/route.ts");
-const migration = read("supabase/migrations/20260902163027_campaign_call_to_action.sql");
+const migration = read("supabase/migrations/20260902164344_campaign_call_to_action.sql");
 const prospectCtaRoute = read("app/api/crm/outreach/enrolments/[id]/cta/route.ts");
-const prospectCtaMigration = read("supabase/migrations/20260902171606_prospect_cta_overrides.sql");
+const prospectCtaMigration = read("supabase/migrations/20260902172640_prospect_cta_overrides.sql");
 
 assert.match(prepareRoute, /ensureOutreachEmailSimpleOptOut/);
 assert.match(prepareRoute, /preferred default, not a validity rule/i);

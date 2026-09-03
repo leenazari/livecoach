@@ -70,7 +70,7 @@ const lane = read("components/crm/SalesPipelineLane.tsx");
 const inbox = read("app/crm/inbox/page.tsx");
 const sharing = read("app/settings/team/sharing/page.tsx");
 const migration = read(
-  "supabase/migrations/20260824173500_quick_call_overrides.sql"
+  "supabase/migrations/20260824163834_quick_call_overrides.sql"
 );
 
 assert.match(route, /requireRequestScope\(\)/);

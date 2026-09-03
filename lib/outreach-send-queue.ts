@@ -19,7 +19,10 @@ import {
   isSenderSlotConflict,
   outreachSafetyError,
 } from "@/lib/outreach-team-safety";
-import { resolveReplyAttention } from "@/lib/reply-attention";
+import {
+  reopenReplyAttention,
+  resolveReplyAttention,
+} from "@/lib/reply-attention";
 
 export const OUTREACH_SEND_SPACING_MINUTES = 5;
 const SEND_SPACING_MS = OUTREACH_SEND_SPACING_MINUTES * 60 * 1000;
@@ -92,24 +95,14 @@ export async function queueApprovedOutreachMessage(messageId: string) {
     throw new Error("Approve this exact draft before queueing it");
   if (message.from_email !== sender.senderEmail)
     throw new Error("Sender safety check failed");
-  const isReply = message.strategy?.messageType === "reply";
+  const isReply =
+    message.strategy?.messageType === "reply" || Number(message.step_number) === 10;
   if (message.scheduled_at) {
-    let attentionResolved = true;
-    if (isReply) {
-      try {
-        await resolveReplyAttention({
-          workspaceId: sender.workspaceId,
-          userId: sender.userId,
-          prospectId: message.prospect_id,
-        });
-      } catch {
-        attentionResolved = false;
-      }
-    }
     return {
       queued: true,
       scheduledAt: message.scheduled_at,
-      attentionResolved,
+      attentionResolved: false,
+      attentionPendingDelivery: isReply,
     };
   }
 
@@ -146,22 +139,11 @@ export async function queueApprovedOutreachMessage(messageId: string) {
       .single();
     if (!current?.scheduled_at)
       throw new Error("The database did not confirm the send queue");
-    let attentionResolved = true;
-    if (isReply) {
-      try {
-        await resolveReplyAttention({
-          workspaceId: sender.workspaceId,
-          userId: sender.userId,
-          prospectId: message.prospect_id,
-        });
-      } catch {
-        attentionResolved = false;
-      }
-    }
     return {
       queued: true,
       scheduledAt: current.scheduled_at,
-      attentionResolved,
+      attentionResolved: false,
+      attentionPendingDelivery: isReply,
     };
   }
   const scheduledAt = queued.scheduled_at;
@@ -181,19 +163,12 @@ export async function queueApprovedOutreachMessage(messageId: string) {
         message.message_source === "brain_direct" ? "brain_direct" : "sequence",
     },
   });
-  let attentionResolved = true;
-  if (isReply) {
-    try {
-      await resolveReplyAttention({
-        workspaceId: sender.workspaceId,
-        userId: sender.userId,
-        prospectId: message.prospect_id,
-      });
-    } catch {
-      attentionResolved = false;
-    }
-  }
-  return { queued: true, scheduledAt, attentionResolved };
+  return {
+    queued: true,
+    scheduledAt,
+    attentionResolved: false,
+    attentionPendingDelivery: isReply,
+  };
 }
 
 export async function dispatchDueOutreachMessage(messageId: string) {
@@ -218,12 +193,14 @@ export async function dispatchDueOutreachMessage(messageId: string) {
   if (claimError) throw claimError;
   if (!message) return { sent: false, skipped: true };
   const sender = await resolveOutreachIdentity(message.sender_user_id);
+  const isReply =
+    message.strategy?.messageType === "reply" || Number(message.step_number) === 10;
 
   const stopClaim = async (
     reason: string,
     status: "failed" | "cancelled" = "cancelled"
   ): Promise<never> => {
-    await Promise.all([
+    const stopResults = await Promise.all([
       supabaseAdmin
         .from("outreach_messages")
         .update({
@@ -250,6 +227,26 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         },
       }),
     ]);
+    const stopError = stopResults.find((result) => result.error)?.error;
+    if (isReply) {
+      try {
+        await reopenReplyAttention({
+          workspaceId: sender.workspaceId,
+          userId: sender.userId,
+          prospectId: message.prospect_id,
+          messageId: message.id,
+          receivedAt:
+            typeof message.strategy?.replyReceivedAt === "string"
+              ? message.strategy.replyReceivedAt
+              : null,
+          failureReason: reason,
+        });
+      } catch {
+        // Preserve the original delivery error. The canonical reply itself is
+        // still untouched and remains recoverable in the Replies workspace.
+      }
+    }
+    if (stopError) throw stopError;
     throw new Error(reason);
   };
 
@@ -297,7 +294,6 @@ export async function dispatchDueOutreachMessage(messageId: string) {
     await stopClaim("Direct Brain email has an invalid campaign link", "failed");
   if (!isBrainDirect && (!enrolment || !campaign || campaign.status !== "active"))
     await stopClaim("Campaign or prospect is unavailable", "failed");
-  const isReply = message.strategy?.messageType === "reply";
   const ownerOverride =
     isBrainDirect && message.strategy?.ownerOverride === true;
   if (
@@ -460,7 +456,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
       : {}),
   });
   if (!sent.ok) {
-    await Promise.all([
+    const failedResults = await Promise.all([
       supabaseAdmin
         .from("outreach_messages")
         .update({
@@ -485,6 +481,27 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         },
       }),
     ]);
+    try {
+      if (isReply) {
+        await reopenReplyAttention({
+          workspaceId: sender.workspaceId,
+          userId: sender.userId,
+          prospectId: message.prospect_id,
+          messageId: message.id,
+          receivedAt:
+            typeof message.strategy?.replyReceivedAt === "string"
+              ? message.strategy.replyReceivedAt
+              : null,
+          failureReason: sent.error,
+        });
+      }
+    } catch {
+      // The provider failure remains the primary error. The raw reply and its
+      // immutable event history are still retained even if receipt recovery
+      // also needs operator attention.
+    }
+    const failedWriteError = failedResults.find((result) => result.error)?.error;
+    if (failedWriteError) throw failedWriteError;
     throw new Error(sent.error || "The connected mailbox refused the send");
   }
 
@@ -500,7 +517,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         sentAt.getTime() + stepDelay(sequence, nextStep) * 86400000
       ).toISOString()
     : null;
-  await Promise.all([
+  const deliveryResults = await Promise.all([
     supabaseAdmin
       .from("outreach_messages")
       .update({
@@ -513,6 +530,8 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         error: null,
         updated_at: sentAt.toISOString(),
       })
+      .eq("workspace_id", sender.workspaceId)
+      .eq("sender_user_id", sender.userId)
       .eq("id", message.id),
     ...(!isBrainDirect
       ? [
@@ -540,6 +559,7 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         last_contacted_at: sentAt.toISOString(),
         updated_at: sentAt.toISOString(),
       })
+      .eq("workspace_id", sender.workspaceId)
       .eq("id", prospect.id),
     supabaseAdmin.from("outreach_events").insert({
       workspace_id: sender.workspaceId,
@@ -573,9 +593,36 @@ export async function dispatchDueOutreachMessage(messageId: string) {
         ]
       : []),
   ]);
+  const deliveryWriteError = deliveryResults.find((result) => result.error)?.error;
+  if (deliveryWriteError) throw deliveryWriteError;
+
+  let attentionResolved = !isReply;
+  if (isReply) {
+    const replyReceivedAt =
+      typeof message.strategy?.replyReceivedAt === "string"
+        ? message.strategy.replyReceivedAt
+        : null;
+    if (replyReceivedAt) {
+      try {
+        await resolveReplyAttention({
+          workspaceId: sender.workspaceId,
+          userId: sender.userId,
+          prospectId: message.prospect_id,
+          receivedAt: replyReceivedAt,
+          messageId: message.id,
+        });
+        attentionResolved = true;
+      } catch {
+        // Delivery is already provider-confirmed and must never be retried. The
+        // open receipt is the safe failure mode if its UI acknowledgement fails.
+        attentionResolved = false;
+      }
+    }
+  }
   return {
     sent: true,
     sentAt: sentAt.toISOString(),
     remainingToday: Math.max(0, dailyLimit - (count || 0) - 1),
+    attentionResolved,
   };
 }

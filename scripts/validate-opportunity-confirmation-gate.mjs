@@ -86,7 +86,7 @@ const resolver = read("app/api/crm/opportunity-clarifications/[id]/route.ts");
 const brainContext = read("lib/crm-context.ts");
 const brainRoute = read("app/api/crm/assistant/route.ts");
 const migration = read(
-  "supabase/migrations/20260828172339_canonical_open_revenue_opportunity_per_workstream.sql"
+  "supabase/migrations/20260828173307_canonical_open_revenue_opportunity_per_workstream.sql"
 );
 
 assert.match(canonical, /opportunityProposalNeedsConfirmation/);

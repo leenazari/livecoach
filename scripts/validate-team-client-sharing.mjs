@@ -9,22 +9,22 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260821232429_team_client_sharing.sql"
+  "supabase/migrations/20260821233848_team_client_sharing.sql"
 );
 const ownerOnlyMigration = read(
-  "supabase/migrations/20260821234128_restrict_team_client_sharing_to_owner.sql"
+  "supabase/migrations/20260821234202_restrict_team_client_sharing_to_owner.sql"
 );
 const assignmentMigration = read(
-  "supabase/migrations/20260822084442_team_client_sales_ownership.sql"
+  "supabase/migrations/20260822090035_team_client_sales_ownership.sql"
 );
 const serviceBoundaryMigration = read(
-  "supabase/migrations/20260822100306_team_client_assignment_service_boundary.sql"
+  "supabase/migrations/20260822090407_team_client_assignment_service_boundary.sql"
 );
 const confidentialityMigration = read(
-  "supabase/migrations/20260823224104_add_company_confidentiality_lock.sql"
+  "supabase/migrations/20260823224825_add_company_confidentiality_lock.sql"
 );
 const sharedReadAccessMigration = read(
-  "supabase/migrations/20260901104524_fix_shared_client_read_access.sql"
+  "supabase/migrations/20260901104641_fix_shared_client_read_access.sql"
 );
 const sharingHelper = read("lib/team-client-sharing.ts");
 const sharingPolicy = read("lib/client-sharing-policy.ts");

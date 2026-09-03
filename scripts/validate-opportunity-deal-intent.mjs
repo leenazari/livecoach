@@ -14,7 +14,7 @@ const workspace = read("components/crm/PipelineWorkspace.tsx");
 const commercialMemory = read("lib/commercial-memory.ts");
 const crmContext = read("lib/crm-context.ts");
 const migration = read(
-  "supabase/migrations/20260828183151_opportunity_deal_intent_intelligence.sql"
+  "supabase/migrations/20260828183949_opportunity_deal_intent_intelligence.sql"
 );
 
 // One existing material-signal assessment derives both the evidence-led

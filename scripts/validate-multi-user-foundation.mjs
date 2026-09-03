@@ -7,79 +7,79 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const migration = readFileSync(
   path.join(
     root,
-    "supabase/migrations/20260821095420_multi_user_security_foundation.sql"
+    "supabase/migrations/20260821100624_multi_user_security_foundation.sql"
   ),
   "utf8"
 );
 const apiIsolationMigration = readFileSync(
   path.join(
     root,
-    "supabase/migrations/20260821130021_multi_user_api_isolation.sql"
+    "supabase/migrations/20260821131406_multi_user_api_isolation.sql"
   ),
   "utf8"
 );
 const keyCleanupMigration = readFileSync(
   path.join(
     root,
-    "supabase/migrations/20260821130536_remove_global_single_user_keys.sql"
+    "supabase/migrations/20260821133426_remove_global_single_user_keys.sql"
   ),
   "utf8"
 );
 const rpcHardeningMigration = readFileSync(
   path.join(
     root,
-    "supabase/migrations/20260821130400_harden_multi_user_rpcs.sql"
+    "supabase/migrations/20260821131932_harden_multi_user_rpcs.sql"
   ),
   "utf8"
 );
 const costRollupGrantMigration = readFileSync(
   path.join(
     root,
-    "supabase/migrations/20260821130430_grant_scoped_cost_rollup.sql"
+    "supabase/migrations/20260821132030_grant_scoped_cost_rollup.sql"
   ),
   "utf8"
 );
 const legacyStorageMigration = readFileSync(
   path.join(
     root,
-    "supabase/migrations/20260821130450_bind_legacy_storage_owner.sql"
+    "supabase/migrations/20260821132316_bind_legacy_storage_owner.sql"
   ),
   "utf8"
 );
 const signalScopeMigration = readFileSync(
   path.join(
     root,
-    "supabase/migrations/20260821130470_scope_opportunity_signal_identity.sql"
+    "supabase/migrations/20260821132618_scope_opportunity_signal_identity.sql"
   ),
   "utf8"
 );
 const onboardingMigration = readFileSync(
   path.join(
     root,
-    "supabase/migrations/20260821142000_team_member_onboarding.sql"
+    "supabase/migrations/20260821135017_team_member_onboarding.sql"
   ),
   "utf8"
 );
 const invitationConflictFixMigration = readFileSync(
   path.join(
     root,
-    "supabase/migrations/20260821214202_fix_team_invitation_workspace_id_ambiguity.sql"
+    "supabase/migrations/20260824170744_auto_activate_verified_team_invites.sql"
   ),
   "utf8"
 );
 const automaticInvitationActivationMigration = readFileSync(
   path.join(
     root,
-    "supabase/migrations/20260824170537_auto_activate_verified_team_invites.sql"
+    "supabase/migrations/20260824170744_auto_activate_verified_team_invites.sql"
   ),
   "utf8"
 );
 const assignmentMigration = readFileSync(
-  path.join(root, "supabase/migrations/20260821160000_team_work_assignment.sql"),
+  path.join(root, "supabase/migrations/20260821165615_team_work_assignment.sql"),
   "utf8"
 );
 const senderProtectionMigration = readFileSync(
-  path.join(root, "supabase/migrations/20260821170000_protect_outreach_sender_identity.sql"),
+  path.join(root, "supabase/migrations/20260821170222_protect_outreach_sender_identity.sql"),
   "utf8"
 );
 const microsoftMigration = readFileSync(

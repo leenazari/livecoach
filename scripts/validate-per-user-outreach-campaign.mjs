@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260826110917_per_user_outreach_campaign_selection.sql"
+  "supabase/migrations/20260826112000_per_user_outreach_campaign_selection.sql"
 );
 const selection = read("lib/outreach-campaign-selection.ts");
 const campaigns = read("app/api/crm/outreach/campaigns/route.ts");

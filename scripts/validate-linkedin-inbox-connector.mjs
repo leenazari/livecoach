@@ -197,11 +197,11 @@ const [
 ] = await Promise.all([
   read("tools/linkedin-inbox-connector/content.js"),
   read("tools/linkedin-inbox-connector/background.js"),
-  read("supabase/migrations/20260828180413_linkedin_inbox_connector.sql"),
+  read("supabase/migrations/20260828182504_linkedin_inbox_connector.sql"),
   read("app/api/connectors/linkedin-inbox/import/route.ts"),
   read("lib/linkedin-inbox.ts"),
   read("app/api/crm/linkedin-inbox/route.ts"),
-  read("supabase/migrations/20260828202426_linkedin_inbox_two_week_limit.sql"),
+  read("supabase/migrations/20260828202544_linkedin_inbox_two_week_limit.sql"),
   read("app/privacy/page.tsx"),
 ]);
 assert(!content.includes("fetch("), "LinkedIn page capture must not transmit data itself");

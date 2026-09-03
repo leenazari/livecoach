@@ -337,6 +337,38 @@ function replyNextMove(reply: Record<string, any>) {
   return "Read the exact reply and choose whether to respond, follow up later or close it.";
 }
 
+function replyDeliveryBadge(reply: Record<string, any>) {
+  if (reply.deliveryState === "failed")
+    return {
+      label: "Delivery failed",
+      style: "border-rust/55 bg-rust/10 text-rust",
+    };
+  if (reply.slaBreached)
+    return {
+      label: "Unanswered over 2 hours",
+      style: "border-rust/55 bg-rust/10 text-rust",
+    };
+  if (reply.deliveryState === "queued")
+    return {
+      label: "Queued, awaiting delivery",
+      style: "border-sky/55 bg-sky/10 text-sky",
+    };
+  if (reply.deliveryState === "sending")
+    return {
+      label: "Sending now",
+      style: "border-sky/55 bg-sky/10 text-sky",
+    };
+  if (reply.attentionOpen)
+    return {
+      label: "Action needed",
+      style: "border-amber/50 bg-amber/10 text-amber",
+    };
+  return {
+    label: reply.deliveryState === "sent" ? "Reply delivered" : "Reviewed",
+    style: "border-moss/40 bg-moss/10 text-moss",
+  };
+}
+
 function linkedinTarget(prospect: Prospect) {
   const saved = String(prospect.person_linkedin_url || "").trim();
   if (/^https:\/\/(www\.)?linkedin\.com\//i.test(saved)) return saved;
@@ -940,6 +972,10 @@ export default function OutreachPage() {
         .sort((left, right) => {
           if (left.id === focusedReplyId) return -1;
           if (right.id === focusedReplyId) return 1;
+          if (left.slaBreached !== right.slaBreached)
+            return left.slaBreached ? -1 : 1;
+          if ((left.deliveryState === "failed") !== (right.deliveryState === "failed"))
+            return left.deliveryState === "failed" ? -1 : 1;
           if (left.attentionOpen !== right.attentionOpen)
             return left.attentionOpen ? -1 : 1;
           return (
@@ -2046,7 +2082,7 @@ export default function OutreachPage() {
       </header>
 
       <section className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {[{ label: "Today's queue", value: queue.length, tab: "queue" as Tab }, { label: "Sent today", value: metrics.sentToday || 0, tab: "activity" as Tab }, { label: "Awaiting approval", value: queue.filter((r) => r.message?.status === "draft").length, tab: "queue" as Tab }, { label: "Positive replies", value: metrics.positiveReplies || 0, tab: "replies" as Tab }].map((item) => <button type="button" onClick={() => selectTab(item.tab)} key={item.label} className="rounded-xl border border-edge bg-panel p-3 text-left transition hover:border-amber/55"><strong className="block font-display text-2xl text-bone">{item.value}</strong><span className="font-mono text-[0.55rem] uppercase tracking-wider text-muted">{item.label} ↘</span></button>)}
+        {[{ label: "Today's queue", value: queue.length, tab: "queue" as Tab }, { label: "Sent today", value: metrics.sentToday || 0, tab: "activity" as Tab }, { label: "Awaiting approval", value: queue.filter((r) => r.message?.status === "draft").length, tab: "queue" as Tab }, { label: "Unanswered replies", value: metrics.unansweredReplies || 0, tab: "replies" as Tab }].map((item) => <button type="button" onClick={() => selectTab(item.tab)} key={item.label} className={`rounded-xl border bg-panel p-3 text-left transition hover:border-amber/55 ${item.label === "Unanswered replies" && metrics.overdueReplies ? "border-rust/55" : "border-edge"}`}><strong className={`block font-display text-2xl ${item.label === "Unanswered replies" && metrics.overdueReplies ? "text-rust" : "text-bone"}`}>{item.value}</strong><span className="font-mono text-[0.55rem] uppercase tracking-wider text-muted">{item.label} ↘</span></button>)}
       </section>
 
       <nav aria-label="Outreach sections" className="sticky top-0 z-40 mb-4 -mx-3 flex overflow-x-auto border-y border-edge bg-ink/95 px-3 shadow-[0_10px_25px_rgba(0,0,0,0.32)] backdrop-blur sm:mx-0 sm:rounded-xl sm:border">
@@ -2636,11 +2672,12 @@ export default function OutreachPage() {
       </section> : null}
 
       {!loading && !tabLoading && tab === "replies" ? <section data-sales-tour="reply-handover">
-        <div className="mb-4 flex flex-col gap-2 rounded-xl border border-edge bg-panel p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Email and SendPilot replies meet here. Every reply stops the sequence. Deal value still waits until a real conversation.</p></div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking email…" : "Check email replies"}</button></div>
+        <div className={`mb-4 flex flex-col gap-2 rounded-xl border bg-panel p-4 sm:flex-row sm:items-center sm:justify-between ${metrics.overdueReplies ? "border-rust/55" : "border-edge"}`}><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Email and SendPilot replies meet here. Every reply stops the sequence. A queued reply stays open until the provider confirms delivery.</p>{metrics.overdueReplies ? <p className="mt-2 font-mono text-[0.55rem] uppercase text-rust">{metrics.overdueReplies} interested {metrics.overdueReplies === 1 ? "reply has" : "replies have"} waited over 2 hours</p> : null}</div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking email…" : "Check email replies"}</button></div>
         {focusedReplyId ? <div className="mb-3 flex flex-col gap-2 rounded-xl border border-moss/50 bg-moss/[0.08] p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.52rem] uppercase tracking-wider text-moss">Reply to close</p><p className="mt-1 text-sm text-bone/80">The exact reply that brought you here is first. Read it, decide the next move and clear its alert without losing the history.</p></div><button type="button" onClick={() => { setFocusedReplyId(""); const url = new URL(window.location.href); url.searchParams.delete("reply"); window.history.replaceState({}, "", `${url.pathname}${url.search}`); }} className={button}>Show all replies</button></div> : null}
-        <div className="space-y-2">{displayedReplies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; const handover = handoverReviews[reply.id]; const isFocusedReply = focusedReplyId === reply.id; const canScheduleFollowUp = ["later", "objection", "referral", "unclassified"].includes(reply.reply_category || "unclassified"); return <article id={`reply-${reply.id}`} key={reply.id} className={`rounded-xl border bg-panel p-4 ${isFocusedReply ? "border-moss/65 shadow-[inset_3px_0_0_rgba(112,177,125,0.8)]" : "border-edge"}`}>
-          <div className="flex flex-wrap items-start justify-between gap-2"><CanonicalRecordLink href={outreachProspectHref(reply)} onNavigate={(event) => openProspectFromThisPage(reply, event)} className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${`${reply.first_name || ""} ${reply.last_name || ""}`.trim() || reply.email || "prospect"}`}><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></CanonicalRecordLink><div className="flex flex-wrap gap-2"><span className="rounded-full border border-sky/50 px-2 py-1 font-mono text-[0.55rem] uppercase text-sky">{reply.replyChannel === "linkedin" ? "LinkedIn" : "Email"}</span>{reply.campaign?.name ? <span className="rounded-full border border-edge px-2 py-1 font-mono text-[0.55rem] uppercase text-muted">{reply.campaign.name}</span> : null}<span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${replyCategoryTone(reply.reply_category)}`}>{replyCategoryLabel(reply.reply_category)}</span>{reply.attentionOpen ? <span className="rounded-full border border-rust/45 bg-rust/10 px-2 py-1 font-mono text-[0.55rem] uppercase text-rust">Action needed</span> : <span className="rounded-full border border-moss/40 bg-moss/10 px-2 py-1 font-mono text-[0.55rem] uppercase text-moss">Reviewed</span>}</div></div>
+        <div className="space-y-2">{displayedReplies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; const handover = handoverReviews[reply.id]; const isFocusedReply = focusedReplyId === reply.id; const canScheduleFollowUp = ["later", "objection", "referral", "unclassified"].includes(reply.reply_category || "unclassified"); const deliveryBadge = replyDeliveryBadge(reply); return <article id={`reply-${reply.id}`} key={reply.id} className={`rounded-xl border bg-panel p-4 ${isFocusedReply ? "border-moss/65 shadow-[inset_3px_0_0_rgba(112,177,125,0.8)]" : reply.slaBreached || reply.deliveryState === "failed" ? "border-rust/50" : "border-edge"}`}>
+          <div className="flex flex-wrap items-start justify-between gap-2"><CanonicalRecordLink href={outreachProspectHref(reply)} onNavigate={(event) => openProspectFromThisPage(reply, event)} className="block min-h-11 min-w-0 py-1" ariaLabel={`Open ${`${reply.first_name || ""} ${reply.last_name || ""}`.trim() || reply.email || "prospect"}`}><h3 className="font-display text-lg text-bone">{reply.first_name} {reply.last_name}</h3><p className="text-sm text-bone/80">{reply.company_name}</p></CanonicalRecordLink><div className="flex flex-wrap gap-2"><span className="rounded-full border border-sky/50 px-2 py-1 font-mono text-[0.55rem] uppercase text-sky">{reply.replyChannel === "linkedin" ? "LinkedIn" : "Email"}</span>{reply.campaign?.name ? <span className="rounded-full border border-edge px-2 py-1 font-mono text-[0.55rem] uppercase text-muted">{reply.campaign.name}</span> : null}<span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${replyCategoryTone(reply.reply_category)}`}>{replyCategoryLabel(reply.reply_category)}</span><span className={`rounded-full border px-2 py-1 font-mono text-[0.55rem] uppercase ${deliveryBadge.style}`}>{deliveryBadge.label}</span></div></div>
           <p className="mt-3 text-sm leading-6 text-bone/80">{reply.reply_summary}</p>
+          {reply.deliveryState === "failed" ? <div className="mt-3 rounded-lg border border-rust/55 bg-rust/10 px-3 py-2 text-sm text-rust" role="alert">The connected mailbox did not accept this reply. {reply.deliveryError || "Review the saved draft and try again."}</div> : null}
           {reply.last_reply_text ? <div className="mt-3 rounded-lg border border-moss/35 bg-moss/[0.04] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-mono text-[0.5rem] uppercase tracking-wider text-moss">Their exact reply</p><span className="font-mono text-[0.48rem] uppercase text-muted">{formatActivityDate(reply.last_reply_at)}</span></div><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-bone/90">{reply.last_reply_text}</p></div> : <div className="mt-3 rounded-lg border border-amber/35 bg-amber/[0.04] p-3 text-sm text-amber">The reply was detected, but its exact text is unavailable. Check the connected mailbox before responding.</div>}
           <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)]">
             <div className="rounded-lg border border-amber/35 bg-amber/[0.04] p-3"><p className="font-mono text-[0.5rem] uppercase tracking-wider text-amber">Recommended next move</p><p className="mt-2 text-sm leading-6 text-bone/85">{replyNextMove(reply)}</p></div>

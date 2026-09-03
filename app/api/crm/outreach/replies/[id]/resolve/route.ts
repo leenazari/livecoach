@@ -38,6 +38,7 @@ export async function POST(
       workspaceId: account.workspaceId,
       userId: account.userId,
       prospectId: prospect.id,
+      receivedAt: prospect.last_reply_at,
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (error: any) {

@@ -288,6 +288,7 @@ async function runAccount() {
                     action: plan.action,
                     urgency: plan.urgency,
                     confidence: plan.confidence,
+                    replyCategory: outreach.category,
                     replyRecommended: true,
                     draftMode: plan.draftMode,
                     calendarRelated: false,
