@@ -5,7 +5,12 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { capitaliseSentenceStarts } from "@/lib/text";
-import { crmConfirmationError, crmFetch, type Company } from "@/lib/crm";
+import {
+  crmConfirmationError,
+  crmFetch,
+  type Company,
+  type Contact,
+} from "@/lib/crm";
 import { emailAssistantVoiceReadyForDisplayedScript } from "@/lib/email-assistant-voice-policy";
 import NavMenu from "@/components/crm/NavMenu";
 import MatrixRain from "@/components/MatrixRain";
@@ -14,6 +19,7 @@ import type {
   ClientPortfolioRow,
   ClientPortfolioTotals,
   ClientTeamMember,
+  NewClientInput,
 } from "@/components/crm/ClientPortfolio";
 
 const tabLoading = () => (
@@ -94,7 +100,6 @@ function BoardInner() {
   const [canManageAssignments, setCanManageAssignments] = useState(false);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState("");
-  const [newName, setNewName] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
   const [openOpportunity, setOpenOpportunity] = useState("");
@@ -476,17 +481,30 @@ function BoardInner() {
       setSaveError("That opportunity change did not save. Please try again.");
     }
   };
-  const createCompany = async () => {
-    if (!newName.trim()) return;
+  const createCompany = async (input: NewClientInput): Promise<boolean> => {
     setSaveError("");
     setSaveNotice("");
     try {
+      const companyName = input.companyName.trim();
+      const email = input.email.trim().toLowerCase();
+      const contactName = [input.firstName.trim(), input.lastName.trim()]
+        .filter(Boolean)
+        .join(" ");
+      if (!companyName || !contactName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        setSaveError(
+          "Company name, contact first name, and a valid exact work email are required. Nothing was saved."
+        );
+        return false;
+      }
+      const requestedStage = input.recordType === "prospect"
+        ? "New"
+        : input.relationshipStage;
       const { company, existing } = await crmFetch<{
         company: Company;
         existing?: boolean;
       }>("/api/crm/companies", {
           method: "POST",
-          body: JSON.stringify({ name: newName.trim() }),
+          body: JSON.stringify({ name: companyName, stage: requestedStage }),
         });
       if (!company?.id)
         throw crmConfirmationError({
@@ -494,15 +512,98 @@ function BoardInner() {
           method: "POST",
           reason: "LiveCoach did not return the newly created client",
         });
-      setNewName("");
+      if (
+        input.recordType === "prospect" &&
+        String(company.stage || "").trim().toLowerCase() !== "new"
+      ) {
+        await load("clients");
+        setSaveError(
+          `${company.name} already exists as ${company.stage || "an established relationship"}. No duplicate contact or cold-outreach prospect was created. Open the existing client and confirm its relationship stage before treating it as a new lead.`
+        );
+        return false;
+      }
+
+      let outreachCreated = false;
+      let outreachDuplicatePrevented = false;
+      if (input.recordType === "prospect") {
+        const outreachResult = await crmFetch<{
+          prospect: {
+            id: string;
+            email: string;
+            crm_company_id: string | null;
+          };
+          created: boolean;
+          duplicatePrevented: boolean;
+        }>("/api/crm/outreach", {
+          method: "POST",
+          body: JSON.stringify({
+            firstName: input.firstName,
+            lastName: input.lastName,
+            email,
+            companyName: company.name,
+            jobTitle: input.jobTitle,
+            crmCompanyId: company.id,
+          }),
+        });
+        if (
+          !outreachResult.prospect?.id ||
+          outreachResult.prospect.crm_company_id !== company.id ||
+          String(outreachResult.prospect.email || "").trim().toLowerCase() !== email
+        ) {
+          throw crmConfirmationError({
+            url: "/api/crm/outreach",
+            method: "POST",
+            reason: "LiveCoach did not confirm the person against the same client in Outreach",
+          });
+        }
+        outreachCreated = outreachResult.created;
+        outreachDuplicatePrevented = outreachResult.duplicatePrevented;
+      }
+
+      // For a sales prospect, reserve and deduplicate the outreach identity
+      // before writing the CRM contact. This prevents another salesperson's
+      // existing private contact from being copied into a second contact row.
+      const contactResult = await crmFetch<{
+        contact: Contact;
+        created: boolean;
+        alreadyExists: boolean;
+      }>("/api/crm/contacts", {
+        method: "POST",
+        body: JSON.stringify({
+          company_id: company.id,
+          name: contactName,
+          email,
+          role: input.jobTitle.trim(),
+        }),
+      });
+      if (
+        !contactResult.contact?.id ||
+        contactResult.contact.company_id !== company.id ||
+        String(contactResult.contact.email || "").trim().toLowerCase() !== email
+      ) {
+        throw crmConfirmationError({
+          url: "/api/crm/contacts",
+          method: "POST",
+          reason: "LiveCoach did not confirm the primary contact on the selected client",
+        });
+      }
+
       await load("clients");
-      setSaveNotice(
-        existing
-          ? `${company.name} already existed under Clients. No duplicate was created. To add a person to Outreach, use Add prospect and enter their exact work email.`
-          : `${company.name} was saved under Clients. To add a person to Outreach, use Add prospect and enter their exact work email.`
-      );
+      if (input.recordType === "prospect") {
+        setSaveNotice(
+          `${company.name} and ${contactName} are now linked in Clients and Outreach. ${existing || contactResult.alreadyExists || outreachDuplicatePrevented ? "Existing matching records were reused, so no duplicate was created. " : ""}${outreachCreated ? "The prospect is assigned to you. " : "The existing prospect remains assigned as already recorded. "}Nothing was researched, enrolled, or sent.`
+        );
+      } else {
+        setSaveNotice(
+          `${company.name} and ${contactName} were saved as ${company.stage || requestedStage} under Clients. ${existing || contactResult.alreadyExists ? "Existing matching records were reused, so no duplicate was created. " : ""}They were not added to cold Outreach.`
+        );
+      }
+      return true;
     } catch (error: any) {
-      setSaveError(error?.message || "That client could not be created. Please try again.");
+      const message = error?.message || "That client could not be created. Please try again.";
+      await load("clients");
+      setSaveError(message);
+      return false;
     }
   };
   const deleteCompany = async (id: string, name: string) => {
@@ -1078,8 +1179,6 @@ function BoardInner() {
             team={clientTeam}
             currentUser={currentUser}
             canManageAssignments={canManageAssignments}
-            newName={newName}
-            setNewName={setNewName}
             onCreate={createCompany}
             onDelete={deleteCompany}
             onStageChange={setCompanyStage}
