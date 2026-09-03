@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
+import { shouldShowUnrecordedScheduledCall } from "@/lib/call-list-recovery";
 
 export const runtime = "nodejs";
 // Without this, a no-arg GET() is statically optimised and Next caches the
@@ -157,8 +158,23 @@ export async function GET() {
     // 3. PAST SCHEDULED CALLS that were never run through the app at all (no
     // scorecard AND no captured session), so a missed call still shows up.
     const coveredUpcoming = new Set<string>();
-    for (const s of sessions || [])
-      if ((s as any).upcoming_id) coveredUpcoming.add((s as any).upcoming_id);
+    const startedWithoutCapture = new Set<string>();
+    for (const s of sessions || []) {
+      const upcomingId = String((s as any).upcoming_id || "");
+      if (!upcomingId) continue;
+      const transcript =
+        typeof (s as any).transcript === "string"
+          ? (s as any).transcript.trim()
+          : "";
+      if (
+        transcript.length >= 500 ||
+        summarySessionIds.has((s as any).session_id)
+      ) {
+        coveredUpcoming.add(upcomingId);
+      } else {
+        startedWithoutCapture.add(upcomingId);
+      }
+    }
     const scoredTimes = (calls || [])
       .filter((c: any) => c.company_id && c.created_at)
       .map((c: any) => ({
@@ -176,7 +192,13 @@ export async function GET() {
       .filter((u: any) => {
         if (coveredUpcoming.has(u.id)) return false;
         const schedMs = u.scheduled_at ? new Date(u.scheduled_at).getTime() : 0;
-        const past = !!u.completed_at || (schedMs > 0 && schedMs < grace);
+        const past = shouldShowUnrecordedScheduledCall({
+          scheduledAt: u.scheduled_at,
+          completedAt: u.completed_at,
+          nowMs: now,
+          graceMs: 3 * 60 * 60 * 1000,
+          startedWithoutCapture: startedWithoutCapture.has(u.id),
+        });
         if (!past) return false;
         return !hasNearbyScore(u.company_id, schedMs || Date.parse(u.completed_at));
       })

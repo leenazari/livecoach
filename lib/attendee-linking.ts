@@ -5,6 +5,15 @@ const domainOf = (email: string) => {
   return match ? match[1] : "";
 };
 
+const cleanDomain = (value: string) =>
+  String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]
+    .replace(/:\d+$/, "");
+
 export type Attendee = {
   email?: string;
   self?: boolean;
@@ -17,6 +26,14 @@ export type AttendeeConfig = {
   internalCompanyId: string | null;
   contactEmailToCompany: Map<string, string>;
   companyByDomain: Map<string, string>;
+  companyById?: Map<string, ExistingCalendarCompany>;
+};
+
+export type ExistingCalendarCompany = {
+  id: string;
+  name?: string | null;
+  domain?: string | null;
+  profile?: Record<string, any> | null;
 };
 
 export type AttendeeEventContext = {
@@ -30,6 +47,48 @@ const PERSONAL_DOMAINS = new Set([
   "live.co.uk", "msn.com", "btinternet.com", "sky.com", "mail.com", "zoho.com",
   "fastmail.com", "yandex.com", "qq.com", "163.com",
 ]);
+
+// Existing calendar links normally represent a deliberate human choice and
+// must not be replaced. The sole safe repair is a known internal/test
+// placeholder attached to a meeting whose guests all point at one different
+// external work domain. This fixes stale auto-links without touching a genuine
+// client link or guessing between different outside organisations.
+export function shouldRepairStaleCalendarCompanyLink(
+  existing: ExistingCalendarCompany | null | undefined,
+  attendees: Attendee[],
+  config: AttendeeConfig
+): boolean {
+  if (!existing?.id) return false;
+  const profile = existing.profile || {};
+  const exclusionReason = String(
+    (profile as any)?.pipeline_exclusion?.reason || ""
+  ).toLowerCase();
+  const domain = cleanDomain(String(existing.domain || ""));
+  const internalPlaceholder =
+    existing.id === config.internalCompanyId ||
+    (profile as any)?.internal === true ||
+    ((profile as any)?.pipeline_exclusion?.active === true &&
+      exclusionReason.includes("internal"));
+  const testPlaceholder =
+    /^test(?:\s+client)?\b/i.test(String(existing.name || "").trim()) ||
+    domain.endsWith(".example") ||
+    (profile as any)?.test === true ||
+    (profile as any)?.is_test === true;
+  if (!internalPlaceholder && !testPlaceholder) return false;
+
+  const outsideDomains = new Set(
+    (attendees || [])
+      .filter((attendee) => attendee?.email && !attendee.self)
+      .map((attendee) => domainOf(String(attendee.email)))
+      .filter(
+        (attendeeDomain) =>
+          attendeeDomain &&
+          !config.internalDomains.has(attendeeDomain) &&
+          !PERSONAL_DOMAINS.has(attendeeDomain)
+      )
+  );
+  return outsideDomains.size === 1 && !outsideDomains.has(domain);
+}
 
 function humanizeDomain(domain: string): string {
   const sld = (domain || "").split(".")[0] || domain;

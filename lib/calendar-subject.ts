@@ -108,6 +108,22 @@ const cleanDomain = (value: unknown) =>
     .split("/")[0]
     .replace(/:\d+$/, "");
 
+export function calendarHasExternalGuest(
+  attendees: CalendarAttendee[] | null | undefined,
+  internalDomains: string[] | Set<string> = []
+): boolean {
+  const protectedDomains = new Set(DEFAULT_INTERNAL_DOMAINS);
+  for (const domain of internalDomains || []) {
+    const clean = cleanDomain(domain);
+    if (clean) protectedDomains.add(clean);
+  }
+  return (attendees || []).some((attendee) => {
+    if (!attendee?.email || attendee.self === true) return false;
+    const domain = calendarEmailDomain(String(attendee.email));
+    return Boolean(domain && !protectedDomains.has(domain));
+  });
+}
+
 export type CompanyIntentEmailContext = {
   companyDomain?: string | null;
   companyInternal?: boolean;
@@ -151,6 +167,35 @@ const attendeeName = (attendee: CalendarAttendee) => {
 
 const unique = <T,>(rows: T[]) => (rows.length === 1 ? rows[0] : null);
 
+// Calendar titles are often typed from memory while attendee names come from
+// the address book. Accept one small spelling variation in a person token, for
+// example "George" in the title and "Georgi" on the invite. Keep this narrow
+// so a fuzzy company or short-name match cannot silently select the wrong guest.
+const personTokenIsNearMatch = (left: string, right: string) => {
+  if (left === right || left.length < 4 || right.length < 4) return false;
+  if (Math.abs(left.length - right.length) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < left.length && j < right.length) {
+    if (left[i] === right[j]) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    edits += 1;
+    if (edits > 1) return false;
+    if (left.length > right.length) i += 1;
+    else if (right.length > left.length) j += 1;
+    else {
+      i += 1;
+      j += 1;
+    }
+  }
+  if (i < left.length || j < right.length) edits += 1;
+  return edits === 1;
+};
+
 const titleMatchScore = (
   attendee: CalendarAttendee,
   titleTokens: string[],
@@ -187,6 +232,13 @@ const titleMatchScore = (
       (compactName.startsWith(titleToken) || compactLocal.startsWith(titleToken))
     ) {
       score += 4;
+    }
+    if (
+      [...nameTokens, ...localTokens].some((personToken) =>
+        personTokenIsNearMatch(titleToken, personToken)
+      )
+    ) {
+      score += 5;
     }
   }
   return score;
