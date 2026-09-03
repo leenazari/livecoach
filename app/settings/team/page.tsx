@@ -572,7 +572,7 @@ export default function TeamAccessPage() {
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-mono text-[0.58rem] uppercase tracking-wider text-muted">Notetaker today</p>
                       <span className={`rounded-full border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-wider ${member.transcriberUsage.activeBot ? "border-sage/50 bg-sage/10 text-sage" : "border-edge text-muted"}`}>
-                        {member.transcriberUsage.activeBot ? "Live now" : "One bot max"}
+                        {member.transcriberUsage.activeBot ? "Live now" : "One personal bot"}
                       </span>
                     </div>
                     <p className="mt-2 text-sm font-semibold text-bone">
@@ -588,6 +588,9 @@ export default function TeamAccessPage() {
                     </div>
                     <p className="mt-2 text-xs text-muted">
                       {member.transcriberUsage.remainingMinutes} minutes remain. Resets at midnight UK time.
+                    </p>
+                    <p className="mt-2 text-xs leading-5 text-muted">
+                      Teammates can each use their own private notetaker in the same meeting. Their agendas, live coaching and summaries stay separate.
                     </p>
                     <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                       <label className="sr-only" htmlFor={`limit-${member.user_id}`}>Daily notetaker minutes</label>

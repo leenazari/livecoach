@@ -33,4 +33,4 @@ create index if not exists meet_bots_owner_created_idx
   on public.meet_bots (workspace_id, owner_id, created_at desc);
 
 comment on index public.meet_bots_one_active_per_owner_uidx is
-  'Prevents concurrent Recall bots for the same LiveCoach account.';
+  'Prevents concurrent Recall bots for the same LiveCoach account while allowing different teammates to run their own private bot in one shared meeting.';
