@@ -1,7 +1,6 @@
--- Keep dashboard cost work inside Postgres. The previous API transferred up to
--- 6,000 raw rows to the server on every visit and reduced them in JavaScript.
--- This returns one compact row per feature while preserving the same London
--- calendar week/month boundaries and all-time totals.
+-- The production function pre-dated its recorded permission migration. Keep
+-- the definition here so a clean branch can replay the recorded history
+-- without depending on untracked production state.
 create or replace function public.crm_dashboard_cost_rollup()
 returns table (
   feature text,
@@ -86,7 +85,9 @@ as $$
   order by week desc, rows.feature;
 $$;
 
-revoke all on function public.crm_dashboard_cost_rollup()
-  from public, anon, authenticated;
-grant execute on function public.crm_dashboard_cost_rollup()
-  to service_role;
+-- The cost rollup is security-invoker and therefore remains subject to the
+-- caller's RLS visibility. Allow signed-in workspace members to execute it so
+-- the request-scoped API no longer needs service-role authority.
+
+revoke all on function public.crm_dashboard_cost_rollup() from public, anon;
+grant execute on function public.crm_dashboard_cost_rollup() to authenticated;
