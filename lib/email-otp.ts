@@ -1,12 +1,14 @@
+import { safeLocalRedirect } from "./safe-local-redirect.ts";
+
 export const EMAIL_OTP_LENGTH = 6;
 
 export function normalizeEmailOtp(value: string): string {
   return value.replace(/\D/g, "").slice(0, EMAIL_OTP_LENGTH);
 }
 
-export function emailOtpRedirect(origin: string): string {
+export function emailOtpRedirect(origin: string, next = "/crm"): string {
   const url = new URL("/auth/callback", origin);
-  url.searchParams.set("next", "/crm");
+  url.searchParams.set("next", safeLocalRedirect(next, "/crm"));
   url.searchParams.set("method", "email");
   return url.toString();
 }

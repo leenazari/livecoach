@@ -59,6 +59,7 @@ export async function middleware(request: NextRequest) {
     path.startsWith("/call") ||
     path.startsWith("/crm") ||
     path.startsWith("/settings") ||
+    path.startsWith("/oauth/consent") ||
     path.startsWith("/candidate-bot") ||
     path.startsWith("/meet-test");
   // CRM and model-powered interview APIs contain private client data and can
@@ -117,8 +118,10 @@ export async function middleware(request: NextRequest) {
   // Candidate join pages and the bot harness stay public. The private operator
   // console always requires the signed-in Supabase session.
   if (!user && isPrivatePage) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
+    const url = new URL("/login", request.url);
+    if (path.startsWith("/oauth/consent")) {
+      url.searchParams.set("redirect", `${path}${request.nextUrl.search}`);
+    }
     const login = NextResponse.redirect(url);
     login.headers.set("Cache-Control", "private, no-store");
     return finish(login);
