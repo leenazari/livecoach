@@ -164,6 +164,10 @@ export async function POST(req: NextRequest) {
       .lt("created_at", staleBefore.toISOString());
     if (staleBotError) throw staleBotError;
 
+    // Deliberately enforce concurrency per signed-in coach, never per meeting
+    // URL or workspace. Lee and a salesperson can join the same customer call
+    // with one personal bot each because their intent, live coaching, transcript
+    // stream and summary belong to different private account scopes.
     const { data: activeBotRows, error: existingError } = await supabaseAdmin
       .from("meet_bots")
       .select("bot_id,bot_name,session_id")
