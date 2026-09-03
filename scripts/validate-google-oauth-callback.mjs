@@ -24,6 +24,12 @@ assert.match(callback, /oauthState\.workspaceId/);
 assert.match(callback, /oauthState\.userId/);
 assert.match(callback, /Google OAuth callback failed/);
 assert.doesNotMatch(callback, /getRequestScope/);
+assert.match(callback, /membership\.status === "active" && email/);
+assert.match(callback, /outreach_sender_name/);
+assert.match(callback, /outreach_sender_email: normalizedEmail/);
+assert.match(callback, /\.eq\("user_id", oauthState\.userId\)/);
+assert.match(callback, /\.is\("outreach_sender_email", null\)/);
+assert.match(callback, /verified Gmail send-as alias/);
 
 assert.match(connector, /export async function saveGoogleConnectionForOwner/);
 assert.match(connector, /GOOGLE_DRIVE_FILE_SCOPE/);
