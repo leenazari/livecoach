@@ -42,7 +42,7 @@ const PIPELINE_ITEM: Item = { href: "/crm/revenue", label: "Pipeline", icon: "�
 const TASKS_ITEM: Item = { href: "/crm/tasks", label: "Tasks", icon: "☑" };
 const CLIENTS_ITEM: Item = { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" };
 const CALLS_ITEM: Item = { href: "/crm/calls", label: "Calls", icon: "☎" };
-const PLAYBOOK_ITEM: Item = { href: "/crm/pitch-playbook", label: "Pitch playbook", icon: "◇" };
+const PLAYBOOK_ITEM: Item = { href: "/crm/pitch-playbook", label: "Sales knowledge", icon: "◇" };
 const COSTS_ITEM: Item = { href: "/crm/costs", label: "Costs", icon: "£" };
 const DOCUMENTS_ITEM: Item = { href: "/crm/documents", label: "Documents", icon: "▤" };
 const OWNER_CORE_ITEMS: Item[] = [

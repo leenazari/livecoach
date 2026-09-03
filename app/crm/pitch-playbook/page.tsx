@@ -10,6 +10,24 @@ type Chapter = {
   id: string;
   title: string;
   createdAt: string;
+  updatedAt?: string;
+  kind?: "principle" | "sales_call" | "field_note";
+  status?: "draft" | "approved" | "archived";
+  visibility?: "private" | "team";
+  canEdit?: boolean;
+  sourceKind?: "sales_call" | "field_note";
+  sourceLabel?: string | null;
+  sourceUrl?: string | null;
+  sourceSummary?: string;
+  principle?: string;
+  liveCoachSafeguard?: string;
+  calibrationLevels?: Array<{
+    level: string;
+    signals: string[];
+    sellerMove: string;
+  }>;
+  diagnosticQuestions?: string[];
+  knowledgeChecks?: Array<{ question: string; answer: string }>;
   mode?: "prospect_demo" | "commercial_partner";
   callId?: string;
   callDate?: string;
@@ -64,6 +82,17 @@ const chapterSearchText = (chapter: Chapter) =>
     chapter.candidate,
     chapter.scenario,
     chapter.audience,
+    chapter.sourceLabel,
+    chapter.sourceSummary,
+    chapter.principle,
+    chapter.liveCoachSafeguard,
+    ...(chapter.calibrationLevels || []).flatMap((item) => [
+      item.level,
+      ...safeList(item.signals),
+      item.sellerMove,
+    ]),
+    ...safeList(chapter.diagnosticQuestions),
+    ...(chapter.knowledgeChecks || []).flatMap((item) => [item.question, item.answer]),
     ...safeList(chapter.buyerLanguage),
     ...safeList(chapter.questionsThatWorked),
     ...safeList(chapter.pitchMoves),
@@ -125,7 +154,7 @@ async function downloadPlaybookPdf(chapters: Chapter[], fileName: string, docume
   doc.setFontSize(24);
   doc.text(doc.splitTextToSize(pdfText(documentTitle), width), left, 32);
   y = 68;
-  write(`${chapters.length} approved ${chapters.length === 1 ? "lesson" : "lessons"} from real conversations`, 11, "bold", 3);
+  write(`${chapters.length} curated ${chapters.length === 1 ? "lesson" : "lessons"} from approved field sources and real conversations`, 11, "bold", 3);
   write(`Downloaded ${new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}. Use these patterns as grounded guidance, then adapt them to the buyer in front of you.`, 10, "normal", 4);
 
   chapters.forEach((chapter, index) => {
@@ -137,15 +166,36 @@ async function downloadPlaybookPdf(chapters: Chapter[], fileName: string, docume
     y += 7;
     write(chapter.title, 17, "bold", 3);
     const meta = [
-      chapter.mode === "commercial_partner" ? "Commercial partner" : "Prospect or demo",
+      chapter.sourceKind === "field_note"
+        ? "Field lesson"
+        : chapter.mode === "commercial_partner"
+          ? "Commercial partner"
+          : "Prospect or demo",
       chapter.callDate ? new Date(chapter.callDate).toLocaleDateString("en-GB") : "",
       chapter.candidate || "",
+      chapter.sourceLabel || "",
     ].filter(Boolean);
     write(meta.join(" | "), 8.5, "normal", 4);
+    if (chapter.sourceSummary) section("Source insight", [chapter.sourceSummary]);
+    if (chapter.principle) section("Operating principle", [chapter.principle]);
+    if (chapter.liveCoachSafeguard) section("LiveCoach safeguard", [chapter.liveCoachSafeguard]);
     if (chapter.scenario) section("When to use this", [chapter.scenario]);
     if (chapter.audience) section("Useful with", [chapter.audience]);
+    if (chapter.calibrationLevels?.length) {
+      section(
+        "Calibration guide",
+        chapter.calibrationLevels.map(
+          (item) => `${item.level}. Notice: ${safeList(item.signals).join(", ")}. Adapt: ${item.sellerMove}`
+        )
+      );
+    }
     section("Buyer language", safeList(chapter.buyerLanguage));
-    section("Seller questions that worked", safeList(chapter.questionsThatWorked));
+    section(
+      chapter.sourceKind === "field_note" ? "Diagnostic questions" : "Seller questions that worked",
+      chapter.sourceKind === "field_note"
+        ? safeList(chapter.diagnosticQuestions)
+        : safeList(chapter.questionsThatWorked)
+    );
     section("Pitch moves", safeList(chapter.pitchMoves));
     section("Buying signals", safeList(chapter.buyingSignals));
     if (Array.isArray(chapter.objections) && chapter.objections.length) {
@@ -159,6 +209,12 @@ async function downloadPlaybookPdf(chapters: Chapter[], fileName: string, docume
       safeList(chapter.script).map((line, lineIndex) => `${lineIndex + 1}. ${line}`)
     );
     section("Avoid next time", safeList(chapter.avoid));
+    if (chapter.knowledgeChecks?.length) {
+      section(
+        "Knowledge check",
+        chapter.knowledgeChecks.map((item) => `${item.question} Answer: ${item.answer}`)
+      );
+    }
   });
 
   const pages = doc.getNumberOfPages();
@@ -169,7 +225,7 @@ async function downloadPlaybookPdf(chapters: Chapter[], fileName: string, docume
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(105, 105, 100);
-    doc.text("Interviewa pitching playbook", left, 293);
+    doc.text("Interviewa sales knowledge base", left, 293);
     doc.text(`${page} / ${pages}`, 192, 293, { align: "right" });
   }
   doc.save(fileName);
@@ -187,16 +243,29 @@ export default function PitchPlaybookPage() {
   const [buildNote, setBuildNote] = useState("");
   const [search, setSearch] = useState("");
   const [downloading, setDownloading] = useState("");
+  const [canManageTeamKnowledge, setCanManageTeamKnowledge] = useState(false);
+  const [showFieldNote, setShowFieldNote] = useState(false);
+  const [sourceTitle, setSourceTitle] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceContent, setSourceContent] = useState("");
+  const [fieldNoteBusy, setFieldNoteBusy] = useState(false);
+  const [knowledgeBusy, setKnowledgeBusy] = useState("");
 
   const load = () => {
     setLoading(true);
     setError("");
-    return crmFetch<{ chapters: Chapter[]; reviewQueue: ReviewCandidate[] }>("/api/crm/pitch-playbook")
+    return crmFetch<{
+      chapters: Chapter[];
+      reviewQueue: ReviewCandidate[];
+      canManageTeamKnowledge: boolean;
+    }>("/api/crm/pitch-playbook")
       .then((data) => {
         const nextChapters = Array.isArray(data.chapters) ? data.chapters : [];
         const nextQueue = Array.isArray(data.reviewQueue) ? data.reviewQueue : [];
         setChapters(nextChapters);
         setReviewQueue(nextQueue);
+        setCanManageTeamKnowledge(data.canManageTeamKnowledge === true);
         setModes(Object.fromEntries(nextQueue.map((call) => [call.id, call.suggestedMode])));
         setQueuePage(0);
       })
@@ -284,6 +353,76 @@ export default function PitchPlaybookPage() {
     setBuilding(false);
   };
 
+  const buildFieldNote = async () => {
+    if (fieldNoteBusy || sourceContent.trim().length < 120) return;
+    setFieldNoteBusy(true);
+    setError("");
+    setBuildNote("Building a private lesson for review…");
+    try {
+      const result = await crmFetch<{ id: string }>("/api/crm/pitch-playbook", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "field_note",
+          sourceTitle,
+          sourceLabel,
+          sourceUrl,
+          sourceContent,
+        }),
+      });
+      setSourceTitle("");
+      setSourceLabel("");
+      setSourceUrl("");
+      setSourceContent("");
+      setShowFieldNote(false);
+      await load();
+      setBuildNote(
+        "Private lesson built. Review it below, then publish it to the team when the interpretation is right."
+      );
+      window.setTimeout(() => {
+        document.getElementById(`lesson-${result.id}`)?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 120);
+    } catch (err: any) {
+      setError(err?.message || "Could not build that field lesson");
+      setBuildNote("");
+    } finally {
+      setFieldNoteBusy(false);
+    }
+  };
+
+  const changeKnowledgeAccess = async (
+    chapter: Chapter,
+    action: "publish_team" | "make_private" | "archive"
+  ) => {
+    if (knowledgeBusy) return;
+    setKnowledgeBusy(chapter.id);
+    setError("");
+    setBuildNote("");
+    try {
+      const { lesson } = await crmFetch<{
+        lesson: { id: string; status: Chapter["status"]; visibility: Chapter["visibility"] };
+      }>(`/api/crm/lessons/${chapter.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ action }),
+      });
+      if (!lesson?.id) throw new Error("LiveCoach did not confirm the knowledge change");
+      await load();
+      setBuildNote(
+        action === "publish_team"
+          ? "Lesson published to the sales team and available to relevant Brain call preparation."
+          : action === "make_private"
+            ? "Lesson is private and no longer available to the sales team."
+            : "Lesson archived."
+      );
+    } catch (err: any) {
+      setError(err?.message || "That knowledge change did not save");
+    } finally {
+      setKnowledgeBusy("");
+    }
+  };
+
   const formatDuration = (seconds: number | null) => {
     if (!seconds || seconds <= 0) return "Duration unavailable";
     return `${Math.max(1, Math.round(seconds / 60))} minutes`;
@@ -305,16 +444,25 @@ export default function PitchPlaybookPage() {
       <header className="mb-6 flex flex-col gap-3 border-b border-edge pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="font-mono text-[0.58rem] uppercase tracking-[0.2em] text-sage">Sales training</p>
-          <h1 className="mt-1 font-display text-3xl text-bone">Interviewa pitching playbook</h1>
+          <h1 className="mt-1 font-display text-3xl text-bone">Interviewa sales knowledge base</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-            A living training document built only from prospect, demo and explicitly approved commercial partner calls.
+            Approved field lessons and proven patterns from real calls, turned into practical guidance the sales team and Brain can retrieve when relevant.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 print:hidden">
+          {canManageTeamKnowledge ? (
+            <button
+              type="button"
+              onClick={() => setShowFieldNote((open) => !open)}
+              className="rounded-full border border-sky/55 bg-sky/10 px-4 py-2 font-mono text-[0.6rem] uppercase text-sky hover:bg-sky/20"
+            >
+              {showFieldNote ? "Close field lesson" : "+ Add field lesson"}
+            </button>
+          ) : null}
           <Link href="/crm/calls" className="rounded-full border border-edge px-4 py-2 font-mono text-[0.6rem] uppercase text-muted hover:border-amber/50 hover:text-amber">
             Choose a call
           </Link>
-          <button type="button" onClick={() => downloadPdf(chapters, "all", "Interviewa pitching playbook")} disabled={!chapters.length || !!downloading} className="rounded-full border border-amber/55 bg-amber/10 px-4 py-2 font-mono text-[0.6rem] uppercase text-amber hover:bg-amber/20 disabled:opacity-35">
+          <button type="button" onClick={() => downloadPdf(chapters.filter((chapter) => chapter.status === "approved"), "all", "Interviewa sales knowledge base")} disabled={!chapters.some((chapter) => chapter.status === "approved") || !!downloading} className="rounded-full border border-amber/55 bg-amber/10 px-4 py-2 font-mono text-[0.6rem] uppercase text-amber hover:bg-amber/20 disabled:opacity-35">
             {downloading === "all" ? "Building PDF…" : "Download PDF"}
           </button>
           <button type="button" onClick={() => window.print()} className="rounded-full border border-sage/50 bg-sage/10 px-4 py-2 font-mono text-[0.6rem] uppercase text-sage hover:bg-sage/20">
@@ -323,13 +471,77 @@ export default function PitchPlaybookPage() {
         </div>
       </header>
 
-      {loading ? <MatrixRain size="panel" messages={["loading the pitch playbook", "organising proven conversations"]} /> : null}
+      {showFieldNote && canManageTeamKnowledge ? (
+        <section className="mb-6 rounded-2xl border border-sky/40 bg-sky/[0.05] p-4 sm:p-5 print:hidden">
+          <p className="font-mono text-[0.58rem] uppercase tracking-[0.18em] text-sky">External field lesson</p>
+          <h2 className="mt-1 font-display text-xl text-bone">Turn a useful post, article or note into training</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">
+            LiveCoach creates a private structured draft first. It stores the distilled lesson and source attribution, not the copied article. Review the result before publishing it to the team.
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1 text-xs text-muted">
+              Source title
+              <input
+                value={sourceTitle}
+                onChange={(event) => setSourceTitle(event.target.value)}
+                placeholder="What the source is about"
+                className="min-h-11 rounded-xl border border-edge bg-ink/55 px-3 text-sm text-bone outline-none placeholder:text-muted/65 focus:border-sky/60"
+              />
+            </label>
+            <label className="grid gap-1 text-xs text-muted">
+              Source or author label
+              <input
+                value={sourceLabel}
+                onChange={(event) => setSourceLabel(event.target.value)}
+                placeholder="For example, Supersonik field observation"
+                className="min-h-11 rounded-xl border border-edge bg-ink/55 px-3 text-sm text-bone outline-none placeholder:text-muted/65 focus:border-sky/60"
+              />
+            </label>
+          </div>
+          <label className="mt-3 grid gap-1 text-xs text-muted">
+            Source link
+            <input
+              type="url"
+              value={sourceUrl}
+              onChange={(event) => setSourceUrl(event.target.value)}
+              placeholder="Optional http or https link"
+              className="min-h-11 rounded-xl border border-edge bg-ink/55 px-3 text-sm text-bone outline-none placeholder:text-muted/65 focus:border-sky/60"
+            />
+          </label>
+          <label className="mt-3 grid gap-1 text-xs text-muted">
+            Source material
+            <textarea
+              value={sourceContent}
+              onChange={(event) => setSourceContent(event.target.value)}
+              rows={8}
+              placeholder="Paste the post, article excerpt or your notes"
+              className="rounded-xl border border-edge bg-ink/55 px-3 py-3 text-sm leading-6 text-bone outline-none placeholder:text-muted/65 focus:border-sky/60"
+            />
+          </label>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs leading-5 text-muted">
+              One Terra extraction. The draft remains private until an owner or manager publishes it.
+            </p>
+            <button
+              type="button"
+              onClick={() => void buildFieldNote()}
+              disabled={fieldNoteBusy || sourceContent.trim().length < 120}
+              className="min-h-11 rounded-full border border-sky/60 bg-sky/15 px-5 font-mono text-[0.58rem] uppercase text-sky hover:bg-sky/25 disabled:opacity-35"
+            >
+              {fieldNoteBusy ? "Building private draft…" : "Build private lesson"}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {loading ? <MatrixRain size="panel" messages={["loading sales knowledge", "organising approved lessons"]} /> : null}
       {error ? <p className="rounded-xl border border-rust/40 bg-rust/10 p-4 text-sm text-rust">{error}</p> : null}
+      {buildNote ? <p role="status" className="mb-4 rounded-xl border border-amber/35 bg-amber/[0.06] p-3 text-sm text-amber">{buildNote}</p> : null}
       {!loading && !error && reviewQueue.length > 0 ? (
         <section className="mb-6 rounded-2xl border border-amber/40 bg-amber/[0.04] p-4 sm:p-5 print:hidden">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="font-mono text-[0.58rem] uppercase tracking-[0.18em] text-amber">Pitch playbook review queue</p>
+              <p className="font-mono text-[0.58rem] uppercase tracking-[0.18em] text-amber">Call lesson review queue</p>
               <h2 className="mt-1 font-display text-xl text-bone">Choose the calls worth teaching from</h2>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
                 This shortlist uses saved CRM facts and transcript size, so reviewing it costs no AI tokens. Internal, interview, support and weak calls are excluded.
@@ -390,7 +602,6 @@ export default function PitchPlaybookPage() {
           <div className="mt-4 flex flex-col gap-3 border-t border-edge/70 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-[0.76rem] leading-snug text-muted">Selecting is free. Building uses one Terra extraction per approved call and never contacts the client.</p>
-              {buildNote ? <p className="mt-1 text-[0.76rem] text-amber">{buildNote}</p> : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" onClick={() => { setQueuePage((page) => Math.max(0, page - 1)); setSelected(new Set()); }} disabled={queuePage === 0 || building} className="min-h-10 rounded-full border border-edge px-3 font-mono text-[0.56rem] uppercase text-muted disabled:opacity-30">Previous five</button>
@@ -404,9 +615,9 @@ export default function PitchPlaybookPage() {
       ) : null}
       {!loading && !error && chapters.length === 0 ? (
         <section className="rounded-2xl border border-dashed border-edge bg-panel/30 p-6">
-          <h2 className="font-display text-xl text-bone">No approved calls yet</h2>
+          <h2 className="font-display text-xl text-bone">No sales knowledge lessons yet</h2>
           <p className="mt-2 text-sm leading-6 text-muted">
-            Open a useful prospect or demo call, then choose Add to pitching playbook. Internal and routine partner calls remain excluded.
+            An owner or manager can add a field lesson. You can also open a useful prospect or demo call and approve it as a lesson. Internal and routine partner calls remain excluded.
           </p>
           <Link href="/crm/calls" className="mt-4 inline-flex rounded-full border border-amber/50 bg-amber/10 px-4 py-2 font-mono text-[0.6rem] uppercase text-amber">
             Open calls
@@ -418,7 +629,7 @@ export default function PitchPlaybookPage() {
         <section className="mb-5 rounded-2xl border border-edge bg-panel/40 p-4 print:hidden">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <label className="block flex-1">
-              <span className="mb-1.5 block font-mono text-[0.56rem] uppercase tracking-[0.17em] text-sage">Search saved playbooks</span>
+              <span className="mb-1.5 block font-mono text-[0.56rem] uppercase tracking-[0.17em] text-sage">Search sales knowledge</span>
               <input
                 type="search"
                 value={search}
@@ -431,7 +642,7 @@ export default function PitchPlaybookPage() {
               {filteredChapters.length} of {chapters.length} saved lessons
             </div>
           </div>
-          <p className="mt-2 text-xs leading-5 text-muted">Searches the saved lesson locally and uses no AI tokens. The Brain only retrieves up to three relevant lessons when you explicitly ask about pitching.</p>
+          <p className="mt-2 text-xs leading-5 text-muted">Searches saved lessons locally and uses no AI tokens. The Brain retrieves up to three approved relevant lessons for sales questions and sales call preparation.</p>
         </section>
       ) : null}
 
@@ -444,20 +655,43 @@ export default function PitchPlaybookPage() {
       <div className="space-y-5">
         {filteredChapters.map((chapter) => {
           const chapterIndex = chapters.findIndex((item) => item.id === chapter.id);
+          const fieldLesson = chapter.sourceKind === "field_note" || chapter.kind === "field_note";
+          const publishedToTeam = chapter.status === "approved" && chapter.visibility === "team";
           return (
-          <article id={`lesson-${chapter.id}`} key={chapter.id} className="scroll-mt-6 break-inside-avoid rounded-2xl border border-edge bg-panel/45 p-4 sm:p-6">
+          <article id={`lesson-${chapter.id}`} key={chapter.id} className={`scroll-mt-6 break-inside-avoid rounded-2xl border bg-panel/45 p-4 sm:p-6 ${chapter.status === "draft" ? "border-sky/55" : "border-edge"}`}>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-sage">
-                  Lesson {chapters.length - chapterIndex} · {chapter.mode === "commercial_partner" ? "commercial partner" : "prospect or demo"}
-                </p>
+                <div className="flex flex-wrap items-center gap-2 font-mono text-[0.55rem] uppercase tracking-[0.18em] text-sage">
+                  <span>Lesson {chapters.length - chapterIndex}</span>
+                  <span>·</span>
+                  <span>{fieldLesson ? "field lesson" : chapter.mode === "commercial_partner" ? "commercial partner" : "prospect or demo"}</span>
+                  <span className={`rounded-full border px-2 py-0.5 text-[0.48rem] ${publishedToTeam ? "border-sage/50 bg-sage/10 text-sage" : chapter.status === "draft" ? "border-sky/50 bg-sky/10 text-sky" : "border-edge text-muted"}`}>
+                    {publishedToTeam ? "team approved" : chapter.status === "draft" ? "private draft" : "private"}
+                  </span>
+                </div>
                 <h2 className="mt-1 font-display text-xl text-bone">{chapter.title}</h2>
-                {chapter.audience ? <p className="mt-1 text-sm text-muted">Useful with: {chapter.audience}</p> : null}
+                {chapter.audience ? <p className="mt-1 text-sm text-muted">Useful with {chapter.audience}</p> : null}
+                {chapter.sourceLabel ? <p className="mt-1 text-xs text-muted">Source {chapter.sourceLabel}</p> : null}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2 print:hidden">
-                <button type="button" onClick={() => downloadPdf([chapter], chapter.id, "Interviewa pitching lesson")} disabled={!!downloading} className="min-h-9 rounded-full border border-edge px-3 font-mono text-[0.55rem] uppercase text-amber hover:border-amber/55 disabled:opacity-35">
+                {chapter.canEdit && canManageTeamKnowledge ? (
+                  <button
+                    type="button"
+                    onClick={() => void changeKnowledgeAccess(chapter, publishedToTeam ? "make_private" : "publish_team")}
+                    disabled={!!knowledgeBusy}
+                    className="min-h-9 rounded-full border border-sage/50 bg-sage/10 px-3 font-mono text-[0.55rem] uppercase text-sage hover:bg-sage/20 disabled:opacity-35"
+                  >
+                    {knowledgeBusy === chapter.id ? "Saving…" : publishedToTeam ? "Make private" : "Publish to team"}
+                  </button>
+                ) : null}
+                <button type="button" onClick={() => downloadPdf([chapter], chapter.id, "Interviewa sales knowledge lesson")} disabled={!!downloading} className="min-h-9 rounded-full border border-edge px-3 font-mono text-[0.55rem] uppercase text-amber hover:border-amber/55 disabled:opacity-35">
                   {downloading === chapter.id ? "Building PDF…" : "Download lesson"}
                 </button>
+                {fieldLesson && chapter.sourceUrl?.startsWith("http") ? (
+                  <a href={chapter.sourceUrl} target="_blank" rel="noreferrer" className="font-mono text-[0.58rem] uppercase text-sky hover:text-amber">
+                    Source ↗
+                  </a>
+                ) : null}
                 {chapter.callId ? (
                   <Link href={`/crm/calls/${chapter.callId}`} className="font-mono text-[0.58rem] uppercase text-sky hover:text-amber">
                     Source call ↗
@@ -466,6 +700,27 @@ export default function PitchPlaybookPage() {
               </div>
             </div>
 
+            {chapter.sourceSummary ? (
+              <div className="mt-4 rounded-xl border border-sky/30 bg-sky/[0.05] p-3 text-sm leading-6 text-bone/85">
+                <span className="font-mono text-[0.56rem] uppercase tracking-[0.16em] text-sky">Source insight</span>
+                <p className="mt-1">{chapter.sourceSummary}</p>
+              </div>
+            ) : null}
+
+            {chapter.principle ? (
+              <div className="mt-4 rounded-xl border border-amber/40 bg-amber/[0.06] p-4 text-sm leading-6 text-bone">
+                <span className="font-mono text-[0.56rem] uppercase tracking-[0.16em] text-amber">Operating principle</span>
+                <p className="mt-1 font-medium">{chapter.principle}</p>
+              </div>
+            ) : null}
+
+            {chapter.liveCoachSafeguard ? (
+              <div className="mt-3 rounded-xl border border-rust/30 bg-rust/[0.05] p-3 text-sm leading-6 text-bone/85">
+                <span className="font-mono text-[0.56rem] uppercase tracking-[0.16em] text-rust">LiveCoach safeguard</span>
+                <p className="mt-1">{chapter.liveCoachSafeguard}</p>
+              </div>
+            ) : null}
+
             {chapter.scenario ? (
               <div className="mt-4 rounded-xl border border-sage/30 bg-sage/[0.06] p-3 text-sm leading-6 text-bone/85">
                 <span className="font-mono text-[0.56rem] uppercase tracking-[0.16em] text-sage">When to use this</span>
@@ -473,16 +728,33 @@ export default function PitchPlaybookPage() {
               </div>
             ) : null}
 
+            {chapter.calibrationLevels?.length ? (
+              <div className="mt-4">
+                <p className="mb-2 font-mono text-[0.56rem] uppercase tracking-[0.17em] text-muted">Calibration guide</p>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {chapter.calibrationLevels.map((item, index) => (
+                    <div key={`${item.level}:${index}`} className="rounded-xl border border-edge bg-ink/35 p-3">
+                      <h3 className="text-sm font-medium text-bone">{item.level}</h3>
+                      <ul className="mt-2 space-y-1 text-[0.78rem] leading-snug text-muted">
+                        {safeList(item.signals).map((signal) => <li key={signal}>• {signal}</li>)}
+                      </ul>
+                      <p className="mt-2 text-[0.78rem] leading-snug text-sage">Adapt by {item.sellerMove}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <List title="Buyer language" items={safeList(chapter.buyerLanguage)} tone="text-sky/90" />
-              <List title="Seller questions that worked" items={safeList(chapter.questionsThatWorked)} />
+              <List title={fieldLesson ? "Diagnostic questions" : "Seller questions that worked"} items={fieldLesson ? safeList(chapter.diagnosticQuestions) : safeList(chapter.questionsThatWorked)} />
+              <List title={fieldLesson ? "Evidence of real use" : "Buyer language"} items={fieldLesson ? safeList(chapter.buyingSignals) : safeList(chapter.buyerLanguage)} tone="text-sky/90" />
               <List title="Pitch moves" items={safeList(chapter.pitchMoves)} tone="text-sage/90" />
-              <List title="Buying signals" items={safeList(chapter.buyingSignals)} tone="text-amber/90" />
+              {!fieldLesson ? <List title="Buying signals" items={safeList(chapter.buyingSignals)} tone="text-amber/90" /> : null}
             </div>
 
             {Array.isArray(chapter.objections) && chapter.objections.length ? (
               <div className="mt-4">
-                <p className="mb-2 font-mono text-[0.56rem] uppercase tracking-[0.17em] text-muted">Objections and response</p>
+                <p className="mb-2 font-mono text-[0.56rem] uppercase tracking-[0.17em] text-muted">{fieldLesson ? "Claim or behaviour and response" : "Objections and response"}</p>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {chapter.objections.map((item, index) => (
                     <div key={index} className="rounded-lg border border-edge bg-ink/35 p-3 text-[0.8rem] leading-snug">
@@ -505,7 +777,20 @@ export default function PitchPlaybookPage() {
                 ))}
               </ol>
             </div>
-            <div className="mt-4"><List title="Avoid next time" items={safeList(chapter.avoid)} tone="text-rust/85" /></div>
+            <div className="mt-4"><List title={fieldLesson ? "Avoid" : "Avoid next time"} items={safeList(chapter.avoid)} tone="text-rust/85" /></div>
+            {chapter.knowledgeChecks?.length ? (
+              <div className="mt-4 rounded-xl border border-edge bg-ink/30 p-4">
+                <p className="font-mono text-[0.56rem] uppercase tracking-[0.17em] text-sky">Knowledge check</p>
+                <div className="mt-2 space-y-2">
+                  {chapter.knowledgeChecks.map((item, index) => (
+                    <details key={`${item.question}:${index}`} className="rounded-lg border border-edge bg-panel/45 px-3 py-2 text-sm">
+                      <summary className="cursor-pointer text-bone">{item.question}</summary>
+                      <p className="mt-2 leading-6 text-muted">{item.answer}</p>
+                    </details>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </article>
         );})}
       </div>

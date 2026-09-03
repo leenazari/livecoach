@@ -116,9 +116,13 @@ export async function getBrainQuestions(): Promise<string> {
 // given task needs so prompts stay focused. Empty string if none.
 export async function getLessonsBlock(topics?: string[]): Promise<string> {
   try {
+    const scope = await resolveRecordScope();
     let q = supabaseAdmin
       .from("lessons")
       .select("topic, content")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("status", "approved")
+      .or(`owner_id.eq.${scope.userId},visibility.eq.team`)
       .order("created_at", { ascending: false })
       .limit(12);
     if (topics && topics.length) q = q.in("topic", topics);
@@ -165,10 +169,14 @@ const list = (value: unknown, limit: number): string[] =>
 // the CRM without being paid for on every Brain turn.
 export async function getRelevantPitchingLessons(message: string): Promise<string> {
   try {
+    const scope = await resolveRecordScope();
     const { data, error } = await supabaseAdmin
       .from("lessons")
-      .select("title, content, created_at")
+      .select("title, content, kind, source_label, created_at")
+      .eq("workspace_id", scope.workspaceId)
       .eq("topic", "pitching")
+      .eq("status", "approved")
+      .or(`owner_id.eq.${scope.userId},visibility.eq.team`)
       .order("created_at", { ascending: false })
       .limit(60);
     if (error) throw error;
@@ -193,10 +201,28 @@ export async function getRelevantPitchingLessons(message: string): Promise<strin
     if (!rows.length) return "";
 
     const chapters = rows.map(({ row, content }) => {
+      const fieldLesson = content.sourceKind === "field_note" || row.kind === "field_note";
+      const calibration = Array.isArray(content.calibrationLevels)
+        ? content.calibrationLevels
+            .slice(0, 4)
+            .map((item: any) =>
+              `${String(item?.level || "Level").slice(0, 80)}: ${list(item?.signals, 3).join(", ")} -> ${String(item?.sellerMove || "").slice(0, 260)}`
+            )
+            .filter(Boolean)
+        : [];
       const parts = [
         `LESSON: ${String(row.title || "Pitching lesson").slice(0, 220)}`,
+        fieldLesson ? `Evidence type: externally sourced field lesson, not a verified LiveCoach call result` : "",
+        row.source_label ? `Source: ${String(row.source_label).slice(0, 200)}` : "",
+        content.sourceSummary ? `Source insight: ${String(content.sourceSummary).slice(0, 500)}` : "",
+        content.principle ? `Operating principle: ${String(content.principle).slice(0, 320)}` : "",
+        content.liveCoachSafeguard ? `Safeguard: ${String(content.liveCoachSafeguard).slice(0, 500)}` : "",
         content.scenario ? `Use when: ${String(content.scenario).slice(0, 300)}` : "",
         content.audience ? `Audience: ${String(content.audience).slice(0, 220)}` : "",
+        calibration.length ? `Calibration guide: ${calibration.join(" | ")}` : "",
+        list(content.diagnosticQuestions, 4).length
+          ? `Diagnostic questions: ${list(content.diagnosticQuestions, 4).join(" | ")}`
+          : "",
         list(content.questionsThatWorked, 3).length
           ? `Seller questions that worked: ${list(content.questionsThatWorked, 3).join(" | ")}`
           : "",
@@ -212,7 +238,7 @@ export async function getRelevantPitchingLessons(message: string): Promise<strin
       ].filter(Boolean);
       return parts.join("\n");
     });
-    return `RELEVANT APPROVED PITCHING LESSONS (retrieved on demand from real calls; adapt them to the current buyer and never invent proof):\n${chapters.join("\n\n")}\n\n`;
+    return `RELEVANT APPROVED SALES KNOWLEDGE (retrieved on demand from approved field lessons and real calls; adapt it to the current buyer, respect the stated evidence type and never invent proof):\n${chapters.join("\n\n")}\n\n`;
   } catch {
     return "";
   }

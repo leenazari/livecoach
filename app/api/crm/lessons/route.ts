@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
 import { logModelUsage } from "@/lib/usage";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -14,11 +15,17 @@ const TOPICS = ["negotiation", "psychology", "strategy", "pitching", "general"];
 // GET /api/crm/lessons -> the whole lessons library, newest first.
 export async function GET() {
   try {
-    const { data } = await supabaseAdmin
+    const scope = requireRequestScope();
+    const { data, error } = await supabaseAdmin
       .from("lessons")
       .select("id, topic, title, content, source_url, created_at")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
+      .neq("topic", "pitching")
+      .neq("status", "archived")
       .order("created_at", { ascending: false })
       .limit(500);
+    if (error) throw error;
     return NextResponse.json({ lessons: data || [] });
   } catch (err: any) {
     return NextResponse.json(
@@ -32,6 +39,7 @@ export async function GET() {
 // from pasted content (a transcript, an article) under a topic, and store them.
 export async function POST(req: NextRequest) {
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
     let content = typeof body.content === "string" ? body.content.trim() : "";
     const topic = TOPICS.includes(body.topic) ? body.topic : "general";
@@ -160,7 +168,12 @@ Rules:
     const { data, error } = await supabaseAdmin
       .from("lessons")
       .insert({
+        workspace_id: scope.workspaceId,
+        owner_id: scope.userId,
         topic,
+        kind: "principle",
+        status: "approved",
+        visibility: "private",
         title,
         content: lessons.map((l) => `- ${l}`).join("\n"),
         source_url: sourceUrl,

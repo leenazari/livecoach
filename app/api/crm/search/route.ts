@@ -94,12 +94,13 @@ export async function GET(req: NextRequest) {
           .eq("status", "draft")
           .or(`draft_subject.ilike.%${q}%,draft_body.ilike.%${q}%`)
           .limit(8),
-        accountRecords(
-          supabaseAdmin
+        supabaseAdmin
           .from("lessons")
           .select("id, title, content, created_at")
-        )
+          .eq("workspace_id", scope.workspaceId)
           .eq("topic", "pitching")
+          .neq("status", "archived")
+          .or(`owner_id.eq.${scope.userId},and(visibility.eq.team,status.eq.approved)`)
           .or(`title.ilike.%${q}%,content.ilike.%${q}%`)
           .order("created_at", { ascending: false })
           .limit(8),
@@ -260,7 +261,11 @@ export async function GET(req: NextRequest) {
         id: `playbook:${lesson.id}`,
         type: "playbook",
         label: lesson.title || "Pitching lesson",
-        detail: compact([content.scenario, content.audience].filter(Boolean).join(" · ")),
+        detail: compact(
+          [content.principle, content.scenario, content.audience]
+            .filter(Boolean)
+            .join(" · ")
+        ),
         href: `/crm/pitch-playbook?lesson=${lesson.id}`,
       });
     }
