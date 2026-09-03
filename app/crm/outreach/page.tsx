@@ -114,6 +114,26 @@ type HandoverPreview = {
   reason: string;
 };
 type PrepareStatus = "adding" | "queued" | "researching" | "done" | "error";
+type ResearchJobSnapshot = {
+  id: string;
+  prospectId: string;
+  enrolmentId: string;
+  messageId: string | null;
+  stepNumber: number;
+  kind: "full_draft" | "voice_script";
+  status: "queued" | "running" | "completed" | "failed";
+  attempts: number;
+  maxAttempts: number;
+  error: string | null;
+  updatedAt: string;
+};
+type ResearchJobsResponse = {
+  jobs: ResearchJobSnapshot[];
+  accepted?: number;
+  errors?: { prospectId: string; error: string }[];
+  skipped?: { prospectId: string; reason: string }[];
+  revision: string;
+};
 type TeamMember = {
   userId: string;
   role: string;
@@ -162,8 +182,6 @@ const recommendationPill: Record<RecommendationAction, string> = {
 const button = "min-h-11 rounded-lg border border-edge px-3 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-bone transition hover:border-amber/60 hover:text-amber disabled:cursor-not-allowed disabled:opacity-40";
 const primary = "min-h-11 rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40";
 const input = "w-full rounded-lg border border-edge bg-ink/50 px-3 py-2.5 text-sm text-bone placeholder:text-muted focus:border-amber/60 focus:outline-none";
-const PREPARE_QUEUE_KEY = "livecoach:outreach-prepare-queue:v1";
-const MAX_CONCURRENT_RESEARCH = 2;
 const PROSPECT_PAGE_SIZE = 60;
 const OUTREACH_URLS = {
   queue: "/api/crm/outreach/queue",
@@ -172,6 +190,7 @@ const OUTREACH_URLS = {
   metricsSummary: "/api/crm/outreach/metrics?summary=1",
   metrics: "/api/crm/outreach/metrics",
   prospects: "/api/crm/outreach",
+  researchJobs: "/api/crm/outreach/research-jobs",
   suppressions: "/api/crm/outreach/suppressions",
 } as const;
 
@@ -602,12 +621,22 @@ export default function OutreachPage() {
   const [error, setError] = useState("");
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [prepareJobs, setPrepareJobs] = useState<Record<string, PrepareStatus>>({});
+  const [prepareJobCounts, setPrepareJobCounts] = useState({
+    queued: 0,
+    researching: 0,
+    completed: 0,
+    failed: 0,
+    total: 0,
+  });
   const [ctaBlockedIds, setCtaBlockedIds] = useState<string[]>([]);
   const [ctaRefreshRequiredProspectIds, setCtaRefreshRequiredProspectIds] =
     useState<string[]>([]);
   const prepareJobsRef = useRef<Record<string, PrepareStatus>>({});
-  const prepareQueueRef = useRef<string[]>([]);
-  const activePrepareRef = useRef<Set<string>>(new Set());
+  const queueRef = useRef<QueueRow[]>(queue);
+  const prepareRevisionRef = useRef("");
+  const prepareResumeAttemptedRef = useRef(false);
+  const prepareWasActiveRef = useRef(false);
+  queueRef.current = queue;
   const ownerFilterInitialisedRef = useRef(Boolean(cachedProspects));
   const initialQueueFillAttemptedRef = useRef(false);
   const [q, setQ] = useState("");
@@ -744,91 +773,213 @@ export default function OutreachPage() {
     setPrepareJobs((current) => {
       const next = { ...current, [prospectId]: status };
       prepareJobsRef.current = next;
-      const pending = Object.entries(next)
-        // A running request keeps completing after an in-app navigation. Only
-        // work that has not started is resumed, preventing duplicate AI spend.
-        .filter(([, value]) => value === "queued")
-        .map(([id]) => id);
-      window.localStorage.setItem(PREPARE_QUEUE_KEY, JSON.stringify(pending));
       return next;
     });
   }, []);
 
-  const runPrepareQueue = useCallback(() => {
-    while (
-      activePrepareRef.current.size < MAX_CONCURRENT_RESEARCH &&
-      prepareQueueRef.current.length
-    ) {
-      const prospectId = prepareQueueRef.current.shift();
-      if (!prospectId || activePrepareRef.current.has(prospectId)) continue;
-      activePrepareRef.current.add(prospectId);
-      updatePrepareJob(prospectId, "researching");
-      setRowErrors((all) => ({ ...all, [prospectId]: "" }));
-
-      void crmFetch<any>(`/api/crm/outreach/${prospectId}/prepare`, {
-        method: "POST",
-        body: "{}",
-      })
-        .then((result) => {
-          updatePrepareJob(prospectId, "done");
-          setCtaRefreshRequiredProspectIds((current) =>
-            current.filter((id) => id !== prospectId)
-          );
-          setNotice(
-            result.formatRepaired
-              ? "A queued research draft completed after an automatic format repair. Review it carefully before sending."
-              : result.needsExtraReview
-              ? "A queued draft is ready but its quality score is lower than usual. Review it carefully before sending."
-              : "Research and draft completed in the background. It is ready to review in Today."
-          );
-        })
-        .catch((e: any) => {
-          const message = e.message || "The research draft could not be prepared";
-          updatePrepareJob(prospectId, "error");
-          setRowErrors((all) => ({ ...all, [prospectId]: message }));
-          setError(message);
-        })
-        .finally(() => {
-          activePrepareRef.current.delete(prospectId);
-          void Promise.all([loadCore(), loadProspects()]).finally(() => {
-            runPrepareQueue();
-          });
-        });
+  const applyResearchJobResponse = useCallback((payload: ResearchJobsResponse) => {
+    const currentQueue = queueRef.current;
+    const next: Record<string, PrepareStatus> = {};
+    const failedErrors: Record<string, string> = {};
+    const latestJobs: ResearchJobSnapshot[] = [];
+    for (const job of payload.jobs || []) {
+      const queueRow = currentQueue.find(
+        (row) => row.prospect?.id === job.prospectId
+      );
+      if (
+        queueRow &&
+        (queueRow.id !== job.enrolmentId ||
+          Number(queueRow.current_step) !== Number(job.stepNumber))
+      ) {
+        continue;
+      }
+      if (
+        !queueRow &&
+        job.status !== "queued" &&
+        job.status !== "running"
+      ) {
+        continue;
+      }
+      if (next[job.prospectId]) continue;
+      next[job.prospectId] =
+        job.status === "running"
+          ? "researching"
+          : job.status === "completed"
+          ? "done"
+          : job.status === "failed"
+          ? "error"
+          : "queued";
+      latestJobs.push(job);
+      if (job.status === "failed" && job.error) {
+        failedErrors[job.prospectId] = job.error;
+      }
     }
-  }, [loadCore, loadProspects, updatePrepareJob]);
+    prepareJobsRef.current = next;
+    setPrepareJobs(next);
+    const counts = {
+      queued: latestJobs.filter((job) => job.status === "queued").length,
+      researching: latestJobs.filter((job) => job.status === "running").length,
+      completed: latestJobs.filter((job) => job.status === "completed").length,
+      failed: latestJobs.filter((job) => job.status === "failed").length,
+      total: latestJobs.length,
+    };
+    setPrepareJobCounts(counts);
+    setRowErrors((current) => {
+      const updated = { ...current };
+      for (const job of latestJobs) {
+        if (job.status === "completed") updated[job.prospectId] = "";
+      }
+      return { ...updated, ...failedErrors };
+    });
+    return counts;
+  }, []);
+
+  const syncResearchJobs = useCallback(async (silent = true) => {
+    try {
+      const payload = await crmFetch<ResearchJobsResponse>(
+        OUTREACH_URLS.researchJobs
+      );
+      const previousRevision = prepareRevisionRef.current;
+      prepareRevisionRef.current = payload.revision || previousRevision;
+      const counts = applyResearchJobResponse(payload);
+      const active = counts.queued + counts.researching > 0;
+      if (previousRevision && payload.revision !== previousRevision) {
+        await Promise.all([
+          loadCore(),
+          loadedResourcesRef.current.prospects
+            ? loadProspects()
+            : Promise.resolve(),
+        ]);
+      }
+      if (prepareWasActiveRef.current && !active) {
+        setNotice(
+          counts.failed
+            ? `${counts.completed} research drafts completed. ${counts.failed} stopped with a clear blocker below.`
+            : "Research and drafting completed. The drafts are ready to review in Today."
+        );
+      }
+      prepareWasActiveRef.current = active;
+      return counts;
+    } catch (caught: any) {
+      if (!silent) {
+        setError(
+          caught?.message ||
+            "Research progress could not be loaded. Refresh Today to try again."
+        );
+      }
+      return null;
+    }
+  }, [applyResearchJobResponse, loadCore, loadProspects]);
+
+  const enqueuePrepareBatch = useCallback(async (
+    prospectIds: string[],
+    quiet = false
+  ) => {
+    const uniqueIds = [...new Set(prospectIds.filter(Boolean))].slice(0, 50);
+    if (!uniqueIds.length) return null;
+    for (const prospectId of uniqueIds) {
+      updatePrepareJob(prospectId, "adding");
+      setRowErrors((current) => ({ ...current, [prospectId]: "" }));
+    }
+    setError("");
+    if (!quiet) setNotice("");
+    try {
+      const payload = await crmFetch<ResearchJobsResponse>(
+        OUTREACH_URLS.researchJobs,
+        {
+          method: "POST",
+          body: JSON.stringify({ prospectIds: uniqueIds }),
+        }
+      );
+      prepareRevisionRef.current = payload.revision || "";
+      const counts = applyResearchJobResponse(payload);
+      prepareWasActiveRef.current = counts.queued + counts.researching > 0;
+      const requestErrors = payload.errors || [];
+      if (requestErrors.length) {
+        setRowErrors((current) => ({
+          ...current,
+          ...Object.fromEntries(
+            requestErrors.map((item) => [item.prospectId, item.error])
+          ),
+        }));
+        setError(
+          requestErrors.length === 1
+            ? requestErrors[0].error
+            : `${requestErrors.length} people could not be queued. Each affected card explains the blocker.`
+        );
+      }
+      if (!quiet || uniqueIds.length > 1) {
+        const accepted = Number(payload.accepted || 0);
+        setNotice(
+          accepted
+            ? `${accepted} ${accepted === 1 ? "person is" : "people are"} saved in the server research queue. Two will run at a time and the work will continue if you leave this page.`
+            : payload.skipped?.length
+            ? "Those drafts are already ready to review."
+            : "No research work was added. Check the blocker shown below."
+        );
+      }
+      return payload;
+    } catch (caught: any) {
+      const message =
+        caught?.message ||
+        "Research could not be queued. Refresh Today and try once more.";
+      for (const prospectId of uniqueIds) {
+        updatePrepareJob(prospectId, "error");
+        setRowErrors((current) => ({ ...current, [prospectId]: message }));
+      }
+      setError(message);
+      return null;
+    }
+  }, [applyResearchJobResponse, updatePrepareJob]);
 
   const enqueuePrepare = useCallback(
-    (prospectId: string) => {
+    (prospectId: string, quiet = false) => {
       const current = prepareJobsRef.current[prospectId];
-      if (current === "queued" || current === "researching") return;
-      prepareQueueRef.current.push(prospectId);
-      updatePrepareJob(prospectId, "queued");
-      setError("");
-      setNotice("Added to the research queue. You can prepare another prospect now.");
-      queueMicrotask(runPrepareQueue);
+      if (["adding", "queued", "researching"].includes(current || "")) {
+        return Promise.resolve(null);
+      }
+      return enqueuePrepareBatch([prospectId], quiet);
     },
-    [runPrepareQueue, updatePrepareJob]
+    [enqueuePrepareBatch]
   );
 
-  // Resume any unfinished research after a refresh. The prepare endpoint is
-  // idempotent, so an interrupted item is safe to run again and cannot send.
+  // The database is the queue source of truth. A page reload only reconnects
+  // the progress display and nudges the worker, while the minute recovery cron
+  // keeps processing even when no browser is open.
   useEffect(() => {
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(PREPARE_QUEUE_KEY) || "[]");
-      if (!Array.isArray(saved)) return;
-      for (const prospectId of saved.filter((value) => typeof value === "string")) {
-        if (prepareQueueRef.current.includes(prospectId)) continue;
-        prepareQueueRef.current.push(prospectId);
-        prepareJobsRef.current[prospectId] = "queued";
+    let cancelled = false;
+    void syncResearchJobs(false).then((counts) => {
+      if (
+        cancelled ||
+        !counts ||
+        prepareResumeAttemptedRef.current ||
+        counts.queued + counts.researching === 0
+      ) {
+        return;
       }
-      if (prepareQueueRef.current.length) {
-        setPrepareJobs({ ...prepareJobsRef.current });
-        queueMicrotask(runPrepareQueue);
-      }
-    } catch {
-      window.localStorage.removeItem(PREPARE_QUEUE_KEY);
-    }
-  }, [runPrepareQueue]);
+      prepareResumeAttemptedRef.current = true;
+      void crmFetch<ResearchJobsResponse>(OUTREACH_URLS.researchJobs, {
+        method: "POST",
+        body: JSON.stringify({ resume: true }),
+      })
+        .then(applyResearchJobResponse)
+        .catch(() => {
+          // The recovery cron owns the fallback. Polling below will continue to
+          // show the durable state without inventing a completion.
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [applyResearchJobResponse, syncResearchJobs]);
+
+  useEffect(() => {
+    if (!prepareJobCounts.queued && !prepareJobCounts.researching) return;
+    const timer = window.setInterval(() => {
+      void syncResearchJobs(true);
+    }, 4_000);
+    return () => window.clearInterval(timer);
+  }, [prepareJobCounts.queued, prepareJobCounts.researching, syncResearchJobs]);
 
   useEffect(() => { loadCore(); }, [loadCore]);
   useEffect(() => {
@@ -1159,69 +1310,11 @@ export default function OutreachPage() {
     }
   };
   const prepare = (prospectId: string) => enqueuePrepare(prospectId);
-  const createVoiceScript = async (
-    messageId: string,
+  const createVoiceScript = (
+    _messageId: string,
     prospectId: string,
     quiet = false
-  ) => {
-    const current = prepareJobsRef.current[prospectId];
-    if (current === "queued" || current === "researching") return;
-    updatePrepareJob(prospectId, "researching");
-    setRowErrors((all) => ({ ...all, [prospectId]: "" }));
-    setError("");
-    if (!quiet) setNotice("");
-    try {
-      const result = await crmFetch<{
-        message: Record<string, any>;
-        audioGenerated: boolean;
-        emailPreserved: boolean;
-      }>(`/api/crm/outreach/messages/${messageId}/voice-script`, {
-        method: "POST",
-        body: "{}",
-      });
-      if (
-        !result.message?.voice_script ||
-        result.message.voice_status !== "script_ready" ||
-        result.audioGenerated !== false ||
-        result.emailPreserved !== true
-      ) {
-        throw crmConfirmationError({
-          url: `/api/crm/outreach/messages/${messageId}/voice-script`,
-          method: "POST",
-          reason: "LiveCoach did not confirm a safe text-only voice script",
-        });
-      }
-      updatePrepareJob(prospectId, "done");
-      setQueue((all) =>
-        all.map((row) =>
-          row.message?.id === messageId
-            ? { ...row, message: { ...row.message, ...result.message } }
-            : row
-        )
-      );
-      setDraftEdits((all) => ({
-        ...all,
-        [messageId]: {
-          subject: result.message.subject || all[messageId]?.subject || "",
-          body_text:
-            result.message.body_text || all[messageId]?.body_text || "",
-          voice_script: result.message.voice_script || "",
-        },
-      }));
-      if (!quiet)
-        setNotice(
-          "Voice script created. The email was preserved and no audio was generated or charged."
-        );
-    } catch (caught: any) {
-      const message =
-        caught?.message || "The text voice script could not be created";
-      updatePrepareJob(prospectId, "error");
-      setRowErrors((all) => ({ ...all, [prospectId]: message }));
-      setError(message);
-    } finally {
-      await loadCore();
-    }
-  };
+  ) => enqueuePrepare(prospectId, quiet);
   const saveDraft = async (messageId: string) => {
     setBusy(`save:${messageId}`); setError("");
     try {
@@ -1360,7 +1453,7 @@ export default function OutreachPage() {
       setBusy("");
     }
   };
-  const prepareAllRemaining = () => {
+  const prepareAllRemaining = async () => {
     const preparable = filterOutreachQueueByCampaign(
       queue,
       queueCampaignFilterId
@@ -1379,16 +1472,10 @@ export default function OutreachPage() {
       setNotice("Every eligible person in today's queue is already prepared or in progress.");
       return;
     }
-    for (const row of selectedRows) {
-      if (queueRowNeedsVoiceScript(row) && row.message?.id) {
-        void createVoiceScript(row.message.id, row.prospect.id, true);
-      } else {
-        enqueuePrepare(row.prospect.id);
-      }
-    }
     const voiceRepairs = selectedRows.filter(queueRowNeedsVoiceScript).length;
     const newDrafts = ids.length - voiceRepairs;
-    setNotice(`${ids.length} ${firstTouches.length ? "step one drafts" : "follow ups"} added to the preparation queue. ${newDrafts} need a new email and voice script. ${voiceRepairs} existing drafts need their missing voice script restored. Two will prepare at a time while you keep reviewing.`);
+    setNotice(`${ids.length} ${firstTouches.length ? "step one drafts" : "follow ups"} are being saved to the research queue. ${newDrafts} need a new email and voice script. ${voiceRepairs} existing drafts need their missing voice script restored.`);
+    await enqueuePrepareBatch(ids, true);
   };
   const completeManualSequenceStep = async (row: QueueRow) => {
     const step = row.sequenceStep;
@@ -1802,7 +1889,8 @@ export default function OutreachPage() {
     try {
       if (!queue.some((row) => row.prospect?.id === prospect.id && row.status === "queued"))
         await addProspectToTeamQueue(prospect);
-      enqueuePrepare(prospect.id);
+      await loadCore();
+      await enqueuePrepare(prospect.id);
     } catch (e: any) {
       updatePrepareJob(prospect.id, "error");
       setError(e.message || "This prospect could not be prepared");
@@ -1974,12 +2062,8 @@ export default function OutreachPage() {
     { label: "Interested", value: metrics.positiveReplies || 0, colour: "bg-moss", tab: "replies" as Tab },
     { label: "Meetings", value: metrics.meetings || 0, colour: "bg-moss", tab: "replies" as Tab },
   ];
-  const researchingCount = Object.values(prepareJobs).filter(
-    (status) => status === "researching"
-  ).length;
-  const queuedResearchCount = Object.values(prepareJobs).filter(
-    (status) => status === "queued" || status === "adding"
-  ).length;
+  const researchingCount = prepareJobCounts.researching;
+  const queuedResearchCount = prepareJobCounts.queued;
   const visibleQueue = useMemo(
     () => filterOutreachQueueByCampaign(queue, queueCampaignFilterId),
     [queue, queueCampaignFilterId]
@@ -2090,7 +2174,7 @@ export default function OutreachPage() {
 
       {notice ? <p className="mb-3 rounded-lg border border-moss/40 bg-moss/10 px-3 py-2 text-sm text-moss">{notice}</p> : null}
       {error ? <p className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm text-rust">{error}</p> : null}
-      {researchingCount || queuedResearchCount ? <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-sky/45 bg-sky/[0.08] px-3 py-2 text-sm text-sky" role="status" aria-live="polite"><span className="h-2 w-2 animate-pulse rounded-full bg-sky" /><strong>{researchingCount} researching</strong>{queuedResearchCount ? <span>· {queuedResearchCount} waiting</span> : null}<span className="text-bone/65">You can keep working or add more prospects.</span></div> : null}
+      {researchingCount || queuedResearchCount ? <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-sky/45 bg-sky/[0.08] px-3 py-2 text-sm text-sky" role="status" aria-live="polite"><span className="h-2 w-2 animate-pulse rounded-full bg-sky" /><strong>{researchingCount} researching</strong>{queuedResearchCount ? <span>· {queuedResearchCount} waiting</span> : null}{prepareJobCounts.completed ? <span>· {prepareJobCounts.completed} completed</span> : null}{prepareJobCounts.failed ? <span className="text-rust">· {prepareJobCounts.failed} blocked</span> : null}<span className="text-bone/65">Saved on the server. You can leave this page and it will continue.</span></div> : null}
       {loading ? <MatrixRain size="panel" messages={["loading outreach", "checking today's queue", "refreshing campaign activity"]} /> : null}
       {!loading && tabLoading ? <MatrixRain size="compact" messages={["loading this outreach view"]} /> : null}
 
@@ -2165,7 +2249,7 @@ export default function OutreachPage() {
             </div>
             {canPrepare ? (
               <button onClick={() => needsVoiceScript && m?.id ? void createVoiceScript(m.id, p.id) : prepare(p.id)} disabled={preparePending || ctaBlocked} className={`${primary} w-full sm:w-auto`}>
-                {prepareStatus === "researching" ? needsVoiceScript ? "Creating voice script…" : "Researching in background…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? needsVoiceScript ? "Voice script ready" : "Draft ready" : needsVoiceScript ? "Create voice script" : isFollowUp ? `Prepare step ${row.current_step} follow up` : "Research + write email + voice script"}
+                {prepareStatus === "adding" ? "Saving to queue…" : prepareStatus === "researching" ? needsVoiceScript ? "Creating voice script…" : "Researching in background…" : prepareStatus === "queued" ? "Queued on server" : prepareStatus === "done" ? needsVoiceScript ? "Voice script ready" : "Draft ready" : needsVoiceScript ? "Create voice script" : isFollowUp ? `Prepare step ${row.current_step} follow up` : "Research + write email + voice script"}
               </button>
             ) : manual && channel === "linkedin" ? (
               <div className="grid w-full gap-2 sm:w-auto sm:min-w-[25rem] sm:grid-cols-2">

@@ -111,7 +111,6 @@ export async function POST(
         .from("outreach_enrolments")
         .select("*")
         .eq("workspace_id", sender.workspaceId)
-        .eq("owner_id", sender.userId)
         .eq("id", message.enrolment_id)
         .maybeSingle(),
       supabaseAdmin

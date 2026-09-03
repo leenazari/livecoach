@@ -29,6 +29,9 @@ const generate = read(
 const createScript = read(
   "app/api/crm/outreach/messages/[id]/voice-script/route.ts"
 );
+const researchProcessor = read(
+  "app/api/crm/outreach/research-jobs/processor.ts"
+);
 const patchRoute = read("app/api/crm/outreach/messages/[id]/route.ts");
 const queue = read("app/api/crm/outreach/queue/route.ts");
 const sender = read("lib/outreach-send-queue.ts");
@@ -177,7 +180,14 @@ assert.match(createScript, /resolveOutreachIdentity\(\)/);
 assert.match(createScript, /\.eq\("workspace_id", sender\.workspaceId\)/);
 assert.match(createScript, /\.eq\("sender_user_id", sender\.userId\)/);
 assert.match(createScript, /\.eq\("assigned_to_user_id", sender\.userId\)/);
-assert.match(createScript, /\.eq\("owner_id", sender\.userId\)/);
+assert.doesNotMatch(
+  createScript,
+  /from\("outreach_enrolments"\)[\s\S]{0,180}\.eq\("owner_id", sender\.userId\)/
+);
+assert.match(
+  createScript,
+  /enrolment\.prospect_id !== prospect\.id \|\| enrolment\.campaign_id !== campaign\.id/
+);
 assert.match(createScript, /OPENAI_MODEL_LIVE/);
 assert.doesNotMatch(createScript, /web_search/);
 assert.doesNotMatch(createScript, /generateElevenLabsOutreachAudio/);
@@ -273,7 +283,8 @@ assert.match(outreachPage, /optional voice scripts to prepare/);
 assert.match(outreachPage, /Research \+ draft current wave/);
 assert.match(outreachPage, /Create voice script/);
 assert.match(outreachPage, /Refresh draft/);
-assert.match(outreachPage, /emailPreserved !== true/);
+assert.match(researchProcessor, /body\?\.emailPreserved === true/);
+assert.match(researchProcessor, /body\?\.audioGenerated === false/);
 assert.doesNotMatch(
   outreachPage,
   /Complete and generate the personal voice note before queueing/

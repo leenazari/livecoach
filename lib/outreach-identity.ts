@@ -68,14 +68,53 @@ export async function resolveOutreachIdentity(
     .toLowerCase();
   if (!provider || !mailboxEmail)
     throw new Error("Connect this account's Google or Microsoft email first");
-  const senderEmail = String(profile?.outreach_sender_email || mailboxEmail)
+  const savedSenderEmail = String(profile?.outreach_sender_email || "")
     .trim()
     .toLowerCase();
-  const senderName = String(
-    profile?.outreach_sender_name || profile?.display_name || mailboxEmail
+  const savedSenderName = String(profile?.outreach_sender_name || "").trim();
+  let senderEmail = savedSenderEmail || mailboxEmail;
+  let senderName = String(
+    savedSenderName || profile?.display_name || mailboxEmail
   ).trim();
   if (!senderEmail || !senderName)
     throw new Error("This account needs an outreach sender identity");
+
+  // Google and Microsoft are the verified source of a salesperson's mailbox.
+  // Older invitations could become active without copying that identity onto
+  // the profile used by the database sender guard. Repair only missing fields
+  // before any research or generation starts, while preserving configured
+  // aliases and never borrowing another user's connector.
+  if (!savedSenderEmail || !savedSenderName) {
+    const senderPatch: Record<string, string> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (!savedSenderEmail) {
+      senderPatch.outreach_sender_email = mailboxEmail;
+    }
+    if (!savedSenderName) {
+      senderPatch.outreach_sender_name = senderName;
+    }
+    const { data: repairedProfile, error: repairError } = await supabaseService
+      .from("profiles")
+      .update(senderPatch)
+      .eq("user_id", scope.userId)
+      .select("outreach_sender_name,outreach_sender_email")
+      .maybeSingle();
+    if (repairError || !repairedProfile) {
+      throw new Error(
+        "Your mailbox is connected, but LiveCoach could not finish your sender setup. Reconnect the mailbox in Settings, then try again."
+      );
+    }
+    senderEmail = String(repairedProfile.outreach_sender_email || "")
+      .trim()
+      .toLowerCase();
+    senderName = String(repairedProfile.outreach_sender_name || "").trim();
+    if (!senderEmail || !senderName) {
+      throw new Error(
+        "Your mailbox is connected, but your outreach sender name or email is still missing."
+      );
+    }
+  }
   return {
     userId: scope.userId,
     workspaceId: scope.workspaceId,
