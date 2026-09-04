@@ -9,6 +9,7 @@ import {
   runCallSummaryJob,
   type CallSummaryPayload,
 } from "@/lib/call-summary-jobs";
+import { completeSharedUpcomingCalls } from "@/lib/shared-call-access";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -172,6 +173,11 @@ export async function POST(req: NextRequest) {
       sessionId,
       upcomingId: typeof upcomingId === "string" ? upcomingId : null,
     });
+    const clearedSharedUpcoming = await completeSharedUpcomingCalls({
+      workspaceId: accountScope.workspaceId,
+      userId: accountScope.userId,
+      sessionId,
+    });
 
     let summaryQueued = false;
     if (
@@ -202,7 +208,12 @@ export async function POST(req: NextRequest) {
       summaryQueued = true;
     }
 
-    return NextResponse.json({ ok: true, clearedUpcoming, summaryQueued });
+    return NextResponse.json({
+      ok: true,
+      clearedUpcoming,
+      clearedSharedUpcoming,
+      summaryQueued,
+    });
   } catch (err: any) {
     // Non-fatal: the scorecard (interview_summaries) is the primary record.
     return NextResponse.json(

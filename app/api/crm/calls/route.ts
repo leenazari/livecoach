@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { shouldShowUnrecordedScheduledCall } from "@/lib/call-list-recovery";
+import { requireRequestScope } from "@/lib/request-scope";
 
 export const runtime = "nodejs";
 // Without this, a no-arg GET() is statically optimised and Next caches the
@@ -25,14 +26,42 @@ export const dynamic = "force-dynamic";
 // is listed too, flagged needsClient, rather than being filtered out.
 export async function GET() {
   try {
+    const account = requireRequestScope();
     const now = Date.now();
     const grace = now - 3 * 60 * 60 * 1000; // matches the Upcoming past-cutoff
     const windowIso = new Date(now - 45 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: accessRows, error: accessError } = await supabaseService
+      .from("meet_capture_access")
+      .select("capture_id,access_role")
+      .eq("workspace_id", account.workspaceId)
+      .eq("user_id", account.userId)
+      .is("revoked_at", null)
+      .limit(500);
+    if (accessError) throw accessError;
+    const captureIds = (accessRows || []).map((row: any) => row.capture_id);
+    const { data: sharedCaptures, error: captureError } = captureIds.length
+      ? await supabaseService
+          .from("meet_bots")
+          .select("id,session_id,host_owner_id")
+          .eq("workspace_id", account.workspaceId)
+          .in("id", captureIds)
+      : { data: [], error: null };
+    if (captureError) throw captureError;
+    const sharedSessionIds = Array.from(
+      new Set(
+        (sharedCaptures || [])
+          .map((row: any) => String(row.session_id || ""))
+          .filter(Boolean)
+      )
+    );
+
     const [
       { data: companies },
       { data: calls },
       { data: sessions },
       { data: ups },
+      { data: sharedCalls },
+      { data: sharedSessions },
     ] = await Promise.all([
       supabaseAdmin.from("companies").select("id, name"),
       supabaseAdmin
@@ -53,9 +82,57 @@ export async function GET() {
         .select("id, company_id, title, scheduled_at, completed_at")
         .gte("scheduled_at", windowIso)
         .limit(500),
+      sharedSessionIds.length
+        ? supabaseService
+            .from("interview_summaries")
+            .select("id, session_id, candidate, role, company_id, created_at, cost, ref")
+            .eq("workspace_id", account.workspaceId)
+            .in("session_id", sharedSessionIds)
+            .limit(500)
+        : Promise.resolve({ data: [] }),
+      sharedSessionIds.length
+        ? supabaseService
+            .from("interview_sessions")
+            .select(
+              "session_id, upcoming_id, candidate, role, company_id, created_at, updated_at, ended_at, transcript, total_cost, summary_attempts, summary_error"
+            )
+            .eq("workspace_id", account.workspaceId)
+            .in("session_id", sharedSessionIds)
+            .gte("created_at", windowIso)
+            .limit(500)
+        : Promise.resolve({ data: [] }),
     ]);
+    const callIds = new Set((calls || []).map((row: any) => row.id));
+    const allCalls = [
+      ...(calls || []),
+      ...(sharedCalls || []).filter((row: any) => !callIds.has(row.id)),
+    ];
+    const ownedSessionIds = new Set(
+      (sessions || []).map((row: any) => String(row.session_id || ""))
+    );
+    const allSessions = [
+      ...(sessions || []),
+      ...(sharedSessions || []).filter(
+        (row: any) => !ownedSessionIds.has(String(row.session_id || ""))
+      ),
+    ];
+    const sharedCompanyIds = Array.from(
+      new Set(
+        [...(sharedCalls || []), ...(sharedSessions || [])]
+          .map((row: any) => row.company_id)
+          .filter(Boolean)
+      )
+    );
+    const { data: sharedCompanies } = sharedCompanyIds.length
+      ? await supabaseService
+          .from("companies")
+          .select("id,name")
+          .eq("workspace_id", account.workspaceId)
+          .in("id", sharedCompanyIds)
+      : { data: [] };
     const nameById = new Map<string, string>();
     for (const c of companies || []) nameById.set(c.id, c.name);
+    for (const c of sharedCompanies || []) nameById.set(c.id, c.name);
     const nameOf = (id: string | null) => (id ? nameById.get(id) || null : null);
 
     type Item = {
@@ -75,10 +152,11 @@ export async function GET() {
       error: string | null;
       needsClient: boolean;
       hasTranscript: boolean;
+      sharedCall: boolean;
     };
 
     const transcriptSessionIds = new Set(
-      (sessions || [])
+      allSessions
         .filter(
           (session: any) =>
             session.session_id &&
@@ -89,7 +167,7 @@ export async function GET() {
     );
 
     // 1. SCORECARDS.
-    const scored: Item[] = (calls || []).map((c: any) => ({
+    const scored: Item[] = allCalls.map((c: any) => ({
       id: c.id,
       candidate: c.candidate,
       role: c.role,
@@ -106,10 +184,11 @@ export async function GET() {
       error: null,
       needsClient: !c.company_id,
       hasTranscript: !!c.session_id && transcriptSessionIds.has(c.session_id),
+      sharedCall: sharedSessionIds.includes(String(c.session_id || "")),
     }));
 
     const summarySessionIds = new Set(
-      (calls || []).map((c: any) => c.session_id).filter(Boolean)
+      allCalls.map((c: any) => c.session_id).filter(Boolean)
     );
 
     // 2. CAPTURED SESSIONS with a real transcript but no scorecard. These are
@@ -121,7 +200,7 @@ export async function GET() {
       const t = v ? new Date(v).getTime() : 0;
       return Number.isFinite(t) ? t : 0;
     };
-    const captured: Item[] = (sessions || [])
+    const captured: Item[] = allSessions
       .filter((s: any) => {
         if (!s.session_id || summarySessionIds.has(s.session_id)) return false;
         const t = typeof s.transcript === "string" ? s.transcript.trim() : "";
@@ -152,6 +231,7 @@ export async function GET() {
           error: s.summary_error || null,
           needsClient: !s.company_id,
           hasTranscript: true,
+          sharedCall: sharedSessionIds.includes(String(s.session_id || "")),
         };
       });
 
@@ -159,7 +239,7 @@ export async function GET() {
     // scorecard AND no captured session), so a missed call still shows up.
     const coveredUpcoming = new Set<string>();
     const startedWithoutCapture = new Set<string>();
-    for (const s of sessions || []) {
+    for (const s of allSessions) {
       const upcomingId = String((s as any).upcoming_id || "");
       if (!upcomingId) continue;
       const transcript =
@@ -175,7 +255,7 @@ export async function GET() {
         startedWithoutCapture.add(upcomingId);
       }
     }
-    const scoredTimes = (calls || [])
+    const scoredTimes = allCalls
       .filter((c: any) => c.company_id && c.created_at)
       .map((c: any) => ({
         company_id: c.company_id as string,
@@ -219,6 +299,7 @@ export async function GET() {
         error: null,
         needsClient: !u.company_id,
         hasTranscript: false,
+        sharedCall: false,
       }));
 
     const items = [...scored, ...captured, ...unrecorded]

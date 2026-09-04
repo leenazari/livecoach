@@ -5,6 +5,7 @@ import {
   buildSpeakerMap,
   canonicalName,
   loadHostIdentity,
+  loadHostIdentityForUser,
 } from "@/lib/speakers";
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { estimateCost } from "@/lib/costs";
@@ -16,6 +17,8 @@ import { resolveCallScope } from "@/lib/workstreams";
 import { createHash } from "crypto";
 import { isVerifiedServiceRequest } from "@/lib/request-scope";
 import { withTransientSummaryRetry } from "@/lib/call-summary-retry";
+import { resolveRecordScope } from "@/lib/record-scope";
+import { loadSharedCallAccess } from "@/lib/shared-call-access";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -187,6 +190,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const account = await resolveRecordScope();
+    const sharedAccess = sessionId
+      ? await loadSharedCallAccess({
+          workspaceId: account.workspaceId,
+          userId: account.userId,
+          sessionId,
+        })
+      : null;
+    const verifiedHostOwnerId = String(
+      (sharedAccess?.capture as any)?.host_owner_id || account.userId
+    );
+    const verifiedHost =
+      verifiedHostOwnerId === account.userId
+        ? await loadHostIdentity()
+        : await loadHostIdentityForUser(
+            verifiedHostOwnerId,
+            account.workspaceId
+          );
+
     const fixedComps =
       Array.isArray(competencies) && competencies.length
         ? competencies.filter((c: any) => typeof c === "string")
@@ -337,7 +359,8 @@ Rules: scores are 1-5 integers. 3-6 items in strengths/concerns/notCovered. "ans
         ? await condenseTranscript(transcript)
         : transcript;
 
-    const userMsg = `ROLE: ${role || "(not specified)"}
+    const userMsg = `HOST NAME: ${verifiedHost.name || "(not specified)"}
+ROLE: ${role || "(not specified)"}
 SUBJECT (the client / other party on the call - only a "candidate" if this is an interview): ${candidate || "(unknown)"}
 
 COMPETENCIES TO SCORE (use these exact names if provided): ${
@@ -441,7 +464,7 @@ Return the JSON assessment now.`;
           .map((u: any) => u.speaker)
           .filter((x: any) => typeof x === "string" && x.trim());
       }
-      const host = await loadHostIdentity();
+      const host = verifiedHost;
       const map = buildSpeakerMap(labels, host.name);
 
       // Stamp who "you" is onto the scorecard itself, so the summary screen can

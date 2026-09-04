@@ -579,6 +579,9 @@ export async function listAllMicrosoftEventsSnapshot(
   const byId = new Map<string, any>();
   for (const event of batches.flat()) {
     if (!event?.id || byId.has(String(event.id))) continue;
+    const organiserAddress = String(
+      event?.organizer?.emailAddress?.address || ""
+    ).toLowerCase();
     const attendees = Array.isArray(event.attendees)
       ? event.attendees.map((attendee: any) => {
           const email = String(attendee?.emailAddress?.address || "").toLowerCase();
@@ -586,10 +589,27 @@ export async function listAllMicrosoftEventsSnapshot(
             email,
             displayName: attendee?.emailAddress?.name || email,
             self: email === profile.email,
+            organizer: Boolean(email && email === organiserAddress),
             responseStatus: attendee?.status?.response || "none",
           };
         })
       : [];
+    // Graph does not guarantee the organiser is repeated in `attendees`.
+    // Preserve that identity explicitly because shared LiveCoach calls use the
+    // organiser's exact calendar row as their canonical focus and summary.
+    if (
+      organiserAddress &&
+      !attendees.some((attendee: any) => attendee.email === organiserAddress)
+    ) {
+      attendees.unshift({
+        email: organiserAddress,
+        displayName:
+          event?.organizer?.emailAddress?.name || organiserAddress,
+        self: organiserAddress === profile.email,
+        organizer: true,
+        responseStatus: "accepted",
+      });
+    }
     byId.set(String(event.id), {
       id: String(event.id),
       status: event.isCancelled ? "cancelled" : "confirmed",

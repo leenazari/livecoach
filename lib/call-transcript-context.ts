@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { getRequestScope } from "@/lib/request-scope";
 
 export type TranscriptCallCandidate = {
@@ -303,6 +303,30 @@ export async function gatherCallTranscriptContext(
   const since = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString();
   const screenCallId = callIdFromPath(options.screenPath || "");
   const requestScope = getRequestScope();
+  const sharedCaptureBySession = new Map<string, any>();
+  if (requestScope) {
+    const { data: grants, error: grantError } = await supabaseService
+      .from("meet_capture_access")
+      .select("capture_id")
+      .eq("workspace_id", requestScope.workspaceId)
+      .eq("user_id", requestScope.userId)
+      .is("revoked_at", null)
+      .limit(500);
+    if (grantError) throw grantError;
+    const captureIds = (grants || []).map((row: any) => row.capture_id);
+    if (captureIds.length) {
+      const { data: captures, error: captureError } = await supabaseService
+        .from("meet_bots")
+        .select("id,session_id,owner_id")
+        .eq("workspace_id", requestScope.workspaceId)
+        .in("id", captureIds);
+      if (captureError) throw captureError;
+      for (const capture of captures || []) {
+        if ((capture as any).session_id)
+          sharedCaptureBySession.set((capture as any).session_id, capture);
+      }
+    }
+  }
   let summariesQuery = supabaseAdmin
     .from("interview_summaries")
     .select("id, session_id, candidate, role, company_id, workstream_id, created_at")
@@ -326,7 +350,39 @@ export async function gatherCallTranscriptContext(
   if (summariesRes.error) throw summariesRes.error;
   if (sessionsRes.error) throw sessionsRes.error;
 
-  const sessions = sessionsRes.data || [];
+  const sharedSessionIds = [...sharedCaptureBySession.keys()];
+  const [{ data: sharedSummaries }, { data: sharedSessions }] =
+    requestScope && sharedSessionIds.length
+      ? await Promise.all([
+          supabaseService
+            .from("interview_summaries")
+            .select("id, session_id, candidate, role, company_id, workstream_id, created_at")
+            .eq("workspace_id", requestScope.workspaceId)
+            .in("session_id", sharedSessionIds),
+          supabaseService
+            .from("interview_sessions")
+            .select("session_id, upcoming_id, candidate, role, company_id, workstream_id, created_at, started_at, ended_at")
+            .eq("workspace_id", requestScope.workspaceId)
+            .in("session_id", sharedSessionIds),
+        ])
+      : [{ data: [] as any[] }, { data: [] as any[] }];
+  const summaryIds = new Set(
+    (summariesRes.data || []).map((row: any) => row.id)
+  );
+  const summaries = [
+    ...(summariesRes.data || []),
+    ...(sharedSummaries || []).filter((row: any) => !summaryIds.has(row.id)),
+  ];
+  const ownSessionIds = new Set(
+    (sessionsRes.data || []).map((row: any) => row.session_id)
+  );
+  const sessions = [
+    ...(sessionsRes.data || []),
+    ...(sharedSessions || []).filter(
+      (row: any) => !ownSessionIds.has(row.session_id)
+    ),
+  ];
+
   const sessionById = new Map(
     sessions.map((session: any) => [session.session_id, session])
   );
@@ -335,20 +391,34 @@ export async function gatherCallTranscriptContext(
   );
   const companyIds = Array.from(
     new Set(
-      [...(summariesRes.data || []), ...sessions]
+      [...summaries, ...sessions]
         .map((row: any) => row.company_id)
         .filter(Boolean)
     )
   );
+  const upcomingQuery = requestScope
+    ? supabaseService
+        .from("upcoming_calls")
+        .select("id, title, scheduled_at, attendees, company_id, workstream_id")
+        .eq("workspace_id", requestScope.workspaceId)
+        .in("id", upcomingIds)
+    : supabaseAdmin
+        .from("upcoming_calls")
+        .select("id, title, scheduled_at, attendees, company_id, workstream_id")
+        .in("id", upcomingIds);
+  const companiesQuery = requestScope
+    ? supabaseService
+        .from("companies")
+        .select("id, name")
+        .eq("workspace_id", requestScope.workspaceId)
+        .in("id", companyIds)
+    : supabaseAdmin.from("companies").select("id, name").in("id", companyIds);
   const [upcomingRes, companiesRes] = await Promise.all([
     upcomingIds.length
-      ? supabaseAdmin
-          .from("upcoming_calls")
-          .select("id, title, scheduled_at, attendees, company_id, workstream_id")
-          .in("id", upcomingIds)
+      ? upcomingQuery
       : Promise.resolve({ data: [] as any[], error: null }),
     companyIds.length
-      ? supabaseAdmin.from("companies").select("id, name").in("id", companyIds)
+      ? companiesQuery
       : Promise.resolve({ data: [] as any[], error: null }),
   ]);
   if (upcomingRes.error) throw upcomingRes.error;
@@ -362,7 +432,7 @@ export async function gatherCallTranscriptContext(
 
   const candidates: TranscriptCallCandidate[] = [];
   const representedSessions = new Set<string>();
-  for (const summary of summariesRes.data || []) {
+  for (const summary of summaries) {
     const session: any = summary.session_id
       ? sessionById.get(summary.session_id)
       : null;
@@ -449,31 +519,45 @@ export async function gatherCallTranscriptContext(
 
   let transcript = "";
   if (best.call.sessionId) {
-    let transcriptQuery = supabaseAdmin
-      .from("interview_sessions")
-      .select("transcript")
-      .eq("session_id", best.call.sessionId)
-      .order("created_at", { ascending: false })
-      .limit(1);
-    if (requestScope && requestScope.role !== "owner") {
-      transcriptQuery = transcriptQuery.eq(
-        "owner_id",
-        requestScope.userId
-      );
-    }
+    const sharedCapture = sharedCaptureBySession.get(best.call.sessionId);
+    let transcriptQuery = sharedCapture && requestScope
+      ? supabaseService
+          .from("interview_sessions")
+          .select("transcript")
+          .eq("workspace_id", requestScope.workspaceId)
+          .eq("owner_id", sharedCapture.owner_id)
+          .eq("session_id", best.call.sessionId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+      : supabaseAdmin
+          .from("interview_sessions")
+          .select("transcript")
+          .eq("session_id", best.call.sessionId)
+          .order("created_at", { ascending: false })
+          .limit(1);
+    if (!sharedCapture && requestScope && requestScope.role !== "owner")
+      transcriptQuery = transcriptQuery.eq("owner_id", requestScope.userId);
     const { data, error } = await transcriptQuery.maybeSingle();
     if (error) throw error;
     transcript = typeof data?.transcript === "string" ? data.transcript.trim() : "";
   }
   let manualNotes = "";
   if (!transcript && best.call.summaryId) {
-    let notesQuery = supabaseAdmin
-      .from("interview_summaries")
-      .select("summary")
-      .eq("id", best.call.summaryId);
-    if (requestScope && requestScope.role !== "owner") {
+    const sharedCapture = best.call.sessionId
+      ? sharedCaptureBySession.get(best.call.sessionId)
+      : null;
+    let notesQuery = sharedCapture && requestScope
+      ? supabaseService
+          .from("interview_summaries")
+          .select("summary")
+          .eq("workspace_id", requestScope.workspaceId)
+          .eq("id", best.call.summaryId)
+      : supabaseAdmin
+          .from("interview_summaries")
+          .select("summary")
+          .eq("id", best.call.summaryId);
+    if (!sharedCapture && requestScope && requestScope.role !== "owner")
       notesQuery = notesQuery.eq("owner_id", requestScope.userId);
-    }
     const { data, error } = await notesQuery.maybeSingle();
     if (error) throw error;
     const notes = data?.summary && typeof data.summary === "object"

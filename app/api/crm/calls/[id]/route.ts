@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+import { loadSharedCallAccess } from "@/lib/shared-call-access";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -16,7 +17,7 @@ export async function GET(
 ) {
   try {
     const scope = requireRequestScope();
-    const { data: call, error } = await supabaseAdmin
+    const { data: ownedCall, error } = await supabaseAdmin
       .from("interview_summaries")
       .select("id, candidate, role, company_id, created_at, cost, summary, session_id, ref")
       .eq("id", params.id)
@@ -24,6 +25,25 @@ export async function GET(
       .eq("owner_id", scope.userId)
       .maybeSingle();
     if (error) throw error;
+    let call: any = ownedCall;
+    let sharedAccess: Awaited<ReturnType<typeof loadSharedCallAccess>> = null;
+    if (!call) {
+      const { data: candidate, error: candidateError } = await supabaseService
+        .from("interview_summaries")
+        .select("id, candidate, role, company_id, created_at, cost, summary, session_id, ref")
+        .eq("id", params.id)
+        .eq("workspace_id", scope.workspaceId)
+        .maybeSingle();
+      if (candidateError) throw candidateError;
+      if (candidate?.session_id) {
+        sharedAccess = await loadSharedCallAccess({
+          workspaceId: scope.workspaceId,
+          userId: scope.userId,
+          sessionId: candidate.session_id,
+        });
+      }
+      if (sharedAccess) call = candidate;
+    }
     if (!call) {
       return NextResponse.json({ error: "call not found" }, { status: 404 });
     }
@@ -32,14 +52,23 @@ export async function GET(
     let companyInternal = false;
     if (call?.company_id) {
       const access = await loadAssignedClientAccess(call.company_id, scope);
-      if (!access) {
+      if (!access && !sharedAccess) {
         return NextResponse.json(
           { error: "The linked company is not available to your account" },
           { status: 403 }
         );
       }
-      company = access.company.name || null;
-      if (access.mode === "owner") {
+      if (access) company = access.company.name || null;
+      if (!company && sharedAccess) {
+        const { data: sharedCompany } = await supabaseService
+          .from("companies")
+          .select("name")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("id", call.company_id)
+          .maybeSingle();
+        company = sharedCompany?.name || null;
+      }
+      if (access?.mode === "owner") {
         const { data: owned } = await supabaseAdmin
           .from("companies")
           .select("profile")
@@ -57,7 +86,7 @@ export async function GET(
     let transcriptChars: number | null = null;
     let participants: string[] = [];
     if (call?.session_id) {
-      const { data: sess } = await supabaseAdmin
+      const { data: ownedSession } = await supabaseAdmin
         .from("interview_sessions")
         .select("started_at, ended_at, transcript")
         .eq("session_id", call.session_id)
@@ -66,6 +95,30 @@ export async function GET(
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
+      let sess: any = ownedSession;
+      if (!sess) {
+        sharedAccess =
+          sharedAccess ||
+          (await loadSharedCallAccess({
+            workspaceId: scope.workspaceId,
+            userId: scope.userId,
+            sessionId: call.session_id,
+          }));
+        if (sharedAccess) {
+          const { data: sharedSession, error: sharedSessionError } =
+            await supabaseService
+              .from("interview_sessions")
+              .select("started_at, ended_at, transcript")
+              .eq("workspace_id", scope.workspaceId)
+              .eq("owner_id", (sharedAccess.capture as any).owner_id)
+              .eq("session_id", call.session_id)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+          if (sharedSessionError) throw sharedSessionError;
+          sess = sharedSession;
+        }
+      }
       if (sess) {
         if (sess.started_at && sess.ended_at) {
           const ms =
@@ -104,6 +157,12 @@ export async function GET(
         durationSeconds,
         transcriptChars,
         participants,
+        sharedCall: sharedAccess
+          ? {
+              accessRole: (sharedAccess.access as any).access_role,
+              hostOwnerId: (sharedAccess.capture as any).host_owner_id,
+            }
+          : null,
       },
     });
   } catch (err: any) {

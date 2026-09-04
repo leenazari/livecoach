@@ -14,6 +14,11 @@ import {
 } from "@/lib/calendar-provider";
 import { calendarDurationMinutes } from "@/lib/calendar-create";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+import {
+  resolveSharedCalendarOccurrence,
+  sharedFocusPrep,
+  type SharedUpcomingCall,
+} from "@/lib/shared-call-access";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -33,7 +38,7 @@ export async function GET(
     const { data, error } = await supabaseAdmin
       .from("upcoming_calls")
       .select(
-        "id, company_id, workstream_id, title, scheduled_at, meeting_url, intent, prepped, prep, research, attendees"
+        "id, workspace_id, owner_id, company_id, workstream_id, title, scheduled_at, meeting_url, source, external_id, completed_at, intent, prepped, prep, research, attendees"
       )
       .eq("id", params.id)
       .eq("workspace_id", account.workspaceId)
@@ -41,6 +46,33 @@ export async function GET(
       .maybeSingle();
     if (error) throw error;
     if (!data) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+    // When several LiveCoach users attend the same exact provider event, the
+    // organiser's saved intent and focus are the shared call context. Keep the
+    // viewer's private notes local and never expose research or company memory
+    // from the organiser's private CRM record.
+    const occurrence = await resolveSharedCalendarOccurrence(
+      data as SharedUpcomingCall
+    );
+    const canonicalIsAnotherUser =
+      occurrence && occurrence.canonical.owner_id !== account.userId;
+    if (canonicalIsAnotherUser) {
+      const ownPrep =
+        data.prep && typeof data.prep === "object"
+          ? (data.prep as Record<string, unknown>)
+          : {};
+      const safeHostPrep = sharedFocusPrep(occurrence.canonical.prep);
+      data.intent = occurrence.canonical.intent || data.intent;
+      if (safeHostPrep) {
+        data.prep = {
+          ...safeHostPrep,
+          ...(Array.isArray(ownPrep.privateNotes)
+            ? { privateNotes: ownPrep.privateNotes }
+            : {}),
+        };
+        data.prepped = Boolean(occurrence.canonical.prepped);
+      }
+    }
     // Repair older calendar rows that have a guest but were never linked to a
     // client. Exact saved contact-email matches are conservative and give Prep
     // access to the correct relationship history immediately.
@@ -146,6 +178,15 @@ export async function GET(
         primaryAttendee,
         workstream: scope.workstream,
         workstreamChoices,
+        sharedCall: occurrence
+          ? {
+              hostOwnerId: occurrence.hostOwnerId,
+              canonicalUpcomingId: occurrence.canonical.id,
+              viewerRole:
+                occurrence.members.find((member) => member.userId === account.userId)
+                  ?.accessRole || "attendee",
+            }
+          : null,
       },
     });
   } catch (err: any) {
