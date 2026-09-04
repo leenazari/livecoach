@@ -110,6 +110,7 @@ export async function sendConnectedMail(
     from?: string;
     replyTo?: string;
     threadId?: string;
+    sourceMessageId?: string;
   },
   ownerId?: string
 ): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {

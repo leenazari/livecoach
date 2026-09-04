@@ -776,11 +776,33 @@ export async function sendMicrosoftMail(
     html?: string;
     text?: string;
     replyTo?: string;
+    sourceMessageId?: string;
   },
   ownerId?: string
 ): Promise<{ ok: boolean; id?: string; threadId?: string; error?: string }> {
   const to = String(opts.to || "").trim();
   if (!to) return { ok: false, error: "A recipient is required" };
+  const sourceMessageId = String(opts.sourceMessageId || "").trim();
+  if (sourceMessageId) {
+    const response = await graphFetch(
+      `/me/messages/${encodeURIComponent(sourceMessageId)}/reply`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment: String(opts.text || htmlToText(opts.html || "")) }),
+      },
+      ownerId
+    );
+    if (!response) return { ok: false, error: "Microsoft Mail could not be reached" };
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 240);
+      return {
+        ok: false,
+        error: `Microsoft Mail refused the reply (${response.status})${detail ? ` ${detail}` : ""}`,
+      };
+    }
+    return { ok: true, id: sourceMessageId };
+  }
   const content = opts.html || String(opts.text || "").replace(/\n/g, "<br>");
   const message: Record<string, unknown> = {
     subject: String(opts.subject || ""),

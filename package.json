@@ -110,6 +110,7 @@
     "validate:brain-call-focus": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-call-focus-actions.mjs",
     "validate:unified-task-composer": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-unified-task-composer.mjs",
     "validate:tasks-dashboard": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-tasks-dashboard.mjs",
+    "validate:task-email-intent": "node scripts/validate-task-email-intent.mjs",
     "validate:manual-contact-callback": "node scripts/validate-manual-contact-callback.mjs",
     "validate:brain-operating-system": "node scripts/validate-brain-operating-system.mjs",
     "validate:sales-knowledge": "node scripts/validate-sales-knowledge-base.mjs",
