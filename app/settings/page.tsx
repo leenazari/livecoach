@@ -1273,6 +1273,7 @@ export default function SettingsPage() {
 
       <div
         id="sendpilot-inbox"
+        data-sales-tour="sendpilot-settings"
         className={`mb-5 rounded-xl border p-5 ${
           sendPilot?.connected && sendPilot.webhookConfigured
             ? "border-moss/45 bg-moss/[0.06]"
@@ -1346,26 +1347,39 @@ export default function SettingsPage() {
             ) : null}
           </div>
 
-          {sendPilot?.connected ? (
-            <div className="flex shrink-0 flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void runSendPilotInitialBackfill()}
-                disabled={!!sendPilotBusy}
-                className="min-h-10 rounded-full border border-sky/55 bg-sky/10 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-sky disabled:opacity-40"
-              >
-                {sendPilotBusy === "backfill" ? "Syncing…" : "Sync SendPilot now"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void disconnectSendPilotAccount()}
-                disabled={!!sendPilotBusy}
-                className="min-h-10 rounded-full border border-rust/50 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-rust disabled:opacity-40"
-              >
-                {sendPilotBusy === "disconnect" ? "Disconnecting…" : "Disconnect"}
-              </button>
-            </div>
-          ) : null}
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                window.dispatchEvent(
+                  new CustomEvent("lc:start-sendpilot-tutorial")
+                )
+              }
+              className="min-h-10 rounded-full border border-amber/55 bg-amber/10 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-amber"
+            >
+              Open tutorial
+            </button>
+            {sendPilot?.connected ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void runSendPilotInitialBackfill()}
+                  disabled={!!sendPilotBusy}
+                  className="min-h-10 rounded-full border border-sky/55 bg-sky/10 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-sky disabled:opacity-40"
+                >
+                  {sendPilotBusy === "backfill" ? "Syncing…" : "Sync SendPilot now"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void disconnectSendPilotAccount()}
+                  disabled={!!sendPilotBusy}
+                  className="min-h-10 rounded-full border border-rust/50 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-rust disabled:opacity-40"
+                >
+                  {sendPilotBusy === "disconnect" ? "Disconnecting…" : "Disconnect"}
+                </button>
+              </>
+            ) : null}
+          </div>
         </div>
 
         {sendPilotLoaded && !sendPilot ? (

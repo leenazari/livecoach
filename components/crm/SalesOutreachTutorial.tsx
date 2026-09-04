@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { crmFetch } from "@/lib/crm";
-import { SALES_OUTREACH_TUTORIAL_STEPS } from "@/lib/sales-tutorial";
+import {
+  SALES_OUTREACH_TUTORIAL_STEPS,
+  SENDPILOT_TUTORIAL_STEPS,
+} from "@/lib/sales-tutorial";
+
+type TutorialGuide = "sales" | "sendpilot";
 
 type TutorialStatus =
   | "not_started"
@@ -19,6 +24,7 @@ type TutorialResponse = {
     lastPath: string | null;
   };
   autoStart: boolean;
+  guide: TutorialGuide;
   role: "owner" | "manager" | "sales";
 };
 
@@ -61,6 +67,8 @@ const CORE_SETUP_IDS = new Set([
 ]);
 
 const API = "/api/crm/tutorial";
+const tutorialApi = (guide: TutorialGuide) =>
+  `${API}?guide=${encodeURIComponent(guide)}`;
 
 export default function SalesOutreachTutorial() {
   const pathname = usePathname() || "/crm";
@@ -68,6 +76,7 @@ export default function SalesOutreachTutorial() {
   const router = useRouter();
   const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState(false);
+  const [tutorialGuide, setTutorialGuide] = useState<TutorialGuide>("sales");
   const [currentStep, setCurrentStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -81,7 +90,11 @@ export default function SalesOutreachTutorial() {
     const query = searchParams.toString();
     return `${pathname}${query ? `?${query}` : ""}`;
   }, [pathname, searchParams]);
-  const step = SALES_OUTREACH_TUTORIAL_STEPS[currentStep];
+  const tutorialSteps =
+    tutorialGuide === "sendpilot"
+      ? SENDPILOT_TUTORIAL_STEPS
+      : SALES_OUTREACH_TUTORIAL_STEPS;
+  const step = tutorialSteps[currentStep];
 
   const loadSetup = useCallback(async () => {
     setSetupLoading(true);
@@ -98,13 +111,18 @@ export default function SalesOutreachTutorial() {
   }, []);
 
   const writeProgress = useCallback(
-    async (status: Exclude<TutorialStatus, "not_started">, nextStep: number) => {
+    async (
+      status: Exclude<TutorialStatus, "not_started">,
+      nextStep: number,
+      requestedGuide: TutorialGuide = tutorialGuide
+    ) => {
       setSaving(true);
       setError("");
       try {
-        return await crmFetch<TutorialResponse>(API, {
+        return await crmFetch<TutorialResponse>(tutorialApi(requestedGuide), {
           method: "PUT",
           body: JSON.stringify({
+            guide: requestedGuide,
             status,
             currentStep: nextStep,
             lastPath: currentPath,
@@ -117,16 +135,17 @@ export default function SalesOutreachTutorial() {
         setSaving(false);
       }
     },
-    [currentPath]
+    [currentPath, tutorialGuide]
   );
 
   useEffect(() => {
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
     let active = true;
-    void crmFetch<TutorialResponse>(API)
+    void crmFetch<TutorialResponse>(tutorialApi("sales"))
       .then((data) => {
         if (!active) return;
+        setTutorialGuide("sales");
         const savedStep = Math.min(
           SALES_OUTREACH_TUTORIAL_STEPS.length - 1,
           Math.max(0, Number(data.tutorial.currentStep) || 0)
@@ -135,7 +154,7 @@ export default function SalesOutreachTutorial() {
         if (data.tutorial.status === "active" || data.autoStart) {
           setOpen(true);
           void loadSetup();
-          if (data.autoStart) void writeProgress("active", 0);
+          if (data.autoStart) void writeProgress("active", 0, "sales");
         }
       })
       .catch(() => {
@@ -154,24 +173,50 @@ export default function SalesOutreachTutorial() {
         ? SALES_OUTREACH_TUTORIAL_STEPS.findIndex((item) => item.id === requestedStepId)
         : 0;
       const nextStep = requestedStep >= 0 ? requestedStep : 0;
+      setTutorialGuide("sales");
       setCurrentStep(nextStep);
       setConfirmDismiss(false);
       setError("");
       setOpen(true);
       void loadSetup();
-      void writeProgress("active", nextStep);
+      void writeProgress("active", nextStep, "sales");
     };
     window.addEventListener("lc:start-sales-tutorial", start);
     return () => window.removeEventListener("lc:start-sales-tutorial", start);
   }, [loadSetup, writeProgress]);
 
   useEffect(() => {
+    const start = (event: Event) => {
+      const requestedStepId = (event as CustomEvent<{ stepId?: string }>).detail?.stepId;
+      const requestedStep = requestedStepId
+        ? SENDPILOT_TUTORIAL_STEPS.findIndex((item) => item.id === requestedStepId)
+        : 0;
+      const nextStep = requestedStep >= 0 ? requestedStep : 0;
+      setTutorialGuide("sendpilot");
+      setCurrentStep(nextStep);
+      setConfirmDismiss(false);
+      setError("");
+      setOpen(true);
+      void loadSetup();
+      void writeProgress("active", nextStep, "sendpilot");
+    };
+    window.addEventListener("lc:start-sendpilot-tutorial", start);
+    return () => window.removeEventListener("lc:start-sendpilot-tutorial", start);
+  }, [loadSetup, writeProgress]);
+
+  useEffect(() => {
     const refreshAfterReturn = () => {
-      if (open && currentStep <= 1) void loadSetup();
+      if (
+        open &&
+        ((tutorialGuide === "sales" && currentStep <= 1) ||
+          (tutorialGuide === "sendpilot" && currentStep <= 3))
+      ) {
+        void loadSetup();
+      }
     };
     window.addEventListener("focus", refreshAfterReturn);
     return () => window.removeEventListener("focus", refreshAfterReturn);
-  }, [currentStep, loadSetup, open]);
+  }, [currentStep, loadSetup, open, tutorialGuide]);
 
   const onStepScreen = useMemo(() => {
     if (!step.href) return true;
@@ -209,7 +254,7 @@ export default function SalesOutreachTutorial() {
 
   const moveTo = async (nextStep: number) => {
     const bounded = Math.min(
-      SALES_OUTREACH_TUTORIAL_STEPS.length - 1,
+      tutorialSteps.length - 1,
       Math.max(0, nextStep)
     );
     const previousStep = currentStep;
@@ -219,7 +264,7 @@ export default function SalesOutreachTutorial() {
       setCurrentStep(previousStep);
       return;
     }
-    const nextPath = SALES_OUTREACH_TUTORIAL_STEPS[bounded].href;
+    const nextPath = tutorialSteps[bounded].href;
     if (nextPath) router.push(nextPath);
   };
 
@@ -239,7 +284,7 @@ export default function SalesOutreachTutorial() {
   const finish = async () => {
     const saved = await writeProgress(
       "completed",
-      SALES_OUTREACH_TUTORIAL_STEPS.length - 1
+      tutorialSteps.length - 1
     );
     if (saved) setOpen(false);
   };
@@ -265,34 +310,88 @@ export default function SalesOutreachTutorial() {
         : linkedInAutomation.mappedCampaignCount < 1
           ? "SendPilot and replies are connected. Map one active campaign before handing off leads."
           : `${linkedInAutomation.mappedCampaignCount} LinkedIn campaign${linkedInAutomation.mappedCampaignCount === 1 ? " is" : "s are"} mapped and ready.`;
+  const sendPilotSetupChecks = [
+    {
+      id: "connection",
+      label: "Your SendPilot account",
+      ready: Boolean(linkedInAutomation?.connected),
+      detail: linkedInAutomation?.connected
+        ? "Your private SendPilot sender is connected."
+        : "Connect the SendPilot account linked to your own LinkedIn profile.",
+    },
+    {
+      id: "webhook",
+      label: "Reply webhook",
+      ready: Boolean(linkedInAutomation?.webhookConfigured),
+      detail: linkedInAutomation?.webhookConfigured
+        ? "Messages, replies and status changes can return to LiveCoach."
+        : "Add your webhook URL and secret so replies return to the correct CRM owner.",
+    },
+    {
+      id: "mapping",
+      label: "Campaign mapping",
+      ready: Number(linkedInAutomation?.mappedCampaignCount || 0) > 0,
+      detail:
+        Number(linkedInAutomation?.mappedCampaignCount || 0) > 0
+          ? `${linkedInAutomation?.mappedCampaignCount || 0} campaign${linkedInAutomation?.mappedCampaignCount === 1 ? " is" : "s are"} mapped for this user.`
+          : "Map one active LiveCoach campaign to one running SendPilot campaign.",
+    },
+  ];
+  const sendPilotReadyCount = sendPilotSetupChecks.filter(
+    (check) => check.ready
+  ).length;
+  const firstIncompleteSendPilotStep = !linkedInAutomation?.connected
+    ? 1
+    : !linkedInAutomation.webhookConfigured
+      ? 2
+      : Number(linkedInAutomation.mappedCampaignCount || 0) < 1
+        ? 3
+        : 4;
+  const sendPilotStepAlreadyReady =
+    tutorialGuide === "sendpilot" &&
+    ((currentStep === 1 && Boolean(linkedInAutomation?.connected)) ||
+      (currentStep === 2 && Boolean(linkedInAutomation?.webhookConfigured)) ||
+      (currentStep === 3 &&
+        Number(linkedInAutomation?.mappedCampaignCount || 0) > 0));
 
   if (!loaded || !open) return null;
 
   const percent = Math.round(
-    ((currentStep + 1) / SALES_OUTREACH_TUTORIAL_STEPS.length) * 100
+    ((currentStep + 1) / tutorialSteps.length) * 100
   );
-  const finalStep = currentStep === SALES_OUTREACH_TUTORIAL_STEPS.length - 1;
+  const finalStep = currentStep === tutorialSteps.length - 1;
   const primaryLabel =
     currentStep === 0
-      ? coreSetupReady
-        ? "Start walkthrough"
-        : "Review setup"
-      : !onStepScreen
-        ? "Open this screen"
-        : finalStep
-          ? "Finish tutorial"
-          : "Next step";
+      ? tutorialGuide === "sendpilot"
+        ? setupLoading
+          ? "Checking your setup…"
+          : "Start SendPilot guide"
+        : coreSetupReady
+          ? "Start walkthrough"
+          : "Review setup"
+      : sendPilotStepAlreadyReady
+        ? "Already ready · next"
+        : !onStepScreen
+          ? "Open this screen"
+          : finalStep
+            ? "Finish tutorial"
+            : "Next step";
 
   return (
     <aside
       role="dialog"
-      aria-label="Sales outreach tutorial"
+      aria-label={
+        tutorialGuide === "sendpilot"
+          ? "SendPilot tutorial"
+          : "Sales outreach tutorial"
+      }
       className="fixed inset-x-3 bottom-[5.2rem] z-[70] max-h-[min(72vh,620px)] overflow-y-auto rounded-2xl border border-amber/45 bg-panel/95 p-4 shadow-2xl backdrop-blur sm:inset-x-auto sm:bottom-5 sm:right-5 sm:w-[390px]"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="font-mono text-[0.54rem] uppercase tracking-[0.18em] text-amber">
-            Sales tutorial · {currentStep + 1} of {SALES_OUTREACH_TUTORIAL_STEPS.length}
+            {tutorialGuide === "sendpilot" ? "SendPilot tutorial" : "Sales tutorial"} ·{" "}
+            {currentStep + 1} of {tutorialSteps.length}
           </p>
           <p className="mt-1 text-xs text-muted">{percent}% complete</p>
         </div>
@@ -312,7 +411,7 @@ export default function SalesOutreachTutorial() {
         />
       </div>
 
-      {currentStep <= 1 ? (
+      {tutorialGuide === "sales" && currentStep <= 1 ? (
         <section className="mt-4 rounded-xl border border-sage/35 bg-sage/[0.05] p-3">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -411,6 +510,83 @@ export default function SalesOutreachTutorial() {
         </section>
       ) : null}
 
+      {tutorialGuide === "sendpilot" && currentStep <= 3 ? (
+        <section className="mt-4 rounded-xl border border-sky/35 bg-sky/[0.05] p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-mono text-[0.5rem] uppercase tracking-[0.16em] text-sky">
+                Your SendPilot setup
+              </p>
+              <p className="mt-1 text-sm font-semibold text-bone">
+                {setupLoading && !linkedInAutomation
+                  ? "Checking this account…"
+                  : sendPilotReadyCount === sendPilotSetupChecks.length
+                    ? "Ready to hand off leads"
+                    : `${sendPilotReadyCount} of ${sendPilotSetupChecks.length} ready`}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-muted">
+                Checked only for this signed-in salesperson. No AI tokens are used.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadSetup()}
+              disabled={setupLoading}
+              className="min-h-9 shrink-0 rounded-lg border border-sky/35 px-2 font-mono text-[0.48rem] uppercase text-sky disabled:opacity-40"
+            >
+              {setupLoading ? "Checking…" : "Refresh"}
+            </button>
+          </div>
+
+          {setupError ? (
+            <p className="mt-3 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-xs text-rust">
+              {setupError}
+            </p>
+          ) : null}
+
+          <div className="mt-3 space-y-2">
+            {sendPilotSetupChecks.map((check) => (
+              <div
+                key={check.id}
+                className={`rounded-lg border px-3 py-2 ${
+                  check.ready
+                    ? "border-sage/30 bg-sage/[0.05]"
+                    : "border-sky/30 bg-ink/35"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold text-bone">{check.label}</p>
+                  <span
+                    className={`font-mono text-[0.44rem] uppercase ${
+                      check.ready ? "text-sage" : "text-sky"
+                    }`}
+                  >
+                    {check.ready ? "Ready" : "Next"}
+                  </span>
+                </div>
+                <p className="mt-1 text-[0.68rem] leading-4 text-muted">
+                  {check.detail}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {sendPilotReadyCount < sendPilotSetupChecks.length ? (
+            <button
+              type="button"
+              onClick={() => router.push("/settings#sendpilot-inbox")}
+              className="mt-3 min-h-9 w-full rounded-lg border border-sky/45 bg-sky/10 px-3 font-mono text-[0.5rem] uppercase text-sky"
+            >
+              Open SendPilot setup →
+            </button>
+          ) : (
+            <p className="mt-3 rounded-lg border border-sage/30 bg-sage/[0.06] px-3 py-2 text-xs text-sage">
+              ✓ Connection, replies and campaign mapping are ready for this login.
+            </p>
+          )}
+        </section>
+      ) : null}
+
       <div className="mt-4">
         <p className="font-mono text-[0.55rem] uppercase tracking-wider text-sage">
           {step.eyebrow}
@@ -506,12 +682,30 @@ export default function SalesOutreachTutorial() {
             <button
               type="button"
               onClick={() => {
-                if (currentStep === 0) void moveTo(coreSetupReady ? 2 : 1);
-                else if (!onStepScreen) openCurrentScreen();
-                else if (finalStep) void finish();
-                else void moveTo(currentStep + 1);
+                if (currentStep === 0) {
+                  void moveTo(
+                    tutorialGuide === "sendpilot"
+                      ? firstIncompleteSendPilotStep
+                      : coreSetupReady
+                        ? 2
+                        : 1
+                  );
+                } else if (sendPilotStepAlreadyReady) {
+                  void moveTo(currentStep + 1);
+                } else if (!onStepScreen) {
+                  openCurrentScreen();
+                } else if (finalStep) {
+                  void finish();
+                } else {
+                  void moveTo(currentStep + 1);
+                }
               }}
-              disabled={saving}
+              disabled={
+                saving ||
+                (tutorialGuide === "sendpilot" &&
+                  currentStep === 0 &&
+                  setupLoading)
+              }
               className="min-h-11 flex-1 rounded-lg border border-amber/60 bg-amber/15 px-4 font-mono text-[0.57rem] uppercase tracking-wider text-amber disabled:opacity-40"
             >
               {saving ? "Saving…" : primaryLabel}

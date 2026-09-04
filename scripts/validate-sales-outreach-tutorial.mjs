@@ -20,6 +20,7 @@ const pipeline = read("components/crm/PipelineWorkspace.tsx");
 const readiness = read("app/settings/readiness/page.tsx");
 const readinessRoute = read("app/api/crm/account-readiness/route.ts");
 const calls = read("app/crm/calls/page.tsx");
+const settings = read("app/settings/page.tsx");
 
 assert.match(migration, /create table if not exists public\.sales_tutorial_progress/);
 assert.match(migration, /primary key \(workspace_id, user_id, guide_key\)/);
@@ -32,15 +33,26 @@ assert.doesNotMatch(migration, /security definer/i);
 assert.match(route, /requireRequestScope\(\)/);
 assert.match(route, /SALES_TUTORIAL_GUIDE_KEY/);
 assert.match(route, /SALES_TUTORIAL_LAST_STEP/);
+assert.match(route, /SENDPILOT_TUTORIAL_GUIDE_KEY/);
+assert.match(route, /SENDPILOT_TUTORIAL_LAST_STEP/);
+assert.match(route, /type TutorialGuide = "sales" \| "sendpilot"/);
+assert.match(route, /tutorialGuide\(body\.guide\)/);
 assert.match(route, /\.eq\("workspace_id", scope\.workspaceId\)/);
 assert.match(route, /\.eq\("user_id", scope\.userId\)/);
 assert.match(route, /onConflict: "workspace_id,user_id,guide_key"/);
-assert.match(route, /autoStart: !row && role === "sales"/);
+assert.match(route, /autoStart: !row && role === "sales" && guide === "sales"/);
 
 assert.match(tutorialConfig, /SALES_TUTORIAL_GUIDE_KEY = "sales_workflow_v3"/);
+assert.match(tutorialConfig, /SENDPILOT_TUTORIAL_GUIDE_KEY = "sendpilot_workflow_v1"/);
 assert.match(tutorialConfig, /SALES_TUTORIAL_LAST_STEP/);
-assert.equal((tutorialConfig.match(/\n    id: "/g) || []).length, 8);
-assert.equal((tutorialConfig.match(/\n    demo: \{/g) || []).length, 8);
+assert.match(tutorialConfig, /SENDPILOT_TUTORIAL_LAST_STEP/);
+const [salesTutorialConfig, sendPilotTutorialConfig = ""] = tutorialConfig.split(
+  "export const SENDPILOT_TUTORIAL_STEPS"
+);
+assert.equal((salesTutorialConfig.match(/\n    id: "/g) || []).length, 8);
+assert.equal((salesTutorialConfig.match(/\n    demo: \{/g) || []).length, 8);
+assert.equal((sendPilotTutorialConfig.match(/\n    id: "/g) || []).length, 7);
+assert.equal((sendPilotTutorialConfig.match(/\n    demo: \{/g) || []).length, 7);
 for (const label of [
   "Make your account ready before selling",
   "Choose the campaign, message and next step",
@@ -58,12 +70,16 @@ assert.doesNotMatch(tutorialConfig, /\/prepare|\/send|supabaseAdmin/);
 assert.match(tutorial, /Preview only/);
 assert.match(tutorial, /Turn off tutorial/);
 assert.match(tutorial, /lc:start-sales-tutorial/);
+assert.match(tutorial, /lc:start-sendpilot-tutorial/);
 assert.match(tutorial, /requestedStepId/);
 assert.match(tutorial, /Your live setup/);
 assert.match(tutorial, /\/api\/crm\/account-readiness/);
 assert.match(tutorial, /Already ready/);
 assert.match(tutorial, /LinkedIn automation/);
 assert.match(tutorial, /Checked from this login only/);
+assert.match(tutorial, /Your SendPilot setup/);
+assert.match(tutorial, /Checked only for this signed-in salesperson/);
+assert.match(tutorial, /Already ready · next/);
 assert.match(readinessRoute, /sendPilotIntegrationStatus/);
 assert.match(readinessRoute, /userId: scope\.userId/);
 assert.match(readinessRoute, /workspaceId: scope\.workspaceId/);
@@ -73,6 +89,18 @@ assert.match(layout, /<SalesOutreachTutorial \/>/);
 assert.match(settingsLayout, /<SalesOutreachTutorial \/>/);
 assert.match(nav, /Sales tutorial/);
 assert.match(nav, /lc:start-sales-tutorial/);
+assert.match(nav, /SendPilot guide/);
+assert.match(nav, /lc:start-sendpilot-tutorial/);
+assert.match(settings, /data-sales-tour="sendpilot-settings"/);
+assert.match(settings, /Open tutorial/);
+for (const label of [
+  "Connect your own SendPilot account",
+  "Send replies and activity back to LiveCoach",
+  "Map the matching campaigns once",
+  "Prepare and claim the lead in LiveCoach",
+  "Approve one exact SendPilot handoff",
+  "Work every reply from LiveCoach",
+]) assert.match(sendPilotTutorialConfig, new RegExp(label));
 for (const target of [
   "campaign-setup",
   "prospect-pool",

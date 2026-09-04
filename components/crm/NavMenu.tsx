@@ -187,6 +187,11 @@ function NavMenuInner({
     setMobileMore(false);
   };
 
+  const openSendPilotTutorial = () => {
+    window.dispatchEvent(new CustomEvent("lc:start-sendpilot-tutorial"));
+    setMobileMore(false);
+  };
+
   const logout = async () => {
     if (loggingOut) return;
     setLoggingOut(true);
@@ -282,6 +287,9 @@ function NavMenuInner({
                 </button>
                 <button type="button" onClick={openSalesTutorial} className="flex min-h-12 items-center gap-3 rounded-xl border border-sage/40 bg-sage/10 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-sage">
                   <span>?</span>Sales tutorial
+                </button>
+                <button type="button" onClick={openSendPilotTutorial} className="flex min-h-12 items-center gap-3 rounded-xl border border-sky/40 bg-sky/10 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-sky">
+                  <span>↗</span>SendPilot guide
                 </button>
                 <ThemeToggle className="min-h-12 justify-start" />
                 <button type="button" onClick={logout} disabled={loggingOut} className="flex min-h-12 items-center gap-3 rounded-xl border border-edge bg-ink/40 px-3 text-left font-mono text-[0.62rem] uppercase tracking-wider text-muted disabled:opacity-50">
@@ -444,6 +452,14 @@ function NavMenuInner({
               >
                 <span className="w-4 text-center">?</span>
                 Sales tutorial
+              </button>
+              <button
+                type="button"
+                onClick={openSendPilotTutorial}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 font-mono text-[0.66rem] uppercase tracking-wider text-sky transition hover:bg-sky/10"
+              >
+                <span className="w-4 text-center">↗</span>
+                SendPilot guide
               </button>
             </div>
           ) : null}
