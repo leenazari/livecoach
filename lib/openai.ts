@@ -183,6 +183,9 @@ function outputText(response: any): string {
 function legacyMessage(response: any) {
   const text = outputText(response);
   const output = Array.isArray(response?.output) ? response.output : [];
+  const webSearchCalls = output.filter(
+    (item: any) => item?.type === "web_search_call"
+  ).length;
   const annotationSources = output
     .filter((item: any) => item?.type === "message")
     .flatMap((item: any) => (Array.isArray(item?.content) ? item.content : []))
@@ -212,7 +215,10 @@ function legacyMessage(response: any) {
         ? [{ type: "web_search_tool_result", content: citations }]
         : []),
     ],
-    usage: normalizeUsage(response?.usage),
+    usage: {
+      ...normalizeUsage(response?.usage),
+      web_search_calls: webSearchCalls,
+    },
     stop_reason:
       response?.status === "incomplete" &&
       response?.incomplete_details?.reason === "max_output_tokens"

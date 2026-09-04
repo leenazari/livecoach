@@ -1916,7 +1916,11 @@ export default function OutreachPage() {
       if (!queue.some((row) => row.prospect?.id === prospect.id && row.status === "queued"))
         await addProspectToTeamQueue(prospect);
       await loadCore();
-      await enqueuePrepare(prospect.id);
+      // This handler has already marked the row as `adding` while it creates
+      // the queue item. Calling enqueuePrepare here would mistake that local
+      // display state for an existing server job and return early, leaving the
+      // card spinning forever. The batch helper is the actual server enqueue.
+      await enqueuePrepareBatch([prospect.id]);
     } catch (e: any) {
       updatePrepareJob(prospect.id, "error");
       setError(e.message || "This prospect could not be prepared");

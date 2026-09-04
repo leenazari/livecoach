@@ -131,6 +131,9 @@ const OUTREACH_DRAFT_FORMAT = {
   },
 } as const;
 
+const COLD_FIRST_TOUCH_MAX_OUTPUT_TOKENS = 1_600;
+const COLD_FIRST_TOUCH_MAX_SEARCHES = 1;
+
 type CompleteOutreachDraft = {
   research: Record<string, any>;
   strategy: Record<string, any>;
@@ -205,6 +208,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // works without tracking opens or adding invasive pixels.
     const variant = parseInt(String(prospect.id).replace(/-/g, "").slice(-2), 16) % 2 === 0 ? "A" : "B";
     const existingResearch = enrolment.research && typeof enrolment.research === "object" ? enrolment.research : null;
+    const coldFirstTouch = step === 1 && !existingResearch;
     const mcpContextNotes = Array.isArray(
       prospect.source_metadata?.chatgpt_mcp?.context_notes
     )
@@ -316,6 +320,8 @@ Do not invent personal facts, clients, results, savings, case studies, product c
 
 RESEARCH DISCIPLINE: bring back only information that changes the decision or message for the campaign contract. Use the company's own website and other approved primary company or applicant tracking system pages only. Never search, open, scrape or cite LinkedIn. Do not use job aggregators, social networks or copied vacancy listings. When the official company site has an About, About us, Who we are, Our story, Company or What we do page, use it to understand what the business sells, whom it serves, its specialism and its operating model. Put only the commercially useful facts in companyOverview. Do not copy generic marketing prose, biographies or values. Research current vacancies only when hiring evidence directly supports this campaign goal or offer angle. When it does, find up to four current or very recent vacancies and retain only roles with an exact primary source URL. Otherwise activeJobs and jobSignals must be empty and volumeAssessment must be unknown. Never invent a job count or use a generic industry applicant average as if it belongs to this company. Ignore generic biography, old news and facts that do not affect the campaign intent. Tie every retained fact to one of three outcomes: close a customer deal, build a commercially useful relationship, or start a credible partnership. Reuse saved research when still current and refresh only facts likely to have changed. The saved research must be concise enough to reuse in future Brain, intent and call prep prompts without reopening the web.
 
+${coldFirstTouch ? "COLD FIRST TOUCH: this is an unengaged lead, so do one focused official site search only. Find one credible reason to contact them, retain no more than two relevant vacancies, then stop. Do not broaden the search merely to fill fields. Deeper research belongs after a reply, a clear buying signal or a booked call." : "ENGAGED OR FOLLOW UP RESEARCH: reuse the saved evidence first and refresh only a fact that could materially change the message."}
+
 ${candidatePreparationVacancyPriority}
 
 VOICE TO FOLLOW: ${clean(voice.tone || "warm, commercially curious and concise", 300)}. ${clean(voice.style || "Founder to founder, plain English and respectful", 400)}
@@ -366,15 +372,15 @@ ${mcpContextNotes.length ? `STAFF VERIFIED CONTEXT FROM LIVECOACH, treat as refe
 ${senderGuidance ? `SENDER'S EXTRA GUIDANCE:\n${senderGuidance}` : ""}`;
     const message = await openai.messages.create({
       model: OPENAI_MODEL_PRO,
-      max_tokens: 2000,
+      max_tokens: coldFirstTouch ? COLD_FIRST_TOUCH_MAX_OUTPUT_TOKENS : 2000,
       response_format: OUTREACH_DRAFT_FORMAT,
       system,
       tools: [{
         type: "web_search_20250305",
         name: "web_search",
-        max_uses: 3,
+        max_uses: coldFirstTouch ? COLD_FIRST_TOUCH_MAX_SEARCHES : 2,
         filters: { allowed_domains: jobSearchDomains },
-        search_context_size: "medium",
+        search_context_size: coldFirstTouch ? "low" : "medium",
       }] as any,
       messages: [{ role: "user", content: user }],
     }, { timeout: 38_000 });
@@ -386,6 +392,7 @@ ${senderGuidance ? `SENDER'S EXTRA GUIDANCE:\n${senderGuidance}` : ""}`;
       outputTokens: Number(message?.usage?.output_tokens) || 0,
       cachedInputTokens: Number(message?.usage?.cache_read_input_tokens) || 0,
       sourceCount: sources.length,
+      webSearchCalls: Number(message?.usage?.web_search_calls) || 0,
       stopReason: message?.stop_reason || "unknown",
       outputChars: originalText.length,
       generationMode,
