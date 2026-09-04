@@ -14,6 +14,9 @@ const identity = read("lib/outreach-identity.ts");
 const voiceScript = read(
   "app/api/crm/outreach/messages/[id]/voice-script/route.ts"
 );
+const prepareRoute = read("app/api/crm/outreach/[id]/prepare/route.ts");
+const openai = read("lib/openai.ts");
+const costs = read("lib/costs.ts");
 const vercel = read("vercel.json");
 const migration = read(
   "supabase/migrations/20260903172529_durable_outreach_research_jobs.sql"
@@ -63,6 +66,7 @@ assert.match(vercel, /"schedule": "\* \* \* \* \*"/);
 
 assert.match(page, /OUTREACH_URLS\.researchJobs/);
 assert.match(page, /enqueuePrepareBatch\(ids, true\)/);
+assert.match(page, /await enqueuePrepareBatch\(\[prospect\.id\]\)/);
 assert.match(page, /Saved on the server/);
 assert.match(page, /You can leave this page and it will continue/);
 assert.doesNotMatch(page, /livecoach:outreach-prepare-queue/);
@@ -77,5 +81,15 @@ assert.doesNotMatch(
   /from\("outreach_enrolments"\)[\s\S]{0,180}\.eq\("owner_id", sender\.userId\)/
 );
 assert.match(processor, /supabaseService/);
+
+assert.match(prepareRoute, /const COLD_FIRST_TOUCH_MAX_SEARCHES = 1/);
+assert.match(prepareRoute, /search_context_size: coldFirstTouch \? "low" : "medium"/);
+assert.match(prepareRoute, /max_uses: coldFirstTouch \? COLD_FIRST_TOUCH_MAX_SEARCHES : 2/);
+assert.match(prepareRoute, /max_tokens: coldFirstTouch \? COLD_FIRST_TOUCH_MAX_OUTPUT_TOKENS : 2000/);
+assert.match(openai, /web_search_calls: webSearchCalls/);
+assert.match(costs, /webSearchCalls \* RATES\.webSearchPerCall/);
+assert.match(costs, /webSearchPerCall: 0\.01/);
+assert.match(costs, /sonnetInPerM: 2\.0/);
+assert.match(costs, /sonnetOutPerM: 12\.0/);
 
 console.log("Durable outreach research queue checks passed");

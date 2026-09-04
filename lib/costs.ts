@@ -2,12 +2,14 @@
 // Cost model — single source of truth for the running-cost meter.
 // All rates in USD. Edit here if pricing changes.
 //
-// Verified provider rates (May 2026):
+// Verified provider rates (September 2026):
+// https://developers.openai.com/api/docs/pricing
 //   Deepgram streaming (Nova): $0.0077 / min  (PER audio stream)
-//   GPT-5.6 Luna:  $1 / M input,  $6 / M output
-//   GPT-5.6 Terra: $2.50 / M input, $15 / M output
-//   GPT-5.6 Sol:   $5 / M input,  $30 / M output
+//   GPT-5.6 Luna:  $0.20 / M input,  $1.20 / M output
+//   GPT-5.6 Terra: $2 / M input,     $12 / M output
+//   GPT-5.6 Sol:   $4 / M input,     $20 / M output
 //   Prompt cache read: ~0.1x input rate;  cache write: ~1.25x input rate
+//   OpenAI web search: $0.01 / call, plus search content tokens
 //
 // ESTIMATED rates — VERIFY against real invoices before using in a financial
 // document. These are derived to reconcile with the project's blended targets
@@ -20,24 +22,25 @@ export const USD_TO_GBP = 0.79; // rough; update as needed
 
 export const RATES = {
   deepgramPerMin: 0.0077, // per stream
+  webSearchPerCall: 0.01,
 
   // GPT-5.6 Luna (live track: cues, plan, running summary)
-  haikuInPerM: 1.0,
-  haikuOutPerM: 6.0,
-  haikuCacheReadPerM: 0.1, // 0.1x input
-  haikuCacheWritePerM: 1.25, // 1.25x input
+  haikuInPerM: 0.2,
+  haikuOutPerM: 1.2,
+  haikuCacheReadPerM: 0.1, // multiplier: 0.1x input
+  haikuCacheWritePerM: 1.25, // multiplier: 1.25x input
 
   // GPT-5.6 Terra (end-of-call scorecard and synthesis)
-  sonnetInPerM: 2.5,
-  sonnetOutPerM: 15.0,
+  sonnetInPerM: 2.0,
+  sonnetOutPerM: 12.0,
 
   // GPT-5.6 Sol (the THINK tier + the brain's smart chat).
-  opusInPerM: 5.0,
-  opusOutPerM: 30.0,
+  opusInPerM: 4.0,
+  opusOutPerM: 20.0,
 
   // Kept as a compatibility label for any older stored usage rows.
-  fableInPerM: 5.0,
-  fableOutPerM: 30.0,
+  fableInPerM: 4.0,
+  fableOutPerM: 20.0,
 
   // Transport / real-time layer. ESTIMATES — verify against invoices.
   livekitPerHour: 1.5, // in-app two-party real-time
@@ -107,6 +110,7 @@ export function usageCostUSD(
         output_tokens?: number;
         cache_creation_input_tokens?: number;
         cache_read_input_tokens?: number;
+        web_search_calls?: number;
       }
     | null
     | undefined
@@ -132,11 +136,13 @@ export function usageCostUSD(
   const out = Number(usage.output_tokens) || 0;
   const cw = Number(usage.cache_creation_input_tokens) || 0;
   const cr = Number(usage.cache_read_input_tokens) || 0;
+  const webSearchCalls = Math.max(0, Number(usage.web_search_calls) || 0);
   return (
     (inp / 1_000_000) * inRate +
     (cw / 1_000_000) * inRate * RATES.haikuCacheWritePerM +
     (cr / 1_000_000) * inRate * RATES.haikuCacheReadPerM +
-    (out / 1_000_000) * outRate
+    (out / 1_000_000) * outRate +
+    webSearchCalls * RATES.webSearchPerCall
   );
 }
 
