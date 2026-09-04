@@ -41,6 +41,7 @@ export default function CallDetailPage() {
   // Speaking-coach debrief: generated on demand, votable, learns over time.
   const [coaching, setCoaching] = useState<CoachPoint[]>([]);
   const [coachBusy, setCoachBusy] = useState(false);
+  const [coachNote, setCoachNote] = useState("");
   const [playbookBusy, setPlaybookBusy] = useState<"prospect_demo" | "commercial_partner" | "">("");
   const [playbookNote, setPlaybookNote] = useState("");
 
@@ -67,22 +68,29 @@ export default function CallDetailPage() {
       .then((d) => setCall(d.call))
       .catch((e) => setError(e?.message || "Could not load this call."));
     // Load any debrief already generated for this call (no model cost).
-    crmFetch<{ points: CoachPoint[] }>(
+    crmFetch<{ points: CoachPoint[]; note?: string | null }>(
       `/api/interview/coaching-debrief?callId=${id}`
     )
-      .then((d) => setCoaching(Array.isArray(d.points) ? d.points : []))
+      .then((d) => {
+        setCoaching(Array.isArray(d.points) ? d.points : []);
+        setCoachNote(typeof d.note === "string" ? d.note : "");
+      })
       .catch(() => {});
   }, [id]);
 
   const generateCoaching = () => {
     if (coachBusy || !id) return;
     setCoachBusy(true);
-    crmFetch<{ points: CoachPoint[] }>("/api/interview/coaching-debrief", {
+    setCoachNote("");
+    crmFetch<{ points: CoachPoint[]; note?: string | null }>("/api/interview/coaching-debrief", {
       method: "POST",
       body: JSON.stringify({ callId: id }),
     })
-      .then((d) => setCoaching(Array.isArray(d.points) ? d.points : []))
-      .catch(() => {})
+      .then((d) => {
+        setCoaching(Array.isArray(d.points) ? d.points : []);
+        setCoachNote(typeof d.note === "string" ? d.note : "");
+      })
+      .catch((e) => setCoachNote(e?.message || "The speaking debrief could not be created."))
       .finally(() => setCoachBusy(false));
   };
 
@@ -411,8 +419,9 @@ export default function CallDetailPage() {
             {coaching.length === 0 ? (
               <div className="flex flex-col items-start gap-2">
                 <p className="font-sans text-[0.82rem] leading-snug text-bone/75">
-                  A line-by-line debrief of how you spoke on this call, with a
-                  sharper way to say each moment. Separate from the summary.
+                  A personal debrief of the moments where your words most affected
+                  the outcome. On shared calls, each teammate is coached privately
+                  on their own speech.
                 </p>
                 <button
                   type="button"
@@ -482,6 +491,11 @@ export default function CallDetailPage() {
                 ))}
               </ul>
             )}
+            {coachNote ? (
+              <p className="mt-3 rounded-lg border border-amber/35 bg-amber/10 px-3 py-2 font-sans text-[0.78rem] leading-snug text-amber">
+                {coachNote}
+              </p>
+            ) : null}
           </section>
         </>
       )}

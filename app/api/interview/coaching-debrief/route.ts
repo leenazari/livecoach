@@ -1,31 +1,120 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openai, OPENAI_MODEL_PRO } from "@/lib/openai";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { getCoachingTasteBlock } from "@/lib/workspace";
 import { logModelUsage } from "@/lib/usage";
+import { requireRequestScope } from "@/lib/request-scope";
+import { loadSharedCallAccess } from "@/lib/shared-call-access";
+import { loadHostIdentityForUser } from "@/lib/speakers";
+import {
+  buildStrategicCoachingTranscript,
+  hostSpeakingStats,
+  keepGroundedHostQuotes,
+  normaliseCoachingText,
+  otherSpeakerNames,
+} from "@/lib/coaching-transcript";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 // A post-call SPEAKING debrief, separate from the deal summary. It goes through
-// the host's OWN lines and, for the moments that mattered, shows a sharper way
-// they could have said it and why - so Lee gets better at speaking. Each point
-// is votable, and those votes tune future debriefs (the coach learns how Lee
-// likes to be coached).
+// the signed-in user's OWN lines and, for the moments that mattered, shows a
+// sharper way they could have said it and why. Shared calls remain one raw
+// transcript, while each verified attendee receives their own private debrief.
 
-async function loadCall(callId: string) {
-  const { data: sum } = await supabaseAdmin
+async function loadCall(
+  callId: string,
+  scope: { userId: string; workspaceId: string }
+) {
+  const { data: ownedSummary, error: ownedSummaryError } = await supabaseAdmin
     .from("interview_summaries")
     .select("id, session_id, company_id, candidate, summary")
     .eq("id", callId)
+    .eq("workspace_id", scope.workspaceId)
+    .eq("owner_id", scope.userId)
     .maybeSingle();
+  if (ownedSummaryError) throw ownedSummaryError;
+  let sum: any = ownedSummary;
+  let sharedAccess: Awaited<ReturnType<typeof loadSharedCallAccess>> = null;
+  if (!sum) {
+    const { data: candidate, error: candidateError } = await supabaseService
+      .from("interview_summaries")
+      .select("id, session_id, company_id, candidate, summary")
+      .eq("id", callId)
+      .eq("workspace_id", scope.workspaceId)
+      .maybeSingle();
+    if (candidateError) throw candidateError;
+    if (candidate?.session_id) {
+      sharedAccess = await loadSharedCallAccess({
+        workspaceId: scope.workspaceId,
+        userId: scope.userId,
+        sessionId: candidate.session_id,
+      });
+    }
+    if (sharedAccess) sum = candidate;
+  }
   if (!sum?.session_id) return null;
-  const { data: sess } = await supabaseAdmin
+  sharedAccess =
+    sharedAccess ||
+    (await loadSharedCallAccess({
+      workspaceId: scope.workspaceId,
+      userId: scope.userId,
+      sessionId: sum.session_id,
+    }));
+
+  const { data: ownedSession, error: ownedSessionError } = await supabaseAdmin
     .from("interview_sessions")
     .select("transcript, candidate, brief, competencies, call_type")
     .eq("session_id", sum.session_id as string)
+    .eq("workspace_id", scope.workspaceId)
+    .eq("owner_id", scope.userId)
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
+  if (ownedSessionError) throw ownedSessionError;
+  let sess: any = ownedSession;
+  if (!sess && sharedAccess) {
+    const { data: sharedSession, error: sharedSessionError } = await supabaseService
+      .from("interview_sessions")
+      .select("transcript, candidate, brief, competencies, call_type")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", (sharedAccess.capture as any).owner_id)
+      .eq("session_id", sum.session_id as string)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (sharedSessionError) throw sharedSessionError;
+    sess = sharedSession;
+  }
+  if (!sess) return null;
+
+  const viewer = await loadHostIdentityForUser(scope.userId, scope.workspaceId);
+  const viewerUpcomingId = String(
+    (sharedAccess?.access as any)?.upcoming_id || ""
+  );
+  let viewerUpcoming: any = null;
+  if (viewerUpcomingId && sharedAccess) {
+    const { data, error } = await supabaseService
+      .from("upcoming_calls")
+      .select("intent,prep,owner_id")
+      .eq("id", viewerUpcomingId)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
+      .maybeSingle();
+    if (error) throw error;
+    viewerUpcoming = data;
+  }
+
+  const prep =
+    viewerUpcoming?.prep && typeof viewerUpcoming.prep === "object"
+      ? viewerUpcoming.prep
+      : {};
+  const canonicalFocus = Array.isArray(prep.selectedComps)
+    ? prep.selectedComps
+    : Array.isArray(prep.suggestedComps)
+      ? prep.suggestedComps
+      : null;
   const [{ data: company }, { data: opportunities }] = await Promise.all([
     sum.company_id
       ? supabaseAdmin
@@ -44,17 +133,38 @@ async function loadCall(callId: string) {
           .limit(10)
       : Promise.resolve({ data: [] }),
   ]);
+  const transcript = typeof sess?.transcript === "string" ? sess.transcript : "";
+  const allowGenericHostLabels =
+    !sharedAccess || (sharedAccess.access as any)?.access_role === "host";
   return {
     sessionId: sum.session_id as string,
-    companyId: (sum.company_id as string) || null,
-    transcript: typeof sess?.transcript === "string" ? sess.transcript : "",
-    intent: typeof sess?.brief === "string" ? sess.brief.trim() : "",
-    focus: Array.isArray(sess?.competencies)
+    companyId: company ? (sum.company_id as string) || null : null,
+    transcript,
+    intent:
+      (typeof viewerUpcoming?.intent === "string" && viewerUpcoming.intent.trim()) ||
+      (typeof sess?.brief === "string" ? sess.brief.trim() : ""),
+    focus: Array.isArray(canonicalFocus)
+      ? canonicalFocus.map((v: any) => String(v || "").trim()).filter(Boolean)
+      : Array.isArray(sess?.competencies)
       ? sess.competencies.map((v: any) => String(v || "").trim()).filter(Boolean)
       : [],
-    callType: typeof sess?.call_type === "string" ? sess.call_type : "general",
+    callType:
+      (typeof prep.callType === "string" && prep.callType) ||
+      (typeof sess?.call_type === "string" ? sess.call_type : "general"),
     summary:
       sum?.summary && typeof sum.summary === "object" ? sum.summary : {},
+    viewerName: viewer.name || "Host",
+    allowGenericHostLabels,
+    speaking: hostSpeakingStats(
+      transcript,
+      viewer.name || "Host",
+      allowGenericHostLabels
+    ),
+    otherSpeakers: otherSpeakerNames(
+      transcript,
+      viewer.name || "Host",
+      allowGenericHostLabels
+    ),
     dealContext: {
       company: company?.name || null,
       relationshipStage: company?.stage || null,
@@ -65,74 +175,10 @@ async function loadCall(callId: string) {
         closePlan: o.close_plan || null,
       })),
     },
-    // The OTHER party on the call - so the coach never coaches their lines.
-    other:
-      (typeof sum.candidate === "string" && sum.candidate.trim()) ||
-      (typeof (sess as any)?.candidate === "string" && (sess as any).candidate.trim()) ||
-      "",
   };
 }
 
-// Labels that mean "the host" (the user being coached). Everything else in a
-// speaker-labelled transcript is treated as the other party.
-const HOST_LABELS = new Set([
-  "you",
-  "interviewer",
-  "host",
-  "me",
-  "lee",
-  "lee nazari",
-]);
-
-function normalizeText(s: any): string {
-  return String(s || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// Split a speaker-labelled transcript into the host's words and everyone
-// else's. A leading "Label:" starts a turn; unlabelled lines continue the
-// current speaker (multi-line turns). Any label that is not a known host label
-// counts as the other party - so an unexpected name never leaks into "host".
-function splitBySpeaker(transcript: string): { host: string; other: string } {
-  const lines = String(transcript || "").split(/\r?\n/);
-  let curHost = false;
-  let sawLabel = false;
-  const hostParts: string[] = [];
-  const otherParts: string[] = [];
-  for (const line of lines) {
-    const m = line.match(/^\s*([A-Za-z][A-Za-z .'\-]{0,39}):\s?(.*)$/);
-    if (m) {
-      sawLabel = true;
-      curHost = HOST_LABELS.has(normalizeText(m[1]));
-      (curHost ? hostParts : otherParts).push(m[2] || "");
-    } else if (sawLabel) {
-      (curHost ? hostParts : otherParts).push(line);
-    }
-  }
-  return {
-    host: normalizeText(hostParts.join(" ")),
-    other: normalizeText(otherParts.join(" ")),
-  };
-}
-
-// Deterministic backstop: keep only points whose quote is the HOST's words. A
-// quote that matches the other party's words (and not the host's) is dropped
-// outright, so the coach can never coach the other person even if the model
-// misreads who is who. Points with no real quote (pure advice) are kept.
-function keepHostQuotes(points: any[], transcript: string): any[] {
-  const { host, other } = splitBySpeaker(transcript);
-  if (!host && !other) return points; // couldn't classify - don't over-filter
-  return (Array.isArray(points) ? points : []).filter((p: any) => {
-    const q = normalizeText(p && p.quote);
-    if (q.length < 8) return true; // too short to misattribute meaningfully
-    const inOther = !!other && other.includes(q);
-    const inHost = !!host && host.includes(q);
-    return !(inOther && !inHost);
-  });
-}
+const MIN_USEFUL_POINTS = 4;
 
 async function existingPoints(sessionId: string) {
   const { data } = await supabaseAdmin
@@ -145,11 +191,24 @@ async function existingPoints(sessionId: string) {
 
 export async function GET(req: NextRequest) {
   try {
+    const scope = requireRequestScope();
     const callId = new URL(req.url).searchParams.get("callId") || "";
     if (!callId) return NextResponse.json({ points: [] });
-    const call = await loadCall(callId);
+    const call = await loadCall(callId, scope);
     if (!call) return NextResponse.json({ points: [] });
-    return NextResponse.json({ points: await existingPoints(call.sessionId) });
+    const points = keepGroundedHostQuotes(
+      await existingPoints(call.sessionId),
+      call.transcript,
+      call.viewerName,
+      call.allowGenericHostLabels
+    );
+    return NextResponse.json({
+      points,
+      note:
+        call.speaking.words < 35
+          ? `There was not enough recorded speech from ${call.viewerName} to build a personal speaking debrief.`
+          : null,
+    });
   } catch (err: any) {
     return NextResponse.json({ points: [], error: err?.message });
   }
@@ -157,30 +216,45 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
     const callId = typeof body.callId === "string" ? body.callId : "";
     if (!callId)
       return NextResponse.json({ error: "callId required" }, { status: 400 });
-    const call = await loadCall(callId);
+    const call = await loadCall(callId, scope);
     if (!call || call.transcript.trim().length < 200) {
       return NextResponse.json({
         points: [],
         error: "Not enough transcript to coach on this call.",
       });
     }
-    // Idempotent: if a debrief already exists for this call, return it.
-    const already = await existingPoints(call.sessionId);
-    if (already.length) return NextResponse.json({ points: already });
+    // A complete debrief is immutable and free to reopen. A historic partial
+    // result may be topped up once rather than trapping the user with one weak
+    // point forever.
+    const already = keepGroundedHostQuotes(
+      await existingPoints(call.sessionId),
+      call.transcript,
+      call.viewerName,
+      call.allowGenericHostLabels
+    );
+    if (already.length >= MIN_USEFUL_POINTS)
+      return NextResponse.json({ points: already });
+    if (call.speaking.words < 35) {
+      return NextResponse.json({
+        points: already,
+        note: `There was not enough recorded speech from ${call.viewerName} to build a personal speaking debrief.`,
+      });
+    }
 
     const taste = await getCoachingTasteBlock();
-    const other = (call.other || "").trim();
-    const otherBlock = other
-      ? `WHO IS WHO (read this first - it is the single most important rule):
-- The HOST is the user you are coaching. Their lines are labelled "You:", "Interviewer:", or by their own name like "Lee Nazari:".
-- The OTHER party on this call is "${other}" - the client/buyer/guest. Their lines are labelled with their name (e.g. "${other}:") or "Candidate:".
-- You coach ONLY the HOST. You must NEVER quote, rewrite or coach the OTHER party's lines, no matter how much they ramble, hedge or over-talk. Their words are off limits.
-- Be careful: on this call the HOST may be labelled "Interviewer:" even though it is a sales or business call, and the OTHER party may do a lot of the talking and questioning. Do not be fooled by who talks more - coach the HOST only.`
-      : `WHO IS WHO: The HOST is the user you are coaching - their lines are labelled "You:", "Interviewer:", or by their own name like "Lee Nazari:". Any other named speaker is the OTHER party. You coach ONLY the HOST and must NEVER quote, rewrite or coach the other party's lines.`;
+    const viewerLabels = call.allowGenericHostLabels
+      ? `"${call.viewerName}:", "Team member ${call.viewerName}:", "You:", "Interviewer:", or "Host:"`
+      : `"${call.viewerName}:" or "Team member ${call.viewerName}:". Generic labels such as "You:" belong to the call host and must not be attributed to ${call.viewerName}`;
+    const otherBlock = `WHO IS WHO (read this first - it is the single most important rule):
+- The person you are coaching is "${call.viewerName}". Their permitted transcript labels are ${viewerLabels}.
+- Other recorded speakers are ${call.otherSpeakers.length ? call.otherSpeakers.map((name) => `"${name}"`).join(", ") : "not reliably identified"}.
+- Coach ONLY ${call.viewerName}. Never quote, rewrite or coach another participant's words.
+- This may be a shared call. The person who clicked Start is not automatically the person being coached. Use the exact labels above.`;
     const system = `You are a world-class strategic call coach. You are reviewing a completed call to help the HOST achieve better outcomes, not merely sound polished. ${taste}
 ${otherBlock}
 Prioritise the 5 to 8 moments with the greatest practical impact, in this order:
@@ -211,7 +285,24 @@ Before you finalise, re-check every quote: if it is the other party's line and n
       priorityFocus: call.focus.slice(0, 10),
       dealContext: call.dealContext,
       summary: call.summary,
+      existingPoints: already.map((point: any) => ({
+        quote: point.quote,
+        better: point.better,
+      })),
     }).slice(0, 8000);
+
+    const coachingTranscript = buildStrategicCoachingTranscript(
+      call.transcript,
+      call.viewerName,
+      30000,
+      call.allowGenericHostLabels
+    );
+    if (coachingTranscript.length < 200) {
+      return NextResponse.json({
+        points: already,
+        note: `There was not enough attributable speech from ${call.viewerName} to build a personal speaking debrief.`,
+      });
+    }
 
     const msg = await openai.messages.create({
       model: OPENAI_MODEL_PRO,
@@ -221,9 +312,7 @@ Before you finalise, re-check every quote: if it is the other party's line and n
       messages: [
         {
           role: "user",
-          content: `CALL CONTEXT (use this to judge what mattered):\n${strategicContext}\n\nTRANSCRIPT (speaker-labelled):\n${call.transcript.slice(
-            -14000
-          )}\n\nReturn the JSON array of strategic coaching points now.`,
+          content: `CALL CONTEXT (use this to judge what mattered):\n${strategicContext}\n\nSELECTED MOMENTS FROM THE FULL CALL (speaker-labelled and chronological):\n${coachingTranscript}\n\nDo not repeat an existing point. Return the JSON array of strategic coaching points now.`,
         },
       ],
     });
@@ -240,10 +329,26 @@ Before you finalise, re-check every quote: if it is the other party's line and n
     } catch {
       parsed = [];
     }
-    const onlyHost = keepHostQuotes(Array.isArray(parsed) ? parsed : [], call.transcript);
+    const onlyHost = keepGroundedHostQuotes(
+      Array.isArray(parsed) ? parsed : [],
+      call.transcript,
+      call.viewerName,
+      call.allowGenericHostLabels
+    );
+    const existingFingerprints = new Set(
+      already.map((point: any) =>
+        normaliseCoachingText(`${point.quote || ""} ${point.better || ""}`)
+      )
+    );
     const rows = onlyHost
       .filter((p: any) => p && typeof p.better === "string" && p.better.trim())
-      .slice(0, 10)
+      .filter(
+        (p: any) =>
+          !existingFingerprints.has(
+            normaliseCoachingText(`${p.quote || ""} ${p.better || ""}`)
+          )
+      )
+      .slice(0, Math.max(0, 8 - already.length))
       .map((p: any) => ({
         session_id: call.sessionId,
         company_id: call.companyId,
@@ -251,12 +356,25 @@ Before you finalise, re-check every quote: if it is the other party's line and n
         better: String(p.better).trim(),
         why: typeof p.why === "string" ? p.why.trim() : "",
       }));
-    if (!rows.length) return NextResponse.json({ points: [] });
-    const { data: inserted } = await supabaseAdmin
+    if (!rows.length)
+      return NextResponse.json({
+        points: already,
+        note: already.length
+          ? "No additional grounded coaching moments were found."
+          : "No grounded coaching moments were found for this speaker.",
+      });
+    const { error: insertError } = await supabaseAdmin
       .from("coaching_points")
       .insert(rows)
       .select("id, quote, better, why, vote, created_at");
-    return NextResponse.json({ points: inserted || [] });
+    if (insertError) throw insertError;
+    const saved = keepGroundedHostQuotes(
+      await existingPoints(call.sessionId),
+      call.transcript,
+      call.viewerName,
+      call.allowGenericHostLabels
+    );
+    return NextResponse.json({ points: saved });
   } catch (err: any) {
     return NextResponse.json(
       { points: [], error: err?.message || "coaching failed" },
