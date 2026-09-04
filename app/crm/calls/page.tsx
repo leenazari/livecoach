@@ -173,7 +173,7 @@ export default function CallsPage() {
         </div>
       )}
 
-      <div className="mb-4">
+      <div data-sales-tour="calls-workspace" className="mb-4">
         <UpcomingCalls limit={10} />
       </div>
 

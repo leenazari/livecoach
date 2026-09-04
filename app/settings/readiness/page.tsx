@@ -107,7 +107,10 @@ function AccountCard({ account }: { account: AccountReadiness }) {
     (account.readyCount / Math.max(1, account.totalCount)) * 100
   );
   return (
-    <section className="rounded-2xl border border-edge bg-panel/50 p-4 sm:p-5">
+    <section
+      data-sales-tour="account-readiness"
+      className="rounded-2xl border border-edge bg-panel/50 p-4 sm:p-5"
+    >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

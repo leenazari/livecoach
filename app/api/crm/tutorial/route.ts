@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
+import {
+  SALES_TUTORIAL_GUIDE_KEY,
+  SALES_TUTORIAL_LAST_STEP,
+} from "@/lib/sales-tutorial";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const GUIDE_KEY = "sales_outreach_v1";
-const LAST_STEP = 7;
 const STATUSES = new Set(["active", "paused", "completed", "dismissed"]);
 
 function responseBody(row: any, role: string) {
@@ -41,7 +43,7 @@ export async function GET() {
       )
       .eq("workspace_id", scope.workspaceId)
       .eq("user_id", scope.userId)
-      .eq("guide_key", GUIDE_KEY)
+      .eq("guide_key", SALES_TUTORIAL_GUIDE_KEY)
       .maybeSingle();
     if (error) throw error;
     return NextResponse.json(responseBody(data, scope.role), {
@@ -68,7 +70,7 @@ export async function PUT(req: NextRequest) {
     }
 
     const currentStep = Math.min(
-      LAST_STEP,
+      SALES_TUTORIAL_LAST_STEP,
       Math.max(0, Math.round(Number(body.currentStep) || 0))
     );
     const rawPath = typeof body.lastPath === "string" ? body.lastPath.trim() : "";
@@ -79,16 +81,17 @@ export async function PUT(req: NextRequest) {
       .select("started_at")
       .eq("workspace_id", scope.workspaceId)
       .eq("user_id", scope.userId)
-      .eq("guide_key", GUIDE_KEY)
+      .eq("guide_key", SALES_TUTORIAL_GUIDE_KEY)
       .maybeSingle();
     if (previousError) throw previousError;
 
     const payload = {
       workspace_id: scope.workspaceId,
       user_id: scope.userId,
-      guide_key: GUIDE_KEY,
+      guide_key: SALES_TUTORIAL_GUIDE_KEY,
       status,
-      current_step: status === "completed" ? LAST_STEP : currentStep,
+      current_step:
+        status === "completed" ? SALES_TUTORIAL_LAST_STEP : currentStep,
       last_path: lastPath,
       started_at: previous?.started_at || now,
       completed_at: status === "completed" ? now : null,
