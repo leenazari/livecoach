@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
+  SENDPILOT_TUTORIAL_GUIDE_KEY,
+  SENDPILOT_TUTORIAL_LAST_STEP,
   SALES_TUTORIAL_GUIDE_KEY,
   SALES_TUTORIAL_LAST_STEP,
 } from "@/lib/sales-tutorial";
@@ -10,8 +12,28 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const STATUSES = new Set(["active", "paused", "completed", "dismissed"]);
+type TutorialGuide = "sales" | "sendpilot";
 
-function responseBody(row: any, role: string) {
+const tutorialGuide = (value: unknown) => {
+  const name = String(value || "sales").trim().toLowerCase();
+  if (name === "sales") {
+    return {
+      name: "sales" as TutorialGuide,
+      key: SALES_TUTORIAL_GUIDE_KEY,
+      lastStep: SALES_TUTORIAL_LAST_STEP,
+    };
+  }
+  if (name === "sendpilot") {
+    return {
+      name: "sendpilot" as TutorialGuide,
+      key: SENDPILOT_TUTORIAL_GUIDE_KEY,
+      lastStep: SENDPILOT_TUTORIAL_LAST_STEP,
+    };
+  }
+  throw Object.assign(new Error("Choose a valid tutorial"), { status: 400 });
+};
+
+function responseBody(row: any, role: string, guide: TutorialGuide) {
   return {
     tutorial: row
       ? {
@@ -28,14 +50,16 @@ function responseBody(row: any, role: string) {
           completedAt: null,
           dismissedAt: null,
         },
-    autoStart: !row && role === "sales",
+    autoStart: !row && role === "sales" && guide === "sales",
+    guide,
     role,
   };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const scope = requireRequestScope();
+    const guide = tutorialGuide(req.nextUrl.searchParams.get("guide"));
     const { data, error } = await supabaseAdmin
       .from("sales_tutorial_progress")
       .select(
@@ -43,16 +67,16 @@ export async function GET() {
       )
       .eq("workspace_id", scope.workspaceId)
       .eq("user_id", scope.userId)
-      .eq("guide_key", SALES_TUTORIAL_GUIDE_KEY)
+      .eq("guide_key", guide.key)
       .maybeSingle();
     if (error) throw error;
-    return NextResponse.json(responseBody(data, scope.role), {
+    return NextResponse.json(responseBody(data, scope.role, guide.name), {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "The tutorial could not be loaded" },
-      { status: 403 }
+      { status: Number(error?.status) === 400 ? 400 : 403 }
     );
   }
 }
@@ -61,6 +85,7 @@ export async function PUT(req: NextRequest) {
   try {
     const scope = requireRequestScope();
     const body = await req.json();
+    const guide = tutorialGuide(body.guide);
     const status = String(body.status || "");
     if (!STATUSES.has(status)) {
       return NextResponse.json(
@@ -70,7 +95,7 @@ export async function PUT(req: NextRequest) {
     }
 
     const currentStep = Math.min(
-      SALES_TUTORIAL_LAST_STEP,
+      guide.lastStep,
       Math.max(0, Math.round(Number(body.currentStep) || 0))
     );
     const rawPath = typeof body.lastPath === "string" ? body.lastPath.trim() : "";
@@ -81,17 +106,17 @@ export async function PUT(req: NextRequest) {
       .select("started_at")
       .eq("workspace_id", scope.workspaceId)
       .eq("user_id", scope.userId)
-      .eq("guide_key", SALES_TUTORIAL_GUIDE_KEY)
+      .eq("guide_key", guide.key)
       .maybeSingle();
     if (previousError) throw previousError;
 
     const payload = {
       workspace_id: scope.workspaceId,
       user_id: scope.userId,
-      guide_key: SALES_TUTORIAL_GUIDE_KEY,
+      guide_key: guide.key,
       status,
       current_step:
-        status === "completed" ? SALES_TUTORIAL_LAST_STEP : currentStep,
+        status === "completed" ? guide.lastStep : currentStep,
       last_path: lastPath,
       started_at: previous?.started_at || now,
       completed_at: status === "completed" ? now : null,
@@ -105,13 +130,13 @@ export async function PUT(req: NextRequest) {
       .single();
     if (error) throw error;
 
-    return NextResponse.json(responseBody(data, scope.role), {
+    return NextResponse.json(responseBody(data, scope.role, guide.name), {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "The tutorial progress could not be saved" },
-      { status: 403 }
+      { status: Number(error?.status) === 400 ? 400 : 403 }
     );
   }
 }

@@ -17,6 +17,7 @@ export type SalesTutorialStep = {
 };
 
 export const SALES_TUTORIAL_GUIDE_KEY = "sales_workflow_v3";
+export const SENDPILOT_TUTORIAL_GUIDE_KEY = "sendpilot_workflow_v1";
 
 export const SALES_OUTREACH_TUTORIAL_STEPS: SalesTutorialStep[] = [
   {
@@ -228,3 +229,184 @@ export const SALES_OUTREACH_TUTORIAL_STEPS: SalesTutorialStep[] = [
 
 export const SALES_TUTORIAL_LAST_STEP =
   SALES_OUTREACH_TUTORIAL_STEPS.length - 1;
+
+export const SENDPILOT_TUTORIAL_STEPS: SalesTutorialStep[] = [
+  {
+    id: "sendpilot-overview",
+    eyebrow: "Safe guided walkthrough",
+    title: "Use LiveCoach to control SendPilot outreach",
+    body:
+      "LiveCoach remains the source of truth for the lead, assignment, approval and history. SendPilot carries out the LinkedIn sequence after you approve one exact handoff.",
+    checklist: [
+      "Connect only your own SendPilot account",
+      "Map one LiveCoach campaign to one running SendPilot campaign",
+      "Approve each exact lead before SendPilot receives it",
+    ],
+    href: null,
+    target: null,
+    demo: {
+      label: "Practice flow",
+      title: "Maya Patel · Northstar Talent",
+      facts: [
+        "LiveCoach owns Maya's CRM record",
+        "No LinkedIn action has been taken",
+        "The walkthrough never hands Maya to SendPilot",
+      ],
+      outcome:
+        "Practice outcome · understand the complete handoff and reply flow without contacting anyone.",
+    },
+  },
+  {
+    id: "sendpilot-connect",
+    eyebrow: "Step 1",
+    title: "Connect your own SendPilot account",
+    body:
+      "Create a workspace API key in SendPilot, then paste it into your private LiveCoach settings. LiveCoach verifies the active LinkedIn sender and never shows the saved key again.",
+    checklist: [
+      "Use the SendPilot account connected to your own LinkedIn profile",
+      "Open SendPilot Integrations and API Keys to create the key",
+      "Paste it into LiveCoach and confirm the displayed sender is you",
+    ],
+    href: "/settings#sendpilot-inbox",
+    target: "sendpilot-settings",
+    demo: {
+      label: "Expected result",
+      title: "Your SendPilot identity is connected",
+      facts: [
+        "The API key is encrypted",
+        "The connection belongs only to this login",
+        "Another salesperson cannot use your sender",
+      ],
+      outcome:
+        "This connection gives LiveCoach controlled lead handoff and inbound activity access.",
+    },
+  },
+  {
+    id: "sendpilot-webhook",
+    eyebrow: "Step 2",
+    title: "Send replies and activity back to LiveCoach",
+    body:
+      "Copy the personal webhook URL from LiveCoach into SendPilot. Select the five supported events, then save the one-time webhook secret back in LiveCoach.",
+    checklist: [
+      "Select reply received and message sent",
+      "Select connection request sent and accepted",
+      "Select lead updated, then save the webhook secret",
+    ],
+    href: "/settings#sendpilot-inbox",
+    target: "sendpilot-settings",
+    demo: {
+      label: "Expected result",
+      title: "Automatic CRM events are active",
+      facts: [
+        "Replies return to the correct lead owner",
+        "Missed events are repaired by the inbound safety sync",
+        "No lead is enrolled by the safety sync",
+      ],
+      outcome:
+        "LiveCoach can now alert the correct salesperson and stop overlapping outreach after a reply.",
+    },
+  },
+  {
+    id: "sendpilot-map",
+    eyebrow: "Step 3",
+    title: "Map the matching campaigns once",
+    body:
+      "Build and start the LinkedIn sequence inside SendPilot first. Then map that running campaign to the matching LiveCoach campaign in your settings.",
+    checklist: [
+      "Start the SendPilot campaign before trying to map it",
+      "Match the same audience and sales purpose in both systems",
+      "Do not duplicate the SendPilot cadence as extra manual LinkedIn steps",
+    ],
+    href: "/settings#sendpilot-inbox",
+    target: "sendpilot-settings",
+    demo: {
+      label: "Practice mapping",
+      title: "Workable screening · Workable LinkedIn",
+      facts: [
+        "LiveCoach campaign · active",
+        "SendPilot campaign · started",
+        "Private mapping · only for this salesperson",
+      ],
+      outcome:
+        "When a LinkedIn step becomes due, LiveCoach knows the exact SendPilot campaign to use.",
+    },
+  },
+  {
+    id: "sendpilot-prepare",
+    eyebrow: "Step 4",
+    title: "Prepare and claim the lead in LiveCoach",
+    body:
+      "Choose the prospect in LiveCoach first. Check their LinkedIn profile, campaign fit, assignment and contact history before the LinkedIn step becomes eligible.",
+    checklist: [
+      "Claim an unassigned lead so one salesperson owns the contact",
+      "Confirm the LinkedIn URL belongs to the correct person",
+      "Review prior email, reply and suppression history",
+    ],
+    href: "/crm/outreach?tab=prospects",
+    target: "prospect-pool",
+    demo: {
+      label: "Practice lead",
+      title: "Maya is ready for review",
+      facts: [
+        "Assigned to you",
+        "No team member has contacted her",
+        "LinkedIn identity has been checked",
+      ],
+      outcome:
+        "LiveCoach blocks duplicates and conflicting outreach before any provider handoff.",
+    },
+  },
+  {
+    id: "sendpilot-handoff",
+    eyebrow: "Step 5",
+    title: "Approve one exact SendPilot handoff",
+    body:
+      "When the mapped LinkedIn step is due, use Approve for SendPilot on the lead. Confirm the exact person and campaign. SendPilot then owns delivery of its LinkedIn sequence.",
+    checklist: [
+      "Check the person and mapped campaign in the confirmation",
+      "Approve only the lead you intend to enrol",
+      "Look for the SendPilot queued or active status before moving on",
+    ],
+    href: "/crm/outreach",
+    target: "outreach-queue",
+    demo: {
+      label: "Practice handoff",
+      title: "Approve Maya for Workable LinkedIn",
+      facts: [
+        "Daily team safety rules are checked again",
+        "Duplicate provider enrolment is blocked",
+        "LiveCoach keeps the canonical activity history",
+      ],
+      outcome:
+        "One confirmation starts the mapped provider sequence. The CRM remains usable while it runs.",
+    },
+  },
+  {
+    id: "sendpilot-replies",
+    eyebrow: "Step 6",
+    title: "Work every reply from LiveCoach",
+    body:
+      "SendPilot reports activity and replies back to the same lead. LiveCoach notifies the owner, stops conflicting outreach and keeps the next action with the CRM record.",
+    checklist: [
+      "Open the reply from Notifications, Sales Today or Replies",
+      "Respond from the correct LinkedIn account",
+      "Log the outcome and add one dated next action",
+    ],
+    href: "/crm/outreach?tab=replies",
+    target: "reply-handover",
+    demo: {
+      label: "Practice reply",
+      title: "Maya replied · interested",
+      facts: [
+        "Owner notification · created",
+        "Conflicting email outreach · stopped",
+        "Next move · arrange a 10 minute demo",
+      ],
+      outcome:
+        "The reply, prospect, campaign and next action stay connected in one LiveCoach record.",
+    },
+  },
+];
+
+export const SENDPILOT_TUTORIAL_LAST_STEP =
+  SENDPILOT_TUTORIAL_STEPS.length - 1;
