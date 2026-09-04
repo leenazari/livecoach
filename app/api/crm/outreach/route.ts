@@ -177,7 +177,6 @@ export async function GET(req: NextRequest) {
       resolveOutreachCampaignSelection(account.userId, account.workspaceId),
       supabaseAdmin.from("outreach_learnings").select("*").eq("workspace_id", account.workspaceId).eq("status", "promoted").limit(100),
       supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", account.workspaceId),
-      outreachCrmGuard(),
     ]);
     let messagesQuery = supabaseAdmin
         .from("outreach_messages")
@@ -203,19 +202,26 @@ export async function GET(req: NextRequest) {
       loadRecentClientProspectCandidates(account),
     ]);
     if (error) throw error;
-    const [selection, { data: learnings }, { data: suppressions }, crmGuard] = context;
+    const [selection, { data: learnings }, { data: suppressions }] = context;
     const [{ data: messages }, { data: ownEnrolments }] = history;
     const campaigns = selection.campaigns;
     const campaign = selection.campaign;
-    const sendpilotContext = await loadSendPilotOutreachContext(
-      { userId: account.userId, workspaceId: account.workspaceId },
-      {
-        prospectIds: (data || [])
-          .filter((prospect: any) => prospect.assigned_to_user_id === account.userId)
-          .map((prospect: any) => prospect.id),
-        campaignIds: campaigns.map((row: any) => row.id),
-      }
-    );
+    const [sendpilotContext, crmGuard] = await Promise.all([
+      loadSendPilotOutreachContext(
+        { userId: account.userId, workspaceId: account.workspaceId },
+        {
+          prospectIds: (data || [])
+            .filter((prospect: any) => prospect.assigned_to_user_id === account.userId)
+            .map((prospect: any) => prospect.id),
+          campaignIds: campaigns.map((row: any) => row.id),
+        }
+      ),
+      outreachCrmGuard({
+        prospectCompanyIds: (data || [])
+          .map((prospect: any) => String(prospect.crm_company_id || ""))
+          .filter(Boolean),
+      }),
+    ]);
     const sendpilotByProspect = new Map<string, any>();
     for (const link of sendpilotContext.links) {
       if (!sendpilotByProspect.has(link.outreach_prospect_id)) {

@@ -9,7 +9,9 @@ import {
 } from "@/lib/outreach-crm-eligibility";
 
 export {
+  outreachCrmBlockReason,
   prospectHasBlockedCrmRelationship,
+  type OutreachCrmBlockReason,
   type OutreachCrmGuard,
 } from "@/lib/outreach-crm-eligibility";
 export {
@@ -107,7 +109,9 @@ async function loadAssignedSharedCompaniesForOutreach(): Promise<any[]> {
   );
 }
 
-async function loadCrmCompaniesForOutreach(): Promise<any[]> {
+async function loadCrmCompaniesForOutreach(
+  prospectCompanyIds: string[] = []
+): Promise<any[]> {
   const companies: any[] = [];
   for (let from = 0; ; from += CRM_GUARD_PAGE_SIZE) {
     let query = supabaseAdmin
@@ -129,9 +133,31 @@ async function loadCrmCompaniesForOutreach(): Promise<any[]> {
     if ((data || []).length < CRM_GUARD_PAGE_SIZE) break;
   }
   const visibleIds = new Set(companies.map((company) => String(company.id || "")));
-  const sharedCompanies = await loadAssignedSharedCompaniesForOutreach();
-  for (const company of sharedCompanies) {
-    if (!visibleIds.has(String(company.id || ""))) companies.push(company);
+  const requestScope = getRequestScope();
+  const serviceScope =
+    !requestScope && isVerifiedServiceRequest()
+      ? getServiceRecordScope()
+      : null;
+  const scope = requestScope || serviceScope;
+  const safeProspectCompanyIds = Array.from(
+    new Set(prospectCompanyIds.map((id) => String(id || "").trim()).filter(Boolean))
+  ).slice(0, 1000);
+  const [sharedCompanies, prospectCompanies] = await Promise.all([
+    loadAssignedSharedCompaniesForOutreach(),
+    scope && safeProspectCompanyIds.length
+      ? loadSafeSharedCompanies(safeProspectCompanyIds, scope.workspaceId)
+      : Promise.resolve([]),
+  ]);
+  // Prospect-linked companies are loaded only from IDs on records already
+  // visible to this exact user. The loader exposes the fixed safe projection
+  // and rejects confidential companies, so private CRM context never crosses
+  // the assignment boundary while the eligibility check remains accurate.
+  for (const company of [...sharedCompanies, ...prospectCompanies]) {
+    const companyId = String(company.id || "");
+    if (!visibleIds.has(companyId)) {
+      companies.push(company);
+      visibleIds.add(companyId);
+    }
   }
   return companies;
 }
@@ -160,9 +186,11 @@ async function loadOpenOpportunityCompanyIds(): Promise<Set<string>> {
   return ids;
 }
 
-export async function outreachCrmGuard(): Promise<OutreachCrmGuard> {
+export async function outreachCrmGuard(options: {
+  prospectCompanyIds?: string[];
+} = {}): Promise<OutreachCrmGuard> {
   const [companies, openOpportunityCompanyIds] = await Promise.all([
-    loadCrmCompaniesForOutreach(),
+    loadCrmCompaniesForOutreach(options.prospectCompanyIds || []),
     loadOpenOpportunityCompanyIds(),
   ]);
   const guard: OutreachCrmGuard = {

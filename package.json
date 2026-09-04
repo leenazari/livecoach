@@ -11,6 +11,7 @@
     "lint": "next lint",
     "validate:actionable-blockers": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-actionable-crm-blockers.mjs",
     "validate:outreach-eligibility": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-crm-eligibility.mjs",
+    "validate:outreach-assignment-access": "node scripts/validate-outreach-assignment-company-access.mjs",
     "validate:outreach-team-safety": "node scripts/validate-team-outreach-safety.mjs",
     "validate:outreach-personal-analytics": "node scripts/validate-outreach-personal-analytics.mjs",
     "validate:outreach-row-isolation": "node scripts/validate-outreach-row-isolation.mjs",

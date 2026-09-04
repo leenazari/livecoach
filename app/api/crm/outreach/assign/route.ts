@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   isUntouchedOutreachAssignment,
 } from "@/lib/outreach-assignment";
+import { assignOutreachProspectsWithCompanyAccess } from "@/lib/outreach-assignment-service";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 
@@ -160,24 +161,18 @@ export async function POST(req: NextRequest) {
       .map((row) => row.id);
 
     const assignedIds: string[] = [];
-    const now = new Date().toISOString();
+    let companyAccessShared = 0;
+    let linkedCompaniesHeldPrivate = 0;
     for (const idBatch of batches(eligibleIds)) {
-      const { data, error } = await supabaseAdmin
-        .from("outreach_prospects")
-        .update({
-          assigned_to_user_id: assignedToUserId,
-          visibility: "team",
-          updated_at: now,
-        })
-        .eq("workspace_id", account.workspaceId)
-        .in("id", idBatch)
-        .select("id,assigned_to_user_id");
-      if (error) throw error;
-      assignedIds.push(
-        ...(data || [])
-          .filter((row) => row.assigned_to_user_id === assignedToUserId)
-          .map((row) => row.id)
-      );
+      const saved = await assignOutreachProspectsWithCompanyAccess({
+        actorUserId: account.userId,
+        workspaceId: account.workspaceId,
+        prospectIds: idBatch,
+        assignedToUserId,
+      });
+      assignedIds.push(...saved.assignedIds);
+      companyAccessShared += saved.companyAccessShared;
+      linkedCompaniesHeldPrivate += saved.linkedCompaniesHeldPrivate;
     }
 
     return NextResponse.json({
@@ -186,8 +181,10 @@ export async function POST(req: NextRequest) {
       skipped: prospectIds.length - assignedIds.length,
       hiddenOrUnavailable: prospectIds.filter((id) => !visibleIds.has(id)).length,
       assignedIds,
+      companyAccessShared,
+      linkedCompaniesHeldPrivate,
       rule:
-        "Only untouched imported prospects were assigned. A paused campaign membership may move with them only when it has no research, draft, send, contact or reply history. Matching email history anywhere in the workspace always blocks assignment.",
+        "Only untouched imported prospects were assigned. Eligible New-lead companies received restricted sales access. Private CRM notes and protected relationships did not move. Matching email history anywhere in the workspace always blocks assignment.",
     });
   } catch (err: any) {
     return NextResponse.json(

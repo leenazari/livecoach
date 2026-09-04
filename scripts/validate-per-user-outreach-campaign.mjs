@@ -51,7 +51,8 @@ assert.match(
   /assigned_to_user_id\.is\.null,assigned_to_user_id\.eq\.\$\{account\.userId\}/
 );
 assert.match(queue, /campaignProspectIds\.has\(prospect\.id\)/);
-assert.match(queue, /\.is\("assigned_to_user_id", null\)/);
+assert.match(queue, /assignOutreachProspectsWithCompanyAccess/);
+assert.match(queue, /outreachAssignmentConflict/);
 assert.match(prospects, /resolveOutreachCampaignSelection\(account\.userId, account\.workspaceId\)/);
 assert.match(prospects, /eq\("status", "paused"\)/);
 assert.match(readiness, /label: "Your active campaign"/);

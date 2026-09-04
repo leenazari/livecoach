@@ -4,6 +4,11 @@ export type OutreachCrmGuard = {
   blockedDomains: Set<string>;
 };
 
+export type OutreachCrmBlockReason =
+  | "linked_company_ineligible"
+  | "linked_company_unavailable"
+  | "blocked_company_domain";
+
 export function normalizeOutreachDomain(value: unknown): string {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -25,7 +30,7 @@ export function crmCompanyAllowsColdOutreach(
   return stage === "new" && !!companyId && !openOpportunityCompanyIds.has(companyId);
 }
 
-export function prospectHasBlockedCrmRelationship(
+export function outreachCrmBlockReason(
   prospect: {
     crm_company_id?: unknown;
     company_domain?: unknown;
@@ -33,7 +38,7 @@ export function prospectHasBlockedCrmRelationship(
     email?: unknown;
   },
   guard: OutreachCrmGuard
-): boolean {
+): OutreachCrmBlockReason | null {
   const companyId = String(prospect.crm_company_id || "");
   const emailDomain = String(prospect.email || "").toLowerCase().split("@")[1] || "";
   const domain = normalizeOutreachDomain(
@@ -43,6 +48,26 @@ export function prospectHasBlockedCrmRelationship(
   // A linked company must be positively confirmed as a New lead. Unknown,
   // dormant and engaged CRM records fail closed. A blocked duplicate domain
   // also wins over an otherwise eligible company link.
-  if (companyId && !guard.eligibleCompanyIds.has(companyId)) return true;
-  return !!(domain && guard.blockedDomains.has(domain));
+  if (companyId && guard.blockedCompanyIds.has(companyId)) {
+    return "linked_company_ineligible";
+  }
+  if (companyId && !guard.eligibleCompanyIds.has(companyId)) {
+    return "linked_company_unavailable";
+  }
+  if (domain && guard.blockedDomains.has(domain)) {
+    return "blocked_company_domain";
+  }
+  return null;
+}
+
+export function prospectHasBlockedCrmRelationship(
+  prospect: {
+    crm_company_id?: unknown;
+    company_domain?: unknown;
+    website?: unknown;
+    email?: unknown;
+  },
+  guard: OutreachCrmGuard
+): boolean {
+  return outreachCrmBlockReason(prospect, guard) !== null;
 }

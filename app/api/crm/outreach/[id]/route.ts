@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
+import {
+  assignOutreachProspectsWithCompanyAccess,
+  outreachAssignmentConflict,
+} from "@/lib/outreach-assignment-service";
 
 const PRIORITIES = new Set(["high", "medium", "low"]);
 const STATUSES = new Set(["imported", "queued", "ready", "contacted", "replied", "qualified", "not_interested", "suppressed"]);
@@ -41,6 +45,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       );
     }
     const patch: Record<string, any> = {};
+    let assignmentTarget: string | undefined;
     if (typeof body.priority === "string" && PRIORITIES.has(body.priority)) patch.priority = body.priority;
     if (typeof body.status === "string" && STATUSES.has(body.status)) patch.status = body.status;
     if (body.assignedToUserId === null || body.assignedToUserId === "") {
@@ -76,27 +81,50 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           { error: "Finish or cancel the current sender's draft before reassigning this prospect" },
           { status: 409 }
         );
-      patch.assigned_to_user_id = requested;
+      assignmentTarget = requested;
     }
-    if (!Object.keys(patch).length) return NextResponse.json({ error: "no valid change supplied" }, { status: 400 });
-    patch.updated_at = new Date().toISOString();
-    const claimingUnassigned =
-      account.role === "sales" &&
-      !current.assigned_to_user_id &&
-      patch.assigned_to_user_id === account.userId;
-    let update = supabaseAdmin
-      .from("outreach_prospects")
-      .update(patch)
-      .eq("id", params.id)
-      .eq("workspace_id", account.workspaceId);
-    if (claimingUnassigned) update = update.is("assigned_to_user_id", null);
-    const { data, error } = await update.select("*").maybeSingle();
-    if (error) throw error;
-    if (!data && claimingUnassigned) {
-      return NextResponse.json(
-        { error: "Another teammate claimed this prospect first" },
-        { status: 409 }
-      );
+    if (!Object.keys(patch).length && !assignmentTarget) {
+      return NextResponse.json({ error: "no valid change supplied" }, { status: 400 });
+    }
+
+    if (assignmentTarget) {
+      try {
+        await assignOutreachProspectsWithCompanyAccess({
+          actorUserId: account.userId,
+          workspaceId: account.workspaceId,
+          prospectIds: [params.id],
+          assignedToUserId: assignmentTarget,
+        });
+      } catch (error) {
+        const conflict = outreachAssignmentConflict(error);
+        if (conflict) {
+          return NextResponse.json({ error: conflict }, { status: 409 });
+        }
+        throw error;
+      }
+    }
+
+    let data: any = null;
+    if (Object.keys(patch).length) {
+      patch.updated_at = new Date().toISOString();
+      const { data: updated, error } = await supabaseAdmin
+        .from("outreach_prospects")
+        .update(patch)
+        .eq("id", params.id)
+        .eq("workspace_id", account.workspaceId)
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      data = updated;
+    } else {
+      const { data: assigned, error } = await supabaseAdmin
+        .from("outreach_prospects")
+        .select("*")
+        .eq("id", params.id)
+        .eq("workspace_id", account.workspaceId)
+        .maybeSingle();
+      if (error) throw error;
+      data = assigned;
     }
     if (!data) {
       return NextResponse.json({ error: "prospect not found" }, { status: 404 });

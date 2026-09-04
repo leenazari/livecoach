@@ -123,7 +123,8 @@ assert.match(allocationPage, /matching email draft, send, research, contact or r
 assert.match(bulkAssignmentApi, /isUntouchedOutreachAssignment/);
 assert.match(bulkAssignmentApi, /Matching email history anywhere in the workspace always blocks assignment/);
 assert.match(bulkAssignmentApi, /recipient_email/);
-assert.match(bulkAssignmentApi, /visibility: "team"/);
+assert.match(bulkAssignmentApi, /assignOutreachProspectsWithCompanyAccess/);
+assert.match(bulkAssignmentApi, /companyAccessShared/);
 assert.match(bulkAssignmentApi, /\.eq\("workspace_id", account\.workspaceId\)/);
 assert.match(allocationApi, /recipientEmailsWithMessages/);
 assert.match(allocationApi, /enrolmentsByProspect/);
