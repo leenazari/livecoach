@@ -25,7 +25,7 @@ export default async function VoiceNotePage({
   const { data: message, error } = await supabaseService
     .from("outreach_messages")
     .select(
-      "id,workspace_id,sender_user_id,from_email,subject,voice_script,voice_status,voice_audio_path,voice_estimated_seconds"
+      "id,workspace_id,sender_user_id,from_email,voice_script,voice_status,voice_audio_path,voice_estimated_seconds"
     )
     .eq("voice_public_token", params.token)
     .eq("voice_status", "ready")
@@ -67,11 +67,7 @@ export default async function VoiceNotePage({
             </p>
           </details>
         ) : null}
-        <ReturnToInboxButton
-          senderFirstName={senderName.split(/\s+/)[0] || "the sender"}
-          senderEmail={message.from_email}
-          subject={message.subject}
-        />
+        <ReturnToInboxButton />
         <p className="mt-6 text-xs text-muted">
           Shared securely through LiveCoach CRM.
         </p>
