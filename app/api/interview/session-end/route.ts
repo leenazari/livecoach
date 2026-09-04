@@ -9,7 +9,10 @@ import {
   runCallSummaryJob,
   type CallSummaryPayload,
 } from "@/lib/call-summary-jobs";
-import { completeSharedUpcomingCalls } from "@/lib/shared-call-access";
+import {
+  completeSharedUpcomingCalls,
+  loadSharedCallAccess,
+} from "@/lib/shared-call-access";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -173,6 +176,11 @@ export async function POST(req: NextRequest) {
       sessionId,
       upcomingId: typeof upcomingId === "string" ? upcomingId : null,
     });
+    const sharedCallAccess = await loadSharedCallAccess({
+      workspaceId: accountScope.workspaceId,
+      userId: accountScope.userId,
+      sessionId,
+    });
     const clearedSharedUpcoming = await completeSharedUpcomingCalls({
       workspaceId: accountScope.workspaceId,
       userId: accountScope.userId,
@@ -200,7 +208,16 @@ export async function POST(req: NextRequest) {
       const payload = await canonicalizeCallSummaryPayload(initialPayload);
       const processing = runCallSummaryJob(req, payload)
         .then(async (result) => {
-          if (result.landed && !result.alreadyDone && result.summary)
+          const verifiedHostOwnerId = String(
+            (sharedCallAccess?.capture as any)?.host_owner_id ||
+              accountScope.userId
+          );
+          if (
+            result.landed &&
+            !result.alreadyDone &&
+            result.summary &&
+            verifiedHostOwnerId === accountScope.userId
+          )
             await postSummaryFollowups(req, payload, result.summary);
         })
         .catch((error) => console.error("Background call summary failed", error));

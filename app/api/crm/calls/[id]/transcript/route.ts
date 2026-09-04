@@ -82,6 +82,13 @@ export async function GET(
         { status: 404 }
       );
     }
+    sharedAccess =
+      sharedAccess ||
+      (await loadSharedCallAccess({
+        workspaceId: account.workspaceId,
+        userId: account.userId,
+        sessionId,
+      }));
 
     const { data: ownedSession, error: sessionError } = await supabaseAdmin
       .from("interview_sessions")
@@ -95,13 +102,6 @@ export async function GET(
     if (sessionError) throw sessionError;
     let session: any = ownedSession;
     if (!session) {
-      sharedAccess =
-        sharedAccess ||
-        (await loadSharedCallAccess({
-          workspaceId: account.workspaceId,
-          userId: account.userId,
-          sessionId,
-        }));
       if (sharedAccess) {
         const { data: sharedSession, error: sharedSessionError } =
           await supabaseService

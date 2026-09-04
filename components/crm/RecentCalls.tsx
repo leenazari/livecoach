@@ -17,6 +17,8 @@ type Call = {
   state?: CallState;
   session_id?: string | null;
   error?: string | null;
+  needsClient?: boolean;
+  sharedCall?: boolean;
 };
 
 const stateOf = (c: Call): CallState =>
@@ -143,7 +145,9 @@ export default function RecentCalls() {
   };
 
   if (loaded && calls.length === 0) return null;
-  const unassigned = calls.filter((c) => !c.company_id).length;
+  const unassigned = calls.filter(
+    (c) => c.needsClient ?? (!c.company_id && !c.company)
+  ).length;
   const broken = calls.filter((c) => stateOf(c) === "failed").length;
 
   return (
@@ -223,6 +227,10 @@ export default function RecentCalls() {
                   >
                     {c.company || "client"}
                   </Link>
+                ) : c.company ? (
+                  <span className="rounded-full border border-sky/35 bg-sky/10 px-2.5 py-1 font-mono text-[0.56rem] text-sky">
+                    {c.company} · shared call
+                  </span>
                 ) : assigningId === c.id ? (
                   <CompanyLinkPicker value={null} onChange={(v) => assign(c.id, v)} />
                 ) : (

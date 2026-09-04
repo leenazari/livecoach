@@ -132,6 +132,9 @@ export async function GET() {
       : { data: [] };
     const nameById = new Map<string, string>();
     for (const c of companies || []) nameById.set(c.id, c.name);
+    const linkableCompanyIds = new Set(
+      (companies || []).map((company: any) => String(company.id))
+    );
     for (const c of sharedCompanies || []) nameById.set(c.id, c.name);
     const nameOf = (id: string | null) => (id ? nameById.get(id) || null : null);
 
@@ -171,7 +174,10 @@ export async function GET() {
       id: c.id,
       candidate: c.candidate,
       role: c.role,
-      company_id: c.company_id || null,
+      company_id:
+        c.company_id && linkableCompanyIds.has(String(c.company_id))
+          ? c.company_id
+          : null,
       company: nameOf(c.company_id || null),
       created_at: c.created_at,
       cost: c.cost,
@@ -218,7 +224,10 @@ export async function GET() {
           id: `session:${s.session_id}`,
           candidate: s.candidate || "Untitled call",
           role: s.role || null,
-          company_id: s.company_id || null,
+          company_id:
+            s.company_id && linkableCompanyIds.has(String(s.company_id))
+              ? s.company_id
+              : null,
           company: nameOf(s.company_id || null),
           created_at: s.ended_at || s.created_at,
           cost: s.total_cost ?? null,
