@@ -82,10 +82,9 @@ assert.doesNotMatch(
 );
 assert.match(processor, /supabaseService/);
 
-assert.match(prepareRoute, /const COLD_FIRST_TOUCH_MAX_SEARCHES = 1/);
-assert.match(prepareRoute, /search_context_size: coldFirstTouch \? "low" : "medium"/);
-assert.match(prepareRoute, /max_uses: coldFirstTouch \? COLD_FIRST_TOUCH_MAX_SEARCHES : 2/);
-assert.match(prepareRoute, /max_tokens: coldFirstTouch \? COLD_FIRST_TOUCH_MAX_OUTPUT_TOKENS : 2000/);
+assert.match(prepareRoute, /max_tokens: 2000/);
+assert.match(prepareRoute, /max_uses: 3/);
+assert.match(prepareRoute, /search_context_size: "medium"/);
 assert.match(openai, /web_search_calls: webSearchCalls/);
 assert.match(costs, /webSearchCalls \* RATES\.webSearchPerCall/);
 assert.match(costs, /webSearchPerCall: 0\.01/);
