@@ -22,6 +22,44 @@ type TutorialResponse = {
   role: "owner" | "manager" | "sales";
 };
 
+type SetupCheck = {
+  id: string;
+  label: string;
+  state: "ready" | "action";
+  detail: string;
+  href?: string;
+  actionLabel?: string;
+};
+
+type AccountReadinessResponse = {
+  account: {
+    readyCount: number;
+    totalCount: number;
+    checks: SetupCheck[];
+  };
+  capabilities: {
+    linkedinAutomation?: {
+      available: boolean;
+      connected: boolean;
+      webhookConfigured: boolean;
+      mappedCampaignCount: number;
+      outboundReady: boolean;
+    };
+  };
+  aiUsed: false;
+};
+
+const CORE_SETUP_IDS = new Set([
+  "account",
+  "sales_profile",
+  "email",
+  "calendar",
+  "linkedin",
+  "transcriber",
+  "leads",
+  "privacy",
+]);
+
 const API = "/api/crm/tutorial";
 
 export default function SalesOutreachTutorial() {
@@ -34,6 +72,9 @@ export default function SalesOutreachTutorial() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [confirmDismiss, setConfirmDismiss] = useState(false);
+  const [readiness, setReadiness] = useState<AccountReadinessResponse | null>(null);
+  const [setupLoading, setSetupLoading] = useState(false);
+  const [setupError, setSetupError] = useState("");
   const initialLoadRef = useRef(false);
 
   const currentPath = useMemo(() => {
@@ -41,6 +82,20 @@ export default function SalesOutreachTutorial() {
     return `${pathname}${query ? `?${query}` : ""}`;
   }, [pathname, searchParams]);
   const step = SALES_OUTREACH_TUTORIAL_STEPS[currentStep];
+
+  const loadSetup = useCallback(async () => {
+    setSetupLoading(true);
+    setSetupError("");
+    try {
+      setReadiness(
+        await crmFetch<AccountReadinessResponse>("/api/crm/account-readiness")
+      );
+    } catch (nextError: any) {
+      setSetupError(nextError?.message || "Your setup checks could not refresh");
+    } finally {
+      setSetupLoading(false);
+    }
+  }, []);
 
   const writeProgress = useCallback(
     async (status: Exclude<TutorialStatus, "not_started">, nextStep: number) => {
@@ -79,6 +134,7 @@ export default function SalesOutreachTutorial() {
         setCurrentStep(savedStep);
         if (data.tutorial.status === "active" || data.autoStart) {
           setOpen(true);
+          void loadSetup();
           if (data.autoStart) void writeProgress("active", 0);
         }
       })
@@ -89,7 +145,7 @@ export default function SalesOutreachTutorial() {
     return () => {
       active = false;
     };
-  }, [writeProgress]);
+  }, [loadSetup, writeProgress]);
 
   useEffect(() => {
     const start = (event: Event) => {
@@ -102,11 +158,20 @@ export default function SalesOutreachTutorial() {
       setConfirmDismiss(false);
       setError("");
       setOpen(true);
+      void loadSetup();
       void writeProgress("active", nextStep);
     };
     window.addEventListener("lc:start-sales-tutorial", start);
     return () => window.removeEventListener("lc:start-sales-tutorial", start);
-  }, [writeProgress]);
+  }, [loadSetup, writeProgress]);
+
+  useEffect(() => {
+    const refreshAfterReturn = () => {
+      if (open && currentStep <= 1) void loadSetup();
+    };
+    window.addEventListener("focus", refreshAfterReturn);
+    return () => window.removeEventListener("focus", refreshAfterReturn);
+  }, [currentStep, loadSetup, open]);
 
   const onStepScreen = useMemo(() => {
     if (!step.href) return true;
@@ -183,6 +248,24 @@ export default function SalesOutreachTutorial() {
     if (step.href) router.push(step.href);
   };
 
+  const coreChecks = (readiness?.account.checks || []).filter((check) =>
+    CORE_SETUP_IDS.has(check.id)
+  );
+  const missingChecks = coreChecks.filter((check) => check.state === "action");
+  const readyChecks = coreChecks.filter((check) => check.state === "ready");
+  const setupKnown = coreChecks.length > 0;
+  const coreSetupReady = setupKnown && missingChecks.length === 0;
+  const linkedInAutomation = readiness?.capabilities.linkedinAutomation;
+  const automationDetail = !linkedInAutomation?.available
+    ? "LinkedIn automation is not available on this deployment yet."
+    : !linkedInAutomation.connected
+      ? "Connect this salesperson's own SendPilot account if they will use LinkedIn automation."
+      : !linkedInAutomation.webhookConfigured
+        ? "SendPilot is connected. Add this user's webhook secret so replies return to LiveCoach."
+        : linkedInAutomation.mappedCampaignCount < 1
+          ? "SendPilot and replies are connected. Map one active campaign before handing off leads."
+          : `${linkedInAutomation.mappedCampaignCount} LinkedIn campaign${linkedInAutomation.mappedCampaignCount === 1 ? " is" : "s are"} mapped and ready.`;
+
   if (!loaded || !open) return null;
 
   const percent = Math.round(
@@ -191,7 +274,9 @@ export default function SalesOutreachTutorial() {
   const finalStep = currentStep === SALES_OUTREACH_TUTORIAL_STEPS.length - 1;
   const primaryLabel =
     currentStep === 0
-      ? "Start walkthrough"
+      ? coreSetupReady
+        ? "Start walkthrough"
+        : "Review setup"
       : !onStepScreen
         ? "Open this screen"
         : finalStep
@@ -226,6 +311,105 @@ export default function SalesOutreachTutorial() {
           style={{ width: `${percent}%` }}
         />
       </div>
+
+      {currentStep <= 1 ? (
+        <section className="mt-4 rounded-xl border border-sage/35 bg-sage/[0.05] p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-mono text-[0.5rem] uppercase tracking-[0.16em] text-sage">
+                Your live setup
+              </p>
+              <p className="mt-1 text-sm font-semibold text-bone">
+                {setupLoading && !setupKnown
+                  ? "Checking this account…"
+                  : coreSetupReady
+                    ? "Ready to start selling"
+                    : `${readyChecks.length} of ${coreChecks.length || 8} core checks ready`}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-muted">
+                Checked from this login only. No AI tokens are used.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadSetup()}
+              disabled={setupLoading}
+              className="min-h-9 shrink-0 rounded-lg border border-sage/35 px-2 font-mono text-[0.48rem] uppercase text-sage disabled:opacity-40"
+            >
+              {setupLoading ? "Checking…" : "Refresh"}
+            </button>
+          </div>
+
+          {setupError ? (
+            <p className="mt-3 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-xs text-rust">
+              {setupError}
+            </p>
+          ) : null}
+
+          {missingChecks.length ? (
+            <div className="mt-3 space-y-2">
+              {missingChecks.map((check, index) => (
+                <div key={check.id} className="rounded-lg border border-amber/30 bg-ink/35 p-2.5">
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 text-amber">{index + 1}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-bone">{check.label}</p>
+                      <p className="mt-1 text-[0.68rem] leading-4 text-muted">{check.detail}</p>
+                      {check.href ? (
+                        <button
+                          type="button"
+                          onClick={() => router.push(check.href!)}
+                          className="mt-2 min-h-8 rounded-full border border-amber/40 px-3 font-mono text-[0.46rem] uppercase text-amber"
+                        >
+                          {check.actionLabel || "Complete this"} →
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : setupKnown ? (
+            <p className="mt-3 rounded-lg border border-sage/30 bg-sage/[0.06] px-3 py-2 text-xs text-sage">
+              ✓ Email, calendar, identity, leads, privacy and call setup are ready.
+            </p>
+          ) : null}
+
+          {readyChecks.length ? (
+            <details className="mt-3 rounded-lg border border-edge bg-ink/25 px-3 py-2">
+              <summary className="cursor-pointer font-mono text-[0.48rem] uppercase tracking-wider text-muted">
+                Already ready · {readyChecks.length}
+              </summary>
+              <ul className="mt-2 space-y-1.5 text-xs text-sage">
+                {readyChecks.map((check) => (
+                  <li key={check.id}>✓ {check.label}</li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+
+          {linkedInAutomation ? (
+            <div className={`mt-3 rounded-lg border px-3 py-2 ${linkedInAutomation.outboundReady ? "border-sage/30 bg-sage/[0.05]" : "border-sky/30 bg-sky/[0.05]"}`}>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-bone">LinkedIn automation</p>
+                <span className={`font-mono text-[0.44rem] uppercase ${linkedInAutomation.outboundReady ? "text-sage" : "text-sky"}`}>
+                  {linkedInAutomation.outboundReady ? "Ready" : "Optional"}
+                </span>
+              </div>
+              <p className="mt-1 text-[0.68rem] leading-4 text-muted">{automationDetail}</p>
+              {!linkedInAutomation.outboundReady && linkedInAutomation.available ? (
+                <button
+                  type="button"
+                  onClick={() => router.push("/settings#sendpilot-inbox")}
+                  className="mt-2 min-h-8 rounded-full border border-sky/40 px-3 font-mono text-[0.46rem] uppercase text-sky"
+                >
+                  Open SendPilot setup →
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <div className="mt-4">
         <p className="font-mono text-[0.55rem] uppercase tracking-wider text-sage">
@@ -322,7 +506,7 @@ export default function SalesOutreachTutorial() {
             <button
               type="button"
               onClick={() => {
-                if (currentStep === 0) void moveTo(1);
+                if (currentStep === 0) void moveTo(coreSetupReady ? 2 : 1);
                 else if (!onStepScreen) openCurrentScreen();
                 else if (finalStep) void finish();
                 else void moveTo(currentStep + 1);

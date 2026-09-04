@@ -18,6 +18,7 @@ import {
   microsoftConnected,
 } from "@/lib/microsoft";
 import { requireRequestScope } from "@/lib/request-scope";
+import { sendPilotIntegrationStatus } from "@/lib/sendpilot";
 import { supabaseService } from "@/lib/supabase";
 import { deriveTranscriberName } from "@/lib/transcriber";
 
@@ -257,7 +258,13 @@ export async function GET() {
       }
     }
 
-    const [liveGoogle, liveGoogleScopes, liveGmail, liveMicrosoft] =
+    const [
+      liveGoogle,
+      liveGoogleScopes,
+      liveGmail,
+      liveMicrosoft,
+      sendPilot,
+    ] =
       await Promise.all([
         googleConnected(scope.userId).catch(() => ({
           connected: false,
@@ -275,6 +282,16 @@ export async function GET() {
           mailSend: false,
           mailDraft: false,
           calendar: false,
+        })),
+        sendPilotIntegrationStatus({
+          userId: scope.userId,
+          workspaceId: scope.workspaceId,
+        }).catch(() => ({
+          configured: false,
+          connected: false,
+          webhookConfigured: false,
+          mappedCampaignCount: 0,
+          outboundReady: false,
         })),
       ]);
 
@@ -436,6 +453,13 @@ export async function GET() {
             : currentProvider === "microsoft"
               ? liveMicrosoft.status === "ok" && liveMicrosoft.mailSend
               : false,
+      },
+      linkedinAutomation: {
+        available: Boolean(sendPilot.configured),
+        connected: Boolean(sendPilot.connected),
+        webhookConfigured: Boolean(sendPilot.webhookConfigured),
+        mappedCampaignCount: Number(sendPilot.mappedCampaignCount || 0),
+        outboundReady: Boolean(sendPilot.outboundReady),
       },
     };
     const team =

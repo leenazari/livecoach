@@ -18,6 +18,7 @@ const nav = read("components/crm/NavMenu.tsx");
 const outreach = read("app/crm/outreach/page.tsx");
 const pipeline = read("components/crm/PipelineWorkspace.tsx");
 const readiness = read("app/settings/readiness/page.tsx");
+const readinessRoute = read("app/api/crm/account-readiness/route.ts");
 const calls = read("app/crm/calls/page.tsx");
 
 assert.match(migration, /create table if not exists public\.sales_tutorial_progress/);
@@ -36,7 +37,7 @@ assert.match(route, /\.eq\("user_id", scope\.userId\)/);
 assert.match(route, /onConflict: "workspace_id,user_id,guide_key"/);
 assert.match(route, /autoStart: !row && role === "sales"/);
 
-assert.match(tutorialConfig, /SALES_TUTORIAL_GUIDE_KEY = "sales_workflow_v2"/);
+assert.match(tutorialConfig, /SALES_TUTORIAL_GUIDE_KEY = "sales_workflow_v3"/);
 assert.match(tutorialConfig, /SALES_TUTORIAL_LAST_STEP/);
 assert.equal((tutorialConfig.match(/\n    id: "/g) || []).length, 8);
 assert.equal((tutorialConfig.match(/\n    demo: \{/g) || []).length, 8);
@@ -58,6 +59,15 @@ assert.match(tutorial, /Preview only/);
 assert.match(tutorial, /Turn off tutorial/);
 assert.match(tutorial, /lc:start-sales-tutorial/);
 assert.match(tutorial, /requestedStepId/);
+assert.match(tutorial, /Your live setup/);
+assert.match(tutorial, /\/api\/crm\/account-readiness/);
+assert.match(tutorial, /Already ready/);
+assert.match(tutorial, /LinkedIn automation/);
+assert.match(tutorial, /Checked from this login only/);
+assert.match(readinessRoute, /sendPilotIntegrationStatus/);
+assert.match(readinessRoute, /userId: scope\.userId/);
+assert.match(readinessRoute, /workspaceId: scope\.workspaceId/);
+assert.match(readinessRoute, /linkedinAutomation/);
 
 assert.match(layout, /<SalesOutreachTutorial \/>/);
 assert.match(settingsLayout, /<SalesOutreachTutorial \/>/);

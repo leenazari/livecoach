@@ -16,7 +16,7 @@ export type SalesTutorialStep = {
   demo: SalesTutorialDemo;
 };
 
-export const SALES_TUTORIAL_GUIDE_KEY = "sales_workflow_v2";
+export const SALES_TUTORIAL_GUIDE_KEY = "sales_workflow_v3";
 
 export const SALES_OUTREACH_TUTORIAL_STEPS: SalesTutorialStep[] = [
   {

@@ -20,6 +20,13 @@ type ReadinessData = {
       providerDraftReady: boolean;
       rehearsalReady: boolean;
     };
+    linkedinAutomation: {
+      available: boolean;
+      connected: boolean;
+      webhookConfigured: boolean;
+      mappedCampaignCount: number;
+      outboundReady: boolean;
+    };
   };
   team?: AccountReadiness[];
   generatedAt: string;
@@ -286,6 +293,57 @@ export default function AccountReadinessPage() {
                   <p className="text-sm text-bone">{item.label}</p>
                   <p className={`mt-1 text-xs ${item.ready ? "text-sage" : "text-amber"}`}>
                     {item.ready ? "✓ Ready" : "Not set"}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted">{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-sky/35 bg-sky/[0.04] p-4 sm:p-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="font-mono text-[0.58rem] uppercase tracking-[0.18em] text-sky">
+                  Optional LinkedIn channel
+                </p>
+                <h2 className="mt-1 font-display text-xl text-bone">
+                  SendPilot readiness
+                </h2>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
+                  This status belongs only to the signed in salesperson. Email outreach works without it.
+                </p>
+              </div>
+              <Link
+                href="/settings#sendpilot-inbox"
+                className="inline-flex min-h-10 items-center self-start rounded-full border border-sky/45 px-4 font-mono text-[0.58rem] uppercase tracking-wider text-sky hover:bg-sky/10"
+              >
+                SendPilot setup
+              </Link>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              {[
+                {
+                  label: "Own account",
+                  ready: data.capabilities.linkedinAutomation.connected,
+                  detail: "This salesperson's own SendPilot identity",
+                },
+                {
+                  label: "Reply webhook",
+                  ready: data.capabilities.linkedinAutomation.webhookConfigured,
+                  detail: "Replies return to the correct LiveCoach owner",
+                },
+                {
+                  label: "Campaign mapping",
+                  ready: data.capabilities.linkedinAutomation.mappedCampaignCount > 0,
+                  detail: data.capabilities.linkedinAutomation.mappedCampaignCount > 0
+                    ? `${data.capabilities.linkedinAutomation.mappedCampaignCount} active mapping${data.capabilities.linkedinAutomation.mappedCampaignCount === 1 ? "" : "s"}`
+                    : "Map an active campaign before handoff",
+                },
+              ].map((item) => (
+                <div key={item.label} className="rounded-xl border border-edge bg-ink/35 p-3">
+                  <p className="text-sm text-bone">{item.label}</p>
+                  <p className={`mt-1 text-xs ${item.ready ? "text-sage" : "text-sky"}`}>
+                    {item.ready ? "✓ Ready" : "Optional setup"}
                   </p>
                   <p className="mt-1 text-xs leading-5 text-muted">{item.detail}</p>
                 </div>
