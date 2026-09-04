@@ -47,9 +47,17 @@ export async function GET(
     if (!call) {
       return NextResponse.json({ error: "call not found" }, { status: 404 });
     }
+    if (call.session_id && !sharedAccess) {
+      sharedAccess = await loadSharedCallAccess({
+        workspaceId: scope.workspaceId,
+        userId: scope.userId,
+        sessionId: call.session_id,
+      });
+    }
 
     let company: string | null = null;
     let companyInternal = false;
+    let companyIdForViewer: string | null = call.company_id || null;
     if (call?.company_id) {
       const access = await loadAssignedClientAccess(call.company_id, scope);
       if (!access && !sharedAccess) {
@@ -68,6 +76,7 @@ export async function GET(
           .maybeSingle();
         company = sharedCompany?.name || null;
       }
+      if (!access && sharedAccess) companyIdForViewer = null;
       if (access?.mode === "owner") {
         const { data: owned } = await supabaseAdmin
           .from("companies")
@@ -152,6 +161,7 @@ export async function GET(
     return NextResponse.json({
       call: {
         ...call,
+        company_id: companyIdForViewer,
         company,
         companyInternal,
         durationSeconds,

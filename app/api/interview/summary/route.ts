@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openai, OPENAI_MODEL_PRO, OPENAI_MODEL_LIVE } from "@/lib/openai";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import {
   buildSpeakerMap,
   canonicalName,
@@ -528,14 +528,35 @@ Return the JSON assessment now.`;
     // summary time because its link may have been corrected after the call tab
     // opened. With no exact event, keep the original prep link and only then
     // try a conservative auto-resolution.
+    const sharedCanonicalUpcomingId = String(
+      (sharedAccess?.capture as any)?.canonical_upcoming_id || ""
+    ).trim();
     const exactUpcomingId =
-      typeof upcomingId === "string" && upcomingId ? upcomingId : null;
-    const scheduledScope = await resolveCallScope({
-      companyId,
-      upcomingId: exactUpcomingId,
-      workstreamId,
-    });
-    const scheduledCompanyId = scheduledScope.companyId;
+      sharedCanonicalUpcomingId ||
+      (typeof upcomingId === "string" && upcomingId ? upcomingId : null);
+    let scheduledCompanyId: string | null = null;
+    let scheduledWorkstreamId: string | null = null;
+    if (sharedCanonicalUpcomingId) {
+      const { data: canonicalUpcoming, error: canonicalUpcomingError } =
+        await supabaseService
+          .from("upcoming_calls")
+          .select("company_id,workstream_id")
+          .eq("workspace_id", account.workspaceId)
+          .eq("owner_id", verifiedHostOwnerId)
+          .eq("id", sharedCanonicalUpcomingId)
+          .maybeSingle();
+      if (canonicalUpcomingError) throw canonicalUpcomingError;
+      scheduledCompanyId = canonicalUpcoming?.company_id || null;
+      scheduledWorkstreamId = canonicalUpcoming?.workstream_id || null;
+    } else {
+      const scheduledScope = await resolveCallScope({
+        companyId,
+        upcomingId: exactUpcomingId,
+        workstreamId,
+      });
+      scheduledCompanyId = scheduledScope.companyId;
+      scheduledWorkstreamId = scheduledScope.workstream?.id || null;
+    }
 
     let resolvedCompanyId: string | null = exactUpcomingId
       ? scheduledCompanyId
@@ -554,10 +575,9 @@ Return the JSON assessment now.`;
       });
       if (auto) resolvedCompanyId = auto.companyId;
     }
-    const resolvedWorkstreamId =
-      scheduledScope.workstream?.companyId === resolvedCompanyId
-        ? scheduledScope.workstream.id
-        : null;
+    const resolvedWorkstreamId = scheduledCompanyId === resolvedCompanyId
+      ? scheduledWorkstreamId
+      : null;
 
     try {
       const { data: savedCall, error: savedCallError } = await supabaseAdmin.from("interview_summaries").insert({
@@ -596,7 +616,7 @@ Return the JSON assessment now.`;
       // Refresh the compact commercial memory immediately after the scorecard
       // lands. Future Brain, intent and prep requests reuse this facts-only
       // digest instead of paying to reread the transcript or full scorecard.
-      if (resolvedCompanyId) {
+      if (resolvedCompanyId && verifiedHostOwnerId === account.userId) {
         getCommercialMemory(resolvedCompanyId, resolvedWorkstreamId).catch(() => {});
         await enqueueOpportunitySignal({
           companyId: resolvedCompanyId,

@@ -19,6 +19,7 @@ const brainTranscript = read("lib/call-transcript-context.ts");
 const summary = read("app/api/interview/summary/route.ts");
 const sessionEnd = read("app/api/interview/session-end/route.ts");
 const microsoft = read("lib/microsoft.ts");
+const recentCalls = read("components/crm/RecentCalls.tsx");
 
 // Persistent read access is distinct from an active coaching subscription and
 // remains private to one exact user and workspace.
@@ -55,7 +56,13 @@ assert.match(brainTranscript, /meet_capture_access/);
 assert.match(brainTranscript, /sharedCaptureBySession/);
 assert.match(summary, /loadHostIdentityForUser/);
 assert.match(summary, /HOST NAME:/);
+assert.match(summary, /sharedCanonicalUpcomingId/);
+assert.match(summary, /verifiedHostOwnerId === account\.userId/);
 assert.match(sessionEnd, /completeSharedUpcomingCalls/);
+assert.match(sessionEnd, /verifiedHostOwnerId === accountScope\.userId/);
+assert.match(call, /companyIdForViewer/);
+assert.match(calls, /linkableCompanyIds/);
+assert.match(recentCalls, /shared call/);
 
 // Outlook snapshots must retain organiser identity just as Google snapshots do.
 assert.match(microsoft, /organizer: Boolean\(email && email === organiserAddress\)/);
