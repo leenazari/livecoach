@@ -119,6 +119,7 @@ function DealDetails({
   const questions = Array.isArray(row.outlookQuestions) ? row.outlookQuestions : [];
   const canEdit =
     canManageAssignments ||
+    row.owner_id === currentUser ||
     !row.assigned_to_user_id ||
     row.assigned_to_user_id === currentUser;
   const [history, setHistory] = useState<Record<string, any>[] | null>(null);
@@ -377,6 +378,7 @@ export default function PipelineWorkspace(props: Props) {
   }), [ownerVisibleRows]);
   const canEditDeal = (row: Row) =>
     canManageAssignments ||
+    row.owner_id === currentUser ||
     !row.assigned_to_user_id ||
     row.assigned_to_user_id === currentUser;
   const editorButton = (row: Row) => (

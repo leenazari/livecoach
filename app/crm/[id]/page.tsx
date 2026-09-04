@@ -117,6 +117,7 @@ export default function CompanyDetailPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pipelineSaving, setPipelineSaving] = useState(false);
   const [synthing, setSynthing] = useState(false);
   const [err, setErr] = useState("");
   const [savedAt, setSavedAt] = useState("");
@@ -343,6 +344,44 @@ export default function CompanyDetailPage() {
     } catch (e: any) {
       setOpps(previous);
       setErr(e?.message || "opportunity change did not save");
+    }
+  };
+
+  const addToPipeline = async () => {
+    if (!company || pipelineSaving) return;
+    setPipelineSaving(true);
+    setErr("");
+    try {
+      const onlyContact = contacts.length === 1 ? contacts[0] : null;
+      const title = onlyContact?.name
+        ? `${onlyContact.name} at ${company.name}`
+        : `${company.name} sales opportunity`;
+      const { opportunity } = await crmFetch<{ opportunity: any }>(
+        `/api/crm/companies/${id}/pipeline`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title,
+            rationale: "Added to the pipeline from the client profile",
+          }),
+        }
+      );
+      if (!opportunity?.id) {
+        throw crmConfirmationError({
+          url: `/api/crm/companies/${id}/pipeline`,
+          method: "POST",
+          reason: "LiveCoach did not confirm the new pipeline opportunity",
+        });
+      }
+      setOpps((current) => [
+        opportunity,
+        ...current.filter((row) => row.id !== opportunity.id),
+      ]);
+      setSavedAt(new Date().toLocaleTimeString());
+    } catch (e: any) {
+      setErr(e?.message || "This client could not be added to the pipeline");
+    } finally {
+      setPipelineSaving(false);
     }
   };
 
@@ -1442,10 +1481,27 @@ export default function CompanyDetailPage() {
             ({opps.filter((o) => o.status === "open").length} open)
           </span>
         </p>
+        {!priorityOpportunity && access?.canEdit ? (
+          <div className="mb-3 rounded-lg border border-amber/30 bg-amber/[0.05] p-3">
+            <p className="font-sans text-sm text-bone">
+              This relationship is not in your sales pipeline yet.
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              Add one real opportunity without inventing a value, probability or win outlook.
+            </p>
+            <button
+              type="button"
+              onClick={addToPipeline}
+              disabled={pipelineSaving}
+              className="mt-3 min-h-10 rounded-full border border-amber/50 bg-amber/10 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-50"
+            >
+              {pipelineSaving ? "Adding…" : "Add to my pipeline"}
+            </button>
+          </div>
+        ) : null}
         {opps.length === 0 ? (
           <p className="font-mono text-[0.6rem] text-muted">
-            Opportunities the AI spots in your calls land here. Link a call to
-            this client and run it.
+            No canonical opportunity has been recorded for this relationship.
           </p>
         ) : (
           <ul className="flex flex-col gap-2">

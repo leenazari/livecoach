@@ -86,8 +86,8 @@ export async function gatherClientContext(
       "",
       `CLIENT: ${company.name}`,
       `Sector: ${company.sector?.trim() || "not set"}`,
-      `Stage: ${company.stage?.trim() || "not set"}`,
-      `Assigned opportunity records: ${
+      `Relationship stage: ${company.stage?.trim() || "not set"}`,
+      `Canonical pipeline opportunity records: ${
         opportunities.length
           ? opportunities
               .map(
@@ -95,7 +95,7 @@ export async function gatherClientContext(
                   `[${opportunity.opportunity_type || "revenue"}] ${opportunity.title}. Lifecycle ${opportunity.pipeline_stage || opportunity.status || "not set"}. Win outlook ${opportunity.win_outlook || "not assessed"}${opportunity.win_outlook_confidence == null ? "" : ` at ${opportunity.win_outlook_confidence}% confidence`}${opportunity.win_outlook_override ? " (human override)" : ""}.${opportunity.value ? ` Value ~£${opportunity.value}.` : " Value not set."}${opportunity.deal_intent ? ` Intent${opportunity.deal_intent_override ? " (human override)" : ""}: ${cut(opportunity.deal_intent, 320)}.` : ""}${Array.isArray(opportunity.win_outlook_reasons) && opportunity.win_outlook_reasons.length ? ` Evidence: ${opportunity.win_outlook_reasons.slice(0, 3).join(" | ")}.` : ""}${Array.isArray(opportunity.win_outlook_questions) && opportunity.win_outlook_questions.length ? ` Ask next: ${opportunity.win_outlook_questions.slice(0, 3).join(" | ")}.` : ""}${opportunity.next_action ? ` Next: ${cut(opportunity.next_action, 220)}${opportunity.next_action_due_at ? ` due ${String(opportunity.next_action_due_at).slice(0, 10)}` : ""}.` : ""}${opportunity.engagement_motion ? ` Motion ${String(opportunity.engagement_motion).replace(/_/g, " ")}.` : ""}${opportunity.active_contact_method ? ` Contact via ${String(opportunity.active_contact_method).replace(/_/g, " ")}.` : ""}`
               )
               .join("; ")
-          : "none assigned to this account"
+          : "none assigned to this account, so this client is not currently in this account's pipeline"
       }`,
     ];
     return lines.join("\n");
@@ -228,7 +228,7 @@ export async function gatherClientContext(
 
   lines.push(`CLIENT: ${company.name}`);
   lines.push(`Sector: ${company.sector?.trim() || "not set"}`);
-  lines.push(`Stage: ${company.stage?.trim() || "not set"}`);
+  lines.push(`Relationship stage: ${company.stage?.trim() || "not set"}`);
   lines.push(`Notes: ${hasNotes ? String(company.notes).trim() : "none recorded"}`);
   const emailCtx = (company as any).email_context;
   if (!hasMultipleActiveWorkstreams && emailCtx && String(emailCtx).trim()) {
@@ -333,7 +333,7 @@ export async function gatherClientContext(
     }`
   );
   lines.push(
-    `Open CRM opportunity records: ${
+    `Canonical pipeline opportunity records: ${
       opps.length
         ? opps
             .map(
@@ -341,7 +341,7 @@ export async function gatherClientContext(
                 `[${o.workstream_id ? workstreamName.get(o.workstream_id) || "workstream" : "company-wide"}] [${o.opportunity_type || "revenue"}] ${o.title}. Lifecycle ${o.pipeline_stage || o.status || "not set"}. Win outlook ${o.win_outlook || "not assessed"}${o.win_outlook_confidence == null ? "" : ` at ${o.win_outlook_confidence}% confidence`}${o.win_outlook_override ? " (human override)" : ""}.${o.value ? ` Value ~£${o.value}.` : " Value not set."}${o.deal_intent ? ` Intent${o.deal_intent_override ? " (human override)" : ""}: ${cut(o.deal_intent, 320)}.` : ""}${Array.isArray(o.win_outlook_reasons) && o.win_outlook_reasons.length ? ` Evidence: ${o.win_outlook_reasons.slice(0, 3).join(" | ")}.` : ""}${Array.isArray(o.win_outlook_questions) && o.win_outlook_questions.length ? ` Ask next: ${o.win_outlook_questions.slice(0, 3).join(" | ")}.` : ""}${o.next_action ? ` Next: ${cut(o.next_action, 220)}${o.next_action_due_at ? ` due ${String(o.next_action_due_at).slice(0, 10)}` : ""}.` : ""}${o.engagement_motion ? ` Motion ${String(o.engagement_motion).replace(/_/g, " ")}.` : ""}${o.active_contact_method ? ` Contact via ${String(o.active_contact_method).replace(/_/g, " ")}.` : ""}${o.detail ? ` Context: ${cut(o.detail, 320)}` : ""}`
             )
             .join("; ")
-        : "none recorded - no deal value or budget on file"
+        : "none recorded - this client is not currently in the pipeline, and no deal value or budget is on file"
     }`
   );
   lines.push(

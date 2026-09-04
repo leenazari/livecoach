@@ -22,6 +22,17 @@ type RevenueOpportunityDraft = {
   source?: string;
   surfacedByAi?: boolean;
   assignedToUserId?: string | null;
+  rationale?: string | null;
+  pipelineStage?:
+    | "new"
+    | "discovery"
+    | "qualified"
+    | "proposal"
+    | "negotiation"
+    | "verbal"
+    | "won"
+    | "lost";
+  probability?: number;
 };
 
 export type OpportunityScopeClarification = {
@@ -250,13 +261,28 @@ export async function createCanonicalOpenRevenueOpportunity(
       value: draft.value ?? null,
       status: "open",
       opportunity_type: "revenue",
+      ...(draft.pipelineStage
+        ? { pipeline_stage: draft.pipelineStage }
+        : {}),
+      ...(typeof draft.probability === "number" &&
+      Number.isFinite(draft.probability)
+        ? {
+            probability: Math.max(
+              0,
+              Math.min(100, Math.round(draft.probability))
+            ),
+          }
+        : {}),
       source: draft.source || "call",
       surfaced_by_ai: draft.surfacedByAi !== false,
       last_change_context: {
         nonce: crypto.randomUUID(),
         sourceType: draft.surfacedByAi === false ? "human" : "system",
         sourceChannel: draft.source || "call",
-        rationale: "Created the canonical active revenue opportunity for this relationship scope",
+        rationale:
+          typeof draft.rationale === "string" && draft.rationale.trim()
+            ? draft.rationale.trim().slice(0, 1000)
+            : "Created the canonical active revenue opportunity for this relationship scope",
         evidence: {
           sessionId: draft.sessionId || null,
           workstreamId,
