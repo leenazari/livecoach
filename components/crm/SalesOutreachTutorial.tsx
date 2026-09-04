@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { crmFetch } from "@/lib/crm";
+import { SALES_OUTREACH_TUTORIAL_STEPS } from "@/lib/sales-tutorial";
 
 type TutorialStatus =
   | "not_started"
@@ -20,146 +21,6 @@ type TutorialResponse = {
   autoStart: boolean;
   role: "owner" | "manager" | "sales";
 };
-
-type Step = {
-  id: string;
-  eyebrow: string;
-  title: string;
-  body: string;
-  checklist: string[];
-  href: string | null;
-  target: string | null;
-};
-
-export const SALES_OUTREACH_TUTORIAL_STEPS: Step[] = [
-  {
-    id: "overview",
-    eyebrow: "Your safe sales flow",
-    title: "From a fresh prospect to a truthful pipeline",
-    body:
-      "This walkthrough follows the real screens without changing data, running research or contacting anyone.",
-    checklist: [
-      "Choose the right campaign before selecting people",
-      "Claim each prospect before research or outreach",
-      "Move genuine interest into Pipeline with one clear next action",
-    ],
-    href: null,
-    target: null,
-  },
-  {
-    id: "campaign",
-    eyebrow: "Step 1",
-    title: "Check the campaign first",
-    body:
-      "A campaign answers who you are contacting and why. Open one campaign and check the amber Setup view before anyone builds a queue.",
-    checklist: [
-      "Confirm the goal, audience and Interviewa angle",
-      "Check the daily maximum and whether the campaign is active",
-      "Keep approval mode on so nothing sends unchecked",
-    ],
-    href: "/crm/outreach?tab=campaign",
-    target: "campaign-setup",
-  },
-  {
-    id: "campaign-sequence",
-    eyebrow: "Step 2",
-    title: "Build only the sequence you need",
-    body:
-      "New campaigns begin with one email. Open a campaign, choose the blue Sequence view and add a follow up only when it has a clear purpose.",
-    checklist: [
-      "Edit the first email before adding more steps",
-      "Use Add next step for email, phone or manual LinkedIn activity",
-      "Templates are optional and replace only the unsaved sequence",
-      "Every email still waits for human approval",
-    ],
-    href: "/crm/outreach?tab=campaign",
-    target: "campaign-sequence",
-  },
-  {
-    id: "claim",
-    eyebrow: "Step 3",
-    title: "Claim suitable unassigned prospects",
-    body:
-      "Filter by campaign and choose Unassigned. Press Claim only when you intend to work that person.",
-    checklist: [
-      "Check the company and contact are relevant",
-      "Claiming locks ownership to you",
-      "Another salesperson cannot take the same claimed contact",
-    ],
-    href: "/crm/outreach?tab=prospects",
-    target: "prospect-pool",
-  },
-  {
-    id: "queue",
-    eyebrow: "Step 4",
-    title: "Build today’s ranked queue",
-    body:
-      "The Today view prioritises the strongest safe prospects within the active campaign. Work the limited queue instead of the whole database.",
-    checklist: [
-      "Start with the highest ranked people",
-      "LiveCoach checks team wide email safety first",
-      "Blocked, replied or duplicate recipients stay out",
-    ],
-    href: "/crm/outreach",
-    target: "outreach-queue",
-  },
-  {
-    id: "research",
-    eyebrow: "Step 5",
-    title: "Queue research and a first draft",
-    body:
-      "Research runs in the background only after you choose a prospect. You can continue working while LiveCoach prepares the draft.",
-    checklist: [
-      "Use Queue research and draft",
-      "Researching never sends an email",
-      "Read the evidence and relevance before approval",
-    ],
-    href: "/crm/outreach",
-    target: "outreach-queue",
-  },
-  {
-    id: "approval",
-    eyebrow: "Step 6",
-    title: "Approve the exact message",
-    body:
-      "Check the recipient, evidence, tone and offer. Only the exact words you approve can join your paced sending queue.",
-    checklist: [
-      "Correct anything vague or inaccurate",
-      "Approve only when it sounds natural and relevant",
-      "Sent emails are spaced and logged against your account",
-    ],
-    href: "/crm/outreach",
-    target: "outreach-queue",
-  },
-  {
-    id: "replies",
-    eyebrow: "Step 7",
-    title: "Turn positive replies into CRM context",
-    body:
-      "A reply stops the sequence. Review the reply, link it to the correct client, and prepare the next response or meeting.",
-    checklist: [
-      "Never guess a client match",
-      "Link or create the right CRM profile",
-      "Record the agreed next step and meeting",
-    ],
-    href: "/crm/outreach?tab=replies",
-    target: "reply-handover",
-  },
-  {
-    id: "pipeline",
-    eyebrow: "Step 8",
-    title: "Assign and advance the opportunity",
-    body:
-      "Pipeline becomes the source of truth once there is genuine commercial interest. Give the deal an owner, stage and dated next action.",
-    checklist: [
-      "Set the salesperson responsible for the deal",
-      "Choose the lifecycle stage supported by the conversation",
-      "Add one next action and due date. Leave value or outlook blank until evidence exists",
-    ],
-    href: "/crm/revenue",
-    target: "pipeline-assignment",
-  },
-];
 
 const API = "/api/crm/tutorial";
 
@@ -374,6 +235,33 @@ export default function SalesOutreachTutorial() {
           {step.title}
         </h2>
         <p className="mt-2 text-sm leading-6 text-bone/75">{step.body}</p>
+        <section
+          aria-label={`Practice example for ${step.title}`}
+          className="mt-3 rounded-xl border border-sky/35 bg-sky/[0.06] p-3"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-mono text-[0.5rem] uppercase tracking-[0.16em] text-sky">
+              {step.demo.label}
+            </p>
+            <span className="rounded-full border border-sky/35 px-2 py-0.5 font-mono text-[0.46rem] uppercase text-sky">
+              Preview only
+            </span>
+          </div>
+          <h3 className="mt-2 text-sm font-semibold text-bone">
+            {step.demo.title}
+          </h3>
+          <ul className="mt-2 space-y-1.5 text-xs leading-5 text-bone/75">
+            {step.demo.facts.map((fact) => (
+              <li key={fact} className="flex gap-2">
+                <span className="text-sky">•</span>
+                <span>{fact}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 border-t border-sky/20 pt-2 text-xs leading-5 text-sage">
+            {step.demo.outcome}
+          </p>
+        </section>
         <ul className="mt-3 space-y-2 text-sm leading-5 text-bone/80">
           {step.checklist.map((item) => (
             <li key={item} className="flex gap-2">
