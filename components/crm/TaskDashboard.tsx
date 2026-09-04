@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 
 import MatrixRain from "@/components/MatrixRain";
 import TaskComposer from "@/components/crm/TaskComposer";
+import TaskEmailComposer from "@/components/crm/TaskEmailComposer";
 import {
   crmConfirmationError,
   crmFetch,
@@ -146,6 +147,7 @@ export default function TaskDashboard() {
   const [clock, setClock] = useState(() => new Date());
   const [busyId, setBusyId] = useState("");
   const [editingId, setEditingId] = useState("");
+  const [emailingId, setEmailingId] = useState("");
   const [editText, setEditText] = useState("");
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
@@ -311,6 +313,7 @@ export default function TaskDashboard() {
 
   const beginEdit = (task: Task) => {
     const parts = dueParts(task);
+    setEmailingId("");
     setEditingId(task.id);
     setEditText(task.text);
     setEditDate(parts.date);
@@ -387,17 +390,13 @@ export default function TaskDashboard() {
         : outreachProspectHref({ id: task.payload.outreachProspectId })
       : null;
     if (task.link_kind === "email" || task.link_kind === "drafts") {
-      if (!task.company_id && prospectHref) return router.push(prospectHref);
-      window.dispatchEvent(
-        new CustomEvent("lc:draft-email", {
-          detail: {
-            companyId: task.company_id,
-            companyName: task.company,
-            text: task.text,
-            taskId: task.id,
-          },
-        })
-      );
+      if (task.kind === "reply_alert" && prospectHref) {
+        return router.push(prospectHref);
+      }
+      setEditingId("");
+      setEmailingId((current) => (current === task.id ? "" : task.id));
+      setError("");
+      setNotice("");
       return;
     }
     if (task.upcoming_id || task.link_kind === "call") {
@@ -739,7 +738,11 @@ export default function TaskDashboard() {
                               disabled={busyId === task.id}
                               className="min-h-10 rounded-lg border border-sky/45 bg-sky/10 px-3 font-mono text-[0.56rem] uppercase tracking-wider text-sky transition hover:bg-sky/15 disabled:opacity-40"
                             >
-                              Start ↗
+                              {taskType(task) === "email"
+                                ? emailingId === task.id
+                                  ? "Email open"
+                                  : "Write email"
+                                : "Start ↗"}
                             </button>
                           ) : null}
                         </div>
@@ -802,6 +805,24 @@ export default function TaskDashboard() {
                             </button>
                           </div>
                         </div>
+                      ) : null}
+                      {emailingId === task.id && !done ? (
+                        <TaskEmailComposer
+                          taskId={task.id}
+                          taskText={task.text}
+                          onClose={() => setEmailingId("")}
+                          onSent={async () => {
+                            setEmailingId("");
+                            setTasks((current) =>
+                              current.filter((item) => item.id !== task.id)
+                            );
+                            setNotice(
+                              "Email sent from your connected mailbox. The task is complete everywhere."
+                            );
+                            savedEverywhere();
+                            await load();
+                          }}
+                        />
                       ) : null}
                     </div>
                   </div>

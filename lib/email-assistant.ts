@@ -48,6 +48,8 @@ export type EmailAssistantDraftStatus =
   | "draft"
   | "approving"
   | "handed_off"
+  | "sending"
+  | "sent"
   | "dismissed"
   | "stale"
   | "blocked";
@@ -111,7 +113,9 @@ export type EmailAssistantDraft = {
   status: EmailAssistantDraftStatus;
   provider_draft_id: string | null;
   provider_draft_url: string | null;
+  provider_message_id: string | null;
   approved_at: string | null;
+  sent_at: string | null;
   last_error: string | null;
   created_at: string;
   updated_at: string;
@@ -144,7 +148,7 @@ export type EmailAssistantRehearsalResult = {
 };
 
 export const EMAIL_ASSISTANT_DRAFT_SELECT =
-  "id,workspace_id,owner_id,company_id,outreach_prospect_id,source_task_id,mail_provider,source_message_id,source_thread_id,source_received_at,recipient_email,recipient_name,draft_subject,draft_body,intent,next_step,evidence_summary,confidence,urgency,generation_mode,due_at,meeting_cta_recommended,booking_url,voice_script,voice_status,voice_audio_path,voice_audio_mime,voice_generated_at,voice_script_hash,voice_public_token,voice_model_id,voice_provider_voice_id,voice_provider_request_id,voice_estimated_seconds,voice_character_count,voice_estimated_cost_gbp,voice_error,voice_script_approved_at,voice_script_approved_by,voice_script_approved_hash,status,provider_draft_id,provider_draft_url,approved_at,last_error,created_at,updated_at";
+  "id,workspace_id,owner_id,company_id,outreach_prospect_id,source_task_id,mail_provider,source_message_id,source_thread_id,source_received_at,recipient_email,recipient_name,draft_subject,draft_body,intent,next_step,evidence_summary,confidence,urgency,generation_mode,due_at,meeting_cta_recommended,booking_url,voice_script,voice_status,voice_audio_path,voice_audio_mime,voice_generated_at,voice_script_hash,voice_public_token,voice_model_id,voice_provider_voice_id,voice_provider_request_id,voice_estimated_seconds,voice_character_count,voice_estimated_cost_gbp,voice_error,voice_script_approved_at,voice_script_approved_by,voice_script_approved_hash,status,provider_draft_id,provider_draft_url,provider_message_id,approved_at,sent_at,last_error,created_at,updated_at";
 
 const clean = (value: unknown, maximum: number) =>
   String(value || "")
@@ -282,7 +286,7 @@ async function ownedTarget(
   };
 }
 
-async function groundedContext(
+export async function emailAssistantGroundedContext(
   scope: RecordScope,
   input: { companyId: string | null; prospectId: string | null; senderEmail: string }
 ): Promise<string> {
@@ -412,7 +416,7 @@ export async function generateEmailAssistantDraft(
 
   const owned = await ownedTarget(scope, input.target);
   const [context, salesProfile, bookingProfile] = await Promise.all([
-    groundedContext(scope, {
+    emailAssistantGroundedContext(scope, {
       companyId: owned.companyId,
       prospectId: owned.prospectId,
       senderEmail: recipientEmail,

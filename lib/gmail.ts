@@ -487,7 +487,26 @@ export async function sendMail(
 
   let encoded = "";
   try {
-    encoded = gmailRawMessage(opts);
+    let replyHeaders: Pick<GmailComposedMessage, "inReplyTo" | "references"> = {};
+    if (opts.sourceMessageId) {
+      const source = await api(
+        `/messages/${encodeURIComponent(
+          opts.sourceMessageId
+        )}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`,
+        token,
+        ownerId
+      );
+      const headers = source?.payload?.headers || [];
+      const messageId = oneLineHeader(header(headers, "Message-ID"), 500);
+      const references = oneLineHeader(header(headers, "References"));
+      if (messageId) {
+        replyHeaders = {
+          inReplyTo: messageId,
+          references: `${references ? `${references} ` : ""}${messageId}`,
+        };
+      }
+    }
+    encoded = gmailRawMessage({ ...opts, ...replyHeaders });
   } catch (error: any) {
     return { ok: false, error: error?.message || "The email is invalid" };
   }
