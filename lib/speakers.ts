@@ -1,4 +1,5 @@
 import { connectedEmail } from "@/lib/mail";
+import { supabaseService } from "@/lib/supabase";
 
 // SPEAKER IDENTITY.
 //
@@ -81,6 +82,49 @@ export async function loadHostIdentity(): Promise<{
     .join(" ");
 
   return { name: guessed, email };
+}
+
+// Shared calls can be launched by one attendee while another verified member
+// is the calendar organiser and actual host. Callers must derive ownerId from
+// the exact shared-call access record, never from browser input.
+export async function loadHostIdentityForUser(
+  ownerId: string,
+  workspaceId: string
+): Promise<{ name: string; email: string }> {
+  const [{ data: profile }, { data: google }, { data: microsoft }] =
+    await Promise.all([
+      supabaseService
+        .from("profiles")
+        .select("display_name,email")
+        .eq("user_id", ownerId)
+        .maybeSingle(),
+      supabaseService
+        .from("google_oauth")
+        .select("email")
+        .eq("workspace_id", workspaceId)
+        .eq("owner_id", ownerId)
+        .maybeSingle(),
+      supabaseService
+        .from("microsoft_oauth")
+        .select("email")
+        .eq("workspace_id", workspaceId)
+        .eq("owner_id", ownerId)
+        .maybeSingle(),
+    ]);
+  const email = String(google?.email || microsoft?.email || profile?.email || "")
+    .trim()
+    .toLowerCase();
+  const guessed = (email.split("@")[0] || "")
+    .replace(/[._+-]+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+  return {
+    name: String(profile?.display_name || guessed || "Host").trim(),
+    email,
+  };
 }
 
 // Build a map that collapses every label seen in a set of utterances onto one

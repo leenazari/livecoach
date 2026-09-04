@@ -9,6 +9,12 @@ import {
   shareableCalendarSource,
   validUuid,
 } from "@/lib/shared-meet-capture";
+import {
+  grantSharedCaptureAccess,
+  resolveSharedCalendarOccurrence,
+  type SharedCalendarOccurrence,
+  type SharedUpcomingCall,
+} from "@/lib/shared-call-access";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import {
   getTranscriberIdentity,
@@ -233,13 +239,14 @@ export async function POST(req: NextRequest) {
 
     let verifiedUpcomingId: string | null = null;
     let sharedInstanceKey: string | null = null;
+    let sharedOccurrence: SharedCalendarOccurrence | null = null;
     if (upcomingId) {
       // A meeting URL alone never grants another person's transcript. RLS must
       // first prove that this exact synced occurrence belongs to this account.
       const { data: call, error: callError } = await supabaseAdmin
         .from("upcoming_calls")
         .select(
-          "id,scheduled_at,meeting_url,source,external_id,completed_at,workspace_id,owner_id"
+          "id,workspace_id,owner_id,company_id,workstream_id,title,scheduled_at,meeting_url,source,external_id,completed_at,attendees,intent,prepped,prep"
         )
         .eq("workspace_id", accountScope.workspaceId)
         .eq("owner_id", accountScope.userId)
@@ -258,10 +265,12 @@ export async function POST(req: NextRequest) {
         shareableCalendarSource(call.source, call.external_id) &&
         meetingUrlsMatch(call.meeting_url, meetingUrl)
       ) {
-        sharedInstanceKey = meetingInstanceKey(
-          call.meeting_url,
-          call.scheduled_at
+        sharedOccurrence = await resolveSharedCalendarOccurrence(
+          call as SharedUpcomingCall
         );
+        sharedInstanceKey =
+          sharedOccurrence?.instanceKey ||
+          meetingInstanceKey(call.meeting_url, call.scheduled_at);
       }
     }
 
@@ -370,6 +379,22 @@ export async function POST(req: NextRequest) {
       );
       const sharedCapture = matchingCaptures[0];
       if (sharedCapture) {
+        if (sharedOccurrence) {
+          const { error: hostError } = await supabaseService
+            .from("meet_bots")
+            .update({
+              host_owner_id: sharedOccurrence.hostOwnerId,
+              canonical_upcoming_id: sharedOccurrence.canonical.id,
+            })
+            .eq("workspace_id", accountScope.workspaceId)
+            .eq("id", sharedCapture.id);
+          if (hostError) throw hostError;
+          await grantSharedCaptureAccess({
+            captureId: sharedCapture.id,
+            occurrence: sharedOccurrence,
+            captureOwnerId: sharedCapture.owner_id,
+          });
+        }
         const { error: attachError } = await attachSubscriber({
           captureId: sharedCapture.id,
           workspaceId: accountScope.workspaceId,
@@ -567,7 +592,7 @@ export async function POST(req: NextRequest) {
 
     // A bot without a scoped database record cannot be stopped safely and its
     // transcript cannot be assigned safely. Remove it immediately on failure.
-    const { error: botInsertError } = await supabaseAdmin
+    const { data: insertedCapture, error: botInsertError } = await supabaseAdmin
       .from("meet_bots")
       .insert({
         session_id: String(sessionId),
@@ -578,9 +603,14 @@ export async function POST(req: NextRequest) {
         webhook_token_expires_at: webhookTokenExpiresAt.toISOString(),
         meeting_instance_key: sharedInstanceKey,
         source_upcoming_id: verifiedUpcomingId,
+        host_owner_id: sharedOccurrence?.hostOwnerId || accountScope.userId,
+        canonical_upcoming_id:
+          sharedOccurrence?.canonical.id || verifiedUpcomingId,
         status: "active",
         ...privateRecordFields(accountScope),
-      });
+      })
+      .select("id")
+      .single();
     if (botInsertError) {
       await leaveUntrackedBot(region, key, recallBot.id);
       if (botInsertError.code === "23505") {
@@ -596,6 +626,22 @@ export async function POST(req: NextRequest) {
             .eq("status", "active")
             .maybeSingle();
           if (winner) {
+            if (sharedOccurrence) {
+              const { error: winnerHostError } = await supabaseService
+                .from("meet_bots")
+                .update({
+                  host_owner_id: sharedOccurrence.hostOwnerId,
+                  canonical_upcoming_id: sharedOccurrence.canonical.id,
+                })
+                .eq("workspace_id", accountScope.workspaceId)
+                .eq("id", winner.id);
+              if (winnerHostError) throw winnerHostError;
+              await grantSharedCaptureAccess({
+                captureId: winner.id,
+                occurrence: sharedOccurrence,
+                captureOwnerId: accountScope.userId,
+              });
+            }
             const { error: attachError } = await attachSubscriber({
               captureId: winner.id,
               workspaceId: accountScope.workspaceId,
@@ -626,6 +672,14 @@ export async function POST(req: NextRequest) {
         );
       }
       throw botInsertError;
+    }
+
+    if (insertedCapture?.id && sharedOccurrence) {
+      await grantSharedCaptureAccess({
+        captureId: insertedCapture.id,
+        occurrence: sharedOccurrence,
+        captureOwnerId: accountScope.userId,
+      });
     }
 
     return NextResponse.json(

@@ -54,9 +54,12 @@ assert.match(downloadRoute, /\.eq\("workspace_id", account\.workspaceId\)/);
 assert.match(downloadRoute, /\.eq\("owner_id", account\.userId\)/);
 assert.match(downloadRoute, /\.eq\("session_id", sessionId\)/);
 assert.match(downloadRoute, /companyId !== session\.company_id/);
+assert.match(downloadRoute, /loadSharedCallAccess/);
+assert.match(downloadRoute, /sharedAccess\.capture/);
+assert.match(downloadRoute, /\.eq\("owner_id", \(sharedAccess\.capture as any\)\.owner_id\)/);
 assert.match(downloadRoute, /Content-Disposition/);
 assert.match(downloadRoute, /private, no-store/);
-assert.doesNotMatch(downloadRoute, /supabaseService|openai|anthropic/i);
+assert.doesNotMatch(downloadRoute, /openai|anthropic/i);
 
 assert.match(callsRoute, /hasTranscript/);
 assert.match(companyCallsRoute, /hasTranscript/);

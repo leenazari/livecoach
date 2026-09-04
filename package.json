@@ -23,6 +23,7 @@
     "validate:team-invite": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-team-invitation-link.mjs",
     "validate:transcriber": "node scripts/validate-transcriber-isolation.mjs",
     "validate:shared-meeting-coaching": "node scripts/validate-shared-meeting-personal-coaching.mjs",
+    "validate:shared-call-access": "node scripts/validate-shared-call-attendee-access.mjs",
     "validate:transcriber-allowance": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-transcriber-allowance.mjs",
     "validate:realtime-token-security": "node scripts/validate-realtime-token-security.mjs",
     "validate:sales-profile": "node scripts/validate-sales-profile.mjs",

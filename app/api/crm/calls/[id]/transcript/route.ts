@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRequestScope } from "@/lib/request-scope";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
+import { loadSharedCallAccess } from "@/lib/shared-call-access";
 import {
   parseTranscriptDownloadId,
   renderTranscriptDownload,
@@ -36,9 +37,10 @@ export async function GET(
     let title = "Call";
     let companyId: string | null = null;
     let recordedAt: string | null = null;
+    let sharedAccess: Awaited<ReturnType<typeof loadSharedCallAccess>> = null;
 
     if (requested.kind === "summary") {
-      const { data: summary, error: summaryError } = await supabaseAdmin
+      const { data: ownedSummary, error: summaryError } = await supabaseAdmin
         .from("interview_summaries")
         .select("id,session_id,candidate,company_id,created_at,summary")
         .eq("workspace_id", account.workspaceId)
@@ -46,6 +48,24 @@ export async function GET(
         .eq("id", requested.id)
         .maybeSingle();
       if (summaryError) throw summaryError;
+      let summary: any = ownedSummary;
+      if (!summary) {
+        const { data: candidate, error: candidateError } = await supabaseService
+          .from("interview_summaries")
+          .select("id,session_id,candidate,company_id,created_at,summary")
+          .eq("workspace_id", account.workspaceId)
+          .eq("id", requested.id)
+          .maybeSingle();
+        if (candidateError) throw candidateError;
+        if (candidate?.session_id) {
+          sharedAccess = await loadSharedCallAccess({
+            workspaceId: account.workspaceId,
+            userId: account.userId,
+            sessionId: candidate.session_id,
+          });
+        }
+        if (sharedAccess) summary = candidate;
+      }
       if (!summary) {
         return NextResponse.json({ error: "Call not found" }, { status: 404 });
       }
@@ -63,7 +83,7 @@ export async function GET(
       );
     }
 
-    const { data: session, error: sessionError } = await supabaseAdmin
+    const { data: ownedSession, error: sessionError } = await supabaseAdmin
       .from("interview_sessions")
       .select("session_id,candidate,company_id,created_at,ended_at,transcript")
       .eq("workspace_id", account.workspaceId)
@@ -73,6 +93,30 @@ export async function GET(
       .limit(1)
       .maybeSingle();
     if (sessionError) throw sessionError;
+    let session: any = ownedSession;
+    if (!session) {
+      sharedAccess =
+        sharedAccess ||
+        (await loadSharedCallAccess({
+          workspaceId: account.workspaceId,
+          userId: account.userId,
+          sessionId,
+        }));
+      if (sharedAccess) {
+        const { data: sharedSession, error: sharedSessionError } =
+          await supabaseService
+            .from("interview_sessions")
+            .select("session_id,candidate,company_id,created_at,ended_at,transcript")
+            .eq("workspace_id", account.workspaceId)
+            .eq("owner_id", (sharedAccess.capture as any).owner_id)
+            .eq("session_id", sessionId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (sharedSessionError) throw sharedSessionError;
+        session = sharedSession;
+      }
+    }
     const transcript =
       typeof session?.transcript === "string" ? session.transcript : "";
     if (!session || !transcript.trim()) {
@@ -82,7 +126,12 @@ export async function GET(
       );
     }
 
-    if (companyId && session.company_id && companyId !== session.company_id) {
+    if (
+      !sharedAccess &&
+      companyId &&
+      session.company_id &&
+      companyId !== session.company_id
+    ) {
       return NextResponse.json(
         { error: "The call and transcript links do not match" },
         { status: 409 }
@@ -94,7 +143,14 @@ export async function GET(
 
     let company: string | null = null;
     if (companyId) {
-      const { data } = await supabaseAdmin
+      const { data } = sharedAccess
+        ? await supabaseService
+            .from("companies")
+            .select("name")
+            .eq("workspace_id", account.workspaceId)
+            .eq("id", companyId)
+            .maybeSingle()
+        : await supabaseAdmin
         .from("companies")
         .select("name")
         .eq("workspace_id", account.workspaceId)
