@@ -166,6 +166,10 @@ const bulkOutreachAssignment = readFileSync(
   path.join(root, "app/api/crm/outreach/assign/route.ts"),
   "utf8"
 );
+const outreachAssignmentService = readFileSync(
+  path.join(root, "lib/outreach-assignment-service.ts"),
+  "utf8"
+);
 const outreachAssignment = readFileSync(
   path.join(root, "lib/outreach-assignment.ts"),
   "utf8"
@@ -518,7 +522,16 @@ assert.match(outreachAssignment, /isPristinePausedOutreachEnrolment/);
 assert.match(bulkOutreachAssignment, /messageProspectIds/);
 assert.match(bulkOutreachAssignment, /messageRecipientEmails/);
 assert.match(bulkOutreachAssignment, /enrolmentsByProspect/);
-assert.match(bulkOutreachAssignment, /assigned_to_user_id: assignedToUserId/);
+assert.match(bulkOutreachAssignment, /assignOutreachProspectsWithCompanyAccess/);
+assert.match(bulkOutreachAssignment, /assignedToUserId/);
+assert.match(
+  outreachAssignmentService,
+  /p_assigned_to_user_id: input\.assignedToUserId/
+);
+assert.match(
+  outreachAssignmentService,
+  /assign_outreach_prospects_with_company_access_service/
+);
 assert.match(outreachPage, /Share untouched prospects/);
 assert.match(outreachPage, /Assignment only · no research · no emails/);
 assert.match(outreachPage, /Owner filter/);

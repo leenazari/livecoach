@@ -25,12 +25,11 @@ assert.doesNotMatch(migration, /security definer/i);
 assert.match(migration, /NULL means it is available in the shared team pool/);
 
 assert.match(prospectRoute, /\.eq\("workspace_id", account\.workspaceId\)/);
-assert.match(prospectRoute, /claimingUnassigned/);
-assert.match(prospectRoute, /\.is\("assigned_to_user_id", null\)/);
-assert.match(prospectRoute, /Another teammate claimed this prospect first/);
+assert.match(prospectRoute, /assignOutreachProspectsWithCompanyAccess/);
+assert.match(prospectRoute, /outreachAssignmentConflict/);
 
-assert.match(queueRoute, /\.is\("assigned_to_user_id", null\)/);
-assert.match(queueRoute, /Another teammate claimed this prospect first/);
+assert.match(queueRoute, /assignOutreachProspectsWithCompanyAccess/);
+assert.match(queueRoute, /outreachAssignmentConflict/);
 assert.match(
   queueRoute,
   /const existing = await loadQueue\(account\.userId, account\.workspaceId\)/,

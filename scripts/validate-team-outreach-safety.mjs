@@ -104,7 +104,7 @@ assert.match(queue, /isActiveOutreachEnrolmentStatus/);
 assert.match(queue, /isInsideCrossCampaignCooldown/);
 assert.match(queue, /\["owner", "manager"\]\.includes\(requestScope\.role\)/);
 assert.match(queue, /cooldownOverrideReason/);
-assert.match(queue, /Another teammate claimed this prospect first/);
+assert.match(queue, /outreachAssignmentConflict/);
 assert.match(queue, /\.eq\("recipient_email", email\)/);
 assert.match(queue, /reservedEmailsForAnotherCampaign/);
 assert.match(queue, /chosenEmails\.has\(email\)/);

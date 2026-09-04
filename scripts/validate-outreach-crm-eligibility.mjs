@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   crmCompanyAllowsColdOutreach,
+  outreachCrmBlockReason,
   prospectHasBlockedCrmRelationship,
 } from "../lib/outreach-crm-eligibility.ts";
 
@@ -74,6 +75,30 @@ assert.equal(
   ),
   true,
   "An unknown linked CRM company should fail closed"
+);
+assert.equal(
+  outreachCrmBlockReason(
+    {
+      crm_company_id: "unknown-company",
+      company_domain: "unknown.example",
+      email: "person@unknown.example",
+    },
+    guard
+  ),
+  "linked_company_unavailable",
+  "A missing safe company projection must identify the owner-access problem"
+);
+assert.equal(
+  outreachCrmBlockReason(
+    {
+      crm_company_id: "demo",
+      company_domain: "demo.example",
+      email: "person@demo.example",
+    },
+    guard
+  ),
+  "linked_company_ineligible",
+  "A visible non-New relationship must remain distinct from missing access"
 );
 assert.equal(
   prospectHasBlockedCrmRelationship(

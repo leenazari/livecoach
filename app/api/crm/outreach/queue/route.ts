@@ -20,6 +20,11 @@ import { outreachSequenceStepAt } from "@/lib/outreach-sequence";
 import { canResumeUnsentFirstTouch } from "@/lib/outreach-queue-policy";
 import { loadSendPilotOutreachContext } from "@/lib/sendpilot-outreach";
 import {
+  assignOutreachProspectsWithCompanyAccess,
+  outreachAssignmentConflict,
+} from "@/lib/outreach-assignment-service";
+import { outreachCrmBlocker } from "@/lib/outreach-crm-blocker";
+import {
   verifiedCompanyResearchEvidence,
   verifiedJobResearchEvidence,
 } from "@/lib/job-research-sources";
@@ -348,12 +353,16 @@ export async function POST(req: NextRequest) {
     if (requestedProspectId) {
       if (!remaining)
         return NextResponse.json({ error: `Today's queue already has ${limit} people` }, { status: 400 });
-      const [{ data: prospect }, { data: suppressions }, crmGuard] = await Promise.all([
+      const [{ data: prospect }, { data: suppressions }] = await Promise.all([
         supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", account.workspaceId).eq("id", requestedProspectId).maybeSingle(),
         supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", account.workspaceId),
-        outreachCrmGuard(),
       ]);
       if (!prospect) return NextResponse.json({ error: "Prospect not found" }, { status: 404 });
+      const crmGuard = await outreachCrmGuard({
+        prospectCompanyIds: prospect.crm_company_id
+          ? [String(prospect.crm_company_id)]
+          : [],
+      });
       if (prospect.assigned_to_user_id && prospect.assigned_to_user_id !== account.userId)
         return NextResponse.json({ error: "This prospect is assigned to another team member" }, { status: 403 });
       const email = String(prospect.email || "").trim().toLowerCase();
@@ -363,8 +372,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "This person is not eligible for prospect outreach" }, { status: 400 });
       if (blocked.has(email) || (domain && blocked.has(domain)))
         return NextResponse.json({ error: "This person or company is on the do-not-contact list" }, { status: 400 });
-      if (prospectHasBlockedCrmRelationship(prospect, crmGuard))
-        return NextResponse.json({ error: "This CRM relationship is engaged, dormant or not confirmed as a new lead" }, { status: 400 });
+      const relationshipBlocker = outreachCrmBlocker(prospect, crmGuard);
+      if (relationshipBlocker) {
+        const { status, ...payload } = relationshipBlocker;
+        return NextResponse.json(payload, { status });
+      }
       const [
         { data: previous, error: previousError },
         { count: campaignMembershipCount, error: membershipCountError },
@@ -437,28 +449,24 @@ export async function POST(req: NextRequest) {
       }
       if (previous && ["contacted", "replied", "booked", "completed"].includes(previous.status))
         return NextResponse.json({ error: "This person already has outreach history. Open their history instead." }, { status: 400 });
-      if (!prospect.assigned_to_user_id) {
-        const { data: claimed, error: claimError } = await supabaseAdmin
-          .from("outreach_prospects")
-          .update({
-            assigned_to_user_id: account.userId,
-            visibility: "team",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("workspace_id", account.workspaceId)
-          .eq("id", requestedProspectId)
-          .is("assigned_to_user_id", null)
-          .select("assigned_to_user_id")
-          .maybeSingle();
-        if (claimError) throw claimError;
-        if (!claimed) {
-          return NextResponse.json(
-            { error: "Another teammate claimed this prospect first" },
-            { status: 409 }
-          );
-        }
-        prospect.assigned_to_user_id = account.userId;
+      try {
+        // Re-running the atomic assignment is intentional. It repairs any
+        // older assignment which predates automatic safe company sharing.
+        await assignOutreachProspectsWithCompanyAccess({
+          actorUserId: account.userId,
+          workspaceId: account.workspaceId,
+          prospectIds: [requestedProspectId],
+          assignedToUserId: account.userId,
+        });
+      } catch (error) {
+        const conflict = outreachAssignmentConflict(error);
+        if (!conflict) throw error;
+        return NextResponse.json(
+          { error: conflict },
+          { status: 409 }
+        );
       }
+      prospect.assigned_to_user_id = account.userId;
       const now = new Date().toISOString();
       const overrideFields = cooldownConflict && overrideReason
         ? {
@@ -536,13 +544,17 @@ export async function POST(req: NextRequest) {
     // repeatedly advancing the first few people. Protected, suppressed and
     // low-evidence prospects still remain safely held.
     if (remaining > 0) {
-      const [{ data: enrolments }, { data: suppressions }, { data: prospects }, { data: learnings }, crmGuard] = await Promise.all([
+      const [{ data: enrolments }, { data: suppressions }, { data: prospects }, { data: learnings }] = await Promise.all([
         supabaseAdmin.from("outreach_enrolments").select("id,campaign_id,prospect_id,status,queued_for,last_sent_at,recipient_email").eq("workspace_id", account.workspaceId).limit(5000),
         supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", account.workspaceId),
         supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", account.workspaceId).or(`assigned_to_user_id.is.null,assigned_to_user_id.eq.${account.userId}`).in("status", ["imported", "queued", "ready"]).order("priority_score", { ascending: false }).limit(1000),
         supabaseAdmin.from("outreach_learnings").select("*").eq("workspace_id", account.workspaceId).eq("campaign_id", campaign.id).eq("status", "promoted").limit(100),
-        outreachCrmGuard(),
       ]);
+      const crmGuard = await outreachCrmGuard({
+        prospectCompanyIds: (prospects || [])
+          .map((prospect: any) => String(prospect.crm_company_id || ""))
+          .filter(Boolean),
+      });
       const enrolmentByProspect = new Map<string, any>();
       const campaignProspectIds = new Set<string>();
       const reservedEmailsForAnotherCampaign = new Set<string>();
@@ -610,26 +622,20 @@ export async function POST(req: NextRequest) {
       }
       let addedSelected = 0;
       for (const prospect of selected) {
-        if (!prospect.assigned_to_user_id) {
-          const { data: claimed, error: claimError } = await supabaseAdmin
-            .from("outreach_prospects")
-            .update({
-              assigned_to_user_id: account.userId,
-              visibility: "team",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("workspace_id", account.workspaceId)
-            .eq("id", prospect.id)
-            .is("assigned_to_user_id", null)
-            .select("id,assigned_to_user_id")
-            .maybeSingle();
-          if (claimError) throw claimError;
-          if (!claimed) {
-            held += 1;
-            continue;
-          }
-          prospect.assigned_to_user_id = account.userId;
+        try {
+          await assignOutreachProspectsWithCompanyAccess({
+            actorUserId: account.userId,
+            workspaceId: account.workspaceId,
+            prospectIds: [prospect.id],
+            assignedToUserId: account.userId,
+          });
+        } catch (error) {
+          const conflict = outreachAssignmentConflict(error);
+          if (!conflict) throw error;
+          held += 1;
+          continue;
         }
+        prospect.assigned_to_user_id = account.userId;
         const existingEnrolment = enrolmentByProspect.get(prospect.id);
         let enrolmentId = existingEnrolment?.id;
         if (existingEnrolment) {
