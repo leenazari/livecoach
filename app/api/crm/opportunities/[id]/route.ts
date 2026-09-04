@@ -74,6 +74,7 @@ export async function PATCH(
     if (
       account.role === "sales" &&
       !current.assigned_to_user_id &&
+      current.owner_id !== account.userId &&
       body.assignedToUserId !== account.userId
     ) {
       return NextResponse.json(

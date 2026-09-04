@@ -278,7 +278,7 @@ async function findOutreachRecipients(
   const requestScope = getRequestScope();
   if (!requestScope) return [];
   const fields =
-    "id,email,first_name,last_name,company_name,assigned_to_user_id,workspace_id,owner_id,status,reply_category,last_reply_at";
+    "id,email,first_name,last_name,company_name,crm_company_id,assigned_to_user_id,workspace_id,owner_id,status,reply_category,last_reply_at";
   const pattern = term.replace(/[\\%_]/g, (value) => `\\${value}`);
   const available = (query: any) => {
     const scoped = query.eq("workspace_id", requestScope.workspaceId);
@@ -303,13 +303,25 @@ async function findOutreachRecipients(
   } else if (parts.length > 1) {
     const firstName = parts.shift() || "";
     const lastName = parts.join(" ");
-    const { data } = await available(
-      supabaseAdmin.from("outreach_prospects").select(fields)
-    )
-      .ilike("first_name", firstName.replace(/[\\%_]/g, (value) => `\\${value}`))
-      .ilike("last_name", lastName.replace(/[\\%_]/g, (value) => `\\${value}`))
-      .limit(10);
-    rows = data || [];
+    const [structuredName, importedFullName] = await Promise.all([
+      available(supabaseAdmin.from("outreach_prospects").select(fields))
+        .ilike("first_name", firstName.replace(/[\\%_]/g, (value) => `\\${value}`))
+        .ilike("last_name", lastName.replace(/[\\%_]/g, (value) => `\\${value}`))
+        .limit(10),
+      // Some legacy imports placed the full name in first_name. Keep exact
+      // identity matching compatible without widening access or fuzzy-linking
+      // a different person's company.
+      available(supabaseAdmin.from("outreach_prospects").select(fields))
+        .ilike("first_name", pattern)
+        .limit(10),
+    ]);
+    rows = [
+      ...(structuredName.data || []),
+      ...(importedFullName.data || []),
+    ].filter(
+      (prospect: any, index: number, all: any[]) =>
+        all.findIndex((candidate) => candidate.id === prospect.id) === index
+    );
   } else {
     const [firstResult, lastResult] = await Promise.all([
       available(supabaseAdmin.from("outreach_prospects").select(fields))
@@ -1843,6 +1855,48 @@ async function resolveActions(
       continue;
     }
 
+    if (it.type === "promote_to_pipeline") {
+      const clientReference = String(it.client || "").trim();
+      const personReference = String(it.person || "").trim();
+      let company = clientReference
+        ? await findCompany(clientReference)
+        : null;
+      let personLabel = personReference;
+      if (!company) {
+        const prospects = await findOutreachRecipients(
+          personReference || clientReference
+        );
+        if (prospects.length === 1 && prospects[0].crm_company_id) {
+          company = await findCompanyById(String(prospects[0].crm_company_id));
+          personLabel =
+            `${prospects[0].first_name || ""} ${prospects[0].last_name || ""}`
+              .replace(/\s+/g, " ")
+              .trim();
+        }
+      }
+      if (!company) continue;
+      const suppliedTitle = String(it.title || "").trim().slice(0, 240);
+      const title =
+        suppliedTitle ||
+        (personLabel
+          ? `${personLabel} at ${company.name}`
+          : `${company.name} sales opportunity`);
+      out.push({
+        key,
+        type: it.type,
+        label: `Add "${title}" to your pipeline`,
+        endpoint: `/api/crm/companies/${company.id}/pipeline`,
+        method: "POST",
+        body: {
+          title,
+          rationale:
+            String(it.rationale || "").trim().slice(0, 1000) ||
+            "The user explicitly asked Brain to add this client relationship to their pipeline",
+        },
+      });
+      continue;
+    }
+
     if (it.type === "update_opportunity") {
       const opportunities = await findOpportunities(
         String(it.opportunity || it.title || ""),
@@ -2514,7 +2568,7 @@ CALENDAR AND SAVED PREP: the user's upcoming calls, synced from their calendar, 
 
 CALL TRANSCRIPTS ON DEMAND: when an ON-DEMAND CALL TRANSCRIPT block is present, it was fetched only because the user explicitly asked about a specific recorded conversation. Treat the matched transcript source as authoritative for that question. Never combine it with another call, never substitute a generic scorecard for missing words, and never imply that you checked a raw transcript when the block says it is unavailable. If the block reports several close matches, ask the user which exact call they mean. If it contains bounded excerpts and the answer is not present, say that plainly and ask for the topic or phrase to search rather than guessing.
 
-ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, create and move owned calendar events, manage client stages, stakeholders and to-dos, assign permitted sales work, create or update internal CRM records, create and configure outreach campaigns, prepare research, email and personal voice-note assets, enrol assigned leads in SendPilot, record manual LinkedIn steps, create follow-ups, prepare positive-reply drafts, create and share in CRM chat, update opportunities, pull email context, remember durable rules, correct records, merge verified duplicates when the owner explicitly approves, dismiss stale work, and queue one-off emails from the signed-in user's own connected mailbox. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
+ACTIONS YOU CAN TAKE (never claim you already did them, approval is what does the work): you can change call records, create and move owned calendar events, manage client stages, stakeholders and to-dos, assign permitted sales work, create or update internal CRM records, add a permitted client relationship to the canonical pipeline, create and configure outreach campaigns, prepare research, email and personal voice-note assets, enrol assigned leads in SendPilot, record manual LinkedIn steps, create follow-ups, prepare positive-reply drafts, create and share in CRM chat, update opportunities, pull email context, remember durable rules, correct records, merge verified duplicates when the owner explicitly approves, dismiss stale work, and queue one-off emails from the signed-in user's own connected mailbox. The current screen tells you what to lead with, but you are universal and can act anywhere in the CRM. Put ONLY the exact requested changes in a JSON array between these markers:
 ---ACTIONS---
 [{"type":"set_meeting_link","call":"<exact call title plus its UK date and time from the context>","url":"<link>"},{"type":"set_intent","call":"<exact call title plus its UK date and time from the context>","intent":"<intent text, empty to clear>"},{"type":"add_intent","call":"<exact call title plus its UK date and time from the context>","note":"<the focus note to add to that call, kept alongside what is already there>"},{"type":"link_call","call":"<exact call title plus its UK date and time from the context>","client":"<client name>"},{"type":"restore_call","call":"<exact future call title plus its UK date and time from the context>"},{"type":"cancel_call","call":"<exact call title plus its UK date and time from the context>","reason":"<why it is not happening, optional>"},{"type":"dismiss","kind":"draft","item":"<the draft subject>"},{"type":"dismiss","kind":"task","item":"<the to-do text>"},{"type":"create_client","name":"<person or company name>","brief":"<what you know about them so far, one or two sentences>"},{"type":"log_client_update","client":"<client name, omit on their profile>","channel":"phone|text|voice|note","content":"<the concise factual update and any agreed next step>"},{"type":"remember","note":"<the durable preference, habit, standard practice or fact to save, in one clear line>"},{"type":"correct","client":"<the client this correction is about>","correction":"<the corrected fact in one clear line>"},{"type":"pull_emails","person":"<their name>","email":"<their email if you know it, optional>","question":"<the user's exact factual mailbox question, when they asked one>"}]
 ---END ACTIONS---
@@ -2546,11 +2600,13 @@ Additional supported actions are:
 {"type":"share_in_chat","members":["<exact team member name or email>"],"groupName":"<required for a new group>","message":"<message>","client":"<optional exact client>","person":"<optional exact contact, client also required>"}
 {"type":"merge_duplicate_clients","keepClient":"<exact owner-held client name to keep>","mergeClient":"<exact verified duplicate name to merge>"}
 {"type":"send_email","recipientName":"<person name>","email":"<exact recipient email when known>","company":"<optional company>","subject":"<exact approved subject>","body":"<exact approved body including a simple do not follow up line for cold outreach, plus an optional sales call to action only when requested>"}
+{"type":"promote_to_pipeline","client":"<exact existing CRM company>","person":"<optional exact contact or prospect name>","title":"<optional concise deal title>","rationale":"<why the user wants this relationship in their pipeline>"}
 {"type":"update_opportunity","client":"<client name>","opportunity":"<opportunity title if needed>","title":"<optional corrected title>","dealIntent":"<the commercial outcome this deal is pursuing>","pipelineStage":"new|discovery|qualified|proposal|negotiation|verbal|won|lost","probability":0,"forecastCategory":"pipeline|best_case|commit|omitted","winOutlook":"not_assessed|at_risk|possible|likely|highly_likely|won","winOutlookConfidence":0,"winOutlookReasons":["<stored evidence only>"],"winOutlookQuestions":["<targeted next-call question>"],"engagementMotion":"cold_outreach_campaign|personal_relationship_led|existing_customer_expansion|inbound_enquiry|partner_referral","activeContactMethod":"automated_email|personal_email|phone|video_call|linkedin|event|in_person|other","opportunityType":"revenue|investment|internal|strategic","nextAction":"<one move>","nextActionDueAt":"YYYY-MM-DD","nextActionOwner":"us|buyer|joint","expectedCloseAt":"YYYY-MM-DD","status":"open|won|lost|dismissed","outcomeReason":"<optional>","rationale":"<why this change is supported>"}
 {"type":"resolve_opportunity_clarification","clarificationId":"<exact id from PENDING PIPELINE CONFIRMATIONS>","decision":"same_deal|separate_workstream|not_an_opportunity","workstreamName":"<required only for a separate workstream>"}
 For update_opportunity include only fields the user actually supplied or that are literally supported by the CRM context. Lifecycle stage and win outlook are separate. Never raise win outlook without concise stored evidence. If evidence is missing, keep it not_assessed and add targeted winOutlookQuestions for the next call. Never invent a value, probability, date or stage. Prospect value is deliberately unknown before a substantive call establishes likely usage, buying process, urgency and next-step evidence, so never assign or use speculative prospect values for outreach priority.
 For a PENDING PIPELINE CONFIRMATION, ask the user the exact three-way question before emitting resolve_opportunity_clarification. Never infer the answer. Once they answer, use its exact clarification id. A separate deal also needs a clear workstream name. This decision is always confirmed on its own and is never folded into a batch.
 Use update_client for the relationship-level client stage and core facts. Use update_opportunity for a real revenue deal stage. When "move this client to qualified" clearly refers to a deal, update the opportunity. When it refers to the overall relationship or there is no deal, update the client stage. Never update both unless the user explicitly asks.
+Only a canonical opportunity record means a client is in the pipeline. A company relationship stage such as Discovery is never proof of pipeline membership. When the user explicitly asks to add or move an existing permitted client or assigned prospect into their pipeline and no canonical opportunity is shown, use promote_to_pipeline. It starts without invented value, probability, outlook or lifecycle evidence and always waits for confirmation.
 When the user explicitly says a company is a partner, supplier, internal organisation or other non-buyer and should not appear in prospecting or the sales pipeline, include removeFromPipeline:true with update_client. Do not include it merely because the relationship stage is Partner, because a partner can still have a genuine expansion deal. This action dismisses active revenue opportunities but preserves the client, calls, tasks and immutable deal history.
 Use update_contact to correct or clear an existing person's core details. Use upsert_stakeholder when the change is specifically about their buying role or when the named contact may need to be created.
 Use link_contact_to_client only to repair one existing contact with one exact existing CRM company. It must never invent or fuzzy-create a company. Exact email duplicates at the target company are blocked for review.

@@ -12,6 +12,10 @@ const updateProfile = read("app/api/crm/update-profile/route.ts");
 const synthesize = read("app/api/crm/companies/[id]/synthesize/route.ts");
 const commercialUpdate = read("app/api/crm/calls/[id]/commercial-update/route.ts");
 const revenue = read("app/api/crm/revenue/route.ts");
+const companyPipeline = read("app/api/crm/companies/[id]/pipeline/route.ts");
+const companyPage = read("app/crm/[id]/page.tsx");
+const brain = read("app/api/crm/assistant/route.ts");
+const authority = read("lib/brain-authority.ts");
 const inbox = read("app/api/crm/inbox/route.ts");
 const dashboard = read("app/api/crm/dashboard/route.ts");
 const migration = read(
@@ -41,6 +45,18 @@ assert.match(commercialUpdate, /chooseCanonicalOpenRevenueOpportunity/);
 assert.match(commercialUpdate, /context\.call\.workstream_id/);
 assert.match(commercialUpdate, /\.eq\("workspace_id", scope\.workspaceId\)/);
 assert.match(commercialUpdate, /assigned_to_user_id\.eq\.\$\{scope\.userId\}/);
+assert.match(companyPipeline, /export async function POST/);
+assert.match(companyPipeline, /loadAssignedClientAccess/);
+assert.match(companyPipeline, /createCanonicalOpenRevenueOpportunity/);
+assert.match(companyPipeline, /surfacedByAi: false/);
+assert.match(companyPage, /Add to my pipeline/);
+assert.match(companyPage, /\/api\/crm\/companies\/\$\{id\}\/pipeline/);
+assert.match(brain, /if \(it\.type === "promote_to_pipeline"\)/);
+assert.match(brain, /Only a canonical opportunity record means a client is in the pipeline/);
+assert.ok(authority.includes("promote_to_pipeline: ["));
+assert.ok(
+  authority.includes("/^\\/api\\/crm\\/companies\\/[0-9a-f-]+\\/pipeline$/i")
+);
 
 // Every primary sales read obeys an explicit company-level exclusion.
 assert.match(exclusion, /companyPipelineExclusionIds/);

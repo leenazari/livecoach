@@ -117,6 +117,16 @@ assert.equal(
 
 assert.equal(opportunityMatchesOwner({ assigned_to_user_id: lee }, jimmy, lee), false);
 assert.equal(opportunityMatchesOwner({ assigned_to_user_id: jimmy }, jimmy, lee), true);
+assert.equal(
+  opportunityMatchesOwner({ owner_id: jimmy, assigned_to_user_id: null }, "mine", jimmy),
+  true,
+  "A salesperson's own unassigned opportunity remains visible in their Mine view"
+);
+assert.equal(
+  opportunityMatchesOwner({ owner_id: lee, assigned_to_user_id: null }, "mine", jimmy),
+  false,
+  "Another person's unassigned opportunity is never treated as mine"
+);
 assert.equal(opportunityMatchesOwner({ assigned_to_user_id: null }, "unassigned", lee), true);
 
 const accessHelper = read("lib/opportunity-access.ts");
@@ -145,6 +155,11 @@ assert.doesNotMatch(
 assert.match(opportunityList, /loadVisibleOpportunities\(scope/);
 assert.match(opportunityBoard, /loadVisibleOpportunities\(accountScope/);
 assert.match(opportunityRoute, /loadVisibleOpportunityById/);
+assert.match(
+  opportunityRoute,
+  /!current\.assigned_to_user_id\s*&&\s*current\.owner_id !== account\.userId/,
+  "A salesperson can edit their own opportunity even before an assignee is set"
+);
 assert.match(opportunityRoute, /resultingOpportunityType !== "revenue"/);
 assert.match(opportunityRoute, /patch\.visibility = "private"/);
 assert.match(eventsRoute, /requireRequestScope\(\)/);

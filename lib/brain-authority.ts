@@ -192,6 +192,15 @@ const ACTION_PROFILES: Record<string, BrainAuthorityProfile> = {
     // provider-style idempotency key. Never create a duplicate room by retrying.
     canRetry: false,
   },
+  promote_to_pipeline: {
+    actionKind: "update_internal_crm",
+    risk: "reversible_internal",
+    requiresSeparateApproval: false,
+    ownerOnly: false,
+    managerAllowed: true,
+    canOwnerOverride: false,
+    canRetry: true,
+  },
   assign_work: {
     actionKind: "update_internal_crm",
     risk: "reversible_internal",
@@ -258,6 +267,9 @@ const ACTION_ENDPOINTS: Record<string, RegExp[]> = {
   build_outreach_queue: [/^\/api\/crm\/outreach\/queue$/],
   send_email: [/^\/api\/crm\/assistant\/email$/],
   update_opportunity: [/^\/api\/crm\/opportunities\/[0-9a-f-]+$/i],
+  promote_to_pipeline: [
+    /^\/api\/crm\/companies\/[0-9a-f-]+\/pipeline$/i,
+  ],
   resolve_opportunity_clarification: [
     /^\/api\/crm\/opportunity-clarifications\/[0-9a-f-]+$/i,
   ],
