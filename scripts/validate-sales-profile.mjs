@@ -53,8 +53,11 @@ for (const source of [brain, outreach, live]) {
   assert.match(source, /sales-profile/);
   assert.match(source, /salesProfile|personalProfile/);
 }
-assert.match(digest, /getOptionalSalesProfile/);
-assert.match(digest, /Your working focus/);
+assert.doesNotMatch(
+  digest,
+  /Your working focus/,
+  "Static sales-profile facts must not take space in daily or Sunday email briefs"
+);
 
 assert.match(page, /Personal to your login/);
 assert.match(page, /Email and calendar/);
