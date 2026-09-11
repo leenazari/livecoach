@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireWorkspaceOwner } from "@/lib/request-scope";
+import { requireOutreachImportAccess } from "@/lib/outreach-import-access";
 import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const scope = requireWorkspaceOwner();
+    const scope = await requireOutreachImportAccess();
     const { data, error } = await supabaseService
       .from("crm_import_batches")
       .select(
@@ -24,7 +24,7 @@ export async function GET() {
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (error: any) {
-    const forbidden = /owner access/i.test(error?.message || "");
+    const forbidden = /import access|workspace access|owner access/i.test(error?.message || "");
     return NextResponse.json(
       { error: error?.message || "Could not load staged imports" },
       { status: forbidden ? 403 : 500 }

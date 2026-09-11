@@ -39,6 +39,7 @@ import {
 import { documentBrainContext } from "@/lib/document-context";
 import { getSalesProfileContextBlock } from "@/lib/sales-profile";
 import { getRequestScope } from "@/lib/request-scope";
+import { canStageOutreachImports } from "@/lib/outreach-import-access";
 import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 import {
   exactVisibleContactNamesIn,
@@ -1041,7 +1042,7 @@ async function resolveActions(
 
     if (it.type === "stage_outreach_import") {
       const scope = getRequestScope();
-      if (!scope || scope.role !== "owner" || !Array.isArray(it.rows)) continue;
+      if (!scope || !Array.isArray(it.rows) || !(await canStageOutreachImports(scope))) continue;
       const rows = it.rows
         .filter((row: unknown) => row && typeof row === "object" && !Array.isArray(row))
         .slice(0, 50);
@@ -1051,6 +1052,7 @@ async function resolveActions(
         ? await findTeamMembers(assigneeReference)
         : [];
       if (assigneeReference && assignees.length !== 1) continue;
+      if (scope.role !== "owner" && assignees[0] && assignees[0].userId !== scope.userId) continue;
       out.push({
         key,
         type: it.type,
@@ -1059,7 +1061,7 @@ async function resolveActions(
         method: "POST",
         body: {
           sourceName: String(it.sourceName || "Brain lead list").slice(0, 240),
-          assignedToUserId: assignees[0]?.userId || null,
+          assignedToUserId: scope.role === "owner" ? assignees[0]?.userId || null : scope.userId,
           rows,
         },
       });
@@ -2485,6 +2487,7 @@ export async function POST(req: NextRequest) {
       }));
 
     const requestScope = getRequestScope();
+    const importAllowed = requestScope ? await canStageOutreachImports(requestScope) : false;
     const accessBoundary =
       requestScope?.role === "owner"
         ? `You are assisting the verified workspace owner. This is the only role allowed the full Brain view across the owner's private records and the shared workspace.`
@@ -2620,7 +2623,7 @@ ONE-OFF EMAILS: when the user explicitly asks to send an email you drafted in th
 
 CAMPAIGN SAFETY: create_campaign always creates a draft. build_outreach_queue only selects up to the daily limit for review and spends no research tokens. Never propose or execute research, message approval or email sending as a universal batch action. Campaign sequence mail stays in the dedicated Outreach approval flow. One-off send_email actions use the same protected outreach ledger, suppression rules, pacing and per-user limits without inventing a campaign.
 
-IMPORT SAFETY: only the workspace owner can stage a lead list. stage_outreach_import accepts at most 50 rows through Brain and creates a private review batch only. Exact email duplicates, invalid emails and missing companies stay out. Staging does not create prospects, start research, enrol a sequence or contact anyone. The owner must review and apply the clean rows in Outreach.
+IMPORT SAFETY: this account's verified lead import permission is ${importAllowed ? "enabled" : "disabled"}. When enabled, stage_outreach_import accepts at most 50 rows through Brain and creates a private review batch belonging to this account. Staff uploads must be assigned to the signed-in user; only the workspace owner can choose another assignee. When disabled, ask the workspace owner to enable lead import permission. Exact email duplicates, invalid emails and missing companies stay out. Staging does not create prospects, start research, enrol a sequence or contact anyone. The uploader must review and apply the clean rows in Outreach. For files or longer lists, direct the user to Outreach, Leads, Import CSV.
 
 SENDPILOT AND REPLIES: only enrol or stop a lead assigned to the signed-in salesperson, and only in that salesperson's connected and mapped SendPilot account. A SendPilot reply is canonical CRM activity and stops competing sequence work. Use prepare_reply only for an interested reply. It creates a review draft with that salesperson's booking link and never sends automatically. sendpilot_stop_lead marks one exact remote lead Done after separate approval. SendPilot only supports pause and resume at whole-campaign level, so never claim one lead was paused or resumed. Pausing or resuming a mapped campaign always needs its own external approval. Use log_sequence_action only after the salesperson says they completed that exact manual LinkedIn step.
 

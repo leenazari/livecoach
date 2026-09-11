@@ -594,6 +594,7 @@ export default function OutreachPage() {
   const [currentUser, setCurrentUser] = useState(cachedProspects?.currentUser || "");
   const [canManageAssignments, setCanManageAssignments] = useState(cachedProspects?.canManageAssignments === true);
   const [canStageImports, setCanStageImports] = useState(cachedProspects?.canStageImports === true);
+  const [canAssignImports, setCanAssignImports] = useState(cachedProspects?.canAssignImports === true);
   const [campaigns, setCampaigns] = useState<Campaign[]>(cachedCampaigns?.campaigns || []);
   const [campaignStats, setCampaignStats] = useState<Record<string, CampaignStats>>(
     cachedCampaignStats?.campaignStats || cachedCampaigns?.campaignStats || {}
@@ -747,6 +748,7 @@ export default function OutreachPage() {
     setCurrentUser(data.currentUser || "");
     setCanManageAssignments(data.canManageAssignments === true);
     setCanStageImports(data.canStageImports === true);
+    setCanAssignImports(data.canAssignImports === true);
     if (!ownerFilterInitialisedRef.current) {
       // A salesperson's useful default is work they can act on now. Include
       // their own prospects and the unassigned shared pool, but never another
@@ -2382,7 +2384,7 @@ export default function OutreachPage() {
           candidates={crmCandidates}
           onSaved={handleManualProspectSaved}
         />
-        {canStageImports ? <StagedOutreachImports team={team} onApplied={loadProspects} /> : null}
+        {canStageImports ? <StagedOutreachImports team={team} currentUser={currentUser} canAssignImports={canAssignImports} onApplied={loadProspects} /> : null}
         <div className="mb-3 rounded-xl border border-edge bg-panel p-3">
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_repeat(6,minmax(0,9rem))]">
             <input className={input} value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search person, company, role or email…" />

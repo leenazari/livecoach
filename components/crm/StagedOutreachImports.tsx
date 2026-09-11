@@ -31,9 +31,13 @@ const primary =
 
 export default function StagedOutreachImports({
   team,
+  currentUser,
+  canAssignImports,
   onApplied,
 }: {
   team: TeamMember[];
+  currentUser: string;
+  canAssignImports: boolean;
   onApplied: () => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
@@ -80,7 +84,7 @@ export default function StagedOutreachImports({
           method: "POST",
           body: JSON.stringify({
             sourceName,
-            assignedToUserId: assignedToUserId || null,
+            assignedToUserId: canAssignImports ? assignedToUserId || null : currentUser,
             rows: parsedRows,
           }),
         }
@@ -141,7 +145,7 @@ export default function StagedOutreachImports({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-mono text-[0.52rem] uppercase tracking-[0.18em] text-amber">
-            Owner clean import
+            Import leads
           </p>
           <h2 className="mt-1 font-display text-base text-bone">Stage a lead list before it enters Outreach</h2>
           <p className="mt-1 text-xs leading-5 text-muted">
@@ -160,13 +164,13 @@ export default function StagedOutreachImports({
               <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Source</span>
               <input className={input} value={sourceName} onChange={(event) => setSourceName(event.target.value)} maxLength={240} />
             </label>
-            <label>
+            {canAssignImports ? <label>
               <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Assign clean rows to</span>
               <select className={input} value={assignedToUserId} onChange={(event) => setAssignedToUserId(event.target.value)}>
                 <option value="">Leave unassigned</option>
                 {team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}
               </select>
-            </label>
+            </label> : <p className="self-end pb-2 text-sm text-bone/80">These leads will be assigned to you.</p>}
           </div>
           <label className="block">
             <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">CSV file</span>
