@@ -12,6 +12,8 @@ import {
 } from "@/lib/team-client-sharing";
 import { companyPipelineExclusionIds } from "@/lib/company-pipeline-exclusion";
 
+import { teamLeadCoverEnabled } from "@/lib/team-lead-cover";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,7 @@ const DAY = 24 * 60 * 60 * 1000;
 export async function GET() {
   try {
     const account = requireRequestScope();
+    const canCoverTeamLeads = await teamLeadCoverEnabled(account);
     const canManageAssignments =
       account.role === "owner" || account.role === "manager";
     const now = new Date();
@@ -434,7 +437,7 @@ export async function GET() {
       .eq("workspace_id", account.workspaceId)
       .eq("status", "active")
       .order("created_at");
-    if (!canManageAssignments) {
+    if (!canManageAssignments && !canCoverTeamLeads) {
       membersQuery = membersQuery.eq("user_id", account.userId);
     }
     const { data: members, error: membersError } = await membersQuery;
@@ -524,6 +527,7 @@ export async function GET() {
       team,
       currentUser: account.userId,
       canManageAssignments,
+      canCoverTeamLeads,
       generatedAt: new Date().toISOString(),
     }, {
       headers: { "Cache-Control": "private, no-store" },

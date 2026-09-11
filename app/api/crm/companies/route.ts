@@ -7,6 +7,8 @@ import {
   loadSafeSharedCompanies,
 } from "@/lib/team-client-sharing";
 
+import { loadTeamLeadCoverCompanies } from "@/lib/team-lead-cover";
+
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
 // keeps serving a stale snapshot even after the database has changed (a
@@ -56,10 +58,12 @@ export async function GET(req: NextRequest) {
     ]);
     if (error) throw error;
     const ownedIds = new Set((data || []).map((company: any) => company.id));
-    const shared = await loadSafeSharedCompanies(
+    const assignedShared = await loadSafeSharedCompanies(
       sharedIds.filter((id) => !ownedIds.has(id)),
       scope.workspaceId
     );
+    const coverCompanies = await loadTeamLeadCoverCompanies(scope);
+    const shared = [...new Map([...assignedShared, ...coverCompanies].filter((row) => !ownedIds.has(row.id)).map((row) => [row.id, row])).values()];
     const needle = q.toLowerCase();
     const matchingShared = needle
       ? shared.filter((company) =>
@@ -109,7 +113,8 @@ export async function POST(req: NextRequest) {
       sharedIds,
       scope.workspaceId
     );
-    const sharedExisting = sharedCompanies.find(
+    const coverCompanies = await loadTeamLeadCoverCompanies(scope);
+    const sharedExisting = [...sharedCompanies, ...coverCompanies].find(
       (company) => company.name.trim().toLowerCase() === name.toLowerCase()
     );
     if (sharedExisting) {

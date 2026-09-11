@@ -262,7 +262,7 @@ export default function RevenuePage() {
   };
 
   const wonProgress = data?.goal?.target ? Math.min(100, (data.goal.wonYtd / data.goal.target) * 100) : 0;
-  const activeOwnerFilter = data?.canManageAssignments
+  const activeOwnerFilter = (data?.canManageAssignments || data?.canCoverTeamLeads)
     ? ownerFilter || "all"
     : "mine";
   const revenueRows = useMemo(
@@ -348,6 +348,7 @@ export default function RevenuePage() {
             team={data.team || []}
             currentUser={data.currentUser || ""}
             canManageAssignments={data.canManageAssignments === true}
+            canCoverTeamLeads={data.canCoverTeamLeads === true}
             ownerFilter={activeOwnerFilter}
             onOwnerFilterChange={setOwnerFilter}
             busy={busy}

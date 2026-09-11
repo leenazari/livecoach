@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { clampOutreachDailyLimit, londonDayBounds } from "@/lib/outreach";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { getRequestScope } from "@/lib/request-scope";
@@ -19,6 +19,8 @@ import {
 } from "@/lib/team-client-sharing";
 import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
 
+import { loadTeamLeadCoverCompanies, loadTeamLeadCoverCompany, loadTeamLeadNotes } from "@/lib/team-lead-cover";
+
 // Gathers EVERYTHING we know about one client into a single grounding string:
 // profile, recent call scorecards (incl. focus scores), open opportunities,
 // follow-up drafts, contacts, custom fields, and the company-scoped context
@@ -31,6 +33,24 @@ export async function gatherClientContext(
   const cut = (s: any, n: number) =>
     typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : "";
   const requestScope = getRequestScope();
+
+  const covered = requestScope ? await loadTeamLeadCoverCompany(companyId, requestScope) : null;
+  if (covered && requestScope && covered.owner_id !== requestScope.userId) {
+    const [{ data: deals, error }, notes, { data: contacts }] = await Promise.all([
+      supabaseService.from("opportunities").select("id,title,pipeline_stage,status,value,next_action,next_action_due_at,assigned_to_user_id")
+        .eq("workspace_id", requestScope.workspaceId).eq("company_id", companyId).eq("opportunity_type", "revenue").limit(20),
+      loadTeamLeadNotes(companyId, requestScope),
+      supabaseService.from("contacts").select("name,role,email").eq("workspace_id", requestScope.workspaceId).eq("company_id", companyId).limit(20),
+    ]);
+    if (error) throw error;
+    return ["TEAM LEAD COVER: Active members may update this sales lead without changing its assignee. Personal mail, transcripts, documents and non-sales records remain restricted.",
+      `CLIENT: ${covered.name} (${companyId}). Stage: ${covered.stage || "not set"}.`,
+      `Sales notes: ${cut(covered.notes, 1200)}`,
+      `Contacts: ${JSON.stringify(contacts || [])}`,
+      `Opportunities: ${JSON.stringify(deals || [])}`,
+      `Recent team updates: ${JSON.stringify(notes.slice(0, 12).map((note) => ({ at: note.created_at, author: note.owner_id, content: cut(note.content, 400) })))}`,
+    ].join("\n");
+  }
 
   // Resolve access before loading any related record. This prevents a shared
   // client lookup from even fetching the original owner's private contacts,
@@ -509,7 +529,8 @@ export async function gatherGlobalContext(
       sharedIds.filter((id) => !ownedIds.has(id)),
       requestScope.workspaceId
     );
-    companies = [...companies, ...sharedCompanies];
+    const coverCompanies = await loadTeamLeadCoverCompanies(requestScope);
+    companies = [...new Map([...companies, ...sharedCompanies, ...coverCompanies.filter((row) => !ownedIds.has(row.id))].map((row) => [row.id, row])).values()];
   }
   if (companies.length === 0) {
     return requestScope && requestScope.role !== "owner"
@@ -1016,7 +1037,8 @@ export async function findCompaniesNamedIn(
       sharedIds.filter((id) => !ownedIds.has(id)),
       requestScope.workspaceId
     );
-    visibleCompanies = [...visibleCompanies, ...sharedCompanies];
+    const coverCompanies = await loadTeamLeadCoverCompanies(requestScope);
+    visibleCompanies = [...new Map([...visibleCompanies, ...sharedCompanies, ...coverCompanies.filter((row) => !ownedIds.has(row.id))].map((row) => [row.id, row])).values()];
   }
   const out: { id: string; name: string }[] = [];
   for (const c of visibleCompanies) {

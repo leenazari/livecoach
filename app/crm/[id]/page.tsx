@@ -63,6 +63,7 @@ type ClientAccess = {
   assignedToUserId: string;
   canEdit: boolean;
   privateSourcesHidden: boolean;
+  teamLeadCover?: boolean;
 };
 
 type SalesResearch = {
@@ -663,9 +664,9 @@ export default function CompanyDetailPage() {
         <section className="mb-3 rounded-xl border border-sage/45 bg-sage/[0.07] p-4">
           <p className="font-mono text-[0.58rem] uppercase tracking-wider text-sage">Shared sales record</p>
           <p className="mt-1 text-sm leading-relaxed text-muted">
-            {access.canEdit
+            {access.teamLeadCover ? "Team cover is enabled. You can update this lead, its sales contacts, notes and opportunities while its assigned salesperson remains responsible." : access.canEdit
               ? "This client is assigned to you. You can work with the client basics and team opportunity."
-              : "This client belongs to another salesperson, so it is view only for you."} The original owner's calls, transcripts, mailbox context, notes, documents and Brain memory are not available to this account.
+              : "This client belongs to another salesperson, so it is view only for you."} Calls, transcripts, mailbox context, documents and private Brain memory keep their existing access settings.
           </p>
         </section>
       ) : null}
@@ -813,6 +814,7 @@ export default function CompanyDetailPage() {
             (company.profile as any)?.activity_intelligence?.latest || null
           }
           sharedSalesAccess={access?.mode === "shared_sales"}
+          teamLeadCover={access?.teamLeadCover === true}
           resolveTaskId={resolveTaskId}
           onTaskResolved={() =>
             router.replace(`/crm/${id}#sec-quick-update`, { scroll: false })
@@ -1255,7 +1257,7 @@ export default function CompanyDetailPage() {
                   />
                 </label>
               </div>
-              {access?.mode !== "shared_sales" ? (
+              {(access?.mode !== "shared_sales" || access.teamLeadCover) ? (
                 <label className="block">
                   <span className={labelCls}>Notes</span>
                   <textarea
@@ -1303,12 +1305,12 @@ export default function CompanyDetailPage() {
         <section className="flex flex-col gap-4">
           {access?.mode === "shared_sales" ? (
             <div className="rounded-xl border border-sage/35 bg-sage/[0.05] p-4 text-sm leading-relaxed text-muted">
-              The original owner's contacts and relationship threads stay hidden. Contacts you add to this assigned client are private to your account and appear below.
+              {access.teamLeadCover ? "Sales contacts are available to the team for holiday cover." : "The original owner's contacts and relationship threads stay hidden. Contacts you add to this assigned client are private to your account and appear below."}
             </div>
           ) : null}
           <div className="rounded-xl border border-edge bg-panel/40 p-4">
             <p className="mb-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-amber">
-              {access?.mode === "shared_sales" ? "Your contacts" : "Contacts"}{" "}
+              {access?.mode === "shared_sales" && !access.teamLeadCover ? "Your contacts" : "Contacts"}{" "}
               <span className="text-muted">({contacts.length})</span>
             </p>
 

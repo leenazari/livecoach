@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
 
+import { loadTeamLeadNotes } from "@/lib/team-lead-cover";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -48,7 +50,7 @@ export async function GET(
       { data: tasks },
       { data: followUps },
       { data: opportunities },
-      { data: context },
+      { data: ownContext },
       { data: upcoming },
       { data: outreachProspects },
     ] = await Promise.all([
@@ -107,6 +109,9 @@ export async function GET(
         .eq("crm_company_id", params.id)
         .limit(50),
     ]);
+
+    const teamNotes = await loadTeamLeadNotes(params.id, scope);
+    const context = [...new Map([...(ownContext || []), ...teamNotes].map((row) => [row.id, row])).values()];
 
     const prospectIds = (outreachProspects || []).map((prospect: any) => prospect.id);
     const outreachEvents = prospectIds.length

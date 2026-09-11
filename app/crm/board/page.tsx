@@ -97,6 +97,7 @@ function BoardInner() {
   });
   const [clientTeam, setClientTeam] = useState<ClientTeamMember[]>([]);
   const [currentUser, setCurrentUser] = useState("");
+  const [canCoverTeamLeads, setCanCoverTeamLeads] = useState(false);
   const [canManageAssignments, setCanManageAssignments] = useState(false);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState("");
@@ -165,11 +166,13 @@ function BoardInner() {
           team: ClientTeamMember[];
           currentUser: string;
           canManageAssignments: boolean;
+          canCoverTeamLeads?: boolean;
         }>("/api/crm/clients/portfolio");
         setCompanies(d.clients || []);
         setClientTeam(d.team || []);
         setCurrentUser(d.currentUser || "");
         setCanManageAssignments(d.canManageAssignments === true);
+        setCanCoverTeamLeads(d.canCoverTeamLeads === true);
         setClientTotals(d.totals || {
           all: 0,
           red: 0,
@@ -1179,6 +1182,7 @@ function BoardInner() {
             team={clientTeam}
             currentUser={currentUser}
             canManageAssignments={canManageAssignments}
+            canCoverTeamLeads={canCoverTeamLeads}
             onCreate={createCompany}
             onDelete={deleteCompany}
             onStageChange={setCompanyStage}

@@ -3,6 +3,8 @@ import "server-only";
 import { supabaseAdmin } from "@/lib/supabase";
 import { loadSafeSharedCompany } from "@/lib/team-client-sharing";
 
+import { loadTeamLeadCoverCompany } from "@/lib/team-lead-cover";
+
 export type AssignedClientAccess = {
   mode: "owner" | "shared_sales";
   company: any;
@@ -10,8 +12,8 @@ export type AssignedClientAccess = {
 };
 
 // Return a client only when the signed-in account owns it or is the exact
-// salesperson named on an active safe-share grant. A workspace membership by
-// itself is never enough to open or write another person's client record.
+// salesperson named on an active safe-share grant, or has owner-enabled
+// team lead cover for this ordinary sales company.
 export async function loadAssignedClientAccess(
   companyId: string,
   scope: { userId: string; workspaceId: string }
@@ -25,6 +27,9 @@ export async function loadAssignedClientAccess(
     .maybeSingle();
   if (ownedError) throw ownedError;
   if (owned) return { mode: "owner", company: owned, shareId: null };
+
+  const coverCompany = await loadTeamLeadCoverCompany(companyId, scope);
+  if (coverCompany) return { mode: "shared_sales", company: coverCompany, shareId: null };
 
   const { data: share, error: shareError } = await supabaseAdmin
     .from("team_client_shares")

@@ -62,7 +62,7 @@ export async function PATCH(
     if (!current)
       return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
     if (
-      account.role === "sales" &&
+      account.role === "sales" && !current.canTeamEdit &&
       current.assigned_to_user_id &&
       current.assigned_to_user_id !== account.userId
     ) {
@@ -72,7 +72,7 @@ export async function PATCH(
       );
     }
     if (
-      account.role === "sales" &&
+      account.role === "sales" && !current.canTeamEdit &&
       !current.assigned_to_user_id &&
       current.owner_id !== account.userId &&
       body.assignedToUserId !== account.userId
@@ -83,6 +83,11 @@ export async function PATCH(
       );
     }
 
+    // Editors submit the displayed assignee on every save. Leaving it unchanged
+    // is ordinary cover work; taking over another person's assignment is not.
+    if (body.assignedToUserId !== undefined && (body.assignedToUserId || null) === current.assigned_to_user_id) delete body.assignedToUserId;
+    if (account.role === "sales" && current.canTeamEdit && current.assigned_to_user_id && current.assigned_to_user_id !== account.userId && body.assignedToUserId !== undefined)
+      return NextResponse.json({ error: "A manager must change another team member's assignment" }, { status: 403 });
     const patch: Record<string, any> = {};
     if (body.assignedToUserId === null || body.assignedToUserId === "") {
       if (
@@ -336,6 +341,7 @@ export async function PATCH(
       patch.lost_at = null;
     }
     patch.last_change_context = {
+      actorUserId: account.userId,
       nonce: crypto.randomUUID(),
       sourceType,
       sourceChannel:
@@ -353,7 +359,7 @@ export async function PATCH(
           ? body.evidence
           : {},
     };
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await (current.canTeamEdit ? supabaseService : supabaseAdmin)
       .from("opportunities")
       .update(patch)
       .eq("workspace_id", account.workspaceId)

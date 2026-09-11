@@ -15,6 +15,7 @@ export type ClientPortfolioRow = {
   id: string;
   name: string;
   shared: boolean;
+  canTeamEdit?: boolean;
   accessMode: "owner" | "shared_sales";
   assignedToUserId: string | null;
   sector: string | null;
@@ -340,6 +341,7 @@ export default function ClientPortfolio({
   team,
   currentUser,
   canManageAssignments,
+  canCoverTeamLeads = false,
   onCreate,
   onDelete,
   onStageChange,
@@ -350,6 +352,7 @@ export default function ClientPortfolio({
   team: ClientTeamMember[];
   currentUser: string;
   canManageAssignments: boolean;
+  canCoverTeamLeads?: boolean;
   onCreate: (input: NewClientInput) => Promise<boolean>;
   onDelete: (id: string, name: string) => void;
   onStageChange: (id: string, stage: string) => void;
@@ -360,13 +363,12 @@ export default function ClientPortfolio({
     "all" | ClientHealth | "opportunities" | "archived"
   >("all");
   const [stage, setStage] = useState("all");
-  const [ownerFilter, setOwnerFilter] = useState(
-    canManageAssignments ? "all" : "mine"
-  );
+  const [ownerFilter, setOwnerFilter] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newClient, setNewClient] = useState<NewClientInput>(EMPTY_NEW_CLIENT);
-  const effectiveOwnerFilter = canManageAssignments ? ownerFilter : "mine";
+  const canViewTeam = canManageAssignments || canCoverTeamLeads;
+  const effectiveOwnerFilter = canViewTeam ? ownerFilter : "mine";
   const [sort, setSort] = useState<{
     key: "priority" | "health" | "name" | "owner" | "contact" | "stage" | "added" | "lastActivity" | "nextMeeting" | "commercial" | "nextMove";
     direction: "asc" | "desc";
@@ -410,7 +412,7 @@ export default function ClientPortfolio({
     row.assignedToUserId === currentUser
       ? "Mine"
       : row.assignedToUserId
-        ? canManageAssignments
+        ? canViewTeam
           ? teamNameById.get(row.assignedToUserId) || "Another team member"
           : "Another team member"
         : "Unassigned";
@@ -497,7 +499,7 @@ export default function ClientPortfolio({
         if (comparison === 0) comparison = a.name.localeCompare(b.name, "en-GB", { sensitivity: "base" });
         return sort.direction === "asc" ? comparison : -comparison;
       });
-    }, [canManageAssignments, clients, currentUser, deferredQuery, effectiveOwnerFilter, health, sort, stage, teamNameById]);
+    }, [canManageAssignments, canViewTeam, clients, currentUser, deferredQuery, effectiveOwnerFilter, health, sort, stage, teamNameById]);
 
   const chooseSort = (key: typeof sort.key) => {
     setSort((current) => {
@@ -569,7 +571,7 @@ export default function ClientPortfolio({
               <option key={value} value={value}>{value}</option>
             ))}
           </select>
-          {canManageAssignments ? (
+          {canViewTeam ? (
             <select
               aria-label="Filter clients by sales owner"
               value={effectiveOwnerFilter}
@@ -749,7 +751,7 @@ export default function ClientPortfolio({
             key={row.id}
             row={row}
             salesOwner={ownerName(row)}
-            editable={canManageAssignments || row.assignedToUserId === currentUser}
+            editable={row.canTeamEdit === true || canManageAssignments || row.assignedToUserId === currentUser}
             saving={savingId === row.id}
             onStageChange={onStageChange}
             onDelete={onDelete}
@@ -822,7 +824,7 @@ export default function ClientPortfolio({
                     <StageSelect
                       row={row}
                       saving={savingId === row.id}
-                      editable={canManageAssignments || row.assignedToUserId === currentUser}
+                      editable={row.canTeamEdit === true || canManageAssignments || row.assignedToUserId === currentUser}
                       onChange={onStageChange}
                     />
                   </td>

@@ -9,6 +9,8 @@ import {
   verifiedJobResearchEvidence,
 } from "@/lib/job-research-sources";
 
+import { loadTeamLeadCoverCompany } from "@/lib/team-lead-cover";
+
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
 // keeps serving a stale snapshot even after the database has changed (a
@@ -92,6 +94,7 @@ export async function GET(
     // projection. Full rows are available only to their privacy owner.
     let company: any =
       privateCompany?.owner_id === scope.userId ? privateCompany : null;
+    const coverCompany = await loadTeamLeadCoverCompany(params.id, scope);
     let sharedSalesAccess = false;
     let activeShare: any = null;
     if (!company) {
@@ -119,6 +122,9 @@ export async function GET(
       if (shareError) throw shareError;
       activeShare = share;
     }
+
+    if (!company && coverCompany) { company = coverCompany; sharedSalesAccess = true; }
+    if (sharedSalesAccess && coverCompany) company = coverCompany;
 
     // A safely merged client gets a permanent pointer to the surviving
     // record. Old bookmarks, timeline links and browser history continue to
@@ -205,24 +211,33 @@ export async function GET(
       if (result.error) throw result.error;
     }
     const salesResearch = await salesResearchPromise;
+    let contacts = contactsResult.data || [];
+    if (coverCompany) {
+      const { data: teamContacts, error: contactsError } = await supabaseService.from("contacts")
+        .select("id,company_id,owner_id,name,role,email,sector,notes,created_at,updated_at")
+        .eq("workspace_id", scope.workspaceId).eq("company_id", params.id).order("created_at");
+      if (contactsError) throw contactsError;
+      contacts = teamContacts || [];
+    }
 
     return NextResponse.json({
       company,
-      contacts: contactsResult.data || [],
+      contacts,
       departments: departmentsResult.data || [],
       workstreams: workstreamsResult.data || [],
       workstreamContacts: linksResult.data || [],
       salesResearch,
       access: {
+        teamLeadCover: !!coverCompany,
         mode: sharedSalesAccess ? "shared_sales" : "owner",
         shared: !!activeShare,
         canManageSharing:
           !sharedSalesAccess &&
           scope.role === "owner" &&
           company.owner_id === scope.userId,
-        assignedToUserId: activeShare?.assigned_to_user_id || scope.userId,
+        assignedToUserId: activeShare?.assigned_to_user_id || company.owner_id || scope.userId,
         canEdit:
-          !sharedSalesAccess ||
+          !!coverCompany || !sharedSalesAccess ||
           scope.role === "owner" ||
           scope.role === "manager" ||
           activeShare?.assigned_to_user_id === scope.userId,
@@ -258,6 +273,7 @@ export async function PATCH(
       .maybeSingle();
     if (currentError) throw currentError;
 
+    const coverCompany = await loadTeamLeadCoverCompany(params.id, scope);
     let sharedSalesAccess = false;
     if (!current || current.owner_id !== scope.userId) {
       const { data: share, error: shareError } = await supabaseAdmin
@@ -268,7 +284,7 @@ export async function PATCH(
         .eq("status", "active")
         .maybeSingle();
       if (shareError) throw shareError;
-      sharedSalesAccess = !!share;
+      sharedSalesAccess = !!share || !!coverCompany;
       if (!sharedSalesAccess) {
         return NextResponse.json(
           crmBlockerPayload({
@@ -282,7 +298,7 @@ export async function PATCH(
         );
       }
       if (
-        scope.role === "sales" &&
+        scope.role === "sales" && !coverCompany &&
         share?.assigned_to_user_id !== scope.userId
       ) {
         return NextResponse.json(
@@ -302,7 +318,7 @@ export async function PATCH(
     for (const f of PATCHABLE) {
       if (
         sharedSalesAccess &&
-        (f === "notes" || f === "email_context")
+        ((f === "notes" && !coverCompany) || f === "email_context")
       )
         continue;
       if (typeof body[f] === "string") patch[f] = body[f].trim() || null;
@@ -367,14 +383,14 @@ export async function PATCH(
         .update(patch)
         .eq("workspace_id", scope.workspaceId)
         .eq("id", params.id)
-        .select("id,name,domain,website,sector,stage,created_at,updated_at")
+        .select("id,name,domain,website,sector,stage,notes,created_at,updated_at")
         .single();
       if (updateError) throw updateError;
       data = {
         ...updated,
         profile: {},
         attributes: {},
-        notes: null,
+        notes: coverCompany ? updated.notes : null,
         email_context: null,
         commercial_memory: null,
       };

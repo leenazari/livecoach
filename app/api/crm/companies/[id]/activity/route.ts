@@ -16,6 +16,8 @@ import { enqueueOpportunitySignal } from "@/lib/opportunity-signals";
 import { requireRequestScope } from "@/lib/request-scope";
 import { loadSafeSharedCompany } from "@/lib/team-client-sharing";
 
+import { loadTeamLeadCoverCompany } from "@/lib/team-lead-cover";
+
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
@@ -75,6 +77,8 @@ export async function POST(
       .maybeSingle();
     if (companyError) throw companyError;
 
+    const coverCompany = await loadTeamLeadCoverCompany(params.id, scope);
+
     // A deliberately shared sales record exposes only its fixed safe company
     // projection. The salesperson may still log their own off-system update,
     // but the route must never load or rewrite the original owner's private
@@ -93,6 +97,7 @@ export async function POST(
         sharedCompany = await loadSafeSharedCompany(params.id, scope.workspaceId);
       }
     }
+    if (coverCompany && (!company || company.owner_id !== scope.userId)) sharedCompany = coverCompany;
     if ((!company || company.owner_id !== scope.userId) && !sharedCompany) {
       return NextResponse.json({ error: "client not found" }, { status: 404 });
     }
@@ -138,14 +143,14 @@ export async function POST(
       }
     }
 
-    if (sharedCompany) {
+    if (coverCompany || sharedCompany) {
       return NextResponse.json({
         item,
         intelligence: null,
         completedTaskId,
         warning:
-          taskCompletionWarning ||
-          "Your update is saved to your private Brain context. The original owner's private history was not opened or changed.",
+          taskCompletionWarning || (coverCompany ? "Update saved to the team lead history." :
+          "Your update is saved to your private Brain context. The original owner's private history was not opened or changed."),
       });
     }
     if (!company || company.owner_id !== scope.userId) {

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+
+import { loadTeamLeadCoverCompany, teamLeadCoverEnabled } from "@/lib/team-lead-cover";
 
 export const runtime = "nodejs";
 
@@ -17,7 +19,8 @@ export async function PATCH(
   try {
     const scope = requireRequestScope();
     const body = await req.json();
-    const { data: current, error: currentError } = await supabaseAdmin
+    const coverEnabled = await teamLeadCoverEnabled(scope);
+    const { data: current, error: currentError } = await (coverEnabled ? supabaseService : supabaseAdmin)
       .from("contacts")
       .select("id,company_id,owner_id,workspace_id,name,email")
       .eq("workspace_id", scope.workspaceId)
@@ -27,11 +30,15 @@ export async function PATCH(
     if (!current) {
       return NextResponse.json({ error: "contact not found" }, { status: 404 });
     }
-    if (current.owner_id !== scope.userId) {
+    const coverCompany = current.company_id ? await loadTeamLeadCoverCompany(current.company_id, scope) : null;
+    if (current.owner_id !== scope.userId && !coverCompany) {
       return NextResponse.json(
         { error: "Only the person who owns this contact can change its company" },
         { status: 403 }
       );
+    }
+    if (current.owner_id !== scope.userId && ("companyId" in body || "departmentId" in body || "attributes" in body)) {
+      return NextResponse.json({ error: "The contact owner manages company links and custom fields" }, { status: 403 });
     }
     if (current.company_id) {
       const access = await loadAssignedClientAccess(current.company_id, scope);
@@ -139,12 +146,12 @@ export async function PATCH(
       return NextResponse.json({ error: "nothing to update" }, { status: 400 });
     }
 
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await (coverCompany ? supabaseService : supabaseAdmin)
       .from("contacts")
       .update(patch)
       .eq("workspace_id", scope.workspaceId)
       .eq("id", params.id)
-      .select()
+      .select(coverCompany ? "id,company_id,owner_id,name,role,email,sector,notes,created_at,updated_at" : "*")
       .single();
     if (error) throw error;
     return NextResponse.json({ contact: data });

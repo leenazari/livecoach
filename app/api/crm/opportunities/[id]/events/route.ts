@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
 import { loadVisibleOpportunityById } from "@/lib/opportunity-access";
 
@@ -12,14 +12,14 @@ export async function GET(
 ) {
   try {
     const scope = requireRequestScope();
-    const opportunity = await loadVisibleOpportunityById(
+    const opportunity = await loadVisibleOpportunityById<any>(
       scope,
       params.id,
       "id,workspace_id,owner_id,visibility,opportunity_type,assigned_to_user_id,company_id"
     );
     if (!opportunity)
       return NextResponse.json({ error: "opportunity not found" }, { status: 404 });
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await (opportunity.canTeamEdit ? supabaseService : supabaseAdmin)
       .from("opportunity_events")
       .select("id,event_type,source_type,source_channel,rationale,created_at")
       .eq("workspace_id", scope.workspaceId)

@@ -32,6 +32,7 @@ export default function QuickClientUpdate({
   onApplied,
   initialIntelligence,
   sharedSalesAccess = false,
+  teamLeadCover = false,
   resolveTaskId = "",
   onTaskResolved,
 }: {
@@ -41,6 +42,7 @@ export default function QuickClientUpdate({
   onApplied?: () => void | Promise<void>;
   initialIntelligence?: ActivityIntelligence | null;
   sharedSalesAccess?: boolean;
+  teamLeadCover?: boolean;
   resolveTaskId?: string;
   onTaskResolved?: () => void;
 }) {
@@ -207,7 +209,7 @@ export default function QuickClientUpdate({
             ＋ Log an update
           </p>
           <p className="mt-1 font-sans text-[0.74rem] text-bone/65">
-            {sharedSalesAccess
+            {teamLeadCover ? "Your update will be visible in the team lead history." : sharedSalesAccess
               ? "Phone calls, texts and voice notes feed your private timeline and Brain context. The original owner's private history stays closed."
               : "Phone calls, texts and voice notes feed the timeline and Brain. One small Luna pass finds the commercial next move."}
           </p>
