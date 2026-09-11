@@ -8,6 +8,8 @@ import {
   type OpportunityAccessRow,
 } from "@/lib/opportunity-access-policy";
 
+import { loadTeamLeadCoverCompanies, loadTeamLeadCoverCompany, teamLeadCoverEnabled } from "@/lib/team-lead-cover";
+
 type LoadOptions = {
   select?: string;
   status?: string;
@@ -37,8 +39,8 @@ async function nonConfidentialCompanyIds(
   return new Set((data || []).map((company: any) => String(company.id)));
 }
 
-function buildOpportunityQuery(scope: RequestScope, options: LoadOptions) {
-  let query: any = supabaseAdmin
+function buildOpportunityQuery(scope: RequestScope, options: LoadOptions, client = supabaseAdmin) {
+  let query: any = client
     .from("opportunities")
     .select(options.select || "*")
     .eq("workspace_id", scope.workspaceId);
@@ -52,6 +54,18 @@ function buildOpportunityQuery(scope: RequestScope, options: LoadOptions) {
     });
   }
   return query.limit(Math.max(1, Math.min(1000, options.limit || 500)));
+}
+
+async function loadCoveredOpportunities(scope: RequestScope, options: LoadOptions): Promise<any[]> {
+  if (options.opportunityType && options.opportunityType !== "revenue") return [];
+  const companies = await loadTeamLeadCoverCompanies(scope);
+  if (!companies.length) return [];
+  const batches: string[][] = [];
+  for (let start = 0; start < companies.length; start += 100) batches.push(companies.slice(start, start + 100).map((company) => company.id));
+  const results = await Promise.all(batches.map((ids) => buildOpportunityQuery(scope, options, supabaseService)
+    .eq("opportunity_type", "revenue").in("company_id", ids)));
+  for (const result of results) if (result.error) throw result.error;
+  return results.flatMap((result) => (result.data || []).map((row: any) => ({ ...row, canTeamEdit: true })));
 }
 
 function sortRows(rows: any[], options: LoadOptions) {
@@ -84,7 +98,9 @@ export async function loadVisibleOpportunities<T = Record<string, any>>(
       limit,
     });
     if (error) throw error;
-    return (data || []) as T[];
+    const covered = await loadCoveredOpportunities(scope, { ...options, limit });
+    const byId = new Map([...(data || []), ...covered].map((row) => [row.id, row]));
+    return sortRows([...byId.values()], options).slice(0, limit) as T[];
   }
 
   const ownedQuery = buildOpportunityQuery(scope, { ...options, limit }).eq(
@@ -114,6 +130,7 @@ export async function loadVisibleOpportunities<T = Record<string, any>>(
       .map((row) => row.company_id || "")
   );
   const visible = filterVisibleOpportunities(scope, candidates, safeCompanyIds);
+  visible.push(...await loadCoveredOpportunities(scope, { ...options, limit }));
   const byId = new Map(visible.map((row) => [String(row.id), row]));
   return sortRows([...byId.values()], options).slice(0, limit) as T[];
 }
@@ -130,6 +147,18 @@ export async function loadVisibleOpportunityById<T = Record<string, any>>(
     .eq("id", opportunityId)
     .maybeSingle();
   if (error) throw error;
+  if (await teamLeadCoverEnabled(scope)) {
+    const { data: candidate, error: candidateError } = await supabaseService.from("opportunities")
+      .select("company_id").eq("workspace_id", scope.workspaceId).eq("id", opportunityId).eq("opportunity_type", "revenue").maybeSingle();
+    if (candidateError) throw candidateError;
+    if (candidate?.company_id && await loadTeamLeadCoverCompany(candidate.company_id, scope)) {
+      const { data: covered, error: coverError } = await supabaseService.from("opportunities")
+        .select(select).eq("workspace_id", scope.workspaceId).eq("id", opportunityId)
+        .eq("opportunity_type", "revenue").eq("company_id", candidate.company_id).maybeSingle();
+      if (coverError) throw coverError;
+      if (covered) return { ...(covered as any), canTeamEdit: true } as T;
+    }
+  }
   if (!data) return null;
   const row = data as unknown as OpportunityAccessRow & Record<string, any>;
   if (scope.role === "owner" || row.owner_id === scope.userId) return row as T;

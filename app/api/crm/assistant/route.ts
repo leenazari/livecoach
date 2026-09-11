@@ -1,3 +1,4 @@
+import { loadTeamLeadCoverCompanies, loadTeamLeadCoverCompany, teamLeadCoverEnabled } from "@/lib/team-lead-cover";
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
@@ -130,6 +131,11 @@ async function findCompany(name: string) {
   // Workspace owners administer access, but that must not make another
   // person's private client mutable through their Brain. Only an explicit
   // safe client assignment grants a non-owner a projected client record.
+  const covered = await loadTeamLeadCoverCompanies(requestScope);
+  const exactCovered = covered.filter((row) => row.name.trim().toLowerCase() === term.toLowerCase());
+  if (exactCovered.length === 1) return exactCovered[0];
+  const partialCovered = covered.filter((row) => row.name.toLowerCase().includes(term.toLowerCase()));
+  if (partialCovered.length === 1) return partialCovered[0];
   if (requestScope.role === "owner") return null;
 
   const sharedIds = await activeSharedClientIds(
@@ -160,7 +166,10 @@ async function findCompanyById(id: string) {
     .eq("owner_id", requestScope.userId)
     .eq("id", id);
   const { data } = await query.maybeSingle();
-  if (data || requestScope.role === "owner") return data || null;
+  if (data) return data;
+  const covered = await loadTeamLeadCoverCompany(id, requestScope);
+  if (covered) return covered;
+  if (requestScope.role === "owner") return null;
   const sharedIds = await activeSharedClientIds(
     requestScope.workspaceId,
     requestScope.userId
@@ -506,7 +515,7 @@ async function findOpportunities(title: string, client: string): Promise<any[]> 
   return rows
     .filter(
       (row: any) =>
-        row.owner_id === requestScope.userId ||
+        row.canTeamEdit === true || row.owner_id === requestScope.userId ||
         row.assigned_to_user_id === requestScope.userId
     )
     .filter((row: any) =>
@@ -2488,9 +2497,11 @@ export async function POST(req: NextRequest) {
 
     const requestScope = getRequestScope();
     const importAllowed = requestScope ? await canStageOutreachImports(requestScope) : false;
+    const coverAllowed = requestScope ? await teamLeadCoverEnabled(requestScope) : false;
     const accessBoundary =
       requestScope?.role === "owner"
         ? `You are assisting the verified workspace owner. This is the only role allowed the full Brain view across the owner's private records and the shared workspace.`
+        : coverAllowed ? `TEAM LEAD COVER is enabled by the workspace owner. This active member may read and update ordinary sales leads, their sales contacts, manual lead notes and revenue opportunities returned by the verified CRM context, even when assigned to a colleague. Preserve the assignee unless an authorised assignment action explicitly changes it. Confidential, internal, investor and strategic records, personal mailboxes, transcripts, documents and private Brain history remain restricted. Outreach sending, tasks and connected accounts retain their separate assignment rules. Do not ask for reassignment merely to update a permitted sales lead.`
         : `You are assisting a restricted workspace member. Only the verified workspace owner has the full Brain view. Use this member's own private records and the safe high-level context of clients the owner has explicitly shared with the team. Shared client access is lookup access only. It does not reveal the owner's private notes, email, calls, transcripts, calendar, documents, Brain history or opportunity details assigned to somebody else. Only recommend or action opportunities, outreach prospects and work assigned to this member. Never reveal or search an unshared client or another person's private records, even if the member names them or directly asks. Team campaign names and non-sensitive aggregate learnings may be used only as shared context. Treat unassigned outreach prospects only as available to claim. If permitted records do not contain the answer, say this account does not have access and ask the owner to share or assign the record.`;
     const scope = isGlobal
       ? `${accessBoundary}\n\nYou are the user's overall CRM assistant. You know the clients and pipeline this verified account is permitted to access below. They might ask about one client ("what do I do next with Alaine"), or across their permitted work ("what's my to-do list", "which deal is closest to closing"). When they name a client, match it to the closest permitted one in the context even if the spelling is slightly off. Never imply that inaccessible or unassigned records belong to them.`
@@ -2627,7 +2638,7 @@ IMPORT SAFETY: this account's verified lead import permission is ${importAllowed
 
 SENDPILOT AND REPLIES: only enrol or stop a lead assigned to the signed-in salesperson, and only in that salesperson's connected and mapped SendPilot account. A SendPilot reply is canonical CRM activity and stops competing sequence work. Use prepare_reply only for an interested reply. It creates a review draft with that salesperson's booking link and never sends automatically. sendpilot_stop_lead marks one exact remote lead Done after separate approval. SendPilot only supports pause and resume at whole-campaign level, so never claim one lead was paused or resumed. Pausing or resuming a mapped campaign always needs its own external approval. Use log_sequence_action only after the salesperson says they completed that exact manual LinkedIn step.
 
-AUTHORITY BOUNDARY: staff may use the safe actions above only on records they own, claimed unassigned work, or work deliberately assigned to them. They cannot change Brain permissions, workspace roles, access rules, application code, audit history, another person's private client records, calendar, mailbox, SendPilot connection, voice identity or booking link. Only the workspace owner can change Brain trust settings for the team. If the signed-in workspace owner explicitly says owner override, do it anyway, force this action or bypass the normal workflow, the exact signed action may retry only an allowlisted ordinary workflow blocker. An owner override never bypasses identity, authentication, workspace isolation, another user's assignment or private connection, do-not-contact suppression, exact content approval, cost approval, immutable audit history, or code and database security controls. Never claim a universal bypass.
+AUTHORITY BOUNDARY: staff may use the safe actions above on records they own, claimed unassigned work, work deliberately assigned to them, or ordinary CRM lead updates permitted by the verified TEAM LEAD COVER boundary above. Team lead cover never grants another person's outreach sending or connected-account authority. They cannot change Brain permissions, workspace roles, access rules, application code, audit history, another person's private client records, calendar, mailbox, SendPilot connection, voice identity or booking link. Only the workspace owner can change Brain trust settings for the team. If the signed-in workspace owner explicitly says owner override, do it anyway, force this action or bypass the normal workflow, the exact signed action may retry only an allowlisted ordinary workflow blocker. An owner override never bypasses identity, authentication, workspace isolation, another user's assignment or private connection, do-not-contact suppression, exact content approval, cost approval, immutable audit history, or code and database security controls. Never claim a universal bypass.
 
 BATCH APPROVAL: when the user asks for several safe internal changes, emit them together. The interface shows every exact change and offers one approval for the safe subset. Destructive changes, mailbox pulls and any future external send stay separately confirmed.
 NO SILENT FAILURES: if a requested edit cannot be matched or completed, the action panel will mark it Not completed. Never imply that an edit happened merely because you described it in prose.

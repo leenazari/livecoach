@@ -1,3 +1,4 @@
+import { loadTeamLeadCoverCompanies, teamLeadCoverEnabled } from "@/lib/team-lead-cover";
 import { NextResponse } from "next/server";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import {
@@ -39,6 +40,7 @@ const firstText = (value: unknown): string =>
 export async function GET() {
   try {
     const scope = requireRequestScope();
+    const canCoverTeamLeads = await teamLeadCoverEnabled(scope);
     const canManageAssignments =
       scope.role === "owner" || scope.role === "manager";
     const nowMs = Date.now();
@@ -66,7 +68,7 @@ export async function GET() {
       .eq("workspace_id", scope.workspaceId)
       .eq("status", "active")
       .order("created_at");
-    if (!canManageAssignments) {
+    if (!canManageAssignments && !canCoverTeamLeads) {
       membersQuery = membersQuery.eq("user_id", scope.userId);
     }
     const [
@@ -157,7 +159,9 @@ export async function GET() {
       ),
       scope.workspaceId
     );
-    const companies = [...(ownedCompanies || []), ...safeSharedCompanies];
+    const covered = await loadTeamLeadCoverCompanies(scope);
+    const coverIds = new Set(covered.map((row) => row.id));
+    const companies = [...new Map([...(ownedCompanies || []), ...safeSharedCompanies, ...covered.filter((row) => !ownedIds.has(row.id))].map((row) => [row.id, row])).values()];
     const activeShareIds = new Set(sharedIds);
     const shareByCompany = new Map(
       (clientShares || []).map((share: any) => [share.company_id, share])
@@ -351,11 +355,12 @@ export async function GET() {
       return {
         id: company.id,
         name: company.name,
-        shared: activeShareIds.has(company.id),
+        shared: activeShareIds.has(company.id) || coverIds.has(company.id),
+        canTeamEdit: coverIds.has(company.id),
         accessMode: ownedIds.has(company.id) ? "owner" : "shared_sales",
         assignedToUserId:
           (shareByCompany.get(company.id) as any)?.assigned_to_user_id ||
-          (ownedIds.has(company.id) ? scope.userId : null),
+          (company.owner_id || (ownedIds.has(company.id) ? scope.userId : null)),
         sector: company.sector || null,
         relationshipStage: company.stage || null,
         relationshipType,
@@ -431,6 +436,7 @@ export async function GET() {
         team,
         currentUser: scope.userId,
         canManageAssignments,
+        canCoverTeamLeads,
       },
       {
         headers: {

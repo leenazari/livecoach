@@ -48,6 +48,7 @@ type Props = {
   team: TeamMember[];
   currentUser: string;
   canManageAssignments: boolean;
+  canCoverTeamLeads?: boolean;
   ownerFilter: string;
   onOwnerFilterChange: (value: string) => void;
   busy: string;
@@ -120,7 +121,7 @@ function DealDetails({
   const reasons = Array.isArray(row.win_outlook_reasons) ? row.win_outlook_reasons : [];
   const questions = Array.isArray(row.outlookQuestions) ? row.outlookQuestions : [];
   const canEdit =
-    canManageAssignments ||
+    row.canTeamEdit === true || canManageAssignments ||
     row.owner_id === currentUser ||
     !row.assigned_to_user_id ||
     row.assigned_to_user_id === currentUser;
@@ -289,11 +290,12 @@ export default function PipelineWorkspace(props: Props) {
   const [localFocus, setLocalFocus] = useState("all");
   const activeFocus = props.focus ?? localFocus;
   const changeFocus = props.onFocusChange ?? setLocalFocus;
-  const effectiveOwnerFilter = canManageAssignments ? ownerFilter : "mine";
+  const canViewTeam = canManageAssignments || props.canCoverTeamLeads === true;
+  const effectiveOwnerFilter = canViewTeam ? ownerFilter : "mine";
   const ownerName = (row: Row) => row.assigned_to_user_id === currentUser
     ? "Mine"
     : row.assigned_to_user_id
-      ? canManageAssignments
+      ? canViewTeam
         ? team.find((member) => member.userId === row.assigned_to_user_id)?.name || "Another team member"
         : "Another team member"
       : "Unassigned";
@@ -384,7 +386,7 @@ export default function PipelineWorkspace(props: Props) {
     stageDefinitions,
   ), [props.savedRows, effectiveOwnerFilter, currentUser, stageDefinitions]);
   const canEditDeal = (row: Row) =>
-    canManageAssignments ||
+    row.canTeamEdit === true || canManageAssignments ||
     row.owner_id === currentUser ||
     !row.assigned_to_user_id ||
     row.assigned_to_user_id === currentUser;
@@ -427,7 +429,7 @@ export default function PipelineWorkspace(props: Props) {
             <option value="newest">Newest deal</option>
             <option value="oldest">Oldest deal</option>
           </select>
-          {canManageAssignments ? (
+          {canViewTeam ? (
             <select
               aria-label="Filter pipeline by deal owner"
               value={effectiveOwnerFilter}

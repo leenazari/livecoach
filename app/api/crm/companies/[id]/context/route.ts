@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 
+import { requireRequestScope } from "@/lib/request-scope";
+import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+import { loadTeamLeadNotes } from "@/lib/team-lead-cover";
+
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
 // keeps serving a stale snapshot even after the database has changed (a
@@ -20,6 +24,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = requireRequestScope();
     const { data, error } = await supabaseAdmin
       .from("client_context")
       .select("*")
@@ -27,7 +32,9 @@ export async function GET(
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) throw error;
-    return NextResponse.json({ items: data || [] });
+    const teamNotes = await loadTeamLeadNotes(params.id, scope);
+    const items = [...new Map([...(data || []), ...teamNotes].map((row) => [row.id, row])).values()].sort((a,b) => String(b.created_at).localeCompare(String(a.created_at)));
+    return NextResponse.json({ items });
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "failed to load context" },
@@ -66,6 +73,8 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = requireRequestScope();
+    if (!(await loadAssignedClientAccess(params.id, scope))) return NextResponse.json({ error: "Client unavailable" }, { status: 404 });
     const body = await req.json();
     const kind = ["note", "link", "doc"].includes(body.kind) ? body.kind : "note";
     const title = typeof body.title === "string" ? body.title.trim() : "";
