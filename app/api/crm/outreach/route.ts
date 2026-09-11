@@ -11,6 +11,7 @@ import { loadSendPilotOutreachContext } from "@/lib/sendpilot-outreach";
 import { crmBlockerPayload } from "@/lib/crm-blocker";
 import { privateRecordFields } from "@/lib/record-scope";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+import { canStageOutreachImports } from "@/lib/outreach-import-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -425,7 +426,8 @@ export async function GET(req: NextRequest) {
       team,
       currentUser: account.userId,
       canManageAssignments,
-      canStageImports: account.role === "owner",
+      canStageImports: await canStageOutreachImports(account),
+      canAssignImports: account.role === "owner",
       selectedCampaignId: selection.selectedCampaignId,
     });
   } catch (err: any) {

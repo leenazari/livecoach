@@ -215,9 +215,11 @@ const ACTION_PROFILES: Record<string, BrainAuthorityProfile> = {
     actionKind: "update_internal_crm",
     risk: "reversible_internal",
     requiresSeparateApproval: false,
-    ownerOnly: true,
-    managerAllowed: false,
-    salesAllowed: false,
+    // The staging endpoint checks the member's explicit import grant and
+    // enforces self-assignment. Other Brain owner-only actions stay locked.
+    ownerOnly: false,
+    managerAllowed: true,
+    salesAllowed: true,
     canOwnerOverride: false,
     canRetry: true,
   },

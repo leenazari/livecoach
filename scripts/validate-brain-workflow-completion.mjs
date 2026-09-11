@@ -47,7 +47,8 @@ assert.match(importMigration, /interval '10 minutes'/);
 assert.match(importMigration, /not exists \(select 1 from public\.outreach_messages/);
 
 const stageRoute = read("app/api/crm/imports/outreach/stage/route.ts");
-assert.match(stageRoute, /requireWorkspaceOwner/);
+assert.match(stageRoute, /requireOutreachImportAccess/);
+assert.match(stageRoute, /resolveOutreachImportAssignee/);
 assert.match(stageRoute, /normaliseOutreachImportRows/);
 assert.match(stageRoute, /workspaceEmailSet\("contacts"/);
 assert.match(stageRoute, /body\.rows\.length > 500/);
@@ -59,7 +60,7 @@ assert.match(contactRoute, /contact_company_exact_email_duplicate/);
 assert.match(contactRoute, /patch\.department_id = null/);
 
 const authority = read("lib/brain-authority.ts");
-assert.match(authority, /stage_outreach_import:[\s\S]*ownerOnly: true/);
+assert.match(authority, /stage_outreach_import:[\s\S]*?ownerOnly: false[\s\S]*?salesAllowed: true/);
 assert.match(authority, /link_contact_to_client/);
 assert.match(authority, /merge_duplicate_clients:[\s\S]*ownerOnly: true/);
 

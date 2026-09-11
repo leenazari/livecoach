@@ -4,7 +4,8 @@ import {
   normaliseOutreachImportRows,
   type StagedOutreachImportRow,
 } from "@/lib/outreach-import";
-import { requireWorkspaceOwner } from "@/lib/request-scope";
+import { requireOutreachImportAccess } from "@/lib/outreach-import-access";
+import { resolveOutreachImportAssignee } from "@/lib/outreach-import-permissions";
 import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -42,7 +43,7 @@ function counts(rows: StagedOutreachImportRow[]) {
 
 export async function POST(request: NextRequest) {
   try {
-    const scope = requireWorkspaceOwner();
+    const scope = await requireOutreachImportAccess();
     const body = await request.json().catch(() => ({}));
     if (!Array.isArray(body.rows) || !body.rows.length) {
       return NextResponse.json(
@@ -63,10 +64,7 @@ export async function POST(request: NextRequest) {
     if (!sourceName) {
       return NextResponse.json({ error: "A source name is required" }, { status: 400 });
     }
-    const assignedToUserId =
-      typeof body.assignedToUserId === "string" && body.assignedToUserId
-        ? body.assignedToUserId
-        : null;
+    const assignedToUserId = resolveOutreachImportAssignee(scope, body.assignedToUserId);
     if (assignedToUserId) {
       const { data: member, error: memberError } = await supabaseService
         .from("workspace_members")
@@ -112,7 +110,7 @@ export async function POST(request: NextRequest) {
     if (error) throw error;
     return NextResponse.json({ batch }, { status: 201 });
   } catch (error: any) {
-    const forbidden = /owner access/i.test(error?.message || "");
+    const forbidden = /import access|workspace access|owner access/i.test(error?.message || "");
     return NextResponse.json(
       { error: error?.message || "Could not stage this import" },
       { status: forbidden ? 403 : 500 }
