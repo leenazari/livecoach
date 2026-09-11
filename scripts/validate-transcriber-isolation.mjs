@@ -6,7 +6,7 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const [baseMigration, sharedMigration, access, start, stop, backfill, sessionEnd, stage, identity] =
   await Promise.all([
     read("supabase/migrations/20260821144742_per_user_transcriber_isolation.sql"),
-    read("supabase/migrations/20260903165256_shared_meeting_capture_fanout.sql"),
+    read("supabase/migrations/20260903171447_shared_meeting_capture_fanout.sql"),
     read("app/api/meet/access/route.ts"),
     read("app/api/meet/start/route.ts"),
     read("app/api/meet/stop/route.ts"),

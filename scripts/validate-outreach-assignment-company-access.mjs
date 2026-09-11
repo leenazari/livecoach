@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260904105146_assign_outreach_company_access.sql"
+  "supabase/migrations/20260904110302_assign_outreach_company_access.sql"
 );
 const assignmentService = read("lib/outreach-assignment-service.ts");
 const outreachGuard = read("lib/outreach.ts");

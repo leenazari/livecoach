@@ -19,10 +19,10 @@ const openai = read("lib/openai.ts");
 const costs = read("lib/costs.ts");
 const vercel = read("vercel.json");
 const migration = read(
-  "supabase/migrations/20260903172529_durable_outreach_research_jobs.sql"
+  "supabase/migrations/20260903174029_durable_outreach_research_jobs.sql"
 );
 const indexMigration = read(
-  "supabase/migrations/20260903174500_index_outreach_research_job_foreign_keys.sql"
+  "supabase/migrations/20260903174318_index_outreach_research_job_foreign_keys.sql"
 );
 
 assert.match(migration, /create table public\.outreach_research_jobs/);

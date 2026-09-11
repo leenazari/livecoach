@@ -95,7 +95,7 @@ const migration = read(
   "supabase/migrations/20260821183209_transcriber_cost_controls.sql"
 );
 const sharedMigration = read(
-  "supabase/migrations/20260903165256_shared_meeting_capture_fanout.sql"
+  "supabase/migrations/20260903171447_shared_meeting_capture_fanout.sql"
 );
 const startRoute = read("app/api/meet/start/route.ts");
 const teamRoute = read("app/api/crm/team/route.ts");

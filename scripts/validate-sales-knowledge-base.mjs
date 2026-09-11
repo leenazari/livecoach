@@ -7,10 +7,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260903221221_sales_knowledge_team_governance.sql"
+  "supabase/migrations/20260903222515_sales_knowledge_team_governance.sql"
 );
 const hardening = read(
-  "supabase/migrations/20260903222707_sales_knowledge_advisor_hardening.sql"
+  "supabase/migrations/20260903222719_sales_knowledge_advisor_hardening.sql"
 );
 const api = read("app/api/crm/pitch-playbook/route.ts");
 const lessonApi = read("app/api/crm/lessons/[id]/route.ts");
