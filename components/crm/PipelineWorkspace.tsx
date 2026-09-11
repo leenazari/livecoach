@@ -12,6 +12,7 @@ import {
 } from "@/lib/opportunity-fields";
 import { crmFetch } from "@/lib/crm";
 import { opportunityMatchesOwner } from "@/lib/opportunity-owner-filter";
+import { summarizePipelineStages } from "@/lib/pipeline-entry";
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
 
 type Row = Record<string, any> & {
@@ -42,6 +43,7 @@ type TeamMember = { userId: string; role: string; name: string };
 
 type Props = {
   rows: Row[];
+  savedRows: Row[];
   stageDefinitions: { key: string; label: string }[];
   team: TeamMember[];
   currentUser: string;
@@ -145,6 +147,17 @@ function DealDetails({
         </p>
       ) : null}
       <fieldset disabled={!canEdit} className="grid gap-4 rounded-xl border border-edge bg-ink/30 p-3 disabled:opacity-65 sm:grid-cols-2 sm:p-4 lg:grid-cols-4">
+        <label>
+          <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Sales stage</span>
+          <select className={input} value={row.pipeline_stage} onChange={(event) => onChange(row.id, { pipeline_stage: event.target.value })}>
+            {[...stageDefinitions, { key: "won", label: "Won" }, { key: "lost", label: "Lost" }].map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}
+          </select>
+        </label>
+        <label>
+          <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Deal value (£)</span>
+          <input type="number" min="0" step="0.01" className={input} value={Number.isNaN(row.value) ? "" : row.value} onChange={(event) => onChange(row.id, { value: event.target.value === "" ? Number.NaN : Number(event.target.value) })} />
+        </label>
+
         <label className="lg:col-span-2">
           <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Deal intent</span>
           <textarea className={`${input} min-h-20 resize-y`} value={row.deal_intent || ""} onChange={(event) => onChange(row.id, { deal_intent: event.target.value })} placeholder="The commercial outcome this deal is pursuing" />
@@ -169,12 +182,6 @@ function DealDetails({
               </button>
             ) : null}
           </span>
-        </label>
-        <label>
-          <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Lifecycle stage</span>
-          <select className={input} value={row.pipeline_stage} onChange={(event) => onChange(row.id, { pipeline_stage: event.target.value })}>
-            {stageDefinitions.map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}
-          </select>
         </label>
         <label>
           <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Win outlook</span>
@@ -207,10 +214,6 @@ function DealDetails({
             {canManageAssignments ? team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>) : <option value={currentUser}>Me</option>}
             {!canManageAssignments && row.assigned_to_user_id && row.assigned_to_user_id !== currentUser ? <option value={row.assigned_to_user_id}>{team.find((member) => member.userId === row.assigned_to_user_id)?.name || "Another team member"}</option> : null}
           </select>
-        </label>
-        <label>
-          <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Value</span>
-          <input type="number" min="0" className={input} value={Number.isNaN(row.value) ? "" : row.value} onChange={(event) => onChange(row.id, { value: event.target.value === "" ? Number.NaN : Number(event.target.value) })} />
         </label>
         <label className="sm:col-span-2">
           <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Outlook evidence, one point per line</span>
@@ -376,6 +379,10 @@ export default function PipelineWorkspace(props: Props) {
     atRisk: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "at_risk")).length,
     stalled: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "stalled")).length,
   }), [ownerVisibleRows]);
+  const stageTotals = useMemo(() => summarizePipelineStages(
+    props.savedRows.filter((row) => opportunityMatchesOwner(row, effectiveOwnerFilter, currentUser)),
+    stageDefinitions,
+  ), [props.savedRows, effectiveOwnerFilter, currentUser, stageDefinitions]);
   const canEditDeal = (row: Row) =>
     canManageAssignments ||
     row.owner_id === currentUser ||
@@ -388,7 +395,7 @@ export default function PipelineWorkspace(props: Props) {
       aria-haspopup="dialog"
       className="mt-2 flex min-h-10 w-full items-center justify-between gap-3 rounded-lg border border-edge bg-panel/60 px-3 py-2 text-left font-mono text-[0.52rem] uppercase tracking-wider text-amber transition hover:border-amber/55 hover:bg-amber/[0.08]"
     >
-      <span>{canEditDeal(row) ? "Evidence and edit" : "Evidence · view only"}</span>
+      <span>{canEditDeal(row) ? "Edit opportunity" : "Evidence · view only"}</span>
       <span className="shrink-0 text-muted">
         {row.pendingSignalCount
           ? `${row.pendingSignalCount} new · open`
@@ -403,9 +410,9 @@ export default function PipelineWorkspace(props: Props) {
     <section data-sales-tour="pipeline-assignment" className="mb-4 rounded-xl border border-amber/30 bg-panel p-3 sm:p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="font-mono text-[0.55rem] uppercase tracking-widest text-amber">Pipeline operating view</p>
-          <h2 className="mt-1 font-display text-xl text-bone">What needs attention now</h2>
-          <p className="mt-1 text-sm text-muted">Lifecycle shows where the deal is. Win outlook shows the evidence-led chance of winning it.</p>
+          <p className="font-mono text-[0.55rem] uppercase tracking-widest text-amber">Sales pipeline</p>
+          <h2 className="mt-1 font-display text-xl text-bone">Your opportunities</h2>
+          <p className="mt-1 text-sm text-muted">Choose Edit opportunity to change the sales stage or deal value, then Save changes.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <select
@@ -445,6 +452,21 @@ export default function PipelineWorkspace(props: Props) {
             {(["table", "kanban"] as const).map((value) => <button key={value} onClick={() => setView(value)} className={`min-h-9 rounded-md px-3 font-mono text-[0.56rem] uppercase ${view === value ? "bg-amber/20 text-amber" : "text-muted"}`}>{value}</button>)}
           </div>
         </div>
+      </div>
+
+      <div className="mt-4" aria-label="Open pipeline by stage">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-bone">Deals and value by stage</h3>
+          <button type="button" onClick={() => changeFocus("all")} className="min-h-9 rounded-lg border border-edge px-3 text-xs text-amber">Show all stages</button>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {stageTotals.map((stage) => <button key={stage.key} type="button" aria-pressed={activeFocus === `stage:${stage.key}`} onClick={() => changeFocus(`stage:${stage.key}`)} className={`rounded-lg border p-3 text-left transition hover:border-amber/60 ${activeFocus === `stage:${stage.key}` ? "border-amber/60 bg-amber/10" : "border-edge bg-ink/30"}`}>
+            <span className="block text-xs text-muted">{stage.label}</span>
+            <strong className="mt-1 block text-lg text-bone">{stage.count} {stage.count === 1 ? "deal" : "deals"}</strong>
+            <span className="mt-1 block text-sm text-amber">{gbp(stage.value)}</span>
+          </button>)}
+        </div>
+        <p className="mt-2 text-xs text-muted">Saved open opportunities for {ownerViewLabel}. Totals include recorded values; won and lost deals are excluded.</p>
       </div>
 
       <p className="mt-3 font-mono text-[0.52rem] uppercase tracking-wider text-muted">
@@ -508,7 +530,7 @@ export default function PipelineWorkspace(props: Props) {
         <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
           {stageDefinitions.filter((stage) => !["won", "lost"].includes(stage.key)).map((stage) => {
             const members = visibleRows.filter((row) => row.pipeline_stage === stage.key);
-            return <section key={stage.key} className="w-[280px] shrink-0 rounded-xl border border-edge bg-ink/30 p-2.5"><div className="mb-2 flex items-center justify-between"><h3 className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</h3><span className="rounded-full bg-panel px-2 py-1 text-xs text-muted">{members.length}</span></div><div className="space-y-2">{members.length ? members.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-panel p-3"><div className="flex items-start justify-between gap-2"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><span className="text-xs text-muted">{gbp(row.value)}</span></div><p className="mt-1 text-xs text-muted">{row.title}</p><p className="mt-1 font-mono text-[0.48rem] uppercase text-sky">{ownerName(row)}</p><p className="mt-1 font-mono text-[0.46rem] uppercase text-muted">Added {dateTime(row.created_at)}</p><div className="mt-2"><OutlookBadge row={row} /></div><p className="mt-2 text-sm text-amber">{row.next_action || row.nextAction}</p>{row.next_action_due_at ? <p className="mt-1 text-xs text-muted">Due {dateTime(row.next_action_due_at)}</p> : null}{editorButton(row)}</article>) : <p className="rounded-lg border border-dashed border-edge p-3 text-center text-xs text-muted">No deals</p>}</div></section>;
+            return <section key={stage.key} className="w-[280px] shrink-0 rounded-xl border border-edge bg-ink/30 p-2.5"><div className="mb-2 flex items-center justify-between"><h3 className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</h3><span className="rounded-full bg-panel px-2 py-1 text-xs text-muted">{members.length} deals</span></div><p className="mb-2 text-sm text-amber">{gbp(members.reduce((sum, row) => sum + (Number(row.value) || 0), 0))}</p><div className="space-y-2">{members.length ? members.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-panel p-3"><div className="flex items-start justify-between gap-2"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><span className="text-xs text-muted">{gbp(row.value)}</span></div><p className="mt-1 text-xs text-muted">{row.title}</p><p className="mt-1 font-mono text-[0.48rem] uppercase text-sky">{ownerName(row)}</p><p className="mt-1 font-mono text-[0.46rem] uppercase text-muted">Added {dateTime(row.created_at)}</p><div className="mt-2"><OutlookBadge row={row} /></div><p className="mt-2 text-sm text-amber">{row.next_action || row.nextAction}</p>{row.next_action_due_at ? <p className="mt-1 text-xs text-muted">Due {dateTime(row.next_action_due_at)}</p> : null}{editorButton(row)}</article>) : <p className="rounded-lg border border-dashed border-edge p-3 text-center text-xs text-muted">No deals</p>}</div></section>;
           })}
         </div>
       )}
@@ -516,7 +538,7 @@ export default function PipelineWorkspace(props: Props) {
         <p className="mt-3 rounded-lg border border-dashed border-edge p-5 text-center text-sm text-muted">
           {canManageAssignments
             ? "No deals match this owner view. Choose All team work to see the shared pipeline."
-            : "No revenue deals are assigned to this view."}
+            : "No opportunities match this view. Choose Show all stages or use New opportunity above to add your first deal."}
         </p>
       ) : null}
       {editorRow ? createPortal(
@@ -536,7 +558,7 @@ export default function PipelineWorkspace(props: Props) {
             <header className="flex shrink-0 items-start justify-between gap-3 border-b border-edge bg-panel/95 px-4 py-3 backdrop-blur sm:px-6 sm:py-4">
               <div className="min-w-0">
                 <p className="font-mono text-[0.52rem] uppercase tracking-widest text-amber">
-                  Deal workspace
+                  Edit opportunity
                 </p>
                 <h3
                   id={`deal-workspace-${editorRow.id}`}
@@ -557,7 +579,7 @@ export default function PipelineWorkspace(props: Props) {
                     type="button"
                     onClick={() => props.onSave(editorRow)}
                     disabled={!!props.busy}
-                    className="hidden min-h-10 rounded-lg border border-amber/60 bg-amber/15 px-4 font-mono text-[0.54rem] uppercase text-amber disabled:opacity-40 sm:block"
+                    className="min-h-10 rounded-lg border border-amber/60 bg-amber/15 px-3 font-mono text-[0.54rem] uppercase text-amber disabled:opacity-40 sm:px-4"
                   >
                     {props.busy === `opp:${editorRow.id}` ? "Saving…" : "Save changes"}
                   </button>

@@ -5,6 +5,8 @@ import Link from "next/link";
 import NavMenu from "@/components/crm/NavMenu";
 import { crmConfirmationError, crmFetch, getCached } from "@/lib/crm";
 import MatrixRain from "@/components/MatrixRain";
+import NewPipelineOpportunity from "@/components/crm/NewPipelineOpportunity";
+import { pipelineStatusForStage } from "@/lib/pipeline-entry";
 import PipelineWorkspace from "@/components/crm/PipelineWorkspace";
 import OutlookIntelligencePanel, { type SignalHealth } from "@/components/crm/OutlookIntelligencePanel";
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
@@ -162,10 +164,12 @@ export default function RevenuePage() {
   const saveOpportunity = async (row: Opportunity) => {
     setBusy(`opp:${row.id}`); setError(""); setNotice("");
     try {
+      if (Number.isFinite(row.value) && row.value < 0) throw new Error("Deal value cannot be negative");
       const { opportunity: saved } = await crmFetch<{ opportunity: Opportunity }>(`/api/crm/opportunities/${row.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          value: Number(row.value) || null,
+          value: Number.isFinite(row.value) ? row.value : null,
+          status: pipelineStatusForStage(row.pipeline_stage),
           pipelineStage: row.pipeline_stage,
           probability: Number(row.probability) || 0,
           forecastCategory: row.forecast_category,
@@ -194,7 +198,7 @@ export default function RevenuePage() {
           method: "PATCH",
           reason: "LiveCoach did not return the saved forecast",
         });
-      setNotice(`${row.company} forecast saved.`);
+      setNotice(`${row.company} opportunity saved.`);
       await load();
       // Keep the exact confirmed row authoritative even if the aggregate read
       // briefly reaches an older database snapshot.
@@ -321,17 +325,39 @@ export default function RevenuePage() {
       <NavMenu />
       <header className="mb-4 flex items-start justify-between gap-3 border-b border-edge pb-4">
         <div>
-          <h1 className="font-display text-[1.55rem] tracking-tight text-bone"><span className="italic text-amber">Revenue</span> command centre</h1>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">One truthful forecast from opportunities, next commitments, calls, calendar and outreach conversions.</p>
+          <h1 className="font-display text-[1.55rem] tracking-tight text-bone"><span className="italic text-amber">Opportunities</span> and pipeline</h1>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">Create opportunities, update stages and deal values, and see the total at each sales stage.</p>
         </div>
         <Link href="/crm" className="shrink-0 rounded-full border border-edge px-3 py-2 font-mono text-[0.6rem] uppercase text-muted">◂ CRM</Link>
       </header>
 
-      {notice ? <p className="mb-3 rounded-lg border border-moss/40 bg-moss/10 px-3 py-2 text-sm text-moss">{notice}</p> : null}
-      {error ? <p className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm text-rust">{error}</p> : null}
+      {notice ? <p role="status" className="mb-3 rounded-lg border border-moss/40 bg-moss/10 px-3 py-2 text-sm text-moss">{notice}</p> : null}
+      {error ? <p role="alert" className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm text-rust">{error}</p> : null}
       {!data ? <MatrixRain size="panel" messages={["loading the live pipeline", "checking revenue priorities"]} /> : null}
 
       {data ? <>
+        <NewPipelineOpportunity stages={data.stageDefinitions} onCreated={async (message) => {
+          setError(""); setNotice(message); setOwnerFilter("mine");
+          await load(); chooseDrilldown("all");
+        }} />
+        <div id="pipeline-records" className="scroll-mt-20">
+          <PipelineWorkspace
+            rows={revenueRows as any}
+            savedRows={data.opportunities || []}
+            stageDefinitions={data.stageDefinitions}
+            team={data.team || []}
+            currentUser={data.currentUser || ""}
+            canManageAssignments={data.canManageAssignments === true}
+            ownerFilter={activeOwnerFilter}
+            onOwnerFilterChange={setOwnerFilter}
+            busy={busy}
+            onChange={updateRow as any}
+            onSave={saveOpportunity as any}
+            onDismiss={dismissOpportunity as any}
+            focus={pipelineFocus}
+            onFocusChange={(next) => chooseDrilldown(next)}
+          />
+        </div>
         <section className="mb-4 rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -339,18 +365,18 @@ export default function RevenuePage() {
               <p className="mt-1 font-display text-3xl text-bone">{gbp(data.goal.target)}</p>
               <p className="mt-1 text-sm text-muted">{gbp(data.goal.wonYtd)} won this year · {gbp(data.goal.gap)} still to close</p>
             </div>
-            <div className="flex w-full gap-2 sm:w-auto">
+            {data.canManageAssignments ? <div className="flex w-full gap-2 sm:w-auto">
               <input aria-label="Annual revenue target" type="number" min="1000" step="1000" value={Number.isNaN(target) ? "" : target} onChange={(e) => setTarget(e.target.value === "" ? Number.NaN : Number(e.target.value))} className={`${input} sm:w-44`} />
               <button onClick={saveTarget} disabled={!!busy || !Number.isFinite(target)} className={button}>{busy === "target" ? "Saving…" : "Save target"}</button>
-            </div>
+            </div> : null}
           </div>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-ink"><div className="h-full rounded-full bg-moss" style={{ width: `${wonProgress}%` }} /></div>
           <div className="mt-2 flex justify-between font-mono text-[0.55rem] uppercase text-muted"><span>{pct(wonProgress)} achieved</span><span>{gbp(data.goal.requiredPerMonth)}/month needed</span></div>
         </section>
 
         <section className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.07] p-4">
-          <h2 className="font-display text-lg text-bone">The forecast now counts sales only</h2>
-          <p className="mt-1 text-sm leading-6 text-muted">The original 16 records mixed customer deals with fundraising, internal work and future routes. Nothing was deleted, but only genuine customer revenue is included in the figures below.</p>
+          <h2 className="font-display text-lg text-bone">Pipeline classifications</h2>
+          <p className="mt-1 text-sm leading-6 text-muted">Customer revenue contributes to the sales forecast. Other work stays in its own classification.</p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               ["Customer revenue", visibleClassification.revenue, "raw", "pipeline"],
@@ -435,23 +461,7 @@ export default function RevenuePage() {
           </section>
         ) : null}
 
-        <div id="pipeline-records" className="scroll-mt-20">
-          <PipelineWorkspace
-            rows={revenueRows as any}
-            stageDefinitions={data.stageDefinitions}
-            team={data.team || []}
-            currentUser={data.currentUser || ""}
-            canManageAssignments={data.canManageAssignments === true}
-            ownerFilter={activeOwnerFilter}
-            onOwnerFilterChange={setOwnerFilter}
-            busy={busy}
-            onChange={updateRow as any}
-            onSave={saveOpportunity as any}
-            onDismiss={dismissOpportunity as any}
-            focus={pipelineFocus}
-            onFocusChange={(next) => chooseDrilldown(next)}
-          />
-        </div>
+
 
         {excludedRows.length ? <section id="excluded-records" className="mt-4 scroll-mt-20 rounded-xl border border-edge bg-panel p-4">
           <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h2 className="font-display text-lg text-bone">Kept outside the revenue forecast</h2><p className="mt-1 text-sm leading-6 text-muted">These records are still available as useful CRM context. Change the classification if any should become a real customer deal.</p></div>{excludedDrilldown ? <button type="button" onClick={() => chooseDrilldown("all", "excluded")} className="min-h-9 rounded-lg border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted hover:border-amber/50 hover:text-amber">Show every classification</button> : null}</div>
