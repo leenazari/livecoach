@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
 
 const migration = read(
-  "supabase/migrations/20260904170105_shared_call_attendee_access.sql"
+  "supabase/migrations/20260904170909_shared_call_attendee_access.sql"
 );
 const helper = read("lib/shared-call-access.ts");
 const start = read("app/api/meet/start/route.ts");

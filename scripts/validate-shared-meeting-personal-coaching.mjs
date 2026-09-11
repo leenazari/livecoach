@@ -21,8 +21,8 @@ const [
   supabase,
   teamPage,
 ] = await Promise.all([
-  read("supabase/migrations/20260903165256_shared_meeting_capture_fanout.sql"),
-  read("supabase/migrations/20260903171800_index_shared_meeting_calendar_links.sql"),
+  read("supabase/migrations/20260903171447_shared_meeting_capture_fanout.sql"),
+  read("supabase/migrations/20260903171522_index_shared_meeting_calendar_links.sql"),
   read("app/api/meet/start/route.ts"),
   read("app/api/meet/stop/route.ts"),
   read("app/api/meet/access/route.ts"),
