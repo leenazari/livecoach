@@ -6,6 +6,8 @@
     "node": "22.x"
   },
   "scripts": {
+    "validate:chat-scroll": "node scripts/validate-chat-scroll.mjs",
+    "validate:assigned-opportunity-history": "node scripts/validate-assigned-opportunity-history.mjs",
     "validate:pipeline-entry": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-pipeline-entry.mjs",
     "build": "next build",
     "start": "next start",
@@ -144,6 +146,8 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
+    "jsdom": "30.0.1",
+    "@electric-sql/pglite": "0.5.8",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
