@@ -59,7 +59,7 @@ assert.match(pipeline, /repeated client name means that client has separate deal
 // inside a narrow table cell or Kanban card.
 assert.match(pipeline, /aria-haspopup="dialog"/);
 assert.match(pipeline, /role="dialog"/);
-assert.match(pipeline, /Deal workspace/);
+assert.match(pipeline, /Edit opportunity/);
 assert.match(pipeline, /sm:w-\[min\(960px,calc\(100vw-2rem\)\)\]/);
 assert.match(pipeline, /createPortal/);
 assert.equal(

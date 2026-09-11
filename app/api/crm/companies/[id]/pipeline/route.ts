@@ -3,6 +3,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
 import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+import { parsePipelineEntry } from "@/lib/pipeline-entry";
+import { activeCompanyPipelineExclusion } from "@/lib/company-pipeline-exclusion";
 import { createCanonicalOpenRevenueOpportunity } from "@/lib/canonical-opportunity";
 
 export const runtime = "nodejs";
@@ -14,8 +16,8 @@ export const dynamic = "force-dynamic";
 // POST /api/crm/companies/:id/pipeline -> explicitly promote one permitted
 // client relationship into the canonical sales pipeline. This is intentionally
 // separate from the company's relationship stage. It is idempotent, creates no
-// speculative value or probability, and is used only after the user confirms
-// the exact Brain action.
+// speculative value or probability. Explicit user-supplied values and open
+// stages are accepted from the Pipeline form as well as confirmed Brain actions.
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -29,7 +31,16 @@ export async function POST(
         { status: 404 }
       );
     }
-    const body = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => null);
+    const entry = parsePipelineEntry(body);
+    if (!entry.ok) return NextResponse.json({ error: entry.error }, { status: 400 });
+    const { data: companyProfile, error: profileError } = await supabaseAdmin
+      .from("companies").select("profile")
+      .eq("workspace_id", scope.workspaceId).eq("id", params.id).maybeSingle();
+    if (profileError) throw profileError;
+    if (activeCompanyPipelineExclusion(companyProfile?.profile)) {
+      return NextResponse.json({ error: "This client was removed from the sales pipeline. Review that decision on the client record before adding an opportunity." }, { status: 409 });
+    }
     const suppliedTitle =
       typeof body.title === "string" ? body.title.trim().slice(0, 240) : "";
     const title = suppliedTitle || `${access.company.name} sales opportunity`;
@@ -46,7 +57,8 @@ export async function POST(
         surfacedByAi: false,
         assignedToUserId: scope.userId,
         rationale,
-        pipelineStage: "new",
+        pipelineStage: entry.pipelineStage,
+        value: entry.value,
         probability: 0,
       }
     );
