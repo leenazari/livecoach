@@ -11,6 +11,7 @@ import {
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import ChatMessageViewport from "@/components/crm/ChatMessageViewport";
 import NavMenu from "@/components/crm/NavMenu";
 import {
   CHAT_ALLOWED_MIME_TYPES,
@@ -441,6 +442,12 @@ function ChatPageInner() {
     UUID.test(requestedConversation) ? requestedConversation : ""
   );
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messagesConversationId, setMessagesConversationId] = useState("");
+  const selectedIdRef = useRef(selectedId);
+  const messageRequestId = useRef(0);
+  selectedIdRef.current = selectedId;
+  const visibleMessages = messagesConversationId === selectedId ? messages : [];
+  const latestMessage = visibleMessages[visibleMessages.length - 1];
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [error, setError] = useState("");
@@ -461,7 +468,6 @@ function ChatPageInner() {
     {}
   );
   const fileInput = useRef<HTMLInputElement | null>(null);
-  const messageEnd = useRef<HTMLDivElement | null>(null);
   const driveSaving = useRef<Set<string>>(new Set());
 
   const selectedConversation = useMemo(
@@ -544,15 +550,19 @@ function ChatPageInner() {
       setMessages([]);
       return;
     }
+    const requestId = ++messageRequestId.current;
     setMessagesLoading(true);
     try {
       const next = await crmFetch<MessagesFeed>(
         `/api/crm/chat/${conversationId}/messages`
       );
+      // Ignore late responses from a previous chat or an older poll.
+      if (selectedIdRef.current !== conversationId || requestId !== messageRequestId.current) return;
+      setMessagesConversationId(conversationId);
       setMessages(next.messages || []);
       window.dispatchEvent(new CustomEvent("lc:notifications-updated"));
     } finally {
-      setMessagesLoading(false);
+      if (requestId === messageRequestId.current) setMessagesLoading(false);
     }
   }, []);
 
@@ -595,7 +605,7 @@ function ChatPageInner() {
     };
   }, [loadFeed, loadMessages, selectedId]);
 
-  const brainThinking = messages.some(
+  const brainThinking = visibleMessages.some(
     (message) =>
       message.senderKind === "brain" &&
       (message.status === "queued" || message.status === "running")
@@ -608,10 +618,6 @@ function ChatPageInner() {
     }, 2_500);
     return () => window.clearInterval(timer);
   }, [brainThinking, loadMessages, selectedId]);
-
-  useEffect(() => {
-    messageEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages]);
 
   const chooseConversation = (id: string) => {
     setSelectedId(id);
@@ -881,9 +887,9 @@ function ChatPageInner() {
         </section>
       ) : null}
 
-      <section className="grid min-h-[68vh] overflow-hidden rounded-xl border border-edge bg-panel/90 shadow-2xl sm:grid-cols-[19rem_minmax(0,1fr)]">
+      <section className="grid h-[calc(100dvh-15rem)] min-h-[24rem] overflow-hidden rounded-xl border border-edge bg-panel/90 shadow-2xl sm:grid-cols-[19rem_minmax(0,1fr)]">
         <aside
-          className={`${selectedId ? "hidden sm:flex" : "flex"} min-h-[68vh] flex-col border-r border-edge`}
+          className={`${selectedId ? "hidden sm:flex" : "flex"} min-h-0 flex-col border-r border-edge`}
         >
           <div className="border-b border-edge p-3">
             <p className="font-mono text-[0.54rem] uppercase tracking-wider text-muted">
@@ -950,11 +956,11 @@ function ChatPageInner() {
         </aside>
 
         <div
-          className={`${selectedId ? "flex" : "hidden sm:flex"} min-w-0 flex-col`}
+          className={`${selectedId ? "flex" : "hidden sm:flex"} min-h-0 min-w-0 flex-col`}
         >
           {selectedConversation ? (
             <>
-              <div className="flex items-center gap-3 border-b border-edge px-3 py-3 sm:px-4">
+              <div className="flex shrink-0 items-center gap-3 border-b border-edge px-3 py-3 sm:px-4">
                 <button
                   type="button"
                   onClick={() => {
@@ -984,10 +990,15 @@ function ChatPageInner() {
                 </span>
               </div>
 
-              <div className="flex min-h-[22rem] flex-1 flex-col gap-3 overflow-y-auto bg-ink/20 p-3 sm:p-4">
-                {messagesLoading && !messages.length ? (
+              <ChatMessageViewport
+                key={selectedId}
+                ready={messagesConversationId === selectedId}
+                latestMessageId={latestMessage?.id || ""}
+                latestMessageIsMine={!!latestMessage && latestMessage.senderUserId === feed?.currentUserId}
+              >
+                {(messagesLoading || messagesConversationId !== selectedId) && !visibleMessages.length ? (
                   <p className="m-auto text-sm text-muted">Loading messages…</p>
-                ) : !messages.length ? (
+                ) : !visibleMessages.length ? (
                   <div className="m-auto max-w-sm text-center">
                     <p className="font-display text-xl text-bone">
                       Start the conversation
@@ -997,7 +1008,7 @@ function ChatPageInner() {
                     </p>
                   </div>
                 ) : (
-                  messages.map((message) => {
+                  visibleMessages.map((message) => {
                     const brain = message.senderKind === "brain";
                     const mine = !brain && message.senderUserId === feed?.currentUserId;
                     return (
@@ -1052,10 +1063,9 @@ function ChatPageInner() {
                     );
                   })
                 )}
-                <div ref={messageEnd} />
-              </div>
+              </ChatMessageViewport>
 
-              <div className="border-t border-edge bg-panel p-3 sm:p-4">
+              <div className="shrink-0 border-t border-edge bg-panel p-3 sm:p-4">
                 {pendingShare ? (
                   <div className="mb-2 flex items-center gap-3 rounded-lg border border-sky/40 bg-sky/[0.07] p-3">
                     <span className="text-sky">

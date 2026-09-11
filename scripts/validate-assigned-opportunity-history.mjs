@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { PGlite } from '@electric-sql/pglite';
+const db = new PGlite();
+const owner='00000000-0000-4000-8000-000000000001', assignee='00000000-0000-4000-8000-000000000002', stranger='00000000-0000-4000-8000-000000000003', manager='00000000-0000-4000-8000-000000000004';
+await db.exec(`
+create role authenticated;
+create schema auth;
+create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
+grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;
+create table workspace_members(workspace_id text,user_id uuid,role text,status text);
+create table opportunities(id text primary key,company_id text,workspace_id text,owner_id uuid,assigned_to_user_id uuid,visibility text,opportunity_type text,value numeric);
+create table opportunity_events(id serial primary key,opportunity_id text,company_id text,workspace_id text,owner_id uuid,visibility text,value numeric);
+insert into workspace_members values ('one','${owner}','owner','active'),('one','${assignee}','sales','active'),('one','${stranger}','sales','active'),('one','${manager}','manager','active');
+insert into opportunities values ('deal','client','one','${owner}','${assignee}','team','revenue',100),('private','client','one','${owner}','${owner}','private','investment',200),('foreign','other','two','${owner}','${assignee}','team','revenue',300);
+alter table opportunities enable row level security; alter table opportunity_events enable row level security;
+grant select on workspace_members to authenticated; grant select, update on opportunities to authenticated;
+grant select,insert,update,delete on opportunity_events to authenticated; grant usage on sequence opportunity_events_id_seq to authenticated;
+create policy opportunity_read on opportunities for select to authenticated using (exists(select 1 from workspace_members m where m.workspace_id=opportunities.workspace_id and m.user_id=auth.uid() and m.status='active') and (owner_id=auth.uid() or visibility='team'));
+create policy opportunity_update on opportunities for update to authenticated using (owner_id=auth.uid() or visibility='team') with check (owner_id=auth.uid() or visibility='team');
+create policy event_read on opportunity_events for select to authenticated using (true);
+create policy event_owner_insert on opportunity_events for insert to authenticated with check (owner_id=auth.uid() and exists(select 1 from workspace_members m where m.workspace_id=opportunity_events.workspace_id and m.user_id=auth.uid() and m.status='active'));
+create function fixture_log() returns trigger language plpgsql as $$ begin insert into opportunity_events(opportunity_id,company_id,workspace_id,owner_id,visibility,value) values(new.id,new.company_id,new.workspace_id,new.owner_id,new.visibility,new.value); return new; end $$;
+create trigger opportunity_log after update on opportunities for each row execute function fixture_log();
+`);
+const asUser = async (id, query) => {
+ await db.exec(`begin;set local role authenticated;set local "request.jwt.claim.sub"='${id}';`);
+ try { const result=await db.query(query); await db.exec('commit'); return result; } catch(e) { await db.exec('rollback'); throw e; }
+};
+await assert.rejects(asUser(assignee,"update opportunities set value=101 where id='deal' returning value"),e=>e.code==='42501', 'Reproduce assigned edit blocked by history INSERT policy');
+await db.exec(readFileSync(new URL('../supabase/migrations/20260911174652_assigned_opportunity_history.sql', import.meta.url),'utf8'));
+assert.equal((await asUser(assignee,"update opportunities set value=102 where id='deal' returning value")).rows.length,1);
+let events=(await db.query("select * from opportunity_events order by id")).rows;
+assert.equal(events.length,1);assert.equal(events[0].owner_id,owner);assert.equal(events[0].value,'102');
+await assert.rejects(asUser(stranger,"update opportunities set value=999 where id='deal'"),e=>e.code==='42501');
+await assert.rejects(asUser(assignee,`insert into opportunity_events(opportunity_id,company_id,workspace_id,owner_id,visibility) values('deal','client','one','${owner}','team')`),e=>e.code==='42501','A direct INSERT must not impersonate the record owner');
+assert.equal((await asUser(assignee,"update opportunities set value=999 where id='private' returning id")).rows.length,0);
+assert.equal((await asUser(assignee,"update opportunities set value=999 where id='foreign' returning id")).rows.length,0);
+await asUser(manager,"update opportunities set value=103 where id='deal'");
+await asUser(owner,"update opportunities set value=104 where id='deal'");
+await db.exec(`update workspace_members set status='inactive' where user_id='${assignee}'`);
+assert.equal((await asUser(assignee,"update opportunities set value=999 where id='deal' returning id")).rows.length,0);
+assert.equal((await db.query("select value from opportunities where id='deal'")).rows[0].value,'104');
+assert.equal((await db.query("select count(*)::int as count from opportunity_events")).rows[0].count,3);
+console.log('PASS: original failure reproduced; assigned, owner and manager edits save history; other staff, direct owner impersonation, private records, cross-workspace and inactive access remain blocked.');
+await db.close();
