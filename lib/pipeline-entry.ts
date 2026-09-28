@@ -1,6 +1,51 @@
 export const OPEN_PIPELINE_STAGES = ["new", "discovery", "qualified", "proposal", "negotiation", "verbal"] as const;
 export type OpenPipelineStage = typeof OPEN_PIPELINE_STAGES[number];
 
+export const QUALIFIED_PIPELINE_STAGES = [
+  "qualified",
+  "proposal",
+  "negotiation",
+  "verbal",
+  "won",
+] as const;
+
+export const NOT_SUITABLE_OUTCOME = "not_suitable" as const;
+
+export function isQualifiedPipelineStage(stage: unknown): boolean {
+  return QUALIFIED_PIPELINE_STAGES.includes(
+    String(stage || "").trim().toLowerCase() as typeof QUALIFIED_PIPELINE_STAGES[number]
+  );
+}
+
+export function hasRecordedRevenueAmount(value: unknown): boolean {
+  const amount = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim()
+      ? Number(value)
+      : Number.NaN;
+  return Number.isFinite(amount) && amount > 0;
+}
+
+export function opportunityHygieneError(input: {
+  pipelineStage: unknown;
+  value: unknown;
+  outcomeReason?: unknown;
+}): string | null {
+  const stage = String(input.pipelineStage || "").trim().toLowerCase();
+  if (stage === NOT_SUITABLE_OUTCOME) {
+    const reason = typeof input.outcomeReason === "string"
+      ? input.outcomeReason.trim()
+      : "";
+    return reason.length >= 10
+      ? null
+      : "Add a specific reason for marking this opportunity Not suitable so the team can learn from it";
+  }
+  if (isQualifiedPipelineStage(stage) && !hasRecordedRevenueAmount(input.value)) {
+    return "Add a realistic expected revenue amount before moving this opportunity to Qualified or beyond";
+  }
+  return null;
+}
+
 // Blank values stay unknown; only amounts explicitly entered by the user are saved.
 export function parsePipelineEntry(body: unknown):
   | { ok: true; value: number | null; pipelineStage: OpenPipelineStage }
@@ -14,6 +59,8 @@ export function parsePipelineEntry(body: unknown):
   const pipelineStage = input.pipelineStage ?? "new";
   if (!OPEN_PIPELINE_STAGES.includes(pipelineStage as OpenPipelineStage))
     return { ok: false, error: "Choose an open sales stage" };
+  const hygieneError = opportunityHygieneError({ pipelineStage, value });
+  if (hygieneError) return { ok: false, error: hygieneError };
   return { ok: true, value: value as number | null, pipelineStage: pipelineStage as OpenPipelineStage };
 }
 

@@ -12,7 +12,12 @@ import {
 } from "@/lib/opportunity-fields";
 import { crmFetch } from "@/lib/crm";
 import { opportunityMatchesOwner } from "@/lib/opportunity-owner-filter";
-import { summarizePipelineStages } from "@/lib/pipeline-entry";
+import {
+  hasRecordedRevenueAmount,
+  isQualifiedPipelineStage,
+  NOT_SUITABLE_OUTCOME,
+  summarizePipelineStages,
+} from "@/lib/pipeline-entry";
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
 
 type Row = Record<string, any> & {
@@ -37,6 +42,9 @@ type Row = Record<string, any> & {
   deal_intent_source: "human" | "system";
   deal_intent_override: boolean;
   clearDealIntentOverride?: boolean;
+  valueRecorded?: boolean;
+  outcome_reason?: string | null;
+  qualified?: boolean;
 };
 
 type TeamMember = { userId: string; role: string; name: string };
@@ -62,6 +70,7 @@ type Props = {
 const input = "min-h-10 w-full rounded-lg border border-edge bg-ink/70 px-2.5 py-2 text-sm text-bone outline-none focus:border-amber/60";
 const formatLabel = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const gbp = (value: number) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 }).format(value || 0);
+const revenueDisplay = (row: Row) => hasRecordedRevenueAmount(row.value) ? gbp(row.value) : "Revenue needed";
 const dateTime = (value: string | null) => value
   ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Europe/London" }).format(new Date(value))
   : "Not recorded";
@@ -81,6 +90,7 @@ function matchesPipelineFocus(row: Row, focus: string): boolean {
       new Date(row.nextMeetingAt).getTime() <= Date.now() + 3 * 86400000;
   if (focus === "at_risk") return row.win_outlook === "at_risk";
   if (focus === "stalled") return Number(row.daysQuiet) >= 14;
+  if (focus === "missing_value") return !hasRecordedRevenueAmount(row.value);
   if (focus.startsWith("stage:")) return row.pipeline_stage === focus.slice(6);
   return true;
 }
@@ -92,6 +102,7 @@ function pipelineFocusLabel(focus: string): string {
   if (focus === "meetings") return "Deals with meetings in the next three days";
   if (focus === "at_risk") return "At risk deals";
   if (focus === "stalled") return "Deals quiet for 14 days or longer";
+  if (focus === "missing_value") return "Deals that need an expected revenue amount";
   if (focus.startsWith("stage:")) return `${formatLabel(focus.slice(6))} deals`;
   if (focus === "weighted") return "Deals behind the weighted forecast";
   if (focus === "coverage") return "Deals behind pipeline coverage";
@@ -128,6 +139,9 @@ function DealDetails({
   const [history, setHistory] = useState<Record<string, any>[] | null>(null);
   const [historyError, setHistoryError] = useState("");
   const [confirmDismiss, setConfirmDismiss] = useState(false);
+  const notSuitable = row.pipeline_stage === NOT_SUITABLE_OUTCOME;
+  const qualifiedStage = isQualifiedPipelineStage(row.pipeline_stage);
+  const revenueRecorded = hasRecordedRevenueAmount(row.value);
   const loadHistory = async () => {
     if (history) return;
     setHistoryError("");
@@ -147,17 +161,32 @@ function DealDetails({
           This deal belongs to another salesperson. You can see the shared sales position, but only its owner or a manager can change it.
         </p>
       ) : null}
+      {!notSuitable && !revenueRecorded ? (
+        <p className={`rounded-lg border px-3 py-2 text-sm ${qualifiedStage ? "border-rust/45 bg-rust/[0.07] text-rust" : "border-amber/35 bg-amber/[0.06] text-amber"}`}>
+          {qualifiedStage
+            ? "Expected revenue is required at Qualified and later stages. Add the best evidence-based amount before saving this stage."
+            : "Expected revenue has not been recorded. Add the best current estimate so this opportunity can be used in forecasting."}
+        </p>
+      ) : null}
       <fieldset disabled={!canEdit} className="grid gap-4 rounded-xl border border-edge bg-ink/30 p-3 disabled:opacity-65 sm:grid-cols-2 sm:p-4 lg:grid-cols-4">
         <label>
           <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Sales stage</span>
           <select className={input} value={row.pipeline_stage} onChange={(event) => onChange(row.id, { pipeline_stage: event.target.value })}>
-            {[...stageDefinitions, { key: "won", label: "Won" }, { key: "lost", label: "Lost" }].map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}
+            {[...stageDefinitions, { key: "won", label: "Won" }, { key: "lost", label: "Lost" }, { key: NOT_SUITABLE_OUTCOME, label: "Not suitable" }].map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}
           </select>
         </label>
         <label>
-          <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Deal value (£)</span>
-          <input type="number" min="0" step="0.01" className={input} value={Number.isNaN(row.value) ? "" : row.value} onChange={(event) => onChange(row.id, { value: event.target.value === "" ? Number.NaN : Number(event.target.value) })} />
+          <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Expected revenue (£){qualifiedStage ? " · required" : ""}</span>
+          <input type="number" min="0" step="0.01" className={input} value={row.valueRecorded === false ? "" : Number.isFinite(row.value) ? row.value : ""} onChange={(event) => onChange(row.id, { value: event.target.value === "" ? Number.NaN : Number(event.target.value), valueRecorded: hasRecordedRevenueAmount(event.target.value) })} placeholder="Best current estimate" />
         </label>
+
+        {notSuitable ? (
+          <label className="sm:col-span-2">
+            <span className="mb-1 block font-mono text-[0.5rem] uppercase text-rust">Why is this opportunity not suitable</span>
+            <textarea className={`${input} min-h-20 resize-y border-rust/45`} value={row.outcome_reason || ""} onChange={(event) => onChange(row.id, { outcome_reason: event.target.value })} placeholder="Record the specific fit, timing, budget or buyer reason so the team can learn" />
+            <span className="mt-1 block text-xs text-muted">Required. This removes the deal from active pipeline but keeps its history and learning.</span>
+          </label>
+        ) : null}
 
         <label className="lg:col-span-2">
           <span className="mb-1 block font-mono text-[0.5rem] uppercase text-muted">Deal intent</span>
@@ -252,7 +281,7 @@ function DealDetails({
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => onSave(row)} disabled={!!busy || !canEdit} className="min-h-10 rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.57rem] uppercase text-amber disabled:opacity-40">
-            {busy === `opp:${row.id}` ? "Saving…" : "Save confirmed changes"}
+            {busy === `opp:${row.id}` ? "Saving…" : notSuitable ? "Save reason and close" : "Save confirmed changes"}
           </button>
           {!confirmDismiss ? (
             <button type="button" onClick={() => setConfirmDismiss(true)} disabled={!!busy || !canEdit} className="min-h-10 rounded-lg border border-edge px-3 py-2 font-mono text-[0.55rem] uppercase text-muted hover:border-rust/50 hover:text-rust disabled:opacity-40">Remove from pipeline</button>
@@ -380,6 +409,7 @@ export default function PipelineWorkspace(props: Props) {
     meetings: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "meetings")).length,
     atRisk: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "at_risk")).length,
     stalled: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "stalled")).length,
+    missingRevenue: ownerVisibleRows.filter((row) => matchesPipelineFocus(row, "missing_value")).length,
   }), [ownerVisibleRows]);
   const stageTotals = useMemo(() => summarizePipelineStages(
     props.savedRows.filter((row) => opportunityMatchesOwner(row, effectiveOwnerFilter, currentUser)),
@@ -475,12 +505,13 @@ export default function PipelineWorkspace(props: Props) {
         Showing {visibleRows.length} of {ownerVisibleRows.length} open revenue deals · {ownerViewLabel}
       </p>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
         {[
           ["Overdue", stats.overdue, "text-rust", "overdue"],
           ["Meetings soon", stats.meetings, "text-amber", "meetings"],
           ["At risk", stats.atRisk, "text-rust", "at_risk"],
           ["Stalled", stats.stalled, "text-muted", "stalled"],
+          ["Revenue needed", stats.missingRevenue, "text-rust", "missing_value"],
         ].map(([label, value, tone, focus]) => (
           <MetricDrilldown
             key={String(label)}
@@ -506,7 +537,7 @@ export default function PipelineWorkspace(props: Props) {
           <div className="mt-3 space-y-2 md:hidden">
             {tableRows.map((row) => <article key={row.id} className="rounded-xl border border-edge bg-ink/35 p-3">
               <div className="flex items-start justify-between gap-2"><div><Link href={`/crm/${row.company_id}`} className="font-display text-lg text-bone hover:text-amber">{row.company}</Link>{dealThreadBadge(row)}<p className="text-sm text-muted">{row.title}</p></div><OutlookBadge row={row} /></div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Stage</span><strong className="text-bone">{formatLabel(row.pipeline_stage)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Value</span><strong className="text-bone">{gbp(row.value)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Owner</span><strong className="text-bone">{ownerName(row)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Motion</span><strong className="text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Date added</span><strong className="text-bone">{dateTime(row.created_at)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Last activity</span><strong className="text-bone">{dateTime(row.lastMeaningfulActivityAt)}</strong></div></div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Stage</span><strong className="text-bone">{formatLabel(row.pipeline_stage)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Value</span><strong className={hasRecordedRevenueAmount(row.value) ? "text-bone" : "text-rust"}>{revenueDisplay(row)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Owner</span><strong className="text-bone">{ownerName(row)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Motion</span><strong className="text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Date added</span><strong className="text-bone">{dateTime(row.created_at)}</strong></div><div><span className="block font-mono text-[0.48rem] uppercase text-muted">Last activity</span><strong className="text-bone">{dateTime(row.lastMeaningfulActivityAt)}</strong></div></div>
               <p className="mt-3 rounded-lg border border-amber/25 bg-amber/[0.05] p-2 text-sm text-amber">{row.next_action || row.nextAction}</p>
               {editorButton(row)}
             </article>)}
@@ -524,7 +555,7 @@ export default function PipelineWorkspace(props: Props) {
             ) : null}
             <table className="w-full min-w-[1180px] border-separate border-spacing-y-2 text-left">
               <thead><tr className="font-mono text-[0.5rem] uppercase text-muted"><th className="px-2">Deal</th><th className="px-2">Owner</th><th className="px-2">Stage</th><th className="px-2">Win outlook</th><th className="px-2">Value</th><th className="px-2">Engagement</th><th aria-sort={tableOrder === "newest" ? "descending" : tableOrder === "oldest" ? "ascending" : "none"} className="px-2"><button type="button" onClick={() => setTableOrder((current) => current === "newest" ? "oldest" : "newest")} className="transition hover:text-amber">Date added{tableOrder === "newest" ? " ↓" : tableOrder === "oldest" ? " ↑" : " ↕"}</button></th><th aria-sort={tableOrder === "activity_newest" ? "descending" : tableOrder === "activity_oldest" ? "ascending" : "none"} className="px-2"><button type="button" onClick={() => setTableOrder((current) => current === "activity_newest" ? "activity_oldest" : "activity_newest")} className="transition hover:text-amber">Last activity{tableOrder === "activity_newest" ? " ↓" : tableOrder === "activity_oldest" ? " ↑" : " ↕"}</button></th><th className="px-2">Next action</th></tr></thead>
-              <tbody>{tableRows.map((row) => <tr key={row.id} className="align-top [&>td]:border-y [&>td]:border-edge [&>td]:bg-ink/35 [&>td]:p-2 first:[&>td]:rounded-l-lg last:[&>td]:rounded-r-lg"><td className="w-52 border-l"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><p className="max-w-52 text-xs text-muted">{row.title}</p>{row.priorityReasons?.length ? <p className="mt-1 text-[0.67rem] text-amber">{row.priorityReasons.slice(0, 2).join(" · ")}</p> : null}</td><td className="text-xs text-bone">{ownerName(row)}</td><td><span className="text-sm text-bone">{formatLabel(row.pipeline_stage)}</span></td><td><OutlookBadge row={row} /></td><td className="text-sm text-bone">{gbp(row.value)}</td><td className="max-w-36 text-xs text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}<span className="mt-1 block text-muted">{row.active_contact_method ? formatLabel(row.active_contact_method) : "Method not set"}</span></td><td className="whitespace-nowrap text-xs text-bone">{dateTime(row.created_at)}</td><td className="text-xs text-bone">{dateTime(row.lastMeaningfulActivityAt)}{row.nextMeetingAt ? <span className="mt-1 block text-amber">Meeting {dateTime(row.nextMeetingAt)}</span> : null}</td><td className="w-72"><p className="text-sm text-amber">{row.next_action || row.nextAction}</p><p className="mt-1 text-xs text-muted">{row.next_action_due_at ? `Due ${dateTime(row.next_action_due_at)}` : "No due date"}</p>{editorButton(row)}</td></tr>)}</tbody>
+              <tbody>{tableRows.map((row) => <tr key={row.id} className="align-top [&>td]:border-y [&>td]:border-edge [&>td]:bg-ink/35 [&>td]:p-2 first:[&>td]:rounded-l-lg last:[&>td]:rounded-r-lg"><td className="w-52 border-l"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><p className="max-w-52 text-xs text-muted">{row.title}</p>{row.priorityReasons?.length ? <p className="mt-1 text-[0.67rem] text-amber">{row.priorityReasons.slice(0, 2).join(" · ")}</p> : null}</td><td className="text-xs text-bone">{ownerName(row)}</td><td><span className="text-sm text-bone">{formatLabel(row.pipeline_stage)}</span></td><td><OutlookBadge row={row} /></td><td className={`text-sm ${hasRecordedRevenueAmount(row.value) ? "text-bone" : "font-semibold text-rust"}`}>{revenueDisplay(row)}</td><td className="max-w-36 text-xs text-bone">{row.engagement_motion ? formatLabel(row.engagement_motion) : "Not set"}<span className="mt-1 block text-muted">{row.active_contact_method ? formatLabel(row.active_contact_method) : "Method not set"}</span></td><td className="whitespace-nowrap text-xs text-bone">{dateTime(row.created_at)}</td><td className="text-xs text-bone">{dateTime(row.lastMeaningfulActivityAt)}{row.nextMeetingAt ? <span className="mt-1 block text-amber">Meeting {dateTime(row.nextMeetingAt)}</span> : null}</td><td className="w-72"><p className="text-sm text-amber">{row.next_action || row.nextAction}</p><p className="mt-1 text-xs text-muted">{row.next_action_due_at ? `Due ${dateTime(row.next_action_due_at)}` : "No due date"}</p>{editorButton(row)}</td></tr>)}</tbody>
             </table>
           </div>
         </>
@@ -532,7 +563,7 @@ export default function PipelineWorkspace(props: Props) {
         <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
           {stageDefinitions.filter((stage) => !["won", "lost"].includes(stage.key)).map((stage) => {
             const members = visibleRows.filter((row) => row.pipeline_stage === stage.key);
-            return <section key={stage.key} className="w-[280px] shrink-0 rounded-xl border border-edge bg-ink/30 p-2.5"><div className="mb-2 flex items-center justify-between"><h3 className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</h3><span className="rounded-full bg-panel px-2 py-1 text-xs text-muted">{members.length} deals</span></div><p className="mb-2 text-sm text-amber">{gbp(members.reduce((sum, row) => sum + (Number(row.value) || 0), 0))}</p><div className="space-y-2">{members.length ? members.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-panel p-3"><div className="flex items-start justify-between gap-2"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><span className="text-xs text-muted">{gbp(row.value)}</span></div><p className="mt-1 text-xs text-muted">{row.title}</p><p className="mt-1 font-mono text-[0.48rem] uppercase text-sky">{ownerName(row)}</p><p className="mt-1 font-mono text-[0.46rem] uppercase text-muted">Added {dateTime(row.created_at)}</p><div className="mt-2"><OutlookBadge row={row} /></div><p className="mt-2 text-sm text-amber">{row.next_action || row.nextAction}</p>{row.next_action_due_at ? <p className="mt-1 text-xs text-muted">Due {dateTime(row.next_action_due_at)}</p> : null}{editorButton(row)}</article>) : <p className="rounded-lg border border-dashed border-edge p-3 text-center text-xs text-muted">No deals</p>}</div></section>;
+            return <section key={stage.key} className="w-[280px] shrink-0 rounded-xl border border-edge bg-ink/30 p-2.5"><div className="mb-2 flex items-center justify-between"><h3 className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</h3><span className="rounded-full bg-panel px-2 py-1 text-xs text-muted">{members.length} deals</span></div><p className="mb-2 text-sm text-amber">{gbp(members.reduce((sum, row) => sum + (Number(row.value) || 0), 0))}</p><div className="space-y-2">{members.length ? members.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-panel p-3"><div className="flex items-start justify-between gap-2"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><span className={`text-xs ${hasRecordedRevenueAmount(row.value) ? "text-muted" : "font-semibold text-rust"}`}>{revenueDisplay(row)}</span></div><p className="mt-1 text-xs text-muted">{row.title}</p><p className="mt-1 font-mono text-[0.48rem] uppercase text-sky">{ownerName(row)}</p><p className="mt-1 font-mono text-[0.46rem] uppercase text-muted">Added {dateTime(row.created_at)}</p><div className="mt-2"><OutlookBadge row={row} /></div><p className="mt-2 text-sm text-amber">{row.next_action || row.nextAction}</p>{row.next_action_due_at ? <p className="mt-1 text-xs text-muted">Due {dateTime(row.next_action_due_at)}</p> : null}{editorButton(row)}</article>) : <p className="rounded-lg border border-dashed border-edge p-3 text-center text-xs text-muted">No deals</p>}</div></section>;
           })}
         </div>
       )}
@@ -572,7 +603,7 @@ export default function PipelineWorkspace(props: Props) {
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
                   <span>{formatLabel(editorRow.pipeline_stage)}</span>
                   <OutlookBadge row={editorRow} />
-                  <strong className="text-bone">{gbp(editorRow.value)}</strong>
+                  <strong className={hasRecordedRevenueAmount(editorRow.value) ? "text-bone" : "text-rust"}>{revenueDisplay(editorRow)}</strong>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">

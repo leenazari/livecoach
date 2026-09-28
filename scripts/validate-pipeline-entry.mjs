@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { parsePipelineEntry, pipelineStatusForStage, summarizePipelineStages, OPEN_PIPELINE_STAGES } from "../lib/pipeline-entry.ts";
+import {
+  hasRecordedRevenueAmount,
+  isQualifiedPipelineStage,
+  NOT_SUITABLE_OUTCOME,
+  opportunityHygieneError,
+  parsePipelineEntry,
+  pipelineStatusForStage,
+  summarizePipelineStages,
+  OPEN_PIPELINE_STAGES,
+} from "../lib/pipeline-entry.ts";
 import { opportunityMatchesOwner } from "../lib/opportunity-owner-filter.ts";
 import { activeCompanyPipelineExclusion } from "../lib/company-pipeline-exclusion.ts";
 
 assert.deepEqual(parsePipelineEntry({}), { ok: true, value: null, pipelineStage: "new" });
-assert.deepEqual(parsePipelineEntry({ value: 0, pipelineStage: "proposal" }), { ok: true, value: 0, pipelineStage: "proposal" });
+assert.equal(parsePipelineEntry({ value: 0, pipelineStage: "proposal" }).ok, false);
+assert.deepEqual(parsePipelineEntry({ value: 12000, pipelineStage: "proposal" }), { ok: true, value: 12000, pipelineStage: "proposal" });
 assert.equal(parsePipelineEntry({ value: 12450.75 }).value, 12450.75);
 for (const value of [-1, Infinity, NaN, "1000", {}, true]) assert.equal(parsePipelineEntry({ value }).ok, false);
 for (const pipelineStage of ["won", "lost", "invented", false]) assert.equal(parsePipelineEntry({ pipelineStage }).ok, false);
@@ -14,6 +24,18 @@ for (const input of [null, [], "bad"]) assert.equal(parsePipelineEntry(input).ok
 assert.equal(pipelineStatusForStage("won"), "won");
 assert.equal(pipelineStatusForStage("lost"), "lost");
 for (const stage of OPEN_PIPELINE_STAGES) assert.equal(pipelineStatusForStage(stage), "open");
+for (const stage of ["qualified", "proposal", "negotiation", "verbal", "won"])
+  assert.equal(isQualifiedPipelineStage(stage), true);
+for (const stage of ["new", "discovery", "lost", NOT_SUITABLE_OUTCOME, ""])
+  assert.equal(isQualifiedPipelineStage(stage), false);
+assert.equal(hasRecordedRevenueAmount(1250), true);
+assert.equal(hasRecordedRevenueAmount("1250"), true);
+for (const value of [null, undefined, "", 0, -5, Number.NaN])
+  assert.equal(hasRecordedRevenueAmount(value), false);
+assert.match(opportunityHygieneError({ pipelineStage: "qualified", value: null }), /revenue amount/i);
+assert.equal(opportunityHygieneError({ pipelineStage: "proposal", value: 5000 }), null);
+assert.match(opportunityHygieneError({ pipelineStage: NOT_SUITABLE_OUTCOME, value: null, outcomeReason: "Too short" }), /specific reason/i);
+assert.equal(opportunityHygieneError({ pipelineStage: NOT_SUITABLE_OUTCOME, value: null, outcomeReason: "No active recruitment requirement this year" }), null);
 
 const stages = OPEN_PIPELINE_STAGES.map((key) => ({ key, label: key }));
 const rows = [

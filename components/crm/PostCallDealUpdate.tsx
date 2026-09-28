@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { crmFetch } from "@/lib/crm";
+import {
+  NOT_SUITABLE_OUTCOME,
+  opportunityHygieneError,
+} from "@/lib/pipeline-entry";
 
 type Opportunity = Record<string, any>;
 type DealData = {
@@ -13,7 +17,7 @@ type DealData = {
 
 const probabilityByStage: Record<string, number> = {
   new: 10, discovery: 20, qualified: 40, proposal: 60,
-  negotiation: 75, verbal: 90, won: 100, lost: 0,
+  negotiation: 75, verbal: 90, won: 100, lost: 0, not_suitable: 0,
 };
 const input = "min-h-11 w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 text-sm text-bone outline-none focus:border-amber/60";
 
@@ -27,6 +31,7 @@ export default function PostCallDealUpdate({ callId, embedded = false }: { callI
   const [nextAction, setNextAction] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [owner, setOwner] = useState("us");
+  const [outcomeReason, setOutcomeReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -40,6 +45,7 @@ export default function PostCallDealUpdate({ callId, embedded = false }: { callI
     setNextAction(opportunity?.next_action || suggestion || "");
     setDueAt(opportunity?.next_action_due_at?.slice(0, 10) || "");
     setOwner(opportunity?.next_action_owner || "us");
+    setOutcomeReason("");
   };
 
   useEffect(() => {
@@ -56,6 +62,12 @@ export default function PostCallDealUpdate({ callId, embedded = false }: { callI
   const save = async () => {
     setBusy(true); setError(""); setNotice("");
     try {
+      const hygieneError = opportunityHygieneError({
+        pipelineStage: stage,
+        value,
+        outcomeReason,
+      });
+      if (hygieneError) throw new Error(hygieneError);
       const result = await crmFetch<{ opportunity: Opportunity }>(`/api/crm/calls/${callId}/commercial-update`, {
         method: "POST",
         body: JSON.stringify({
@@ -67,10 +79,12 @@ export default function PostCallDealUpdate({ callId, embedded = false }: { callI
           nextAction,
           nextActionDueAt: dueAt || null,
           nextActionOwner: owner,
+          outcomeDisposition: stage === NOT_SUITABLE_OUTCOME ? NOT_SUITABLE_OUTCOME : undefined,
+          outcomeReason: stage === NOT_SUITABLE_OUTCOME ? outcomeReason : undefined,
         }),
       });
       setOpportunityId(result.opportunity.id);
-      setNotice(stage === "won" ? "Deal marked won." : stage === "lost" ? "Deal closed as lost." : "Deal and next action saved.");
+      setNotice(stage === NOT_SUITABLE_OUTCOME ? "Opportunity closed as Not suitable and the reason was saved." : stage === "won" ? "Deal marked won." : stage === "lost" ? "Deal closed as lost." : "Deal and next action saved.");
       window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
     } catch (e: any) {
       setError(e.message || "That update did not save");
@@ -96,12 +110,14 @@ export default function PostCallDealUpdate({ callId, embedded = false }: { callI
       {!opportunityId ? <label className="mb-2 block"><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Deal name</span><input className={input} value={title} onChange={(event) => setTitle(event.target.value)} /></label> : null}
 
       <div className="grid gap-2 sm:grid-cols-3">
-        <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Stage after this call</span><select className={input} value={stage} onChange={(event) => { const next = event.target.value; setStage(next); setProbability(probabilityByStage[next]); }}><option value="new">New</option><option value="discovery">Discovery</option><option value="qualified">Qualified</option><option value="proposal">Proposal</option><option value="negotiation">Negotiation</option><option value="verbal">Verbal yes</option><option value="won">Won</option><option value="lost">Lost</option></select></label>
+        <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Stage after this call</span><select className={input} value={stage} onChange={(event) => { const next = event.target.value; setStage(next); setProbability(probabilityByStage[next]); }}><option value="new">New</option><option value="discovery">Discovery</option><option value="qualified">Qualified</option><option value="proposal">Proposal</option><option value="negotiation">Negotiation</option><option value="verbal">Verbal yes</option><option value="won">Won</option><option value="lost">Lost</option><option value={NOT_SUITABLE_OUTCOME}>Not suitable</option></select></label>
         <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Probability %</span><input type="number" min="0" max="100" className={input} value={Number.isNaN(probability) ? "" : probability} onChange={(event) => setProbability(event.target.value === "" ? Number.NaN : Number(event.target.value))} /></label>
-        <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Deal value £</span><input type="number" min="0" step="100" className={input} value={Number.isNaN(value) ? "" : value} onChange={(event) => setValue(event.target.value === "" ? Number.NaN : Number(event.target.value))} placeholder="0" /></label>
+        <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Expected revenue £</span><input type="number" min="0" step="100" className={input} value={Number.isNaN(value) ? "" : value} onChange={(event) => setValue(event.target.value === "" ? Number.NaN : Number(event.target.value))} placeholder="Best evidence-based estimate" /></label>
       </div>
 
-      {stage !== "won" && stage !== "lost" ? <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_9rem]">
+      {stage === NOT_SUITABLE_OUTCOME ? <label className="mt-2 block"><span className="mb-1 block font-mono text-[0.52rem] uppercase text-rust">Why is this opportunity not suitable</span><textarea className={`${input} min-h-24 resize-y border-rust/45`} value={outcomeReason} onChange={(event) => setOutcomeReason(event.target.value)} placeholder="Record the specific fit, timing, budget or buyer reason so the team can learn" /><span className="mt-1 block text-xs text-muted">Required. The closed record and reason stay available for future analysis.</span></label> : null}
+
+      {stage !== "won" && stage !== "lost" && stage !== NOT_SUITABLE_OUTCOME ? <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_9rem]">
         <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-amber">Primary next action</span><input className={input} value={nextAction} onChange={(event) => setNextAction(event.target.value)} placeholder="The one action that moves this forward" /></label>
         <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Due</span><input type="date" className={input} value={dueAt} onChange={(event) => setDueAt(event.target.value)} /></label>
         <label><span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">Owner</span><select className={input} value={owner} onChange={(event) => setOwner(event.target.value)}><option value="us">Us</option><option value="buyer">Buyer</option><option value="joint">Joint</option></select></label>
@@ -109,7 +125,7 @@ export default function PostCallDealUpdate({ callId, embedded = false }: { callI
 
       {error ? <p className="mt-2 text-sm text-rust">{error}</p> : null}
       {notice ? <p className="mt-2 text-sm text-sage">{notice}</p> : null}
-      <button type="button" onClick={save} disabled={busy || (!opportunityId && !title.trim())} className="mt-3 min-h-11 w-full rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-amber disabled:opacity-40 sm:w-auto">{busy ? "Saving…" : stage === "won" ? "Save as won" : stage === "lost" ? "Close as lost" : "Save deal and next action"}</button>
+      <button type="button" onClick={save} disabled={busy || (!opportunityId && !title.trim())} className="mt-3 min-h-11 w-full rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.6rem] uppercase tracking-wider text-amber disabled:opacity-40 sm:w-auto">{busy ? "Saving…" : stage === NOT_SUITABLE_OUTCOME ? "Save reason and close" : stage === "won" ? "Save as won" : stage === "lost" ? "Close as lost" : "Save deal and next action"}</button>
     </section>
   );
 }

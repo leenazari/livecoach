@@ -6,7 +6,12 @@ import NavMenu from "@/components/crm/NavMenu";
 import { crmConfirmationError, crmFetch, getCached } from "@/lib/crm";
 import MatrixRain from "@/components/MatrixRain";
 import NewPipelineOpportunity from "@/components/crm/NewPipelineOpportunity";
-import { pipelineStatusForStage } from "@/lib/pipeline-entry";
+import {
+  hasRecordedRevenueAmount,
+  NOT_SUITABLE_OUTCOME,
+  opportunityHygieneError,
+  pipelineStatusForStage,
+} from "@/lib/pipeline-entry";
 import PipelineWorkspace from "@/components/crm/PipelineWorkspace";
 import OutlookIntelligencePanel, { type SignalHealth } from "@/components/crm/OutlookIntelligencePanel";
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
@@ -42,6 +47,9 @@ type Opportunity = Record<string, any> & {
   engagement_motion: string | null;
   active_contact_method: string | null;
   assigned_to_user_id: string | null;
+  valueRecorded?: boolean;
+  outcome_reason?: string | null;
+  qualified?: boolean;
 };
 
 const input = "min-h-11 w-full rounded-lg border border-edge bg-ink/60 px-3 py-2.5 text-sm text-bone outline-none focus:border-amber/60";
@@ -76,6 +84,7 @@ const REVENUE_VIEWS = new Set([
   "meetings",
   "at_risk",
   "stalled",
+  "missing_value",
   "strategic",
   "internal",
   "investment",
@@ -100,6 +109,7 @@ function editableOpportunityRows(next: Pipeline | null): Opportunity[] {
       // Put the deterministic suggestion into editable state. Pressing Save
       // deal therefore confirms exactly what the user can see.
       next_action: row.next_action ?? row.nextAction ?? "",
+      valueRecorded: row.valueRecorded ?? hasRecordedRevenueAmount(row.value),
     })
   );
 }
@@ -164,13 +174,31 @@ export default function RevenuePage() {
   const saveOpportunity = async (row: Opportunity) => {
     setBusy(`opp:${row.id}`); setError(""); setNotice("");
     try {
+      const original = [...(data?.opportunities || []), ...(data?.excludedOpportunities || [])]
+        .find((item: Opportunity) => item.id === row.id) as Opportunity | undefined;
+      const hygieneApplies =
+        row.pipeline_stage === NOT_SUITABLE_OUTCOME ||
+        !original ||
+        original.pipeline_stage !== row.pipeline_stage ||
+        (hasRecordedRevenueAmount(original.value) && !hasRecordedRevenueAmount(row.value));
+      const hygieneError = hygieneApplies
+        ? opportunityHygieneError({
+            pipelineStage: row.pipeline_stage,
+            value: row.value,
+            outcomeReason: row.outcome_reason,
+          })
+        : null;
+      if (hygieneError) throw new Error(hygieneError);
       if (Number.isFinite(row.value) && row.value < 0) throw new Error("Deal value cannot be negative");
+      const notSuitable = row.pipeline_stage === NOT_SUITABLE_OUTCOME;
       const { opportunity: saved } = await crmFetch<{ opportunity: Opportunity }>(`/api/crm/opportunities/${row.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          value: Number.isFinite(row.value) ? row.value : null,
-          status: pipelineStatusForStage(row.pipeline_stage),
-          pipelineStage: row.pipeline_stage,
+          value: hasRecordedRevenueAmount(row.value) ? row.value : null,
+          status: notSuitable ? "dismissed" : pipelineStatusForStage(row.pipeline_stage),
+          pipelineStage: notSuitable ? undefined : row.pipeline_stage,
+          outcomeDisposition: notSuitable ? NOT_SUITABLE_OUTCOME : undefined,
+          outcomeReason: notSuitable ? row.outcome_reason : undefined,
           probability: Number(row.probability) || 0,
           forecastCategory: row.forecast_category,
           opportunityType: row.opportunity_type,
@@ -198,7 +226,9 @@ export default function RevenuePage() {
           method: "PATCH",
           reason: "LiveCoach did not return the saved forecast",
         });
-      setNotice(`${row.company} opportunity saved.`);
+      setNotice(notSuitable
+        ? `${row.company} was marked Not suitable and the reason was saved for future learning.`
+        : `${row.company} opportunity saved.`);
       await load();
       // Keep the exact confirmed row authoritative even if the aggregate read
       // briefly reaches an older database snapshot.
