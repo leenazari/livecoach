@@ -240,7 +240,11 @@ export default function RevenuePage() {
         nextAction: saved.next_action || item.nextAction,
         weightedValue: (Number(saved.value) || 0) * (Number(saved.probability) || 0) / 100,
       } : item));
-    } catch (e: any) { setError(e.message || "That opportunity did not save"); }
+      return true;
+    } catch (e: any) {
+      setError(e.message || "That opportunity did not save");
+      return false;
+    }
     finally { setBusy(""); }
   };
 

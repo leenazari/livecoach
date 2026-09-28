@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   CONTACT_METHODS,
@@ -16,6 +16,7 @@ import {
   hasRecordedRevenueAmount,
   isQualifiedPipelineStage,
   NOT_SUITABLE_OUTCOME,
+  opportunityHygieneError,
   summarizePipelineStages,
 } from "@/lib/pipeline-entry";
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
@@ -61,7 +62,7 @@ type Props = {
   onOwnerFilterChange: (value: string) => void;
   busy: string;
   onChange: (id: string, patch: Partial<Row>) => void;
-  onSave: (row: Row) => void;
+  onSave: (row: Row) => boolean | Promise<boolean>;
   onDismiss: (row: Row) => void;
   focus?: string;
   onFocusChange?: (value: string) => void;
@@ -315,6 +316,8 @@ export default function PipelineWorkspace(props: Props) {
     canManageAssignments,
     ownerFilter,
     onOwnerFilterChange,
+    busy,
+    onSave,
   } = props;
   const [localFocus, setLocalFocus] = useState("all");
   const activeFocus = props.focus ?? localFocus;
@@ -333,6 +336,17 @@ export default function PipelineWorkspace(props: Props) {
     "priority" | "newest" | "oldest" | "activity_newest" | "activity_oldest"
   >("priority");
   const [editorRowId, setEditorRowId] = useState("");
+  const [draggedRowId, setDraggedRowId] = useState("");
+  const [dropStage, setDropStage] = useState("");
+  const [stageMoveMessage, setStageMoveMessage] = useState<{
+    tone: "success" | "error";
+    text: string;
+  } | null>(null);
+  const [stageMovePrompt, setStageMovePrompt] = useState<{
+    rowId: string;
+    targetStage: string;
+    message: string;
+  } | null>(null);
   const editorRow = useMemo(
     () => rows.find((row) => row.id === editorRowId) || null,
     [editorRowId, rows]
@@ -344,7 +358,10 @@ export default function PipelineWorkspace(props: Props) {
     if (!editorRowId) return;
     const previousOverflow = document.body.style.overflow;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setEditorRowId("");
+      if (event.key === "Escape") {
+        setEditorRowId("");
+        setStageMovePrompt(null);
+      }
     };
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", closeOnEscape);
@@ -420,10 +437,76 @@ export default function PipelineWorkspace(props: Props) {
     row.owner_id === currentUser ||
     !row.assigned_to_user_id ||
     row.assigned_to_user_id === currentUser;
+  const moveDealToStage = async (row: Row, targetStage: string) => {
+    setDropStage("");
+    setDraggedRowId("");
+    setStageMoveMessage(null);
+    if (row.pipeline_stage === targetStage) return;
+    if (!canEditDeal(row)) {
+      setStageMoveMessage({
+        tone: "error",
+        text: `Only ${ownerName(row).toLowerCase()} or a manager can move ${row.company}.`,
+      });
+      return;
+    }
+    const hygieneError = opportunityHygieneError({
+      pipelineStage: targetStage,
+      value: row.value,
+      outcomeReason: row.outcome_reason,
+    });
+    if (hygieneError) {
+      setStageMovePrompt({
+        rowId: row.id,
+        targetStage,
+        message: `Add expected revenue before moving this opportunity to ${formatLabel(targetStage)}.`,
+      });
+      setEditorRowId(row.id);
+      return;
+    }
+    const saved = await onSave({ ...row, pipeline_stage: targetStage });
+    setStageMoveMessage(saved
+      ? { tone: "success", text: `${row.company} moved to ${formatLabel(targetStage)}.` }
+      : { tone: "error", text: `${row.company} could not be moved. Review the save error and try again.` });
+  };
+  const beginDrag = (event: DragEvent<HTMLElement>, row: Row) => {
+    if (!canEditDeal(row) || !!busy) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", row.id);
+    setStageMoveMessage(null);
+    setDraggedRowId(row.id);
+  };
+  const allowStageDrop = (event: DragEvent<HTMLElement>, stage: string) => {
+    if (!draggedRowId || !!busy) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (dropStage !== stage) setDropStage(stage);
+  };
+  const dropOnStage = async (event: DragEvent<HTMLElement>, stage: string) => {
+    event.preventDefault();
+    const rowId = event.dataTransfer.getData("text/plain") || draggedRowId;
+    const row = rows.find((candidate) => candidate.id === rowId);
+    if (!row) {
+      setDropStage("");
+      setDraggedRowId("");
+      return;
+    }
+    await moveDealToStage(row, stage);
+  };
+  const saveEditedDeal = async (row: Row) => {
+    const saved = await onSave(row);
+    if (saved) setStageMovePrompt(null);
+    return saved;
+  };
   const editorButton = (row: Row) => (
     <button
       type="button"
-      onClick={() => setEditorRowId(row.id)}
+      onClick={() => {
+        setStageMovePrompt(null);
+        setEditorRowId(row.id);
+      }}
       aria-haspopup="dialog"
       className="mt-2 flex min-h-10 w-full items-center justify-between gap-3 rounded-lg border border-edge bg-panel/60 px-3 py-2 text-left font-mono text-[0.52rem] uppercase tracking-wider text-amber transition hover:border-amber/55 hover:bg-amber/[0.08]"
     >
@@ -444,7 +527,7 @@ export default function PipelineWorkspace(props: Props) {
         <div>
           <p className="font-mono text-[0.55rem] uppercase tracking-widest text-amber">Sales pipeline</p>
           <h2 className="mt-1 font-display text-xl text-bone">Your opportunities</h2>
-          <p className="mt-1 text-sm text-muted">Choose Edit opportunity to change the sales stage or deal value, then Save changes.</p>
+          <p className="mt-1 text-sm text-muted">Use Kanban to drag editable opportunities between stages. Use Edit opportunity for revenue, evidence and mobile stage changes.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <select
@@ -532,6 +615,15 @@ export default function PipelineWorkspace(props: Props) {
         </div>
       ) : null}
 
+      {stageMoveMessage ? (
+        <p
+          role={stageMoveMessage.tone === "error" ? "alert" : "status"}
+          className={`mt-3 rounded-lg border px-3 py-2 text-sm ${stageMoveMessage.tone === "error" ? "border-rust/45 bg-rust/[0.07] text-rust" : "border-moss/45 bg-moss/[0.08] text-moss"}`}
+        >
+          {stageMoveMessage.text}
+        </p>
+      ) : null}
+
       {view === "table" ? (
         <>
           <div className="mt-3 space-y-2 md:hidden">
@@ -560,11 +652,65 @@ export default function PipelineWorkspace(props: Props) {
           </div>
         </>
       ) : (
-        <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
-          {stageDefinitions.filter((stage) => !["won", "lost"].includes(stage.key)).map((stage) => {
-            const members = visibleRows.filter((row) => row.pipeline_stage === stage.key);
-            return <section key={stage.key} className="w-[280px] shrink-0 rounded-xl border border-edge bg-ink/30 p-2.5"><div className="mb-2 flex items-center justify-between"><h3 className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</h3><span className="rounded-full bg-panel px-2 py-1 text-xs text-muted">{members.length} deals</span></div><p className="mb-2 text-sm text-amber">{gbp(members.reduce((sum, row) => sum + (Number(row.value) || 0), 0))}</p><div className="space-y-2">{members.length ? members.map((row) => <article key={row.id} className="rounded-lg border border-edge bg-panel p-3"><div className="flex items-start justify-between gap-2"><Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link><span className={`text-xs ${hasRecordedRevenueAmount(row.value) ? "text-muted" : "font-semibold text-rust"}`}>{revenueDisplay(row)}</span></div><p className="mt-1 text-xs text-muted">{row.title}</p><p className="mt-1 font-mono text-[0.48rem] uppercase text-sky">{ownerName(row)}</p><p className="mt-1 font-mono text-[0.46rem] uppercase text-muted">Added {dateTime(row.created_at)}</p><div className="mt-2"><OutlookBadge row={row} /></div><p className="mt-2 text-sm text-amber">{row.next_action || row.nextAction}</p>{row.next_action_due_at ? <p className="mt-1 text-xs text-muted">Due {dateTime(row.next_action_due_at)}</p> : null}{editorButton(row)}</article>) : <p className="rounded-lg border border-dashed border-edge p-3 text-center text-xs text-muted">No deals</p>}</div></section>;
-          })}
+        <div className="mt-3">
+          <p className="mb-2 text-xs text-muted">Drag an editable card into another stage. On touch devices, open the opportunity and choose its stage.</p>
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {stageDefinitions.filter((stage) => !["won", "lost"].includes(stage.key)).map((stage) => {
+              const members = visibleRows.filter((row) => row.pipeline_stage === stage.key);
+              const activeDropTarget = dropStage === stage.key && !!draggedRowId;
+              return (
+                <section
+                  key={stage.key}
+                  aria-label={`${stage.label} stage. Drop an editable opportunity here to move it.`}
+                  onDragOver={(event) => allowStageDrop(event, stage.key)}
+                  onDrop={(event) => void dropOnStage(event, stage.key)}
+                  className={`w-[280px] shrink-0 rounded-xl border p-2.5 transition ${activeDropTarget ? "border-amber bg-amber/[0.10] shadow-[0_0_0_2px_rgba(217,163,95,0.18)]" : "border-edge bg-ink/30"}`}
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <h3 className="font-mono text-[0.58rem] uppercase text-bone">{stage.label}</h3>
+                    <span className="rounded-full bg-panel px-2 py-1 text-xs text-muted">{members.length} deals</span>
+                  </div>
+                  <p className="mb-2 text-sm text-amber">{gbp(members.reduce((sum, row) => sum + (Number(row.value) || 0), 0))}</p>
+                  {activeDropTarget ? <p className="mb-2 rounded-lg border border-amber/45 bg-amber/[0.10] px-2 py-1.5 text-center text-xs text-amber">Drop to move here</p> : null}
+                  <div className="min-h-28 space-y-2">
+                    {members.length ? members.map((row) => {
+                      const editable = canEditDeal(row);
+                      const dragging = draggedRowId === row.id;
+                      return (
+                        <article
+                          key={row.id}
+                          draggable={editable && !busy}
+                          onDragStart={(event) => beginDrag(event, row)}
+                          onDragEnd={() => {
+                            setDraggedRowId("");
+                            setDropStage("");
+                          }}
+                          aria-busy={busy === `opp:${row.id}`}
+                          className={`rounded-lg border bg-panel p-3 transition ${editable ? "cursor-grab active:cursor-grabbing" : "cursor-default"} ${dragging ? "border-amber/70 opacity-55" : "border-edge"}`}
+                        >
+                          <div className="mb-2 flex items-center justify-between gap-2 font-mono text-[0.46rem] uppercase text-muted">
+                            <span>{editable ? "⋮⋮ Drag card" : "View only"}</span>
+                            {busy === `opp:${row.id}` ? <span className="text-amber">Saving…</span> : null}
+                          </div>
+                          <div className="flex items-start justify-between gap-2">
+                            <Link href={`/crm/${row.company_id}`} className="font-display text-bone hover:text-amber">{row.company}</Link>
+                            <span className={`text-xs ${hasRecordedRevenueAmount(row.value) ? "text-muted" : "font-semibold text-rust"}`}>{revenueDisplay(row)}</span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted">{row.title}</p>
+                          <p className="mt-1 font-mono text-[0.48rem] uppercase text-sky">{ownerName(row)}</p>
+                          <p className="mt-1 font-mono text-[0.46rem] uppercase text-muted">Added {dateTime(row.created_at)}</p>
+                          <div className="mt-2"><OutlookBadge row={row} /></div>
+                          <p className="mt-2 text-sm text-amber">{row.next_action || row.nextAction}</p>
+                          {row.next_action_due_at ? <p className="mt-1 text-xs text-muted">Due {dateTime(row.next_action_due_at)}</p> : null}
+                          {editorButton(row)}
+                        </article>
+                      );
+                    }) : <p className="rounded-lg border border-dashed border-edge p-3 text-center text-xs text-muted">No deals. Drop one here.</p>}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
         </div>
       )}
       {!visibleRows.length ? (
@@ -579,7 +725,10 @@ export default function PipelineWorkspace(props: Props) {
           <button
             type="button"
             aria-label="Close deal workspace"
-            onClick={() => setEditorRowId("")}
+            onClick={() => {
+              setEditorRowId("");
+              setStageMovePrompt(null);
+            }}
             className="absolute inset-0 h-full w-full bg-black/70 backdrop-blur-sm"
           />
           <section
@@ -610,7 +759,7 @@ export default function PipelineWorkspace(props: Props) {
                 {canEditDeal(editorRow) ? (
                   <button
                     type="button"
-                    onClick={() => props.onSave(editorRow)}
+                    onClick={() => void saveEditedDeal(editorRow)}
                     disabled={!!props.busy}
                     className="min-h-10 rounded-lg border border-amber/60 bg-amber/15 px-3 font-mono text-[0.54rem] uppercase text-amber disabled:opacity-40 sm:px-4"
                   >
@@ -620,7 +769,10 @@ export default function PipelineWorkspace(props: Props) {
                 <button
                   type="button"
                   autoFocus
-                  onClick={() => setEditorRowId("")}
+                  onClick={() => {
+                    setEditorRowId("");
+                    setStageMovePrompt(null);
+                  }}
                   className="flex h-10 w-10 items-center justify-center rounded-lg border border-edge font-mono text-lg text-muted transition hover:border-amber/55 hover:text-amber"
                   aria-label="Close deal workspace"
                 >
@@ -629,7 +781,13 @@ export default function PipelineWorkspace(props: Props) {
               </div>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto p-3 pb-8 sm:p-6">
-              <DealDetails key={editorRow.id} {...props} row={editorRow} />
+              {stageMovePrompt?.rowId === editorRow.id ? (
+                <div role="alert" className="mb-4 rounded-lg border border-rust/45 bg-rust/[0.07] px-3 py-2 text-sm text-rust">
+                  <strong className="block">Revenue is needed before this stage change</strong>
+                  <span className="mt-1 block">{stageMovePrompt.message} Then choose {formatLabel(stageMovePrompt.targetStage)} below and save the opportunity.</span>
+                </div>
+              ) : null}
+              <DealDetails key={editorRow.id} {...props} onSave={saveEditedDeal} row={editorRow} />
             </div>
           </section>
         </div>,
