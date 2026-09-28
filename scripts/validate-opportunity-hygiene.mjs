@@ -52,8 +52,15 @@ assert.match(editor, /Expected revenue is required at Qualified and later stages
 assert.match(editor, /Revenue needed/);
 assert.match(editor, /missing_value/);
 assert.match(editor, /Why is this opportunity not suitable/);
+assert.match(editor, /draggable=\{editable && !busy\}/);
+assert.match(editor, /onDrop=\{\(event\) => void dropOnStage\(event, stage\.key\)\}/);
+assert.match(editor, /await onSave\(\{ \.\.\.row, pipeline_stage: targetStage \}\)/);
+assert.match(editor, /Add expected revenue before moving this opportunity/);
+assert.match(editor, /On touch devices, open the opportunity and choose its stage/);
 assert.match(create, /Qualified and later stages need a positive revenue amount/);
 assert.match(revenuePage, /outcomeDisposition: notSuitable \? NOT_SUITABLE_OUTCOME/);
+assert.match(revenuePage, /return true/);
+assert.match(revenuePage, /return false/);
 assert.match(revenueApi, /qualified: isQualifiedPipelineStage\(op\.pipeline_stage\)/);
 assert.match(revenueApi, /valueRecorded/);
 
