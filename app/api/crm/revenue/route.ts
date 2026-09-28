@@ -11,6 +11,10 @@ import {
   loadSafeSharedCompanies,
 } from "@/lib/team-client-sharing";
 import { companyPipelineExclusionIds } from "@/lib/company-pipeline-exclusion";
+import {
+  hasRecordedRevenueAmount,
+  isQualifiedPipelineStage,
+} from "@/lib/pipeline-entry";
 
 import { teamLeadCoverEnabled } from "@/lib/team-lead-cover";
 
@@ -268,7 +272,8 @@ export async function GET() {
 
     const rows = open.map((op: any) => {
       const companyId = op.company_id as string;
-      const value = Number(op.value) || 0;
+      const valueRecorded = hasRecordedRevenueAmount(op.value);
+      const value = valueRecorded ? Number(op.value) : 0;
       const probability = Math.max(0, Math.min(100, Number(op.probability) || 0));
       const nextMeetingAt = nextMeetingByCompany.get(companyId) || null;
       const storedActivity = op.last_meaningful_activity_at
@@ -277,7 +282,7 @@ export async function GET() {
       const lastTouch = Math.max(lastTouchByCompany.get(companyId) || 0, storedActivity || 0) || null;
       const daysQuiet = lastTouch ? Math.max(0, Math.floor((Date.now() - lastTouch) / DAY)) : null;
       const risks: { code: string; label: string; severity: "high" | "medium" }[] = [];
-      if (!value) risks.push({ code: "missing_value", label: "Deal value missing", severity: "high" });
+      if (!valueRecorded) risks.push({ code: "missing_value", label: "Expected revenue missing", severity: "high" });
       if (!op.expected_close_at) risks.push({ code: "missing_close", label: "Expected close date missing", severity: "medium" });
       if (op.expected_close_at && new Date(`${op.expected_close_at}T23:59:59`).getTime() < Date.now()) risks.push({ code: "close_overdue", label: "Expected close date passed", severity: "high" });
       if (!nextMeetingAt) risks.push({ code: "no_meeting", label: "No next meeting", severity: probability >= 60 ? "high" : "medium" });
@@ -329,6 +334,8 @@ export async function GET() {
       return {
         ...op,
         value,
+        valueRecorded,
+        qualified: isQualifiedPipelineStage(op.pipeline_stage),
         probability,
         weightedValue: value * probability / 100,
         company: nameByCompany.get(companyId) || outreachNameByCompany.get(companyId) || "Private client",

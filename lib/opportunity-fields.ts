@@ -58,7 +58,7 @@ export const cleanStringList = (value: unknown, limit = 8, length = 240) =>
 
 export const defaultOutlookQuestions = (opportunity: Record<string, any>) => {
   const questions: string[] = [];
-  if (!opportunity.value) questions.push("What level of usage would define the commercial value?");
+  if (!opportunity.value) questions.push("What defensible revenue amount should be recorded for this opportunity?");
   if (!opportunity.expected_close_at) questions.push("What decision date is the buyer working towards?");
   if (!opportunity.next_action) questions.push("What exact mutual next step will move this forward?");
   if (!opportunity.win_outlook_reasons?.length)

@@ -9,6 +9,7 @@
     "validate:chat-scroll": "node scripts/validate-chat-scroll.mjs",
     "validate:assigned-opportunity-history": "node scripts/validate-assigned-opportunity-history.mjs",
     "validate:pipeline-entry": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-pipeline-entry.mjs",
+    "validate:opportunity-hygiene": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-opportunity-hygiene.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

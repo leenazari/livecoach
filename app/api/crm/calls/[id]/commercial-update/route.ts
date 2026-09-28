@@ -8,6 +8,11 @@ import {
 } from "@/lib/canonical-opportunity";
 import { requireRequestScope, type RequestScope } from "@/lib/request-scope";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+import {
+  hasRecordedRevenueAmount,
+  NOT_SUITABLE_OUTCOME,
+  opportunityHygieneError,
+} from "@/lib/pipeline-entry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -106,7 +111,12 @@ export async function POST(
     const context = await callContext(params.id, scope);
     if (!context) return NextResponse.json({ error: "This call is not linked to a company" }, { status: 404 });
 
-    const pipelineStage = STAGES.includes(body.pipelineStage) ? body.pipelineStage : "discovery";
+    const notSuitableRequested = body.outcomeDisposition === NOT_SUITABLE_OUTCOME || body.pipelineStage === NOT_SUITABLE_OUTCOME;
+    const pipelineStage = notSuitableRequested
+      ? "lost"
+      : STAGES.includes(body.pipelineStage)
+        ? body.pipelineStage
+        : "discovery";
     const nextActionOwner = OWNERS.includes(body.nextActionOwner) ? body.nextActionOwner : "us";
     const nextAction = typeof body.nextAction === "string"
       ? capitaliseSentenceStarts(body.nextAction.trim()).slice(0, 500)
@@ -120,9 +130,18 @@ export async function POST(
       : DEFAULT_PROBABILITY[pipelineStage];
     const valueNumber = Number(body.value);
     const value = Number.isFinite(valueNumber) && valueNumber >= 0 ? valueNumber : null;
+    const hygieneError = opportunityHygieneError({
+      pipelineStage: notSuitableRequested ? NOT_SUITABLE_OUTCOME : pipelineStage,
+      value,
+      outcomeReason: body.outcomeReason,
+    });
+    if (hygieneError)
+      return NextResponse.json({ error: hygieneError }, { status: 400 });
     const now = new Date().toISOString();
-    const status = pipelineStage === "won" ? "won" : pipelineStage === "lost" ? "lost" : "open";
-    const forecastCategory = pipelineStage === "won" || pipelineStage === "verbal"
+    const status = notSuitableRequested ? "dismissed" : pipelineStage === "won" ? "won" : pipelineStage === "lost" ? "lost" : "open";
+    const forecastCategory = notSuitableRequested
+      ? "omitted"
+      : pipelineStage === "won" || pipelineStage === "verbal"
       ? "commit"
       : pipelineStage === "lost"
         ? "omitted"
@@ -136,7 +155,10 @@ export async function POST(
       pipeline_stage: pipelineStage,
       probability,
       forecast_category: forecastCategory,
-      value,
+      value: hasRecordedRevenueAmount(value) ? value : null,
+      outcome_reason: notSuitableRequested
+        ? String(body.outcomeReason || "").trim().slice(0, 1000)
+        : null,
       next_action: status === "open" ? nextAction || null : null,
       next_action_due_at: status === "open" && dueDate ? `${dueDate}T12:00:00Z` : null,
       next_action_owner: nextActionOwner,
@@ -145,12 +167,23 @@ export async function POST(
         nonce: crypto.randomUUID(),
         sourceType: "human",
         sourceChannel: "post_call_review",
-        rationale: `Confirmed after ${context.call.candidate || "the linked call"}`,
-        evidence: { callId: context.call.id, sessionId: context.call.session_id || null },
+        rationale: notSuitableRequested
+          ? `Marked Not suitable after ${context.call.candidate || "the linked call"}`
+          : `Confirmed after ${context.call.candidate || "the linked call"}`,
+        evidence: {
+          callId: context.call.id,
+          sessionId: context.call.session_id || null,
+          ...(notSuitableRequested
+            ? {
+                outcomeDisposition: NOT_SUITABLE_OUTCOME,
+                outcomeReason: String(body.outcomeReason || "").trim().slice(0, 1000),
+              }
+            : {}),
+        },
       },
       updated_at: now,
       won_at: status === "won" ? now : null,
-      lost_at: status === "lost" ? now : null,
+      lost_at: status === "lost" || notSuitableRequested ? now : null,
     };
 
     let opportunityId = typeof body.opportunityId === "string" ? body.opportunityId : "";

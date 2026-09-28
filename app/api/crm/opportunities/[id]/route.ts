@@ -12,6 +12,12 @@ import {
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
 import { loadVisibleOpportunityById } from "@/lib/opportunity-access";
+import {
+  hasRecordedRevenueAmount,
+  isQualifiedPipelineStage,
+  NOT_SUITABLE_OUTCOME,
+  opportunityHygieneError,
+} from "@/lib/pipeline-entry";
 
 export const runtime = "nodejs";
 
@@ -161,6 +167,22 @@ export async function PATCH(
     }
     if (typeof body.outcomeReason === "string") patch.outcome_reason = body.outcomeReason.trim().slice(0, 1000) || null;
     const sourceType = body.sourceType === "system" ? "system" : "human";
+    const notSuitableRequested = body.outcomeDisposition === NOT_SUITABLE_OUTCOME;
+    if (notSuitableRequested) {
+      const hygieneError = opportunityHygieneError({
+        pipelineStage: NOT_SUITABLE_OUTCOME,
+        value: patch.value !== undefined ? patch.value : current.value,
+        outcomeReason: body.outcomeReason,
+      });
+      if (hygieneError)
+        return NextResponse.json({ error: hygieneError }, { status: 400 });
+      patch.status = "dismissed";
+      patch.forecast_category = "omitted";
+      patch.probability = 0;
+      patch.outcome_reason = body.outcomeReason.trim().slice(0, 1000);
+      patch.next_action = null;
+      patch.next_action_due_at = null;
+    }
     const dealIntentRequested = Object.prototype.hasOwnProperty.call(body, "dealIntent");
     if (sourceType === "system" && current.deal_intent_override && dealIntentRequested) {
       return NextResponse.json(
@@ -283,6 +305,28 @@ export async function PATCH(
       sourceType === "human" &&
       patch.pipeline_stage !== undefined &&
       patch.pipeline_stage !== current.pipeline_stage;
+    const resultingStage = patch.pipeline_stage ?? current.pipeline_stage;
+    const resultingValue = patch.value !== undefined ? patch.value : current.value;
+    const humanQualifiedStageChange =
+      sourceType === "human" &&
+      !notSuitableRequested &&
+      ((manualStageChange && isQualifiedPipelineStage(resultingStage)) ||
+        (patch.status === "won" && current.status !== "won"));
+    const humanQualifiedValueRemoved =
+      sourceType === "human" &&
+      !notSuitableRequested &&
+      isQualifiedPipelineStage(resultingStage) &&
+      hasRecordedRevenueAmount(current.value) &&
+      !hasRecordedRevenueAmount(resultingValue);
+    if (
+      (humanQualifiedStageChange && !hasRecordedRevenueAmount(resultingValue)) ||
+      humanQualifiedValueRemoved
+    ) {
+      return NextResponse.json(
+        { error: "Add a realistic expected revenue amount before moving this opportunity to Qualified or beyond" },
+        { status: 400 }
+      );
+    }
     const manualNextActionChange =
       sourceType === "human" &&
       ((patch.next_action !== undefined &&
@@ -336,6 +380,11 @@ export async function PATCH(
       patch.forecast_category = "omitted";
       patch.lost_at = patch.updated_at;
       patch.won_at = null;
+    } else if (patch.status === "dismissed" && notSuitableRequested) {
+      patch.probability = 0;
+      patch.forecast_category = "omitted";
+      patch.lost_at = patch.updated_at;
+      patch.won_at = null;
     } else if (patch.status === "open") {
       patch.won_at = null;
       patch.lost_at = null;
@@ -354,10 +403,17 @@ export async function PATCH(
           : sourceType === "human"
             ? "Confirmed by the user"
             : "Updated from stored CRM evidence",
-      evidence:
-        body.evidence && typeof body.evidence === "object" && !Array.isArray(body.evidence)
+      evidence: {
+        ...(body.evidence && typeof body.evidence === "object" && !Array.isArray(body.evidence)
           ? body.evidence
-          : {},
+          : {}),
+        ...(notSuitableRequested
+          ? {
+              outcomeDisposition: NOT_SUITABLE_OUTCOME,
+              outcomeReason: patch.outcome_reason,
+            }
+          : {}),
+      },
     };
     const { data, error } = await (current.canTeamEdit ? supabaseService : supabaseAdmin)
       .from("opportunities")

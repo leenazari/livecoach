@@ -4,7 +4,11 @@ import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import { crmFetch } from "@/lib/crm";
-import { parsePipelineEntry } from "@/lib/pipeline-entry";
+import {
+  hasRecordedRevenueAmount,
+  isQualifiedPipelineStage,
+  parsePipelineEntry,
+} from "@/lib/pipeline-entry";
 
 const input = "min-h-11 w-full rounded-lg border border-edge bg-ink px-3 py-2 text-sm text-bone outline-none focus:border-amber/60";
 
@@ -19,6 +23,8 @@ export default function NewPipelineOpportunity({ stages, onCreated }: {
   const [stage, setStage] = useState("new");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const revenueRequired = isQualifiedPipelineStage(stage);
+  const revenueRecorded = hasRecordedRevenueAmount(value);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -55,7 +61,7 @@ export default function NewPipelineOpportunity({ stages, onCreated }: {
           <p className="mt-2 text-xs text-muted">Need a new client? <Link href="/crm/board?tab=clients" className="text-amber underline">Add them in Clients</Link> first.</p>
         </div>
         <label className="sm:col-span-2"><span className="mb-1 block text-sm text-bone">Opportunity name</span><input autoFocus required maxLength={240} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Recruitment support for the autumn intake" className={input} /></label>
-        <label><span className="mb-1 block text-sm text-bone">Deal value (£)</span><input type="number" min="0" step="0.01" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Leave blank if unknown" className={input} /></label>
+        <label><span className="mb-1 block text-sm text-bone">Expected revenue (£){revenueRequired ? " · required" : ""}</span><input type="number" min="0" step="0.01" required={revenueRequired} value={value} onChange={(e) => setValue(e.target.value)} placeholder="Best evidence-based estimate" className={input} /><span className={`mt-1 block text-xs ${revenueRequired && !revenueRecorded ? "text-rust" : "text-muted"}`}>{revenueRequired ? "Qualified and later stages need a positive revenue amount." : "Add the best current estimate. You can revise it as scope becomes clearer."}</span></label>
         <label><span className="mb-1 block text-sm text-bone">Sales stage</span><select value={stage} onChange={(e) => setStage(e.target.value)} className={input}>{stages.filter((s) => !["won", "lost"].includes(s.key)).map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}</select></label>
         <p className="text-xs text-muted sm:col-span-2">Assigned to you. If this client already has an open opportunity in your pipeline, we’ll keep that record and its existing details.</p>
         {error ? <p role="alert" className="text-sm text-rust sm:col-span-2">{error}</p> : null}
