@@ -46,11 +46,11 @@ export async function GET(req: NextRequest) {
     const unreadOnly = req.nextUrl.searchParams.get("unread") === "1";
     const activeSnoozeFilter = `snoozed_until.is.null,snoozed_until.lte.${snapshotAt}`;
 
+    const notificationColumns =
+      "id,kind,title,body,href,source_table,source_id,read_at,snoozed_until,attention_at,created_at";
     let listQuery = supabaseAdmin
       .from("crm_notifications")
-      .select(
-        "id,kind,title,body,href,source_table,source_id,read_at,snoozed_until,attention_at,created_at"
-      )
+      .select(notificationColumns)
       .eq("workspace_id", account.workspaceId)
       .eq("user_id", account.userId)
       .is("dismissed_at", null)
@@ -59,12 +59,31 @@ export async function GET(req: NextRequest) {
     if (unreadOnly)
       listQuery = listQuery.is("read_at", null).or(activeSnoozeFilter);
 
+    // The history list is deliberately capped. Unread receipts can be older
+    // than that window, so fetch them independently for the Notifications page
+    // instead of showing a truthful badge beside an empty unread view. The
+    // lightweight sidebar request already asks for unread-only rows and does
+    // not need the second query.
+    const unreadListQuery = unreadOnly
+      ? null
+      : supabaseAdmin
+          .from("crm_notifications")
+          .select(notificationColumns)
+          .eq("workspace_id", account.workspaceId)
+          .eq("user_id", account.userId)
+          .is("dismissed_at", null)
+          .is("read_at", null)
+          .or(activeSnoozeFilter)
+          .order("attention_at", { ascending: false })
+          .limit(limit);
+
     const [
       listResult,
       countResult,
       chatCountResult,
       snoozedResult,
       preferencesResult,
+      unreadListResult,
     ] =
       await Promise.all([
         listQuery,
@@ -101,16 +120,24 @@ export async function GET(req: NextRequest) {
           .eq("workspace_id", account.workspaceId)
           .eq("user_id", account.userId)
           .maybeSingle(),
+        unreadListQuery,
       ]);
     if (listResult.error) throw listResult.error;
     if (countResult.error) throw countResult.error;
     if (chatCountResult.error) throw chatCountResult.error;
     if (snoozedResult.error) throw snoozedResult.error;
     if (preferencesResult.error) throw preferencesResult.error;
+    if (unreadListResult?.error) throw unreadListResult.error;
+
+    const notificationRows = listResult.data || [];
+    const unreadNotificationRows = unreadOnly
+      ? notificationRows
+      : unreadListResult?.data || [];
 
     return NextResponse.json(
       {
-        notifications: (listResult.data || []).map(mapNotification),
+        notifications: notificationRows.map(mapNotification),
+        unreadNotifications: unreadNotificationRows.map(mapNotification),
         unreadCount: countResult.count || 0,
         chatUnreadCount: chatCountResult.count || 0,
         snoozedCount: snoozedResult.count || 0,

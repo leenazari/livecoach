@@ -33,6 +33,7 @@ type CrmNotification = {
 
 type NotificationFeed = {
   notifications: CrmNotification[];
+  unreadNotifications: CrmNotification[];
   unreadCount: number;
   chatUnreadCount: number;
   snoozedCount: number;
@@ -125,6 +126,7 @@ export default function NotificationsPage() {
   const [error, setError] = useState("");
   const [permission, setPermission] =
     useState<BrowserPermission>("unsupported");
+  const [permissionChecked, setPermissionChecked] = useState(false);
   const [permissionHelp, setPermissionHelp] = useState(
     "Open this site's browser settings and allow notifications."
   );
@@ -134,6 +136,7 @@ export default function NotificationsPage() {
     setPermission(
       "Notification" in window ? Notification.permission : "unsupported"
     );
+    setPermissionChecked(true);
     setPermissionHelp(notificationPermissionHelp(window.navigator.userAgent));
   }, []);
 
@@ -186,7 +189,10 @@ export default function NotificationsPage() {
   }, [feed?.notifications]);
 
   const visible = useMemo(() => {
-    const notifications = feed?.notifications || [];
+    const notifications =
+      filter === "unread"
+        ? feed?.unreadNotifications || []
+        : feed?.notifications || [];
     return notifications.filter((item) => {
       const snoozed = isFutureSnooze(item);
       const matchesFilter =
@@ -202,7 +208,7 @@ export default function NotificationsPage() {
       if (!deferredSearch) return true;
       return `${item.title} ${item.body}`.toLowerCase().includes(deferredSearch);
     });
-  }, [deferredSearch, feed?.notifications, filter]);
+  }, [deferredSearch, feed?.notifications, feed?.unreadNotifications, filter]);
 
   const enableDesktop = async () => {
     if (!("Notification" in window)) return;
@@ -367,11 +373,9 @@ export default function NotificationsPage() {
   const preferences = feed?.preferences;
   const quietNow = preferences ? isQuietHoursActive(preferences) : false;
   const permissionStyle =
-    permission === "granted"
-      ? "border-moss/40 bg-moss/[0.08] text-moss"
-      : permission === "denied"
-        ? "border-rust/45 bg-rust/[0.08] text-rust"
-        : "border-sky/40 bg-sky/[0.08] text-sky";
+    permission === "denied"
+      ? "border-rust/45 bg-rust/[0.08] text-rust"
+      : "border-sky/40 bg-sky/[0.08] text-sky";
   const filters: Array<{ key: Filter; label: string; count: number }> = [
     { key: "unread", label: "Unread", count: feed?.unreadCount || 0 },
     { key: "all", label: "All", count: counts.all },
@@ -553,47 +557,47 @@ export default function NotificationsPage() {
         </section>
       ) : null}
 
-      <section className={`mb-4 rounded-xl border p-4 ${permissionStyle}`}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="font-mono text-[0.58rem] uppercase tracking-wider">
-              Desktop popups
-            </p>
-            <p className="mt-1 text-sm leading-6">
-              {permission === "granted"
-                ? "Enabled in this browser."
-                : permission === "denied"
+      {permissionChecked && permission !== "granted" ? (
+        <section className={`mb-4 rounded-xl border p-4 ${permissionStyle}`}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-mono text-[0.58rem] uppercase tracking-wider">
+                Desktop popups
+              </p>
+              <p className="mt-1 text-sm leading-6">
+                {permission === "denied"
                   ? "Blocked in this browser. Browsers will not show the permission prompt again until you allow LiveCoach in site settings."
                   : permission === "unsupported"
                     ? "This browser does not support desktop notifications."
                     : "Optional. Enable popups for team messages, replies and newly assigned leads."}
-            </p>
-            <p className="mt-1 text-xs opacity-80">
-              Popups work while your browser is running. Your in-app history remains here either way.
-            </p>
-          </div>
-          {permission === "default" ? (
-            <button
-              type="button"
-              onClick={() => void enableDesktop()}
-              className={`${primary} w-full shrink-0 sm:w-auto`}
-            >
-              Enable desktop popups
-            </button>
-          ) : permission === "denied" ? (
-            <div className="w-full rounded-lg border border-rust/35 bg-rust/[0.06] p-3 sm:max-w-md">
-              <p className="text-xs leading-5 text-bone/80">{permissionHelp}</p>
+              </p>
+              <p className="mt-1 text-xs opacity-80">
+                Popups work while your browser is running. Your in-app history remains here either way.
+              </p>
+            </div>
+            {permission === "default" ? (
               <button
                 type="button"
-                onClick={checkDesktopPermission}
-                className={`${button} mt-2 w-full border-rust/45 text-rust sm:w-auto`}
+                onClick={() => void enableDesktop()}
+                className={`${primary} w-full shrink-0 sm:w-auto`}
               >
-                I allowed it, check again
+                Enable desktop popups
               </button>
-            </div>
-          ) : null}
-        </div>
-      </section>
+            ) : permission === "denied" ? (
+              <div className="w-full rounded-lg border border-rust/35 bg-rust/[0.06] p-3 sm:max-w-md">
+                <p className="text-xs leading-5 text-bone/80">{permissionHelp}</p>
+                <button
+                  type="button"
+                  onClick={checkDesktopPermission}
+                  className={`${button} mt-2 w-full border-rust/45 text-rust sm:w-auto`}
+                >
+                  I allowed it, check again
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {error ? (
         <p
