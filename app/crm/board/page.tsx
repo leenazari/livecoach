@@ -9,7 +9,6 @@ import {
   crmConfirmationError,
   crmFetch,
   type Company,
-  type Contact,
 } from "@/lib/crm";
 import { emailAssistantVoiceReadyForDisplayedScript } from "@/lib/email-assistant-voice-policy";
 import NavMenu from "@/components/crm/NavMenu";
@@ -499,106 +498,58 @@ function BoardInner() {
         );
         return false;
       }
-      const requestedStage = input.recordType === "prospect"
-        ? "New"
-        : input.relationshipStage;
-      const { company, existing } = await crmFetch<{
+      // One request reaches one database transaction. Navigating away or a
+      // later network interruption can no longer save only the company and
+      // silently lose the primary contact or its outreach link.
+      const result = await crmFetch<{
+        ok: true;
         company: Company;
-        existing?: boolean;
-      }>("/api/crm/companies", {
-          method: "POST",
-          body: JSON.stringify({ name: companyName, stage: requestedStage }),
-        });
-      if (!company?.id)
-        throw crmConfirmationError({
-          url: "/api/crm/companies",
-          method: "POST",
-          reason: "LiveCoach did not return the newly created client",
-        });
-      if (
-        input.recordType === "prospect" &&
-        String(company.stage || "").trim().toLowerCase() !== "new"
-      ) {
-        await load("clients");
-        setSaveError(
-          `${company.name} already exists as ${company.stage || "an established relationship"}. No duplicate contact or cold-outreach prospect was created. Open the existing client and confirm its relationship stage before treating it as a new lead.`
-        );
-        return false;
-      }
-
-      let outreachCreated = false;
-      let outreachDuplicatePrevented = false;
-      if (input.recordType === "prospect") {
-        const outreachResult = await crmFetch<{
-          prospect: {
-            id: string;
-            email: string;
-            crm_company_id: string | null;
-          };
-          created: boolean;
-          duplicatePrevented: boolean;
-        }>("/api/crm/outreach", {
-          method: "POST",
-          body: JSON.stringify({
-            firstName: input.firstName,
-            lastName: input.lastName,
-            email,
-            companyName: company.name,
-            jobTitle: input.jobTitle,
-            crmCompanyId: company.id,
-          }),
-        });
-        if (
-          !outreachResult.prospect?.id ||
-          outreachResult.prospect.crm_company_id !== company.id ||
-          String(outreachResult.prospect.email || "").trim().toLowerCase() !== email
-        ) {
-          throw crmConfirmationError({
-            url: "/api/crm/outreach",
-            method: "POST",
-            reason: "LiveCoach did not confirm the person against the same client in Outreach",
-          });
-        }
-        outreachCreated = outreachResult.created;
-        outreachDuplicatePrevented = outreachResult.duplicatePrevented;
-      }
-
-      // For a sales prospect, reserve and deduplicate the outreach identity
-      // before writing the CRM contact. This prevents another salesperson's
-      // existing private contact from being copied into a second contact row.
-      const contactResult = await crmFetch<{
-        contact: Contact;
-        created: boolean;
-        alreadyExists: boolean;
-      }>("/api/crm/contacts", {
+        contact: {
+          id: string;
+          company_id: string;
+          name: string;
+          email: string;
+        };
+        prospect: null | {
+          id: string;
+          email: string;
+          crm_company_id: string;
+          assigned_to_user_id: string | null;
+        };
+        companyCreated: boolean;
+        contactCreated: boolean;
+        prospectCreated: boolean;
+        prospectReused: boolean;
+      }>("/api/crm/clients/complete", {
         method: "POST",
-        body: JSON.stringify({
-          company_id: company.id,
-          name: contactName,
-          email,
-          role: input.jobTitle.trim(),
-        }),
+        body: JSON.stringify(input),
       });
       if (
-        !contactResult.contact?.id ||
-        contactResult.contact.company_id !== company.id ||
-        String(contactResult.contact.email || "").trim().toLowerCase() !== email
+        !result.ok ||
+        !result.company?.id ||
+        !result.contact?.id ||
+        result.contact.company_id !== result.company.id ||
+        String(result.contact.email || "").trim().toLowerCase() !== email ||
+        (input.recordType === "prospect" &&
+          (!result.prospect?.id ||
+            result.prospect.crm_company_id !== result.company.id ||
+            String(result.prospect.email || "").trim().toLowerCase() !== email))
       ) {
         throw crmConfirmationError({
-          url: "/api/crm/contacts",
+          url: "/api/crm/clients/complete",
           method: "POST",
-          reason: "LiveCoach did not confirm the primary contact on the selected client",
+          reason: "LiveCoach did not confirm the company, primary contact and outreach identity together",
         });
       }
 
       await load("clients");
       if (input.recordType === "prospect") {
         setSaveNotice(
-          `${company.name} and ${contactName} are now linked in Clients and Outreach. ${existing || contactResult.alreadyExists || outreachDuplicatePrevented ? "Existing matching records were reused, so no duplicate was created. " : ""}${outreachCreated ? "The prospect is assigned to you. " : "The existing prospect remains assigned as already recorded. "}Nothing was researched, enrolled, or sent.`
+          `${result.company.name} and ${contactName} are now linked in Clients and Outreach. ${!result.companyCreated || !result.contactCreated || result.prospectReused ? "Existing matching records were reused, so no duplicate was created. " : ""}${result.prospectCreated ? "The prospect is assigned to you. " : "The existing assigned prospect was linked to this client. "}Nothing was researched, enrolled, or sent.`
         );
       } else {
         setSaveNotice(
-          `${company.name} and ${contactName} were saved as ${company.stage || requestedStage} under Clients. ${existing || contactResult.alreadyExists ? "Existing matching records were reused, so no duplicate was created. " : ""}They were not added to cold Outreach.`
+          `${result.company.name} and ${contactName} were saved as ${result.company.stage || input.relationshipStage} under Clients. ${!result.companyCreated || !result.contactCreated ? "Existing matching records were reused, so no duplicate was created. " : ""}They were not added to cold Outreach.`
         );
       }
       return true;
