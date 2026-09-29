@@ -133,6 +133,13 @@ assert.match(feedRoute, /BULK_ACTIONS = new Set\(\["read", "unread", "dismiss", 
 assert.match(feedRoute, /ids\.length > 100/);
 assert.match(feedRoute, /snoozed_until\.lte/);
 assert.match(feedRoute, /crm_notification_preferences/);
+assert.match(feedRoute, /const unreadListQuery = unreadOnly/);
+assert.match(feedRoute, /unreadNotifications: unreadNotificationRows\.map\(mapNotification\)/);
+assert.match(
+  feedRoute,
+  /unreadListQuery[\s\S]*\.eq\("workspace_id", account\.workspaceId\)[\s\S]*\.eq\("user_id", account\.userId\)/,
+  "Unread rows must retain exact workspace and user scoping"
+);
 assert.match(itemRoute, /new Set\(\["read", "unread", "dismiss", "snooze"\]\)/);
 assert.match(itemRoute, /parseNotificationSnoozeUntil/);
 
@@ -179,6 +186,9 @@ assert.match(page, /lc:notifications-realtime/);
 assert.match(page, /Mark all read/);
 assert.match(page, /Dismiss/);
 assert.match(page, /Popups work while your browser is running/);
+assert.match(page, /feed\?\.unreadNotifications \|\| \[\]/);
+assert.match(page, /permissionChecked && permission !== "granted"/);
+assert.doesNotMatch(page, /Enabled in this browser\./);
 assert.doesNotMatch(page, /openai|anthropic|messages\.create/i);
 
 assert.match(nav, /href: "\/crm\/notifications"/);
