@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { requireRequestScope } from "@/lib/request-scope";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
-
-import { loadTeamLeadCoverCompany, teamLeadCoverEnabled } from "@/lib/team-lead-cover";
+import {
+  pickContactStakeholderAttributes,
+  validateContactStakeholderPatch,
+  validateContactStakeholderValues,
+} from "@/lib/contact-stakeholder-fields";
 
 export const runtime = "nodejs";
 
@@ -19,10 +22,12 @@ export async function PATCH(
   try {
     const scope = requireRequestScope();
     const body = await req.json();
-    const coverEnabled = await teamLeadCoverEnabled(scope);
-    const { data: current, error: currentError } = await (coverEnabled ? supabaseService : supabaseAdmin)
+    // Resolve the exact row with the server client, then authorise against its
+    // company before returning or changing anything. This supports a verified
+    // assignee without weakening the contact table's owner-only RLS policy.
+    const { data: current, error: currentError } = await supabaseService
       .from("contacts")
-      .select("id,company_id,owner_id,workspace_id,name,email")
+      .select("id,company_id,owner_id,workspace_id,name,email,attributes")
       .eq("workspace_id", scope.workspaceId)
       .eq("id", params.id)
       .maybeSingle();
@@ -30,24 +35,24 @@ export async function PATCH(
     if (!current) {
       return NextResponse.json({ error: "contact not found" }, { status: 404 });
     }
-    const coverCompany = current.company_id ? await loadTeamLeadCoverCompany(current.company_id, scope) : null;
-    if (current.owner_id !== scope.userId && !coverCompany) {
+    const ownsContact = current.owner_id === scope.userId;
+    const access = current.company_id
+      ? await loadAssignedClientAccess(current.company_id, scope)
+      : null;
+    if (!ownsContact && !access) {
       return NextResponse.json(
-        { error: "Only the person who owns this contact can change its company" },
+        { error: "This contact is not on a client owned by or assigned to your account" },
         { status: 403 }
       );
     }
-    if (current.owner_id !== scope.userId && ("companyId" in body || "departmentId" in body || "attributes" in body)) {
-      return NextResponse.json({ error: "The contact owner manages company links and custom fields" }, { status: 403 });
-    }
-    if (current.company_id) {
-      const access = await loadAssignedClientAccess(current.company_id, scope);
-      if (!access) {
-        return NextResponse.json(
-          { error: "This contact's current company is not available to your account" },
-          { status: 403 }
-        );
-      }
+    if (
+      !ownsContact &&
+      ("companyId" in body || "departmentId" in body || "notes" in body)
+    ) {
+      return NextResponse.json(
+        { error: "The contact owner manages company links and private notes" },
+        { status: 403 }
+      );
     }
     const patch: Record<string, any> = {};
     for (const f of PATCHABLE) {
@@ -59,8 +64,36 @@ export async function PATCH(
         { status: 400 }
       );
     }
-    if (body.attributes && typeof body.attributes === "object") {
-      patch.attributes = body.attributes;
+    if (Object.prototype.hasOwnProperty.call(body, "attributes")) {
+      if (ownsContact) {
+        const stakeholderValidation = validateContactStakeholderValues(body.attributes);
+        if (!stakeholderValidation.ok) {
+          return NextResponse.json(
+            { error: stakeholderValidation.error },
+            { status: stakeholderValidation.status }
+          );
+        }
+        patch.attributes = {
+          ...(current.attributes && typeof current.attributes === "object"
+            ? current.attributes
+            : {}),
+          ...body.attributes,
+        };
+      } else {
+        const stakeholderPatch = validateContactStakeholderPatch(body.attributes);
+        if (!stakeholderPatch.ok) {
+          return NextResponse.json(
+            { error: stakeholderPatch.error },
+            { status: stakeholderPatch.status }
+          );
+        }
+        patch.attributes = {
+          ...(current.attributes && typeof current.attributes === "object"
+            ? current.attributes
+            : {}),
+          ...stakeholderPatch.patch,
+        };
+      }
     }
     if ("companyId" in body) {
       const companyId =
@@ -146,15 +179,30 @@ export async function PATCH(
       return NextResponse.json({ error: "nothing to update" }, { status: 400 });
     }
 
-    const { data, error } = await (coverCompany ? supabaseService : supabaseAdmin)
+    const { data, error } = await (ownsContact ? supabaseAdmin : supabaseService)
       .from("contacts")
       .update(patch)
       .eq("workspace_id", scope.workspaceId)
       .eq("id", params.id)
-      .select(coverCompany ? "id,company_id,owner_id,name,role,email,sector,notes,created_at,updated_at" : "*")
+      .select(
+        ownsContact
+          ? "*"
+          : "id,company_id,owner_id,name,role,email,sector,notes,created_at,updated_at,attributes"
+      )
       .single();
     if (error) throw error;
-    return NextResponse.json({ contact: data });
+    const savedContact: any = data;
+    return NextResponse.json({
+      contact: ownsContact
+        ? savedContact
+        : (() => {
+            const { notes: _privateNotes, ...safeContact } = savedContact || {};
+            return {
+              ...safeContact,
+              attributes: pickContactStakeholderAttributes(savedContact?.attributes),
+            };
+          })(),
+    });
   } catch (err: any) {
     const message = err?.message || "failed to update contact";
     return NextResponse.json(

@@ -131,7 +131,7 @@ export default function StakeholderMap({
         `/api/crm/contacts/${contact.id}`,
         {
           method: "PATCH",
-          body: JSON.stringify({ attributes: optimistic.attributes }),
+          body: JSON.stringify({ attributes: patch }),
         }
       );
       if (!saved?.id)
@@ -142,9 +142,13 @@ export default function StakeholderMap({
         });
       onSaved(saved);
       window.dispatchEvent(new CustomEvent("lc:crm-updated"));
-    } catch {
+    } catch (saveError) {
       onSaved(previous);
-      setError(`The stakeholder change for ${contact.name} did not save.`);
+      setError(
+        saveError instanceof Error && saveError.message
+          ? saveError.message
+          : `The stakeholder change for ${contact.name} did not save.`
+      );
     } finally {
       setSavingId("");
     }

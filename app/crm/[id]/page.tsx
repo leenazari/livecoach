@@ -861,20 +861,20 @@ export default function CompanyDetailPage() {
       ) : null}
 
       {access?.mode !== "shared_sales" ? (
-        <>
-          <RelationshipStructure
-            companyId={id}
-            contacts={contacts}
-            departments={departments}
-            workstreams={workstreams}
-            links={workstreamContacts}
-            onContactSaved={updateContact}
-            onLinksSaved={setWorkstreamContacts}
-            onStructureSaved={load}
-          />
+        <RelationshipStructure
+          companyId={id}
+          contacts={contacts}
+          departments={departments}
+          workstreams={workstreams}
+          links={workstreamContacts}
+          onContactSaved={updateContact}
+          onLinksSaved={setWorkstreamContacts}
+          onStructureSaved={load}
+        />
+      ) : null}
 
-          <StakeholderMap contacts={contacts} onSaved={updateContact} />
-        </>
+      {access?.canEdit ? (
+        <StakeholderMap contacts={contacts} onSaved={updateContact} />
       ) : null}
 
       {(() => {
