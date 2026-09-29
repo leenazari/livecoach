@@ -11,8 +11,9 @@ const db = {
   workspaces: [{ id: 'workspace', team_lead_cover_enabled: true }],
   workspace_members: ['coverer','colleague','third'].map(user_id => ({ user_id, workspace_id: 'workspace', status: 'active', role: 'sales' })),
   companies: [company('lead'), company('confidential', { is_confidential: true }), company('investor', { stage: 'Investor' }), company('internal', { profile: { triage: { classification: 'in_house' } } }), company('internal-flag', { profile: { internal: true } }), company('foreign', { workspace_id: 'elsewhere' })],
+  team_client_shares: [],
   opportunities: ['lead','confidential','investor','internal','foreign'].map(company_id => ({ id: `${company_id}-deal`, company_id, workspace_id: company_id === 'foreign' ? 'elsewhere' : 'workspace', owner_id: 'colleague', assigned_to_user_id: 'colleague', opportunity_type: 'revenue', visibility: 'private', status: 'open', pipeline_stage: 'new', value: 10 })),
-  contacts: [{ id: 'contact', company_id: 'lead', workspace_id: 'workspace', owner_id: 'colleague', visibility: 'private', name: 'Buyer', email: 'buyer@example.test', attributes: { secret: true } }],
+  contacts: [{ id: 'contact', company_id: 'lead', workspace_id: 'workspace', owner_id: 'colleague', visibility: 'private', name: 'Buyer', email: 'buyer@example.test', notes: 'Owner-only contact note', attributes: { secret: true, stakeholderRole: 'champion', stakeholderInfluence: 'low', stakeholderEngagement: 'warm' } }],
   client_context: [
     { id: 'manual', company_id: 'lead', workspace_id: 'workspace', owner_id: 'colleague', kind: 'note', source_ref: null, content: 'Asked for a demo', created_at: '2026-09-01' },
     { id: 'document', company_id: 'lead', workspace_id: 'workspace', owner_id: 'colleague', kind: 'doc', source_ref: null, content: 'Private document' },
@@ -82,6 +83,10 @@ const context = load('@/app/api/crm/companies/[id]/context/route');
 const activity = load('@/app/api/crm/companies/[id]/activity/route');
 const req = body => ({ json: async () => ({ ...body }) });
 const params = id => ({ params: { id } });
+const clientPage = readFileSync(path.join(root, 'app/crm/[id]/page.tsx'), 'utf8');
+const stakeholderMap = readFileSync(path.join(root, 'components/crm/StakeholderMap.tsx'), 'utf8');
+assert.match(clientPage, /access\?\.canEdit\s*\?[\s\S]{0,120}<StakeholderMap/);
+assert.match(stakeholderMap, /saveError instanceof Error/);
 assert.deepEqual((await cover.loadTeamLeadCoverCompanies(scope)).map(row => row.id), ['lead']);
 for (const userId of ['coverer', 'third']) {
   scope = { ...scope, userId };
@@ -93,7 +98,12 @@ for (const userId of ['coverer', 'third']) {
   assert.equal(opened.company.notes, 'Sales note');
   assert.deepEqual(opened.company.profile, {});
   assert.equal(opened.contacts[0].name, 'Buyer');
-  assert.equal(opened.contacts[0].attributes, undefined);
+  assert.equal(opened.contacts[0].notes, undefined);
+  assert.deepEqual(opened.contacts[0].attributes, {
+    stakeholderRole: 'champion',
+    stakeholderInfluence: 'low',
+    stakeholderEngagement: 'warm',
+  });
   assert.equal((await opportunities.PATCH(req({ value: 25, pipelineStage: 'qualified', assignedToUserId: 'colleague' }), params('lead-deal'))).status, 200);
   assert.equal(db.opportunities[0].assigned_to_user_id, 'colleague');
   assert.equal(db.opportunities[0].owner_id, 'colleague');
@@ -106,6 +116,22 @@ assert.equal((await companies.PATCH(req({ notes: 'Updated sales note' }), params
 assert.equal(db.companies[0].notes, 'Updated sales note');
 assert.equal((await contacts.PATCH(req({ role: 'Decision maker' }), params('contact'))).status, 200);
 assert.equal(db.contacts[0].owner_id, 'colleague');
+const stakeholderResponse = await contacts.PATCH(req({ attributes: { stakeholderRole: 'decision_maker' } }), params('contact'));
+assert.equal(stakeholderResponse.status, 200);
+assert.equal(db.contacts[0].attributes.secret, true);
+assert.equal(db.contacts[0].attributes.stakeholderRole, 'decision_maker');
+assert.equal(db.contacts[0].attributes.stakeholderInfluence, 'low');
+const savedStakeholder = (await stakeholderResponse.json()).contact;
+assert.deepEqual(savedStakeholder.attributes, {
+  stakeholderRole: 'decision_maker',
+  stakeholderInfluence: 'low',
+  stakeholderEngagement: 'warm',
+});
+assert.equal(savedStakeholder.notes, undefined);
+assert.equal((await contacts.PATCH(req({ attributes: { stakeholderRole: 'buyer' } }), params('contact'))).status, 400);
+assert.equal((await contacts.PATCH(req({ attributes: { secret: false } }), params('contact'))).status, 403);
+assert.equal(db.contacts[0].attributes.secret, true);
+assert.equal((await contacts.PATCH(req({ notes: 'Private replacement' }), params('contact'))).status, 403);
 assert.equal((await contacts.PATCH(req({ companyId: 'foreign' }), params('contact'))).status, 403);
 assert.equal((await activity.POST(req({ channel: 'note', content: 'Holiday cover update' }), params('lead'))).status, 200);
 const items = (await (await context.GET(req({}), params('lead'))).json()).items;
@@ -119,6 +145,23 @@ for (const id of ['confidential','investor','internal','foreign']) {
 }
 assert.equal((await opportunities.PATCH(req({ value: 999 }), params('strategic-deal'))).status, 404);
 db.workspaces[0].team_lead_cover_enabled = false;
+db.team_client_shares.push({ id: 'share', company_id: 'lead', workspace_id: 'workspace', assigned_to_user_id: 'coverer', status: 'active', visibility: 'team' });
+scope = { ...scope, userId: 'coverer' };
+const assignedOpened = await (await companies.GET(req({}), params('lead'))).json();
+assert.equal(assignedOpened.contacts[0].attributes.stakeholderRole, 'decision_maker');
+assert.equal(assignedOpened.contacts[0].notes, undefined);
+assert.equal((await contacts.PATCH(req({ attributes: { stakeholderEngagement: 'neutral' } }), params('contact'))).status, 200);
+assert.equal(db.contacts[0].attributes.secret, true);
+assert.equal(db.contacts[0].attributes.stakeholderEngagement, 'neutral');
+scope = { ...scope, userId: 'third' };
+assert.equal((await contacts.PATCH(req({ attributes: { stakeholderEngagement: 'cold' } }), params('contact'))).status, 403);
+db.team_client_shares = [];
+scope = { ...scope, userId: 'colleague' };
+assert.equal((await contacts.PATCH(req({ attributes: { stakeholderRole: 'blocker' } }), params('contact'))).status, 200);
+assert.equal(db.contacts[0].attributes.secret, true);
+assert.equal(db.contacts[0].attributes.stakeholderRole, 'blocker');
+assert.equal((await contacts.PATCH(req({ attributes: { stakeholderRole: 'buyer' } }), params('contact'))).status, 400);
+scope = { ...scope, userId: 'third' };
 assert.equal((await companies.PATCH(req({ stage: 'Demo' }), params('lead'))).status, 404);
 assert.equal((await opportunities.PATCH(req({ value: 999 }), params('lead-deal'))).status, 404);
 db.workspaces[0].team_lead_cover_enabled = true;

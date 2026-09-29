@@ -8,6 +8,7 @@ import {
   verifiedCompanyResearchEvidence,
   verifiedJobResearchEvidence,
 } from "@/lib/job-research-sources";
+import { pickContactStakeholderAttributes } from "@/lib/contact-stakeholder-fields";
 
 import { loadTeamLeadCoverCompany } from "@/lib/team-lead-cover";
 
@@ -212,12 +213,25 @@ export async function GET(
     }
     const salesResearch = await salesResearchPromise;
     let contacts = contactsResult.data || [];
-    if (coverCompany) {
+    const canReadTeamStakeholders = Boolean(
+      coverCompany ||
+        (sharedSalesAccess && activeShare?.assigned_to_user_id === scope.userId)
+    );
+    if (canReadTeamStakeholders) {
       const { data: teamContacts, error: contactsError } = await supabaseService.from("contacts")
-        .select("id,company_id,owner_id,name,role,email,sector,notes,created_at,updated_at")
+        .select("id,company_id,owner_id,name,role,email,sector,notes,created_at,updated_at,attributes")
         .eq("workspace_id", scope.workspaceId).eq("company_id", params.id).order("created_at");
       if (contactsError) throw contactsError;
-      contacts = teamContacts || [];
+      contacts = (teamContacts || []).map((contact: any) => {
+        if (contact.owner_id === scope.userId) {
+          return { ...contact, attributes: contact.attributes || {} };
+        }
+        const { notes: _privateNotes, ...safeContact } = contact;
+        return {
+          ...safeContact,
+          attributes: pickContactStakeholderAttributes(contact.attributes),
+        };
+      });
     }
 
     return NextResponse.json({
