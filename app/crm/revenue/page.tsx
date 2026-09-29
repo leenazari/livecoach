@@ -17,6 +17,7 @@ import OutlookIntelligencePanel, { type SignalHealth } from "@/components/crm/Ou
 import MetricDrilldown from "@/components/crm/MetricDrilldown";
 import { opportunityMatchesOwner } from "@/lib/opportunity-owner-filter";
 import { outreachProspectHref } from "@/lib/crm-navigation";
+import { preparePipelineStageMove } from "@/lib/pipeline-stage-drag";
 
 type Pipeline = Record<string, any>;
 type Opportunity = Record<string, any> & {
@@ -164,7 +165,68 @@ export default function RevenuePage() {
     });
   }, []);
 
-  const updateRow = (id: string, patch: Partial<Opportunity>) => setRows((all) => all.map((row) => row.id === id ? { ...row, ...patch } : row));
+  const updateRow = useCallback(
+    (id: string, patch: Partial<Opportunity>) =>
+      setRows((all) => all.map((row) => row.id === id ? { ...row, ...patch } : row)),
+    []
+  );
+  const moveOpportunityStage = useCallback(async (
+    row: Opportunity,
+    targetStage: string
+  ): Promise<{ ok: true; message: string } | { ok: false; error: string }> => {
+    const prepared = preparePipelineStageMove(row, targetStage);
+    if (!prepared.ok) {
+      setError(prepared.error);
+      return prepared;
+    }
+    const previousStage = row.pipeline_stage;
+    setBusy(`stage:${row.id}`);
+    setError("");
+    setNotice("");
+    updateRow(row.id, { pipeline_stage: prepared.payload.pipelineStage });
+    try {
+      const { opportunity: saved } = await crmFetch<{ opportunity: Opportunity }>(
+        `/api/crm/opportunities/${row.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(prepared.payload),
+        }
+      );
+      if (!saved?.id || saved.pipeline_stage !== prepared.payload.pipelineStage) {
+        throw crmConfirmationError({
+          url: `/api/crm/opportunities/${row.id}`,
+          method: "PATCH",
+          reason: "LiveCoach did not confirm the new pipeline stage",
+        });
+      }
+      const mergeSaved = (item: Opportunity): Opportunity => item.id === saved.id
+        ? {
+            ...item,
+            ...saved,
+            company: item.company,
+            risks: item.risks,
+            nextAction: saved.next_action || item.nextAction,
+            weightedValue: (Number(saved.value) || 0) * (Number(saved.probability) || 0) / 100,
+          }
+        : item;
+      setRows((all) => all.map(mergeSaved));
+      setData((current) => current ? {
+        ...current,
+        opportunities: (current.opportunities || []).map(mergeSaved),
+        excludedOpportunities: (current.excludedOpportunities || []).map(mergeSaved),
+      } : current);
+      const message = `${row.company} moved to ${prepared.payload.pipelineStage.replace(/_/g, " ")} and saved.`;
+      setNotice(message);
+      return { ok: true, message };
+    } catch (moveError: any) {
+      updateRow(row.id, { pipeline_stage: previousStage });
+      const message = moveError?.message || "That deal could not be moved";
+      setError(message);
+      return { ok: false, error: message };
+    } finally {
+      setBusy("");
+    }
+  }, [updateRow]);
   const changeType = (row: Opportunity, opportunity_type: Opportunity["opportunity_type"]) => updateRow(row.id, {
     opportunity_type,
     forecast_category: opportunity_type === "revenue"
@@ -384,6 +446,7 @@ export default function RevenuePage() {
             busy={busy}
             onChange={updateRow as any}
             onSave={saveOpportunity as any}
+            onStageMove={moveOpportunityStage as any}
             onDismiss={dismissOpportunity as any}
             focus={pipelineFocus}
             onFocusChange={(next) => chooseDrilldown(next)}
