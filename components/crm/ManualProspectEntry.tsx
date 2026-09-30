@@ -23,6 +23,7 @@ type ManualProspectDraft = {
   companyName: string;
   jobTitle: string;
   crmCompanyId: string;
+  crmContactId: string;
 };
 
 type ManualProspectResult = {
@@ -42,6 +43,7 @@ const emptyDraft: ManualProspectDraft = {
   companyName: "",
   jobTitle: "",
   crmCompanyId: "",
+  crmContactId: "",
 };
 
 const input =
@@ -71,9 +73,15 @@ export default function ManualProspectEntry({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const begin = (candidate?: CrmProspectCandidate) => {
-    const savedContact = candidate?.contacts.find((contact) => contact.email) ||
-      candidate?.contacts[0];
+  const begin = (
+    candidate?: CrmProspectCandidate,
+    selectedContact?: CrmProspectCandidate["contacts"][number] | null
+  ) => {
+    const savedContact = selectedContact === null
+      ? undefined
+      : selectedContact ||
+        candidate?.contacts.find((contact) => contact.email) ||
+        candidate?.contacts[0];
     const name = splitContactName(savedContact?.name || "");
     setDraft(candidate ? {
       firstName: name.firstName,
@@ -82,6 +90,7 @@ export default function ManualProspectEntry({
       companyName: candidate.companyName,
       jobTitle: savedContact?.role || "",
       crmCompanyId: candidate.companyId,
+      crmContactId: savedContact?.id || "",
     } : emptyDraft);
     setError("");
     setOpen(true);
@@ -143,32 +152,46 @@ export default function ManualProspectEntry({
       {candidates.length ? (
         <div className="mt-3 border-t border-edge/60 pt-3">
           <p className="font-mono text-[0.53rem] uppercase tracking-wider text-amber">
-            Recent clients waiting for a person
+            Recent clients not linked to email Outreach
           </p>
           <p className="mt-1 text-xs leading-5 text-muted">
-            These were saved correctly under Clients but do not yet have a linked Outreach prospect.
+            A saved LinkedIn contact can appear here without a work email. Add a verified work email only when you have one. LiveCoach will update that same person and link them to Outreach without creating a duplicate.
           </p>
           <div className="mt-2 grid gap-2 lg:grid-cols-2">
             {candidates.map((candidate) => {
-              const exactEmailContacts = candidate.contacts.filter((contact) => contact.email);
               return (
                 <article key={candidate.companyId} className="rounded-lg border border-edge bg-ink/35 p-3">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <h3 className="truncate font-display text-sm text-bone">{candidate.companyName}</h3>
-                      <p className="mt-1 text-xs text-muted">
-                        {exactEmailContacts.length
-                          ? `${exactEmailContacts.length} saved contact${exactEmailContacts.length === 1 ? "" : "s"} with an email`
-                          : "No named contact with a work email yet"}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap gap-2">
-                      <Link href={`/crm/${candidate.companyId}`} className={button}>Open client</Link>
-                      <button type="button" onClick={() => begin(candidate)} className={primary}>
-                        Add contact
+                  <div className="flex items-start justify-between gap-3">
+                    <h3 className="min-w-0 truncate font-display text-sm text-bone">{candidate.companyName}</h3>
+                    <Link href={`/crm/${candidate.companyId}`} className={`${button} shrink-0`}>Open client</Link>
+                  </div>
+                  {candidate.contacts.length ? (
+                    <div className="mt-3 grid gap-2">
+                      {candidate.contacts.map((contact) => (
+                        <div key={contact.id} className="flex flex-col gap-2 rounded-lg border border-edge/70 bg-ink/45 p-2.5 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-bone">{contact.name}</p>
+                            <p className="mt-0.5 truncate text-xs text-muted">
+                              {[contact.role, contact.email || "Work email not added"].filter(Boolean).join(" · ")}
+                            </p>
+                          </div>
+                          <button type="button" onClick={() => begin(candidate, contact)} className={`${primary} shrink-0`}>
+                            {contact.email ? "Link to Outreach" : "Add work email"}
+                          </button>
+                        </div>
+                      ))}
+                      <button type="button" onClick={() => begin(candidate, null)} className={`${button} justify-self-start`}>
+                        + Add another person
                       </button>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="mt-3 flex flex-col gap-2 rounded-lg border border-edge/70 bg-ink/45 p-2.5 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-xs text-muted">No named contact has been saved for this client yet.</p>
+                      <button type="button" onClick={() => begin(candidate)} className={`${primary} shrink-0`}>
+                        Add person
+                      </button>
+                    </div>
+                  )}
                 </article>
               );
             })}
@@ -207,7 +230,7 @@ export default function ManualProspectEntry({
             </div>
           </div>
           <p className="mt-2 text-xs text-muted">
-            This creates a private prospect assigned to you. It does not research the person, enrol them in a campaign, or send anything.
+            This saves or updates the person on the client and links the same record to your private Outreach list. It does not research them, enrol them in a campaign, or send anything.
           </p>
           {error ? <p className="mt-2 rounded-lg border border-rust/45 bg-rust/10 px-3 py-2 text-sm text-rust">{error}</p> : null}
         </div>
