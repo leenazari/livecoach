@@ -53,6 +53,16 @@ const UUID =
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RECENT_CLIENT_DAYS = 30;
 const RECENT_CLIENT_LIMIT = 20;
+const EMAIL_OUTREACH_CLIENT_STAGES = new Set([
+  "",
+  "new",
+  "prospect",
+  "discovery",
+  "qualified",
+  "demo",
+  "proposal",
+  "negotiation",
+]);
 
 function cleanManualField(value: unknown, max: number): string {
   return String(value || "")
@@ -73,6 +83,122 @@ function manualProspectBlocker(
   return NextResponse.json(crmBlockerPayload(input), { status });
 }
 
+const MANUAL_PROSPECT_RPC_ERRORS: Record<
+  string,
+  { status: number; payload: Parameters<typeof crmBlockerPayload>[0] }
+> = {
+  manual_prospect_membership_required: {
+    status: 403,
+    payload: {
+      code: "manual_prospect_membership_required",
+      title: "CRM access blocked",
+      reason: "This account is not an active member of the selected workspace",
+      nextAction: "Ask a workspace owner to restore the account before linking this person",
+      responsible: "owner",
+    },
+  },
+  manual_prospect_client_not_owned: {
+    status: 403,
+    payload: {
+      code: "manual_prospect_client_not_owned",
+      title: "Client access blocked",
+      reason: "This client is not owned by the signed-in account",
+      nextAction: "Refresh Outreach and reopen the client assigned to you",
+      responsible: "user",
+    },
+  },
+  manual_prospect_client_stage_blocked: {
+    status: 409,
+    payload: {
+      code: "manual_prospect_client_stage_blocked",
+      title: "Relationship is not an email Outreach prospect",
+      reason: "Partners, customers, internal records and inactive relationships cannot be added to cold email Outreach",
+      nextAction: "Open the client and use the appropriate relationship workflow instead",
+      responsible: "user",
+    },
+  },
+  manual_prospect_contact_not_owned: {
+    status: 403,
+    payload: {
+      code: "manual_prospect_contact_not_owned",
+      title: "Contact access blocked",
+      reason: "The selected contact does not belong to this signed-in account and client",
+      nextAction: "Refresh Outreach and reopen your saved contact",
+      responsible: "user",
+    },
+  },
+  manual_prospect_contact_email_conflict: {
+    status: 409,
+    payload: {
+      code: "manual_prospect_contact_email_conflict",
+      title: "Contact email needs review",
+      reason: "This saved contact already has a different email address",
+      nextAction: "Open the client and confirm which email is correct before linking Outreach",
+      responsible: "user",
+    },
+  },
+  manual_prospect_contact_owned_elsewhere: {
+    status: 409,
+    payload: {
+      code: "manual_prospect_contact_owned_elsewhere",
+      title: "Duplicate contact prevented",
+      reason: "That exact email is already held by another teammate in this workspace",
+      nextAction: "Ask a workspace owner to confirm the relationship owner instead of creating another copy",
+      responsible: "owner",
+    },
+  },
+  manual_prospect_contact_company_conflict: {
+    status: 409,
+    payload: {
+      code: "manual_prospect_contact_company_conflict",
+      title: "Contact company needs review",
+      reason: "That exact email is already linked to a different client",
+      nextAction: "Open the existing contact and correct its company before retrying",
+      responsible: "user",
+    },
+  },
+  manual_prospect_contact_ambiguous: {
+    status: 409,
+    payload: {
+      code: "manual_prospect_contact_ambiguous",
+      title: "Duplicate contacts need review",
+      reason: "More than one saved contact matches this person or email",
+      nextAction: "Resolve the duplicate contacts before linking Outreach",
+      responsible: "user",
+    },
+  },
+  manual_prospect_owned_by_teammate: {
+    status: 409,
+    payload: {
+      code: "manual_prospect_owned_by_teammate",
+      title: "Duplicate prospect prevented",
+      reason: "That exact work email is already held by another salesperson in this workspace",
+      nextAction: "Ask a workspace owner to confirm the owner instead of creating another copy",
+      responsible: "owner",
+    },
+  },
+  manual_prospect_existing_company_mismatch: {
+    status: 409,
+    payload: {
+      code: "manual_prospect_existing_company_mismatch",
+      title: "Prospect company needs review",
+      reason: "That exact work email is already linked to a different CRM client",
+      nextAction: "Open the existing prospect and correct its company before retrying",
+      responsible: "user",
+    },
+  },
+  manual_prospect_duplicate_protected: {
+    status: 409,
+    payload: {
+      code: "manual_prospect_duplicate_protected",
+      title: "Duplicate prospect prevented",
+      reason: "That exact work email already exists in LiveCoach",
+      nextAction: "Ask a workspace owner to find and assign the existing record",
+      responsible: "owner",
+    },
+  },
+};
+
 async function loadRecentClientProspectCandidates(account: {
   userId: string;
   workspaceId: string;
@@ -82,7 +208,7 @@ async function loadRecentClientProspectCandidates(account: {
   ).toISOString();
   const { data: companies, error: companyError } = await supabaseAdmin
     .from("companies")
-    .select("id,name,profile,created_at,updated_at")
+    .select("id,name,stage,profile,created_at,updated_at")
     .eq("workspace_id", account.workspaceId)
     .eq("owner_id", account.userId)
     .gte("created_at", since)
@@ -94,7 +220,10 @@ async function loadRecentClientProspectCandidates(account: {
     const profile = company.profile && typeof company.profile === "object"
       ? company.profile
       : {};
-    return profile.archived !== true && profile.deleted !== true;
+    const stage = cleanManualField(company.stage, 80).toLowerCase();
+    return profile.archived !== true &&
+      profile.deleted !== true &&
+      EMAIL_OUTREACH_CLIENT_STAGES.has(stage);
   });
   const companyIds = activeCompanies.map((company: any) => company.id);
   if (!companyIds.length) return [];
@@ -455,6 +584,7 @@ export async function POST(req: NextRequest) {
     const email = cleanManualField(body.email, 320).toLowerCase();
     let companyName = cleanManualField(body.companyName, 200);
     const requestedCompanyId = cleanManualField(body.crmCompanyId, 80);
+    const requestedContactId = cleanManualField(body.crmContactId, 80);
 
     if (!firstName || !companyName || !email) {
       return manualProspectBlocker(400, {
@@ -481,6 +611,63 @@ export async function POST(req: NextRequest) {
         reason: "The selected CRM client could not be identified safely",
         nextAction: "Close the form, reopen the client from the list and try again",
         responsible: "user",
+      });
+    }
+    if (requestedContactId && !UUID.test(requestedContactId)) {
+      return manualProspectBlocker(400, {
+        code: "manual_prospect_contact_invalid",
+        title: "Contact link is not valid",
+        reason: "The selected CRM contact could not be identified safely",
+        nextAction: "Close the form, reopen the person from the client list and try again",
+        responsible: "user",
+      });
+    }
+    if (requestedContactId && !requestedCompanyId) {
+      return manualProspectBlocker(400, {
+        code: "manual_prospect_contact_company_required",
+        title: "Contact needs its client",
+        reason: "The selected CRM contact was not linked to a client in this request",
+        nextAction: "Close the form, reopen the person from the client list and try again",
+        responsible: "user",
+      });
+    }
+
+    if (requestedCompanyId) {
+      const { data, error } = await supabaseService.rpc(
+        "save_owned_client_outreach_contact_server",
+        {
+          p_actor_id: account.userId,
+          p_workspace_id: account.workspaceId,
+          p_company_id: requestedCompanyId,
+          p_contact_id: requestedContactId || null,
+          p_first_name: firstName,
+          p_last_name: lastName,
+          p_email: email,
+          p_job_title: jobTitle,
+        }
+      );
+      if (error) throw error;
+      const result = data && typeof data === "object"
+        ? data as Record<string, any>
+        : null;
+      if (
+        !result?.contact?.id ||
+        result.contact.company_id !== requestedCompanyId ||
+        String(result.contact.email || "").toLowerCase() !== email ||
+        !result?.prospect?.id ||
+        result.prospect.crm_company_id !== requestedCompanyId ||
+        String(result.prospect.email || "").toLowerCase() !== email
+      ) {
+        throw new Error("manual_prospect_confirmation_missing");
+      }
+      return NextResponse.json({
+        ok: true,
+        prospect: result.prospect,
+        contact: result.contact,
+        created: result.prospectCreated === true,
+        contactCreated: result.contactCreated === true,
+        duplicatePrevented: result.prospectCreated !== true,
+        noOutreachSent: true,
       });
     }
 
@@ -707,7 +894,24 @@ export async function POST(req: NextRequest) {
       noOutreachSent: true,
     });
   } catch (err: any) {
-    console.error("Manual outreach prospect save failed", err?.message || err);
+    const message = String(err?.message || "");
+    const knownError = Object.keys(MANUAL_PROSPECT_RPC_ERRORS).find((code) =>
+      message.includes(code)
+    );
+    if (knownError) {
+      const response = MANUAL_PROSPECT_RPC_ERRORS[knownError];
+      return manualProspectBlocker(response.status, response.payload);
+    }
+    if (/manual_prospect_(?:contact_name|email|job_title)_invalid/.test(message)) {
+      return manualProspectBlocker(400, {
+        code: "manual_prospect_details_invalid",
+        title: "Prospect details are not valid",
+        reason: "One or more contact fields could not be validated safely",
+        nextAction: "Review the name, job title and exact work email, then try again",
+        responsible: "user",
+      });
+    }
+    console.error("Manual outreach prospect save failed", message || err);
     return manualProspectBlocker(500, {
       code: "manual_prospect_save_not_confirmed",
       title: "Prospect not added",
