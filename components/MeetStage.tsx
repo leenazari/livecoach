@@ -37,6 +37,25 @@ type StreamAccess = {
   teamHints: string[];
 };
 
+type ProviderBotState = {
+  code: string;
+  subCode: string;
+  phase:
+    | "joining"
+    | "waiting_room"
+    | "in_call_not_recording"
+    | "recording"
+    | "ended"
+    | "failed"
+    | "unknown";
+  message: string;
+  terminal: boolean;
+  endedAt: string | null;
+  changedAt: string | null;
+  joined: boolean;
+  recording: boolean;
+};
+
 // How we decide a candidate "turn" ended (so cues/summary fire):
 const PAUSE_MS = 1600; // they stopped talking
 const CHECKPOINT_EVERY = 4; // ...or mid-monologue, every N finalised chunks
@@ -78,6 +97,8 @@ export default function MeetStage({
   const [botId, setBotId] = useState("");
   const [botName, setBotName] = useState("Your LiveCoach Notetaker");
   const [status, setStatus] = useState("not connected");
+  const [providerState, setProviderState] =
+    useState<ProviderBotState | null>(null);
   // Honest join state. transcribing = real audio has come through (the bot is
   // genuinely in the room), joinWarn = the watchdog fired without any transcript.
   const [transcribing, setTranscribing] = useState(false);
@@ -173,6 +194,7 @@ export default function MeetStage({
       }
       setTranscribing(true);
       setJoinWarn(false);
+      setStatus("notetaker is in the meeting and transcribing");
       lastUtterAtRef.current = Date.now();
       silenceEndRequestedRef.current = false;
       setSilenceRemainingMs(null);
@@ -572,6 +594,7 @@ export default function MeetStage({
       botIdRef.current = d.botId;
       setTranscribing(false);
       setJoinWarn(false);
+      setProviderState(null);
       setStatus(
         d.sharedCapture
           ? d.status === "shared_active"
@@ -581,10 +604,10 @@ export default function MeetStage({
       );
       if (wsState !== "on") connect();
       if (d.sharedCapture) void deliverBackfill(0);
-      // Join watchdog: if no transcript arrives within ~90s, the bot almost
-      // certainly never got into the room - most often it is sitting in the
-      // meeting's waiting room un-admitted. Surface that, instead of leaving a
-      // green light over a bot that never actually joined.
+      // Transcript is the strongest proof that capture is healthy. The provider
+      // status poll below identifies whether a silent bot is still launching,
+      // waiting, in the call, or has failed. This timer is only a fallback when
+      // the provider cannot return a useful state.
       if (joinWatchdogRef.current) clearTimeout(joinWatchdogRef.current);
       joinWatchdogRef.current = setTimeout(() => {
         joinWatchdogRef.current = null;
@@ -596,6 +619,61 @@ export default function MeetStage({
       sendingRef.current = false;
     }
   }, [meetingUrl, room, upcomingId, wsState, connect, deliverBackfill]);
+
+  // Recall accepts a create request before the meeting platform has accepted
+  // the bot. Poll the exact provider lifecycle while joining so LiveCoach never
+  // guesses that a missing bot is in a waiting room. The endpoint is scoped to
+  // this signed-in account and stops being called once transcript is flowing or
+  // the provider reports a terminal state.
+  useEffect(() => {
+    if (!botId || transcribing) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      let terminal = false;
+      try {
+        const params = new URLSearchParams({ session: room });
+        if (upcomingId) params.set("upcoming", upcomingId);
+        const response = await fetch(`/api/meet/status?${params.toString()}`, {
+          cache: "no-store",
+        });
+        const data = await response.json();
+        if (!cancelled && response.ok && data?.state) {
+          const next = data.state as ProviderBotState;
+          setProviderState(next);
+          setStatus(next.message);
+          terminal = next.terminal;
+          if (
+            next.phase === "waiting_room" ||
+            next.phase === "in_call_not_recording" ||
+            next.phase === "recording"
+          ) {
+            setJoinWarn(false);
+          }
+          if (terminal) {
+            setJoinWarn(true);
+            if (joinWatchdogRef.current) {
+              clearTimeout(joinWatchdogRef.current);
+              joinWatchdogRef.current = null;
+            }
+          }
+        }
+      } catch {
+        // A transient status read must not interrupt the transcript connection.
+        // The fallback watchdog still warns if no verified state ever arrives.
+      }
+      if (!cancelled && !terminal) {
+        timer = setTimeout(poll, 3000);
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [botId, room, upcomingId, transcribing]);
 
   const handledStartRequestRef = useRef(0);
   useEffect(() => {
@@ -612,6 +690,7 @@ export default function MeetStage({
     setBotId("");
     setJoinWarn(false);
     setTranscribing(false);
+    setProviderState(null);
     setCaptureStalled(false);
     lastUtterAtRef.current = 0; // restart the stall clock for the fresh bot
     silenceEndRequestedRef.current = false;
@@ -639,6 +718,7 @@ export default function MeetStage({
         botIdRef.current = "";
         setTranscribing(false);
         setJoinWarn(false);
+        setProviderState(null);
         setSilenceRemainingMs(null);
       }
     } catch (e: any) {
@@ -646,31 +726,54 @@ export default function MeetStage({
     }
   }
 
-  // Honest on-air state. Green ("On air") ONLY once real transcript is flowing,
-  // which proves the bot is in the room and hearing audio. Amber while we wait
-  // for it to join. A distinct "Not joined" when the watchdog has flagged that
-  // nothing is coming through (usually the bot is stuck in the waiting room).
-  // Red "Off air" when there's no bot. The old light went green the instant a
-  // bot was REQUESTED, which is exactly how a bot could read as live yet never
-  // actually join.
-  const air: "off" | "joining" | "on" | "stalled" | "stale" = !botId
+  // Honest on-air state. Transcript remains the proof that capture is healthy,
+  // while Recall's lifecycle distinguishes launching, waiting, joined, ended,
+  // and failed. A missing transcript alone is never labelled as a waiting room.
+  const providerPhase = providerState?.phase;
+  const air:
+    | "off"
+    | "joining"
+    | "waiting"
+    | "joined"
+    | "on"
+    | "stalled"
+    | "failed"
+    | "ended"
+    | "stale" = !botId
     ? "off"
     : transcribing && captureStalled
     ? "stale"
     : transcribing
     ? "on"
+    : providerPhase === "failed"
+    ? "failed"
+    : providerPhase === "ended"
+    ? "ended"
+    : providerPhase === "waiting_room"
+    ? "waiting"
+    : providerPhase === "in_call_not_recording" ||
+      providerPhase === "recording"
+    ? "joined"
     : joinWarn
     ? "stalled"
     : "joining";
   const airPill =
     air === "on"
       ? { cls: "border-sage/60 bg-sage/15 text-sage", dot: "bg-sage animate-pulse", label: "On air" }
+      : air === "joined"
+      ? { cls: "border-sage/60 bg-sage/15 text-sage", dot: "bg-sage animate-pulse", label: "In call" }
+      : air === "waiting"
+      ? { cls: "border-amber/60 bg-amber/15 text-amber", dot: "bg-amber animate-pulse", label: "Waiting room" }
       : air === "joining"
       ? { cls: "border-amber/60 bg-amber/15 text-amber", dot: "bg-amber animate-pulse", label: "Joining…" }
       : air === "stale"
       ? { cls: "border-rust/60 bg-rust/15 text-rust", dot: "bg-rust animate-pulse", label: "Check notetaker" }
+      : air === "failed"
+      ? { cls: "border-rust/60 bg-rust/15 text-rust", dot: "bg-rust", label: "Join failed" }
+      : air === "ended"
+      ? { cls: "border-edge bg-panel text-muted", dot: "bg-muted", label: "Ended" }
       : air === "stalled"
-      ? { cls: "border-rust/60 bg-rust/15 text-rust", dot: "bg-rust", label: "Not joined" }
+      ? { cls: "border-rust/60 bg-rust/15 text-rust", dot: "bg-rust", label: "Not verified" }
       : { cls: "border-rust/55 bg-rust/15 text-rust", dot: "bg-rust", label: "Off air" };
 
   return (
@@ -702,20 +805,34 @@ export default function MeetStage({
           disabled={!meetingUrl.trim() || !!botId || status === "sending bot..."}
           title={
             botId
-              ? "Bot is in the meeting. Stop it before sending another."
+              ? "A notetaker request is active. Stop it before sending another."
               : "Send the bot to join and transcribe"
           }
           className={`rounded-full border px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider transition ${
-            botId
+            air === "on" || air === "joined"
               ? "cursor-default border-sage bg-sage text-ink"
+              : air === "failed" || air === "stalled"
+              ? "cursor-default border-rust bg-rust/15 text-rust"
+              : air === "ended"
+              ? "cursor-default border-edge bg-panel text-muted"
+              : botId
+              ? "cursor-default border-amber bg-amber/15 text-amber"
               : "border-amber/60 bg-amber/15 text-amber hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
           }`}
         >
           {botId
             ? air === "on"
               ? "● on air"
+              : air === "joined"
+              ? "in call"
+              : air === "waiting"
+              ? "waiting room"
+              : air === "failed"
+              ? "join failed"
+              : air === "ended"
+              ? "ended"
               : air === "stalled"
-              ? "not joined"
+              ? "not verified"
               : "● joining…"
             : status === "sending bot..."
             ? "sending…"
@@ -759,7 +876,7 @@ export default function MeetStage({
       {/* The browser display socket is separate from Recall's recording and the
           worker's persistence path. Only warn after a sustained interruption,
           and never claim that a display reconnect means capture has stopped. */}
-      {botId && showReconnectWarning && (
+      {botId && showReconnectWarning && air !== "failed" && air !== "ended" && (
         <div className="rounded-lg border border-amber/60 bg-amber/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-amber">
           {"⚠"} Live transcript display reconnecting. This does not mean the
           notetaker has stopped recording. Saved speech will backfill
@@ -767,21 +884,71 @@ export default function MeetStage({
         </div>
       )}
 
-      {/* The join watchdog fired: a bot was requested but no transcript has come
-          through, so it very likely never got into the room. Most common cause:
-          it is waiting to be admitted. Give the fix and a one-tap retry. */}
+      {air === "waiting" && (
+        <div className="rounded-lg border border-amber/60 bg-amber/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-amber">
+          {"⚠"} The provider confirms that the notetaker is in the waiting room.
+          <span className="mt-1 block text-bone">
+            Admit the notetaker from the Meet prompt or participants list. Capture
+            starts after it enters the meeting.
+          </span>
+        </div>
+      )}
+
+      {air === "failed" && providerState && (
+        <div className="rounded-lg border border-rust/60 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-rust">
+          {"⚠"} {providerState.message}
+          {providerState.subCode && (
+            <span className="mt-1 block text-bone">
+              Blocker code {providerState.subCode}
+            </span>
+          )}
+          <button
+            onClick={retryBot}
+            className="mt-2 rounded-full border border-rust/60 px-2.5 py-0.5 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust hover:text-ink"
+          >
+            retry bot
+          </button>
+        </div>
+      )}
+
+      {air === "ended" && providerState && (
+        <div className="rounded-lg border border-edge bg-panel/70 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-muted">
+          {providerState.message}
+          <button
+            onClick={retryBot}
+            className="ml-2 rounded-full border border-edge px-2.5 py-0.5 font-mono text-[0.58rem] uppercase tracking-wider text-bone transition hover:border-amber/60 hover:text-amber"
+          >
+            retry bot
+          </button>
+        </div>
+      )}
+
+      {air === "joined" && joinWarn && (
+        <div className="rounded-lg border border-rust/60 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-rust">
+          {"⚠"} The provider says the notetaker joined, but no speech has reached
+          LiveCoach yet.
+          <span className="mt-1 block text-bone">
+            Check that recording is allowed and ask someone to speak. Retry if it
+            remains silent.
+          </span>
+          <button
+            onClick={retryBot}
+            className="mt-1 rounded-full border border-rust/60 px-2.5 py-0.5 font-mono text-[0.58rem] uppercase tracking-wider text-rust transition hover:bg-rust hover:text-ink"
+          >
+            retry bot
+          </button>
+        </div>
+      )}
+
+      {/* The fallback watchdog fired without a verified provider state. Do not
+          claim the bot is in a waiting room when Recall has not said that. */}
       {air === "stalled" && (
         <div className="rounded-lg border border-rust/60 bg-rust/10 px-3 py-2 font-mono text-[0.62rem] leading-relaxed text-rust">
-          {"⚠"} Nothing is being transcribed, so the notetaker isn't in the call
-          yet - almost always it's waiting in the lobby.
+          {"⚠"} Nothing is being transcribed and the provider has not confirmed
+          that the notetaker reached the meeting.
           <span className="mt-1 block text-bone">
-            Fix it now: open your Meet window and ADMIT the notetaker from the
-            "asking to join" prompt or the participants list. Capture starts the
-            second it's let in.
-          </span>
-          <span className="mt-1 block">
-            Only Retry if it isn't asking to join at all - that sends a fresh one,
-            which also has to be admitted. Or run without it via Recap by voice.
+            It is not necessarily in the waiting room. Retry once, or continue
+            with Recap by voice if the new bot does not appear.
           </span>
           <button
             onClick={retryBot}
