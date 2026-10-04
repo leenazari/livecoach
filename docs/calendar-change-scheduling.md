@@ -9,6 +9,7 @@ Calendar notifications enqueue an account-scoped refresh of the canonical `upcom
 - A durable, coalesced `calendar_sync_jobs` record is committed before HTTP acknowledgement. One account lease prevents overlapping snapshots. Changes during a read increment the version and are read again after the old version finishes. Failed workers retain pending work with backoff.
 - Every 15 minutes a database-only check bootstraps missing watches, renews expiring subscriptions and retries unfinished jobs. Healthy accounts without changes do not call calendar APIs. Existing occasional full sync is retained because provider delivery is not guaranteed.
 - OAuth connection starts sync/setup in the background. Disconnect and suspended membership fail closed. No user has to keep a CRM tab open.
+- Production workers call the canonical app domain with the existing service credential. They never follow redirects to deployment SSO. Preview workers remain deployment-local.
 - Moving a meeting outside the scheduling horizon cancels its obsolete future reservation. A cancellation in the five-minute pre-meeting window can withdraw an idle bot, but must not terminate an early conversation with captured speech or another participant's shared reservation.
 
 ## Operational checks

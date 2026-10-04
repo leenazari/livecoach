@@ -1,6 +1,6 @@
 import "server-only";
 
-import { internalAppOrigin } from "@/lib/public-app-url";
+import { internalAppOrigin, publicAppOrigin } from "@/lib/public-app-url";
 import type { RecordScope } from "@/lib/record-scope";
 import { supabaseService } from "@/lib/supabase";
 
@@ -34,8 +34,12 @@ export async function finishCalendarSync(scope: RecordScope, job: any, failure: 
 export async function kickCalendarSync(scope: RecordScope) {
   const secret = process.env.CRON_SECRET;
   if (!secret) throw new Error("Calendar worker is not configured");
-  const response = await fetch(`${internalAppOrigin()}/api/crm/calendar-sync?pending=1`, {
-    method: "POST", cache: "no-store", signal: AbortSignal.timeout(290000),
+  // Production deployment URLs can require Vercel SSO even though the
+  // canonical app domain is public. Use that domain with the normal service
+  // credential. Previews must still stay on their own deployment.
+  const origin = process.env.VERCEL_ENV === "production" ? publicAppOrigin() : internalAppOrigin();
+  const response = await fetch(`${origin}/api/crm/calendar-sync?pending=1`, {
+    method: "POST", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(290000),
     headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
     body: JSON.stringify({ userId: scope.userId, workspaceId: scope.workspaceId }),
   });
