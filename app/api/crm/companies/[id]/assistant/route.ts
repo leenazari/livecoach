@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { requireRequestScope } from '@/lib/request-scope';
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -14,9 +15,12 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = requireRequestScope();
     const { data, error } = await supabaseAdmin
       .from("assistant_messages")
       .select("id, role, content, created_at")
+      .eq('workspace_id', scope.workspaceId)
+      .eq('owner_id', scope.userId)
       .eq("company_id", params.id)
       .order("created_at", { ascending: true })
       .limit(200);
@@ -35,9 +39,12 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const scope = requireRequestScope();
     const { error } = await supabaseAdmin
       .from("assistant_messages")
       .delete()
+      .eq('workspace_id', scope.workspaceId)
+      .eq('owner_id', scope.userId)
       .eq("company_id", params.id);
     if (error) throw error;
     return NextResponse.json({ ok: true });

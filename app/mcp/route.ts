@@ -16,6 +16,7 @@ import { buildStaffMcpServer } from "@/lib/staff-mcp-tools";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 const mcpHandler = createMcpHandler(
   ({ authInfo }) => buildStaffMcpServer(principalFromAuthInfo(authInfo)),

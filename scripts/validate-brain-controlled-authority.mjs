@@ -108,7 +108,7 @@ assert.match(controlApi, /scope\.role !== "owner"/);
 assert.match(control, /Only the active workspace owner can change Brain permissions/);
 assert.match(control, /actor_user_id", scope\.userId/);
 assert.match(control, /actual_cost_gbp/);
-assert.match(controlPage, /Other users see only their own actions/);
+assert.match(controlPage, /Each person sees only their own action details/);
 assert.match(controlPage, /Owner override used/);
 assert.match(controlPage, /Recorded \{gbp\(execution\.actual_cost_gbp\)\}/);
 

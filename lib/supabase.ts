@@ -61,10 +61,12 @@ function serviceScopedTable(table: string, scope: { userId: string; workspaceId:
     throw new Error(`Service access to ${table} requires an explicit admin client`);
   }
   const tableClient: any = supabaseService.from(table);
-  const constrain = (builder: any) =>
-    builder
-      .eq("workspace_id", scope.workspaceId)
-      .or(`owner_id.eq.${scope.userId},visibility.eq.team`);
+  const constrain = (builder: any) => {
+    const query = builder.eq('workspace_id', scope.workspaceId);
+    return ['assistant_messages', 'brain_routine_runs'].includes(table)
+      ? query.eq('owner_id', scope.userId)
+      : query.or(`owner_id.eq.${scope.userId},visibility.eq.team`);
+  };
   return new Proxy(tableClient, {
     get(target, property, receiver) {
       if (property === "select")

@@ -110,14 +110,17 @@ export default function McpChatGptConnection() {
           <h2 className="mt-2 font-display text-xl text-bone">
             Query and update your own LiveCoach work from ChatGPT
           </h2>
+          <p className="text-xs text-muted">Your Brain is personal. The workspace owner can review server audit copies for 30 days.</p>
           <p className="mt-2 text-sm leading-6 text-muted">
             Each person connects their own ChatGPT account to their own LiveCoach login.
             Ask for your to-do list, marketing records, calls, calendar, documents, Brain history
-            and connected email. Save your own tasks, campaign records, lead details and notes back into LiveCoach.
+            and connected email. Ask your existing Brain to advise, coach and prepare any action your
+            normal role allows. Review the exact change before approving it.
           </p>
           <p className="mt-2 text-xs leading-5 text-moss">
-            It cannot send outreach, launch advertising, assign colleagues, see another person&apos;s
-            private records, or change code and permissions. Every action returns an audit receipt.
+            The same Brain role, assignment and approval rules apply here. Messages, calendar changes,
+            paid work and destructive actions need separate approval. Another person&apos;s private
+            records and connections stay blocked. It cannot change code, credentials or permissions.
           </p>
         </div>
         <span className={`shrink-0 rounded-full border px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider ${grants.length ? "border-moss/55 bg-moss/10 text-moss" : status?.oauthEnabled ? "border-sky/55 bg-sky/10 text-sky" : "border-amber/55 bg-amber/10 text-amber"}`}>
@@ -153,7 +156,7 @@ export default function McpChatGptConnection() {
         <li>1. On ChatGPT web, enable Developer mode in Settings, Security and login. Your managed workspace may require admin access.</li>
         <li>2. In ChatGPT Plugins, use the plus button and add the address above with OAuth authentication. Existing connections can refresh tools.</li>
         <li>3. Connect using your own LiveCoach login and approve the personal account connection.</li>
-        <li>4. Select LiveCoach in your chat and ask “What is on my to-do list?” or “Update my campaign review date”. Review requested changes before approving them.</li>
+        <li>4. Select LiveCoach in your chat and ask “Ask my Brain what I should focus on today” or “Ask my Brain to update my call prep”. Review each exact proposed action before approving it.</li>
       </ol>
 
       <p className="mt-4 text-xs leading-5 text-amber">

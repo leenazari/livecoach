@@ -95,7 +95,7 @@ assert.match(consent, /another person&apos;s private records/);
 assert.match(consent, /Change LiveCoach code, roles or permissions/);
 assert.match(settings, /revokeGrant/);
 assert.match(settings, /their own LiveCoach login/);
-assert.match(settings, /It cannot send outreach/);
+assert.match(settings, /same Brain role, assignment and approval rules/);
 assert.match(settings, /Plus, Pro, Business, Enterprise and Education/);
 assert.match(settings, /In ChatGPT Plugins/);
 

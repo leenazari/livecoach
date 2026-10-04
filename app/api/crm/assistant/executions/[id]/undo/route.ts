@@ -1,4 +1,7 @@
+import { logBrainAudit } from '@/lib/brain-audit';
 import { NextRequest, NextResponse } from "next/server";
+import { delegatedRequestScope } from '@/lib/delegated-request-scope';
+import { dispatchDelegatedBrainRoute } from '@/lib/brain-route-dispatch';
 
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
@@ -84,6 +87,7 @@ export async function POST(
       );
     }
 
+    await logBrainAudit(scope, { eventType: 'action_requested', correlationId: execution.id, status: 'started', request: { undo } });
     const now = new Date().toISOString();
     const staleClaim = new Date(Date.now() - 2 * 60_000).toISOString();
     const { data: claimed, error: claimError } = await supabaseService
@@ -105,7 +109,9 @@ export async function POST(
     }
 
     const cookie = request.headers.get("cookie") || "";
-    const response = await fetch(
+    const response = delegatedRequestScope()
+      ? await dispatchDelegatedBrainRoute(undo.endpoint, 'PATCH', undo.body)
+      : await fetch(
       `${request.nextUrl.origin}${undo.endpoint}`,
       {
         method: "PATCH",
@@ -142,6 +148,7 @@ export async function POST(
         .eq("id", execution.id)
         .eq("workspace_id", scope.workspaceId)
         .eq("actor_user_id", scope.userId);
+      await logBrainAudit(scope, { eventType: 'action_failed', correlationId: execution.id, status: 'failed', response: { undo: true, result: responseBody }, error: message });
       return NextResponse.json(
         {
           error: message,
@@ -174,10 +181,12 @@ export async function POST(
       .eq("workspace_id", scope.workspaceId)
       .eq("actor_user_id", scope.userId);
     if (saveError) throw saveError;
+    const auditSaved = await logBrainAudit(scope, { eventType: 'action_undone', correlationId: execution.id, status: 'completed', response: { result: responseBody, recovery: finalRecovery } }).then(() => true, () => false);
     return NextResponse.json(
       {
         ok: true,
         undone: true,
+        auditSaved,
         executionId: execution.id,
         result: responseBody,
         recovery: finalRecovery,

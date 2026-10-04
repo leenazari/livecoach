@@ -6,6 +6,7 @@ import {
 import { staffMcpResourceUrl } from "@/lib/staff-mcp-auth";
 
 import { PERSONAL_MCP_TOOLS } from '@/lib/staff-mcp-personal';
+import { BRAIN_MCP_TOOLS } from '@/lib/staff-mcp-brain';
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,8 +25,8 @@ export async function GET() {
       {
         endpoint: staffMcpResourceUrl().href,
         oauthEnabled,
-        toolCount: 6 + PERSONAL_MCP_TOOLS.length,
-        access: "own_and_assigned_work_only",
+        toolCount: 6 + PERSONAL_MCP_TOOLS.length + BRAIN_MCP_TOOLS.length,
+        access: "existing_brain_role_permissions",
       },
       { headers: { "Cache-Control": "private, no-store" } }
     );

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { delegatedRequestScope } from '@/lib/delegated-request-scope';
+import { dispatchDelegatedBrainRoute } from '@/lib/brain-route-dispatch';
 
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -17,7 +19,9 @@ async function post(
   body: Record<string, unknown>
 ) {
   const cookie = request.headers.get("cookie") || "";
-  const response = await fetch(`${request.nextUrl.origin}${path}`, {
+  const response = delegatedRequestScope()
+    ? await dispatchDelegatedBrainRoute(path, method, body)
+    : await fetch(`${request.nextUrl.origin}${path}`, {
     method,
     cache: "no-store",
     headers: {
@@ -94,4 +98,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

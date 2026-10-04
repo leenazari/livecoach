@@ -465,11 +465,9 @@ export async function getBrainControlSnapshot(scope: BrainScope) {
       "id,actor_user_id,actor_role,action_type,action_kind,label,status,policy_decision,owner_override_requested,owner_override_applied,attempt_count,estimated_cost_gbp,actual_cost_gbp,recovery,blocker_code,error,created_at,completed_at,undone_at"
     )
     .eq("workspace_id", scope.workspaceId)
+    .eq("actor_user_id", scope.userId)
     .order("created_at", { ascending: false })
     .limit(80);
-  if (scope.role !== "owner") {
-    executionQuery = executionQuery.eq("actor_user_id", scope.userId);
-  }
   let actionCostQuery = supabaseService
     .from("brain_action_executions")
     .select("actual_cost_gbp")

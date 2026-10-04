@@ -1468,6 +1468,8 @@ export default function ClientAssistant({
         </div>
       </div>
 
+      <p className="mb-3 text-xs text-muted">Your Brain is personal. The workspace owner can review server audit copies for 30 days.</p>
+
       {threadError ? (
         <p className="mb-2 rounded-lg border border-rust/40 bg-rust/10 px-3 py-2 text-xs text-rust">
           {threadError}

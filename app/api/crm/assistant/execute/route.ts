@@ -1,4 +1,7 @@
+import { logBrainAudit } from '@/lib/brain-audit';
 import { NextRequest, NextResponse } from "next/server";
+import { delegatedRequestScope } from '@/lib/delegated-request-scope';
+import { dispatchDelegatedBrainRoute } from '@/lib/brain-route-dispatch';
 
 import {
   brainAuthorityProfile,
@@ -69,7 +72,9 @@ async function callAction(input: {
   ownerOverride: boolean;
 }) {
   const cookie = input.request.headers.get("cookie") || "";
-  const response = await fetch(`${input.request.nextUrl.origin}${input.endpoint}`, {
+  const response = delegatedRequestScope()
+    ? await dispatchDelegatedBrainRoute(input.endpoint, input.method, input.body, input.ownerOverride ? { 'x-livecoach-brain-action': input.token } : undefined)
+    : await fetch(`${input.request.nextUrl.origin}${input.endpoint}`, {
     method: input.method,
     cache: "no-store",
     headers: {
@@ -214,6 +219,8 @@ async function existingExecution(input: {
 }
 
 export async function POST(request: NextRequest) {
+  let auditScope: RequestScope | null = null;
+  let auditCorrelationId = "";
   let executionId = "";
   let retryAllowed = false;
   let actionCompleted = false;
@@ -235,9 +242,13 @@ export async function POST(request: NextRequest) {
     }
     const token = String(input?.token || "");
     const payload = verifyBrainActionToken(token, scope);
+    auditScope = scope;
+    auditCorrelationId = payload.jti;
+    await logBrainAudit(scope, { eventType: 'action_requested', correlationId: payload.jti, status: 'started', request: { action: payload.action } });
     const profile = brainAuthorityProfile(payload.actionType);
     retryAllowed = profile.canRetry;
     if (!brainRoleMayExecute(scope, profile)) {
+      await logBrainAudit(scope, { eventType: 'action_denied', correlationId: payload.jti, status: 'denied', error: 'Current role cannot approve this action' });
       return NextResponse.json(
         {
           error:
@@ -256,6 +267,7 @@ export async function POST(request: NextRequest) {
       key: payload.jti,
     });
     if (existing?.status === "completed") {
+      await logBrainAudit(scope, { eventType: 'action_completed', correlationId: payload.jti, status: 'completed', response: { executionId: existing.id, reused: true, result: existing.response_payload } });
       return NextResponse.json(
         {
           ...cleanObject(existing.response_payload),
@@ -297,6 +309,7 @@ export async function POST(request: NextRequest) {
       payload.ownerOverrideRequested &&
       profile.canOwnerOverride;
     if (trust.mode === "blocked" && !ownerOverrideAllowed) {
+      await logBrainAudit(scope, { eventType: 'action_denied', correlationId: payload.jti, status: 'denied', error: trust.reason || 'Brain trust rule blocked this action' });
       const blockedValues = {
         workspace_id: scope.workspaceId,
         actor_user_id: scope.userId,
@@ -481,6 +494,7 @@ export async function POST(request: NextRequest) {
       .eq("id", executionId)
       .eq("workspace_id", scope.workspaceId)
       .eq("actor_user_id", scope.userId);
+    await logBrainAudit(scope, { eventType: completed ? 'action_completed' : 'action_failed', correlationId: payload.jti, status: completed ? 'completed' : 'failed', response: { executionId, result: result.data, actualCostGbp, recovery }, error: errorMessage || undefined });
     if (auditError) {
       const pendingRecovery = {
         canRetry: false,
@@ -519,6 +533,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (error: any) {
     const message = error?.message || "The Brain action could not be completed";
+    if (auditScope && auditCorrelationId) await logBrainAudit(auditScope, { eventType: actionCompleted ? 'action_completed' : 'action_failed', correlationId: auditCorrelationId, status: actionCompleted ? 'completed' : 'failed', response: { executionId, ...(actionCompleted ? { result: completedActionPayload } : {}) }, error: String(message) }).catch(() => console.error('Brain action audit unavailable'));
     if (executionId && !actionCompleted) {
       await supabaseService
         .from("brain_action_executions")
