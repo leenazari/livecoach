@@ -24,6 +24,7 @@ type TutorialResponse = {
     lastPath: string | null;
   };
   autoStart: boolean;
+  department: string;
   guide: TutorialGuide;
   role: "owner" | "manager" | "sales";
 };
@@ -145,6 +146,7 @@ export default function SalesOutreachTutorial() {
     void crmFetch<TutorialResponse>(tutorialApi("sales"))
       .then((data) => {
         if (!active) return;
+        if (data.department === "marketing") return;
         setTutorialGuide("sales");
         const savedStep = Math.min(
           SALES_OUTREACH_TUTORIAL_STEPS.length - 1,

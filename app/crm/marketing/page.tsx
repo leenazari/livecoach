@@ -27,7 +27,10 @@ export default function MarketingPage() {
   const [selectedTask, setSelectedTask] = useState<MarketingTask | null>(null);
   const [feedbackLead, setFeedbackLead] = useState<MarketingLead | null>(null);
   const load = useCallback(async () => { try { const next = await crmFetch<MarketingData>(API); setData(next); if (!next.canManage) setTab('leads'); } catch (e) { setError(e instanceof Error ? e.message : 'Marketing could not load'); } }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('setup') === '1') setTab('connections');
+    void load();
+  }, [load]);
   const write = async (body: Record<string, unknown>, endpoint = API) => {
     if (busy) return false;
     setBusy(true); setError(''); setNote('');
