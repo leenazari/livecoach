@@ -14,7 +14,7 @@ import LiveCoachLogo from "@/components/LiveCoachLogo";
 // right by padding the body, so nothing is hidden behind it.
 type Item = { href: string; label: string; icon: string; tab?: string };
 type ViewerRole = "owner" | "manager" | "sales";
-type TeamStatus = { role?: ViewerRole };
+type TeamStatus = { role?: ViewerRole; department?: string };
 
 const TEAM_STATUS_URL = "/api/auth/team/status";
 const OUTREACH_ITEM: Item = { href: "/crm/outreach", label: "Outreach", icon: "↗" };
@@ -40,6 +40,7 @@ const BRAIN_CONTROL_ITEM: Item = {
 };
 const PIPELINE_ITEM: Item = { href: "/crm/revenue", label: "Pipeline", icon: "◆" };
 const TASKS_ITEM: Item = { href: "/crm/tasks", label: "Tasks", icon: "☑" };
+const MARKETING_ITEM: Item = { href: '/crm/marketing', label: 'Marketing', icon: '◈' };
 const CLIENTS_ITEM: Item = { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" };
 const CALLS_ITEM: Item = { href: "/crm/calls", label: "Calls", icon: "☎" };
 const PLAYBOOK_ITEM: Item = { href: "/crm/pitch-playbook", label: "Sales knowledge", icon: "◇" };
@@ -99,12 +100,13 @@ function NavMenuInner({
     const cached = getCached<TeamStatus>(TEAM_STATUS_URL);
     return cached?.role || null;
   });
+  const [department, setDepartment] = useState(() => getCached<TeamStatus>(TEAM_STATUS_URL)?.department || 'sales');
 
   useEffect(() => {
     let active = true;
     void crmFetch<TeamStatus>(TEAM_STATUS_URL)
       .then((status) => {
-        if (active && status.role) setViewerRole(status.role);
+        if (active && status.role) { setViewerRole(status.role); setDepartment(status.department || 'sales'); }
       })
       .catch(() => {
         // Navigation still works with the safe salesperson home fallback.
@@ -117,16 +119,22 @@ function NavMenuInner({
   // Sales and manager accounts land on their prioritised Work Inbox. Owners
   // retain the wider executive dashboard and a separate Work Inbox link.
   const salesHome = viewerRole !== "owner";
-  const homeItem: Item = salesHome
+  const marketingHome = salesHome && department === 'marketing';
+  const homeItem: Item = marketingHome
+    ? { href: '/crm/marketing', label: 'Today', icon: '▣' }
+    : salesHome
     ? { href: "/crm/inbox", label: "Today", icon: "▣" }
     : { href: "/crm", label: "Today", icon: "▣" };
-  const coreItems: Item[] = salesHome
-    ? [homeItem, TASKS_ITEM, CHAT_ITEM, ...SALES_CORE_ITEMS, NOTIFICATIONS_ITEM]
+  const coreItems: Item[] = marketingHome
+    ? [homeItem, TASKS_ITEM, CHAT_ITEM, NOTIFICATIONS_ITEM]
+    : salesHome
+    ? [homeItem, TASKS_ITEM, CHAT_ITEM, MARKETING_ITEM, ...SALES_CORE_ITEMS, NOTIFICATIONS_ITEM]
     : [
         homeItem,
         TASKS_ITEM,
         CHAT_ITEM,
         NOTIFICATIONS_ITEM,
+        MARKETING_ITEM,
         { href: "/crm/inbox", label: "Sales Today", icon: "✓" },
         OUTREACH_ITEM,
         BRAIN_CONTROL_ITEM,
@@ -208,6 +216,7 @@ function NavMenuInner({
   const isActive = (it: Item) => {
     if (it.href === "/crm") return pathname === "/crm";
     if (it.href === "/crm/tasks") return pathname.startsWith("/crm/tasks");
+    if (it.href === '/crm/marketing') return pathname.startsWith('/crm/marketing');
     if (it.href === "/call") return pathname.startsWith("/call");
     if (it.href === "/crm/inbox") return pathname.startsWith("/crm/inbox");
     if (it.href === "/crm/notifications")

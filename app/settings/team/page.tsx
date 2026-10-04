@@ -8,6 +8,7 @@ import { crmFetch } from "@/lib/crm";
 
 type Member = {
   user_id: string;
+  department: 'sales' | 'marketing';
   role: "owner" | "manager" | "sales";
   status: "active" | "onboarding" | "suspended" | "removed";
   displayName: string | null;
@@ -49,6 +50,7 @@ type Member = {
 
 type Invitation = {
   id: string;
+  department: 'sales' | 'marketing';
   email: string;
   role: "manager" | "sales";
   status: "pending" | "accepted" | "revoked" | "expired";
@@ -79,7 +81,7 @@ const badge = (status: string) => {
 export default function TeamAccessPage() {
   const [data, setData] = useState<TeamData | null>(null);
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"sales" | "manager">("sales");
+  const [role, setRole] = useState<'sales' | 'manager' | 'marketing'>('sales');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -116,7 +118,8 @@ export default function TeamAccessPage() {
   const sendInvitation = async (
     inviteEmail: string,
     inviteRole: "sales" | "manager",
-    replacement = false
+    replacement = false,
+    inviteDepartment: 'sales' | 'marketing' = 'sales'
   ) => {
     if (!inviteEmail.trim() || busy) return;
     setBusy(true);
@@ -125,7 +128,7 @@ export default function TeamAccessPage() {
     try {
       await crmFetch("/api/crm/team", {
         method: "POST",
-        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole, department: inviteDepartment }),
       });
       setNote(
         `${replacement ? "Fresh invitation" : "Invitation"} sent to ${inviteEmail.trim().toLowerCase()}.`
@@ -139,7 +142,7 @@ export default function TeamAccessPage() {
     }
   };
 
-  const invite = async () => sendInvitation(email, role);
+  const invite = async () => sendInvitation(email, role === 'marketing' ? 'sales' : role, false, role === 'marketing' ? 'marketing' : 'sales');
 
   const revoke = async (invitationId: string) => {
     setBusy(true);
@@ -173,6 +176,16 @@ export default function TeamAccessPage() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const setDepartment = async (member: Member) => {
+    setBusy(true); setError(""); setNote("");
+    try {
+      const department = member.department === 'marketing' ? 'sales' : 'marketing';
+      await crmFetch('/api/crm/team', { method: 'PATCH', body: JSON.stringify({ userId: member.user_id, action: 'set_department', department }) });
+      setNote(`Account moved to ${department}.`); await load();
+    } catch (err: any) { setError(err?.message || 'The department was not updated'); }
+    finally { setBusy(false); }
   };
 
   const setPrivacyTest = async (
@@ -336,11 +349,12 @@ export default function TeamAccessPage() {
               />
               <select
                 value={role}
-                onChange={(event) => setRole(event.target.value as "sales" | "manager")}
+                onChange={(event) => setRole(event.target.value as 'sales' | 'manager' | 'marketing')}
                 className="min-h-12 rounded-xl border border-edge bg-ink/60 px-3 font-mono text-xs uppercase text-bone outline-none focus:border-amber/60"
               >
                 <option value="sales">Sales</option>
                 <option value="manager">Manager</option>
+                <option value="marketing">Marketing</option>
               </select>
               <button
                 type="button"
@@ -558,8 +572,9 @@ export default function TeamAccessPage() {
                       <p className="mt-2 text-xs text-amber">{member.activationIssues.join(". ")}</p>
                     ) : null}
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-muted">{member.role}</span>
+                      <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-muted">{member.department === 'marketing' ? 'Marketing' : member.role}</span>
                       <span className={`rounded-full border px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider ${badge(member.status)}`}>{member.status}</span>
+                      {member.role !== "owner" && <button type="button" onClick={() => void setDepartment(member)} disabled={busy} className="rounded-full border border-edge px-3 py-1 text-xs text-muted disabled:opacity-40">{member.department === 'marketing' ? 'Move to sales' : 'Move to marketing'}</button>}
                       {member.role !== "owner" && member.status !== "active" ? (
                         <button type="button" onClick={() => setMemberAccess(member.user_id, "activate")} disabled={busy || !member.canActivate} className="rounded-full border border-sage/50 bg-sage/10 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-sage disabled:opacity-40">Activate</button>
                       ) : null}
@@ -635,13 +650,13 @@ export default function TeamAccessPage() {
                 <div key={invitation.id} className="flex flex-col gap-3 rounded-xl border border-edge bg-ink/35 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm text-bone">{invitation.email}</p>
-                    <p className="mt-1 text-xs text-muted">{invitation.role} · sent {new Date(invitation.created_at).toLocaleString("en-GB")}</p>
+                    <p className="mt-1 text-xs text-muted">{invitation.department === 'marketing' ? 'Marketing' : invitation.role} · sent {new Date(invitation.created_at).toLocaleString("en-GB")}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className={`rounded-full border px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider ${badge(invitation.status)}`}>{invitation.status}</span>
                     {invitation.status === "pending" ? (
                       <>
-                        <button type="button" onClick={() => sendInvitation(invitation.email, invitation.role, true)} disabled={busy} className="rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-amber disabled:opacity-50">Resend</button>
+                        <button type="button" onClick={() => sendInvitation(invitation.email, invitation.role, true, invitation.department || 'sales')} disabled={busy} className="rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-amber disabled:opacity-50">Resend</button>
                         <button type="button" onClick={() => revoke(invitation.id)} disabled={busy} className="rounded-full border border-rust/50 px-3 py-1 font-mono text-[0.58rem] uppercase tracking-wider text-rust disabled:opacity-50">Revoke</button>
                       </>
                     ) : null}

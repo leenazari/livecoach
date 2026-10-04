@@ -155,12 +155,12 @@ export async function GET() {
       await Promise.all([
         supabaseService
           .from("workspace_members")
-          .select("user_id,role,status,transcriber_daily_minutes_limit,created_at,updated_at")
+          .select("user_id,role,status,department,transcriber_daily_minutes_limit,created_at,updated_at")
           .eq("workspace_id", scope.workspaceId)
           .order("created_at", { ascending: true }),
         supabaseService
           .from("workspace_invitations")
-          .select("id,email,role,status,expires_at,created_at,accepted_at")
+          .select("id,email,role,status,department,expires_at,created_at,accepted_at")
           .eq("workspace_id", scope.workspaceId)
           .order("created_at", { ascending: false })
           .limit(50),
@@ -452,6 +452,7 @@ export async function PATCH(req: NextRequest) {
       "update_transcriber_limit",
       "confirm_privacy_test",
       "reset_privacy_test",
+      'set_department',
     ].includes(body.action)
       ? body.action
       : "";
@@ -469,6 +470,14 @@ export async function PATCH(req: NextRequest) {
     if (memberError) throw memberError;
     if (!member || member.status === "removed")
       return NextResponse.json({ error: "Team account not found" }, { status: 404 });
+
+    if (action === 'set_department') {
+      if (!['sales', 'marketing'].includes(body.department)) return NextResponse.json({ error: 'Choose sales or marketing' }, { status: 400 });
+      const { data, error } = await supabaseService.from('workspace_members').update({ department: body.department, updated_at: new Date().toISOString() }).eq('workspace_id', scope.workspaceId).eq('user_id', userId).select('user_id,department').single();
+      if (error) throw error;
+      await supabaseService.from('access_audit_events').insert({ workspace_id: scope.workspaceId, actor_user_id: scope.userId, source: 'human', action: 'workspace_member_department_changed', target_table: 'workspace_members', target_id: userId, next_scope: { department: body.department } });
+      return NextResponse.json({ ok: true, member: data });
+    }
 
     if (action === "confirm_privacy_test" || action === "reset_privacy_test") {
       if (member.role === "owner") {
@@ -816,6 +825,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const role = typeof body.role === "string" ? body.role : "sales";
+    const department = body.department == null ? 'sales' : body.department;
+    if (!['sales', 'marketing'].includes(department)) return NextResponse.json({ error: 'Choose sales or marketing' }, { status: 400 });
     if (!EMAIL.test(email) || email.length > 254) {
       return NextResponse.json({ error: "Enter a valid work email" }, { status: 400 });
     }
@@ -876,6 +887,7 @@ export async function POST(req: NextRequest) {
         workspace_id: scope.workspaceId,
         email,
         role,
+        department,
         status: "pending",
         token_hash: tokenHash,
         invited_by: scope.userId,
@@ -919,11 +931,12 @@ export async function POST(req: NextRequest) {
     });
 
     const safeLink = htmlEscape(actionLink);
+    const workspaceLabel = department === "marketing" ? "marketing" : "sales";
     const sent = await sendConnectedMail({
       to: email,
-      subject: "Your LiveCoach sales workspace invitation",
-      text: `Lee has invited you to the Interviewa LiveCoach sales workspace. Open this secure link within seven days to set up your account. Google or Microsoft is optional for core CRM access. ${actionLink}`,
-      html: `<p>Lee has invited you to the Interviewa LiveCoach sales workspace.</p><p>You will set up your own login. Google or Microsoft can then be connected for your own email and calendar, but neither is required for core CRM access. Lee's private calls, emails, investors and Brain history are not shared with your account.</p><p><a href="${safeLink}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#d9a35f;color:#171614;text-decoration:none;font-weight:700;">Set up LiveCoach</a></p><p>This secure invitation expires in seven days.</p>`,
+      subject: `Your LiveCoach ${workspaceLabel} workspace invitation`,
+      text: `Lee has invited you to the Interviewa LiveCoach ${workspaceLabel} workspace. Open this secure link within seven days to set up your account. Google or Microsoft is optional for core CRM access. ${actionLink}`,
+      html: `<p>Lee has invited you to the Interviewa LiveCoach ${workspaceLabel} workspace.</p><p>You will set up your own login. Google or Microsoft can then be connected for your own email and calendar, but neither is required for core CRM access. Lee's private calls, emails, investors and Brain history are not shared with your account.</p><p><a href="${safeLink}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#d9a35f;color:#171614;text-decoration:none;font-weight:700;">Set up LiveCoach</a></p><p>This secure invitation expires in seven days.</p>`,
     });
     if (!sent.ok) throw new Error(sent.error || "The invitation email could not be sent");
 
@@ -934,7 +947,7 @@ export async function POST(req: NextRequest) {
       action: "workspace_invitation_sent",
       target_table: "workspace_invitations",
       target_id: invitation.id,
-      next_scope: { email, role, status: "pending" },
+      next_scope: { email, role, department, status: "pending" },
     });
     if (replacedInvitations?.length) {
       await supabaseService.from("access_audit_events").insert(
