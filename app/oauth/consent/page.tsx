@@ -172,16 +172,19 @@ export default function OAuthConsentPage() {
               <li>Add one private lead with exact email deduplication</li>
               <li>Add verified context to your own lead</li>
               <li>Create or reschedule your own follow-up</li>
-              <li>List your own tasks</li>
+              <li>Read your own tasks, marketing records, calls, calendar, documents and Brain history</li>
+              <li>Read your own connected email and saved Analytics snapshot</li>
+              <li>Create, complete or reschedule your own tasks and marketing plans</li>
+              <li>Update your own campaign records and marketing leads; append notes to your own records</li>
             </ul>
           </div>
           <div className="rounded-xl border border-rust/35 bg-rust/[0.06] p-4">
             <h2 className="font-display text-lg text-bone">ChatGPT cannot</h2>
             <ul className="mt-2 space-y-2 text-sm leading-5 text-muted">
-              <li>Read another salesperson&apos;s private records</li>
+              <li>Read another person&apos;s private records</li>
               <li>Assign work to another person</li>
               <li>Send email or LinkedIn outreach</li>
-              <li>Start or change campaigns</li>
+              <li>Launch advertising or spend campaign budget</li>
               <li>Change LiveCoach code, roles or permissions</li>
             </ul>
           </div>
