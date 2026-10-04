@@ -41,6 +41,7 @@ type ProviderBotState = {
   code: string;
   subCode: string;
   phase:
+    | "scheduled"
     | "joining"
     | "waiting_room"
     | "in_call_not_recording"
@@ -596,7 +597,9 @@ export default function MeetStage({
       setJoinWarn(false);
       setProviderState(null);
       setStatus(
-        d.sharedCapture
+        d.status === "scheduled"
+          ? `notetaker scheduled for ${new Date(d.scheduledJoinAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}, five minutes before the meeting`
+          : d.sharedCapture
           ? d.status === "shared_active"
             ? "shared notetaker connected, loading this call"
             : "notetaker requested for both private coaching sessions"
@@ -732,6 +735,7 @@ export default function MeetStage({
   const providerPhase = providerState?.phase;
   const air:
     | "off"
+    | "scheduled"
     | "joining"
     | "waiting"
     | "joined"
@@ -749,6 +753,8 @@ export default function MeetStage({
     ? "failed"
     : providerPhase === "ended"
     ? "ended"
+    : providerPhase === "scheduled"
+    ? "scheduled"
     : providerPhase === "waiting_room"
     ? "waiting"
     : providerPhase === "in_call_not_recording" ||
@@ -766,6 +772,8 @@ export default function MeetStage({
       ? { cls: "border-amber/60 bg-amber/15 text-amber", dot: "bg-amber animate-pulse", label: "Waiting room" }
       : air === "joining"
       ? { cls: "border-amber/60 bg-amber/15 text-amber", dot: "bg-amber animate-pulse", label: "Joining…" }
+      : air === "scheduled"
+      ? { cls: "border-sage/60 bg-sage/15 text-sage", dot: "bg-sage", label: "Scheduled" }
       : air === "stale"
       ? { cls: "border-rust/60 bg-rust/15 text-rust", dot: "bg-rust animate-pulse", label: "Check notetaker" }
       : air === "failed"

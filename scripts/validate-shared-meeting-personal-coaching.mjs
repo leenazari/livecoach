@@ -61,7 +61,7 @@ assert.match(start, /meetingUrlsMatch\(call\.meeting_url, meetingUrl\)/);
 assert.match(start, /meetingInstanceKey\([\s\S]*?call\.scheduled_at/);
 assert.match(start, /\.eq\("meeting_instance_key", sharedInstanceKey\)/);
 assert.match(start, /attachSubscriber\([\s\S]*?ownerId: accountScope\.userId[\s\S]*?sessionId/);
-assert.match(start, /status: "shared_active"/);
+assert.match(start, /scheduledDispatch \? "scheduled" : "shared_active"/);
 assert.match(start, /captureBotName = sharedInstanceKey[\s\S]*?"LiveCoach Notetaker"/);
 assert.match(start, /\.\.\.privateRecordFields\(accountScope\)/);
 
@@ -70,7 +70,7 @@ assert.match(start, /\.\.\.privateRecordFields\(accountScope\)/);
 assert.match(stop, /\.from\("meet_capture_subscribers"\)[\s\S]*?\.eq\("owner_id", accountScope\.userId\)/);
 assert.match(stop, /\.select\("id", \{ count: "exact", head: true \}\)/);
 assert.match(stop, /if \(\(count \|\| 0\) > 0\)[\s\S]*?continue/);
-assert.match(stop, /await leave\(capture\.bot_id\)/);
+assert.match(stop, /await leave\(capture\.bot_id, capture\.scheduled_join_at\)/);
 assert.match(sessionEnd, /\.from\("meet_capture_subscribers"\)/);
 assert.match(migration, /create or replace function public\.close_meet_bots_on_summary\(\)/i);
 

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { resolveRecordScope } from "@/lib/record-scope";
 import { supabaseService } from "@/lib/supabase";
 import { validMeetSessionId } from "@/lib/transcriber";
+import { cancelRecallBotRequest } from "@/lib/recall-scheduled-bot";
 
 // Stop a Meet bot. Accepts EITHER { botId } (direct) or { sessionId } (look up
 // the active bot(s) for that session). The session path means "End session"
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
 
     const { data: captures, error: capturesError } = await supabaseService
       .from("meet_bots")
-      .select("id,bot_id")
+      .select("id,bot_id,scheduled_join_at")
       .eq("workspace_id", accountScope.workspaceId)
       .eq("status", "active")
       .in("id", captureIds);
@@ -84,7 +85,9 @@ export async function POST(req: NextRequest) {
 
     const endedAt = new Date().toISOString();
     const activeSelectedSubscriptions = selectedSubscriptions.filter(
-      (subscription: any) => subscription.status === "active"
+      (subscription: any) =>
+        subscription.status === "active" ||
+        subscription.status === "scheduled"
     );
     for (const subscription of activeSelectedSubscriptions) {
       const { error: endError } = await supabaseService
@@ -93,7 +96,7 @@ export async function POST(req: NextRequest) {
         .eq("workspace_id", accountScope.workspaceId)
         .eq("owner_id", accountScope.userId)
         .eq("id", subscription.id)
-        .eq("status", "active");
+        .in("status", ["scheduled", "active"]);
       if (endError) throw endError;
 
       const { error: tokenError } = await supabaseService
@@ -106,7 +109,10 @@ export async function POST(req: NextRequest) {
       if (tokenError) throw tokenError;
     }
 
-    const leave = async (id: string) => {
+    const leave = async (id: string, scheduledJoinAt: string | null) => {
+      if (scheduledJoinAt && Date.parse(scheduledJoinAt) > Date.now()) {
+        return cancelRecallBotRequest({ region, key, botId: id });
+      }
       const endpoint = `https://${region}.recall.ai/api/v1/bot/${encodeURIComponent(
         id
       )}/leave_call/`;
@@ -128,13 +134,13 @@ export async function POST(req: NextRequest) {
         .select("id", { count: "exact", head: true })
         .eq("workspace_id", accountScope.workspaceId)
         .eq("capture_id", capture.id)
-        .eq("status", "active");
+        .in("status", ["scheduled", "active"]);
       if (countError) throw countError;
       if ((count || 0) > 0) {
         remainingSubscribers += count || 0;
         continue;
       }
-      const ok = await leave(capture.bot_id);
+      const ok = await leave(capture.bot_id, capture.scheduled_join_at);
       if (!ok) continue;
       stopped += 1;
       const { error: updateError } = await supabaseService

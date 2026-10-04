@@ -19,6 +19,8 @@ import {
   sharedFocusPrep,
   type SharedUpcomingCall,
 } from "@/lib/shared-call-access";
+import { scheduleAutomaticNotetakersForUpcomingIds } from "@/lib/automatic-precall";
+import { cancelScheduledNotetakers } from "@/lib/recall-scheduled-bot";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -479,9 +481,30 @@ export async function PATCH(
       if (error) throw error;
       return NextResponse.json({ error: "call not found" }, { status: 404 });
     }
+    let notetakerWarning: string | null = null;
+    if (
+      "scheduled_at" in patch ||
+      "meeting_url" in patch ||
+      "completed_at" in patch
+    ) {
+      try {
+        const schedule = await scheduleAutomaticNotetakersForUpcomingIds([
+          data.id,
+        ]);
+        if (schedule.failed) {
+          notetakerWarning =
+            "The calendar change saved, but the notetaker reservation needs the next calendar sync to retry.";
+        }
+      } catch (scheduleError) {
+        console.error("scheduled call notetaker reconciliation failed", scheduleError);
+        notetakerWarning =
+          "The calendar change saved, but the notetaker reservation needs the next calendar sync to retry.";
+      }
+    }
     return NextResponse.json({
       ok: true,
       call: data,
+      notetakerWarning,
       ...(appendedFocus
         ? {
             focusNoteAdded: appendedFocus.focusAdded,
@@ -541,6 +564,11 @@ export async function POST(
       );
       calendarDeletionConfirmed = true;
     }
+    await cancelScheduledNotetakers({
+      workspaceId: account.workspaceId,
+      ownerId: account.userId,
+      upcomingIds: [params.id],
+    });
     // Record the reason in the brain's learned memory so it sticks.
     try {
       const { data: prof } = await supabaseAdmin
@@ -621,6 +649,12 @@ export async function DELETE(
     if (currentError) throw currentError;
     if (!current)
       return NextResponse.json({ error: "call not found" }, { status: 404 });
+
+    await cancelScheduledNotetakers({
+      workspaceId: scope.workspaceId,
+      ownerId: scope.userId,
+      upcomingIds: [params.id],
+    });
 
     if (
       current.external_id &&

@@ -6,6 +6,7 @@ export const TRANSCRIBER_HARD_LIMIT_SECONDS = 3 * 60 * 60;
 export type TranscriberUsageRow = {
   owner_id: string;
   created_at: string;
+  scheduled_join_at?: string | null;
   ended_at: string | null;
   status: string;
 };
@@ -111,7 +112,9 @@ export function calculateTranscriberUsage(
 
   for (const row of rows) {
     if (row.owner_id !== ownerId) continue;
-    const created = Date.parse(row.created_at);
+    // Provider reservations can be created weeks before the meeting. Usage
+    // begins at their planned join time, not when the reservation row was made.
+    const created = Date.parse(row.scheduled_join_at || row.created_at);
     if (!Number.isFinite(created)) continue;
     const recordedEnd = row.ended_at ? Date.parse(row.ended_at) : nowMs;
     const effectiveEnd = Math.min(
@@ -128,6 +131,7 @@ export function calculateTranscriberUsage(
     if (
       row.status === "active" &&
       !row.ended_at &&
+      created <= nowMs &&
       created + hardLimitMs > nowMs
     ) {
       activeBot = true;

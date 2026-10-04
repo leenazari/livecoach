@@ -24,9 +24,11 @@ import {
 import { listActiveAccountScopes } from "@/lib/automation-accounts";
 import { runWithServiceRecordScope } from "@/lib/service-scope";
 import { shouldReopenScheduledCalendarCall } from "@/lib/calendar-sync-recovery";
+import { scheduleAutomaticNotetakersForUpcomingIds } from "@/lib/automatic-precall";
+import { cancelScheduledNotetakers } from "@/lib/recall-scheduled-bot";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 type CalendarSyncMode = "full" | "near-term";
 
@@ -159,6 +161,13 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
         }
       }
       if (staleIds.length) {
+        // Cancel the provider reservation before deleting its source event.
+        // Otherwise a cancelled calendar call could still receive a bot.
+        await cancelScheduledNotetakers({
+          workspaceId: scope.workspaceId,
+          ownerId: scope.userId,
+          upcomingIds: staleIds,
+        });
         const { data: deleted, error } = await supabaseAdmin
           .from("upcoming_calls")
           .delete()
@@ -427,6 +436,7 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
     }
 
     let added = 0;
+    const syncedUpcomingIds = new Set<string>();
     if (toInsert.length) {
       const { data, error } = await supabaseAdmin
         .from("upcoming_calls")
@@ -436,6 +446,7 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
       added = data?.length || 0;
       const resolvedByExternal = new Map(resolved.map((item) => [item.r.external_id, item]));
       for (const inserted of data || []) {
+        syncedUpcomingIds.add(inserted.id);
         const matched = resolvedByExternal.get(inserted.external_id);
         if (!matched?.outreachProspectId) continue;
         try {
@@ -497,6 +508,10 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
     for (const result of updateResults) {
       if (result.error) throw result.error;
     }
+    for (const row of toUpdate) {
+      const upcomingId = existingId.get(row.external_id);
+      if (upcomingId) syncedUpcomingIds.add(upcomingId);
+    }
 
     let outreachLinked = 0;
     for (const repair of outreachRepairs) {
@@ -525,6 +540,28 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
       });
     }
 
+    // Recall now owns the exact future wake-up. Repeated calendar syncs only
+    // reconcile one durable reservation per event and never scan every minute.
+    let notetakerSchedule = {
+      eligible: 0,
+      scheduled: 0,
+      started: 0,
+      skipped: 0,
+      failed: 0,
+      failureCodes: [] as string[],
+    };
+    try {
+      notetakerSchedule = await scheduleAutomaticNotetakersForUpcomingIds(
+        Array.from(syncedUpcomingIds)
+      );
+    } catch (error: any) {
+      console.error("calendar notetaker scheduling failed", error);
+      notetakerSchedule.failed = Math.max(1, syncedUpcomingIds.size);
+      notetakerSchedule.failureCodes = [
+        String(error?.code || "notetaker_schedule_failed").slice(0, 80),
+      ];
+    }
+
     return NextResponse.json({
       ok: true,
       mode,
@@ -542,6 +579,7 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
       outreachLinked,
       total: rows.length,
       finishedAt,
+      notetakerSchedule,
     });
   } catch (err: any) {
     return NextResponse.json(

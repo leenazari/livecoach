@@ -9,6 +9,7 @@ type RecallStatusChange = {
 const TERMINAL_CODES = new Set(["call_ended", "done", "fatal"]);
 
 export type RecallBotPhase =
+  | "scheduled"
   | "joining"
   | "waiting_room"
   | "in_call_not_recording"
@@ -120,6 +121,9 @@ function phaseFor(code: string): RecallBotPhase {
 }
 
 function messageFor(phase: RecallBotPhase, code: string, subCode: string) {
+  if (phase === "scheduled") {
+    return "The notetaker is scheduled to join five minutes before the meeting. It is not in the waiting room yet.";
+  }
   if (phase === "joining") {
     return "The notetaker is launching. It has not reached the meeting yet.";
   }
@@ -156,7 +160,8 @@ export function currentRecallBotState(payload: unknown) {
       : latest;
   const code = normaliseCode(terminalCause?.code);
   const subCode = normaliseSubCode(terminalCause?.sub_code);
-  const phase = phaseFor(code);
+  const phase = !latest && Date.parse(String((payload as any)?.join_at || "")) > Date.now()
+    ? "scheduled" : phaseFor(code);
   const everJoined = changes.some((change) =>
     [
       "in_call_not_recording",

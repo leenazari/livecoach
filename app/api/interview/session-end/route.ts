@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
       .eq("workspace_id", accountScope.workspaceId)
       .eq("owner_id", accountScope.userId)
       .eq("session_id", sessionId)
-      .eq("status", "active");
+      .in("status", ["scheduled", "active"]);
 
     await supabaseService
       .from("livekit_join_invites")

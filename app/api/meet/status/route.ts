@@ -51,7 +51,7 @@ async function finishCapture(input: {
     })
     .eq("workspace_id", input.workspaceId)
     .eq("capture_id", input.captureId)
-    .eq("status", "active");
+    .in("status", ["scheduled", "active"]);
   if (subscriptionError) throw subscriptionError;
 
   for (const subscriber of subscribers || []) {
