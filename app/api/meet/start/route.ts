@@ -181,7 +181,7 @@ async function attachSubscriber(input: {
   workspaceId: string;
   ownerId: string;
   sessionId: string;
-  upcomingId: string;
+  upcomingId: string | null;
 }) {
   return supabaseService.from("meet_capture_subscribers").upsert(
     {
@@ -202,7 +202,7 @@ async function attachSubscriber(input: {
 export async function POST(req: NextRequest) {
   try {
     const accountScope = await resolveRecordScope();
-    const { meetingUrl, sessionId, upcomingId } = await req.json();
+    const { meetingUrl, sessionId, upcomingId, autoStart } = await req.json();
     if (!validMeetingUrl(meetingUrl) || !validMeetSessionId(sessionId)) {
       return NextResponse.json(
         { error: "A supported meeting link and LiveCoach session are required" },
@@ -471,6 +471,18 @@ export async function POST(req: NextRequest) {
       TRANSCRIBER_HARD_LIMIT_SECONDS,
       usage.remainingSeconds
     );
+    // An automatically dispatched bot arrives five minutes before the calendar
+    // start, so it needs a longer pre-activity runway than a manually sent bot.
+    // Google Meet itself caps waiting-room time at ten minutes. Teams and Zoom
+    // can use the requested fifteen-minute window.
+    const automaticDispatch = autoStart === true;
+    const googleMeet = /(^|\.)meet\.google\.com$/i.test(
+      new URL(meetingUrl).hostname
+    );
+    const preActivityTimeoutSeconds = automaticDispatch ? 900 : 300;
+    const waitingRoomTimeoutSeconds = automaticDispatch && googleMeet
+      ? 600
+      : preActivityTimeoutSeconds;
 
     const endpoint = `https://${region}.recall.ai/api/v1/bot/`;
     const captureBotName = sharedInstanceKey
@@ -533,12 +545,25 @@ export async function POST(req: NextRequest) {
           // Keep this inside Recall so cost protection survives a sleeping or
           // closed browser. The in-app clock starts only after real speech, and
           // Recall's other waiting-room/no-participant guards cover pre-call time.
-          activate_after: 60,
+          // Automatic dispatch can legitimately sit quietly before the booked
+          // start. Activate after ten minutes, then retain the existing five
+          // continuous quiet minutes before leaving. Manual starts keep their
+          // current one-minute activation and five-minute fallback.
+          activate_after: automaticDispatch ? 600 : 60,
           timeout: 300,
         },
-        waiting_room_timeout: Math.min(300, botHardLimitSeconds),
-        noone_joined_timeout: Math.min(300, botHardLimitSeconds),
-        in_call_not_recording_timeout: Math.min(300, botHardLimitSeconds),
+        waiting_room_timeout: Math.min(
+          waitingRoomTimeoutSeconds,
+          botHardLimitSeconds
+        ),
+        noone_joined_timeout: Math.min(
+          preActivityTimeoutSeconds,
+          botHardLimitSeconds
+        ),
+        in_call_not_recording_timeout: Math.min(
+          preActivityTimeoutSeconds,
+          botHardLimitSeconds
+        ),
         in_call_recording_timeout: botHardLimitSeconds,
         recording_permission_denied_timeout: 30,
       },
@@ -548,6 +573,7 @@ export async function POST(req: NextRequest) {
         session_id: sessionId,
         owner_id: accountScope.userId,
         workspace_id: accountScope.workspaceId,
+        dispatch_mode: automaticDispatch ? "automatic" : "manual",
       },
       recording_config: {
         transcript: {
@@ -674,6 +700,45 @@ export async function POST(req: NextRequest) {
       throw botInsertError;
     }
 
+    // The database trigger seeds first-time sessions. This explicit upsert also
+    // reattaches a scheduled room whose earlier bot ended, so a manual retry
+    // cannot leave a fresh provider bot pointing at an old ended subscription.
+    if (insertedCapture?.id) {
+      const { error: ownerAttachError } = await attachSubscriber({
+        captureId: insertedCapture.id,
+        workspaceId: accountScope.workspaceId,
+        ownerId: accountScope.userId,
+        sessionId,
+        upcomingId: verifiedUpcomingId,
+      });
+      if (ownerAttachError) {
+        await leaveUntrackedBot(region, key, recallBot.id);
+        await finishCapture(
+          {
+            id: insertedCapture.id,
+            bot_id: recallBot.id,
+            bot_name: captureBotName,
+            session_id: sessionId,
+            owner_id: accountScope.userId,
+            meeting_instance_key: sharedInstanceKey,
+          },
+          accountScope.workspaceId,
+          new Date().toISOString()
+        );
+        if (ownerAttachError.code === "23505") {
+          return NextResponse.json(
+            {
+              error:
+                "Your LiveCoach session is already active on another call. End that session before starting a new one.",
+              code: "transcriber_already_active",
+            },
+            { status: 409, headers: { "Cache-Control": "private, no-store" } }
+          );
+        }
+        throw ownerAttachError;
+      }
+    }
+
     if (insertedCapture?.id && sharedOccurrence) {
       await grantSharedCaptureAccess({
         captureId: insertedCapture.id,
@@ -691,6 +756,8 @@ export async function POST(req: NextRequest) {
         autoStop: {
           everyoneLeftSeconds: 30,
           silentFallbackMinutes: 5,
+          preActivityMinutes: Math.floor(preActivityTimeoutSeconds / 60),
+          waitingRoomMinutes: Math.floor(waitingRoomTimeoutSeconds / 60),
           hardLimitMinutes: Math.floor(botHardLimitSeconds / 60),
           dailyRemainingMinutes: usage.remainingMinutes,
         },

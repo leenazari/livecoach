@@ -17,6 +17,7 @@ import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { validMeetingUrl } from "@/lib/meeting-url";
 import { cleanResearchBackground } from "@/lib/research-format";
 import { pickPrimaryAttendee } from "@/lib/calendar-subject";
+import { scheduledCallSessionId } from "@/lib/scheduled-call-session";
 import {
   estimateCost,
   usageCostUSD,
@@ -280,7 +281,7 @@ function splitCue(raw: string): {
 
 export default function CallPage() {
   const router = useRouter();
-  const [room] = useState(() => `lc-${crypto.randomUUID()}`);
+  const [room, setRoom] = useState(() => `lc-${crypto.randomUUID()}`);
   const [origin, setOrigin] = useState("");
   const [joinLink, setJoinLink] = useState("");
   const [joinLinkLoading, setJoinLinkLoading] = useState(false);
@@ -1098,6 +1099,8 @@ export default function CallPage() {
       setSource("meet");
     }
     if (upcoming) {
+      const scheduledRoom = scheduledCallSessionId(upcoming);
+      if (scheduledRoom) setRoom(scheduledRoom);
       setIntentLoading(true);
       upcomingIdRef.current = upcoming;
       setUpcomingId(upcoming);
