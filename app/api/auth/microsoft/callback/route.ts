@@ -6,8 +6,11 @@ import {
 } from "@/lib/microsoft";
 import { getRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
+import { waitUntil } from "@vercel/functions";
+import { startConnectedCalendarSync } from "@/lib/calendar-sync-jobs";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const clearState = (response: NextResponse) => {
   response.cookies.set("ms_oauth_state", "", { maxAge: 0, path: "/" });
@@ -123,6 +126,10 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    if (member?.status === "active") {
+      waitUntil(startConnectedCalendarSync(scope)
+        .catch(() => console.error("Connected Microsoft calendar needs sync retry")));
+    }
     return clearState(NextResponse.redirect(resultUrl("connected")));
   } catch (error: any) {
     console.error("Microsoft OAuth callback failed", error?.message || error);

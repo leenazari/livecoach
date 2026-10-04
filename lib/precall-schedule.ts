@@ -18,11 +18,11 @@ export function precallScheduleAction(input: {
     ? Date.parse(input.scheduledAt)
     : NaN;
   if (!Number.isFinite(start)) return "cancel" as const;
-  // A refresh during an ongoing meeting must never stop its capture or launch
-  // another bot for an event whose start time has already passed.
-  if (start < (input.nowMs ?? Date.now()) - 2 * 60 * 1000) return "skip" as const;
+  // Clear any obsolete future reservation after an event moves into the past.
+  // The cancellation helper protects captures that are already in progress.
+  if (start < (input.nowMs ?? Date.now()) - 2 * 60 * 1000) return "cancel" as const;
   // Reserve the rolling next week, refreshed by normal calendar sync. This
   // avoids hundreds of unused provider reservations for distant recurrences.
-  if (start > (input.nowMs ?? Date.now()) + 7 * 86400000) return "skip" as const;
+  if (start > (input.nowMs ?? Date.now()) + 7 * 86400000) return "cancel" as const;
   return "schedule" as const;
 }

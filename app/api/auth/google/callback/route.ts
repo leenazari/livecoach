@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { exchangeCode, saveGoogleConnectionForOwner } from "@/lib/google";
 import { verifyGoogleOAuthState } from "@/lib/google-oauth-state";
 import { supabaseService } from "@/lib/supabase";
+import { waitUntil } from "@vercel/functions";
+import { startConnectedCalendarSync } from "@/lib/calendar-sync-jobs";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 // GET /api/auth/google/callback -> Google redirects here with a code. Verify the
 // state cookie, exchange the code for tokens, store them, and bounce back to
@@ -146,6 +149,10 @@ export async function GET(req: NextRequest) {
       console.error("Google connect audit failed", auditError.message);
     }
 
+    if (membership.status === "active") {
+      waitUntil(startConnectedCalendarSync({ userId: oauthState.userId, workspaceId: oauthState.workspaceId })
+        .catch(() => console.error("Connected Google calendar needs sync retry")));
+    }
     return clearState(NextResponse.redirect(resultUrl("connected")));
   } catch (error: any) {
     console.error("Google OAuth callback failed", error?.message || error);

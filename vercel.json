@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/calendar-notifications",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/crm/calendar-sync",
       "schedule": "0 8,9,11,12,14,15,17,18,20,21 * * 1-5"
     },
