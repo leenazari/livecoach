@@ -4,6 +4,7 @@ import { sendConnectedMail } from "@/lib/mail";
 import { requireWorkspaceOwner } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
 import { deriveTranscriberName } from "@/lib/transcriber";
+import { cancelRecallBotRequest } from "@/lib/recall-scheduled-bot";
 import { publicAppOrigin } from "@/lib/public-app-url";
 import { buildTeamInvitationActionUrl } from "@/lib/team-invitation-link";
 import {
@@ -11,7 +12,6 @@ import {
   londonDayBounds,
   TRANSCRIBER_DAILY_LIMIT_MAX,
   TRANSCRIBER_DAILY_LIMIT_MIN,
-  TRANSCRIBER_HARD_LIMIT_SECONDS,
 } from "@/lib/transcriber-usage";
 
 export const runtime = "nodejs";
@@ -23,7 +23,7 @@ const ROLES = new Set(["manager", "sales"]);
 const normalizeEmail = (value: unknown) =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
 
-async function leaveRecallCapture(botId: string) {
+async function leaveRecallCapture(botId: string, scheduledJoinAt?: string | null) {
   const key = process.env.RECALL_API_KEY;
   const region = process.env.RECALL_REGION;
   if (!key || !region || !botId) return false;
@@ -37,6 +37,9 @@ async function leaveRecallCapture(botId: string) {
       signal: AbortSignal.timeout(5000),
     });
   try {
+    if (scheduledJoinAt && Date.parse(scheduledJoinAt) > Date.now()) {
+      return await cancelRecallBotRequest({ region, key, botId });
+    }
     let response = await call(key);
     if (response.status === 401 || response.status === 403) {
       response = await call(`Token ${key}`);
@@ -188,7 +191,7 @@ export async function GET() {
     const now = new Date();
     const { start: todayStart, end: todayEnd } = londonDayBounds(now);
     const usageWindowStart = new Date(
-      todayStart.getTime() - TRANSCRIBER_HARD_LIMIT_SECONDS * 1000
+      todayStart.getTime() - 35 * 24 * 60 * 60 * 1000
     );
     const [
       { data: profiles, error: profilesError },
@@ -220,7 +223,7 @@ export async function GET() {
               .in("owner_id", memberIds),
             supabaseService
               .from("meet_bots")
-              .select("owner_id,created_at,ended_at,status")
+              .select("owner_id,created_at,scheduled_join_at,ended_at,status")
               .eq("workspace_id", scope.workspaceId)
               .in("owner_id", memberIds)
               .gte("created_at", usageWindowStart.toISOString())
@@ -717,7 +720,7 @@ export async function PATCH(req: NextRequest) {
           .select("capture_id")
           .eq("workspace_id", scope.workspaceId)
           .eq("owner_id", userId)
-          .eq("status", "active");
+          .in("status", ["scheduled", "active"]);
       if (activeSubscriptionsError) throw activeSubscriptionsError;
 
       await Promise.all([
@@ -744,7 +747,7 @@ export async function PATCH(req: NextRequest) {
           .update({ status: "ended", ended_at: endedAt, updated_at: endedAt })
           .eq("workspace_id", scope.workspaceId)
           .eq("owner_id", userId)
-          .eq("status", "active"),
+          .in("status", ["scheduled", "active"]),
       ]);
 
       // Suspending one teammate must not end a bot another authorised
@@ -757,18 +760,18 @@ export async function PATCH(req: NextRequest) {
           .select("id", { count: "exact", head: true })
           .eq("workspace_id", scope.workspaceId)
           .eq("capture_id", captureId)
-          .eq("status", "active");
+          .in("status", ["scheduled", "active"]);
         if (remainingError) throw remainingError;
         if ((count || 0) === 0) {
           const { data: capture, error: captureError } = await supabaseService
             .from("meet_bots")
-            .select("bot_id")
+            .select("bot_id,scheduled_join_at")
             .eq("workspace_id", scope.workspaceId)
             .eq("id", captureId)
             .eq("status", "active")
             .maybeSingle();
           if (captureError) throw captureError;
-          if (capture?.bot_id) await leaveRecallCapture(capture.bot_id);
+          if (capture?.bot_id) await leaveRecallCapture(capture.bot_id, capture.scheduled_join_at);
 
           const { error: closeCaptureError } = await supabaseService
             .from("meet_bots")

@@ -69,19 +69,32 @@ assert.equal(normaliseDailyTranscriberLimit(10), 30);
 assert.equal(normaliseDailyTranscriberLimit(900), 720);
 assert.equal(normaliseDailyTranscriberLimit("bad"), 360);
 
-assert.deepEqual(
-  currentRecallBotState({
+const endedState = currentRecallBotState({
     status_changes: [
       { code: "joining_call", created_at: "2026-08-21T10:00:00.000Z" },
       { code: "bot.call_ended", created_at: "2026-08-21T11:00:00.000Z" },
     ],
-  }),
-  {
-    code: "call_ended",
-    terminal: true,
-    endedAt: "2026-08-21T11:00:00.000Z",
-  }
-);
+  });
+assert.equal(endedState.code, "call_ended");
+assert.equal(endedState.terminal, true);
+assert.equal(endedState.endedAt, "2026-08-21T11:00:00.000Z");
+
+const futureReservation = calculateTranscriberUsage([
+  { owner_id: "owner-a", created_at: "2026-08-01T10:00:00Z",
+    scheduled_join_at: "2026-08-22T10:55:00Z", ended_at: null, status: "active" },
+], "owner-a", 360, now);
+assert.equal(futureReservation.usedMinutes, 0);
+assert.equal(futureReservation.activeBot, false);
+assert.equal(futureReservation.botCount, 0);
+
+const scheduledUsage = calculateTranscriberUsage([
+  { owner_id: "owner-a", created_at: "2026-08-01T10:00:00Z",
+    scheduled_join_at: "2026-08-21T11:55:00Z", ended_at: null, status: "active" },
+  { owner_id: "owner-b", created_at: "2026-08-01T10:00:00Z",
+    scheduled_join_at: "2026-08-21T10:55:00Z", ended_at: null, status: "active" },
+], "owner-a", 360, now);
+assert.equal(scheduledUsage.usedMinutes, 5);
+assert.equal(scheduledUsage.activeBot, true);
 assert.equal(
   currentRecallBotState({
     status_changes: [

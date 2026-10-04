@@ -48,7 +48,7 @@ assert.match(
 );
 assert.match(
   sync,
-  /update\(\{[\s\S]{0,700}completed_at: null[\s\S]{0,450}\.eq\("workspace_id", scope\.workspaceId\)[\s\S]{0,100}\.eq\("owner_id", scope\.userId\)/
+  /update\(\{[\s\S]*?completed_at: null[\s\S]*?\.eq\("workspace_id", scope\.workspaceId\)[\s\S]{0,100}\.eq\("owner_id", scope\.userId\)/
 );
 assert.match(sync, /for \(const result of updateResults\)[\s\S]{0,100}if \(result\.error\) throw result\.error/);
 

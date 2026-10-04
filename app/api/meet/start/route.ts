@@ -2,7 +2,12 @@
 import { createHash, randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
+import { PRECALL_LEAD_MS, precallJoinAt, precallScheduleAction } from "@/lib/precall-schedule";
 import { currentRecallBotState } from "@/lib/recall-bot-status";
+import {
+  cancelRecallBotRequest,
+  cancelScheduledNotetakers,
+} from "@/lib/recall-scheduled-bot";
 import {
   meetingInstanceKey,
   meetingUrlsMatch,
@@ -65,13 +70,7 @@ async function leaveUntrackedBot(
   botId: string
 ) {
   try {
-    await recallRequest(
-      `https://${region}.recall.ai/api/v1/bot/${encodeURIComponent(
-        botId
-      )}/leave_call/`,
-      key,
-      { method: "POST" }
-    );
+    await cancelRecallBotRequest({ region, key, botId });
   } catch (error) {
     console.error("Failed to remove untracked Recall bot", error);
   }
@@ -84,6 +83,7 @@ type ActiveBotRow = {
   session_id: string;
   owner_id: string;
   meeting_instance_key: string | null;
+  scheduled_join_at?: string | null;
 };
 
 type ActiveSubscriptionRow = {
@@ -118,7 +118,7 @@ async function finishCapture(
     .update({ status: "ended", ended_at: endedAt, updated_at: endedAt })
     .eq("workspace_id", workspaceId)
     .eq("capture_id", bot.id)
-    .eq("status", "active");
+    .in("status", ["scheduled", "active"]);
   if (subscriberError) throw subscriberError;
 
   for (const subscriber of subscribers || []) {
@@ -182,6 +182,7 @@ async function attachSubscriber(input: {
   ownerId: string;
   sessionId: string;
   upcomingId: string | null;
+  status?: "scheduled" | "active";
 }) {
   return supabaseService.from("meet_capture_subscribers").upsert(
     {
@@ -190,7 +191,7 @@ async function attachSubscriber(input: {
       owner_id: input.ownerId,
       session_id: input.sessionId,
       upcoming_id: input.upcomingId,
-      status: "active",
+      status: input.status || "active",
       visibility: "private",
       ended_at: null,
       updated_at: new Date().toISOString(),
@@ -203,6 +204,7 @@ export async function POST(req: NextRequest) {
   try {
     const accountScope = await resolveRecordScope();
     const { meetingUrl, sessionId, upcomingId, autoStart } = await req.json();
+    const automaticDispatch = autoStart === true;
     if (!validMeetingUrl(meetingUrl) || !validMeetSessionId(sessionId)) {
       return NextResponse.json(
         { error: "A supported meeting link and LiveCoach session are required" },
@@ -212,6 +214,12 @@ export async function POST(req: NextRequest) {
     if (upcomingId != null && !validUuid(upcomingId)) {
       return NextResponse.json(
         { error: "The scheduled call reference is invalid" },
+        { status: 400 }
+      );
+    }
+    if (automaticDispatch && !upcomingId) {
+      return NextResponse.json(
+        { error: "Automatic dispatch requires an owned calendar call" },
         { status: 400 }
       );
     }
@@ -238,6 +246,7 @@ export async function POST(req: NextRequest) {
     );
 
     let verifiedUpcomingId: string | null = null;
+    let verifiedScheduledAt: string | null = null;
     let sharedInstanceKey: string | null = null;
     let sharedOccurrence: SharedCalendarOccurrence | null = null;
     if (upcomingId) {
@@ -260,6 +269,21 @@ export async function POST(req: NextRequest) {
         );
       }
       verifiedUpcomingId = call.id;
+      verifiedScheduledAt = call.scheduled_at;
+      if (automaticDispatch && (
+        !meetingUrlsMatch(call.meeting_url, meetingUrl) ||
+        precallScheduleAction({
+          scheduledAt: call.scheduled_at,
+          completed: Boolean(call.completed_at),
+          supportedLink: validMeetingUrl(call.meeting_url),
+          nowMs: now.getTime(),
+        }) !== "schedule"
+      )) {
+        return NextResponse.json(
+          { error: "The calendar call changed. Sync it before scheduling the notetaker.", code: "calendar_call_changed" },
+          { status: 409 }
+        );
+      }
       if (
         !call.completed_at &&
         shareableCalendarSource(call.source, call.external_id) &&
@@ -274,19 +298,150 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Calendar sync reserves one provider bot as soon as the event is known.
+    // The five-minute lead time is derived from the exact owned calendar row,
+    // never from an arbitrary timestamp supplied by a browser.
+    const scheduledJoinAt = automaticDispatch
+      ? precallJoinAt(verifiedScheduledAt, now.getTime())
+      : null;
+    const scheduledDispatch = scheduledJoinAt !== null;
+    const scheduledJoinAtMs = scheduledJoinAt ? Date.parse(scheduledJoinAt) : NaN;
+
+    // Repeated calendar syncs are idempotent. A changed time or meeting link
+    // cancels the old provider reservation before creating its replacement.
+    if (verifiedUpcomingId && verifiedScheduledAt) {
+      const expectedJoinAtMs = Date.parse(verifiedScheduledAt) - PRECALL_LEAD_MS;
+      const { data: reservedSubscriptions, error: reservedSubscriptionError } =
+        await supabaseService
+          .from("meet_capture_subscribers")
+          .select("capture_id,status")
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("owner_id", accountScope.userId)
+          .eq("upcoming_id", verifiedUpcomingId)
+          .in("status", ["scheduled", "active"])
+          .limit(2);
+      if (reservedSubscriptionError) throw reservedSubscriptionError;
+      const subscribedCaptureIds = Array.from(
+        new Set(
+          (reservedSubscriptions || []).map((row: any) =>
+            String(row.capture_id)
+          )
+        )
+      );
+      const { data: subscribedReservations, error: subscribedReservationError } =
+        subscribedCaptureIds.length
+          ? await supabaseService
+              .from("meet_bots")
+              .select(
+                "id,bot_id,bot_name,owner_id,meeting_instance_key,scheduled_join_at,scheduled_meeting_url"
+              )
+              .eq("workspace_id", accountScope.workspaceId)
+              .eq("status", "active")
+              .not("scheduled_join_at", "is", null)
+              .in("id", subscribedCaptureIds)
+          : { data: [], error: null };
+      if (subscribedReservationError) throw subscribedReservationError;
+
+      // Owner/source lookup repairs old reservations whose trigger-created
+      // subscription is missing. Shared reservations are found above through
+      // the current user's private subscription.
+      const { data: ownedReservations, error: ownedReservationError } =
+        await supabaseService
+          .from("meet_bots")
+          .select(
+            "id,bot_id,bot_name,owner_id,meeting_instance_key,scheduled_join_at,scheduled_meeting_url"
+          )
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("owner_id", accountScope.userId)
+          .eq("source_upcoming_id", verifiedUpcomingId)
+          .eq("status", "active")
+          .not("scheduled_join_at", "is", null)
+          .limit(2);
+      if (ownedReservationError) throw ownedReservationError;
+      const reservationById = new Map<string, any>();
+      for (const reservation of [
+        ...(subscribedReservations || []),
+        ...(ownedReservations || []),
+      ]) {
+        reservationById.set(String(reservation.id), reservation);
+      }
+      const reservations = Array.from(reservationById.values());
+      const exactReservation = reservations.find(
+        (capture: any) =>
+          capture.meeting_instance_key === sharedInstanceKey &&
+          meetingUrlsMatch(capture.scheduled_meeting_url, meetingUrl) &&
+          Math.abs(
+            Date.parse(capture.scheduled_join_at) - expectedJoinAtMs
+          ) < 1000
+      );
+      if (exactReservation) {
+        const existingSubscription = (reservedSubscriptions || []).find(
+          (row: any) =>
+            String(row.capture_id) === String(exactReservation.id)
+        );
+        const subscriptionStatus =
+          !automaticDispatch || existingSubscription?.status === "active" ? "active" : "scheduled";
+        const { error: attachError } = await attachSubscriber({
+          captureId: exactReservation.id,
+          workspaceId: accountScope.workspaceId,
+          ownerId: accountScope.userId,
+          sessionId,
+          upcomingId: verifiedUpcomingId,
+          status: subscriptionStatus,
+        });
+        if (attachError?.code === "23505") {
+          return NextResponse.json(
+            { error: "End your other LiveCoach session before opening this call.", code: "transcriber_already_active" },
+            { status: 409 }
+          );
+        }
+        if (attachError) throw attachError;
+        if (sharedOccurrence) {
+          await grantSharedCaptureAccess({
+            captureId: exactReservation.id,
+            occurrence: sharedOccurrence,
+            captureOwnerId: exactReservation.owner_id,
+          });
+        }
+        return NextResponse.json(
+          {
+            botId: exactReservation.bot_id,
+            botName: exactReservation.bot_name || "LiveCoach Notetaker",
+            status: Date.parse(exactReservation.scheduled_join_at) > now.getTime()
+              ? "scheduled" : "already_active",
+            sharedCapture: Boolean(sharedInstanceKey),
+            scheduledJoinAt: exactReservation.scheduled_join_at,
+          },
+          { headers: { "Cache-Control": "private, no-store" } }
+        );
+      }
+      if (reservations.length) {
+        await cancelScheduledNotetakers({
+          workspaceId: accountScope.workspaceId,
+          ownerId: accountScope.userId,
+          upcomingIds: [verifiedUpcomingId],
+        });
+      }
+    }
+
     // Provider-side automatic leave already enforces this ceiling. Reconcile
     // any old capture left active by a lost browser or historic webhook so it
     // cannot block a teammate's private session forever.
     const { data: staleCaptureRows, error: staleBotError } = await supabaseService
       .from("meet_bots")
       .select(
-        "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key"
+        "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key,scheduled_join_at"
       )
       .eq("workspace_id", accountScope.workspaceId)
       .eq("status", "active")
       .lt("created_at", staleBefore.toISOString());
     if (staleBotError) throw staleBotError;
-    for (const staleCapture of (staleCaptureRows || []) as ActiveBotRow[]) {
+    const staleCaptures = ((staleCaptureRows || []) as ActiveBotRow[]).filter(
+      (capture) =>
+        !capture.scheduled_join_at ||
+        Date.parse(capture.scheduled_join_at) < staleBefore.getTime()
+    );
+    for (const staleCapture of staleCaptures) {
       await finishCapture(
         staleCapture,
         accountScope.workspaceId,
@@ -297,13 +452,15 @@ export async function POST(req: NextRequest) {
     // Concurrency belongs to the user's private subscription, not the capture
     // owner. The first teammate may end while another remains on the same bot.
     const { data: subscriptionRows, error: subscriptionError } =
-      await supabaseService
-        .from("meet_capture_subscribers")
-        .select("id,capture_id,session_id,upcoming_id")
-        .eq("workspace_id", accountScope.workspaceId)
-        .eq("owner_id", accountScope.userId)
-        .eq("status", "active")
-        .limit(2);
+      scheduledDispatch
+        ? { data: [], error: null }
+        : await supabaseService
+            .from("meet_capture_subscribers")
+            .select("id,capture_id,session_id,upcoming_id")
+            .eq("workspace_id", accountScope.workspaceId)
+            .eq("owner_id", accountScope.userId)
+            .eq("status", "active")
+            .limit(2);
     if (subscriptionError) throw subscriptionError;
     const subscriptions = (subscriptionRows || []) as ActiveSubscriptionRow[];
     const captureIds = subscriptions.map((row) => row.capture_id);
@@ -312,7 +469,7 @@ export async function POST(req: NextRequest) {
         ? await supabaseService
             .from("meet_bots")
             .select(
-              "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key"
+              "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key,scheduled_join_at"
             )
             .eq("workspace_id", accountScope.workspaceId)
             .eq("status", "active")
@@ -364,7 +521,7 @@ export async function POST(req: NextRequest) {
         await supabaseService
           .from("meet_bots")
           .select(
-            "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key"
+            "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key,scheduled_join_at"
           )
           .eq("workspace_id", accountScope.workspaceId)
           .eq("meeting_instance_key", sharedInstanceKey)
@@ -401,6 +558,7 @@ export async function POST(req: NextRequest) {
           ownerId: accountScope.userId,
           sessionId,
           upcomingId: verifiedUpcomingId,
+          status: scheduledDispatch ? "scheduled" : "active",
         });
         if (attachError) {
           if (attachError.code === "23505") {
@@ -419,8 +577,11 @@ export async function POST(req: NextRequest) {
           {
             botId: sharedCapture.bot_id,
             botName: sharedCapture.bot_name || "LiveCoach Notetaker",
-            status: "shared_active",
+            status: scheduledDispatch || Date.parse(sharedCapture.scheduled_join_at || "") > now.getTime()
+              ? "scheduled" : "shared_active",
             sharedCapture: true,
+            scheduledJoinAt:
+              sharedCapture.scheduled_join_at || scheduledJoinAt,
           },
           { headers: { "Cache-Control": "private, no-store" } }
         );
@@ -441,11 +602,11 @@ export async function POST(req: NextRequest) {
     );
     const { start: dayStart, end: dayEnd } = londonDayBounds(now);
     const usageWindowStart = new Date(
-      dayStart.getTime() - TRANSCRIBER_HARD_LIMIT_SECONDS * 1000
+      dayStart.getTime() - 35 * 24 * 60 * 60 * 1000
     );
     const { data: usageRows, error: usageError } = await supabaseAdmin
       .from("meet_bots")
-      .select("owner_id,created_at,ended_at,status")
+      .select("owner_id,created_at,scheduled_join_at,ended_at,status")
       .eq("workspace_id", accountScope.workspaceId)
       .eq("owner_id", accountScope.userId)
       .gte("created_at", usageWindowStart.toISOString())
@@ -457,7 +618,7 @@ export async function POST(req: NextRequest) {
       dailyLimitMinutes,
       now
     );
-    if (usage.remainingSeconds < 60) {
+    if (!scheduledDispatch && usage.remainingSeconds < 60) {
       return NextResponse.json(
         {
           error: `Today's ${dailyLimitMinutes} minute notetaker allowance has been used. The workspace owner can raise it in Team access.`,
@@ -469,20 +630,11 @@ export async function POST(req: NextRequest) {
     }
     const botHardLimitSeconds = Math.min(
       TRANSCRIBER_HARD_LIMIT_SECONDS,
-      usage.remainingSeconds
+      scheduledDispatch ? dailyLimitMinutes * 60 : usage.remainingSeconds
     );
     // An automatically dispatched bot arrives five minutes before the calendar
     // start, so it needs a longer pre-activity runway than a manually sent bot.
-    // Google Meet itself caps waiting-room time at ten minutes. Teams and Zoom
-    // can use the requested fifteen-minute window.
-    const automaticDispatch = autoStart === true;
-    const googleMeet = /(^|\.)meet\.google\.com$/i.test(
-      new URL(meetingUrl).hostname
-    );
     const preActivityTimeoutSeconds = automaticDispatch ? 900 : 300;
-    const waitingRoomTimeoutSeconds = automaticDispatch && googleMeet
-      ? 600
-      : preActivityTimeoutSeconds;
 
     const endpoint = `https://${region}.recall.ai/api/v1/bot/`;
     const captureBotName = sharedInstanceKey
@@ -493,13 +645,18 @@ export async function POST(req: NextRequest) {
       .update(webhookToken)
       .digest("hex");
     const webhookTokenExpiresAt = new Date(
-      Date.now() + 4 * 60 * 60 * 1000
+      Math.max(
+        Date.now(),
+        scheduledDispatch ? scheduledJoinAtMs : Date.now()
+      ) +
+        4 * 60 * 60 * 1000
     );
     const realtimeEndpoint = new URL(`${WORKER_URL}/webhook/recall`);
     realtimeEndpoint.searchParams.set("token", webhookToken);
     const body = {
       meeting_url: meetingUrl,
       bot_name: captureBotName,
+      ...(scheduledJoinAt ? { join_at: scheduledJoinAt } : {}),
       // Provider-side protection against abandoned bots. This runs inside
       // Recall, so it still works if the LiveCoach tab is closed, asleep or
       // offline. `everyone_left_timeout` handles the normal case. The two bot
@@ -553,7 +710,7 @@ export async function POST(req: NextRequest) {
           timeout: 300,
         },
         waiting_room_timeout: Math.min(
-          waitingRoomTimeoutSeconds,
+          preActivityTimeoutSeconds,
           botHardLimitSeconds
         ),
         noone_joined_timeout: Math.min(
@@ -632,6 +789,8 @@ export async function POST(req: NextRequest) {
         host_owner_id: sharedOccurrence?.hostOwnerId || accountScope.userId,
         canonical_upcoming_id:
           sharedOccurrence?.canonical.id || verifiedUpcomingId,
+        scheduled_join_at: scheduledJoinAt,
+        scheduled_meeting_url: scheduledJoinAt ? meetingUrl : null,
         status: "active",
         ...privateRecordFields(accountScope),
       })
@@ -674,14 +833,16 @@ export async function POST(req: NextRequest) {
               ownerId: accountScope.userId,
               sessionId,
               upcomingId: verifiedUpcomingId,
+              status: scheduledDispatch ? "scheduled" : "active",
             });
             if (!attachError) {
               return NextResponse.json(
                 {
                   botId: winner.bot_id,
                   botName: winner.bot_name || "LiveCoach Notetaker",
-                  status: "shared_active",
+                  status: scheduledDispatch ? "scheduled" : "shared_active",
                   sharedCapture: true,
+                  scheduledJoinAt,
                 },
                 { headers: { "Cache-Control": "private, no-store" } }
               );
@@ -710,6 +871,7 @@ export async function POST(req: NextRequest) {
         ownerId: accountScope.userId,
         sessionId,
         upcomingId: verifiedUpcomingId,
+        status: scheduledDispatch ? "scheduled" : "active",
       });
       if (ownerAttachError) {
         await leaveUntrackedBot(region, key, recallBot.id);
@@ -721,6 +883,7 @@ export async function POST(req: NextRequest) {
             session_id: sessionId,
             owner_id: accountScope.userId,
             meeting_instance_key: sharedInstanceKey,
+            scheduled_join_at: scheduledJoinAt,
           },
           accountScope.workspaceId,
           new Date().toISOString()
@@ -751,13 +914,14 @@ export async function POST(req: NextRequest) {
       {
         botId: recallBot.id,
         botName: captureBotName,
-        status: "joining",
+        status: scheduledDispatch ? "scheduled" : "joining",
         sharedCapture: Boolean(sharedInstanceKey),
+        scheduledJoinAt,
         autoStop: {
           everyoneLeftSeconds: 30,
           silentFallbackMinutes: 5,
           preActivityMinutes: Math.floor(preActivityTimeoutSeconds / 60),
-          waitingRoomMinutes: Math.floor(waitingRoomTimeoutSeconds / 60),
+          waitingRoomMinutes: Math.floor(preActivityTimeoutSeconds / 60),
           hardLimitMinutes: Math.floor(botHardLimitSeconds / 60),
           dailyRemainingMinutes: usage.remainingMinutes,
         },

@@ -498,11 +498,13 @@ Return the JSON assessment now.`;
       if (sessionId) {
         const { data: sess } = await supabaseAdmin
           .from("interview_sessions")
-          .select("created_at, ended_at, source")
+          .select("created_at, started_at, ended_at, source")
           .eq("session_id", sessionId)
           .maybeSingle();
         if (sess?.created_at) {
-          const startMs = new Date(sess.created_at as string).getTime();
+          // Scheduled rooms can exist well before the meeting. Reservation
+          // creation time is not billable call time.
+          const startMs = new Date((sess.started_at || sess.created_at) as string).getTime();
           const endMs = sess.ended_at
             ? new Date(sess.ended_at as string).getTime()
             : Date.now();
