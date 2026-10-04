@@ -5,6 +5,8 @@ import {
 } from "@/lib/staff-mcp-metadata";
 import { staffMcpResourceUrl } from "@/lib/staff-mcp-auth";
 
+import { PERSONAL_MCP_TOOLS } from '@/lib/staff-mcp-personal';
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -22,8 +24,8 @@ export async function GET() {
       {
         endpoint: staffMcpResourceUrl().href,
         oauthEnabled,
-        toolCount: 6,
-        access: "own_assigned_only",
+        toolCount: 6 + PERSONAL_MCP_TOOLS.length,
+        access: "own_and_assigned_work_only",
       },
       { headers: { "Cache-Control": "private, no-store" } }
     );

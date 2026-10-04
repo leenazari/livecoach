@@ -91,13 +91,13 @@ assert.match(consent, /isAllowedChatGptOAuthClient/);
 assert.match(consent, /approveAuthorization/);
 assert.match(consent, /denyAuthorization/);
 assert.match(consent, /Identity access requested/);
-assert.match(consent, /another salesperson&apos;s private records/);
+assert.match(consent, /another person&apos;s private records/);
 assert.match(consent, /Change LiveCoach code, roles or permissions/);
 assert.match(settings, /revokeGrant/);
 assert.match(settings, /their own LiveCoach login/);
 assert.match(settings, /It cannot send outreach/);
-assert.match(settings, /Business, Enterprise, and Edu/);
-assert.doesNotMatch(settings, /Open Plugins/);
+assert.match(settings, /Plus, Pro, Business, Enterprise and Education/);
+assert.match(settings, /In ChatGPT Plugins/);
 
 assert.match(middleware, /path\.startsWith\("\/oauth\/consent"\)/);
 assert.match(middleware, /url\.searchParams\.set\("redirect"/);

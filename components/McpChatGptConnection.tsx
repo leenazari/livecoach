@@ -108,15 +108,15 @@ export default function McpChatGptConnection() {
             {grants.length ? "✓" : "◇"} ChatGPT staff connector
           </p>
           <h2 className="mt-2 font-display text-xl text-bone">
-            Add your own CRM leads and follow-ups from ChatGPT
+            Query and update your own LiveCoach work from ChatGPT
           </h2>
           <p className="mt-2 text-sm leading-6 text-muted">
-            Each salesperson connects their own ChatGPT account to their own LiveCoach login.
-            ChatGPT can add a private lead, add verified context, create a follow-up, and read
-            only that salesperson&apos;s assigned leads and tasks.
+            Each person connects their own ChatGPT account to their own LiveCoach login.
+            Ask for your to-do list, marketing records, calls, calendar, documents, Brain history
+            and connected email. Save your own tasks, campaign records, lead details and notes back into LiveCoach.
           </p>
           <p className="mt-2 text-xs leading-5 text-moss">
-            It cannot send outreach, start campaigns, assign colleagues, see another person&apos;s
+            It cannot send outreach, launch advertising, assign colleagues, see another person&apos;s
             private records, or change code and permissions. Every action returns an audit receipt.
           </p>
         </div>
@@ -150,14 +150,14 @@ export default function McpChatGptConnection() {
       ) : null}
 
       <ol className="mt-5 space-y-2 text-sm leading-6 text-muted">
-        <li>1. A ChatGPT workspace owner creates the LiveCoach app once in Workspace settings, Apps, Create, using the address above.</li>
-        <li>2. Scan the six tools, complete the test connection, then publish the app to the approved staff group.</li>
-        <li>3. Each salesperson opens ChatGPT Settings, Apps, Enabled Apps, selects LiveCoach, and connects with their own LiveCoach login.</li>
-        <li>4. Ask ChatGPT to add a lead. It must have an exact email and verified company name.</li>
+        <li>1. On ChatGPT web, enable Developer mode in Settings, Security and login. Your managed workspace may require admin access.</li>
+        <li>2. In ChatGPT Plugins, use the plus button and add the address above with OAuth authentication. Existing connections can refresh tools.</li>
+        <li>3. Connect using your own LiveCoach login and approve the personal account connection.</li>
+        <li>4. Select LiveCoach in your chat and ask “What is on my to-do list?” or “Update my campaign review date”. Review requested changes before approving them.</li>
       </ol>
 
       <p className="mt-4 text-xs leading-5 text-amber">
-        ChatGPT currently limits custom apps with write actions to Business, Enterprise, and Edu workspaces.
+        Developer mode is available on ChatGPT web for Plus, Pro, Business, Enterprise and Education. Workspace administrators may control access. This connects CRM tools; it does not import your ChatGPT history into LiveCoach.
       </p>
 
       {!loading && status && !status.oauthEnabled ? (
