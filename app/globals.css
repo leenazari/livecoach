@@ -203,3 +203,53 @@ body::before {
     display: none;
   }
 }
+
+/* Call prep has its own dock in addition to the CRM navigation. Keep their
+   occupied space separate, including wrapped controls and safe-area insets. */
+.lc-call-workspace {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-bottom: calc(var(--lc-call-dock-height, 0px) + 8rem);
+}
+
+.lc-call-workspace [data-call-brain-trigger] {
+  bottom: calc(var(--lc-call-dock-height, 0px) + 2rem);
+}
+
+@media (max-width: 639px) {
+  .lc-mobile-nav {
+    --lc-mobile-nav-clearance: calc(5rem + env(safe-area-inset-bottom));
+  }
+
+  .lc-mobile-nav main.lc-call-workspace {
+    padding-bottom: calc(var(--lc-call-dock-height, 0px) + var(--lc-mobile-nav-clearance) + 4.5rem) !important;
+  }
+
+  .lc-mobile-nav .lc-call-dock {
+    bottom: var(--lc-mobile-nav-clearance);
+  }
+
+  .lc-mobile-nav [data-call-brain-trigger] {
+    bottom: calc(var(--lc-mobile-nav-clearance) + var(--lc-call-dock-height, 0px) + 0.75rem);
+    width: 2.75rem;
+    height: 2.75rem;
+    justify-content: center;
+    gap: 0.25rem;
+    padding: 0.5rem;
+  }
+
+  /* Give the editor the viewport while the phone keyboard is open. */
+  .lc-call-workspace:has(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):focus, textarea:focus) .lc-call-dock,
+  .lc-call-workspace:has(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):focus, textarea:focus) [data-call-brain-trigger] {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .lc-mobile-nav main.lc-task-workspace {
+    padding-bottom: calc(var(--lc-mobile-nav-clearance) + 1.5rem) !important;
+  }
+
+  .lc-task-dashboard label {
+    min-width: 0;
+  }
+}

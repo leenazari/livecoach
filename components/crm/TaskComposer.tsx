@@ -334,7 +334,7 @@ export default function TaskComposer({
   return (
     <form
       onSubmit={save}
-      className="mb-3 rounded-xl border border-amber/45 bg-amber/[0.055] p-3.5"
+      className="min-w-0 w-full mb-3 rounded-xl border border-amber/45 bg-amber/[0.055] p-3.5"
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
@@ -363,7 +363,7 @@ export default function TaskComposer({
         </button>
       </div>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(10rem,.65fr)]">
+      <div className="mt-3 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(10rem,.65fr)]">
         <div>
           <label
             htmlFor={textInputId}
@@ -388,7 +388,7 @@ export default function TaskComposer({
                   ? "Listening… say the task in your own words"
                   : "Type the task, or tap the microphone and speak"
               }
-              className={`${input} resize-y leading-5 ${
+              className={`${input} min-w-0 flex-1 resize-y leading-5 ${
                 listening ? "min-h-[108px] border-rust/65" : "min-h-[68px]"
               }`}
             />
@@ -438,7 +438,7 @@ export default function TaskComposer({
         </label>
       </div>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(9rem,.55fr)_minmax(8rem,.5fr)]">
+      <div className="mt-3 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(9rem,.55fr)_minmax(8rem,.5fr)]">
         <div>
           <span className="mb-1 block font-mono text-[0.52rem] uppercase text-muted">
             {prospect ? "Client and prospect context" : "Client context, optional"}

@@ -63,7 +63,7 @@ type TaskTypeFilter = "all" | "task" | "call" | "email";
 
 const TASKS_URL = "/api/crm/tasks?view=dashboard";
 const input =
-  "min-h-11 w-full rounded-lg border border-edge bg-ink/55 px-3 py-2.5 text-sm text-bone outline-none placeholder:text-muted/55 focus:border-amber/60";
+  "min-h-11 min-w-0 w-full rounded-lg border border-edge bg-ink/55 px-3 py-2.5 text-sm text-bone outline-none placeholder:text-muted/55 focus:border-amber/60";
 const button =
   "min-h-10 rounded-lg border border-edge px-3 font-mono text-[0.56rem] uppercase tracking-wider text-muted transition hover:border-amber/55 hover:text-amber disabled:cursor-wait disabled:opacity-40";
 
@@ -490,15 +490,15 @@ export default function TaskDashboard() {
   ];
 
   return (
-    <>
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Task summary">
+    <div className="lc-task-dashboard min-w-0 [overflow-wrap:anywhere]">
+      <section className="grid min-w-0 grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4" aria-label="Task summary">
         {headlineCards.map((card) => (
           <button
             key={card.id}
             type="button"
             onClick={() => setView(card.id)}
             aria-pressed={view === card.id}
-            className={`rounded-xl border p-4 text-left transition ${
+            className={`min-w-0 rounded-xl border p-3 text-left transition sm:p-4 ${
               view === card.id
                 ? "border-amber/60 bg-amber/[0.08]"
                 : "border-edge bg-panel/45 hover:border-amber/35"
@@ -516,7 +516,7 @@ export default function TaskDashboard() {
       </section>
 
       <section className="mt-4 rounded-2xl border border-edge bg-panel/35 p-4 sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div>
             <h2 className="font-display text-xl text-bone">Your task list</h2>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-muted">
@@ -526,7 +526,7 @@ export default function TaskDashboard() {
           <TaskComposer />
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2" aria-label="Task views">
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap" aria-label="Task views">
           {viewOptions.map((option) => (
             <button
               key={option.id}
@@ -544,7 +544,7 @@ export default function TaskDashboard() {
           ))}
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_12rem_auto]">
+        <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_12rem_auto]">
           <label>
             <span className="sr-only">Search tasks</span>
             <input
@@ -651,10 +651,10 @@ export default function TaskDashboard() {
                     </button>
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="flex min-w-0 flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0 flex-1">
                           <p
-                            className={`text-[0.94rem] leading-6 ${
+                            className={`break-words text-[0.94rem] leading-6 ${
                               done ? "text-muted line-through" : "text-bone"
                             }`}
                           >
@@ -699,7 +699,7 @@ export default function TaskDashboard() {
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-edge/60 pt-2 sm:justify-end sm:border-0 sm:pt-0">
                           {!done && !task.upcoming_id ? (
                             <button
                               type="button"
@@ -750,7 +750,7 @@ export default function TaskDashboard() {
 
                       {editingId === task.id ? (
                         <div className="mt-3 rounded-lg border border-amber/35 bg-ink/50 p-3">
-                          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem_9rem]">
+                          <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_10rem_9rem]">
                             <label>
                               <span className="mb-1 block font-mono text-[0.5rem] uppercase tracking-wider text-muted">
                                 What needs to be done
@@ -832,6 +832,6 @@ export default function TaskDashboard() {
           </div>
         )}
       </section>
-    </>
+    </div>
   );
 }

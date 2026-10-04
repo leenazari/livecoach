@@ -785,8 +785,8 @@ export default function MeetStage({
       : { cls: "border-rust/55 bg-rust/15 text-rust", dot: "bg-rust", label: "Off air" };
 
   return (
-    <div className="grid gap-4 rounded-2xl border border-edge bg-panel/50 p-5">
-      <div className="flex items-center justify-between">
+    <div className="grid min-w-0 grid-cols-1 gap-4 rounded-2xl border border-edge bg-panel/50 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-amber">
             Meet / Teams / Zoom
@@ -806,7 +806,7 @@ export default function MeetStage({
           value={meetingUrl}
           onChange={(e) => setMeetingUrl(e.target.value)}
           placeholder="Paste Meet / Teams / Zoom link"
-          className="min-w-[260px] flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone"
+          className="min-w-0 w-full flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-mono text-sm text-bone"
         />
         <button
           onClick={sendBot}

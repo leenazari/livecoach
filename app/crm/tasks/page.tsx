@@ -7,7 +7,7 @@ import TaskDashboard from "@/components/crm/TaskDashboard";
 
 export default function TasksPage() {
   return (
-    <main className="relative z-10 mx-auto max-w-[1180px] px-5 py-10">
+    <main className="lc-task-workspace relative z-10 mx-auto min-w-0 max-w-[1180px] px-5 py-10">
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-edge pb-4">
         <div>
           <h1 className="font-display text-[1.65rem] leading-none tracking-tight text-bone">

@@ -81,9 +81,11 @@ function describeScreen(pathname: string | null, hasClient: boolean, tab: string
 export default function GlobalAssistant({
   companyId,
   companyName,
+  callWorkspace = false,
 }: {
   companyId?: string;
   companyName?: string;
+  callWorkspace?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [seed, setSeed] = useState("");
@@ -291,13 +293,15 @@ export default function GlobalAssistant({
         type="button"
         onClick={() => setOpen(true)}
         title="Ask the brain"
+        aria-label="Ask the Brain"
+        data-call-brain-trigger={callWorkspace || undefined}
         className="fixed bottom-20 right-4 z-[60] flex items-center gap-2 rounded-full border border-amber/70 bg-amber px-5 py-3 font-mono text-[0.66rem] font-medium uppercase tracking-wider text-ink shadow-[0_8px_26px_rgba(232,163,61,0.4)] transition hover:brightness-110 sm:bottom-4"
       >
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ink/60" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-ink" />
         </span>
-        {"▤"} Ask the brain
+        <span aria-hidden="true">{"▤"}</span> <span className={callWorkspace ? "hidden sm:inline" : undefined}>Ask the brain</span>
       </button>
     );
   }
