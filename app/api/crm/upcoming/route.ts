@@ -12,6 +12,7 @@ import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { validMeetingUrl } from "@/lib/meeting-url";
 import { crmBlockerPayload } from "@/lib/crm-blocker";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
+import { scheduleAutomaticNotetakersForUpcomingIds } from "@/lib/automatic-precall";
 
 export const runtime = "nodejs";
 // Keep this a dynamic function: a no-arg GET would otherwise be statically
@@ -299,6 +300,20 @@ export async function POST(req: NextRequest) {
             .eq("external_id", calendarEvent.externalId)
           .maybeSingle();
         if (existing?.id) {
+          let notetakerWarning: string | null = null;
+          try {
+            const schedule = await scheduleAutomaticNotetakersForUpcomingIds([
+              existing.id,
+            ]);
+            if (schedule.failed) {
+              notetakerWarning =
+                "The call saved, but the notetaker reservation needs the next calendar sync to retry.";
+            }
+          } catch (scheduleError) {
+            console.error("new call notetaker scheduling failed", scheduleError);
+            notetakerWarning =
+              "The call saved, but the notetaker reservation needs the next calendar sync to retry.";
+          }
           return NextResponse.json({
             ok: true,
             id: existing.id,
@@ -307,6 +322,7 @@ export async function POST(req: NextRequest) {
             calendarCreated: true,
             invitesSent: attendeeResult.emails.length,
             reused: true,
+            notetakerWarning,
           });
         }
         return NextResponse.json(
@@ -321,6 +337,22 @@ export async function POST(req: NextRequest) {
       }
       throw error;
     }
+    let notetakerWarning: string | null = null;
+    if (data?.id && data.meeting_url && data.scheduled_at) {
+      try {
+        const schedule = await scheduleAutomaticNotetakersForUpcomingIds([
+          data.id,
+        ]);
+        if (schedule.failed) {
+          notetakerWarning =
+            "The call saved, but the notetaker reservation needs the next calendar sync to retry.";
+        }
+      } catch (scheduleError) {
+        console.error("new call notetaker scheduling failed", scheduleError);
+        notetakerWarning =
+          "The call saved, but the notetaker reservation needs the next calendar sync to retry.";
+      }
+    }
     return NextResponse.json({
       ok: true,
       id: data?.id,
@@ -329,6 +361,7 @@ export async function POST(req: NextRequest) {
       calendarCreated: !!calendarEvent,
       invitesSent: calendarEvent ? attendeeResult.emails.length : 0,
       reused: false,
+      notetakerWarning,
     });
   } catch (err: any) {
     const message = err?.message || "failed to schedule the call";

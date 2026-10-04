@@ -5,6 +5,7 @@ import { listActiveAccountScopes } from "@/lib/automation-accounts";
 import { runWithServiceRecordScope } from "@/lib/service-scope";
 import { isVerifiedServiceRequest } from "@/lib/request-scope";
 import { resolveRecordScope } from "@/lib/record-scope";
+import { recoverScheduledCallInputs } from "@/lib/scheduled-call-recovery";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -66,8 +67,11 @@ async function runAccount(req: Request) {
         )
         .eq("workspace_id", accountScope.workspaceId)
         .eq("owner_id", accountScope.userId)
-        .gte("created_at", since)
-        .order("created_at", { ascending: false })
+        // Scheduled rooms may be seeded weeks before the call. Transcript
+        // activity updates updated_at, which keeps a newly-finished meeting
+        // eligible for recovery regardless of when its room was reserved.
+        .gte("updated_at", since)
+        .order("updated_at", { ascending: false })
         .limit(200),
       supabaseAdmin
         .from("interview_summaries")
@@ -79,6 +83,14 @@ async function runAccount(req: Request) {
     ]);
 
     const haveSummary = new Set((summaries || []).map((s: any) => s.session_id));
+    const unattended = await recoverScheduledCallInputs(haveSummary, dueForRetry);
+    const scheduledIds = new Set(unattended.scheduledSessionIds);
+    // Canonical speech activity, not an old browser save, decides whether a
+    // scheduled call has actually gone quiet.
+    const sessionsById = new Map((sessions || [])
+      .filter((session: any) => !scheduledIds.has(session.session_id))
+      .map((session: any) => [session.session_id, session]));
+    for (const session of unattended.recovered) sessionsById.set(session.session_id, session);
 
     // A call is only "over" once it has gone quiet. The sweep runs on a timer,
     // so without this it could summarise a LONG call mid-flight (a live call
@@ -94,7 +106,7 @@ async function runAccount(req: Request) {
       return Number.isFinite(t) ? t : 0;
     };
 
-    const orphans = (sessions || []).filter((s: any) => {
+    const orphans = Array.from(sessionsById.values()).filter((s: any) => {
       if (!s.session_id || haveSummary.has(s.session_id)) return false;
       const t = typeof s.transcript === "string" ? s.transcript.trim() : "";
       if (t.length < 500) return false; // too thin to be a real call
@@ -133,7 +145,7 @@ async function runAccount(req: Request) {
         transcript: s.transcript,
         role: s.role || null,
         candidate: s.candidate || null,
-        competencies: [],
+        competencies: Array.isArray(s.competencies) ? s.competencies : [],
         callType: s.call_type || null,
         sessionId: s.session_id,
         companyId: s.company_id || null,

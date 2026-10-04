@@ -49,10 +49,6 @@
       "schedule": "* * * * *"
     },
     {
-      "path": "/api/cron/auto-join-meetings",
-      "schedule": "* * * * *"
-    },
-    {
       "path": "/api/cron/outreach-send",
       "schedule": "*/5 * * * *"
     },
