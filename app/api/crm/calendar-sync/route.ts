@@ -28,18 +28,25 @@ import { shouldReopenScheduledCalendarCall } from "@/lib/calendar-sync-recovery"
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+type CalendarSyncMode = "full" | "near-term";
+
 // POST /api/crm/calendar-sync -> pull the user's connected calendar (now to +30d)
 // into upcoming_calls. Adds new events, applies reschedules (time/title/link),
 // skips cancelled and self-declined events, and preserves curated client links,
 // intent and prep on existing rows. The narrow exception is an internal/test
 // placeholder contradicted by one clear external work domain. Supports Google
 // and Microsoft accounts.
-async function runCalendarSync() {
+async function runCalendarSync(mode: CalendarSyncMode = "full") {
   try {
     const scope = await resolveRecordScope();
     const now = Date.now();
     const timeMin = new Date(now - 3 * 60 * 60 * 1000).toISOString();
-    const timeMax = new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const timeMax = new Date(
+      now +
+        (mode === "near-term"
+          ? 2 * 60 * 60 * 1000
+          : 30 * 24 * 60 * 60 * 1000)
+    ).toISOString();
     // Read every calendar the account can see, not just the primary, so a
     // shared calendar is picked up too without crossing account boundaries.
     const snapshot = await listConnectedCalendarSnapshot(timeMin, timeMax);
@@ -510,14 +517,17 @@ async function runCalendarSync() {
     const finishedAt = new Date().toISOString();
     const calendarReconnectRequired =
       source === "google" && snapshot.calendarListAccessible === false;
-    await setAppConfigValue({
-      key: "calendar_sync_last_success_at",
-      value: finishedAt,
-      note: `Latest successful complete or partial ${source} Calendar refresh`,
-    });
+    if (mode === "full") {
+      await setAppConfigValue({
+        key: "calendar_sync_last_success_at",
+        value: finishedAt,
+        note: `Latest successful complete or partial ${source} Calendar refresh`,
+      });
+    }
 
     return NextResponse.json({
       ok: true,
+      mode,
       provider: snapshot.provider,
       added,
       updated: toUpdate.length,
@@ -542,8 +552,11 @@ async function runCalendarSync() {
 }
 
 // Manual refresh from the Upcoming Calls card.
-export async function POST() {
-  return runCalendarSync();
+export async function POST(req?: NextRequest) {
+  const mode = req?.nextUrl.searchParams.get("mode") === "near-term"
+    ? "near-term"
+    : "full";
+  return runCalendarSync(mode);
 }
 
 // Vercel invokes cron paths with GET and sends CRON_SECRET as a bearer token.
