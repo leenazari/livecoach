@@ -1,3 +1,4 @@
+import { logBrainAudit } from '@/lib/brain-audit';
 import { loadTeamLeadCoverCompanies, loadTeamLeadCoverCompany, teamLeadCoverEnabled } from "@/lib/team-lead-cover";
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
@@ -64,6 +65,7 @@ import {
   signBrainAction,
 } from "@/lib/brain-authority";
 import { calendarRecurrence } from "@/lib/calendar-create";
+import { privateRecordFields } from '@/lib/record-scope';
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -2244,6 +2246,10 @@ function authoriseResolvedActions(
 
 export async function POST(req: NextRequest) {
   try {
+    const requestScope = getRequestScope();
+    if (!requestScope || requestScope.status !== 'active') {
+      return NextResponse.json({ error: 'Active workspace access is required' }, { status: 403 });
+    }
     const { companyId, focusCompanyId, message, screenContext: rawScreen } = await req.json();
     if (typeof message !== "string" || !message.trim()) {
       return NextResponse.json({ error: "message is required" }, { status: 400 });
@@ -2332,6 +2338,8 @@ export async function POST(req: NextRequest) {
     let histQ = supabaseAdmin
       .from("assistant_messages")
       .select("role, content, action_sigs")
+      .eq('workspace_id', requestScope.workspaceId)
+      .eq('owner_id', requestScope.userId)
       .lt("created_at", new Date(reqStart).toISOString())
       .order("created_at", { ascending: false })
       .limit(10);
@@ -2421,12 +2429,14 @@ export async function POST(req: NextRequest) {
           company_id: isGlobal ? null : companyId,
           role: "user",
           content: rawMessage,
+          ...privateRecordFields(requestScope),
         },
         {
           company_id: isGlobal ? null : companyId,
           role: "assistant",
           content: "Reply in progress. If this remains after reopening, ask the Brain to continue.",
           action_sigs: [],
+          ...privateRecordFields(requestScope),
         },
       ])
       .select("id, role");
@@ -2457,6 +2467,7 @@ export async function POST(req: NextRequest) {
     )?.id as string | undefined;
     if (!persistedAssistantId)
       throw new Error("the Brain could not safely save this conversation");
+    await logBrainAudit(requestScope, { eventType: 'conversation_requested', correlationId: persistedAssistantId, status: 'started', request: { message: rawMessage, companyId: companyId || null } });
     const ctxMs = Date.now() - reqStart; // time to gather all grounding context
     if (!context) {
       return NextResponse.json({ error: "client not found" }, { status: 404 });
@@ -2495,7 +2506,6 @@ export async function POST(req: NextRequest) {
         content: String(m.content).slice(-1400),
       }));
 
-    const requestScope = getRequestScope();
     const importAllowed = requestScope ? await canStageOutreachImports(requestScope) : false;
     const coverAllowed = requestScope ? await teamLeadCoverEnabled(requestScope) : false;
     const accessBoundary =
@@ -2535,6 +2545,8 @@ export async function POST(req: NextRequest) {
       {
         type: "text",
         text: `${biz}${salesProfile}${lessons}${pitchLessons}${scope}${qBlock}${identityBlock}
+
+BRAIN CONVERSATION PRIVACY: Your context contains only this account's Brain conversation, responses and action details. Never reveal, summarise, retrieve or claim access to another person's Brain responses or conversations, including for the workspace owner or managers. Shared CRM records and approved team learnings never grant access to another person's private Brain history.
 
 GROUND EVERYTHING in the context provided below. This is the hardest rule and it overrides being helpful.
 - Never state a specific number, money amount, budget, deal value, date, deadline, percentage, stage, name or commitment unless it appears literally in the context. Do not estimate, assume, or infer a figure that isn't written there. If you catch yourself about to put a number in a sentence, check it is actually in the context first.
@@ -2721,7 +2733,9 @@ ALWAYS end the spoken version with your closing question whenever your reply has
             const { error } = await supabaseAdmin
               .from("assistant_messages")
               .update({ content })
-              .eq("id", persistedAssistantId);
+              .eq("id", persistedAssistantId)
+              .eq("workspace_id", requestScope.workspaceId)
+              .eq("owner_id", requestScope.userId);
             // A transient checkpoint failure should not kill an otherwise good
             // Brain reply. The final durable save below is still mandatory.
             if (error) console.error("Assistant checkpoint save failed:", error);
@@ -2893,8 +2907,12 @@ ALWAYS end the spoken version with your closing question whenever your reply has
                 .filter((pa) => !pa.unavailable)
                 .map((pa) => brainActionSignature(pa)),
             })
-            .eq("id", persistedAssistantId);
+            .eq("id", persistedAssistantId)
+              .eq("workspace_id", requestScope.workspaceId)
+              .eq("owner_id", requestScope.userId);
           if (saveError) throw saveError;
+
+          await logBrainAudit(requestScope, { eventType: 'conversation_completed', correlationId: persistedAssistantId, status: 'completed', response: { reply, spoken, proposedActions, createdTasks } });
 
           // One timing line per reply (visible in Vercel runtime logs). ctxMs =
           // DB/context gather, ttftMs = time to first word, totalMs = end to end.
@@ -2925,6 +2943,7 @@ ALWAYS end the spoken version with your closing question whenever your reply has
           });
         } catch (e: any) {
           console.error("Assistant stream failed:", e);
+          await logBrainAudit(requestScope, { eventType: 'conversation_failed', correlationId: persistedAssistantId, status: 'failed', response: { partialReply: full.trim() }, error: 'Brain reply interrupted' }).catch(() => console.error('Brain failure audit unavailable'));
           try {
             await partialSave;
             const recovered = full.trim();
@@ -2935,7 +2954,9 @@ ALWAYS end the spoken version with your closing question whenever your reply has
                   ? `${recovered}\n\n(Reply interrupted. Ask the Brain to continue from here.)`
                   : "The reply was interrupted before it began. Ask the Brain to try again.",
               })
-              .eq("id", persistedAssistantId);
+              .eq("id", persistedAssistantId)
+              .eq("workspace_id", requestScope.workspaceId)
+              .eq("owner_id", requestScope.userId);
           } catch (saveErr) {
             console.error("Assistant recovery save failed:", saveErr);
           }

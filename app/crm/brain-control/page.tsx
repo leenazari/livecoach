@@ -777,8 +777,9 @@ export default function BrainControlPage() {
           <div className="mt-6">
             <h3 className="font-display text-lg text-bone">Audited Brain actions</h3>
             <p className="mt-1 text-sm leading-6 text-muted">
-              Every confirmed action is bound to one account, one exact request and one retry key. Lee can see the workspace audit. Other users see only their own actions.
+              Every confirmed action is bound to one account, one exact request and one retry key. Each person sees only their own action details. The owner can review aggregate workspace costs. Other people&apos;s Brain conversations are available only in the separate 30-day server audit.
             </p>
+            {data.role === "owner" && <Link href="/crm/brain-audit" className="mt-2 inline-block text-sm text-amber underline">Review 30-day server audit</Link>}
             <div className="mt-3 grid gap-2">
               {data.actionExecutions?.length ? data.actionExecutions.slice(0, 25).map((execution) => (
                 <article key={execution.id} className="rounded-xl border border-edge bg-panel p-3">

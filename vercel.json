@@ -75,6 +75,10 @@
     {
       "path": "/api/cron/precall-email-context",
       "schedule": "15 9,10 * * 0,6"
+    },
+    {
+      "path": "/api/cron/brain-audit-retention",
+      "schedule": "7 * * * *"
     }
   ]
 }

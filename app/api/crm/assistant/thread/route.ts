@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { requireRequestScope } from '@/lib/request-scope';
 
 export const runtime = "nodejs";
 // Keep this a dynamic function: a no-arg GET would otherwise be statically
@@ -11,9 +12,12 @@ export const dynamic = "force-dynamic";
 // DELETE /api/crm/assistant/thread -> clear the global thread
 export async function GET() {
   try {
+    const scope = requireRequestScope();
     const { data, error } = await supabaseAdmin
       .from("assistant_messages")
       .select("id, role, content, created_at")
+      .eq('workspace_id', scope.workspaceId)
+      .eq('owner_id', scope.userId)
       .is("company_id", null)
       .order("created_at", { ascending: true })
       .limit(200);
@@ -29,9 +33,12 @@ export async function GET() {
 
 export async function DELETE() {
   try {
+    const scope = requireRequestScope();
     const { error } = await supabaseAdmin
       .from("assistant_messages")
       .delete()
+      .eq('workspace_id', scope.workspaceId)
+      .eq('owner_id', scope.userId)
       .is("company_id", null);
     if (error) throw error;
     return NextResponse.json({ ok: true });

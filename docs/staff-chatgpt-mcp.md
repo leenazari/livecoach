@@ -4,7 +4,7 @@ The production MCP endpoint is `https://www.livecoachcrm.com/mcp`.
 
 ## What staff can do
 
-Each person connects ChatGPT using their own LiveCoach login. Every CRM query uses their OAuth token, workspace and owner ID. Assigned lead reads are also limited to that person's assignment. Even workspace managers cannot use this connector to query another user's private records.
+Each person connects ChatGPT using their own LiveCoach login. Every request uses their verified OAuth identity and workspace. Personal tools query their owned or explicitly assigned work. The Brain tools reuse the existing Brain engine and its normal role, shared-work, team-cover, assignment and trust policies. This does not grant access to another person's private records or connected accounts.
 
 - Query and search their tasks, campaigns, marketing leads, assigned sales leads, companies, contacts, opportunities, call summaries, calendar, documents, Brain history and learnings, profile, email drafts, and their own saved Analytics snapshot.
 - Read their own connected Google or Microsoft mailbox through the existing account-specific mail helpers. Provider limits and stripped reply chains are labelled.
@@ -13,10 +13,13 @@ Each person connects ChatGPT using their own LiveCoach login. Every CRM query us
 - Create and update their own campaign records and marketing lead details. This does not launch advertising or spend money. Lead creation remains unassigned until handover in LiveCoach.
 - Append notes to their own companies, contacts and marketing leads without overwriting existing context.
 - Use the original personal lead and follow-up tools.
+- Ask the existing Brain for advice, coaching or any normal Brain action through `ask_my_brain`. Each turn and its result are saved in their own Brain history.
+- Review the exact signed proposal before `execute_my_brain_action`. The existing executor checks current role, Brain trust rules, assigned work, provider account, suppression and approval requirements. External messages, calendar changes, paid work and destructive changes always require separate approval.
+- Check their own execution receipts with `get_my_brain_execution` and undo eligible reversible actions through the existing ten-minute undo handler with `undo_my_brain_action`.
 
-The connector does not send email or outreach, launch campaigns, change budgets in advertising providers, assign colleagues, delete records, alter call transcripts, edit historical Brain conversations, change permissions, or change code. Read-only historical records remain read-only. Linked ChatGPT conversations are not automatically imported into LiveCoach.
+The Brain bridge can carry out the actions the same user can approve in the existing Brain, including account-bound email sends and calendar changes. Owner-only actions remain owner-only; member import grants remain required. The personal record tools retain their narrower limits. No tool changes application code, roles, credentials, permissions or immutable audit history, or bypasses another person's private connections. Advertising launch and ad-provider budget changes are not existing Brain actions and remain unavailable. Linked ChatGPT conversations are not automatically imported; only explicitly delegated Brain turns and action results are saved.
 
-Every call returns an audit receipt. Create requests use reusable IDs to prevent duplicate tasks, campaigns and marketing leads. Lists report totals and page boundaries; long content includes truncation labels. Tokens, signing keys and other users' connector credentials are never returned.
+Every call returns an audit receipt. Create requests use reusable IDs to prevent duplicate tasks, campaigns and marketing leads. Brain turns use a reusable requestId and return the same prepared result on transport retry. Execution retries reuse the original signed Brain token and the existing execution ledger. Lists report totals and page boundaries; long content includes truncation labels. Tokens, signing keys and other users' connector credentials are never returned.
 
 ## One-time owner setup
 
@@ -57,7 +60,7 @@ Developer mode is available on the web for Plus, Pro, Business, Enterprise and E
 5. Read the current record before requesting changes. Review write actions in ChatGPT before approving.
 6. For a managed team, an authorised administrator can publish the connection to the approved staff group using the workspace's available plugin controls.
 
-Existing connections must refresh tools in ChatGPT to discover the expanded surface. Do not reconnect using Lee's login for a staff member.
+This extends the same existing MCP server, not a second connector. Existing connections must refresh tools in ChatGPT to discover the expanded surface. Do not reconnect using Lee's login for a staff member.
 
 Revoke the grant from the ChatGPT connector card in LiveCoach Settings. This stops future MCP access and invalidates the client's refresh grant.
 
@@ -66,3 +69,17 @@ Revoke the grant from the ChatGPT connector card in LiveCoach Settings. This sto
 Run the staff MCP and personal MCP validation scripts. The personal tests exercise two users and two workspaces against a deliberately broad database mock, so ownership must be enforced by the tools themselves as well as RLS. They cover reads, blocked foreign writes, stale versions, task replay, omitted-field preservation, note append behaviour and exact mailbox owner binding.
 
 Before granting broader staff access, complete one connection as each staff account and confirm that revocation and live account membership checks remain effective.
+
+## Brain bridge implementation and checks
+
+The authenticated MCP principal is carried in request-local AsyncLocalStorage while the original Brain route handlers run in-process. This is user context, never a service-session impersonation. It cannot be selected through tool arguments, headers, cookies or a URL. The user-scoped Supabase client retains OAuth RLS; existing narrowly scoped service operations retain their own permission checks. Nested Brain actions dispatch only fixed, allowlisted route modules, avoiding cookie fabrication or a broad bearer-auth exception in middleware. Browser requests keep their existing transport.
+
+Run `validate:brain-mcp` plus the existing staff MCP, personal MCP, Brain controlled-authority and Brain sales-scope checks. The new tests cover concurrent identities, original handler reuse, role-blocked delegation, token identity and role binding, edited review denial, exact provider content review, action retries, trust blocks, foreign receipts and undo.
+
+## Private Brain relationships and owner auditing
+
+Raw conversation history, routine responses and action results are account-private in the application, connector and database, including records formerly labelled team. Explicitly approved shared CRM work and team learning retain their normal role permissions; they do not grant access to another person's raw Brain conversations.
+
+The separate `/crm/brain-audit` screen is available only to an active workspace owner. Server-side audit copies capture new Brain requests, replies, proposed actions, confirmed outcomes and failures in both LiveCoach and ChatGPT. Credentials and execution/signing tokens are redacted; content limits are labelled. No audit copies are sent to ordinary Brain context or MCP tools. Personal Brain history and memory continue independently.
+
+Apply `20261004191900_brain_role_connector_private_audit.sql`. Audit expiry is fixed at 720 hours; authenticated owners cannot read expired entries. The production cron `/api/cron/brain-audit-retention` runs hourly at minute 7 with the existing `CRON_SECRET`, deleting expired audit copies only. Audit rows are append-only for application accounts and the service cannot update them. No backfill of older conversations is performed.

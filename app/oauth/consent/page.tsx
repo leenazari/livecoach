@@ -144,6 +144,7 @@ export default function OAuthConsentPage() {
         <h1 className="mt-2 font-display text-3xl text-bone">
           Connect ChatGPT to your LiveCoach work
         </h1>
+          <p className="text-xs text-muted">Your Brain is personal. The workspace owner can review server audit copies for 30 days.</p>
 
         {!details && !error ? (
           <p className="mt-5 text-sm text-muted">Checking the secure connection request…</p>
@@ -176,14 +177,17 @@ export default function OAuthConsentPage() {
               <li>Read your own connected email and saved Analytics snapshot</li>
               <li>Create, complete or reschedule your own tasks and marketing plans</li>
               <li>Update your own campaign records and marketing leads; append notes to your own records</li>
+              <li>Ask your existing Brain for advice, coaching and actions allowed by your normal role</li>
+              <li>Execute a reviewed Brain proposal with the same role, assignment and approval checks as LiveCoach</li>
+              <li>Check your action receipts and undo eligible reversible changes</li>
             </ul>
           </div>
           <div className="rounded-xl border border-rust/35 bg-rust/[0.06] p-4">
             <h2 className="font-display text-lg text-bone">ChatGPT cannot</h2>
             <ul className="mt-2 space-y-2 text-sm leading-5 text-muted">
               <li>Read another person&apos;s private records</li>
-              <li>Assign work to another person</li>
-              <li>Send email or LinkedIn outreach</li>
+              <li>Act outside your role or approved assignments</li>
+              <li>Send messages, change calendars, spend on paid work or make destructive changes without separate approval</li>
               <li>Launch advertising or spend campaign budget</li>
               <li>Change LiveCoach code, roles or permissions</li>
             </ul>

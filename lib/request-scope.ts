@@ -1,6 +1,7 @@
 import "server-only";
 
 import { headers } from "next/headers";
+import { delegatedRequestScope } from '@/lib/delegated-request-scope';
 import {
   LIVECOACH_ACCESS_TOKEN_HEADER,
   LIVECOACH_SERVICE_REQUEST_HEADER,
@@ -37,6 +38,8 @@ const UUID =
 // by the browser, validates the Supabase user and active workspace membership,
 // then forwards the verified context to the Node route handler.
 export function getRequestScope(): RequestScope | null {
+  const delegated = delegatedRequestScope();
+  if (delegated) return delegated;
   try {
     const requestHeaders = headers();
     const userId = requestHeaders.get(LIVECOACH_USER_ID_HEADER) || "";
@@ -71,6 +74,8 @@ export function getRequestScope(): RequestScope | null {
 }
 
 export function getVerifiedUser(): VerifiedUser | null {
+  const delegated = delegatedRequestScope();
+  if (delegated) return { userId: delegated.userId, accessToken: delegated.accessToken };
   try {
     const requestHeaders = headers();
     const userId = requestHeaders.get(LIVECOACH_USER_ID_HEADER) || "";
@@ -84,6 +89,7 @@ export function getVerifiedUser(): VerifiedUser | null {
 }
 
 export function isVerifiedServiceRequest(): boolean {
+  if (delegatedRequestScope()) return false;
   try {
     return headers().get(LIVECOACH_SERVICE_REQUEST_HEADER) === "cron";
   } catch {
