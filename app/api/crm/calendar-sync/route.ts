@@ -26,6 +26,11 @@ import { runWithServiceRecordScope } from "@/lib/service-scope";
 import { shouldReopenScheduledCalendarCall } from "@/lib/calendar-sync-recovery";
 import { scheduleAutomaticNotetakersForUpcomingIds } from "@/lib/automatic-precall";
 import { cancelScheduledNotetakers } from "@/lib/recall-scheduled-bot";
+import { waitUntil } from "@vercel/functions";
+import { claimCalendarSync, finishCalendarSync, kickCalendarSync, requestCalendarSync } from "@/lib/calendar-sync-jobs";
+import { ensureCalendarWatches } from "@/lib/calendar-watches";
+import { isVerifiedServiceRequest } from "@/lib/request-scope";
+import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -594,7 +599,56 @@ export async function POST(req?: NextRequest) {
   const mode = req?.nextUrl.searchParams.get("mode") === "near-term"
     ? "near-term"
     : "full";
-  return runCalendarSync(mode);
+  try {
+    if (isVerifiedServiceRequest()) {
+      // Notification workers select only the account stored in the verified
+      // channel. This branch is never available to ordinary browser requests.
+      const body = await req?.json().catch(() => null);
+      const uuid = /^[0-9a-f-]{36}$/i;
+      if (!uuid.test(body?.userId || "") || !uuid.test(body?.workspaceId || "")) {
+        return NextResponse.json({ error: "Exact calendar account required" }, { status: 400 });
+      }
+      const { data, error } = await supabaseService.from("workspace_members").select("user_id")
+        .eq("workspace_id", body.workspaceId).eq("user_id", body.userId).eq("status", "active").maybeSingle();
+      if (error || !data) return NextResponse.json({ error: "Active calendar account required" }, { status: 403 });
+      return runWithServiceRecordScope(body, () => runQueuedCalendarSync(mode, req?.nextUrl.searchParams.get("pending") === "1"));
+    }
+    return await runQueuedCalendarSync(mode);
+  } catch (error) {
+    console.error("Calendar sync queue failed", error);
+    return NextResponse.json({ error: "Calendar sync could not be queued safely. Please retry." }, { status: 503 });
+  }
+}
+
+async function runQueuedCalendarSync(mode: CalendarSyncMode = "full", pendingOnly = false) {
+  const scope = await resolveRecordScope();
+  if (!pendingOnly) await requestCalendarSync(scope, mode);
+  let response: NextResponse = NextResponse.json({ ok: true, queued: true, warning: "Calendar update is already running in the background." }, { status: 202 });
+  const started = Date.now();
+  for (let pass = 0; pass < 3 && Date.now() - started < 220000; pass++) {
+    const job = await claimCalendarSync(scope);
+    if (!job) return response;
+    let watches: unknown = null;
+    try {
+      watches = await ensureCalendarWatches();
+    } catch {
+      // Watch maintenance cannot prevent a user's calendar from syncing.
+      watches = { failed: 1 };
+      console.error("Calendar notification registration needs retry");
+    }
+    response = await runCalendarSync(job.requested_mode);
+    const result = await response.clone().json();
+    const failure = !response.ok ? "calendar_sync_failed"
+      : result.notetakerSchedule?.failed ? "notetaker_schedule_failed"
+      : !result.reconciled ? "calendar_snapshot_incomplete" : null;
+    await finishCalendarSync(scope, job, failure);
+    response = NextResponse.json({ ...result, notifications: watches }, { status: response.status });
+    if (failure) return response;
+    // A change arriving during the read leaves a higher version pending. Read
+    // again, in order, so an old snapshot cannot overwrite a newer schedule.
+  }
+  waitUntil(kickCalendarSync(scope).catch(() => console.error("Calendar update retained for retry")));
+  return response;
 }
 
 // Vercel invokes cron paths with GET and sends CRON_SECRET as a bearer token.
@@ -613,7 +667,7 @@ export async function GET(req: NextRequest) {
   }
   const accounts = await listActiveAccountScopes({ connectedOnly: true });
   const results = await Promise.all(accounts.map(async (account) => {
-    const response = await runWithServiceRecordScope(account, () => runCalendarSync());
+    const response = await runWithServiceRecordScope(account, () => runQueuedCalendarSync());
     return { userId: account.userId, status: response.status, result: await response.json() };
   }));
   return NextResponse.json({

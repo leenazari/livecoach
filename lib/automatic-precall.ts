@@ -118,7 +118,6 @@ export async function scheduleAutomaticNotetakersForUpcomingIds(
       cancelIds.push(call.id);
       continue;
     }
-    if (action === "skip") continue;
     eligible.push(call);
   }
   if (cancelIds.length) {

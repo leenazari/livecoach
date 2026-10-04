@@ -1,6 +1,7 @@
 import "server-only";
 
 import { supabaseService } from "@/lib/supabase";
+import { PRECALL_LEAD_MS } from "@/lib/precall-schedule";
 
 async function recallRequest(
   endpoint: string,
@@ -67,14 +68,15 @@ export async function cancelScheduledNotetakers(input: {
     new Set((loadedSubscriptions || []).map((row: any) => String(row.capture_id)))
   );
   const nowIso = new Date().toISOString();
+  const preMeetingBoundary = new Date(Date.now() - PRECALL_LEAD_MS).toISOString();
   const { data: subscribedCaptures, error: subscribedCaptureError } =
     subscribedCaptureIds.length
       ? await supabaseService
           .from("meet_bots")
-          .select("id,bot_id,session_id,owner_id,source_upcoming_id")
+          .select("id,bot_id,session_id,owner_id,source_upcoming_id,scheduled_join_at")
           .eq("workspace_id", input.workspaceId)
           .eq("status", "active")
-          .gt("scheduled_join_at", nowIso)
+          .gt("scheduled_join_at", preMeetingBoundary)
           .in("id", subscribedCaptureIds)
       : { data: [], error: null };
   if (subscribedCaptureError) throw subscribedCaptureError;
@@ -83,20 +85,29 @@ export async function cancelScheduledNotetakers(input: {
   // whose trigger subscription is missing. It remains exact-account scoped.
   const { data: ownedCaptures, error: ownedCaptureError } = await supabaseService
     .from("meet_bots")
-    .select("id,bot_id,session_id,owner_id,source_upcoming_id")
+    .select("id,bot_id,session_id,owner_id,source_upcoming_id,scheduled_join_at")
     .eq("workspace_id", input.workspaceId)
     .eq("owner_id", input.ownerId)
     .eq("status", "active")
-    .gt("scheduled_join_at", nowIso)
+    .gt("scheduled_join_at", preMeetingBoundary)
     .in("source_upcoming_id", upcomingIds);
   if (ownedCaptureError) throw ownedCaptureError;
 
   const captureById = new Map<string, any>();
   for (const capture of [...(subscribedCaptures || []), ...(ownedCaptures || [])]) {
+    if (captureById.has(String(capture.id))) continue;
+    if (capture.scheduled_join_at <= nowIso) {
+      // A cancellation inside the five-minute lead window must remove a bot
+      // already waiting to join. Never interrupt a conversation started early.
+      const { data: speech, error: speechError } = await supabaseService.from("meet_utterances")
+        .select("id").eq("workspace_id", input.workspaceId).eq("bot_id", capture.bot_id).limit(1);
+      if (speechError) throw speechError;
+      if (speech?.length) continue;
+    }
     captureById.set(String(capture.id), capture);
   }
-  // Calendar reconciliation only cancels future reservations. An ongoing bot
-  // is ended through the explicit Stop flow and its normal idle protections.
+  // Only future or not-yet-started reservations are cancelled. An ongoing
+  // capture is ended through the explicit Stop flow and idle protections.
   const subscriptions = (loadedSubscriptions || []).filter((row: any) =>
     captureById.has(String(row.capture_id))
   );

@@ -3,6 +3,7 @@ import { reconcileSenderAfterConnectorDisconnect } from "@/lib/connector-disconn
 import { disconnectMicrosoftConnection } from "@/lib/microsoft";
 import { requireRequestScope } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
+import { disableCalendarWatches } from "@/lib/calendar-watches";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export async function DELETE() {
   try {
     const scope = requireRequestScope();
     const result = await disconnectMicrosoftConnection();
+    await disableCalendarWatches(scope, "microsoft");
     let identity = { provider: null, senderEmail: null } as {
       provider: "google" | "microsoft" | null;
       senderEmail: string | null;

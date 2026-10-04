@@ -24,6 +24,13 @@ export async function middleware(request: NextRequest) {
     forwardedHeaders.delete(name);
   }
 
+  // Provider webhooks have their own per-channel verification. A fast, public
+  // acknowledgement must not wait on unrelated browser authentication, nor
+  // inherit an account from any supplied cookie or internal header.
+  if (["/api/webhooks/calendar/google", "/api/webhooks/calendar/microsoft"].includes(request.nextUrl.pathname)) {
+    return NextResponse.next({ request: { headers: forwardedHeaders } });
+  }
+
   const pendingCookies: PendingCookie[] = [];
   const finish = <T extends NextResponse>(response: T): T => {
     for (const cookie of pendingCookies) {

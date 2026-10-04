@@ -34,8 +34,8 @@ assert.equal(precallJoinAt("2026-10-04T09:04:00Z", nowMs), null);
 assert.equal(precallJoinAt("bad-date", nowMs), null);
 for (const input of [
   { scheduledAt: "2026-10-05T09:00:00Z", completed: false, supportedLink: true, expected: "schedule" },
-  { scheduledAt: "2026-10-04T08:30:00Z", completed: false, supportedLink: true, expected: "skip" },
-  { scheduledAt: "2026-11-04T08:30:00Z", completed: false, supportedLink: true, expected: "skip" },
+  { scheduledAt: "2026-10-04T08:30:00Z", completed: false, supportedLink: true, expected: "cancel" },
+  { scheduledAt: "2026-11-04T08:30:00Z", completed: false, supportedLink: true, expected: "cancel" },
   { scheduledAt: "2026-10-05T09:00:00Z", completed: true, supportedLink: true, expected: "cancel" },
   { scheduledAt: "2026-10-05T09:00:00Z", completed: false, supportedLink: false, expected: "cancel" },
   { scheduledAt: "invalid", completed: false, supportedLink: true, expected: "cancel" },
@@ -78,7 +78,8 @@ assert.match(cancellation, /leave_call/);
 assert.match(cancellation, /\.from\("meet_capture_subscribers"\)[\s\S]*?\.eq\("owner_id", input\.ownerId\)[\s\S]*?\.in\("upcoming_id", upcomingIds\)/);
 assert.match(cancellation, /if \(\(count \|\| 0\) <= selectedCount\) capturesToCancel\.push/);
 assert.match(cancellation, /for \(const capture of capturesToCancel\)[\s\S]*?cancelRecallBotRequest[\s\S]*?const endedAt/);
-assert.match(cancellation, /\.gt\("scheduled_join_at", nowIso\)/);
+assert.match(cancellation, /\.gt\("scheduled_join_at", preMeetingBoundary\)/);
+assert.match(cancellation, /if \(speech\?\.length\) continue/);
 
 // Future reservations do not consume the one-live-call slot or usage before
 // their join time. Browser and scheduler still converge on one private room.

@@ -497,19 +497,24 @@ export async function deleteGoogleCalendarEvent(
 // the connected account (e.g. lee.nazari@gmail.com shared into lee@ai13.com)
 // flows in too.
 export async function listCalendars(accessToken: string): Promise<any[]> {
-  const res = await fetch(
-    "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250",
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  if (!res.ok) {
-    const error = new Error(`calendar list failed (${res.status})`) as Error & {
-      status?: number;
-    };
-    error.status = res.status;
-    throw error;
-  }
-  const d = await res.json();
-  return Array.isArray(d.items) ? d.items : [];
+  const calendars: any[] = [];
+  let pageToken = "";
+  do {
+    const params = new URLSearchParams({ maxResults: "250" });
+    if (pageToken) params.set("pageToken", pageToken);
+    const res = await fetch(`https://www.googleapis.com/calendar/v3/users/me/calendarList?${params}`, {
+      headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store", signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) {
+      const error = new Error(`calendar list failed (${res.status})`) as Error & { status?: number };
+      error.status = res.status;
+      throw error;
+    }
+    const d = await res.json();
+    if (Array.isArray(d.items)) calendars.push(...d.items);
+    pageToken = d.nextPageToken || "";
+  } while (pageToken);
+  return calendars;
 }
 
 // Events across EVERY calendar the account can see (owner / writer / reader),
