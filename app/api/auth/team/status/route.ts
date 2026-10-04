@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const scope = requireRequestScope();
-    const [{ data: workspace, error }, google, microsoft] = await Promise.all([
+    const [{ data: workspace, error }, google, microsoft, membership] = await Promise.all([
       supabaseService
         .from("workspaces")
         .select("name")
@@ -18,12 +18,15 @@ export async function GET() {
         .single(),
       googleConnected(scope.userId),
       microsoftConnected(scope.userId),
+      supabaseService.from('workspace_members').select('department').eq('workspace_id', scope.workspaceId).eq('user_id', scope.userId).single(),
     ]);
     if (error) throw error;
+    if (membership.error) throw membership.error;
     return NextResponse.json(
       {
         workspace: workspace.name,
         role: scope.role,
+        department: membership.data.department,
         status: scope.status,
         google,
         microsoft: {

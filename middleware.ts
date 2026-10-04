@@ -154,7 +154,7 @@ export async function middleware(request: NextRequest) {
   if (user && !serviceAuthorized && requiresWorkspaceMembership) {
     const { data: membership, error: membershipError } = await supabase
       .from("workspace_members")
-      .select("workspace_id, role, status")
+      .select("workspace_id, role, status, department")
       .eq("user_id", user.id)
       .limit(1)
       .maybeSingle();
@@ -204,7 +204,7 @@ export async function middleware(request: NextRequest) {
     // team landing page. The API also enforces this boundary independently.
     if (path === "/crm" && membership.role !== "owner") {
       const url = request.nextUrl.clone();
-      url.pathname = "/crm/inbox";
+      url.pathname = membership.department === 'marketing' ? '/crm/marketing' : '/crm/inbox';
       const redirected = NextResponse.redirect(url);
       redirected.headers.set("Cache-Control", "private, no-store");
       return finish(redirected);

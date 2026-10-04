@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
       returnOrigin: connectorReturnOrigin(request.nextUrl.origin),
       onboarding: scope.status === "onboarding",
     });
-    const response = NextResponse.redirect(buildAuthUrl(state));
+    const response = NextResponse.redirect(buildAuthUrl(state, request.nextUrl.searchParams.get('analytics') === '1'));
     response.cookies.set("g_oauth_state", state, {
       httpOnly: true,
       secure: true,

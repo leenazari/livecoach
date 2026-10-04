@@ -36,6 +36,8 @@ export const GOOGLE_CALENDAR_LIST_READ_SCOPE =
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
 export const GOOGLE_DRIVE_FILE_SCOPE =
   "https://www.googleapis.com/auth/drive.file";
+export const GOOGLE_ANALYTICS_READ_SCOPE =
+  "https://www.googleapis.com/auth/analytics.readonly";
 
 const GOOGLE_CALENDAR_LIST_SCOPES = new Set([
   "https://www.googleapis.com/auth/calendar",
@@ -69,12 +71,12 @@ export function googleConfigured(): boolean {
   );
 }
 
-export function buildAuthUrl(state: string): string {
+export function buildAuthUrl(state: string, includeAnalytics = false): string {
   const p = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID || "",
     redirect_uri: process.env.GOOGLE_REDIRECT_URI || "",
     response_type: "code",
-    scope: SCOPE,
+    scope: includeAnalytics ? `${SCOPE} ${GOOGLE_ANALYTICS_READ_SCOPE}` : SCOPE,
     access_type: "offline", // get a refresh token
     prompt: "consent", // force a refresh token on every connect
     include_granted_scopes: "true",
