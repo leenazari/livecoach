@@ -33,7 +33,18 @@ const tutorialGuide = (value: unknown) => {
   throw Object.assign(new Error("Choose a valid tutorial"), { status: 400 });
 };
 
-function responseBody(row: any, role: string, guide: TutorialGuide) {
+async function tutorialDepartment(workspaceId: string, userId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("workspace_members")
+    .select("department")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", userId)
+    .single();
+  if (error) throw error;
+  return data.department || "sales";
+}
+
+function responseBody(row: any, role: string, guide: TutorialGuide, department: string) {
   return {
     tutorial: row
       ? {
@@ -50,7 +61,8 @@ function responseBody(row: any, role: string, guide: TutorialGuide) {
           completedAt: null,
           dismissedAt: null,
         },
-    autoStart: !row && role === "sales" && guide === "sales",
+    autoStart: !row && role === "sales" && guide === "sales" && department !== "marketing",
+    department,
     guide,
     role,
   };
@@ -59,6 +71,7 @@ function responseBody(row: any, role: string, guide: TutorialGuide) {
 export async function GET(req: NextRequest) {
   try {
     const scope = requireRequestScope();
+    const department = await tutorialDepartment(scope.workspaceId, scope.userId);
     const guide = tutorialGuide(req.nextUrl.searchParams.get("guide"));
     const { data, error } = await supabaseAdmin
       .from("sales_tutorial_progress")
@@ -70,7 +83,7 @@ export async function GET(req: NextRequest) {
       .eq("guide_key", guide.key)
       .maybeSingle();
     if (error) throw error;
-    return NextResponse.json(responseBody(data, scope.role, guide.name), {
+    return NextResponse.json(responseBody(data, scope.role, guide.name, department), {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error: any) {
@@ -84,6 +97,7 @@ export async function GET(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const scope = requireRequestScope();
+    const department = await tutorialDepartment(scope.workspaceId, scope.userId);
     const body = await req.json();
     const guide = tutorialGuide(body.guide);
     const status = String(body.status || "");
@@ -130,7 +144,7 @@ export async function PUT(req: NextRequest) {
       .single();
     if (error) throw error;
 
-    return NextResponse.json(responseBody(data, scope.role, guide.name), {
+    return NextResponse.json(responseBody(data, scope.role, guide.name, department), {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error: any) {

@@ -9,6 +9,7 @@ import InitialCalendarSync from "@/components/InitialCalendarSync";
 type AccountStatus = {
   workspace: string;
   role: string;
+  department: string;
   status: string;
   google: { connected: boolean; email: string | null };
   microsoft: {
@@ -193,7 +194,7 @@ export default function JoinTeamPage() {
             </div>
             {status.crmAccess ? (
               <div className="mt-5 grid gap-2 sm:grid-cols-2">
-                <button type="button" onClick={() => router.push("/settings/sales-profile")} className="w-full rounded-full bg-amber px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-ink">Set up my coaching</button>
+                <button type="button" onClick={() => router.push(status.department === "marketing" ? "/crm/marketing?setup=1" : "/settings/sales-profile")} className="w-full rounded-full bg-amber px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-ink">{status.department === "marketing" ? "Start my marketing guide" : "Set up my coaching"}</button>
                 <button type="button" onClick={() => router.push("/crm")} className="w-full rounded-full border border-sage/50 bg-sage/10 px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-sage">Open LiveCoach</button>
               </div>
             ) : (
