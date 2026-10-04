@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { marketingDirectory, marketingScope } from '@/lib/marketing-server';
-import { MARKETING_CHANNELS, MARKETING_STAGES, MARKETING_LESSONS, OWN_APPROACH, UUID, marketingDate, marketingSpend, marketingText, type MarketingSection } from '@/lib/marketing';
+import { marketingReportIsLimited, MARKETING_CHANNELS, MARKETING_STAGES, MARKETING_LESSONS, OWN_APPROACH, UUID, marketingDate, marketingSpend, marketingText, type MarketingSection } from '@/lib/marketing';
 import { upsertTasks } from '@/lib/tasks';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,15 +11,15 @@ export async function GET() {
   try {
     const scope = await marketingScope();
     const [campaigns, leads, feedback, tasks, connections, members] = await Promise.all([
-      supabaseAdmin.from('marketing_campaigns').select('id,name,audience,offer,channel,status,spend_gbp,success_measure,review_on').eq('workspace_id', scope.workspaceId).order('created_at', { ascending: false }).limit(1001),
-      supabaseAdmin.from('marketing_leads').select('id,campaign_id,company_name,contact_name,contact_email,company_size,notes,assigned_to_user_id,created_at').eq('workspace_id', scope.workspaceId).order('created_at', { ascending: false }).limit(1001),
-      supabaseAdmin.from('marketing_lead_feedback').select('lead_id,user_id,stage,reason').eq('workspace_id', scope.workspaceId).limit(1001),
+      supabaseAdmin.from('marketing_campaigns').select('id,name,audience,offer,channel,status,spend_gbp,success_measure,review_on', { count: 'exact' }).eq('workspace_id', scope.workspaceId).order('created_at', { ascending: false }).limit(1001),
+      supabaseAdmin.from('marketing_leads').select('id,campaign_id,company_name,contact_name,contact_email,company_size,notes,assigned_to_user_id,created_at', { count: 'exact' }).eq('workspace_id', scope.workspaceId).order('created_at', { ascending: false }).limit(1001),
+      supabaseAdmin.from('marketing_lead_feedback').select('lead_id,user_id,stage,reason', { count: 'exact' }).eq('workspace_id', scope.workspaceId).limit(1001),
       supabaseAdmin.from('tasks').select('id,text,status,due_at,payload').eq('workspace_id', scope.workspaceId).eq('owner_id', scope.userId).eq('source', 'marketing').eq('status', 'open').order('due_at', { ascending: true }).limit(100),
       scope.canManage ? supabaseAdmin.from('marketing_connections').select('provider,property_id,snapshot,synced_at').eq('workspace_id', scope.workspaceId).eq('owner_id', scope.userId) : Promise.resolve({ data: [], error: null }),
       marketingDirectory(scope.workspaceId)
     ]);
     for (const result of [campaigns, leads, feedback, tasks, connections]) if (result.error) throw result.error;
-    return NextResponse.json({ canManage: scope.canManage, userId: scope.userId, campaigns: campaigns.data || [], leads: leads.data || [], feedback: feedback.data || [], tasks: tasks.data || [], connections: connections.data || [], members, fetchedAt: new Date().toISOString(), limited: [campaigns, leads, feedback].some(r => (r.data?.length || 0) > 1000) }, { headers });
+    return NextResponse.json({ canManage: scope.canManage, userId: scope.userId, campaigns: campaigns.data || [], leads: leads.data || [], feedback: feedback.data || [], tasks: tasks.data || [], connections: connections.data || [], members, fetchedAt: new Date().toISOString(), limited: marketingReportIsLimited([campaigns, leads, feedback]) }, { headers });
   } catch (error) { return fail(error); }
 }
 export async function POST(req: NextRequest) {

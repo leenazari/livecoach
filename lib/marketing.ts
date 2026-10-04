@@ -33,6 +33,9 @@ export function marketingMetrics(campaigns: MarketingCampaign[], leads: Marketin
   const spend = campaigns.reduce((total, row) => total + Number(row.spend_gbp || 0), 0);
   return { leads: leads.length, accepted, rejected, demos, paid, spend, costPerAccepted: accepted ? spend / accepted : null, unassigned: leads.filter(row => !row.assigned_to_user_id).length, awaiting: leads.filter(row => row.assigned_to_user_id && !stages.has(row.id)).length };
 }
+export function marketingReportIsLimited(results: { count: number | null; data: unknown[] | null }[]): boolean {
+  return results.some(row => row.count == null || row.count > (row.data?.length || 0) || (row.data?.length || 0) > 1000);
+}
 type CoachStep = { title: string; detail: string; simple: string; output: string };
 export type CoachApproach = { id: string; name: string; tradeoff: string; steps: CoachStep[] };
 const step = (title: string, detail: string, simple: string, output: string): CoachStep => ({ title, detail, simple, output });

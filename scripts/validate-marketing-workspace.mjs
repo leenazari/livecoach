@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { marketingMetrics, marketingSpend, marketingDate, marketingText, MARKETING_LESSONS, OWN_APPROACH } from '../lib/marketing.ts';
+import { marketingMetrics, marketingReportIsLimited, marketingSpend, marketingDate, marketingText, MARKETING_LESSONS, OWN_APPROACH } from '../lib/marketing.ts';
 const campaigns = [{ id: 'recruitment', spend_gbp: 600 }, { id: 'education', spend_gbp: 420 }];
 const leads = [
   { id: 'one', campaign_id: 'recruitment', assigned_to_user_id: 'cam' },
@@ -33,4 +33,8 @@ for (const lesson of Object.values(MARKETING_LESSONS)) {
     assert.ok(approach.steps.every(s => s.title && s.detail && s.simple && s.output));
   }
 }
+assert.equal(marketingReportIsLimited([{ count: 1100, data: Array(1000) }]), true, 'Database row caps must not hide incomplete reports');
+assert.equal(marketingReportIsLimited([{ count: null, data: [] }]), true, 'Unknown totals are not a complete report');
+assert.equal(marketingReportIsLimited([{ count: 1000, data: Array(1000) }]), false);
+assert.equal(marketingReportIsLimited([{ count: 0, data: [] }]), false);
 console.log('Marketing attribution, commercial metrics, input validation and repeatable coaching passed.');
