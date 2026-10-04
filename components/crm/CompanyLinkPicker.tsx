@@ -86,8 +86,8 @@ export default function CompanyLinkPicker({
 
   if (value) {
     return (
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-2 rounded-full border border-sky/50 bg-sky/10 px-3 py-1.5 font-mono text-[0.62rem] text-sky">
+      <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+        <span className="inline-flex min-w-0 max-w-full break-words items-center gap-2 rounded-full border border-sky/50 bg-sky/10 px-3 py-1.5 font-mono text-[0.62rem] text-sky">
           {"◆"} {value.name}
         </span>
         <a

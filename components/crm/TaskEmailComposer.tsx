@@ -366,7 +366,7 @@ export default function TaskEmailComposer({
         <p className="mt-4 text-sm text-muted">Opening the private email workspace…</p>
       ) : (
         <>
-          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(12rem,.65fr)_minmax(0,1.35fr)]">
+          <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(12rem,.65fr)_minmax(0,1.35fr)]">
             <label>
               <span className="mb-1 block font-mono text-[0.5rem] uppercase tracking-wider text-muted">
                 Send to
@@ -409,7 +409,7 @@ export default function TaskEmailComposer({
                       ? "Listening… speak naturally"
                       : "For example, thank her for the update, answer the question, and suggest a call next Tuesday"
                   }
-                  className={`${field} resize-y leading-5 ${listening ? "border-rust/65" : ""}`}
+                  className={`${field} min-w-0 flex-1 resize-y leading-5 ${listening ? "border-rust/65" : ""}`}
                 />
                 <button
                   type="button"
@@ -459,7 +459,7 @@ export default function TaskEmailComposer({
 
           {draft ? (
             <div className="mt-4 rounded-xl border border-edge bg-ink/45 p-3">
-              <div className="grid gap-3">
+              <div className="grid min-w-0 grid-cols-1 gap-3">
                 <label>
                   <span className="mb-1 block font-mono text-[0.5rem] uppercase tracking-wider text-muted">
                     Subject

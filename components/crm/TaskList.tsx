@@ -574,8 +574,9 @@ export default function TaskList({
         return (
           <li
             key={t.id}
-            className="flex items-center gap-2.5 border-b border-edge/40 py-2 last:border-none"
+            className="flex min-w-0 flex-col items-stretch gap-2.5 border-b border-edge/40 py-3 last:border-none sm:flex-row sm:items-center sm:py-2"
           >
+            <div className="flex min-w-0 items-start gap-2.5 sm:flex-1 sm:items-center">
             {!bulkMode && !t.upcoming_id && (
               <button
                 type="button"
@@ -631,7 +632,7 @@ export default function TaskList({
                 type="button"
                 onClick={() => canClick && start(t)}
                 disabled={!canClick || savingId === t.id}
-                className={`flex-1 text-left font-sans text-[0.84rem] leading-snug transition ${
+                className={`min-w-0 flex-1 break-words text-left font-sans text-[0.84rem] leading-snug transition ${
                   done
                     ? "text-muted line-through"
                     : canClick
@@ -643,6 +644,8 @@ export default function TaskList({
               </button>
             )}
 
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-2 pl-9 sm:pl-0">
             {dl && !done && (
               <span
                 title="deadline"
@@ -755,6 +758,7 @@ export default function TaskList({
                 ✕
               </button>
             )}
+            </div>
           </li>
         );
       })}

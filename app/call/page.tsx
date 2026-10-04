@@ -12,6 +12,7 @@ import MatrixRain from "@/components/MatrixRain";
 import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
+import CallActionDock from "@/components/crm/CallActionDock";
 import { consumeArmedCallLaunch } from "@/lib/call-launch";
 import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { validMeetingUrl } from "@/lib/meeting-url";
@@ -3068,7 +3069,7 @@ export default function CallPage() {
   };
 
   return (
-    <main className="relative z-10 mx-auto max-w-[1200px] px-4 pb-36 pt-8 sm:px-5 sm:pt-10">
+    <main className="lc-call-workspace relative z-10 mx-auto min-w-0 max-w-[1200px] px-4 pb-36 pt-8 sm:px-5 sm:pt-10">
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-edge pb-3">
         <h1 className="font-display text-[1.55rem] leading-none tracking-tight text-bone">
           <span className="italic text-amber">Live</span>Coach
@@ -3384,7 +3385,7 @@ export default function CallPage() {
             {"▴"} back to brief
           </button>
         )}
-        <div className={briefMode ? "" : "grid md:grid-cols-2"}>
+        <div className={briefMode ? "min-w-0" : "grid min-w-0 grid-cols-1 md:grid-cols-2"}>
           {/* LEFT - stepped setup. Condenses to a one-line strip once the brief
               is built, so the plan can use the full page width. */}
           {briefMode ? (
@@ -3415,10 +3416,10 @@ export default function CallPage() {
               </button>
             </div>
           ) : (
-          <div className="flex flex-col border-edge md:border-r">
+          <div className="min-w-0 flex flex-col border-edge md:border-r">
             {/* STEP 1 - Intent */}
-            <div className="border-b border-edge px-5 py-3.5">
-              <div className="mb-2 flex items-center gap-2.5">
+            <div className="min-w-0 border-b border-edge px-4 py-3.5 sm:px-5">
+              <div className="mb-2 flex flex-wrap items-center gap-2.5">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-amber font-mono text-[0.6rem] text-amber">
                   1
                 </span>
@@ -3549,15 +3550,15 @@ export default function CallPage() {
 
             {/* Email context - the thread so far, where most prep info lives. */}
             {linkedCompany && (
-              <div className="border-b border-edge px-5 py-3.5">
-                <div className="mb-2 flex items-center gap-2.5">
+              <div className="min-w-0 border-b border-edge px-4 py-3.5 sm:px-5">
+                <div className="mb-2 flex flex-wrap items-center gap-2.5">
                   <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-sky font-mono text-[0.55rem] text-sky">
                     {"✉"}
                   </span>
                   <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-bone">
                     Email context
                   </span>
-                  <span className="ml-auto flex items-center gap-2">
+                  <span className="flex w-full flex-wrap items-center justify-between gap-2 sm:ml-auto sm:w-auto sm:justify-end">
                     <span className="font-mono text-[0.52rem] tracking-wider text-muted">
                       {clientEmailCtx.trim() && emailCtxUpdatedAt
                         ? `updated ${new Date(emailCtxUpdatedAt).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`
@@ -3603,20 +3604,20 @@ export default function CallPage() {
             )}
 
             {/* STEP 2 - Who & context */}
-            <div className="border-b border-edge px-5 py-3.5">
-              <div className="mb-3 flex items-center gap-2.5">
+            <div className="min-w-0 border-b border-edge px-4 py-3.5 sm:px-5">
+              <div className="mb-3 flex flex-wrap items-center gap-2.5">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-amber font-mono text-[0.6rem] text-amber">
                   2
                 </span>
                 <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-bone">
                   Who &amp; context
                 </span>
-                <span className="ml-auto font-mono text-[0.58rem] text-muted">
+                <span className="w-full font-mono text-[0.58rem] text-muted sm:ml-auto sm:w-auto">
                   optional - sharpens the plan
                 </span>
               </div>
               <div className="flex flex-col gap-2.5">
-                <div className="grid gap-2.5 sm:grid-cols-2">
+                <div className="grid min-w-0 grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <label className="block">
                     <span className="mb-1.5 block font-mono text-[0.58rem] uppercase tracking-[0.18em] text-muted">
                       Name
@@ -3644,18 +3645,18 @@ export default function CallPage() {
                   <span className="mb-1.5 block font-mono text-[0.58rem] uppercase tracking-[0.18em] text-muted">
                     Public link - website or public profile
                   </span>
-                  <div className="flex gap-2">
+                  <div className="grid min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                     <input
                       value={publicLink}
                       placeholder="https://theircompany.com"
                       onChange={(e) => setPublicLink(e.target.value)}
-                      className="min-w-0 flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-sky/60"
+                      className="col-span-2 min-w-0 w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/60 focus:border-sky/60 sm:w-auto sm:flex-1"
                     />
                     <button
                       type="button"
                       onClick={research}
                       disabled={researching || !publicLink.trim()}
-                      className="shrink-0 rounded-lg border border-sky/50 bg-sky/10 px-4 font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/20 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="min-h-11 min-w-0 rounded-lg border border-sky/50 bg-sky/10 px-3 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-sky transition hover:bg-sky/20 disabled:cursor-not-allowed disabled:opacity-40"
                       title="Read a single public page (a company or about page) and fold it into your plan"
                     >
                       {researching ? "reading..." : "Research page"}
@@ -3667,7 +3668,7 @@ export default function CallPage() {
                         personStage === "identifying" ||
                         personStage === "briefing"
                       }
-                      className="shrink-0 rounded-lg border border-amber/50 bg-amber/10 px-4 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="min-h-11 min-w-0 rounded-lg border border-amber/50 bg-amber/10 px-3 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:cursor-not-allowed disabled:opacity-40"
                       title="Find who you're meeting on the open web. It shows who it found first, you confirm, then it writes the brief into your focus. LinkedIn is never scraped, only used to identify them."
                     >
                       {personStage === "identifying"
@@ -3686,7 +3687,7 @@ export default function CallPage() {
                           personIdRef.current = null;
                           setResearchNote("");
                         }}
-                        className="shrink-0 rounded-lg border border-edge px-3 font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:text-bone"
+                        className="min-h-11 min-w-0 rounded-lg border border-edge px-3 py-2 font-mono text-[0.62rem] uppercase tracking-wider text-muted transition hover:text-bone"
                       >
                         not them
                       </button>
@@ -3749,7 +3750,7 @@ export default function CallPage() {
 
             {/* STEP 3 - Call source */}
             <div className="px-5 py-3.5">
-              <div className="mb-3 flex items-center gap-2.5">
+              <div className="mb-3 flex flex-wrap items-center gap-2.5">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-amber font-mono text-[0.6rem] text-amber">
                   3
                 </span>
@@ -3846,7 +3847,7 @@ export default function CallPage() {
           )}
 
           {/* RIGHT - the generated plan (spans full width in brief mode) */}
-          <div className="relative flex flex-col gap-3 px-5 py-4">
+          <div className="relative min-w-0 flex flex-col gap-3 px-4 py-4 sm:px-5">
             {prepping && suggestedComps.length > 0 ? (
               // BUILDING THE PLAN: the focus the user just locked stays pinned
               // at the top while the rest of the brief unfurls beneath it in
@@ -4280,8 +4281,8 @@ export default function CallPage() {
         )}
 
           {manualRecap && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/80 p-4 backdrop-blur-sm">
-              <div className="w-full max-w-[640px] rounded-2xl border border-sky/40 bg-panel p-6 shadow-2xl">
+            <div className="fixed inset-0 z-[65] flex items-center justify-center overflow-y-auto bg-ink/80 p-4 backdrop-blur-sm">
+              <div className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-[640px] overflow-y-auto rounded-2xl border border-sky/40 bg-panel p-6 shadow-2xl">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <p className="font-mono text-[0.68rem] uppercase tracking-[0.2em] text-sky">
                     {"\u2726"} Complete without bot
@@ -5235,14 +5236,14 @@ export default function CallPage() {
         !ended &&
         !cueFull &&
         (planStage === "focus" || planStage === "full" || callLive) && (
-        <div className="fixed inset-x-3 bottom-3 z-40 mx-auto max-w-[760px] rounded-2xl border border-edge bg-panel/95 p-3 shadow-2xl backdrop-blur-xl sm:bottom-5 sm:p-4">
+        <CallActionDock className="lc-call-dock fixed inset-x-3 bottom-3 z-40 mx-auto max-w-[760px] rounded-2xl border border-edge bg-panel/95 p-3 shadow-2xl backdrop-blur-xl sm:bottom-5 sm:p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <p className={`font-mono text-[0.62rem] uppercase tracking-[0.18em] ${callLive ? "text-sage" : "text-amber"}`}>
                 <span className={`mr-2 inline-block h-2 w-2 rounded-full ${callLive ? "animate-pulse bg-sage" : "bg-amber"}`} />
                 {callLive ? "Call live" : "Plan ready"}
               </p>
-              <p className="mt-1 truncate font-sans text-sm text-bone/85">
+              <p className="mt-1 font-sans text-xs leading-5 text-bone/85 sm:text-sm">
                 {callLive
                   ? "Questions and coaching are active. Wrap up or end whenever you are ready."
                   : planStage === "focus"
@@ -5252,7 +5253,7 @@ export default function CallPage() {
                   : "Start once to open the live coaching view."}
               </p>
             </div>
-            <div className="flex shrink-0 gap-2">
+            <div className="grid min-w-0 grid-cols-1 gap-2 min-[380px]:grid-cols-2 sm:flex sm:shrink-0">
               {callLive ? (
                 <>
                   <button
@@ -5279,14 +5280,14 @@ export default function CallPage() {
                     type="button"
                     onClick={() => setManualRecap(true)}
                     title="Add your own summary and mark this scheduled call complete"
-                    className="min-h-11 rounded-xl border border-edge px-3 py-2.5 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:border-sky/60 hover:text-sky"
+                    className="min-h-11 min-w-0 rounded-xl border border-edge px-3 py-2.5 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:border-sky/60 hover:text-sky"
                   >
                     Complete without bot
                   </button>
                   <button
                     type="button"
                     onClick={openMeetingAndGoLive}
-                    className="min-h-11 flex-1 rounded-xl border border-sage/60 bg-sage/20 px-6 py-2.5 font-mono text-[0.68rem] uppercase tracking-wider text-sage transition hover:bg-sage/30 sm:flex-none"
+                    className="min-h-11 min-w-0 flex-1 rounded-xl border border-sage/60 bg-sage/20 px-3 py-2.5 sm:px-6 font-mono text-[0.68rem] uppercase tracking-wider text-sage transition hover:bg-sage/30 sm:flex-none"
                   >
                     {source === "meet" ? "Open meeting + start" : "Start call"} {"\u25B8"}
                   </button>
@@ -5294,7 +5295,7 @@ export default function CallPage() {
               )}
             </div>
           </div>
-        </div>
+        </CallActionDock>
       )}
 
       {/* The live stage unmounts immediately to stop listening and billing.
@@ -5360,6 +5361,7 @@ export default function CallPage() {
       )}
       <Suspense fallback={null}>
         <GlobalAssistant
+          callWorkspace
           companyId={linkedCompany?.id}
           companyName={linkedCompany?.name}
         />
@@ -5370,3 +5372,4 @@ export default function CallPage() {
     </main>
   );
 }
+
