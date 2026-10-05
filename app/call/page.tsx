@@ -510,7 +510,7 @@ export default function CallPage() {
   const autoLaunchHandledRef = useRef(false);
   // Holds the latest goLive() so the transcript funnel (stable, no deps) can
   // auto-start the call on first real speech without a stale closure.
-  const goLiveRef = useRef<() => void>(() => {});
+  const goLiveRef = useRef<(requestBot?: boolean) => void>(() => {});
   const sourceRef = useRef<"inapp" | "meet">("inapp");
   const backgroundRef = useRef("");
   // Guard so the first-meeting intent draft fires at most once. Research is a
@@ -1197,6 +1197,14 @@ export default function CallPage() {
               const it = call.intent.trim();
               if (!intentEditedRef.current) setBrief(it);
             }
+            // Attach the actual meeting before any email/AI preparation work.
+            // A running automatic capture must not wait for a new intent draft.
+            const mUrl =
+              typeof call?.meeting_url === "string" ? call.meeting_url.trim() : "";
+            if (mUrl) {
+              setMeetingUrl((prev) => (prev.trim() ? prev : mUrl));
+              setSource("meet");
+            }
             // Existing relationships get the intent based on the newest call
             // summary. The endpoint returns the saved copy when it is current,
             // so reopening this screen does not repeatedly spend tokens.
@@ -1258,19 +1266,6 @@ export default function CallPage() {
                 /* keep the current intent */
               }
             }
-            // Pull the invite / meeting link from the scheduled call into the bot
-            // field. Opening a call from the Prep tab passes the upcoming id, not
-            // the link in the query, so without this the Meet / Teams / Zoom link
-            // is dropped and there is nothing to send the bot to. Only fills when
-            // the field is still empty, so a link already in the query or typed by
-            // hand always wins, and switches to meet mode so the field is shown.
-            const mUrl =
-              typeof call?.meeting_url === "string" ? call.meeting_url.trim() : "";
-            if (mUrl) {
-              setMeetingUrl((prev) => (prev.trim() ? prev : mUrl));
-              setSource("meet");
-            }
-
             // FIRST-MEETING INTENT HELP. Draft a useful starting intent from the
             // saved meeting identity and any already-cached background. Public
             // research stays manual so opening Prep never spends research tokens
@@ -1481,13 +1476,13 @@ export default function CallPage() {
   };
 
   const onFinalTranscript = useCallback(
-    (r: string, text: string, speaker?: string) => {
+    (r: string, text: string, speaker?: string, historical = false) => {
       // Auto-start: the moment real speech is transcribed, the call has in
       // effect begun - so flip to the live cue view automatically (the manual
       // Go live button stays for when you want cues up before anyone speaks).
       // Guarded inside goLive so it only ever fires once.
-      if (!callLiveRef.current && text && text.trim().length > 1) {
-        goLiveRef.current();
+      if (!historical && !callLiveRef.current && text && text.trim().length > 1) {
+        goLiveRef.current(false);
       }
       setLines((prev) => {
         const last = prev[prev.length - 1];
@@ -2238,14 +2233,19 @@ export default function CallPage() {
   // Single path into the live call - used by BOTH the manual Go live button and
   // the auto-start on first transcript. Guarded so it only ever runs once:
   // persists the session (for scoring) and switches to the cue view.
-  const goLive = useCallback(() => {
+  const goLive = useCallback((requestBot = true) => {
     if (callLiveRef.current) return;
-    if (source === "meet" && meetingUrl.trim()) {
+    callLiveRef.current = true;
+    if (requestBot && source === "meet" && meetingUrl.trim()) {
       setBotStartRequest((request) => request + 1);
     }
-    persistSession();
     setExpandSetup(false);
     setCallLive(true);
+    // An automatically scheduled capture already has its canonical session and
+    // saved focus. Resuming must neither send another bot nor overwrite that
+    // context with an incompletely hydrated browser's blank fields.
+    if (!requestBot && source === "meet") return;
+    persistSession();
     // The session create now saves company + scheduled-call identity atomically.
     // Keep this delayed idempotent stamp as a safety net, and run it even when
     // there is no company: an unlinked calendar call still has an exact slot.
@@ -2272,6 +2272,17 @@ export default function CallPage() {
       }
     }
   }, [persistSession, linkSession, source, meetingUrl]);
+
+  const resumeExistingSession = useCallback((sessionId: string, live: boolean) => {
+    if (sessionId !== room) {
+      setRoom(sessionId);
+      return;
+    }
+    if (live) {
+      goLive(false);
+      setStatus("connected to your existing live call");
+    }
+  }, [room, goLive]);
 
   // Manual starts open the actual meeting and LiveCoach together. Keeping
   // window.open in this click handler is essential because browsers block
@@ -4558,9 +4569,11 @@ export default function CallPage() {
         {!ended &&
           (source === "meet" ? (
             <MeetStage
+              key={room}
               room={room}
               onFinalTranscript={onFinalTranscript}
               onCandidateTurnEnd={handleCandidateTurnEnd}
+              onSessionRecovered={resumeExistingSession}
               meetingUrl={meetingUrl}
               onMeetingUrlChange={setMeetingUrl}
               upcomingId={upcomingId}
@@ -5372,4 +5385,3 @@ export default function CallPage() {
     </main>
   );
 }
-

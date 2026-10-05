@@ -66,7 +66,7 @@ async function finishCapture(input: {
   }
 }
 
-export async function GET(req: NextRequest) {
+async function readStatus(req: NextRequest, resume = false) {
   try {
     const scope = await resolveRecordScope();
     const sessionId = String(req.nextUrl.searchParams.get("session") || "");
@@ -134,6 +134,15 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // Never use a valid room from another call merely because both belong to
+    // this account. Only a missing room may recover through the exact event.
+    if (upcomingId && subscription.upcoming_id !== upcomingId) {
+      return NextResponse.json(
+        { error: "The call room does not match this calendar event" },
+        { status: 409, headers: { "Cache-Control": "private, no-store" } }
+      );
+    }
+
     const { data: capture, error: captureError } = await supabaseService
       .from("meet_bots")
       .select("id,bot_id,bot_name,status,ended_at")
@@ -150,6 +159,12 @@ export async function GET(req: NextRequest) {
         }
       );
     }
+    const identity = {
+      botId: capture.bot_id,
+      sessionId: subscription.session_id,
+      upcomingId: subscription.upcoming_id,
+      botName: capture.bot_name || "LiveCoach Notetaker",
+    };
 
     const providerResponse = await recallRequest(
       `https://${region}.recall.ai/api/v1/bot/${encodeURIComponent(
@@ -168,7 +183,8 @@ export async function GET(req: NextRequest) {
       }
       return NextResponse.json(
         {
-          botName: capture.bot_name || "LiveCoach Notetaker",
+          ...identity,
+          canResume: false,
           localStatus: "left",
           state: {
             code: "not_found",
@@ -205,9 +221,45 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    const canResume =
+      capture.status === "active" &&
+      !state.terminal &&
+      ["scheduled", "active"].includes(subscription.status) &&
+      ["joining", "waiting_room", "in_call_not_recording", "recording"].includes(state.phase);
+
+    // Calendar reservations intentionally do not consume a user's live slot.
+    // Opening the actual live workspace activates just that user's existing
+    // stream subscription. No bot is created, restarted or moved here.
+    if (resume && canResume && subscription.status === "scheduled") {
+      const { data: activated, error: activateError } = await supabaseService
+        .from("meet_capture_subscribers")
+        .update({ status: "active", updated_at: new Date().toISOString() })
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .eq("session_id", subscription.session_id)
+        .eq("capture_id", subscription.capture_id)
+        .in("status", ["scheduled", "active"])
+        .select("status")
+        .maybeSingle();
+      if (activateError?.code === "23505") {
+        return NextResponse.json(
+          { error: "End your other LiveCoach session before opening this call.", code: "transcriber_already_active" },
+          { status: 409, headers: { "Cache-Control": "private, no-store" } }
+        );
+      }
+      if (activateError) throw activateError;
+      if (!activated) {
+        return NextResponse.json(
+          { error: "This call session has ended. Reopen the call to view its saved transcript." },
+          { status: 409, headers: { "Cache-Control": "private, no-store" } }
+        );
+      }
+    }
+
     return NextResponse.json(
       {
-        botName: capture.bot_name || "LiveCoach Notetaker",
+        ...identity,
+        canResume,
         localStatus: state.terminal ? "left" : capture.status,
         state,
       },
@@ -222,4 +274,14 @@ export async function GET(req: NextRequest) {
       }
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  return readStatus(req);
+}
+
+// POST is an explicit, idempotent attachment to an already scheduled capture.
+// The separate /start endpoint remains the only cost-bearing dispatch path.
+export async function POST(req: NextRequest) {
+  return readStatus(req, true);
 }
