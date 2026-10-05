@@ -14,7 +14,7 @@ import LiveCoachLogo from "@/components/LiveCoachLogo";
 // right by padding the body, so nothing is hidden behind it.
 type Item = { href: string; label: string; icon: string; tab?: string };
 type ViewerRole = "owner" | "manager" | "sales";
-type TeamStatus = { role?: ViewerRole; department?: string };
+type TeamStatus = { role?: ViewerRole; department?: string; callsFirst?: boolean };
 
 const TEAM_STATUS_URL = "/api/auth/team/status";
 const OUTREACH_ITEM: Item = { href: "/crm/outreach", label: "Outreach", icon: "↗" };
@@ -100,13 +100,14 @@ function NavMenuInner({
     const cached = getCached<TeamStatus>(TEAM_STATUS_URL);
     return cached?.role || null;
   });
+  const [callsFirst, setCallsFirst] = useState(false);
   const [department, setDepartment] = useState(() => getCached<TeamStatus>(TEAM_STATUS_URL)?.department || 'sales');
 
   useEffect(() => {
     let active = true;
     void crmFetch<TeamStatus>(TEAM_STATUS_URL)
       .then((status) => {
-        if (active && status.role) { setViewerRole(status.role); setDepartment(status.department || 'sales'); }
+        if (active && status.role) { setViewerRole(status.role); setDepartment(status.department || 'sales'); setCallsFirst(status.callsFirst === true); }
       })
       .catch(() => {
         // Navigation still works with the safe salesperson home fallback.
@@ -125,7 +126,7 @@ function NavMenuInner({
     : salesHome
     ? { href: "/crm/inbox", label: "Today", icon: "▣" }
     : { href: "/crm", label: "Today", icon: "▣" };
-  const coreItems: Item[] = marketingHome
+  const defaultCoreItems: Item[] = marketingHome
     ? [homeItem, TASKS_ITEM, CHAT_ITEM, NOTIFICATIONS_ITEM]
     : salesHome
     ? [homeItem, TASKS_ITEM, CHAT_ITEM, MARKETING_ITEM, ...SALES_CORE_ITEMS, NOTIFICATIONS_ITEM]
@@ -140,10 +141,13 @@ function NavMenuInner({
         BRAIN_CONTROL_ITEM,
         ...OWNER_CORE_ITEMS,
       ];
+  const coreItems = callsFirst
+    ? [homeItem, CALLS_ITEM, ...defaultCoreItems.filter(item => item.href !== homeItem.href && item.href !== CALLS_ITEM.href)]
+    : defaultCoreItems;
   const moreItems = salesHome
     ? [CALLS_ITEM, PLAYBOOK_ITEM, DOCUMENTS_ITEM, COSTS_ITEM, ...MORE_ITEMS]
     : MORE_ITEMS;
-  const allItems = [...coreItems, START_ITEM, ...moreItems];
+  const allItems = [...coreItems, START_ITEM, ...moreItems.filter(item => !coreItems.some(core => core.href === item.href))];
 
   // Phone layout: a thumb-reachable bottom tab bar instead of the left sidebar.
   const [mobile, setMobile] = useState(false);
@@ -257,7 +261,9 @@ function NavMenuInner({
   // "Start" lifted like a call-to-action. The brain chat stays reachable via
   // its own floating button (nudged up on mobile so it clears this bar).
   if (mobile) {
-    const BOTTOM: Item[] = [
+    const BOTTOM: Item[] = callsFirst ? [
+      homeItem, CALLS_ITEM, { href: "/call", label: "Start", icon: "▸" }, TASKS_ITEM,
+    ] : [
       salesHome
         ? SALES_OUTREACH_ITEM
         : OUTREACH_ITEM,

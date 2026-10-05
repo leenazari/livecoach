@@ -37,6 +37,7 @@ const RecentCalls = dynamic(() => import("@/components/crm/RecentCalls"), {
 });
 
 type Dash = {
+  callsFirst?: boolean;
   kpis: {
     clients: number;
     tasks: number;
@@ -405,7 +406,7 @@ export default function DashboardPage() {
 
   const todayGroups = dash?.today
     ? [
-        ["Calls to prepare", dash.today.callsToPrep, "text-amber"],
+        [dash.callsFirst ? "Calls in the next 24 hours" : "Calls to prepare", dash.today.callsToPrep, "text-amber"],
         ["Overdue promises", dash.today.overduePromises, "text-rust"],
         ["Replies ready", dash.today.awaitingReply, "text-sky"],
         ["Waiting on others", dash.today.awaitingOthers || [], "text-rust"],
@@ -485,6 +486,8 @@ export default function DashboardPage() {
 
       <CrmSearch />
 
+      {dash?.callsFirst && <UpcomingCalls limit={focusMode ? 5 : 10} daysAhead={7} />}
+
       <Link
         href="/crm/revenue"
         className="mb-3 flex min-h-12 items-center justify-between rounded-xl border border-moss/45 bg-moss/[0.07] px-4 py-3 transition hover:border-moss hover:bg-moss/[0.12]"
@@ -505,7 +508,9 @@ export default function DashboardPage() {
               {"◆"} Today
             </p>
             <p className="mt-1 font-sans text-[0.8rem] text-bone/65">
-              Your most important moves, ranked across deadlines, promises and revenue.
+              {dash?.callsFirst
+                ? "Your next calls first, followed by deadlines, promises and revenue."
+                : "Your most important moves, ranked across deadlines, promises and revenue."}
             </p>
           </div>
           <span className="rounded-full border border-edge px-2.5 py-1 font-mono text-[0.52rem] uppercase tracking-wider text-muted">
@@ -731,7 +736,7 @@ export default function DashboardPage() {
 
       {/* UPCOMING CALLS - the next seven days only, with schedule, prep and a
           preloaded start. The dedicated Calls page retains the longer view. */}
-      <UpcomingCalls limit={focusMode ? 5 : 10} daysAhead={7} />
+      {!dash?.callsFirst && <UpcomingCalls limit={focusMode ? 5 : 10} daysAhead={7} />}
 
       <section className="mb-3 rounded-xl border border-amber/35 bg-panel/40 p-4">
         <div className="mb-2.5 flex flex-wrap items-start justify-between gap-2">

@@ -1,3 +1,4 @@
+import { personalCallsFirst } from "@/lib/personal-dashboard";
 import { NextResponse } from "next/server";
 import { googleConnected } from "@/lib/google";
 import { microsoftConnected, microsoftConfigured } from "@/lib/microsoft";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const scope = requireRequestScope();
-    const [{ data: workspace, error }, google, microsoft, membership] = await Promise.all([
+    const [{ data: workspace, error }, google, microsoft, callsFirst, membership] = await Promise.all([
       supabaseService
         .from("workspaces")
         .select("name")
@@ -18,6 +19,7 @@ export async function GET() {
         .single(),
       googleConnected(scope.userId),
       microsoftConnected(scope.userId),
+      personalCallsFirst(scope),
       supabaseService.from('workspace_members').select('department').eq('workspace_id', scope.workspaceId).eq('user_id', scope.userId).single(),
     ]);
     if (error) throw error;
@@ -25,6 +27,7 @@ export async function GET() {
     return NextResponse.json(
       {
         workspace: workspace.name,
+        callsFirst,
         role: scope.role,
         department: membership.data.department,
         status: scope.status,

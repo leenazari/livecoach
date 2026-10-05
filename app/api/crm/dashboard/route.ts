@@ -1,3 +1,5 @@
+import { personalCallsFirst } from "@/lib/personal-dashboard";
+import { compareDashboardActions } from "@/lib/dashboard-priority";
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -70,6 +72,7 @@ export async function GET(req: Request) {
       userId: requestScope.userId,
       workspaceId: requestScope.workspaceId,
     };
+    const callsFirst = await personalCallsFirst(accountScope);
     const dashboardNow = Date.now();
     const sevenDayHorizon = new Date(
       dashboardNow + 7 * 24 * 60 * 60 * 1000
@@ -302,7 +305,7 @@ export async function GET(req: Request) {
       .filter(
         (u: any) =>
           isPrepEligibleCalendarEvent(u) &&
-          !u.prepped &&
+          (callsFirst || !u.prepped) &&
           u.scheduled_at &&
           new Date(u.scheduled_at).getTime() <= next24h
       )
@@ -546,7 +549,7 @@ export async function GET(req: Request) {
       ...awaitingReply.map((x: any) => ({ ...x, reason: "Reply ready to send", score: 70 })),
       ...coolingDeals.map((x: any) => ({ ...x, reason: "Deal is cooling", score: 60 })),
       ...rankedOpenTasks,
-    ].sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
+    ].sort((a: any, b: any) => compareDashboardActions(a, b, callsFirst));
     const seenTopActions = new Set<string>();
     const topActions = topCandidates.filter((item: any) => {
       const key = `${item.entity || "item"}:${item.id}`;
@@ -837,6 +840,7 @@ export async function GET(req: Request) {
     const dayPartsAll = [...callParts, ...dayParts].map(withTarget);
     return NextResponse.json(
       {
+        callsFirst,
         kpis,
         tasks: tasks.slice(0, 20),
         today,
