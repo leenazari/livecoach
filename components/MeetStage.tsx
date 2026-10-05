@@ -12,8 +12,9 @@ import {
 
 type Props = {
   room: string;
-  onFinalTranscript: (role: string, text: string, speaker?: string) => void;
+  onFinalTranscript: (role: string, text: string, speaker?: string, historical?: boolean) => void;
   onCandidateTurnEnd: () => void;
+  onSessionRecovered: (sessionId: string, live: boolean) => void;
   // Optional controlled meeting URL (entered up in the setup step). Falls back
   // to internal state if not provided.
   meetingUrl?: string;
@@ -70,6 +71,12 @@ const CAPTURE_STALE_MS = 90000;
 // remained disconnected continuously for long enough to be actionable.
 const WS_RECONNECT_WARNING_GRACE_MS = 8000;
 
+function transcriptIdentity(timestamp: string, speaker: string, text: string) {
+  const time = Date.parse(timestamp);
+  // Postgres returns +00:00 while the worker sends Z for the same instant.
+  return JSON.stringify([Number.isFinite(time) ? time : timestamp, speaker, text.trim()]);
+}
+
 // Each account receives its own coach aliases from its private profile. We
 // match by name rather than meeting host because the coach is not always the
 // person who created the calendar event.
@@ -86,6 +93,7 @@ export default function MeetStage({
   room,
   onFinalTranscript,
   onCandidateTurnEnd,
+  onSessionRecovered,
   meetingUrl: meetingUrlProp,
   onMeetingUrlChange,
   upcomingId = null,
@@ -96,8 +104,10 @@ export default function MeetStage({
   const meetingUrl = meetingUrlProp ?? meetingUrlInternal;
   const setMeetingUrl = onMeetingUrlChange ?? setMeetingUrlInternal;
   const [botId, setBotId] = useState("");
+  const [recovering, setRecovering] = useState(true);
+  const [streamReady, setStreamReady] = useState(false);
   const [botName, setBotName] = useState("Your LiveCoach Notetaker");
-  const [status, setStatus] = useState("not connected");
+  const [status, setStatus] = useState("checking for an existing notetaker...");
   const [providerState, setProviderState] =
     useState<ProviderBotState | null>(null);
   // Honest join state. transcribing = real audio has come through (the bot is
@@ -118,6 +128,8 @@ export default function MeetStage({
   const coachRef = useRef<string | null>(null);
   const onFinalRef = useRef(onFinalTranscript);
   const onTurnEndRef = useRef(onCandidateTurnEnd);
+  const onRecoveredRef = useRef(onSessionRecovered);
+  const liveCaptureRef = useRef(false);
   const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chunkCountRef = useRef(0);
   const sawCandidateRef = useRef(false);
@@ -129,7 +141,7 @@ export default function MeetStage({
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedRef = useRef(false); // true only on intentional teardown (unmount)
   const retryRef = useRef(0); // backoff attempt counter
-  const deliveredRef = useRef(0); // how many utterances we've delivered so far
+  const deliveredKeysRef = useRef(new Set<string>());
   const sendingRef = useRef(false); // in-flight guard so a double-tap can't send two bots
   const connectingRef = useRef(false);
   const connectionAttemptRef = useRef(0);
@@ -154,6 +166,9 @@ export default function MeetStage({
   useEffect(() => {
     onTurnEndRef.current = onCandidateTurnEnd;
   }, [onCandidateTurnEnd]);
+  useEffect(() => {
+    onRecoveredRef.current = onSessionRecovered;
+  }, [onSessionRecovered]);
   useEffect(() => {
     onSilenceTimeoutRef.current = onSilenceTimeout;
   }, [onSilenceTimeout]);
@@ -184,8 +199,16 @@ export default function MeetStage({
   }, []);
 
   const handleUtterance = useCallback(
-    (speaker: string, recallRole: string, text: string) => {
+    (speaker: string, recallRole: string, text: string, timestamp?: string) => {
       if (!text) return;
+      // The worker broadcasts and persists the same timestamp. Deduplicate by
+      // that identity so speech arriving during backfill is neither repeated
+      // nor counted as one of the older lines we still need to recover.
+      if (timestamp) {
+        const key = transcriptIdentity(timestamp, speaker, text);
+        if (deliveredKeysRef.current.has(key)) return;
+        deliveredKeysRef.current.add(key);
+      }
       // First real transcript proves the bot is actually IN the meeting and
       // hearing audio - the honest "on air" signal, not merely that a bot was
       // requested. Clears the join watchdog and any stall warning.
@@ -216,7 +239,6 @@ export default function MeetStage({
       }
 
       onFinalRef.current(role, text, speaker);
-      deliveredRef.current += 1;
 
       if (role === "candidate") {
         sawCandidateRef.current = true;
@@ -245,49 +267,60 @@ export default function MeetStage({
   );
 
   // Pull the worker's stored transcript for this room and deliver only the
-  // utterances we haven't shown yet (from `start`). The worker keeps the full
+  // utterances we haven't shown yet. The worker keeps the full
   // log, so this both repopulates after a page refresh AND recovers whatever was
   // missed while the socket was down - the transcript is never quietly lost.
   const deliverBackfill = useCallback(
-    async (start: number) => {
+    async () => {
       try {
         const r = await fetch(
           `/api/meet/backfill?session=${encodeURIComponent(room)}`
         );
         if (!r.ok) return false;
         const d = await r.json();
+        if (closedRef.current || roomRef.current !== room) return false;
         if (!Array.isArray(d.utterances)) return false;
-        const firstNew = Math.max(0, start);
-        for (let i = firstNew; i < d.utterances.length; i++) {
+        // A live socket can deliver a new line while older speech is loading.
+        // A count alone would then skip an unseen old line. Stable identities
+        // let overlapping backfills and socket messages converge safely.
+        let recoveredCount = 0;
+        let recoveredCandidate = false;
+        for (let i = 0; i < d.utterances.length; i++) {
           const u = d.utterances[i];
+          const text = (u.text || "").trim();
+          const key = transcriptIdentity(u.ts || `stored-${i}`, u.speaker || "", text);
+          if (deliveredKeysRef.current.has(key)) continue;
+          deliveredKeysRef.current.add(key);
           const role = mapRole(u.speaker || "", u.role || "");
-          onFinalRef.current(role, (u.text || "").trim(), u.speaker);
+          onFinalRef.current(role, text, u.speaker, true);
+          recoveredCount++;
+          if (role === "candidate") recoveredCandidate = true;
         }
         // A reconnect can backfill speech that arrived while this tab was
         // asleep. Reset the local clock when that happens so recovered speech
         // can never be mistaken for five minutes of silence.
-        if (d.utterances.length > firstNew) {
+        if (recoveredCount > 0) {
           lastUtterAtRef.current = Date.now();
           silenceEndRequestedRef.current = false;
           setSilenceRemainingMs(null);
-          setTranscribing(true);
+          if (liveCaptureRef.current) setTranscribing(true);
           setJoinWarn(false);
+          // Resume coaching once from the recovered context, not once for
+          // every historical line. Ended calls never trigger live AI work.
+          if (liveCaptureRef.current && recoveredCandidate) {
+            sawCandidateRef.current = true;
+            if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
+            pauseTimerRef.current = setTimeout(fireTurnEnd, PAUSE_MS);
+          }
         }
-        if (d.utterances.length > deliveredRef.current)
-          deliveredRef.current = d.utterances.length;
         return true;
       } catch {
         /* no backfill is fine */
         return false;
       }
     },
-    [room, mapRole]
+    [room, mapRole, fireTurnEnd]
   );
-
-  // On first mount, repopulate from anything already captured (refresh recovery).
-  useEffect(() => {
-    deliverBackfill(0);
-  }, [deliverBackfill]);
 
   const ensureStreamAccess = useCallback(async (): Promise<StreamAccess> => {
     const cached = streamAccessRef.current;
@@ -379,6 +412,9 @@ export default function MeetStage({
       ) {
         return;
       }
+      // Load the canonical transcript after account-specific speaker aliases
+      // arrive, even when the display socket is temporarily unavailable.
+      void deliverBackfill();
       const ws = new WebSocket(
         `${access.workerWs}?session=${encodeURIComponent(room)}`,
         ["livecoach-v1", `livecoach-token.${access.token}`]
@@ -393,7 +429,7 @@ export default function MeetStage({
         setWsState("on");
         retryRef.current = 0;
         // We may have missed utterances while the socket was down - recover them.
-        deliverBackfill(deliveredRef.current);
+        deliverBackfill();
       };
       ws.onerror = () => {
         if (!isCurrentSocket()) return;
@@ -425,7 +461,7 @@ export default function MeetStage({
             // Receiving speech is definitive proof that this display socket is
             // healthy, even if the browser emitted a transient error first.
             setWsState("on");
-            handleUtterance(msg.speaker || "", msg.role || "", msg.text || "");
+            handleUtterance(msg.speaker || "", msg.role || "", msg.text || "", msg.ts);
           }
         } catch {
           /* ignore */
@@ -449,6 +485,7 @@ export default function MeetStage({
 
   // open the socket as soon as we're in the call; clean up on unmount
   useEffect(() => {
+    if (!streamReady) return;
     connect();
     return () => {
       closedRef.current = true;
@@ -466,7 +503,7 @@ export default function MeetStage({
         }
       }
     };
-  }, [connect]);
+  }, [connect, streamReady]);
 
   const wsConnected = wsState === "on";
   useEffect(() => {
@@ -520,7 +557,7 @@ export default function MeetStage({
         if (silenceCheckInFlightRef.current) return;
         silenceCheckInFlightRef.current = true;
         const observedLastSpeech = lastUtterAtRef.current;
-        const backfillVerified = await deliverBackfill(deliveredRef.current);
+        const backfillVerified = await deliverBackfill();
         silenceCheckInFlightRef.current = false;
         // Never end on a stale display. A newly recovered utterance restarts
         // the clock, while an unavailable canonical backfill simply retries on
@@ -554,7 +591,7 @@ export default function MeetStage({
     // Guard against a double-tap firing two bots: `disabled` only updates on the
     // next render, so a fast second click can slip through before React catches
     // up. The ref blocks it synchronously, and we never send if a bot is live.
-    if (!meetingUrl.trim() || botIdRef.current || sendingRef.current) return;
+    if (recovering || !meetingUrl.trim() || botIdRef.current || sendingRef.current) return;
     sendingRef.current = true;
     setStatus("sending bot...");
     try {
@@ -606,7 +643,7 @@ export default function MeetStage({
           : "bot requested, waiting for it to join"
       );
       if (wsState !== "on") connect();
-      if (d.sharedCapture) void deliverBackfill(0);
+      if (d.sharedCapture) void deliverBackfill();
       // Transcript is the strongest proof that capture is healthy. The provider
       // status poll below identifies whether a silent bot is still launching,
       // waiting, in the call, or has failed. This timer is only a fallback when
@@ -621,15 +658,15 @@ export default function MeetStage({
     } finally {
       sendingRef.current = false;
     }
-  }, [meetingUrl, room, upcomingId, wsState, connect, deliverBackfill]);
+  }, [recovering, meetingUrl, room, upcomingId, wsState, connect, deliverBackfill]);
 
   // Recall accepts a create request before the meeting platform has accepted
   // the bot. Poll the exact provider lifecycle while joining so LiveCoach never
-  // guesses that a missing bot is in a waiting room. The endpoint is scoped to
-  // this signed-in account and stops being called once transcript is flowing or
-  // the provider reports a terminal state.
+  // guesses that a missing bot is in a waiting room. Run on mount too so an
+  // automatic notetaker is attached before opening the live stream. POST only
+  // resumes an existing subscription and can never create a provider bot.
   useEffect(() => {
-    if (!botId || transcribing) return;
+    if (botId && transcribing) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -639,11 +676,37 @@ export default function MeetStage({
         const params = new URLSearchParams({ session: room });
         if (upcomingId) params.set("upcoming", upcomingId);
         const response = await fetch(`/api/meet/status?${params.toString()}`, {
+          method: "POST",
           cache: "no-store",
         });
         const data = await response.json();
+        if (cancelled) return;
+        if (response.status === 404) {
+          setRecovering(false);
+          setStreamReady(true);
+          setStatus("not connected");
+          return;
+        }
+        if (!response.ok) {
+          setStatus(data.error || "Unable to reconnect to the existing notetaker. Retrying...");
+          // Access/conflict errors need a visible resolution, not a new bot.
+          if ([400, 401, 403, 409].includes(response.status)) return;
+        }
         if (!cancelled && response.ok && data?.state) {
+          if (data.sessionId !== room) {
+            // An older manual call can have a different saved private room.
+            // Let the parent remount against that exact room before streaming.
+            onRecoveredRef.current(data.sessionId, false);
+            return;
+          }
           const next = data.state as ProviderBotState;
+          botIdRef.current = data.botId;
+          setBotId(data.botId);
+          if (data.botName) setBotName(data.botName);
+          liveCaptureRef.current = data.canResume === true;
+          setRecovering(false);
+          setStreamReady(true);
+          if (data.canResume) onRecoveredRef.current(room, true);
           setProviderState(next);
           setStatus(next.message);
           terminal = next.terminal;
@@ -667,7 +730,7 @@ export default function MeetStage({
         // The fallback watchdog still warns if no verified state ever arrives.
       }
       if (!cancelled && !terminal) {
-        timer = setTimeout(poll, 3000);
+        timer = setTimeout(poll, 10000);
       }
     };
 
@@ -680,10 +743,11 @@ export default function MeetStage({
 
   const handledStartRequestRef = useRef(0);
   useEffect(() => {
+    if (recovering) return;
     if (!startRequest || startRequest === handledStartRequestRef.current) return;
     handledStartRequestRef.current = startRequest;
     sendBot();
-  }, [startRequest, sendBot]);
+  }, [recovering, startRequest, sendBot]);
 
   // Retry: stop the (non-joined) bot and send a fresh one. Forces the synchronous
   // botId mirror clear so the re-send isn't blocked by the in-flight guard.
@@ -745,14 +809,14 @@ export default function MeetStage({
     | "ended"
     | "stale" = !botId
     ? "off"
-    : transcribing && captureStalled
-    ? "stale"
-    : transcribing
-    ? "on"
     : providerPhase === "failed"
     ? "failed"
     : providerPhase === "ended"
     ? "ended"
+    : transcribing && captureStalled
+    ? "stale"
+    : transcribing
+    ? "on"
     : providerPhase === "scheduled"
     ? "scheduled"
     : providerPhase === "waiting_room"
@@ -764,7 +828,9 @@ export default function MeetStage({
     ? "stalled"
     : "joining";
   const airPill =
-    air === "on"
+    recovering
+      ? { cls: "border-amber/60 bg-amber/15 text-amber", dot: "bg-amber animate-pulse", label: "Connecting…" }
+      : air === "on"
       ? { cls: "border-sage/60 bg-sage/15 text-sage", dot: "bg-sage animate-pulse", label: "On air" }
       : air === "joined"
       ? { cls: "border-sage/60 bg-sage/15 text-sage", dot: "bg-sage animate-pulse", label: "In call" }
@@ -810,7 +876,7 @@ export default function MeetStage({
         />
         <button
           onClick={sendBot}
-          disabled={!meetingUrl.trim() || !!botId || status === "sending bot..."}
+          disabled={recovering || !meetingUrl.trim() || !!botId || status === "sending bot..."}
           title={
             botId
               ? "A notetaker request is active. Stop it before sending another."
@@ -828,7 +894,9 @@ export default function MeetStage({
               : "border-amber/60 bg-amber/15 text-amber hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
           }`}
         >
-          {botId
+          {recovering
+            ? "connecting…"
+            : botId
             ? air === "on"
               ? "● on air"
               : air === "joined"
@@ -839,6 +907,8 @@ export default function MeetStage({
               ? "join failed"
               : air === "ended"
               ? "ended"
+              : air === "scheduled"
+              ? "scheduled"
               : air === "stalled"
               ? "not verified"
               : "● joining…"

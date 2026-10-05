@@ -92,7 +92,7 @@ assert.match(session, /onConflict: "owner_id,session_id"/);
 assert.match(stage, /upcomingId\?: string \| null/);
 assert.match(stage, /JSON\.stringify\(\{[\s\S]*?meetingUrl: meetingUrl\.trim\(\),[\s\S]*?sessionId: room,[\s\S]*?upcomingId/);
 assert.match(stage, /return "teammate"/);
-assert.match(stage, /if \(d\.sharedCapture\) void deliverBackfill\(0\)/);
+assert.match(stage, /if \(d\.sharedCapture\) void deliverBackfill\(\)/);
 assert.match(callPage, /upcomingId=\{upcomingId\}/);
 assert.match(callPage, /Team member/);
 assert.match(summary, /SHARED TEAM CALLS: a label beginning "Team member/);
