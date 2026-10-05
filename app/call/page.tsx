@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
+import { refreshCallPrepContext } from "@/lib/call-prep-refresh";
 import { foldDictationEvent } from "@/lib/dictation";
 import CallCarryover from "@/components/crm/CallCarryover";
 import KnowledgePanel from "@/components/KnowledgePanel";
@@ -297,6 +298,7 @@ export default function CallPage() {
   // intent box blocked during this window prevents dictation from racing an
   // incoming saved/generated intent.
   const [intentLoading, setIntentLoading] = useState(true);
+  const [prepContextChanged, setPrepContextChanged] = useState(false);
   const [character, setCharacter] = useState("");
   const [callType, setCallType] = useState("general");
   const [callLive, setCallLive] = useState(false);
@@ -532,6 +534,9 @@ export default function CallPage() {
   // The intent that produced the current focus. If the intent changes, the
   // old focus belongs to a different conversation and must be replaced.
   const focusBasisBriefRef = useRef("");
+  const focusBasisEmailRef = useRef("");
+  const emailEditedRef = useRef(false);
+  const emailRefreshVersionRef = useRef(0);
   // Document-count bookkeeping for the "new document" prompt: how many docs
   // were loaded when the focus was last built vs how many are loaded now.
   const docsAtFocusRef = useRef(0);
@@ -756,8 +761,10 @@ export default function CallPage() {
       setBattlecard(null);
       return;
     }
+    const emailVersion = emailRefreshVersionRef.current;
     crmFetch<any>(`/api/crm/companies/${id}`)
       .then(async (d) => {
+        if (linkedCompanyRef.current?.id !== id) return;
         const departmentNames = new Map(
           (Array.isArray(d?.departments) ? d.departments : []).map(
             (department: any) => [department.id, department.name]
@@ -820,14 +827,19 @@ export default function CallPage() {
         const savedEmailContext = linkedWorkstream?.id
           ? thread?.workstream?.email_context || ""
           : d?.company?.email_context || "";
-        setClientEmailCtx(savedEmailContext);
-        setEmailCtxUpdatedAt(
-          savedEmailContext.trim()
-            ? linkedWorkstream?.id
-              ? thread?.workstream?.email_context_updated_at || null
-              : d?.company?.email_context_updated_at || null
-            : null
-        );
+        if (linkedCompanyRef.current?.id !== id ||
+            (linkedWorkstreamRef.current?.id || null) !== (linkedWorkstream?.id || null)) return;
+        if (!emailEditedRef.current && emailRefreshVersionRef.current === emailVersion) {
+          clientEmailCtxRef.current = savedEmailContext;
+          setClientEmailCtx(savedEmailContext);
+          setEmailCtxUpdatedAt(
+            savedEmailContext.trim()
+              ? linkedWorkstream?.id
+                ? thread?.workstream?.email_context_updated_at || null
+                : d?.company?.email_context_updated_at || null
+              : null
+          );
+        }
         const bc = linkedWorkstream?.id ? null : d?.company?.profile?.battlecard;
         setBattlecard(bc && typeof bc === "object" ? (bc as Battlecard) : null);
 
@@ -880,7 +892,7 @@ export default function CallPage() {
     const workstreamId = linkedWorkstreamRef.current?.id;
     // Blurring an untouched empty box must not pretend that email context was
     // refreshed. It also avoids an unnecessary database write.
-    if (!id || !clientEmailCtx.trim()) return;
+    if (!id || !emailEditedRef.current || !clientEmailCtx.trim()) return;
     setEmailCtxSaving(true);
     try {
       await crmFetch(
@@ -924,6 +936,10 @@ export default function CallPage() {
   const handleLinkCompany = useCallback(
     (v: { id: string; name: string } | null) => {
       if (v?.id !== linkedCompanyRef.current?.id) {
+        emailEditedRef.current = false;
+        emailRefreshVersionRef.current += 1;
+        clientEmailCtxRef.current = "";
+        setClientEmailCtx("");
         setLinkedWorkstream(null);
         linkedWorkstreamRef.current = null;
         setWorkstreamChoices([]);
@@ -941,6 +957,10 @@ export default function CallPage() {
         (thread) => thread.id === workstreamId
       );
       if (!chosen) return;
+      emailEditedRef.current = false;
+      emailRefreshVersionRef.current += 1;
+      clientEmailCtxRef.current = "";
+      setClientEmailCtx("");
       try {
         linkedWorkstreamRef.current = chosen;
         setLinkedWorkstream(chosen);
@@ -968,6 +988,32 @@ export default function CallPage() {
     [linkSession, workstreamChoices]
   );
 
+  const refreshPrepContext = useCallback(async (call: any) => {
+    const result = await refreshCallPrepContext(crmFetch, call);
+    if (!result) return null;
+    if (upcomingIdRef.current !== call.id ||
+        linkedCompanyRef.current?.id !== call.company_id ||
+        (linkedWorkstreamRef.current?.id || null) !== (call.workstream_id || null)) {
+      throw new Error("The call changed while checking email. Reopen its prep.");
+    }
+    let emailContext = clientEmailCtxRef.current;
+    if (typeof result.mail?.emailContext === "string" && !emailEditedRef.current) {
+      emailContext = result.mail.emailContext;
+      emailRefreshVersionRef.current += 1;
+      clientEmailCtxRef.current = emailContext;
+      setClientEmailCtx(emailContext);
+      setEmailCtxUpdatedAt(result.mail.emailContextUpdatedAt || null);
+    }
+    if (result.mail) setEmailPullNote("Latest matching email checked");
+    if (result.intent && !intentEditedRef.current) setBrief(result.intent);
+    if (suggestedCompsRef.current.length &&
+        (emailContext !== focusBasisEmailRef.current ||
+         (result.intent && result.intent !== focusBasisBriefRef.current))) {
+      setPrepContextChanged(true);
+    }
+    return { ...result, emailContext };
+  }, []);
+
   // Restore a prep plan that was built in advance for a scheduled call (the prep
   // snapshot stored on the upcoming_calls row), so reopening prep picks up where
   // you left off instead of from a blank slate.
@@ -991,6 +1037,8 @@ export default function CallPage() {
       }
       focusBasisBriefRef.current =
         typeof prep.focusBasisBrief === "string" ? prep.focusBasisBrief : "";
+      focusBasisEmailRef.current = typeof prep.focusBasisEmailContext === "string"
+        ? prep.focusBasisEmailContext : "";
       if (Array.isArray(prep.selectedComps)) {
         const list = prep.selectedComps.filter(
           (x: any) => typeof x === "string"
@@ -1205,65 +1253,13 @@ export default function CallPage() {
               setMeetingUrl((prev) => (prev.trim() ? prev : mUrl));
               setSource("meet");
             }
-            // Existing relationships get the intent based on the newest call
-            // summary. The endpoint returns the saved copy when it is current,
-            // so reopening this screen does not repeatedly spend tokens.
-            if (call?.company_id && !call?.prep?.selectedComps?.length) {
+            // Saved focus does not freeze the relationship. Always check the
+            // exact guest's latest mail before updating the generated intent.
+            if (call?.company_id) {
               try {
-                // Pull the latest conversation with the actual calendar guest
-                // before drafting the intent. email-pull hashes the thread, so
-                // an unchanged inbox returns the cached digest without AI use.
-                const emailGuest = guest;
-                if (emailGuest?.email) {
-                  try {
-                    const mail = await crmFetch<any>("/api/crm/email-pull", {
-                      method: "POST",
-                      body: JSON.stringify({
-                        companyId: call.company_id,
-                        workstreamId: call.workstream_id || undefined,
-                        upcomingId: upcoming,
-                        name: emailGuest.name || undefined,
-                        email: emailGuest.email,
-                      }),
-                    });
-                    if (
-                      typeof mail.emailContext === "string" &&
-                      mail.emailContext.trim()
-                    ) {
-                      setClientEmailCtx(mail.emailContext);
-                      setEmailCtxUpdatedAt(
-                        typeof mail.emailContextUpdatedAt === "string"
-                          ? mail.emailContextUpdatedAt
-                          : new Date().toISOString()
-                      );
-                      setEmailPullNote(
-                        mail.cached
-                          ? "Latest matching email loaded"
-                          : "Latest matching email refreshed"
-                      );
-                    }
-                  } catch (error: any) {
-                    setEmailPullNote(
-                      error?.message ||
-                        "Email context could not be refreshed. Check the mailbox connection and try once more."
-                    );
-                  }
-                }
-                const fresh = await crmFetch<any>(
-                  `/api/crm/companies/${call.company_id}/prep-intent`,
-                  {
-                    method: "POST",
-                    body: JSON.stringify({ concise: true, upcomingId: upcoming }),
-                  }
-                );
-                if (
-                  typeof fresh.intent === "string" &&
-                  fresh.intent.trim() &&
-                  !intentEditedRef.current
-                )
-                  setBrief(fresh.intent.trim());
-              } catch {
-                /* keep the current intent */
+                await refreshPrepContext({ ...call, id: upcoming, primaryAttendee: guest });
+              } catch (error: any) {
+                setEmailPullNote(error?.message || "Latest email could not be checked. Rebuild focus to retry.");
               }
             }
             // FIRST-MEETING INTENT HELP. Draft a useful starting intent from the
@@ -1357,7 +1353,7 @@ export default function CallPage() {
   // nothing has changed.
   useEffect(() => {
     if (!upcomingIdRef.current || !prepHydratedRef.current) return;
-    if (callLiveRef.current || planStage === "none") return;
+    if (callLiveRef.current || planStage === "none" || intentLoading || prepping) return;
     const openingQuestions = suggestions
       .filter((s) => s.kind === "opening")
       .map((s) => ({ text: s.text, why: s.why }));
@@ -1378,6 +1374,7 @@ export default function CallPage() {
       openingQuestions,
       planStage,
       focusBasisBrief: focusBasisBriefRef.current,
+      focusBasisEmailContext: focusBasisEmailRef.current,
     };
     const sig = JSON.stringify(snapshot);
     if (sig === lastPrepSigRef.current) return;
@@ -1412,6 +1409,8 @@ export default function CallPage() {
     }, 1200);
     return () => clearTimeout(t);
   }, [
+    intentLoading,
+    prepping,
     brief,
     role,
     callType,
@@ -1910,16 +1909,19 @@ export default function CallPage() {
 
   // Intent-driven plan: brief (top priority) + CV/JD context -> ranked focus
   // areas + character profile + opening questions, in one call.
-  const generatePlan = useCallback(async (mode: "focus" | "full" | "refocus") => {
+  const generatePlan = useCallback(async (mode: "focus" | "full" | "refocus", freshContext?: { intent: string; emailContext: string }) => {
+    const planIntent = freshContext?.intent ?? brief;
+    const planEmailContext = freshContext?.emailContext ?? clientEmailCtx;
     const resetStaleFocus =
       mode === "refocus" &&
-      focusBasisBriefRef.current.trim() !== brief.trim();
+      (focusBasisBriefRef.current.trim() !== planIntent.trim() ||
+       focusBasisEmailRef.current.trim() !== planEmailContext.trim());
     aiCallsRef.current += 1;
     const res = await fetch("/api/interview/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        brief: brief || null,
+        brief: planIntent || null,
         role: role || null,
         // The linked client, so the planner can tell an INTERNAL board/strategy
         // call (people named in the brief are the topic) from a client call.
@@ -1940,8 +1942,8 @@ export default function CallPage() {
         subjectName: candidateRef.current || null,
         knowledgeContext: [
           knowledgeRef.current,
-          clientEmailCtx?.trim()
-            ? `EMAIL CONTEXT (the email thread with this client so far - this is where most of the relationship has happened before this call; treat as primary substance):\n${clientEmailCtx.trim()}`
+          planEmailContext?.trim()
+            ? `EMAIL CONTEXT (the email thread with this client so far - this is where most of the relationship has happened before this call; treat as primary substance):\n${planEmailContext.trim()}`
             : "",
           backgroundRef.current
             ? `PUBLIC PAGE RESEARCH (about the person / company):\n${backgroundRef.current}`
@@ -2081,8 +2083,11 @@ export default function CallPage() {
     }
     setCharacter(typeof data.character === "string" ? data.character : "");
     if (typeof data.callType === "string") setCallType(data.callType);
-    if ((mode === "focus" || mode === "refocus") && focus.length > 0)
-      focusBasisBriefRef.current = brief;
+    if ((mode === "focus" || mode === "refocus") && focus.length > 0) {
+      focusBasisBriefRef.current = planIntent;
+      focusBasisEmailRef.current = planEmailContext;
+      setPrepContextChanged(false);
+    }
     // Whatever is in the name field is AUTHORITATIVE: only seed it from the
     // model when it's still empty. Use the live ref (not the stale closure
     // value) so a name you corrected is never overwritten on a rebuild.
@@ -2156,6 +2161,7 @@ export default function CallPage() {
 
   const prep = useCallback(
     async (mode: "focus" | "full" | "refocus") => {
+      if (intentLoading || prepping) return;
       setPrepping(true);
       setMeterOn(true);
       setStatus(
@@ -2168,8 +2174,28 @@ export default function CallPage() {
       try {
         // Always reload context first so a document uploaded since the last
         // build actually reaches the plan (not just on the initial focus).
+        let freshContext: { intent: string; emailContext: string } | undefined;
+        if (upcomingIdRef.current) {
+          setStatus("checking the latest email and intent...");
+          const { call } = await crmFetch<{ call: any }>(`/api/crm/upcoming/${upcomingIdRef.current}`);
+          if (!call) throw new Error("The scheduled call could not be loaded");
+          const fresh = await refreshPrepContext(call);
+          if (fresh) {
+            freshContext = {
+              intent: intentEditedRef.current ? brief : fresh.intent || brief,
+              emailContext: fresh.emailContext,
+            };
+            if (mode === "full" && (
+              freshContext.intent.trim() !== focusBasisBriefRef.current.trim() ||
+              freshContext.emailContext.trim() !== focusBasisEmailRef.current.trim()
+            )) {
+              setPrepContextChanged(true);
+              throw new Error("Context has changed. Rebuild and review the focus before building the plan.");
+            }
+          }
+        }
         await loadContext();
-        const { ok, degraded, added, upgraded } = await generatePlan(mode);
+        const { ok, degraded, added, upgraded } = await generatePlan(mode, freshContext);
         if (mode === "focus") setPlanStage(ok ? "focus" : "none");
         else if (mode === "full" && ok) setPlanStage("full");
         // refocus keeps the current stage - it only re-derives the focus.
@@ -2206,7 +2232,7 @@ export default function CallPage() {
         setPrepping(false);
       }
     },
-    [loadContext, generatePlan]
+    [loadContext, generatePlan, refreshPrepContext, intentLoading, prepping, brief]
   );
   const persistSession = useCallback(() => {
     // Fire-and-forget: record the call's intent server-side so a scorecard can
@@ -3456,7 +3482,7 @@ export default function CallPage() {
                     setBrief(e.target.value);
                   }}
                   rows={7}
-                  disabled={intentLoading}
+                  disabled={intentLoading || prepping}
                   placeholder="e.g. Met Steve at a wedding - he runs a finance business and wants help building software. I want to understand his needs, whether he's a serious buyer, and what kind of system fits."
                   className="max-h-[40vh] min-h-[9rem] w-full resize-y overflow-y-auto rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm leading-relaxed text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60 disabled:cursor-wait"
                 />
@@ -3479,6 +3505,11 @@ export default function CallPage() {
                 the focus or battle plan until you choose the next step.
               </p>
 
+              {prepContextChanged && (
+                <p role="status" className="mt-2 text-sm text-amber">
+                  Email or intent has changed since this focus was built. Rebuild focus to use the latest context.
+                </p>
+              )}
               {/* Build focus first. Once it exists, the focus is reviewed before
                   the next action appears directly underneath it. */}
               {planStage !== "full" && (
@@ -3492,14 +3523,14 @@ export default function CallPage() {
                           prep("focus");
                         }}
                         disabled={
-                          prepping || (!brief.trim() && !(cvReady && role.trim()))
+                          intentLoading || prepping || (!brief.trim() && !(cvReady && role.trim()))
                         }
                         className="w-full rounded-lg border border-amber/60 bg-amber/15 px-5 py-3 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {prepping ? "Building focus..." : "Build focus"}
                       </button>
                       <p className="mt-1.5 font-mono text-[0.58rem] leading-relaxed text-muted">
-                        Uses the intent, latest call actions, client memory and
+                        Checks the latest email and intent, then uses call actions, client memory and
                         documents. Nothing else is built yet.
                       </p>
                     </>
@@ -3513,7 +3544,7 @@ export default function CallPage() {
                         </p>
                         <button
                           onClick={() => prep("refocus")}
-                          disabled={prepping}
+                          disabled={prepping || intentLoading}
                           title="Re-derive the focus from your intent and documents, keeping your edits"
                           className="shrink-0 rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-40"
                         >
@@ -3544,7 +3575,7 @@ export default function CallPage() {
                           prep("full");
                         }}
                         disabled={
-                          prepping || (!brief.trim() && !(cvReady && role.trim()))
+                          intentLoading || prepping || (!brief.trim() && !(cvReady && role.trim()))
                         }
                         className="w-full rounded-lg border border-sage/60 bg-sage/15 px-5 py-3 font-mono text-[0.7rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -3581,17 +3612,21 @@ export default function CallPage() {
                       </span>
                     )}
                     <VoiceNoteButton
-                      onText={(t) =>
+                      onText={(t) => {
+                        emailEditedRef.current = true;
                         setClientEmailCtx((p) =>
                           p.trim() ? `${p.trim()} ${t}` : t
-                        )
-                      }
+                        );
+                      }}
                     />
                   </span>
                 </div>
+                {emailPullNote && (
+                  <p role="status" className="mb-2 text-xs text-sky">{emailPullNote}</p>
+                )}
                 <textarea
                   value={clientEmailCtx}
-                  onChange={(e) => setClientEmailCtx(e.target.value)}
+                  onChange={(e) => { emailEditedRef.current = true; setClientEmailCtx(e.target.value); }}
                   onBlur={saveClientEmailCtx}
                   rows={5}
                   placeholder="Latest from the email thread - what they've said, where it's up to, what's outstanding. This shapes the focus and intent, and the cues on the call."
@@ -3941,7 +3976,7 @@ export default function CallPage() {
                     </p>
                     <button
                       onClick={() => prep("refocus")}
-                      disabled={prepping}
+                      disabled={prepping || intentLoading}
                       className="shrink-0 rounded-full border border-sky/60 bg-sky/15 px-3 py-1.5 font-mono text-[0.58rem] uppercase tracking-wider text-sky transition hover:bg-sky/25 disabled:opacity-40"
                     >
                       {"\u21BB"} Rebuild focus
@@ -3973,7 +4008,7 @@ export default function CallPage() {
                       </p>
                       <button
                         onClick={() => prep("refocus")}
-                        disabled={prepping}
+                        disabled={prepping || intentLoading}
                         title="Re-derive the focus from your intent + documents, keeping your edits"
                         className="shrink-0 rounded-full border border-amber/50 bg-amber/10 px-3 py-1 font-mono text-[0.56rem] uppercase tracking-wider text-amber transition hover:bg-amber/20 disabled:opacity-40"
                       >
@@ -4282,7 +4317,7 @@ export default function CallPage() {
                 if (linkedCompanyRef.current?.id) await saveClientEmailCtx();
                 prep("full");
               }}
-              disabled={prepping || (!brief.trim() && !(cvReady && role.trim()))}
+              disabled={intentLoading || prepping || (!brief.trim() && !(cvReady && role.trim()))}
               className="rounded-full border border-amber/60 bg-amber/15 px-5 py-2.5 font-mono text-[0.7rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {prepping ? "working..." : "Refresh from focus"}
