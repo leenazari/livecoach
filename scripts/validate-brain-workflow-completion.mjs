@@ -54,7 +54,13 @@ assert.match(stageRoute, /workspaceEmailSet\("contacts"/);
 assert.match(stageRoute, /body\.rows\.length > 500/);
 
 const contactRoute = read("app/api/crm/contacts/[id]/route.ts");
-assert.match(contactRoute, /current\.owner_id !== scope\.userId/);
+// Shared stakeholder editing now uses an explicit ownership flag. Company
+// links and private notes must still remain owner-only.
+assert.match(contactRoute, /const ownsContact = current\.owner_id === scope\.userId/);
+assert.match(contactRoute, /if \(!ownsContact && !access\)/);
+assert.match(contactRoute, /!ownsContact &&\s*\("companyId" in body \|\| "departmentId" in body \|\| "notes" in body\)/);
+assert.match(contactRoute, /validateContactStakeholderPatch\(body\.attributes\)/);
+assert.match(contactRoute, /pickContactStakeholderAttributes\(savedContact\?\.attributes\)/);
 assert.match(contactRoute, /loadAssignedClientAccess\(companyId, scope\)/);
 assert.match(contactRoute, /contact_company_exact_email_duplicate/);
 assert.match(contactRoute, /patch\.department_id = null/);

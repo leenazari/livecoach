@@ -6,6 +6,7 @@
     "node": "22.x"
   },
   "scripts": {
+    "validate:outreach-import-headers": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-import-headers.mjs",
     "validate:chat-scroll": "node scripts/validate-chat-scroll.mjs",
     "validate:assigned-opportunity-history": "node scripts/validate-assigned-opportunity-history.mjs",
     "validate:pipeline-entry": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-pipeline-entry.mjs",

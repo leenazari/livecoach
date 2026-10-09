@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { crmFetch } from "@/lib/crm";
-import { parseCsvRows, type StagedOutreachImportRow } from "@/lib/outreach-import";
+import { getOutreachImportHeaderError, parseCsvRows, type StagedOutreachImportRow } from "@/lib/outreach-import";
 
 type TeamMember = { userId: string; name: string };
 type ImportBatch = {
@@ -50,6 +50,7 @@ export default function StagedOutreachImports({
   const [error, setError] = useState("");
 
   const parsedRows = useMemo(() => parseCsvRows(csv), [csv]);
+  const headerError = useMemo(() => getOutreachImportHeaderError(parsedRows), [parsedRows]);
   const load = useCallback(async () => {
     const data = await crmFetch<{ batches: ImportBatch[] }>("/api/crm/imports/outreach");
     setBatches(data.batches || []);
@@ -72,6 +73,10 @@ export default function StagedOutreachImports({
   const stage = async () => {
     if (!parsedRows.length) {
       setError("Paste CSV with a header row and at least one lead.");
+      return;
+    }
+    if (headerError) {
+      setError(headerError);
       return;
     }
     setBusy("stage");
@@ -181,8 +186,14 @@ export default function StagedOutreachImports({
             <textarea className={`${input} min-h-32 font-mono text-xs`} value={csv} onChange={(event) => setCsv(event.target.value)} placeholder={'Email,First Name,Last Name,Company,Status\npat@example.com,Pat,Smith,Example Ltd,not contacted'} />
           </label>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-muted">{parsedRows.length ? `${parsedRows.length} rows detected. Maximum 500 per batch.` : "A header row is required."}</p>
-            <button type="button" onClick={stage} disabled={!!busy || !parsedRows.length} className={primary}>{busy === "stage" ? "Checking…" : "Stage and check"}</button>
+            <p className={`text-xs ${headerError ? "text-rust" : "text-muted"}`} role={headerError ? "alert" : undefined}>
+              {headerError || (parsedRows.length
+                ? `${parsedRows.length} rows detected. Maximum 500 per batch.`
+                : csv.trim()
+                  ? "No lead rows could be read. Check the CSV has column headings and at least one data row."
+                  : "Choose a CSV file or paste a list with column headings.")}
+            </p>
+            <button type="button" onClick={stage} disabled={!!busy || !parsedRows.length || !!headerError} className={primary}>{busy === "stage" ? "Checking…" : "Stage and check"}</button>
           </div>
 
           {notice ? <p className="rounded-lg border border-moss/40 bg-moss/10 px-3 py-2 text-sm text-moss">{notice}</p> : null}
