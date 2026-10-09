@@ -26,7 +26,10 @@ export type StagedOutreachImportRow = {
 };
 
 const HEADER_ALIASES: Record<string, string[]> = {
-  email: ["email", "email address", "email_address", "work email", "work_email"],
+  email: [
+    "email", "email address", "email_address", "work email", "work_email",
+    "email id", "email_id", "emailid", "e-mail", "e-mail address",
+  ],
   firstName: ["first name", "first_name", "firstname", "given name"],
   lastName: ["last name", "last_name", "lastname", "surname", "family name"],
   fullName: ["name", "full name", "full_name", "contact name", "contact_name"],
@@ -42,7 +45,7 @@ const HEADER_ALIASES: Record<string, string[]> = {
   companyDomain: ["company domain", "company_domain", "domain"],
   website: ["website", "company website", "company_website", "url"],
   industry: ["industry", "sector"],
-  phone: ["phone", "phone number", "phone_number", "telephone", "mobile"],
+  phone: ["phone", "phone number", "phone_number", "telephone", "mobile", "contact number", "contact_number"],
   personLinkedinUrl: [
     "linkedin",
     "linkedin url",
@@ -68,6 +71,18 @@ const normalHeader = (value: unknown) =>
     .trim()
     .toLowerCase()
     .replace(/[\s_-]+/g, " ");
+
+export function getOutreachImportHeaderError(inputRows: unknown[]): string | null {
+  if (!inputRows.length) return null;
+  const emailHeaders = new Set(HEADER_ALIASES.email.map(normalHeader));
+  const hasEmailColumn = inputRows.some((row) =>
+    row && typeof row === "object" && !Array.isArray(row)
+      && Object.keys(row).some((key) => emailHeaders.has(normalHeader(key)))
+  );
+  return hasEmailColumn
+    ? null
+    : "No email column was recognised. Rename the email heading to Email, Email Address, Work Email or Email_Id, then stage the file again.";
+}
 
 function aliasedValue(row: Record<string, unknown>, field: keyof typeof HEADER_ALIASES) {
   const normalised = new Map(

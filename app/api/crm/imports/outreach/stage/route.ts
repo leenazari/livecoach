@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  getOutreachImportHeaderError,
   normaliseOutreachImportRows,
   type StagedOutreachImportRow,
 } from "@/lib/outreach-import";
@@ -56,6 +57,10 @@ export async function POST(request: NextRequest) {
         { error: "Stage no more than 500 rows in one batch" },
         { status: 400 }
       );
+    }
+    const headerError = getOutreachImportHeaderError(body.rows);
+    if (headerError) {
+      return NextResponse.json({ error: headerError }, { status: 400 });
     }
     const sourceName = String(body.sourceName || "Pasted lead list")
       .replace(/[\u0000-\u001f]/g, " ")
