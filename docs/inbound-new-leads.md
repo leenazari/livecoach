@@ -7,7 +7,7 @@ The sample view is browser-local fictional data for design review. Status and ha
 ## Install and review
 
 1. Run `pnpm install --frozen-lockfile` and `pnpm validate:inbound-leads`, `pnpm exec tsc --noEmit`, plus the existing marketing/personal MCP checks.
-2. Apply `supabase/migrations/20261015191202_inbound_new_leads_api.sql` to the intended LiveCoach database. It is additive and seeds no access or configuration. Apply it before releasing the application, because the existing sales handover UI now selects the added phone/context columns.
+2. Apply `supabase/migrations/20261015191202_inbound_new_leads_api.sql` to the intended LiveCoach database. It is additive and seeds no access or configuration. The UI can be released first for design review. The existing marketing view falls back to legacy columns until the additive schema is installed. Obtain approval for production database installation before enabling intake.
 3. Deploy through the repository PR workflow. The owner opens New leads and tries Sample view. Check desktop, mobile, details, filters, dropdowns and handover. Do not enable intake during design review.
 4. Later, in `/settings/inbound-leads`, choose the verified marketing account and approved sales recipients, then enable access. Lee owns LiveCoach changes with ChatGPT; Jay coordinates external services; Nicara owns campaign setup/content.
 5. Create one expiring credential per service with only its required scopes, sources and event types. Keys are shown once; only SHA-256 hashes are stored. Revoke or rotate from Setup. No cron or Supabase service secret belongs in an automation tool.

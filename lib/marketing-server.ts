@@ -20,3 +20,14 @@ export async function marketingDirectory(workspaceId: string) {
   if (profileError) throw profileError;
   return sales.map(row => ({ userId: row.user_id as string, name: String(profiles?.find(p => p.user_id === row.user_id)?.display_name || 'Team member') }));
 }
+
+// Permit the design-only dashboard release before the additive inbound schema is installed.
+// Existing marketing must continue to work against the old production schema.
+export async function loadMarketingLeads(workspaceId: string) {
+  const base = 'id,campaign_id,company_name,contact_name,contact_email,company_size,notes,assigned_to_user_id,created_at';
+  const expanded = base + ',contact_phone,inbound_context';
+  const load = (fields: string) => supabaseAdmin.from('marketing_leads').select(fields, { count: 'exact' }).eq('workspace_id', workspaceId).order('created_at', { ascending: false }).limit(1001);
+  const result = await load(expanded);
+  if (result.error && ['42703', 'PGRST204'].includes(result.error.code) && /contact_phone|inbound_context/.test(result.error.message)) return load(base);
+  return result;
+}
