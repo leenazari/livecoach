@@ -683,47 +683,43 @@ export async function POST(req: NextRequest) {
     // response or suppression changes enrolment status, so those people can
     // never re-enter this selection.
     if (remaining > 0) {
-      const { data: assignedRows, error: assignedError } = await supabaseAdmin
-        .from("outreach_prospects")
-        .select("id")
+      // Filter assignment in the database. Serialising every assigned UUID
+      // into an IN filter exceeds the gateway URL limit for large worklists.
+      const { data: due, error: dueError } = await supabaseAdmin
+        .from("outreach_enrolments")
+        .select("id,outreach_prospects!inner(id)")
         .eq("workspace_id", account.workspaceId)
-        .eq("assigned_to_user_id", account.userId);
-      if (assignedError) throw assignedError;
-      const assignedProspectIds = (assignedRows || []).map((row: any) => row.id);
-      if (assignedProspectIds.length) {
-        const { data: due, error: dueError } = await supabaseAdmin
+        .eq("outreach_prospects.workspace_id", account.workspaceId)
+        .eq("outreach_prospects.assigned_to_user_id", account.userId)
+        .eq("campaign_id", campaign.id)
+        .eq("status", "contacted")
+        .lte("next_action_at", new Date().toISOString())
+        .order("next_action_at")
+        .limit(remaining);
+      if (dueError) throw dueError;
+      let queuedFollowUps = 0;
+      for (const row of due || []) {
+        const { error } = await supabaseAdmin
           .from("outreach_enrolments")
-          .select("*")
+          .update({
+            queued_for: today,
+            status: "queued",
+            updated_at: new Date().toISOString(),
+          })
           .eq("workspace_id", account.workspaceId)
-          .eq("campaign_id", campaign.id)
           .eq("status", "contacted")
-          .lte("next_action_at", new Date().toISOString())
-          .in("prospect_id", assignedProspectIds)
-          .order("next_action_at")
-          .limit(remaining);
-        if (dueError) throw dueError;
-        let queuedFollowUps = 0;
-        for (const row of due || []) {
-          const { error } = await supabaseAdmin
-            .from("outreach_enrolments")
-            .update({
-              queued_for: today,
-              status: "queued",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", row.id);
-          if (error) {
-            if (outreachSafetyError(error)) {
-              selection.held += 1;
-              continue;
-            }
-            throw error;
+          .eq("id", row.id);
+        if (error) {
+          if (outreachSafetyError(error)) {
+            selection.held += 1;
+            continue;
           }
-          queuedFollowUps += 1;
+          throw error;
         }
-        selection.contactToday += queuedFollowUps;
-        selection.followUps += queuedFollowUps;
+        queuedFollowUps += 1;
       }
+      selection.contactToday += queuedFollowUps;
+      selection.followUps += queuedFollowUps;
     }
     const queue = await loadQueue(account.userId, account.workspaceId);
     return NextResponse.json({
