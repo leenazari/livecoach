@@ -336,19 +336,35 @@ export async function loadSendPilotLeadLinksForOwner(
   scope: OwnerScope,
   prospectIds?: string[]
 ): Promise<SendPilotLeadLink[]> {
+  const ids = prospectIds ? [...new Set(prospectIds)] : null;
+  if (ids?.length === 0) return [];
   const integration = await loadSendPilotIntegrationForOwner(scope);
   if (!integration) return [];
-  let query = supabaseService
-    .from("sendpilot_lead_links")
-    .select(LEAD_LINK_SELECT)
-    .eq("integration_id", integration.id)
-    .eq("workspace_id", scope.workspaceId)
-    .eq("owner_id", scope.userId)
-    .order("updated_at", { ascending: false });
-  if (prospectIds?.length) query = query.in("outreach_prospect_id", prospectIds);
-  const { data, error } = await query.limit(2_000);
-  if (error) throw error;
-  return (data || []) as SendPilotLeadLink[];
+  // The prospects tracker can supply hundreds of assigned UUIDs. Keep each
+  // request below the database gateway URL limit without dropping any IDs.
+  const batchSize = 100;
+  const batches = ids
+    ? Array.from({ length: Math.ceil(ids.length / batchSize) }, (_, index) =>
+        ids.slice(index * batchSize, (index + 1) * batchSize)
+      )
+    : [null];
+  const links: SendPilotLeadLink[] = [];
+  for (const batch of batches) {
+    let query = supabaseService
+      .from("sendpilot_lead_links")
+      .select(LEAD_LINK_SELECT)
+      .eq("integration_id", integration.id)
+      .eq("workspace_id", scope.workspaceId)
+      .eq("owner_id", scope.userId)
+      .order("updated_at", { ascending: false });
+    if (batch) query = query.in("outreach_prospect_id", batch);
+    const { data, error } = await query.limit(2_000);
+    if (error) throw error;
+    links.push(...((data || []) as SendPilotLeadLink[]));
+  }
+  return links
+    .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
+    .slice(0, 2_000);
 }
 
 export async function loadSendPilotOutreachContext(
