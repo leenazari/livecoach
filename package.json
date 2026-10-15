@@ -137,7 +137,8 @@
     "validate:complete-client-entry": "node scripts/validate-complete-client-entry.mjs",
     "validate:marketing": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-marketing-workspace.mjs",
     "validate:personal-mcp": "node scripts/validate-personal-mcp.mjs",
-    "validate:brain-mcp": "node scripts/validate-brain-mcp.mjs"
+    "validate:brain-mcp": "node scripts/validate-brain-mcp.mjs",
+    "validate:inbound-leads": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-inbound-new-leads.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

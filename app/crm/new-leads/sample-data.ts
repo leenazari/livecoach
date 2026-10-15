@@ -1,0 +1,13 @@
+import type { InboundLead, InboundMember } from '@/lib/inbound-leads';
+export const sampleSales: InboundMember[] = [{ userId: '10000000-0000-4000-8000-000000000001', name: 'Cam' }, { userId: '10000000-0000-4000-8000-000000000002', name: 'Sharon' }];
+export function sampleLeads(): InboundLead[] {
+  const examples = [
+    ['Northfield Care Group', 'Alex Morgan', 'Social care', 'Screen 60 care applicants each month', 'AI screening', 'demo', 'ready', 'facebook'],
+    ['Bridgeway Recruitment', 'Sam Patel', 'Recruitment', 'Reduce first-round screening time', 'AI screening', 'demo', 'in_review', 'facebook'],
+    ['Westwood Training', 'Jordan Ellis', 'Training', 'Practise customer support conversations', 'Scored role play', 'self_service', 'new', 'google'],
+    ['Oakridge College', 'Taylor Reed', 'Education', 'Interview practice for 200 students', 'Interview practice', 'demo', 'new', 'facebook'],
+    ['Cedar Property Partners', 'Casey Green', 'Property', 'Answer website enquiries outside office hours', 'Website avatar', 'self_service', 'in_review', 'facebook'],
+    ['Harbour Talent', 'Jamie Clarke', 'Recruitment', 'Test candidate screening for a new client', 'AI screening', 'demo', 'assigned', 'google'],
+  ];
+  return examples.map((v, i) => ({ id: `20000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`, company_name: v[0], contact_name: v[1], contact_email: `contact${i + 1}@example.com`, contact_phone: `+44770090010${i}`, business_type: v[2], company_size: i % 2 ? '11–50' : '51–200', need: v[3], source: v[7], source_lead_id: `sample-${i + 1}`, source_details: { campaignId: 'sample-campaign', formId: 'sample-form' }, consent: { whatsapp: { granted: true, capturedAt: '2026-10-15T09:00:00Z', wording: 'Sample permission only', version: 'sample' }, aiCall: { granted: i % 2 === 0, capturedAt: '2026-10-15T09:00:00Z', wording: 'Sample permission only', version: 'sample' } }, qualification: { recommendedProduct: v[4], preferredRoute: v[5] as 'demo' | 'self_service', timeline: i % 2 ? 'This quarter' : 'This month', monthlyVolume: i === 0 ? '60 applicants' : null, callSummary: i % 2 ? null : 'Sample qualification summary for design review. No real call has taken place.' }, status: v[6] as InboundLead['status'], version: 1, review_note: i === 0 ? 'Clear need and monthly volume. Ready to book a product demonstration.' : '', duplicate_of: null, assigned_to_user_id: i === 5 ? sampleSales[1].userId : null, marketing_lead_id: null, created_at: new Date(Date.now() - (i + 1) * 3600000).toISOString(), updated_at: new Date(Date.now() - i * 1800000).toISOString(), human_takeover: false, contact_stopped: false }));
+}

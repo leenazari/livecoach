@@ -12,7 +12,7 @@ export async function GET() {
     const scope = await marketingScope();
     const [campaigns, leads, feedback, tasks, connections, members] = await Promise.all([
       supabaseAdmin.from('marketing_campaigns').select('id,name,audience,offer,channel,status,spend_gbp,success_measure,review_on', { count: 'exact' }).eq('workspace_id', scope.workspaceId).order('created_at', { ascending: false }).limit(1001),
-      supabaseAdmin.from('marketing_leads').select('id,campaign_id,company_name,contact_name,contact_email,company_size,notes,assigned_to_user_id,created_at', { count: 'exact' }).eq('workspace_id', scope.workspaceId).order('created_at', { ascending: false }).limit(1001),
+      supabaseAdmin.from('marketing_leads').select('id,campaign_id,company_name,contact_name,contact_email,contact_phone,inbound_context,company_size,notes,assigned_to_user_id,created_at', { count: 'exact' }).eq('workspace_id', scope.workspaceId).order('created_at', { ascending: false }).limit(1001),
       supabaseAdmin.from('marketing_lead_feedback').select('lead_id,user_id,stage,reason', { count: 'exact' }).eq('workspace_id', scope.workspaceId).limit(1001),
       supabaseAdmin.from('tasks').select('id,text,status,due_at,payload').eq('workspace_id', scope.workspaceId).eq('owner_id', scope.userId).eq('source', 'marketing').eq('status', 'open').order('due_at', { ascending: true }).limit(100),
       scope.canManage ? supabaseAdmin.from('marketing_connections').select('provider,property_id,snapshot,synced_at').eq('workspace_id', scope.workspaceId).eq('owner_id', scope.userId) : Promise.resolve({ data: [], error: null }),
