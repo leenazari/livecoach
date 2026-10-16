@@ -447,7 +447,7 @@ export default function NotificationsPage() {
               ["replyAlerts", "New replies", "Alert when a prospect replies"],
               ["assignmentAlerts", "Lead assignments", "Alert when work is assigned to you"],
               ["chatAlerts", "Team messages", "Show popups when a teammate messages you"],
-              ["chatEmailEnabled", "Chat email alerts", "Email a secure link without copying the message body"],
+              ["chatEmailEnabled", "Chat email alerts", "Email the full message with a link to open the chat and reply"],
               ["inAppEnabled", "In-app popups", "Show a small LiveCoach alert"],
               ["desktopEnabled", "Desktop popups", "Use browser notifications when allowed"],
             ].map(([key, label, help]) => {

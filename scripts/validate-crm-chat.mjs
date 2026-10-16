@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import "./validate-chat-email-message.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFileSync(path.join(root, file), "utf8");
@@ -133,12 +134,7 @@ assert.match(driveRoute, /Cache-Control.*private, no-store/);
 assert.match(helpers, /is_confidential/);
 assert.match(helpers, /Confidential clients cannot be shared into chat/);
 assert.match(helpers, /Contacts at confidential clients cannot be shared into chat/);
-assert.match(helpers, /The message and any shared CRM details stay inside LiveCoach/);
-assert.doesNotMatch(
-  helpers,
-  /text: `\$\{[^}]*body|html: `[^`]*\$\{[^}]*body/,
-  "Email alerts must not copy chat message bodies"
-);
+assert.match(helpers, /Open chat and reply/);
 assert.match(helpers, /crm_chat_email_deliveries/);
 assert.match(helpers, /deliveryError\?\.code === "23505"/);
 

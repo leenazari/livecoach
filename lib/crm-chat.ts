@@ -244,8 +244,9 @@ export async function sendChatEmailNotifications(input: {
     .neq("user_id", scope.userId);
   if (membersResult.error) throw membersResult.error;
   const recipientIds = (membersResult.data || []).map((row: any) => row.user_id);
+  if (!recipientIds.length) return;
   const profileIds = [...new Set([scope.userId, ...recipientIds])];
-  const [profilesResult, conversationResult, preferencesResult] =
+  const [profilesResult, conversationResult, preferencesResult, messageResult] =
     await Promise.all([
       supabaseService
         .from("profiles")
@@ -262,15 +263,30 @@ export async function sendChatEmailNotifications(input: {
         .select("user_id,chat_email_enabled")
         .eq("workspace_id", scope.workspaceId)
         .in("user_id", recipientIds),
+      supabaseService
+        .from("crm_chat_messages")
+        .select("body")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("conversation_id", conversationId)
+        .eq("id", messageId)
+        .eq("sender_user_id", scope.userId)
+        .single(),
     ]);
   for (const result of [
     profilesResult,
     conversationResult,
     preferencesResult,
+    messageResult,
   ]) {
     if (result.error) throw result.error;
   }
   if (!conversationResult.data) throw new Error("Conversation not found");
+  if (!messageResult.data) throw new Error("Message not found");
+  const messageBody = String(messageResult.data.body || "");
+  const emailMessage = messageBody.trim()
+    ? messageBody
+    : "Shared a file or CRM record. Open LiveCoach to view it.";
+  const safeMessage = htmlEscape(emailMessage).replace(/\r\n|\r|\n/g, "<br />");
 
   const memberIds = new Set(recipientIds);
   const profiles = (profilesResult.data || []).filter((row: any) =>
@@ -327,8 +343,8 @@ export async function sendChatEmailNotifications(input: {
         {
           to: email,
           subject: `New LiveCoach message from ${senderName}`,
-          text: `${senderName} sent you a message in ${conversationName}. Open LiveCoach to read it securely. ${chatUrl}`,
-          html: `<div style="font-family:Arial,sans-serif;color:#171717;line-height:1.6"><p>Hi ${safeName},</p><p><strong>${safeSender}</strong> sent you a message in ${safeConversation}.</p><p>The message and any shared CRM details stay inside LiveCoach.</p><p><a href="${safeUrl}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#b7791f;color:#fff;text-decoration:none;font-weight:700">Open secure chat</a></p></div>`,
+          text: `${senderName} sent you a message in ${conversationName}.\n\n${emailMessage}\n\nOpen LiveCoach to reply and view any shared files or CRM records:\n${chatUrl}`,
+          html: `<div style="font-family:Arial,sans-serif;color:#171717;line-height:1.6"><p>Hi ${safeName},</p><p><strong>${safeSender}</strong> sent you a message in ${safeConversation}.</p><div style="padding:16px;border-left:3px solid #b7791f;background:#faf7f0;overflow-wrap:anywhere">${safeMessage}</div><p>Open LiveCoach to reply and view any shared files or CRM records.</p><p><a href="${safeUrl}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#b7791f;color:#fff;text-decoration:none;font-weight:700">Open chat and reply</a></p></div>`,
         },
         scope.userId
       );
