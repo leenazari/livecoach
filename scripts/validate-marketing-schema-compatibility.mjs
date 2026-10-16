@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import vm from 'node:vm';
+const require=createRequire(import.meta.url),ts=require('typescript');
+const source=ts.transpileModule(readFileSync('lib/marketing-server.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+const selections=[];let errorCode='42703',message='column marketing_leads.contact_phone does not exist';
+const client={from(table){assert.equal(table,'marketing_leads');let selection;return {select(fields){selection=fields;selections.push(fields);return this;},eq(key,value){assert.equal(key,'workspace_id');assert.equal(value,'verified-workspace');return this;},order(){return this;},limit(){return Promise.resolve(selection.includes('contact_phone')?{data:null,error:errorCode?{code:errorCode,message}:null,count:0}:{data:[{id:'legacy-lead'}],error:null,count:1});}};}};
+const mod={exports:{}};vm.runInThisContext(`(function(require,module,exports){${source}\n})`)(name=>name==='server-only'?{}:name==='@/lib/supabase'?{supabaseAdmin:client,supabaseService:client}:name==='@/lib/request-scope'?{}:require(name),mod,mod.exports);
+let r=await mod.exports.loadMarketingLeads('verified-workspace');assert.equal(r.data[0].id,'legacy-lead');assert.equal(selections.length,2);
+selections.length=0;errorCode='42501';message='permission denied';r=await mod.exports.loadMarketingLeads('verified-workspace');assert.equal(r.error.code,'42501');assert.equal(selections.length,1,'Never hide permission or unrelated database errors');
+selections.length=0;errorCode='';r=await mod.exports.loadMarketingLeads('verified-workspace');assert.equal(r.error,null);assert.equal(selections.length,1);
+console.log('Marketing schema compatibility passed: legacy columns work before migration, expanded columns work afterwards, permission failures remain errors.');

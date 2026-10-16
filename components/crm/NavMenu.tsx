@@ -40,6 +40,7 @@ const BRAIN_CONTROL_ITEM: Item = {
 };
 const PIPELINE_ITEM: Item = { href: "/crm/revenue", label: "Pipeline", icon: "◆" };
 const TASKS_ITEM: Item = { href: "/crm/tasks", label: "Tasks", icon: "☑" };
+const NEW_LEADS_ITEM: Item = { href: '/crm/new-leads', label: 'New leads', icon: '◧' };
 const MARKETING_ITEM: Item = { href: '/crm/marketing', label: 'Marketing', icon: '◈' };
 const CLIENTS_ITEM: Item = { href: "/crm/board?tab=clients", label: "Clients", icon: "◴", tab: "clients" };
 const CALLS_ITEM: Item = { href: "/crm/calls", label: "Calls", icon: "☎" };
@@ -101,6 +102,14 @@ function NavMenuInner({
     return cached?.role || null;
   });
   const [callsFirst, setCallsFirst] = useState(false);
+  const [inboundNavigation, setInboundNavigation] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void crmFetch<{ canReview: boolean }>('/api/crm/inbound-leads/access')
+      .then(access => { if (active) setInboundNavigation(access.canReview); })
+      .catch(() => { if (active) setInboundNavigation(false); });
+    return () => { active = false; };
+  }, []);
   const [department, setDepartment] = useState(() => getCached<TeamStatus>(TEAM_STATUS_URL)?.department || 'sales');
 
   useEffect(() => {
@@ -126,7 +135,7 @@ function NavMenuInner({
     : salesHome
     ? { href: "/crm/inbox", label: "Today", icon: "▣" }
     : { href: "/crm", label: "Today", icon: "▣" };
-  const defaultCoreItems: Item[] = marketingHome
+  const baseCoreItems: Item[] = marketingHome
     ? [homeItem, TASKS_ITEM, CHAT_ITEM, NOTIFICATIONS_ITEM]
     : salesHome
     ? [homeItem, TASKS_ITEM, CHAT_ITEM, MARKETING_ITEM, ...SALES_CORE_ITEMS, NOTIFICATIONS_ITEM]
@@ -141,6 +150,9 @@ function NavMenuInner({
         BRAIN_CONTROL_ITEM,
         ...OWNER_CORE_ITEMS,
       ];
+  const defaultCoreItems = inboundNavigation
+    ? [baseCoreItems[0], NEW_LEADS_ITEM, ...baseCoreItems.slice(1)]
+    : baseCoreItems;
   const coreItems = callsFirst
     ? [homeItem, CALLS_ITEM, ...defaultCoreItems.filter(item => item.href !== homeItem.href && item.href !== CALLS_ITEM.href)]
     : defaultCoreItems;
