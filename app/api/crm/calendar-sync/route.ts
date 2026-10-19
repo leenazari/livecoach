@@ -31,6 +31,7 @@ import { claimCalendarSync, finishCalendarSync, kickCalendarSync, requestCalenda
 import { ensureCalendarWatches } from "@/lib/calendar-watches";
 import { isVerifiedServiceRequest } from "@/lib/request-scope";
 import { supabaseService } from "@/lib/supabase";
+import { cachedIntentForCalendarAttendee, inheritVerifiedCalendarCompany } from "@/lib/calendar-call-identity";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -41,7 +42,7 @@ type CalendarSyncMode = "full" | "near-term";
 // into upcoming_calls. Adds new events, applies reschedules (time/title/link),
 // skips cancelled and self-declined events, and preserves curated client links,
 // intent and prep on existing rows. The narrow exception is an internal/test
-// placeholder contradicted by one clear external work domain. Supports Google
+// placeholder contradicted by one clear guest organisation. Supports Google
 // and Microsoft accounts.
 async function runCalendarSync(mode: CalendarSyncMode = "full") {
   try {
@@ -192,10 +193,11 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
     const existingCompany = new Map<string, string | null>();
     const existingId = new Map<string, string>();
     const existingCompleted = new Map<string, string>();
+    const manuallyPrepared = new Set<string>();
     if (ids.length) {
       const { data, error } = await supabaseAdmin
         .from("upcoming_calls")
-        .select("id, external_id, company_id, completed_at")
+        .select("id, external_id, company_id, completed_at, intent_meta:prep->intentMeta")
         .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId)
         .in("external_id", ids);
@@ -205,15 +207,15 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
         existing.add(d.external_id);
         existingId.set(d.external_id, d.id);
         existingCompany.set(d.external_id, d.company_id || null);
+        if ((d as any).intent_meta?.source === "manual") manuallyPrepared.add(d.external_id);
         if (d.completed_at)
           existingCompleted.set(d.external_id, d.completed_at);
       }
     }
 
-    // Imply the client from the GUEST LIST. The invitees are who the call is
-    // actually with; an all-internal guest list is a board/strategy call, an
-    // outside guest matched to a client links there. Names only mentioned in the
-    // note are the topic, not the participant.
+    // Imply the client from the GUEST LIST. Direct partner/internal meetings
+    // still need their actual organisation, not a default internal company.
+    // Protected colleagues cannot replace the lead when an outside guest joins.
     const attendeeConfig = await loadAttendeeConfig();
     // One lookup for the whole calendar snapshot. This keeps the daily repair
     // fast even when there are dozens of existing meetings.
@@ -277,34 +279,23 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
 
     const newRows = rows.filter((r) => !existing.has(r.external_id));
 
-    // Inherit curation for recurring meetings: if a new event can't resolve a
-    // client from its (often empty) guest list, but a PRIOR call with the SAME
-    // title was already curated, carry the client/internal link onto the new
-    // instance. Intents are deliberately NOT inherited: each occurrence needs
-    // the latest next-call intent derived from relationship history. This stops
-    // daily recurring meetings (standups, design reviews) landing bare each day.
+    // Titles alone (especially "Catch up") cannot identify a recurring client.
+    // Keep scoped history for an exact guest-list comparison, never copy an
+    // unrelated client's link just because the meeting title is the same.
     const inheritTitles = Array.from(
       new Set(newRows.map((r) => r.title).filter(Boolean))
     );
-    const curationByTitle = new Map<
-      string,
-      { company_id: string | null }
-    >();
+    let priorCuratedCalls: { title: string; company_id: string | null; attendees: any[] | null }[] = [];
     if (inheritTitles.length) {
       const { data: priors, error: priorsError } = await supabaseAdmin
         .from("upcoming_calls")
-        .select("title, company_id, created_at")
+        .select("title, company_id, attendees, created_at")
         .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId)
         .in("title", inheritTitles)
         .order("created_at", { ascending: false });
       if (priorsError) throw priorsError;
-      for (const p of priors || []) {
-        const t = (p as any).title as string;
-        if (!t || curationByTitle.has(t)) continue; // most recent wins
-        const cid = ((p as any).company_id as string) || null;
-        if (cid) curationByTitle.set(t, { company_id: cid });
-      }
+      priorCuratedCalls = priors || [];
     }
 
     // Pass 1: resolve from the guest list, then inherited curation.
@@ -332,11 +323,15 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
       if (outreachContext) intent = firstOutreachCallIntent(outreachContext);
       // Only fall back to inherited curation when the guest list gave us
       // nothing - a freshly matched client must never be overwritten.
-      if (!company_id) {
-        const inh = curationByTitle.get(r.title);
-        if (inh) {
-          company_id = inh.company_id;
-        }
+      const conflictingGuest = r.attendees.some((attendee) => {
+        const email = String(attendee.email || "").trim().toLowerCase();
+        return !attendee.self && (attendeeConfig.ambiguousEmails?.has(email) ||
+          attendeeConfig.ambiguousDomains?.has(email.split("@")[1] || ""));
+      });
+      if (!company_id && !outreachProspect && !conflictingGuest) {
+        company_id = inheritVerifiedCalendarCompany(
+          r, priorCuratedCalls, new Set(attendeeConfig.companyById?.keys() || [])
+        );
       }
       resolved.push({ r, company_id, intent, outreachProspectId: outreachProspect?.id || null });
     }
@@ -351,16 +346,16 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
     const companyIds = Array.from(
       new Set(resolved.map((x) => x.company_id).filter(Boolean) as string[])
     );
-    const nextIntentByCompany = new Map<string, string>();
+    const nextIntentByCompany = new Map<string, { intent: string; basedOnLeadEmail?: string }>();
     if (companyIds.length) {
       const { data: companies } = await supabaseAdmin
         .from("companies")
         .select("id, profile")
         .in("id", companyIds);
       for (const company of companies || []) {
-        const next = (company as any)?.profile?.next_call?.intent;
-        if (typeof next === "string" && next.trim())
-          nextIntentByCompany.set((company as any).id, next.trim());
+        const next = (company as any)?.profile?.next_call;
+        if (typeof next?.intent === "string" && next.intent.trim())
+          nextIntentByCompany.set((company as any).id, next);
       }
     }
 
@@ -398,7 +393,9 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
         attendees: x.r.attendees,
         company_id: x.company_id,
         intent:
-          (x.company_id && nextIntentByCompany.get(x.company_id)) || x.intent,
+          (x.company_id && cachedIntentForCalendarAttendee(
+            x.r, x.company_id, attendeeConfig, nextIntentByCompany.get(x.company_id)
+          )) || x.intent,
         source,
         prepped: false,
       });
@@ -428,11 +425,11 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
         : null;
       if (
         currentCompanyId &&
-        !shouldRepairStaleCalendarCompanyLink(
+        (manuallyPrepared.has(r.external_id) || !shouldRepairStaleCalendarCompanyLink(
           currentCompany,
           r.attendees,
           attendeeConfig
-        )
+        ))
       )
         continue;
       const companyId = await resolveCompanyForEvent(r.attendees, r.title);

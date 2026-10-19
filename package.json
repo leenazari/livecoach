@@ -109,6 +109,7 @@
     "validate:sales-campaign-editing": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sales-campaign-editing.mjs",
     "validate:native-outreach-sequence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-native-outreach-sequence.mjs",
     "validate:calendar-primary-attendee": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-calendar-primary-attendee.mjs",
+    "validate:calendar-call-identity": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-calendar-call-identity.mjs",
     "validate:calendar-event-create": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-crm-calendar-event-create.mjs",
     "validate:google-calendar-list": "node scripts/validate-google-calendar-list-sync.mjs",
     "validate:google-oauth": "node scripts/validate-google-oauth-callback.mjs",
