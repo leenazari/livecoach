@@ -33,7 +33,7 @@ export async function POST(
     const message = error?.message || "Could not apply this import";
     return NextResponse.json(
       { error: message },
-      { status: /import access|workspace access|owner access/i.test(message) ? 403 : /not found|expired|no longer/i.test(message) ? 409 : 500 }
+      { status: /import access|workspace access|owner access|workspace membership/i.test(message) ? 403 : /not found|expired|no longer/i.test(message) ? 409 : 500 }
     );
   }
 }

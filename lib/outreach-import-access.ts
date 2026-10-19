@@ -18,7 +18,7 @@ export async function canStageOutreachImports(
 export async function requireOutreachImportAccess(): Promise<RequestScope> {
   const scope = requireRequestScope();
   if (!(await canStageOutreachImports(scope))) {
-    throw new Error("Lead import access is required. Ask the workspace owner to enable it for your account");
+    throw new Error("Active workspace membership is required to import your own leads");
   }
   return scope;
 }

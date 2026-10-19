@@ -91,15 +91,18 @@ export async function loadSafeSharedCompanies(
   workspaceId: string
 ): Promise<SafeSharedCompany[]> {
   const ids = uniqueIds(companyIds);
-  if (!ids.length) return [];
-  const { data, error } = await supabaseService
-    .from("companies")
-    .select(SAFE_SHARED_COMPANY_SELECT)
-    .eq("workspace_id", workspaceId)
-    .eq("is_confidential", false)
-    .in("id", ids);
-  if (error) throw error;
-  return (data || []).map(safeSharedCompany);
+  const companies: SafeSharedCompany[] = [];
+  for (let index = 0; index < ids.length; index += 100) {
+    const { data, error } = await supabaseService
+      .from("companies")
+      .select(SAFE_SHARED_COMPANY_SELECT)
+      .eq("workspace_id", workspaceId)
+      .eq("is_confidential", false)
+      .in("id", ids.slice(index, index + 100));
+    if (error) throw error;
+    companies.push(...(data || []).map(safeSharedCompany));
+  }
+  return companies;
 }
 
 export async function loadSafeSharedCompany(

@@ -12,6 +12,7 @@ import { crmBlockerPayload } from "@/lib/crm-blocker";
 import { privateRecordFields } from "@/lib/record-scope";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 import { canStageOutreachImports } from "@/lib/outreach-import-access";
+import { loadProspectMemberships } from "@/lib/outreach-prospect-memberships";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -370,33 +371,14 @@ export async function GET(req: NextRequest) {
       const unassignedIds = (data || [])
         .filter((row: any) => !row.assigned_to_user_id)
         .map((row: any) => row.id);
-      const enrolmentFields =
-        "campaign_id,prospect_id,recipient_email,status,current_step,last_sent_at,next_action_at,updated_at";
-      const [assignedMembershipResult, sharedMembershipResult] =
-        await Promise.all([
-          assignedIds.length
-            ? supabaseAdmin
-                .from("outreach_enrolments")
-                .select(enrolmentFields)
-                .eq("workspace_id", account.workspaceId)
-                .in("prospect_id", assignedIds)
-            : Promise.resolve({ data: [] as any[], error: null }),
-          unassignedIds.length
-            ? supabaseAdmin
-                .from("outreach_enrolments")
-                .select(enrolmentFields)
-                .eq("workspace_id", account.workspaceId)
-                .eq("status", "paused")
-                .is("last_sent_at", null)
-                .in("prospect_id", unassignedIds)
-            : Promise.resolve({ data: [] as any[], error: null }),
-        ]);
-      if (assignedMembershipResult.error) throw assignedMembershipResult.error;
-      if (sharedMembershipResult.error) throw sharedMembershipResult.error;
+      const [assignedMemberships, sharedMemberships] = await Promise.all([
+        loadProspectMemberships(supabaseAdmin, account.workspaceId, assignedIds),
+        loadProspectMemberships(supabaseAdmin, account.workspaceId, unassignedIds, true),
+      ]);
       enrolments = [
         ...enrolments,
-        ...(assignedMembershipResult.data || []),
-        ...(sharedMembershipResult.data || []),
+        ...assignedMemberships,
+        ...sharedMemberships,
       ].filter(
         (row: any, index: number, rows: any[]) =>
           rows.findIndex(

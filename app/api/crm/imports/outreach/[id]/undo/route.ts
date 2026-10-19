@@ -33,7 +33,7 @@ export async function POST(
     const message = error?.message || "Could not undo this import";
     return NextResponse.json(
       { error: message },
-      { status: /import access|workspace access|owner access/i.test(message) ? 403 : /not found|only an applied|window/i.test(message) ? 409 : 500 }
+      { status: /import access|workspace access|owner access|workspace membership/i.test(message) ? 403 : /not found|only an applied|window/i.test(message) ? 409 : 500 }
     );
   }
 }

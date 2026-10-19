@@ -24,7 +24,7 @@ export async function GET() {
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (error: any) {
-    const forbidden = /import access|workspace access|owner access/i.test(error?.message || "");
+    const forbidden = /import access|workspace access|owner access|workspace membership/i.test(error?.message || "");
     return NextResponse.json(
       { error: error?.message || "Could not load staged imports" },
       { status: forbidden ? 403 : 500 }

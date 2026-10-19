@@ -58,7 +58,7 @@ assert.ok(stage.indexOf("getOutreachImportHeaderError(body.rows)") < stage.index
 assert.match(stage, /NextResponse\.json\(\{ error: headerError \}, \{ status: 400 \}\)/);
 const ui = readFileSync(new URL("../components/crm/StagedOutreachImports.tsx", import.meta.url), "utf8");
 assert.doesNotMatch(ui, /A header row is required/);
-assert.match(ui, /disabled=\{\!\!busy \|\| \!parsedRows\.length \|\| \!\!headerError\}/);
+assert.match(ui, /disabled=\{\!\!busy \|\| \!access \|\| accessLoading \|\| \!parsedRows\.length \|\| \!\!headerError\}/);
 assert.match(ui, /Choose a CSV file or paste a list with column headings/);
 
 console.log("Outreach import headers passed. Email_Id, Contact_Number, CSV parsing, clear errors and duplicate protection verified.");

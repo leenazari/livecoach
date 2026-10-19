@@ -37,7 +37,7 @@ function databaseClient(db) {
     const method = init.method || "GET";
     requests.push({ url, method, table });
     if (url.href.length > 8_000) return new Response("Bad Request", { status: 400 });
-    if (db.failProspect && params.get("outreach_prospect_id")?.includes(db.failProspect)) {
+    if (db.failProspect && (params.get("outreach_prospect_id") || params.get("prospect_id"))?.includes(db.failProspect)) {
       return Response.json({ message: "A batch failed" }, { status: 500 });
     }
     let rows = (db[table] || []).filter((row) => {
@@ -50,6 +50,7 @@ function databaseClient(db) {
         if (value.startsWith("eq.") && String(actual) !== value.slice(3)) return false;
         if (value.startsWith("in.(") && !value.slice(4, -1).split(",").includes(String(actual))) return false;
         if (value.startsWith("lte.") && (!actual || actual > value.slice(4))) return false;
+        if (value === "is.null" && actual != null) return false;
       }
       const or = params.get("or");
       if (or?.includes("assigned_to_user_id.is.null")) {
@@ -58,9 +59,10 @@ function databaseClient(db) {
       }
       return true;
     });
-    const [sortKey, direction] = (params.get("order") || "").split(".");
+    const [sortKey, direction] = (params.get("order") || "").split(",")[0].split(".");
     if (sortKey) rows.sort((a, b) => String(a[sortKey]).localeCompare(String(b[sortKey])) * (direction === "desc" ? -1 : 1));
-    rows = rows.slice(0, Number(params.get("limit")) || Infinity);
+    const offset = Number(params.get("offset")) || 0;
+    rows = rows.slice(offset, offset + (Number(params.get("limit")) || Infinity));
     if (method === "PATCH") {
       const values = JSON.parse(init.body);
       rows.forEach((row) => Object.assign(row, values));
@@ -167,4 +169,62 @@ assert.equal((await loadLinks(scope)).length, 640, "Omitting the list retains th
 db.failProspect = prospectIds[150];
 await assert.rejects(() => loadLinks(scope, prospectIds), (error) => error.message === "A batch failed");
 
-console.log("Large outreach assignments passed. Queue limits, due ordering, 640 prospects, SendPilot batching, two users, workspace isolation, empty lists and batch failures verified.");
+// The Prospects GET used a separate, previously unbounded ID filter. Exercise
+// the actual route with more than 640 prospects and a transport URL-size cap.
+const membershipModule = compile("lib/outreach-prospect-memberships.ts", {});
+const getDb = queueFixtures();
+getDb.outreach_prospects = getDb.outreach_prospects.map((row) => ({ ...row, research: null }));
+getDb.outreach_enrolments = getDb.outreach_prospects.map((row, i) => ({
+  campaign_id: campaignId, prospect_id: row.id, workspace_id: row.workspace_id,
+  owner_id: bob, status: "paused", last_sent_at: null, updated_at: String(i).padStart(5, "0"),
+}));
+const sharedId = uuid(9_000);
+getDb.outreach_prospects.push({ id: sharedId, workspace_id: workspace, assigned_to_user_id: null, company_name: "Available" });
+getDb.outreach_enrolments.push(
+  { campaign_id: campaignId, prospect_id: sharedId, workspace_id: workspace, owner_id: bob, status: "paused", last_sent_at: null },
+  { campaign_id: uuid(9_001), prospect_id: sharedId, workspace_id: workspace, owner_id: bob, status: "contacted", last_sent_at: today },
+);
+const getDatabase = databaseClient(getDb);
+const getRoute = compile("app/api/crm/outreach/route.ts", {
+  "next/server": { NextResponse: { json: (data, options) => Response.json(data, options) } },
+  "@/lib/supabase": { supabaseAdmin: getDatabase.client, supabaseService: getDatabase.client },
+  "@/lib/request-scope": { requireRequestScope: () => ({ userId: alice, workspaceId: workspace, role: "sales", status: "active" }) },
+  "@/lib/outreach-campaign-selection": { resolveOutreachCampaignSelection: async () => ({ campaigns: [{ id: campaignId }], campaign: { id: campaignId } }) },
+  "@/lib/sendpilot-outreach": { loadSendPilotOutreachContext: async () => ({ links: [] }) },
+  "@/lib/outreach": { outreachCrmGuard: async () => ({}) },
+  "@/lib/outreach-limits": { clampOutreachDailyLimit: () => 50 },
+  "@/lib/outreach-scoring": { scoreOutreachProspect: () => ({ action: "hold", score: 0 }) },
+  "@/lib/outreach-team-safety": { isActiveOutreachEnrolmentStatus: () => false },
+  "@/lib/outreach-import-access": { canStageOutreachImports: async () => true },
+  "@/lib/outreach-prospect-memberships": membershipModule,
+});
+const getResponse = await getRoute.GET({ nextUrl: new URL("https://crm.invalid/api/crm/outreach") });
+const getPayload = await getResponse.json();
+assert.equal(getResponse.status, 200, JSON.stringify(getPayload));
+assert.equal(getPayload.prospects.length, 641);
+assert.equal(getPayload.canStageImports, true);
+assert.ok(getPayload.prospects.every((row) => row.outreach.campaignIds.includes(campaignId)));
+assert.deepEqual(getPayload.prospects.find((row) => row.id === sharedId).outreach.campaignIds, [campaignId]);
+assert.ok(getDatabase.requests.every(({ url }) => url.href.length < 8_000));
+
+const memberRows = Array.from({ length: 1205 }, (_, i) => ({ campaign_id: uuid(10_000 + i), prospect_id: prospectIds[0], workspace_id: workspace, updated_at: String(i).padStart(5, "0") }));
+const memberDatabase = databaseClient({ outreach_enrolments: memberRows });
+assert.equal((await membershipModule.loadProspectMemberships(memberDatabase.client, workspace, [prospectIds[0]])).length, 1205, "Do not truncate at the default 1000-row page");
+assert.equal((await membershipModule.loadProspectMemberships(memberDatabase.client, outside, [prospectIds[0]])).length, 0);
+const membershipRequestCount = memberDatabase.requests.length;
+assert.deepEqual(await membershipModule.loadProspectMemberships(memberDatabase.client, workspace, []), []);
+assert.equal(memberDatabase.requests.length, membershipRequestCount);
+getDb.failProspect = prospectIds[150];
+const failedGet = await getRoute.GET({ nextUrl: new URL("https://crm.invalid/api/crm/outreach") });
+assert.equal(failedGet.status, 500, "Never return a successful partial list after a batch fails");
+
+const companyDb = { companies: Array.from({ length: 646 }, (_, i) => ({ id: uuid(20_000 + i), workspace_id: workspace, is_confidential: false, name: `Company ${i}`, notes: "Must remain private", attributes: { secret: true } })) };
+companyDb.companies.push({ ...companyDb.companies[0], id: uuid(30_000), is_confidential: true });
+companyDb.companies.push({ ...companyDb.companies[0], id: uuid(30_001), workspace_id: outside });
+const companyDatabase = databaseClient(companyDb);
+const companyModule = compile("lib/team-client-sharing.ts", { "@/lib/supabase": { supabaseService: companyDatabase.client } });
+const safeCompanies = await companyModule.loadSafeSharedCompanies(companyDb.companies.map((row) => row.id), workspace);
+assert.equal(safeCompanies.length, 646);
+assert.ok(safeCompanies.every((row) => row.notes === null && Object.keys(row.attributes).length === 0));
+assert.ok(companyDatabase.requests.every(({ url }) => url.href.length < 8_000));
+console.log("Large assignments passed. Actual Prospects GET, 640+ leads, campaign history, paging, safe company fields, empty inputs, batch failures, queue and SendPilot isolation verified.");

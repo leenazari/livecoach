@@ -6,6 +6,8 @@
     "node": "22.x"
   },
   "scripts": {
+    "validate:scoped-staff-imports": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-scoped-staff-imports.mjs",
+    "validate:import-access-ui": "node scripts/validate-outreach-import-access-ui.mjs",
     "validate:live-focus-cues": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-live-focus-cues.mjs",
     "validate:removed-member-tasks": "node scripts/validate-removed-member-task-access.mjs",
     "validate:outreach-large-assignment": "node scripts/validate-outreach-large-assignment.mjs",

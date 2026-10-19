@@ -6,6 +6,7 @@ import { crmFetch } from "@/lib/crm";
 import { getOutreachImportHeaderError, parseCsvRows, type StagedOutreachImportRow } from "@/lib/outreach-import";
 
 type TeamMember = { userId: string; name: string };
+type ImportAccess = { currentUser: string; canAssignImports: boolean; team: TeamMember[] };
 type ImportBatch = {
   id: string;
   source_name: string;
@@ -30,16 +31,13 @@ const primary =
   "min-h-11 rounded-lg border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:cursor-not-allowed disabled:opacity-40";
 
 export default function StagedOutreachImports({
-  team,
-  currentUser,
-  canAssignImports,
   onApplied,
 }: {
-  team: TeamMember[];
-  currentUser: string;
-  canAssignImports: boolean;
   onApplied: () => void | Promise<void>;
 }) {
+  const [access, setAccess] = useState<ImportAccess | null>(null);
+  const [accessLoading, setAccessLoading] = useState(true);
+  const [accessError, setAccessError] = useState("");
   const [open, setOpen] = useState(false);
   const [sourceName, setSourceName] = useState("Pasted lead list");
   const [csv, setCsv] = useState("");
@@ -48,6 +46,25 @@ export default function StagedOutreachImports({
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const team = access?.team || [];
+  const currentUser = access?.currentUser || "";
+  const canAssignImports = access?.canAssignImports === true;
+
+  const loadAccess = useCallback(async () => {
+    setAccessLoading(true);
+    setAccessError("");
+    try {
+      const data = await crmFetch<ImportAccess>("/api/crm/imports/outreach/access");
+      if (!data.currentUser) throw new Error("Your upload account could not be confirmed. Please retry.");
+      setAccess(data);
+    } catch (err: any) {
+      setAccess(null);
+      setAccessError(err?.message || "Could not check lead upload access. Please retry.");
+    } finally {
+      setAccessLoading(false);
+    }
+  }, []);
+  useEffect(() => { void loadAccess(); }, [loadAccess]);
 
   const parsedRows = useMemo(() => parseCsvRows(csv), [csv]);
   const headerError = useMemo(() => getOutreachImportHeaderError(parsedRows), [parsedRows]);
@@ -56,8 +73,8 @@ export default function StagedOutreachImports({
     setBatches(data.batches || []);
   }, []);
   useEffect(() => {
-    if (open) void load().catch(() => {});
-  }, [load, open]);
+    if (open && access) void load().catch((err) => setError(err?.message || "Could not load your recent imports"));
+  }, [access, load, open]);
 
   const chooseFile = async (file?: File) => {
     if (!file) return;
@@ -71,6 +88,7 @@ export default function StagedOutreachImports({
   };
 
   const stage = async () => {
+    if (!access || accessLoading) return;
     if (!parsedRows.length) {
       setError("Paste CSV with a header row and at least one lead.");
       return;
@@ -117,7 +135,14 @@ export default function StagedOutreachImports({
       setNotice(
         `${Number(data.result?.inserted || 0)} clean leads were imported. Nothing was contacted or researched.`
       );
-      await Promise.all([load(), Promise.resolve(onApplied())]);
+      setBatches((current) => current.map((item) => item.id === batch.id ? {
+        ...item, status: "applied", applied_result: data.result,
+        applied_at: String(data.result?.appliedAt || new Date().toISOString()),
+      } : item));
+      const refreshed = await Promise.allSettled([load(), Promise.resolve().then(onApplied)]);
+      if (refreshed.some((result) => result.status === "rejected")) {
+        setNotice(`${Number(data.result?.inserted || 0)} clean leads were imported. The prospect list could not refresh yet. Do not re-import the file.`);
+      }
     } catch (err: any) {
       setError(err?.message || "The staged list could not be applied");
     } finally {
@@ -157,10 +182,13 @@ export default function StagedOutreachImports({
             Exact email duplicates, invalid rows and missing companies stay out. Applying never starts research or contact.
           </p>
         </div>
-        <button type="button" onClick={() => setOpen((value) => !value)} className={button}>
+        <button type="button" onClick={() => setOpen((value) => !value)} disabled={accessLoading || !access} className={button}>
           {open ? "Close importer" : "Import CSV"}
         </button>
       </div>
+
+      {accessLoading ? <p className="mt-2 text-xs text-muted" role="status">Checking your lead upload access…</p> : null}
+      {accessError ? <div className="mt-3 flex flex-wrap items-center gap-3" role="alert"><p className="text-sm text-rust">{accessError}</p><button type="button" className={button} onClick={() => void loadAccess()}>Retry upload access</button></div> : null}
 
       {open ? (
         <div className="mt-4 space-y-3 border-t border-edge pt-3">
@@ -193,14 +221,14 @@ export default function StagedOutreachImports({
                   ? "No lead rows could be read. Check the CSV has column headings and at least one data row."
                   : "Choose a CSV file or paste a list with column headings.")}
             </p>
-            <button type="button" onClick={stage} disabled={!!busy || !parsedRows.length || !!headerError} className={primary}>{busy === "stage" ? "Checking…" : "Stage and check"}</button>
+            <button type="button" onClick={stage} disabled={!!busy || !access || accessLoading || !parsedRows.length || !!headerError} className={primary}>{busy === "stage" ? "Checking…" : "Stage and check"}</button>
           </div>
 
           {notice ? <p className="rounded-lg border border-moss/40 bg-moss/10 px-3 py-2 text-sm text-moss">{notice}</p> : null}
           {error ? <p className="rounded-lg border border-rust/45 bg-rust/10 px-3 py-2 text-sm text-rust">{error}</p> : null}
 
           {batches.map((batch) => {
-            const assignee = team.find((member) => member.userId === batch.assigned_to_user_id)?.name || "Unassigned";
+            const assignee = batch.assigned_to_user_id === currentUser ? "You" : team.find((member) => member.userId === batch.assigned_to_user_id)?.name || (batch.assigned_to_user_id ? "Assigned teammate" : "Unassigned");
             const preview = Array.isArray(batch.rows) ? batch.rows.slice(0, 12) : [];
             const canUndo = batch.status === "applied" && batch.applied_at && Date.now() - new Date(batch.applied_at).getTime() <= 10 * 60 * 1000;
             return (
