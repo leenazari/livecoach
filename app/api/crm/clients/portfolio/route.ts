@@ -7,7 +7,7 @@ import {
 } from "@/lib/relationship-stages";
 import { isPrepEligibleCalendarEvent } from "@/lib/calendar-events";
 import { requireRequestScope } from "@/lib/request-scope";
-import { loadSafeSharedCompanies } from "@/lib/team-client-sharing";
+import { loadSafeSharedCompanies, loadSafeSharedReviewFlags } from "@/lib/team-client-sharing";
 import { loadVisibleOpportunities } from "@/lib/opportunity-access";
 
 export const runtime = "nodejs";
@@ -166,14 +166,8 @@ export async function GET() {
     // review flags for already-authorised rows so reviewed clients do not
     // immediately reappear in the next triage batch.
     const sharedCompanyIds = companies.filter((company) => !ownedIds.has(company.id)).map((company) => company.id);
-    const { data: sharedReviewFlags, error: reviewFlagsError } = sharedCompanyIds.length
-      ? await supabaseService.from("companies")
-          .select("id,classification:profile->triage->>classification,reviewedAt:profile->triage->>reviewedAt,archived:profile->archived")
-          .eq("workspace_id", scope.workspaceId).eq("is_confidential", false)
-          .in("id", sharedCompanyIds)
-      : { data: [], error: null };
-    if (reviewFlagsError) throw reviewFlagsError;
-    const sharedReviewById = new Map((sharedReviewFlags || []).map((row) => [row.id, row]));
+    const sharedReviewFlags = await loadSafeSharedReviewFlags(sharedCompanyIds, scope.workspaceId);
+    const sharedReviewById = new Map(sharedReviewFlags.map((row) => [row.id, row]));
     for (const company of companies) {
       const flags = sharedReviewById.get(company.id);
       if (!flags) continue;
