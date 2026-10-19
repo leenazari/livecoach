@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 import { upsertTasks } from "@/lib/tasks";
+import { requireRequestScope } from "@/lib/request-scope";
+import { loadTeamLeadCoverCompanies } from "@/lib/team-lead-cover";
+import { loadSafeSharedCompanies } from "@/lib/team-client-sharing";
+import { sharedClientBlockReason } from "@/lib/client-sharing-policy";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +47,7 @@ const stageFor = (classification: string, currentStage: string | null) => {
 // Dormant and their open reminders are dismissed, while all history remains.
 export async function POST(req: NextRequest) {
   try {
+    const scope = requireRequestScope();
     const body = await req.json();
     const items = Array.isArray(body.items) ? body.items.slice(0, 5) : [];
     if (!items.length) {
@@ -69,26 +75,73 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    const [{ data: companies, error: companyError }, { data: openDeals, error: dealError }] =
+    const [{ data: ownedCompanies, error: companyError }, coveredCompanies, { data: shares, error: shareError }] =
       await Promise.all([
         supabaseAdmin
           .from("companies")
-          .select("id,name,stage,profile")
+          .select("id,name,stage,profile,owner_id,updated_at")
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
           .in("id", ids),
+        loadTeamLeadCoverCompanies(scope, ids),
         supabaseAdmin
-          .from("opportunities")
-          .select("company_id")
+          .from("team_client_shares")
+          .select("company_id,assigned_to_user_id")
+          .eq("workspace_id", scope.workspaceId)
           .in("company_id", ids)
-          .eq("status", "open")
-          .eq("opportunity_type", "revenue"),
+          .eq("status", "active"),
       ]);
     if (companyError) throw companyError;
-    if (dealError) throw dealError;
-    if ((companies || []).length !== new Set(ids).size) {
+    if (shareError) throw shareError;
+    const editableShareIds = (shares || [])
+      .filter((share) => scope.role !== "sales" || share.assigned_to_user_id === scope.userId)
+      .map((share) => share.company_id);
+    const sharedCompanies = await loadSafeSharedCompanies(editableShareIds, scope.workspaceId);
+    const permittedIds = new Set([...ownedCompanies || [], ...coveredCompanies, ...sharedCompanies].map((company) => company.id));
+    if (ids.some((id) => !permittedIds.has(id))) {
       return NextResponse.json(
-        { error: "One of these clients no longer exists. Refresh and try again." },
-        { status: 409 }
+        crmBlockerPayload({
+          code: "triage_client_unavailable",
+          title: "Client review could not be saved",
+          reason: "A selected client is unavailable or your access has changed",
+          nextAction: "Refresh the client list. If it repeats, ask a workspace owner to check the client sharing",
+          responsible: "owner",
+        }),
+        { status: 404 }
       );
+    }
+
+    // Match the guarded company editor: validate ownership, team cover or an
+    // editable share before using the server client. Private profile contents
+    // stay on the server and are never returned to the salesperson.
+    const [{ data: companies, error: snapshotError }, { data: openDeals, error: dealError }] = await Promise.all([
+      supabaseService.from("companies")
+        .select("id,name,stage,sector,profile,owner_id,is_confidential,updated_at")
+        .eq("workspace_id", scope.workspaceId).in("id", ids),
+      supabaseService.from("opportunities").select("company_id")
+        .eq("workspace_id", scope.workspaceId).in("company_id", ids)
+        .eq("status", "open").eq("opportunity_type", "revenue"),
+    ]);
+    if (snapshotError) throw snapshotError;
+    if (dealError) throw dealError;
+    if (companies?.length !== ids.length) {
+      return NextResponse.json({ error: "The client list changed. Refresh and review again." }, { status: 409 });
+    }
+    // Recheck protected relationships against the current server snapshot.
+    for (const company of companies) {
+      const item = clean.find((choice) => choice.id === company.id)!;
+      if (company.owner_id !== scope.userId && (
+        company.profile?.internal === true || sharedClientBlockReason(company) ||
+        item.classification === "in_house" || item.classification === "product_trial"
+      )) {
+        return NextResponse.json(crmBlockerPayload({
+          code: "triage_private_relationship",
+          title: "Client review needs the record owner",
+          reason: "Private relationship classifications must be reviewed by the record owner",
+          nextAction: "Ask the record owner to review this client",
+          responsible: "owner",
+        }), { status: 403 });
+      }
     }
 
     const dealCompanyIds = new Set((openDeals || []).map((deal: any) => deal.company_id));
@@ -110,7 +163,7 @@ export async function POST(req: NextRequest) {
         company.profile && typeof company.profile === "object" ? company.profile : {};
       const stage = stageFor(item.classification, company.stage || null);
       const archived = item.classification === "irrelevant";
-      const { error } = await supabaseAdmin
+      const update = supabaseService
         .from("companies")
         .update({
           stage,
@@ -126,8 +179,16 @@ export async function POST(req: NextRequest) {
           },
           updated_at: reviewedAt,
         })
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", company.owner_id)
         .eq("id", item.id);
+      const { data: saved, error } = await (company.updated_at
+        ? update.eq("updated_at", company.updated_at)
+        : update.is("updated_at", null)).select("id");
       if (error) throw error;
+      if (saved?.length !== 1) {
+        return NextResponse.json({ error: "A client changed during this review. Refresh before trying again." }, { status: 409 });
+      }
 
       if (archived) {
         // `tasks` deliberately has no updated_at column. Status is the
@@ -136,6 +197,8 @@ export async function POST(req: NextRequest) {
         const { data: dismissedTasks, error: taskError } = await supabaseAdmin
           .from("tasks")
           .update({ status: "dismissed" })
+          .eq("workspace_id", scope.workspaceId)
+          .eq("owner_id", scope.userId)
           .eq("company_id", item.id)
           .eq("status", "open")
           .select("id,status");
