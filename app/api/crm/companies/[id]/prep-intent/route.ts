@@ -55,6 +55,14 @@ export async function POST(
     )
       .toLowerCase()
       .trim();
+    // An unresolved/contradicted scheduled-call identity must not fall back to
+    // a company's unrelated history or cached intent. Ask before generating.
+    if (upcomingId && !validatedLeadEmail) {
+      return NextResponse.json(
+        { error: "Confirm who this meeting is with before building its intent. The invite does not identify a clear person for this client." },
+        { status: 409 }
+      );
+    }
     const scope = await resolveCallScope({
       companyId,
       upcomingId,
@@ -303,12 +311,14 @@ Output ONLY JSON with exactly these keys:
 
 Rules:
 - Ground everything only in the context. Never invent facts, names, numbers, dates or commitments. If the record is thin, write a sensible opening intent and say in the rationale that there is little history yet.
-- The MOST RECENT CALL and its unfinished actions are authoritative. If older profile, email, research or playbook context conflicts with them, follow the most recent call.
+- For a scheduled meeting, the VERIFIED MEETING PERSON and MEETING TITLE define who this call is with. Company history may involve other people or projects. Never assume their agenda or commitments belong to this person, or invite those people into this call. When relevance is uncertain, make it a question to confirm, not an asserted purpose.
+- The MOST RECENT CALL and its unfinished actions take precedence over older context only when they concern this meeting's person or workstream. Do not transfer another person's agenda just because they share a company. If older profile, email, research or playbook context conflicts with relevant recent history, follow that recent history.
 - Never repeat or lightly rephrase an old discovery intent merely because a similarly titled meeting is upcoming.
 - Plain English. No markdown, no headings, no bold. No em-dashes or semicolons, use commas and full stops.
 - Write the intent as the host would say it ("I want to ...", "I need to ..."), not as instructions to them.`;
 
     const userMsg = `CLIENT: ${company.name}
+${upcomingId ? `MEETING TITLE: ${leadResolution?.call?.title || "Not specified"}\nVERIFIED MEETING PERSON: ${leadResolution?.primaryAttendee?.name || validatedLeadEmail} (${validatedLeadEmail})` : ""}
 ${workstream ? `DEPARTMENT: ${workstream.departmentName || "not set"}\nWORKSTREAM: ${workstream.name}\nPURPOSE: ${workstream.purpose || "not set"}` : ""}
 
 OPEN LOOPS FROM RECENT CALLS:
@@ -328,6 +338,12 @@ Return the JSON now.`;
     // Deterministic fallback so a timeout never leaves the user empty-handed:
     // stitch the freshest open loops and to-dos into a usable starting intent.
     const buildFallback = (): { intent: string; rationale: string } => {
+      if (upcomingId && !workstream) {
+        return {
+          intent: `I want to catch up with ${leadResolution?.primaryAttendee?.name || validatedLeadEmail} at ${company.name}, confirm today's priorities and agree next steps.`,
+          rationale: "The intent suggestion timed out. This neutral starting point uses the verified invite identity, not another person's company-wide agenda. Review the purpose before building focus.",
+        };
+      }
       const top = summaries[0]?.summary || {};
       const owe = arr(top.myNextActions).slice(0, 3);
       const chase = arr(top.theirNextActions).slice(0, 2);

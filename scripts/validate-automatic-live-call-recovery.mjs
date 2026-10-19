@@ -230,5 +230,8 @@ assert.match(page, /if \(!requestBot && source === "meet"\) return;\s*persistSes
 assert.match(page, /<MeetStage\s+key=\{room\}/);
 assert.match(page, /onSessionRecovered=\{resumeExistingSession\}/);
 const hydration = page.slice(page.indexOf('const { call } = await crmFetch'), page.indexOf('// FIRST-MEETING INTENT HELP'));
-assert.ok(hydration.indexOf('setSource("meet")') < hydration.indexOf('await crmFetch<any>("/api/crm/email-pull"'), "Live meeting hookup must precede slow email/AI work");
+const liveHookupAt = hydration.indexOf('setSource("meet")');
+const emailRefreshAt = hydration.indexOf('await refreshPrepContext(');
+assert.ok(liveHookupAt >= 0 && emailRefreshAt >= 0, "Both live recovery and the current email/intent refresh path must be present");
+assert.ok(liveHookupAt < emailRefreshAt, "Live meeting hookup must precede slow email/AI work");
 console.log("Automatic call recovery, transcript and coaching hookup, no duplicate dispatch, future/ended safety and two-user isolation passed");

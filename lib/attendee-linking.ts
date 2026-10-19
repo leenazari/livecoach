@@ -16,6 +16,7 @@ const cleanDomain = (value: string) =>
 
 export type Attendee = {
   email?: string;
+  displayName?: string;
   self?: boolean;
   organizer?: boolean;
   responseStatus?: string;
@@ -26,6 +27,8 @@ export type AttendeeConfig = {
   internalCompanyId: string | null;
   contactEmailToCompany: Map<string, string>;
   companyByDomain: Map<string, string>;
+  ambiguousEmails?: Set<string>;
+  ambiguousDomains?: Set<string>;
   companyById?: Map<string, ExistingCalendarCompany>;
 };
 
@@ -51,8 +54,9 @@ const PERSONAL_DOMAINS = new Set([
 // Existing calendar links normally represent a deliberate human choice and
 // must not be replaced. The sole safe repair is a known internal/test
 // placeholder attached to a meeting whose guests all point at one different
-// external work domain. This fixes stale auto-links without touching a genuine
-// client link or guessing between different outside organisations.
+// work domain, including a direct meeting with a protected partner. This fixes
+// stale auto-links without touching a genuine client link or guessing between
+// different outside organisations.
 export function shouldRepairStaleCalendarCompanyLink(
   existing: ExistingCalendarCompany | null | undefined,
   attendees: Attendee[],
@@ -87,7 +91,21 @@ export function shouldRepairStaleCalendarCompanyLink(
           !PERSONAL_DOMAINS.has(attendeeDomain)
       )
   );
-  return outsideDomains.size === 1 && !outsideDomains.has(domain);
+  if (outsideDomains.size) {
+    return outsideDomains.size === 1 && !outsideDomains.has(domain);
+  }
+  // Protected partner domains are excluded from OTHER clients' meetings, not
+  // from direct meetings with that partner. Do not repair ambiguous mixed-
+  // organisation meetings or infer a new partner record here.
+  const guestDomains = new Set(
+    (attendees || [])
+      .filter((attendee) => attendee?.email && !attendee.self)
+      .map((attendee) => domainOf(String(attendee.email)))
+      .filter(Boolean)
+  );
+  const directCompany = inferLink(attendees, config).companyId;
+  return guestDomains.size === 1 && !guestDomains.has(domain) &&
+    Boolean(directCompany && directCompany !== existing.id);
 }
 
 function humanizeDomain(domain: string): string {
@@ -115,7 +133,30 @@ export function inferLink(
     (email) => !config.internalDomains.has(domainOf(email))
   );
   if (!external.length) {
-    return { companyId: config.internalCompanyId, isInternal: true };
+    // "Protected from influencing another client" does not mean "belongs to
+    // our default internal company". Resolve a direct partner/internal meeting
+    // by the actual person or one unambiguous guest organisation.
+    const primary = pickPrimaryAttendee(attendees, {
+      title: context.title,
+      internalDomains: config.internalDomains,
+    });
+    if (primary) {
+      if (config.ambiguousEmails?.has(primary.email)) return { companyId: null, isInternal: true };
+      const companyId = config.contactEmailToCompany.get(primary.email) ||
+        config.companyByDomain.get(domainOf(primary.email)) || null;
+      return { companyId, isInternal: true };
+    }
+    const guestDomains = new Set(emails.map(domainOf));
+    if (emails.some((email) => config.ambiguousEmails?.has(email))) return { companyId: null, isInternal: true };
+    const matchedCompanies =
+      emails.map((email) => config.contactEmailToCompany.get(email) ||
+        config.companyByDomain.get(domainOf(email))).filter(Boolean);
+    const companies = new Set(matchedCompanies);
+    return {
+      companyId: guestDomains.size === 1 && companies.size === 1 && matchedCompanies.length === emails.length
+        ? Array.from(companies)[0] || null : null,
+      isInternal: true,
+    };
   }
 
   const primary = pickPrimaryAttendee(attendees, {
@@ -126,6 +167,7 @@ export function inferLink(
     primary?.matchedBy === "meeting_title" &&
     !config.internalDomains.has(domainOf(primary.email))
   ) {
+    if (config.ambiguousEmails?.has(primary.email)) return { companyId: null, isInternal: false };
     const exactCompany = config.contactEmailToCompany.get(primary.email);
     if (exactCompany) {
       return {
@@ -143,19 +185,8 @@ export function inferLink(
     return { companyId: null, isInternal: false };
   }
 
-  const exactHits = new Set<string>();
-  for (const email of emails) {
-    const companyId = config.contactEmailToCompany.get(email);
-    if (companyId) exactHits.add(companyId);
-  }
   const externalDomains = new Set(external.map((email) => domainOf(email)));
-  if (exactHits.size === 1 && externalDomains.size === 1) {
-    const companyId = Array.from(exactHits)[0];
-    if (companyId !== config.internalCompanyId) {
-      return { companyId, isInternal: false };
-    }
-  }
-
+  if (external.some((email) => config.ambiguousEmails?.has(email))) return { companyId: null, isInternal: false };
   const hits = new Set<string>();
   for (const email of external) {
     const companyId = config.contactEmailToCompany.get(email);
@@ -204,7 +235,8 @@ export function deriveNewClientFromAttendees(
   }
 
   const domain = domainOf(email);
-  if (!domain || PERSONAL_DOMAINS.has(domain)) return null;
+  if (!domain || PERSONAL_DOMAINS.has(domain) || config.ambiguousDomains?.has(domain) ||
+      workAttendees.some((attendee) => config.ambiguousEmails?.has(attendee.email))) return null;
   return {
     domain,
     name: humanizeDomain(domain),

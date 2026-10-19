@@ -44,7 +44,7 @@ assert.match(sync, /\? \{ completed_at: null \}/);
 assert.match(sync, /reopened,/);
 assert.match(
   sync,
-  /select\("id, external_id, company_id, completed_at"\)[\s\S]{0,180}\.eq\("workspace_id", scope\.workspaceId\)[\s\S]{0,100}\.eq\("owner_id", scope\.userId\)/
+  /select\("id, external_id, company_id, completed_at(?:, intent_meta:prep->intentMeta)?"\)[\s\S]{0,180}\.eq\("workspace_id", scope\.workspaceId\)[\s\S]{0,100}\.eq\("owner_id", scope\.userId\)/
 );
 assert.match(
   sync,
