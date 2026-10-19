@@ -6,6 +6,8 @@ import {
 } from "@/lib/openai";
 import { getTasteBlock } from "@/lib/workspace";
 import { getSalesProfileContextBlock } from "@/lib/sales-profile";
+import { getRequestScope } from "@/lib/request-scope";
+import { oneOffFocusPrompt, validateRequestedFocus } from "@/lib/live-focus-cue";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -13,6 +15,13 @@ export const maxDuration = 30;
 // LIVE coaching engine. Output shape:
 //   <main question> ||WHY|| <short why> ||FOLLOWUP|| <optional probe>
 export async function POST(req: NextRequest) {
+  const scope = getRequestScope();
+  if (!scope || scope.status !== "active") {
+    return Response.json(
+      { error: "Active workspace access is required" },
+      { status: scope ? 403 : 401 }
+    );
+  }
   try {
     const {
       knowledgeContext,
@@ -31,7 +40,16 @@ export async function POST(req: NextRequest) {
       playbook,
       planBrief,
       allowHold,
+      requestedFocus,
+      focusAreas,
     } = await req.json();
+
+    let focusRequest: string | null;
+    try {
+      focusRequest = validateRequestedFocus(requestedFocus, focusAreas);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
 
     if (!latest || typeof latest !== "string") {
       return new Response(JSON.stringify({ error: "latest is required" }), {
@@ -68,7 +86,7 @@ export async function POST(req: NextRequest) {
 - IFYES and IFNO are exact words the host can use. Never invent proof, pricing or urgency. Do not force a close on a partnership or relationship conversation.`
       : "";
 
-    const holdRule = allowHold
+    const holdRule = allowHold && !focusRequest
       ? `\n\nHOLD RULE (be strict - cues now arrive only about every 30 seconds or when the host asks for one, so each must earn its place): respond with exactly HOLD unless you have a genuinely HIGH-VALUE cue for right now - one that opens something important up, catches a dodge or a missing piece, or moves the call materially forward. HOLD if the best you have is obvious, low-stakes, a minor reword, small talk, or just "keep them talking". When in doubt, HOLD - a quiet screen beats a mediocre prompt.`
       : "";
 
@@ -152,6 +170,8 @@ Rules for each part:
 CRITICAL - no repetition:
 - NEVER suggest a question already asked (see the ASKED list and any interviewer line), or a reword of one.
 - NEVER repeat or reword any recent suggestion (listed below).
+- Recent suggestions are for avoiding duplicates, not instructions to change the call's agenda.
+- A ONE-OFF FOCUS CUE request chooses the topic for this response only, including a covered focus. Keep the saved plan as the overall direction and never infer a lasting preference from that tap.
 
 CONTENT:
 - Favour depth, ownership, concrete examples - but reach them gradually, following the conversation.${salesShape}${holdRule}`;
@@ -256,9 +276,9 @@ The interviewer's most recent question was:
 "${lastQuestion || "(none yet)"}"
 
 ${latestLabel}
-"${latest}"${asked}${recent}
+"${latest}"${asked}${recent}${oneOffFocusPrompt(focusRequest)}
 
-Give the natural next beat: a WARM, friendly MAIN question that flows from what was just said ||WHY|| why, plus optional ||FOLLOWUP|| - or HOLD. Remember: always a usable cue, never meta-commentary.`;
+${focusRequest ? "Give one fresh question for the requested focus, using the conversation and saved plan as context. Do not change the main call angle." : "Give the natural next beat that flows from what was just said, or HOLD."} Use a WARM, friendly MAIN question ||WHY|| why, plus optional ||FOLLOWUP||. Remember: always a usable cue, never meta-commentary.`;
 
     const openaiStream = await openai.messages.stream({
       model: OPENAI_MODEL_PRO,

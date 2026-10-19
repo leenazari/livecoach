@@ -14,6 +14,8 @@ import CompanyLinkPicker from "@/components/crm/CompanyLinkPicker";
 import GlobalAssistant from "@/components/crm/GlobalAssistant";
 import NavMenu from "@/components/crm/NavMenu";
 import CallActionDock from "@/components/crm/CallActionDock";
+import LiveFocusPanel from "@/components/LiveFocusPanel";
+import { validateRequestedFocus } from "@/lib/live-focus-cue";
 import { consumeArmedCallLaunch } from "@/lib/call-launch";
 import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { validMeetingUrl } from "@/lib/meeting-url";
@@ -74,6 +76,7 @@ type Suggestion = {
   kind: "opening" | "live" | "insight";
   pinned: boolean;
   liked?: boolean;
+  requestedFocus?: string;
 };
 
 type SalesScript = {
@@ -438,6 +441,15 @@ export default function CallPage() {
   const [suggestedComps, setSuggestedComps] = useState<string[]>([]);
   const [selectedComps, setSelectedComps] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [cueBusy, setCueBusy] = useState(false);
+  const [requestingFocus, setRequestingFocus] = useState<string | null>(null);
+  const [focusCue, setFocusCue] = useState<{
+    id?: number;
+    focus: string;
+    message: string;
+    error?: boolean;
+  } | null>(null);
+  const focusCueTargetRef = useRef<HTMLDivElement | null>(null);
   const [summary, setSummary] = useState<any>(null);
   const [summarising, setSummarising] = useState(false);
   const [summaryQueued, setSummaryQueued] = useState(false);
@@ -571,6 +583,7 @@ export default function CallPage() {
   const linesRef = useRef<Line[]>([]);
   const suggestIdRef = useRef(0);
   const inFlightRef = useRef(false);
+  const cueAbortRef = useRef<AbortController | null>(null);
   const lastShownRef = useRef("");
   const recentTextsRef = useRef<string[]>([]);
   const focusChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -1514,8 +1527,35 @@ export default function CallPage() {
     return false;
   };
 
-  const requestLiveSuggestion = useCallback(async (force = false) => {
-    if (inFlightRef.current) return;
+  // Never let an old request finish into a different call or an unmounted page.
+  useEffect(() => () => {
+    cueAbortRef.current?.abort();
+  }, [room]);
+
+  useEffect(() => {
+    if (cueFull && focusCue?.id) {
+      focusCueTargetRef.current?.scrollIntoView({
+        block: "nearest", behavior: "smooth",
+      });
+    }
+  }, [cueFull, focusCue?.id]);
+
+  const requestLiveSuggestion = useCallback(async (force = false, requestedFocus?: string) => {
+    if (inFlightRef.current || endRequestedRef.current) return;
+
+    // Local to this invocation. Do not set selectedComps, reorder the focus,
+    // rebuild the plan, or persist the one-off hint in call/prep state.
+    let focus: string | null;
+    try {
+      focus = validateRequestedFocus(requestedFocus, suggestedCompsRef.current);
+    } catch {
+      setFocusCue({
+        focus: requestedFocus || "",
+        message: "That focus is no longer available. Choose a current focus and try again.",
+        error: true,
+      });
+      return;
+    }
 
     const labelled = linesRef.current
       .map((l) => `${lineSpeakerLabel(l, "Candidate")}: ${l.text}`)
@@ -1535,12 +1575,23 @@ export default function CallPage() {
     const lastCandidate = candidateTurns.length
       ? candidateTurns[candidateTurns.length - 1]
       : null;
-    const latest = lastCandidate ? lastCandidate.text.slice(-400) : "";
-    const latestSpeaker = lastCandidate?.speaker || "";
-    if (!latest || latest.length < 8) return;
+    // A deliberate focus tap can use the latest HOST/TEAM turn too, or the
+    // saved plan before speech arrives. Automatic cues still wait for an answer.
+    const latestTurn = focus ? linesRef.current.at(-1) : lastCandidate;
+    const latest = latestTurn?.text.slice(-400) || (
+      focus ? "No speech has been captured yet. Use the saved call plan." : ""
+    );
+    const latestSpeaker = latestTurn ? lineSpeakerLabel(latestTurn, "Candidate") : "";
+    if (!focus && (!latest || latest.length < 8)) return;
 
     inFlightRef.current = true;
+    setCueBusy(true);
+    setRequestingFocus(focus);
     const id = ++suggestIdRef.current;
+    if (focus) {
+      setFocusCue({ id, focus, message: "Creating your focus question…" });
+      if (cueGapTimerRef.current) clearTimeout(cueGapTimerRef.current);
+    }
     setSuggestions((prev) => [
       ...prev,
       {
@@ -1552,13 +1603,19 @@ export default function CallPage() {
         pending: true,
         kind: "live",
         pinned: false,
+        ...(focus ? { requestedFocus: focus } : {}),
       },
     ]);
 
     // Abort a hung request so a mic-toggle renegotiation stall can't leave
     // inFlightRef stuck true and silently freeze all future cues.
     const controller = new AbortController();
-    const cueTimer = setTimeout(() => controller.abort(), 25000);
+    cueAbortRef.current = controller;
+    let timedOut = false;
+    const cueTimer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 25000);
     try {
       aiCallsRef.current += 1;
       const res = await fetch("/api/interview/suggest", {
@@ -1583,7 +1640,11 @@ export default function CallPage() {
           privateNotes: privateNotesRef.current,
           playbook: playbookRef.current,
           planBrief: planBriefRef.current,
-          allowHold: !force,
+          allowHold: !force && !focus,
+          ...(focus ? {
+            requestedFocus: focus,
+            focusAreas: [...suggestedCompsRef.current],
+          } : {}),
         }),
       });
       if (!res.ok || !res.body) {
@@ -1598,6 +1659,7 @@ export default function CallPage() {
         const { done, value } = await reader.read();
         if (done) break;
         acc += decoder.decode(value, { stream: true });
+        if (controller.signal.aborted || endRequestedRef.current) return;
         const { ask, why, followup, listenFor, ifYes, ifNo } = splitCue(
           stripUsageTail(acc)
         );
@@ -1609,6 +1671,7 @@ export default function CallPage() {
           )
         );
       }
+      if (controller.signal.aborted || endRequestedRef.current) return;
       // Bank the exact token usage appended to the stream.
       const um = acc.match(/\|\|USAGE\|\|([\s\S]*?)\|\|ENDUSAGE\|\|/);
       if (um) {
@@ -1629,6 +1692,11 @@ export default function CallPage() {
       const isHold = ask.toUpperCase() === "HOLD";
       if (isHold || isDuplicate(ask)) {
         setSuggestions((prev) => prev.filter((s) => s.id !== id));
+        if (focus) setFocusCue({
+          focus,
+          message: "No fresh question came back. Tap the focus to try again.",
+          error: true,
+        });
       } else {
         lastShownRef.current = ask;
         recentTextsRef.current = [ask, ...recentTextsRef.current].slice(0, 8);
@@ -1648,8 +1716,26 @@ export default function CallPage() {
               : s
           )
         );
+        if (focus) setFocusCue({
+          id, focus,
+          message: "Focus question added. Your main call direction is unchanged.",
+        });
       }
     } catch (e: any) {
+      if (focus) {
+        setSuggestions((prev) => prev.filter((s) => s.id !== id));
+        if (!controller.signal.aborted || timedOut) {
+          setFocusCue({
+            focus,
+            message: timedOut
+              ? "That took too long. Tap the focus to try again. Your plan is unchanged."
+              : "Could not create the focus question. Tap it to try again. Your plan is unchanged.",
+            error: true,
+          });
+        }
+        return;
+      }
+      if (controller.signal.aborted && !timedOut) return;
       setSuggestions((prev) =>
         prev.map((s) =>
           s.id === id ? { ...s, text: `! ${e.message}`, pending: false } : s
@@ -1657,7 +1743,15 @@ export default function CallPage() {
       );
     } finally {
       clearTimeout(cueTimer);
+      if (controller.signal.aborted && !timedOut) {
+        setSuggestions((prev) => prev.filter((s) => s.id !== id));
+        if (focus) setFocusCue(null);
+      }
       inFlightRef.current = false;
+      cueAbortRef.current = null;
+      setCueBusy(false);
+      setRequestingFocus(null);
+      if (focus) lastCueAtRef.current = Date.now();
     }
   }, []);
 
@@ -2574,6 +2668,7 @@ export default function CallPage() {
     // may close, charge and summarise this session.
     if (endRequestedRef.current) return;
     endRequestedRef.current = true;
+    cueAbortRef.current?.abort();
     // End the call NOW. The transcript is already captured in linesRef, so
     // summarising still works - but the live state stops: the cost meter
     // freezes at this moment (no more penny-by-penny ticking) and the
@@ -2972,6 +3067,7 @@ export default function CallPage() {
     return (
       <div
         key={s.id}
+        ref={compact && s.id === focusCue?.id ? focusCueTargetRef : undefined}
         className={`overflow-hidden rounded-xl border bg-ink/40 ${
           fresh ? meta.borderBright : meta.border
         }`}
@@ -3003,10 +3099,13 @@ export default function CallPage() {
           </button>
         </div>
 
+        {s.requestedFocus && (
+          <p className="px-4 pt-2 text-xs leading-5 text-sky">Focus cue · {s.requestedFocus}</p>
+        )}
         {s.pending && !s.text ? (
           <div className={`${compact ? "px-3 pb-2.5 pt-1.5" : "px-4 pb-4 pt-2"}`}>
             <span className={`thinking font-display ${compact ? "text-lg" : "text-lg"}`}>
-              reading the room...
+              {s.requestedFocus ? "creating your focus question…" : "reading the room..."}
             </span>
           </div>
         ) : (
@@ -5121,69 +5220,18 @@ export default function CallPage() {
             </div>
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-            <aside className="max-h-[34vh] shrink-0 overflow-y-auto border-b border-edge bg-panel/55 p-4 lg:max-h-none lg:w-[270px] lg:border-b-0 lg:border-r lg:p-5">
-              <div className="flex items-start justify-between gap-3 lg:block">
-                <div>
-                  <p className="font-mono text-[0.56rem] uppercase tracking-[0.22em] text-amber">
-                    Core focus
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-muted">
-                    Bring the conversation back to these outcomes if it drifts.
-                  </p>
-                </div>
-                <span className="shrink-0 rounded-full border border-edge px-2 py-1 font-mono text-[0.5rem] uppercase text-muted lg:mt-3 lg:inline-flex">
-                  {intentPct}% covered
-                </span>
-              </div>
-              {suggestedComps.length ? (
-                <ol className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                  {suggestedComps.map((focus, index) => {
-                    const active = selectedComps.includes(focus);
-                    const current = focus === servingFocus;
-                    const focusCoverage = Math.max(0, Math.min(100, coverage[focus] ?? 0));
-                    return (
-                      <li
-                        key={`full-focus-${focus}`}
-                        className={`rounded-lg border p-2.5 ${
-                          current
-                            ? "border-amber/55 bg-amber/[0.08]"
-                            : active
-                            ? "border-edge bg-ink/40"
-                            : "border-edge/50 bg-ink/20 opacity-55"
-                        }`}
-                      >
-                        <div className="flex items-start gap-2">
-                          <span className={`font-mono text-[0.54rem] ${current ? "text-amber" : "text-muted"}`}>
-                            {index + 1}
-                          </span>
-                          <span className="min-w-0 flex-1 text-sm leading-5 text-bone">
-                            {focus}
-                          </span>
-                          <span className="font-mono text-[0.5rem] tabular-nums text-muted">
-                            {focusCoverage}%
-                          </span>
-                        </div>
-                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-ink">
-                          <div
-                            className={`h-full rounded-full ${current ? "bg-amber" : "bg-amber/45"}`}
-                            style={{ width: `${focusCoverage}%` }}
-                          />
-                        </div>
-                        {current ? (
-                          <p className="mt-1.5 font-mono text-[0.48rem] uppercase tracking-wider text-amber">
-                            Current focus
-                          </p>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ol>
-              ) : (
-                <p className="mt-3 rounded-lg border border-dashed border-edge p-3 text-xs text-muted">
-                  Build the call focus first to keep the key outcomes visible here.
-                </p>
-              )}
-            </aside>
+            <LiveFocusPanel
+              focuses={suggestedComps}
+              activeFocuses={selectedComps}
+              currentFocus={servingFocus}
+              coverage={coverage}
+              intentCoverage={intentPct}
+              busy={cueBusy}
+              requestedFocus={requestingFocus || undefined}
+              message={focusCue?.message}
+              error={focusCue?.error}
+              onRequest={(focus) => requestLiveSuggestion(true, focus)}
+            />
 
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
               {pinned.length + ideas.length + feed.length === 0 ? (
