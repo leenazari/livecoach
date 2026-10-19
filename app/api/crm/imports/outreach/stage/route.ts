@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
     if (error) throw error;
     return NextResponse.json({ batch }, { status: 201 });
   } catch (error: any) {
-    const forbidden = /import access|workspace access|owner access/i.test(error?.message || "");
+    const forbidden = /import access|workspace access|owner access|workspace membership/i.test(error?.message || "");
     return NextResponse.json(
       { error: error?.message || "Could not stage this import" },
       { status: forbidden ? 403 : 500 }

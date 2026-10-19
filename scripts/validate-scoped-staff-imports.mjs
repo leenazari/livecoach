@@ -19,6 +19,7 @@ const unapproved = "20000000-0000-4000-8000-000000000004";
 assert.equal(resolveOutreachImportAssignee({ userId: first, role: "sales" }, null), first);
 assert.equal(resolveOutreachImportAssignee({ userId: second, role: "sales" }, second), second);
 assert.throws(() => resolveOutreachImportAssignee({ userId: first, role: "sales" }, second), /yourself/);
+assert.throws(() => resolveOutreachImportAssignee({ userId: first, role: "manager" }, second), /yourself/);
 assert.equal(resolveOutreachImportAssignee({ userId: owner, role: "owner" }, second), second);
 assert.equal(resolveOutreachImportAssignee({ userId: owner, role: "owner" }, null), null);
 
@@ -77,6 +78,24 @@ await db.query("update public.outreach_import_permissions set enabled=false wher
 assert.equal(await allowed(second), false);
 await db.query("update public.outreach_import_permissions set enabled=true where user_id=$1", [second]);
 
+// New default applies equally to existing users without a grant and future
+// joiners, without promoting anyone or changing another record's visibility.
+await db.exec(read("supabase/migrations/20261019131841_active_member_self_serve_lead_imports.sql"));
+assert.equal(await allowed(unapproved), true);
+await db.query("update public.outreach_import_permissions set enabled=false where user_id=$1", [second]);
+assert.equal(await allowed(second), true, "Legacy grant flags no longer control the standard capability");
+for (const status of ["suspended", "removed", "onboarding"]) {
+  await db.query("update public.workspace_members set status=$1 where user_id=$2", [status, first]);
+  assert.equal(await allowed(first), false);
+}
+await db.query("update public.workspace_members set status='active' where user_id=$1", [first]);
+assert.equal(await allowed(first, elsewhere), false);
+const newcomer = "20000000-0000-4000-8000-000000000005";
+await db.query("insert into auth.users values ($1)", [newcomer]);
+assert.equal(await allowed(newcomer), false);
+await db.query("insert into public.workspace_members values ($1,$2,'sales','active')", [workspace, newcomer]);
+assert.equal(await allowed(newcomer), true);
+
 const row = (email, extras = {}) => ({ email, companyName: "Synthetic Test Company", rowNumber: 2, decision: "ready", importStatus: "imported", ...extras });
 const batch = async (actor, assignee, rows, ws = workspace) => (await db.query(
   "insert into public.crm_import_batches (workspace_id,owner_id,assigned_to_user_id,source_name,rows,row_count,ready_count) values ($1,$2,$3,'Synthetic test',$4::jsonb,$5,$5) returning id",
@@ -93,7 +112,7 @@ const firstBatch = await batch(first, first, [row("overlap@example.invalid"), ro
 const secondBatch = await batch(second, second, [row("overlap@example.invalid"), row("second@example.invalid")]);
 await assert.rejects(apply(second, firstBatch), /not found/);
 await assert.rejects(apply(first, firstBatch, elsewhere), /import access/);
-await assert.rejects(apply(unapproved, firstBatch), /import access/);
+await assert.rejects(apply(unapproved, firstBatch), /not found/);
 const badAssignment = await batch(first, second, [row("bad-assignment@example.invalid")]);
 await assert.rejects(apply(first, badAssignment), /yourself/);
 const unassigned = await batch(first, null, [row("unassigned@example.invalid")]);
@@ -125,6 +144,17 @@ assert.equal(undone.removed, 1);
 assert.equal(undone.protected, 1); // Another member's reassigned work stays intact.
 assert.equal((await undo(first, firstBatch)).removed, 1);
 
+const newcomerBatch = await batch(newcomer, newcomer, [row("newcomer@example.invalid")]);
+assert.equal((await apply(newcomer, newcomerBatch)).inserted, 1);
+const newcomerLead = (await db.query("select owner_id,assigned_to_user_id from public.outreach_prospects where email='newcomer@example.invalid'")).rows[0];
+assert.deepEqual(newcomerLead, { owner_id: newcomer, assigned_to_user_id: newcomer });
+const unapprovedBatch = await batch(unapproved, unapproved, [row("new-permission@example.invalid")]);
+assert.equal((await apply(unapproved, unapprovedBatch)).inserted, 1);
+await db.query("update public.workspace_members set status='suspended' where user_id=$1", [unapproved]);
+await assert.rejects(apply(unapproved, unapprovedBatch), /import access/);
+await assert.rejects(undo(unapproved, unapprovedBatch), /import access/);
+await db.query("update public.workspace_members set status='active' where user_id=$1", [unapproved]);
+
 // Browser-facing table access cannot disclose another uploader's preview or
 // let a salesperson self-grant permission, and service RPCs are not public.
 await db.query("select set_config('request.jwt.claim.sub',$1,false)", [first]);
@@ -136,5 +166,19 @@ assert.deepEqual(permissions.map((item) => item.user_id), [first]);
 await assert.rejects(db.query("insert into public.outreach_import_permissions (workspace_id,user_id,granted_by_user_id) values ($1,$2,$2)", [workspace, unapproved]), /permission denied/);
 await assert.rejects(apply(first, qualityBatch), /permission denied/);
 await db.exec("reset role");
+
+// A user with no legacy grant can read only their own previews. Losing active
+// membership revokes even direct table reads using a still-valid auth identity.
+await db.query("select set_config('request.jwt.claim.sub',$1,false)", [newcomer]);
+await db.exec("set role authenticated");
+assert.deepEqual((await db.query("select id from public.crm_import_batches")).rows, [{ id: newcomerBatch }]);
+await assert.rejects(allowed(newcomer), /permission denied/);
+await db.exec("reset role");
+for (const status of ["suspended", "removed", "onboarding"]) {
+  await db.query("update public.workspace_members set status=$1 where user_id=$2", [status, newcomer]);
+  await db.exec("set role authenticated");
+  assert.equal((await db.query("select id from public.crm_import_batches")).rows.length, 0);
+  await db.exec("reset role");
+}
 await db.close();
-console.log("Scoped staff imports: assignment, isolation, duplicate checks, suppression, undo and RLS passed");
+console.log("Self-serve imports passed. Existing and future members, self-assignment, duplicates, isolation, inactive membership, undo and RLS verified.");
