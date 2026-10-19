@@ -183,14 +183,20 @@ for (const scenario of [
   { call: null, primaryAttendee: null, status: 404 },
   { call: { id: 'event', company_id: 'other' }, primaryAttendee: null, status: 409 },
   { call: { id: 'event', company_id: 'school' }, primaryAttendee: null, status: 409 },
+  { call: { id: 'event', company_id: 'school', intent: 'My confirmed agenda', prep: { intentMeta: { source: 'manual' } } }, primaryAttendee: null, status: 200 },
 ]) {
   const endpoint = compile('../app/api/crm/companies/[id]/prep-intent/route.ts', {
-    'next/server': { NextResponse }, '@/lib/supabase': { supabaseAdmin: { from: () => { throw new Error('Must not read unrelated history'); } } },
+    'next/server': { NextResponse }, '@/lib/supabase': { supabaseAdmin: { from: table => {
+      assert.equal(table, 'upcoming_calls', 'Must not read unrelated company history');
+      return { select() { return this; }, eq(key, value) { assert.equal(key, 'id'); assert.equal(value, 'event'); return this; },
+        maybeSingle: async () => ({ data: scenario.call, error: null }) };
+    } } },
     '@/lib/openai': {}, '@/lib/usage': {}, '@/lib/commercial-memory': {}, '@/lib/workspace': {}, '@/lib/workstreams': {},
     '@/lib/call-subject': { loadPrimaryAttendeeForUpcoming: async () => scenario },
   });
   const response = await endpoint.POST({ json: async () => ({ upcomingId: 'event' }) }, { params: { id: 'school' } });
   assert.equal(response.status, scenario.status);
+  if (scenario.status === 200) assert.equal((await response.json()).intent, 'My confirmed agenda');
 }
 
 // Exercise actual prompt construction and timeout fallback. Another person's

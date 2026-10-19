@@ -58,6 +58,25 @@ export async function POST(
     // An unresolved/contradicted scheduled-call identity must not fall back to
     // a company's unrelated history or cached intent. Ask before generating.
     if (upcomingId && !validatedLeadEmail) {
+      const { data: manualCall, error: manualError } = await supabaseAdmin
+        .from("upcoming_calls")
+        .select("company_id,intent,prep")
+        .eq("id", upcomingId)
+        .maybeSingle();
+      if (manualError) throw manualError;
+      // An explicit human agenda is already confirmed. Return it unchanged,
+      // without reading company history or spending tokens on a guessed lead.
+      if (manualCall?.company_id === companyId &&
+          (manualCall.prep as any)?.intentMeta?.source === "manual" &&
+          typeof manualCall.intent === "string" && manualCall.intent.trim()) {
+        return NextResponse.json({
+          intent: manualCall.intent,
+          rationale: "Your manually saved intent has been kept. Confirm the meeting person before requesting an automatic suggestion.",
+          cached: true,
+          fallback: false,
+          manual: true,
+        });
+      }
       return NextResponse.json(
         { error: "Confirm who this meeting is with before building its intent. The invite does not identify a clear person for this client." },
         { status: 409 }
