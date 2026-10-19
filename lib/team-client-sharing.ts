@@ -112,3 +112,29 @@ export async function loadSafeSharedCompany(
   const rows = await loadSafeSharedCompanies([companyId], workspaceId);
   return rows[0] || null;
 }
+
+// Call only with IDs already authorised by client sharing or team cover.
+// Keep the private profile out of the response and bound each REST URL, even
+// when a workspace exposes hundreds of clients to the salesperson.
+export async function loadSafeSharedReviewFlags(
+  companyIds: string[],
+  workspaceId: string
+) {
+  const ids = uniqueIds(companyIds);
+  const flags: { id: string; classification: string | null; reviewedAt: string | null; archived: boolean }[] = [];
+  for (let index = 0; index < ids.length; index += 100) {
+    const { data, error } = await supabaseService.from("companies")
+      .select("id,classification:profile->triage->>classification,reviewedAt:profile->triage->>reviewedAt,archived:profile->archived")
+      .eq("workspace_id", workspaceId)
+      .eq("is_confidential", false)
+      .in("id", ids.slice(index, index + 100));
+    if (error) throw error;
+    flags.push(...(data || []).map((row) => ({
+      id: row.id,
+      classification: typeof row.classification === "string" ? row.classification : null,
+      reviewedAt: typeof row.reviewedAt === "string" ? row.reviewedAt : null,
+      archived: row.archived === true,
+    })));
+  }
+  return flags;
+}
