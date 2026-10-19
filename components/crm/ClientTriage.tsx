@@ -125,7 +125,7 @@ export default function ClientTriage({
     if (
       archivedNames.length &&
       !window.confirm(
-        `Archive ${archivedNames.join(", ")}? Their history will remain, but open reminders will be dismissed.`
+        `Archive ${archivedNames.join(", ")}? Their history will remain, but your open reminders will be dismissed.`
       )
     )
       return;
@@ -197,7 +197,7 @@ export default function ClientTriage({
                       className="mt-1 w-full rounded-lg border border-edge bg-ink px-2 py-2 font-sans text-[0.76rem] normal-case tracking-normal text-bone outline-none focus:border-sky/60"
                     >
                       {(Object.keys(labels) as Classification[]).map((key) => (
-                        <option key={key} value={key}>{labels[key]}</option>
+                        <option key={key} value={key} disabled={row.accessMode !== "owner" && (key === "in_house" || key === "product_trial")}>{labels[key]}</option>
                       ))}
                     </select>
                   </label>

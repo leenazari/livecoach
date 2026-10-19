@@ -162,6 +162,29 @@ export async function GET() {
     const covered = await loadTeamLeadCoverCompanies(scope);
     const coverIds = new Set(covered.map((row) => row.id));
     const companies = [...new Map([...(ownedCompanies || []), ...safeSharedCompanies, ...covered.filter((row) => !ownedIds.has(row.id))].map((row) => [row.id, row])).values()];
+    // Shared projections intentionally hide private profiles. Read only the
+    // review flags for already-authorised rows so reviewed clients do not
+    // immediately reappear in the next triage batch.
+    const sharedCompanyIds = companies.filter((company) => !ownedIds.has(company.id)).map((company) => company.id);
+    const { data: sharedReviewFlags, error: reviewFlagsError } = sharedCompanyIds.length
+      ? await supabaseService.from("companies")
+          .select("id,classification:profile->triage->>classification,reviewedAt:profile->triage->>reviewedAt,archived:profile->archived")
+          .eq("workspace_id", scope.workspaceId).eq("is_confidential", false)
+          .in("id", sharedCompanyIds)
+      : { data: [], error: null };
+    if (reviewFlagsError) throw reviewFlagsError;
+    const sharedReviewById = new Map((sharedReviewFlags || []).map((row) => [row.id, row]));
+    for (const company of companies) {
+      const flags = sharedReviewById.get(company.id);
+      if (!flags) continue;
+      company.profile = {
+        archived: flags.archived === true,
+        triage: {
+          classification: typeof flags.classification === "string" ? flags.classification : null,
+          reviewedAt: typeof flags.reviewedAt === "string" ? flags.reviewedAt : null,
+        },
+      };
+    }
     const activeShareIds = new Set(sharedIds);
     const shareByCompany = new Map(
       (clientShares || []).map((share: any) => [share.company_id, share])
