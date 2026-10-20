@@ -77,6 +77,17 @@ prep = callback('prep', '  const persistSession =', bindings);
 await prep('focus');
 assert.equal(planned, null);
 assert.match(status, /Mailbox unavailable/);
+bindings.intentEditedRef.current = false;
+bindings.refreshPrepContext = async () => ({ intent: '', emailContext: '', needsIdentityConfirmation: true, notice: 'Confirm the meeting person or enter your own intent. You can still start recording.' });
+planned = null;
+prep = callback('prep', '  const persistSession =', bindings);
+await prep('focus');
+assert.equal(planned, null, 'An unresolved identity cannot fall back to an older agenda');
+assert.match(status, /enter your own intent/);
+bindings.intentEditedRef.current = true;
+await prep('focus');
+assert.equal(planned.context.intent, 'Outdated intent', 'Explicit user intent allows preparation without guessing a primary person');
+assert.match(page, /!autoHelpedRef.current &&\s*!call\?\.company_id &&/, 'Linked calls cannot bypass verified prep via first-meeting guessing');
 assert.doesNotMatch(page, /call\?\.company_id && !call\?\.prep\?\.selectedComps/);
 assert.match(page, /brief: planIntent \|\| null/);
 assert.match(page, /\$\{planEmailContext.trim\(\)\}/);
@@ -106,7 +117,7 @@ for (const owner of ['lee', 'kam']) {
     linkedWorkstreamRef: ref({ id: `${owner}-thread` }), clientEmailCtxRef: ref(''),
     emailEditedRef: ref(false), emailRefreshVersionRef: ref(0),
     setClientEmailCtx: v => writes.push(v), setEmailCtxUpdatedAt: noop,
-    setEmailPullNote: noop, intentEditedRef: ref(false), setBrief: v => writes.push(v),
+    setEmailPullNote: noop, setPrepIdentityNotice: noop, intentEditedRef: ref(false), setBrief: v => writes.push(v),
     suggestedCompsRef: ref([]), focusBasisEmailRef: ref(''), focusBasisBriefRef: ref(''), setPrepContextChanged: noop,
   };
   const refresh = callback('refreshPrepContext', '  // Restore a prep plan', scoped);

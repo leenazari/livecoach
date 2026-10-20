@@ -436,6 +436,7 @@ export default function CallPage() {
   const [clientEmailCtx, setClientEmailCtx] = useState("");
   const [emailCtxUpdatedAt, setEmailCtxUpdatedAt] = useState<string | null>(null);
   const [emailPullNote, setEmailPullNote] = useState("");
+  const [prepIdentityNotice, setPrepIdentityNotice] = useState("");
   const [emailCtxSaving, setEmailCtxSaving] = useState(false);
   const [emailCtxSaved, setEmailCtxSaved] = useState(false);
   const [suggestedComps, setSuggestedComps] = useState<string[]>([]);
@@ -1018,6 +1019,8 @@ export default function CallPage() {
       setEmailCtxUpdatedAt(result.mail.emailContextUpdatedAt || null);
     }
     if (result.mail) setEmailPullNote("Latest matching email checked");
+    setPrepIdentityNotice(result.notice || "");
+    if (result.needsIdentityConfirmation && !intentEditedRef.current) setBrief("");
     if (result.intent && !intentEditedRef.current) setBrief(result.intent);
     if (suggestedCompsRef.current.length &&
         (emailContext !== focusBasisEmailRef.current ||
@@ -1291,6 +1294,7 @@ export default function CallPage() {
               !!(call?.intent && String(call.intent).trim());
             if (
               !autoHelpedRef.current &&
+              !call?.company_id &&
               !hasIntent &&
               !call?.prep &&
               (autoCompany || autoPerson)
@@ -2275,6 +2279,10 @@ export default function CallPage() {
           if (!call) throw new Error("The scheduled call could not be loaded");
           const fresh = await refreshPrepContext(call);
           if (fresh) {
+            if (fresh.needsIdentityConfirmation &&
+                !(intentEditedRef.current && brief.trim())) {
+              throw new Error(fresh.notice || "Confirm the meeting person or enter your own intent before building focus.");
+            }
             freshContext = {
               intent: intentEditedRef.current ? brief : fresh.intent || brief,
               emailContext: fresh.emailContext,
@@ -3603,6 +3611,11 @@ export default function CallPage() {
                 Step 1: review or change this first. LiveCoach will not build
                 the focus or battle plan until you choose the next step.
               </p>
+              {prepIdentityNotice && (
+                <p role="status" className="mt-2 text-sm text-sky">
+                  {prepIdentityNotice}
+                </p>
+              )}
 
               {prepContextChanged && (
                 <p role="status" className="mt-2 text-sm text-amber">

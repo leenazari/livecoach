@@ -43,7 +43,7 @@ export type AttendeeEventContext = {
   title?: string | null;
 };
 
-const PERSONAL_DOMAINS = new Set([
+export const PERSONAL_DOMAINS = new Set([
   "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "hotmail.co.uk",
   "yahoo.com", "yahoo.co.uk", "ymail.com", "icloud.com", "me.com", "mac.com",
   "aol.com", "proton.me", "protonmail.com", "gmx.com", "gmx.co.uk", "live.com",

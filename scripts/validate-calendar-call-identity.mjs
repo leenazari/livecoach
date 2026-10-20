@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { inferLink, deriveNewClientFromAttendees, shouldRepairStaleCalendarCompanyLink } from '../lib/attendee-linking.ts';
-import { cachedIntentForCalendarAttendee, inheritVerifiedCalendarCompany } from '../lib/calendar-call-identity.ts';
+import { cachedIntentForCalendarAttendee, inheritVerifiedCalendarCompany, verifiedCalendarGroupIntent } from '../lib/calendar-call-identity.ts';
+import { normaliseCompanyDomain } from '../lib/company-identity.ts';
 
 const internalDomains = new Set(['ai13.com', 'interviewa.com', 'schoolofcoding.co.uk']);
 const school = { id: 'school', domain: 'schoolofcoding.co.uk', name: 'School of Coding', profile: {} };
@@ -182,21 +183,32 @@ await runSync('salesperson');
 for (const scenario of [
   { call: null, primaryAttendee: null, status: 404 },
   { call: { id: 'event', company_id: 'other' }, primaryAttendee: null, status: 409 },
-  { call: { id: 'event', company_id: 'school' }, primaryAttendee: null, status: 409 },
+  { call: { id: 'event', company_id: 'school' }, primaryAttendee: null, status: 200, unresolved: true },
   { call: { id: 'event', company_id: 'school', intent: 'My confirmed agenda', prep: { intentMeta: { source: 'manual' } } }, primaryAttendee: null, status: 200 },
 ]) {
   const endpoint = compile('../app/api/crm/companies/[id]/prep-intent/route.ts', {
     'next/server': { NextResponse }, '@/lib/supabase': { supabaseAdmin: { from: table => {
-      assert.equal(table, 'upcoming_calls', 'Must not read unrelated company history');
-      return { select() { return this; }, eq(key, value) { assert.equal(key, 'id'); assert.equal(value, 'event'); return this; },
-        maybeSingle: async () => ({ data: scenario.call, error: null }) };
+      assert.ok(['upcoming_calls', 'companies'].includes(table), 'Must not read unrelated company history');
+      return { select(fields) { if (table === 'companies') assert.equal(fields, 'id,name,domain,website'); return this; },
+        eq(key, value) { assert.equal(key, 'id'); assert.equal(value, table === 'companies' ? 'school' : 'event'); return this; },
+        maybeSingle: async () => ({ data: table === 'companies' ? school : scenario.call, error: null }) };
     } } },
     '@/lib/openai': {}, '@/lib/usage': {}, '@/lib/commercial-memory': {}, '@/lib/workspace': {}, '@/lib/workstreams': {},
     '@/lib/call-subject': { loadPrimaryAttendeeForUpcoming: async () => scenario },
+    '@/lib/calendar-call-identity': { verifiedCalendarGroupIntent },
+    '@/lib/company-identity': { normaliseCompanyDomain },
   });
   const response = await endpoint.POST({ json: async () => ({ upcomingId: 'event' }) }, { params: { id: 'school' } });
   assert.equal(response.status, scenario.status);
-  if (scenario.status === 200) assert.equal((await response.json()).intent, 'My confirmed agenda');
+  if (scenario.status === 200) {
+    const body = await response.json();
+    assert.equal(body.intent, scenario.unresolved ? '' : 'My confirmed agenda');
+    if (scenario.unresolved) {
+      assert.equal(body.needsIdentityConfirmation, true);
+      assert.match(body.notice, /still open the meeting and start/);
+      assert.equal(body.error, undefined, 'Prep uncertainty must not trigger an ownership blocker');
+    }
+  }
 }
 
 // Exercise actual prompt construction and timeout fallback. Another person's
@@ -225,6 +237,8 @@ for (const manual of [false, true]) {
     '@/lib/workspace': { workspaceContextBlock: async () => '', getLessonsBlock: async () => '' },
     '@/lib/workstreams': { resolveCallScope: async () => ({ workstream: null }) },
     '@/lib/call-subject': { loadPrimaryAttendeeForUpcoming: async () => ({ call, primaryAttendee: { email: guests[1].email, name: 'Mo Reza' } }) },
+    '@/lib/calendar-call-identity': { verifiedCalendarGroupIntent },
+    '@/lib/company-identity': { normaliseCompanyDomain },
   });
   const response = await endpoint.POST({ json: async () => ({ upcomingId: 'event', force: true }) }, { params: { id: 'school' } });
   const body = await response.json();
