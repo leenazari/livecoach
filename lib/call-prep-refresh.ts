@@ -25,5 +25,10 @@ export async function refreshCallPrepContext(
     method: "POST",
     body: JSON.stringify({ concise: true, upcomingId: call.id }),
   });
-  return { intent: typeof fresh?.intent === "string" ? fresh.intent.trim() : "", mail };
+  return {
+    intent: typeof fresh?.intent === "string" ? fresh.intent.trim() : "",
+    mail,
+    needsIdentityConfirmation: fresh?.needsIdentityConfirmation === true,
+    notice: typeof fresh?.notice === "string" ? fresh.notice : "",
+  };
 }

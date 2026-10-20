@@ -208,7 +208,11 @@ async function runAccount(req: NextRequest) {
             }),
             { params: { id: group.companyId } }
           );
-          if (intentResponse.ok) intentsRefreshed += 1;
+          const intentResult = await intentResponse.json();
+          if (intentResponse.ok && !intentResult.needsIdentityConfirmation &&
+              typeof intentResult.intent === "string" && intentResult.intent.trim()) {
+            intentsRefreshed += 1;
+          }
         } catch {
           // The email summary remains safely stored. Opening Prep retries the
           // intent pass immediately if this best-effort refresh times out.

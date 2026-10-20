@@ -1,4 +1,5 @@
-import { emailMayInfluenceCompanyIntent, pickPrimaryAttendee } from "./calendar-subject.ts";
+import { calendarEmailDomain, emailMayInfluenceCompanyIntent, pickPrimaryAttendee } from "./calendar-subject.ts";
+import { PERSONAL_DOMAINS } from "./attendee-linking.ts";
 import type { Attendee, AttendeeConfig } from "./attendee-linking.ts";
 
 type PriorCall = {
@@ -11,6 +12,31 @@ const guestKey = (attendees: Attendee[] | null | undefined) =>
   [...new Set((attendees || [])
     .filter((person) => person?.email && !person.self)
     .map((person) => String(person.email).trim().toLowerCase()))].sort().join("|");
+
+// Several people at one verified company are a group meeting, not an unknown
+// person. Do not nominate an arbitrary organiser, accepted guest or contact.
+// Mixed organisations and incomplete guest lists still need confirmation.
+export function verifiedCalendarGroupIntent(
+  call: PriorCall,
+  company: { id: string; name?: string | null; domain?: string | null }
+) {
+  const domain = String(company.domain || "").trim().toLowerCase();
+  const name = String(company.name || "").trim();
+  const title = String(call.title || "").trim();
+  const guests = (call.attendees || []).filter((person) => !person?.self);
+  if (!name || !title || call.company_id !== company.id ||
+      !domain || PERSONAL_DOMAINS.has(domain) || !guests.length ||
+      guests.some((person) => !/^[^@\s]+@[^@\s]+$/.test(String(person?.email || "").trim()) ||
+        calendarEmailDomain(String(person.email).trim()) !== domain)) return null;
+  const attendeeEmails = guestKey(guests).split("|");
+  if (attendeeEmails.length < 2) return null;
+  return {
+    intent: `I want to discuss "${title}" with the ${name} team, confirm the priorities and agree next steps.`,
+    rationale: "Based on this meeting's title and verified company attendees. No individual's previous agenda or mailbox has been used.",
+    attendeeEmails,
+    eventTitle: title,
+  };
+}
 
 // A generic event title is not an identity. Preserve recurring curation only
 // when the complete non-self guest list agrees, and all such history points at

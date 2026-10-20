@@ -6,6 +6,8 @@ import { formatCommercialMemoryBlock, getCommercialMemory } from "@/lib/commerci
 import { workspaceContextBlock, getLessonsBlock } from "@/lib/workspace";
 import { resolveCallScope } from "@/lib/workstreams";
 import { loadPrimaryAttendeeForUpcoming } from "@/lib/call-subject";
+import { verifiedCalendarGroupIntent } from "@/lib/calendar-call-identity";
+import { normaliseCompanyDomain } from "@/lib/company-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,15 +57,21 @@ export async function POST(
     )
       .toLowerCase()
       .trim();
-    // An unresolved/contradicted scheduled-call identity must not fall back to
-    // a company's unrelated history or cached intent. Ask before generating.
+    // A group can have a verified company without one primary person. Keep its
+    // agenda event-local and never borrow a person's company-wide cached intent.
     if (upcomingId && !validatedLeadEmail) {
       const { data: manualCall, error: manualError } = await supabaseAdmin
         .from("upcoming_calls")
-        .select("company_id,intent,prep")
+        .select("company_id,title,attendees,intent,prep")
         .eq("id", upcomingId)
         .maybeSingle();
       if (manualError) throw manualError;
+      if (!manualCall || manualCall.company_id !== companyId) {
+        return NextResponse.json(
+          { error: "The scheduled call is no longer linked to this client." },
+          { status: 409 }
+        );
+      }
       // An explicit human agenda is already confirmed. Return it unchanged,
       // without reading company history or spending tokens on a guessed lead.
       if (manualCall?.company_id === companyId &&
@@ -71,16 +79,83 @@ export async function POST(
           typeof manualCall.intent === "string" && manualCall.intent.trim()) {
         return NextResponse.json({
           intent: manualCall.intent,
-          rationale: "Your manually saved intent has been kept. Confirm the meeting person before requesting an automatic suggestion.",
+          rationale: "Your manually saved intent has been kept.",
           cached: true,
           fallback: false,
           manual: true,
         });
       }
-      return NextResponse.json(
-        { error: "Confirm who this meeting is with before building its intent. The invite does not identify a clear person for this client." },
-        { status: 409 }
-      );
+      const { data: groupCompany, error: companyError } = await supabaseAdmin
+        .from("companies")
+        .select("id,name,domain,website")
+        .eq("id", companyId)
+        .maybeSingle();
+      if (companyError) throw companyError;
+      if (!groupCompany) {
+        return NextResponse.json({ error: "company not found" }, { status: 404 });
+      }
+      const group = verifiedCalendarGroupIntent(manualCall, {
+        ...groupCompany,
+        domain: normaliseCompanyDomain(groupCompany.domain || groupCompany.website),
+      });
+      if (group) {
+        const meta = (manualCall.prep as any)?.intentMeta;
+        const cached = meta?.basis === "verified_company_group" &&
+          meta?.companyId === companyId && meta?.eventTitle === group.eventTitle &&
+          JSON.stringify(meta?.attendeeEmails) === JSON.stringify(group.attendeeEmails) &&
+          manualCall.intent === group.intent;
+        if (!cached) {
+          // Compare-and-set protects edits/invite changes arriving while this
+          // request runs, including a manual agenda or another prep snapshot.
+          let update = supabaseAdmin.from("upcoming_calls").update({
+            intent: group.intent,
+            prep: {
+              ...(manualCall.prep || {}),
+              intentMeta: {
+                source: "generated",
+                basis: "verified_company_group",
+                companyId,
+                eventTitle: group.eventTitle,
+                attendeeEmails: group.attendeeEmails,
+                rationale: group.rationale,
+                savedAt: new Date().toISOString(),
+              },
+            },
+          }).eq("id", upcomingId).eq("company_id", companyId)
+            .eq("title", manualCall.title)
+            .eq("attendees", JSON.stringify(manualCall.attendees));
+          update = manualCall.prep == null
+            ? update.is("prep", null)
+            : update.eq("prep", JSON.stringify(manualCall.prep));
+          update = manualCall.intent == null
+            ? update.is("intent", null)
+            : update.eq("intent", manualCall.intent);
+          const { data: saved, error: saveError } = await update.select("intent").maybeSingle();
+          if (saveError) throw saveError;
+          if (!saved || saved.intent !== group.intent) {
+            return NextResponse.json({
+              intent: "",
+              needsIdentityConfirmation: true,
+              notice: "The meeting details changed while preparing. Reopen prep to use the current invite. You can still open the meeting and start recording.",
+            });
+          }
+        }
+        return NextResponse.json({
+          intent: group.intent,
+          rationale: group.rationale,
+          cached,
+          fallback: false,
+          groupMeeting: true,
+          notice: "Group meeting confirmed. This starting intent uses the meeting title and company, not one attendee's previous agenda. Edit it to add your priorities.",
+        });
+      }
+      // Identity uncertainty is a prep state, not an ownership failure. Joining
+      // and recording stays available, but automatic agenda guessing does not.
+      return NextResponse.json({
+        intent: "",
+        needsIdentityConfirmation: true,
+        notice: "Confirm the meeting person or enter your own intent before building focus. You can still open the meeting and start recording without a plan.",
+      });
     }
     const scope = await resolveCallScope({
       companyId,
