@@ -305,6 +305,11 @@ export default function CallPage() {
   const [character, setCharacter] = useState("");
   const [callType, setCallType] = useState("general");
   const [callLive, setCallLive] = useState(false);
+  // Joining depends on loading the exact call, not on AI intent/focus finishing.
+  // Keep scheduled-call access failures closed without trapping a live capture.
+  const [callEntryState, setCallEntryState] = useState<
+    "loading" | "ready" | "unavailable"
+  >("loading");
   // True once the call has been ended + summarised: freezes the meter and
   // unmounts the transcription stage so nothing keeps running or billing.
   const [ended, setEnded] = useState(false);
@@ -1174,6 +1179,9 @@ export default function CallPage() {
           const { call } = await crmFetch<{ call: any }>(
             `/api/crm/upcoming/${upcoming}`
           );
+          if (!call || call.id !== upcoming) {
+            throw new Error("This scheduled call could not be verified. Reopen it from your calls list.");
+          }
           if (call) {
             if (call?.company_id && call?.company && !linkedCompanyRef.current) {
               handleLinkCompany({ id: call.company_id, name: call.company });
@@ -1265,10 +1273,11 @@ export default function CallPage() {
             // A running automatic capture must not wait for a new intent draft.
             const mUrl =
               typeof call?.meeting_url === "string" ? call.meeting_url.trim() : "";
-            if (mUrl) {
-              setMeetingUrl((prev) => (prev.trim() ? prev : mUrl));
-              setSource("meet");
-            }
+            // The verified event, not an old link in the address bar, owns the
+            // destination. A removed meeting link must not launch the old one.
+            setMeetingUrl(mUrl);
+            setSource(mUrl ? "meet" : "inapp");
+            setCallEntryState("ready");
             // Saved focus does not freeze the relationship. Always check the
             // exact guest's latest mail before updating the generated intent.
             if (call?.company_id) {
@@ -1347,6 +1356,7 @@ export default function CallPage() {
             }
           }
         } catch (error: any) {
+          setCallEntryState("unavailable");
           setStatus(
             error?.message ||
               "Scheduled call context could not be loaded. Refresh the prep screen and try once more."
@@ -1358,6 +1368,7 @@ export default function CallPage() {
         }
       })();
     } else {
+      setCallEntryState("ready");
       setIntentLoading(false);
       prepHydratedRef.current = true;
     }
@@ -2416,6 +2427,16 @@ export default function CallPage() {
   // window.open in this click handler is essential because browsers block
   // meeting tabs created later from an effect or after an awaited request.
   const openMeetingAndGoLive = useCallback(() => {
+    // Navigation back to an active call must never launch another provider tab
+    // or bot, including two clicks before React has rendered the live state.
+    if (callLiveRef.current) {
+      setExpandSetup(false);
+      return;
+    }
+    if (ended || endRequestedRef.current || callEntryState !== "ready") {
+      setStatus("load the scheduled call details before starting");
+      return;
+    }
     if (source === "meet") {
       const url = meetingUrl.trim();
       if (!validMeetingUrl(url)) {
@@ -2427,7 +2448,7 @@ export default function CallPage() {
       setStatus("meeting opened - starting LiveCoach and requesting your notetaker");
     }
     goLive();
-  }, [source, meetingUrl, goLive]);
+  }, [source, meetingUrl, goLive, ended, callEntryState]);
 
   // Dashboard and Prep starts have already opened the meeting in their direct
   // click handler. Once this exact scheduled call is hydrated, start its
@@ -2437,6 +2458,7 @@ export default function CallPage() {
     if (
       !launchRequested ||
       autoLaunchHandledRef.current ||
+      callEntryState !== "ready" ||
       !upcomingId ||
       source !== "meet" ||
       !validMeetingUrl(meetingUrl)
@@ -2446,7 +2468,7 @@ export default function CallPage() {
     setLaunchRequested(false);
     setStatus("meeting opened - starting LiveCoach and requesting your notetaker");
     goLive();
-  }, [launchRequested, upcomingId, source, meetingUrl, goLive]);
+  }, [launchRequested, upcomingId, source, meetingUrl, goLive, callEntryState]);
 
   // Keep the ref pointed at the latest goLive so the transcript funnel can call
   // it without taking goLive as a dependency (which would re-create the funnel).
@@ -2984,9 +3006,16 @@ export default function CallPage() {
       setBriefSetupOpen(false);
     } else {
       // Live: use the same deliberate meeting + notetaker launch as the fixed
-      // Start control, or return to the cue view if already live.
-      if (planStage !== "full") return;
-      if (callLive) setExpandSetup(false);
+      // Start control, or return to the cue view if already live. Preparation is
+      // optional and must never lock somebody out of a running automatic call.
+      if (callLive) {
+        setExpandSetup(false);
+        window.requestAnimationFrame(() =>
+          document.getElementById("live-call-workspace")?.scrollIntoView({
+            block: "start", behavior: "smooth",
+          })
+        );
+      }
       else openMeetingAndGoLive();
     }
   };
@@ -3249,9 +3278,10 @@ export default function CallPage() {
         </div>
       </header>
 
-      {/* STAGE STEPPER - always visible, click to move between the three
-          stages. Stages 2 and 3 unlock once a plan exists. */}
+      {/* Only the pre-call brief requires a plan. Starting or returning to a
+          live call is independent of focus, identity suggestions and AI prep. */}
       <nav
+        aria-label="Call stages"
         className={`mobile-scroll mb-5 flex items-center gap-1 sm:gap-2 ${
           callLive
             ? "sticky top-0 z-30 -mx-5 border-b border-edge bg-ink/90 px-5 py-2 backdrop-blur"
@@ -3263,7 +3293,9 @@ export default function CallPage() {
           [2, "Pre-call brief"],
           [3, "Live"],
         ] as const).map(([n, label], i) => {
-          const reachable = n === 1 || planStage === "full";
+          const reachable = n === 1 || (n === 2
+            ? planStage === "full"
+            : callLive || (callEntryState === "ready" && !ended && !summarising));
           const active = currentStage === n;
           return (
             <span key={n} className="flex items-center gap-1 sm:gap-2">
@@ -3272,10 +3304,15 @@ export default function CallPage() {
                 type="button"
                 onClick={() => goStage(n)}
                 disabled={!reachable}
+                aria-current={active ? "step" : undefined}
                 title={
                   reachable
-                    ? `Go to ${label}`
-                    : "Build the plan first to unlock this"
+                    ? n === 3
+                      ? callLive ? "Return to your live call" : "Start the call without waiting for focus"
+                      : `Go to ${label}`
+                    : n === 2
+                      ? "Build the plan to view the pre-call brief"
+                      : "Load the call details before starting"
                 }
                 className={`flex items-center gap-2 rounded-full px-2.5 py-1.5 font-mono text-[0.6rem] uppercase tracking-[0.12em] transition ${
                   active
@@ -3321,7 +3358,7 @@ export default function CallPage() {
           workstreamChoices.length ? (
             <label className="flex flex-wrap items-center gap-2 rounded-lg border border-amber/40 bg-amber/[0.07] px-2.5 py-1.5">
               <span className="font-mono text-[0.5rem] uppercase tracking-wider text-amber">
-                Choose relationship
+                Project (optional)
               </span>
               <select
                 aria-label="Choose the relationship for this call"
@@ -3329,7 +3366,7 @@ export default function CallPage() {
                 onChange={(event) => chooseWorkstream(event.target.value)}
                 className="max-w-[18rem] rounded-md border border-edge bg-ink px-2 py-1 text-xs text-bone outline-none focus:border-amber"
               >
-                <option value="">Select department and workstream</option>
+                <option value="">Multiple projects / no single workstream</option>
                 {workstreamChoices.map((thread) => (
                   <option key={thread.id} value={thread.id}>
                     {thread.departmentName
@@ -3338,6 +3375,9 @@ export default function CallPage() {
                   </option>
                 ))}
               </select>
+              <span className="w-full text-xs text-muted">
+                Leave unselected when the meeting covers several projects. This does not block starting the call.
+              </span>
             </label>
           ) : (
             <span className="rounded-full border border-amber/35 bg-amber/[0.07] px-2 py-1 font-mono text-[0.52rem] uppercase tracking-wider text-amber">
@@ -3608,8 +3648,8 @@ export default function CallPage() {
                 ) : null}
               </div>
               <p className="mt-1.5 font-mono text-[0.62rem] leading-relaxed text-muted">
-                Step 1: review or change this first. LiveCoach will not build
-                the focus or battle plan until you choose the next step.
+                Optional preparation. Review or change your intent, then build focus
+                when you want. You can start the call without a focus or plan.
               </p>
               {prepIdentityNotice && (
                 <p role="status" className="mt-2 text-sm text-sky">
@@ -4710,7 +4750,7 @@ export default function CallPage() {
         </div>
       )}
 
-      <div className="mb-6">
+      <div id="live-call-workspace" className="mb-6 scroll-mt-20">
         {/* Unmount the transcription stage once the call has ended so the
             socket / mic / bot listener fully stops (no lingering billing). */}
         {!ended &&
@@ -5343,18 +5383,29 @@ export default function CallPage() {
           scattered start and end buttons, and stays reachable on mobile. */}
       {!summary &&
         !ended &&
-        !cueFull &&
-        (planStage === "focus" || planStage === "full" || callLive) && (
+        !cueFull && (
         <CallActionDock className="lc-call-dock fixed inset-x-3 bottom-3 z-40 mx-auto max-w-[760px] rounded-2xl border border-edge bg-panel/95 p-3 shadow-2xl backdrop-blur-xl sm:bottom-5 sm:p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <p className={`font-mono text-[0.62rem] uppercase tracking-[0.18em] ${callLive ? "text-sage" : "text-amber"}`}>
                 <span className={`mr-2 inline-block h-2 w-2 rounded-full ${callLive ? "animate-pulse bg-sage" : "bg-amber"}`} />
-                {callLive ? "Call live" : "Plan ready"}
+                {callLive
+                  ? "Call live"
+                  : callEntryState === "unavailable"
+                  ? "Call unavailable"
+                  : callEntryState === "loading"
+                  ? "Loading call details"
+                  : planStage === "none" ? "Ready to start" : "Plan ready"}
               </p>
               <p className="mt-1 font-sans text-xs leading-5 text-bone/85 sm:text-sm">
                 {callLive
                   ? "Questions and coaching are active. Wrap up or end whenever you are ready."
+                  : callEntryState === "unavailable"
+                  ? "Reopen this meeting from your calls list to verify access. No new call has been started."
+                  : callEntryState === "loading"
+                  ? "Checking the scheduled call. You will not need to wait for AI preparation."
+                  : planStage === "none"
+                  ? "Focus is optional. Start now and use live coaching, then add focus if you want."
                   : planStage === "focus"
                   ? "Focus ready. Build the full plan, start the call, or complete it here if no bot was used."
                   : source === "meet"
@@ -5388,15 +5439,17 @@ export default function CallPage() {
                   <button
                     type="button"
                     onClick={() => setManualRecap(true)}
+                    disabled={callEntryState !== "ready"}
                     title="Add your own summary and mark this scheduled call complete"
-                    className="min-h-11 min-w-0 rounded-xl border border-edge px-3 py-2.5 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:border-sky/60 hover:text-sky"
+                    className="min-h-11 min-w-0 rounded-xl border border-edge px-3 py-2.5 font-mono text-[0.6rem] uppercase tracking-wider text-muted transition hover:border-sky/60 hover:text-sky disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Complete without bot
                   </button>
                   <button
                     type="button"
                     onClick={openMeetingAndGoLive}
-                    className="min-h-11 min-w-0 flex-1 rounded-xl border border-sage/60 bg-sage/20 px-3 py-2.5 sm:px-6 font-mono text-[0.68rem] uppercase tracking-wider text-sage transition hover:bg-sage/30 sm:flex-none"
+                    disabled={callEntryState !== "ready"}
+                    className="min-h-11 min-w-0 flex-1 rounded-xl border border-sage/60 bg-sage/20 px-3 py-2.5 sm:px-6 font-mono text-[0.68rem] uppercase tracking-wider text-sage transition hover:bg-sage/30 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
                   >
                     {source === "meet" ? "Open meeting + start" : "Start call"} {"\u25B8"}
                   </button>
