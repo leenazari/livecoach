@@ -13,6 +13,7 @@ import { privateRecordFields } from "@/lib/record-scope";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 import { canStageOutreachImports } from "@/lib/outreach-import-access";
 import { loadProspectMemberships } from "@/lib/outreach-prospect-memberships";
+import { crmReadError } from "@/lib/crm-read-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -285,8 +286,10 @@ function hasSavedResearch(value: unknown) {
 }
 
 export async function GET(req: NextRequest) {
+  let stage = "scope";
   try {
     const account = requireRequestScope();
+    stage = "prospects-and-history";
     const canManageAssignments = account.role === "owner" || account.role === "manager";
     const priority = req.nextUrl.searchParams.get("priority") || "all";
     const status = req.nextUrl.searchParams.get("status") || "all";
@@ -333,10 +336,14 @@ export async function GET(req: NextRequest) {
       loadRecentClientProspectCandidates(account),
     ]);
     if (error) throw error;
+    for (const result of [context[1], context[2], ...history]) {
+      if (result.error) throw result.error;
+    }
     const [selection, { data: learnings }, { data: suppressions }] = context;
     const [{ data: messages }, { data: ownEnrolments }] = history;
     const campaigns = selection.campaigns;
     const campaign = selection.campaign;
+    stage = "provider-and-client-access";
     const [sendpilotContext, crmGuard] = await Promise.all([
       loadSendPilotOutreachContext(
         { userId: account.userId, workspaceId: account.workspaceId },
@@ -360,6 +367,7 @@ export async function GET(req: NextRequest) {
       }
     }
     let enrolments = ownEnrolments || [];
+    stage = "campaign-memberships";
     if (!canManageAssignments && data?.length) {
       // Once a prospect is assigned, its campaign history follows the
       // prospect even if the original import membership was created by the
@@ -503,6 +511,7 @@ export async function GET(req: NextRequest) {
           },
         };
       });
+    stage = "team";
     let membersQuery = supabaseService
       .from("workspace_members")
       .select("user_id,role,status")
@@ -512,14 +521,16 @@ export async function GET(req: NextRequest) {
     if (!canManageAssignments) {
       membersQuery = membersQuery.eq("user_id", account.userId);
     }
-    const { data: members } = await membersQuery;
+    const { data: members, error: membersError } = await membersQuery;
+    if (membersError) throw membersError;
     const memberIds = (members || []).map((row: any) => row.user_id);
-    const { data: profiles } = memberIds.length
+    const { data: profiles, error: profilesError } = memberIds.length
       ? await supabaseService
           .from("profiles")
           .select("user_id,display_name,outreach_sender_name,outreach_sender_email")
           .in("user_id", memberIds)
-      : { data: [] as any[] };
+      : { data: [] as any[], error: null };
+    if (profilesError) throw profilesError;
     const profileById = new Map((profiles || []).map((row: any) => [row.user_id, row]));
     const team = (members || []).map((member: any) => {
       const profile: any = profileById.get(member.user_id);
@@ -542,7 +553,7 @@ export async function GET(req: NextRequest) {
       selectedCampaignId: selection.selectedCampaignId,
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message || "failed to load outreach prospects" }, { status: 500 });
+    return NextResponse.json(crmReadError("Outreach prospects", stage, err), { status: 500 });
   }
 }
 

@@ -17,6 +17,7 @@ const selectRoute = read(
 );
 const queue = read("app/api/crm/outreach/queue/route.ts");
 const prospects = read("app/api/crm/outreach/route.ts");
+const memberships = read("lib/outreach-prospect-memberships.ts");
 const readiness = read("app/api/crm/outreach/readiness/route.ts");
 const page = read("app/crm/outreach/page.tsx");
 
@@ -54,7 +55,8 @@ assert.match(queue, /campaignProspectIds\.has\(prospect\.id\)/);
 assert.match(queue, /assignOutreachProspectsWithCompanyAccess/);
 assert.match(queue, /outreachAssignmentConflict/);
 assert.match(prospects, /resolveOutreachCampaignSelection\(account\.userId, account\.workspaceId\)/);
-assert.match(prospects, /eq\("status", "paused"\)/);
+assert.match(prospects, /loadProspectMemberships\(supabaseAdmin, account\.workspaceId, unassignedIds, true\)/);
+assert.match(memberships, /if \(pristineOnly\) query = query\.eq\("status", "paused"\)\.is\("last_sent_at", null\)/);
 assert.match(readiness, /label: "Your active campaign"/);
 assert.match(page, /Choose campaign to add next/);
 assert.match(page, /Your teammates keep their own selections/);

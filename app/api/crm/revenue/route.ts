@@ -17,6 +17,8 @@ import {
 } from "@/lib/pipeline-entry";
 
 import { teamLeadCoverEnabled } from "@/lib/team-lead-cover";
+import { loadScopedIdRows } from "@/lib/scoped-id-rows";
+import { crmReadError } from "@/lib/crm-read-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,7 +82,7 @@ export async function GET() {
       { data: calls },
       { data: tasks },
       { count: prospectCount },
-      { data: outreachCompanyRows },
+      outreachCompanyResult,
       sharedClientIds,
     ] = await Promise.all([
       getAppConfigRows(["revenue_target_gbp"]).then((data) => ({ data })),
@@ -121,9 +123,10 @@ export async function GET() {
       ),
     ]);
 
+    if (outreachCompanyResult.error) throw outreachCompanyResult.error;
+    const outreachCompanyRows = outreachCompanyResult.data;
     const visibleProspectIds = (outreachCompanyRows || []).map((row: any) => row.id);
     const visibleOpportunityIds = (opportunities || []).map((row: any) => row.id);
-    const emptyRows = Promise.resolve({ data: [] as any[], error: null });
     let usageQuery: any = supabaseAdmin
       .from("usage_log")
       .select("cost_gbp,created_at")
@@ -134,56 +137,36 @@ export async function GET() {
     if (account.role !== "owner")
       usageQuery = usageQuery.eq("owner_id", account.userId);
     const [
-      { data: sentMessages },
-      { data: outreachEvents },
-      { data: signalReceipts },
-      { data: recentSignalReceipts },
+      sentMessages,
+      outreachEvents,
+      signalReceipts,
+      recentSignalReceipts,
       { data: signalUsage },
     ] = await Promise.all([
-      visibleProspectIds.length
-        ? supabaseAdmin
-            .from("outreach_messages")
-            .select("prospect_id,message_tags,step_number,variant,sent_at")
-            .eq("workspace_id", account.workspaceId)
-            .eq("status", "sent")
-            .in("prospect_id", visibleProspectIds)
-            .limit(5000)
-        : emptyRows,
-      visibleProspectIds.length
-        ? supabaseAdmin
-            .from("outreach_events")
-            .select("prospect_id,kind,metadata,created_at")
-            .eq("workspace_id", account.workspaceId)
-            .in("prospect_id", visibleProspectIds)
-            .in("kind", [
-              "reply",
-              "positive_reply",
-              "objection",
-              "later",
-              "referral",
-              "meeting_booked",
-            ])
-            .limit(5000)
-        : emptyRows,
-      visibleOpportunityIds.length
-        ? supabaseAdmin
-            .from("opportunity_signal_receipts")
-            .select("opportunity_id,status")
-            .eq("workspace_id", account.workspaceId)
-            .in("opportunity_id", visibleOpportunityIds)
-            .in("status", ["queued", "processing", "failed"])
-            .limit(1000)
-        : emptyRows,
-      visibleOpportunityIds.length
-        ? supabaseAdmin
-            .from("opportunity_signal_receipts")
-            .select("id,opportunity_id,company_id,source_record_type,source_channel,status,result,evidence,occurred_at,attempts,error,created_at,updated_at")
-            .eq("workspace_id", account.workspaceId)
-            .in("opportunity_id", visibleOpportunityIds)
-            .gte("created_at", new Date(Date.now() - 7 * DAY).toISOString())
-            .order("created_at", { ascending: false })
-            .limit(200)
-        : emptyRows,
+      loadScopedIdRows(supabaseAdmin, {
+        table: "outreach_messages", columns: "id,prospect_id,message_tags,step_number,variant,sent_at",
+        workspaceId: account.workspaceId, idColumn: "prospect_id", ids: visibleProspectIds,
+        orderBy: "sent_at", limit: 5000, filter: (query) => query.eq("status", "sent"),
+      }),
+      loadScopedIdRows(supabaseAdmin, {
+        table: "outreach_events", columns: "id,prospect_id,kind,metadata,created_at",
+        workspaceId: account.workspaceId, idColumn: "prospect_id", ids: visibleProspectIds,
+        orderBy: "created_at", limit: 5000,
+        filter: (query) => query.in("kind", ["reply", "positive_reply", "objection", "later", "referral", "meeting_booked"]),
+      }),
+      loadScopedIdRows(supabaseAdmin, {
+        table: "opportunity_signal_receipts", columns: "id,opportunity_id,status,created_at",
+        workspaceId: account.workspaceId, idColumn: "opportunity_id", ids: visibleOpportunityIds,
+        orderBy: "created_at", limit: 1000,
+        filter: (query) => query.in("status", ["queued", "processing", "failed"]),
+      }),
+      loadScopedIdRows(supabaseAdmin, {
+        table: "opportunity_signal_receipts",
+        columns: "id,opportunity_id,company_id,source_record_type,source_channel,status,result,evidence,occurred_at,attempts,error,created_at,updated_at",
+        workspaceId: account.workspaceId, idColumn: "opportunity_id", ids: visibleOpportunityIds,
+        orderBy: "created_at", limit: 200,
+        filter: (query) => query.gte("created_at", new Date(Date.now() - 7 * DAY).toISOString()),
+      }),
       usageQuery,
     ]);
 
@@ -540,7 +523,7 @@ export async function GET() {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "failed to load revenue pipeline" }, { status: 500 });
+    return NextResponse.json(crmReadError("Pipeline", "revenue", error), { status: 500 });
   }
 }
 

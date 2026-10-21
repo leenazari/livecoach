@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { londonDayBounds } from "@/lib/outreach";
 import { requireRequestScope } from "@/lib/request-scope";
+import { loadScopedIdRows } from "@/lib/scoped-id-rows";
+import { crmReadError } from "@/lib/crm-read-error";
 
 export const dynamic = "force-dynamic";
 
@@ -191,13 +193,12 @@ export async function GET(req: NextRequest) {
     const recentManualCallProspectIds = (recentManualCalls || []).map((call: any) => call.prospect_id);
     const sendpilotProspectIds = (sendpilotEvents || []).map((event: any) => event.prospect_id);
     const messageProspectIds = Array.from(new Set([...recentMessageProspectIds, ...recentManualCallProspectIds, ...sendpilotProspectIds]));
-    const { data: messageProspects } = messageProspectIds.length
-      ? await supabaseAdmin
-          .from("outreach_prospects")
-          .select("id,first_name,last_name,company_name,email,last_reply_at,reply_category,crm_company_id")
-          .eq("workspace_id", account.workspaceId)
-          .in("id", messageProspectIds)
-      : { data: [] as any[] };
+    const messageProspects = await loadScopedIdRows(supabaseAdmin, {
+      table: "outreach_prospects",
+      columns: "id,first_name,last_name,company_name,email,last_reply_at,reply_category,crm_company_id",
+      workspaceId: account.workspaceId, idColumn: "id", ids: messageProspectIds,
+      orderBy: "id", limit: 5000,
+    });
     const messageProspectMap = new Map((messageProspects || []).map((prospect: any) => [prospect.id, prospect]));
     const sentHistory = (recentMessages || []).map((message: any) => ({
       ...message,
@@ -385,6 +386,6 @@ export async function GET(req: NextRequest) {
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "failed to load outreach metrics" }, { status: 500 });
+    return NextResponse.json(crmReadError("Outreach activity", "metrics", error), { status: 500 });
   }
 }

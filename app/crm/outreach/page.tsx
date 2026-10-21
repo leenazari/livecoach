@@ -38,6 +38,7 @@ import {
 } from "@/lib/outreach-limits";
 import { OVERNIGHT_RESEARCH_INVENTORY_LIMIT } from "@/lib/outreach-overnight-preparation";
 import type { OutreachCampaignCtaConfig } from "@/lib/outreach-demo-reply-cta";
+import { OUTREACH_RESOURCE_LABELS, useOutreachLoads, type OutreachResource } from "@/lib/use-outreach-loads";
 
 const CampaignSequenceBuilder = dynamic(
   () => import("@/components/crm/CampaignSequenceBuilder"),
@@ -673,24 +674,25 @@ export default function OutreachPage() {
   const [handoverReviews, setHandoverReviews] = useState<Record<string, HandoverPreview>>({});
   const [visibleProspectLimit, setVisibleProspectLimit] = useState(PROSPECT_PAGE_SIZE);
   const loadedResourcesRef = useRef({
+    core: Boolean(cachedQueue && cachedCampaigns),
     prospects: Boolean(cachedProspects),
     metrics: Boolean(cachedMetrics),
     campaignStats: Boolean(cachedCampaignStats || cachedCampaigns?.campaignStats),
     suppressions: Boolean(cachedSuppressions),
   });
+  const { load: loadResource, errors: loadErrors, pending: pendingLoads } = useOutreachLoads();
 
-  const loadCore = useCallback(async () => {
+  const loadCore = useCallback(async (fillOnEntry = false) => {
     const metricsRequest = crmFetch<any>(OUTREACH_URLS.metricsSummary)
       .then((data) => setMetrics(data.metrics || {}))
       .catch(() => {
         // The working queue is still useful if the small count strip cannot
         // refresh. A later tab or manual refresh will retry it.
       });
-    try {
-      const [qd, c] = await Promise.all([
-        crmFetch<any>(OUTREACH_URLS.queue),
-        crmFetch<any>(OUTREACH_URLS.campaigns),
-      ]);
+    await loadResource("core", () => Promise.all([
+      crmFetch<any>(OUTREACH_URLS.queue),
+      crmFetch<any>(OUTREACH_URLS.campaigns),
+    ]), ([qd, c]) => {
       const selectedId = c.selectedCampaignId || qd.selectedCampaignId || "";
       const selectedCampaign = (c.campaigns || []).find(
         (campaign: Campaign) => campaign.id === selectedId && campaign.status === "active"
@@ -705,10 +707,12 @@ export default function OutreachPage() {
       setSelectedCampaignId(selectedId);
       setCanEditCampaignContent(c.canEditCampaignContent === true);
       setCanManageCampaigns(c.canManageCampaigns === true);
+      loadedResourcesRef.current.core = true;
       setLoading(false);
       // Queue selection is free. Fill the user's working day on first entry so
       // they do not have to understand or find a separate top-up control.
       if (
+        fillOnEntry &&
         !initialQueueFillAttemptedRef.current &&
         selectedCampaign &&
         nextQueue.length < clampOutreachDailyLimit(selectedCampaign.daily_limit)
@@ -727,33 +731,35 @@ export default function OutreachPage() {
             // remains available with the precise server error if it is needed.
           });
       }
-      await metricsRequest;
-    } catch (e: any) { setError(e.message || "Could not load outreach"); }
-    finally { setLoading(false); }
-  }, []);
+    });
+    setLoading(false);
+    await metricsRequest;
+  }, [loadResource]);
 
   const loadCampaignStats = useCallback(async () => {
-    const data = await crmFetch<any>(OUTREACH_URLS.campaignStats);
-    setCampaignStats(data.campaignStats || {});
-    loadedResourcesRef.current.campaignStats = true;
-  }, []);
+    await loadResource("campaignStats", () => crmFetch<any>(OUTREACH_URLS.campaignStats), (data) => {
+      setCampaignStats(data.campaignStats || {});
+      loadedResourcesRef.current.campaignStats = true;
+    });
+  }, [loadResource]);
 
   const loadProspects = useCallback(async () => {
-    const data = await crmFetch<any>(OUTREACH_URLS.prospects);
-    setProspects(data.prospects || []);
-    setCrmCandidates(data.crmCandidates || []);
-    setTeam(data.team || []);
-    setCurrentUser(data.currentUser || "");
-    setCanManageAssignments(data.canManageAssignments === true);
-    if (!ownerFilterInitialisedRef.current) {
-      // A salesperson's useful default is work they can act on now. Include
-      // their own prospects and the unassigned shared pool, but never another
-      // salesperson's assigned records. Managers retain the whole-team view.
-      setOwnerFilter(data.canManageAssignments === true ? "all" : "available");
-      ownerFilterInitialisedRef.current = true;
-    }
-    loadedResourcesRef.current.prospects = true;
-  }, []);
+    await loadResource("prospects", () => crmFetch<any>(OUTREACH_URLS.prospects), (data) => {
+      setProspects(data.prospects || []);
+      setCrmCandidates(data.crmCandidates || []);
+      setTeam(data.team || []);
+      setCurrentUser(data.currentUser || "");
+      setCanManageAssignments(data.canManageAssignments === true);
+      if (!ownerFilterInitialisedRef.current) {
+        // A salesperson's useful default is work they can act on now. Include
+        // their own prospects and the unassigned shared pool, but never another
+        // salesperson's assigned records. Managers retain the whole-team view.
+        setOwnerFilter(data.canManageAssignments === true ? "all" : "available");
+        ownerFilterInitialisedRef.current = true;
+      }
+      loadedResourcesRef.current.prospects = true;
+    });
+  }, [loadResource]);
 
   const handleManualProspectSaved = async (result: {
     prospect: {
@@ -775,23 +781,25 @@ export default function OutreachPage() {
   };
 
   const loadMetrics = useCallback(async () => {
-    const data = await crmFetch<any>(OUTREACH_URLS.metrics);
-    setMetrics(data.metrics || {});
-    setReplies(data.replies || []);
-    setSentHistory(data.sentHistory || []);
-    setSendPilotActivity(data.sendPilotActivity || []);
-    setManualCalls(data.manualCalls || []);
-    setVariants(data.variants || []);
-    setPerformance(data.performance || []);
-    setLearnings(data.learnings || []);
-    loadedResourcesRef.current.metrics = true;
-  }, []);
+    await loadResource("metrics", () => crmFetch<any>(OUTREACH_URLS.metrics), (data) => {
+      setMetrics(data.metrics || {});
+      setReplies(data.replies || []);
+      setSentHistory(data.sentHistory || []);
+      setSendPilotActivity(data.sendPilotActivity || []);
+      setManualCalls(data.manualCalls || []);
+      setVariants(data.variants || []);
+      setPerformance(data.performance || []);
+      setLearnings(data.learnings || []);
+      loadedResourcesRef.current.metrics = true;
+    });
+  }, [loadResource]);
 
   const loadSuppressions = useCallback(async () => {
-    const data = await crmFetch<any>(OUTREACH_URLS.suppressions);
-    setSuppressions(data.suppressions || []);
-    loadedResourcesRef.current.suppressions = true;
-  }, []);
+    await loadResource("suppressions", () => crmFetch<any>(OUTREACH_URLS.suppressions), (data) => {
+      setSuppressions(data.suppressions || []);
+      loadedResourcesRef.current.suppressions = true;
+    });
+  }, [loadResource]);
 
   const updatePrepareJob = useCallback((prospectId: string, status: PrepareStatus) => {
     setPrepareJobs((current) => {
@@ -1005,7 +1013,7 @@ export default function OutreachPage() {
     return () => window.clearInterval(timer);
   }, [prepareJobCounts.queued, prepareJobCounts.researching, syncResearchJobs]);
 
-  useEffect(() => { loadCore(); }, [loadCore]);
+  useEffect(() => { void loadCore(true); }, [loadCore]);
   useEffect(() => {
     const syncFromLocation = () => {
       const params = new URLSearchParams(window.location.search);
@@ -1065,7 +1073,6 @@ export default function OutreachPage() {
     }
     setTabLoading(requiresBlockingLoader);
     Promise.all(requests)
-      .catch((e: any) => alive && setError(e.message || "Could not load this section"))
       .finally(() => alive && setTabLoading(false));
     return () => { alive = false; };
   }, [tab, loadCampaignStats, loadMetrics, loadProspects, loadSuppressions]);
@@ -2183,6 +2190,17 @@ export default function OutreachPage() {
   const scheduledToSend = visibleQueue.filter(
     (row) => row.message?.status === "approved" && row.message?.scheduled_at
   ).length;
+  const tabResources: Record<Tab, OutreachResource[]> = {
+    queue: ["core"], prospects: ["prospects"], signals: [],
+    activity: ["metrics"], replies: ["metrics"],
+    campaign: ["core", "campaignStats", "metrics"], intelligence: ["metrics"],
+    safety: ["suppressions"],
+  };
+  const tabDataReady = tabResources[tab].every((resource) => loadedResourcesRef.current[resource]);
+  const retryResource: Record<OutreachResource, () => Promise<void>> = {
+    core: loadCore, prospects: loadProspects, metrics: loadMetrics,
+    campaignStats: loadCampaignStats, suppressions: loadSuppressions,
+  };
 
   return (
     <main className="relative z-10 mx-auto max-w-[1180px] px-3 py-5 sm:px-5 sm:py-9">
@@ -2202,13 +2220,25 @@ export default function OutreachPage() {
 
       {notice ? <p className="mb-3 rounded-lg border border-moss/40 bg-moss/10 px-3 py-2 text-sm text-moss">{notice}</p> : null}
       {error ? <p className="mb-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-2 text-sm text-rust">{error}</p> : null}
+      {tabResources[tab].filter((resource) => loadErrors[resource]).map((resource) => (
+        <div key={resource} role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rust/50 bg-rust/10 px-3 py-3 text-sm text-rust">
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold">{OUTREACH_RESOURCE_LABELS[resource]} could not load</p>
+            <p>{loadErrors[resource]}</p>
+            <p className="mt-1 text-muted">{loadedResourcesRef.current[resource] ? "Previously loaded results are still shown below and may be out of date." : "The list has not loaded yet. This does not mean there are no matching records."}</p>
+          </div>
+          <button type="button" className={button} disabled={pendingLoads[resource]} onClick={() => void retryResource[resource]()}>
+            {pendingLoads[resource] ? "Retrying…" : `Retry ${OUTREACH_RESOURCE_LABELS[resource].toLowerCase()}`}
+          </button>
+        </div>
+      ))}
       {researchingCount || queuedResearchCount ? <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-sky/45 bg-sky/[0.08] px-3 py-2 text-sm text-sky" role="status" aria-live="polite"><span className="h-2 w-2 animate-pulse rounded-full bg-sky" /><strong>{researchingCount} researching</strong>{queuedResearchCount ? <span>· {queuedResearchCount} waiting</span> : null}{prepareJobCounts.completed ? <span>· {prepareJobCounts.completed} completed</span> : null}{prepareJobCounts.failed ? <span className="text-rust">· {prepareJobCounts.failed} blocked</span> : null}<span className="text-bone/65">Saved on the server. You can leave this page and it will continue.</span></div> : null}
       {loading ? <MatrixRain size="panel" messages={["loading outreach", "checking today's queue", "refreshing campaign activity"]} /> : null}
       {!loading && tabLoading ? <MatrixRain size="compact" messages={["loading this outreach view"]} /> : null}
 
       {tab === "prospects" ? <StagedOutreachImports onApplied={loadProspects} /> : null}
 
-      {!loading && !tabLoading && tab === "queue" ? <section data-sales-tour="outreach-queue">
+      {!loading && !tabLoading && tabDataReady && tab === "queue" ? <section data-sales-tour="outreach-queue">
         <RevenueToday />
         <div className="mb-4 rounded-xl border border-moss/35 bg-moss/[0.06] p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -2376,7 +2406,7 @@ export default function OutreachPage() {
         </article>; })}{!visibleQueue.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">{queue.length && queueCampaignFilterId !== OUTREACH_QUEUE_ALL_CAMPAIGNS ? <><p>No {queueCampaignFilterName} contacts are in today’s queue. This filter has not moved or removed anyone.</p><button type="button" onClick={() => setQueueCampaignFilterId(OUTREACH_QUEUE_ALL_CAMPAIGNS)} className={`${button} mt-3`}>Show all campaigns</button></> : "The morning queue can be selected and prepared automatically, or you can build it now. Nothing is approved or contacted automatically."}</div> : null}</div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "prospects" ? <section data-sales-tour="prospect-pool">
+      {!loading && !tabLoading && tabDataReady && tab === "prospects" ? <section data-sales-tour="prospect-pool">
         {focusedProspectId ? <div className="mb-3 flex flex-col gap-2 rounded-xl border border-sky/45 bg-sky/[0.07] p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.54rem] uppercase tracking-wider text-sky">Opened from linked activity</p><p className="mt-1 text-sm text-bone/80">Showing the exact prospect record. Its email, history and actions remain together here.</p></div><button type="button" onClick={clearProspectFocus} className={`${button} shrink-0`}>Back to all prospects</button></div> : null}
         <ManualProspectEntry
           candidates={crmCandidates}
@@ -2579,7 +2609,7 @@ export default function OutreachPage() {
         </div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "signals" ? <section className="space-y-4">
+      {!loading && !tabLoading && tabDataReady && tab === "signals" ? <section className="space-y-4">
         <div className="rounded-xl border border-amber/40 bg-amber/[0.06] p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div><h2 className="font-display text-lg text-bone">LinkedIn engagement writer</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-muted">Paste the words from a LinkedIn post. LiveCoach writes in the signed-in salesperson's own saved voice and creates interest without forcing a sales pitch.</p></div>
@@ -2605,7 +2635,7 @@ export default function OutreachPage() {
         </article> : <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm leading-6 text-muted">Paste a post above to create a comment. Nothing is retained after you leave this page.</div>}
       </section> : null}
 
-      {!loading && !tabLoading && tab === "activity" ? <section className="space-y-4">
+      {!loading && !tabLoading && tabDataReady && tab === "activity" ? <section className="space-y-4">
         <div className="rounded-xl border border-edge bg-panel p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="font-display text-lg text-bone">Your outreach progress</h2><p className="mt-1 text-sm text-muted">Email and SendPilot LinkedIn activity from this signed in salesperson, including replies and meetings. Opens are deliberately not tracked.</p></div><button type="button" onClick={() => loadMetrics()} className={button}>Refresh progress</button></div>
           <div className="mt-4 space-y-3">{funnel.map((item, index) => {
@@ -2653,7 +2683,7 @@ export default function OutreachPage() {
         </div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "campaign" ? <section data-sales-tour="campaign-setup" className="space-y-4">
+      {!loading && !tabLoading && tabDataReady && tab === "campaign" ? <section data-sales-tour="campaign-setup" className="space-y-4">
         <div className="rounded-2xl border border-amber/40 bg-amber/[0.045] p-4 sm:p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div><p className="font-mono text-[0.55rem] uppercase tracking-wider text-amber">Campaign control</p><h2 className="mt-1 font-display text-xl text-bone">One campaign, three clear views</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-muted">A campaign defines who you are contacting and why. Its sequence defines the order of contact. Results show what happened. Open only the part you need.</p></div>
@@ -2746,7 +2776,7 @@ export default function OutreachPage() {
         </details> : null}
       </section> : null}
 
-      {!loading && !tabLoading && tab === "intelligence" && activeCampaign ? <section className="space-y-4">
+      {!loading && !tabLoading && tabDataReady && tab === "intelligence" && activeCampaign ? <section className="space-y-4">
         <fieldset disabled={!canEditActiveCampaignContent} className="contents">
         <div className="rounded-xl border border-amber/40 bg-amber/[0.06] p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h2 className="font-display text-lg text-bone">Message intelligence</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-muted">Set the campaign writing tone and guardrails once. The salesperson&apos;s audio voice always comes from My Sales Setup and cannot be changed by a campaign. For every person, Terra must show the evidence, chosen angle and quality score before you approve the exact words.</p></div>{canEditActiveCampaignContent ? <button onClick={() => saveCampaign(activeCampaign)} disabled={!!busy} className={primary}>{busy === `campaign:${activeCampaign.id}` ? "Saving…" : "Save intelligence"}</button> : <span className="rounded-full border border-edge px-3 py-1 font-mono text-[0.52rem] uppercase text-muted">View only</span>}</div>
@@ -2771,7 +2801,7 @@ export default function OutreachPage() {
         </div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "replies" ? <section data-sales-tour="reply-handover">
+      {!loading && !tabLoading && tabDataReady && tab === "replies" ? <section data-sales-tour="reply-handover">
         <div className={`mb-4 flex flex-col gap-2 rounded-xl border bg-panel p-4 sm:flex-row sm:items-center sm:justify-between ${metrics.overdueReplies ? "border-rust/55" : "border-edge"}`}><div><h2 className="font-display text-lg text-bone">Reply inbox</h2><p className="mt-1 text-sm text-muted">Email and SendPilot replies meet here. Every reply stops the sequence. A queued reply stays open until the provider confirms delivery.</p>{metrics.overdueReplies ? <p className="mt-2 font-mono text-[0.55rem] uppercase text-rust">{metrics.overdueReplies} interested {metrics.overdueReplies === 1 ? "reply has" : "replies have"} waited over 2 hours</p> : null}</div><button onClick={checkReplies} disabled={!!busy} className={primary}>{busy === "replies" ? "Checking email…" : "Check email replies"}</button></div>
         {focusedReplyId ? <div className="mb-3 flex flex-col gap-2 rounded-xl border border-moss/50 bg-moss/[0.08] p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-mono text-[0.52rem] uppercase tracking-wider text-moss">Reply to close</p><p className="mt-1 text-sm text-bone/80">The exact reply that brought you here is first. Read it, decide the next move and clear its alert without losing the history.</p></div><button type="button" onClick={() => { setFocusedReplyId(""); const url = new URL(window.location.href); url.searchParams.delete("reply"); window.history.replaceState({}, "", `${url.pathname}${url.search}`); }} className={button}>Show all replies</button></div> : null}
         <div className="space-y-2">{displayedReplies.map((reply) => { const draft = reply.bookingDraft; const edit = draft ? draftEdits[draft.id] || { subject: draft.subject, body_text: draft.body_text } : null; const handover = handoverReviews[reply.id]; const isFocusedReply = focusedReplyId === reply.id; const canScheduleFollowUp = ["later", "objection", "referral", "unclassified"].includes(reply.reply_category || "unclassified"); const deliveryBadge = replyDeliveryBadge(reply); return <article id={`reply-${reply.id}`} key={reply.id} className={`rounded-xl border bg-panel p-4 ${isFocusedReply ? "border-moss/65 shadow-[inset_3px_0_0_rgba(112,177,125,0.8)]" : reply.slaBreached || reply.deliveryState === "failed" ? "border-rust/50" : "border-edge"}`}>
@@ -2801,7 +2831,7 @@ export default function OutreachPage() {
         </article>; })}{!replies.length ? <div className="rounded-xl border border-dashed border-edge p-8 text-center text-sm text-muted">No replies detected yet.</div> : null}</div>
       </section> : null}
 
-      {!loading && !tabLoading && tab === "safety" ? <section className="space-y-4"><OutreachReadiness /><div className="rounded-xl border border-moss/40 bg-moss/10 p-4"><h2 className="font-display text-lg text-bone">Safety rules are active</h2><ul className="mt-3 space-y-2 text-sm text-bone/80"><li>• Email requires approval of the exact draft. SendPilot requires confirmation of the exact person and mapped campaign.</li><li>• Every email uses the assigned sender’s own connected mailbox and verified sending address{sender?.senderEmail ? `, currently ${sender.senderEmail}` : ""}.</li><li>• Maximum {OUTREACH_DAILY_HARD_LIMIT} sends or SendPilot handoffs per sender per London calendar day.</li><li>• New CRM leads can enter outreach. Engaged, dormant and unclassified CRM relationships remain blocked.</li><li>• Replies and blocked addresses stop outreach.</li><li>• Exact email addresses are checked across the whole team, including duplicate CRM records.</li><li>• The same email address cannot be active in two campaigns or receive two messages on the same day.</li><li>• Different people at the same company remain available for outreach.</li><li>• A 30 day pause applies before moving a contacted email address to another campaign. Manager overrides require a saved reason.</li><li>• The database checks every send or handoff again immediately before it leaves.</li><li>• No tracking pixels or hidden open tracking.</li></ul></div><div className="rounded-xl border border-edge bg-panel p-4"><h2 className="font-display text-lg text-bone">Do not contact list</h2><p className="mt-1 text-sm text-muted">Block a person’s email or an entire company domain. You can restore access without losing history.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input className={input} value={blockTarget} onChange={(e) => setBlockTarget(e.target.value)} placeholder="person@company.com or company.com" /><button onClick={addSuppression} disabled={!!busy || !blockTarget.trim()} className={primary}>Block</button></div><div className="mt-4 space-y-2">{suppressions.map((item) => <div key={item.target} className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink/30 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm text-bone">{item.target}</p><p className="text-xs text-muted">{item.reason}</p></div><div className="flex items-center gap-2"><span className="font-mono text-[0.54rem] uppercase text-muted">{item.kind}</span><button type="button" onClick={() => restoreSuppression(item.target)} disabled={!!busy} className="min-h-9 rounded-lg border border-edge px-2 font-mono text-[0.5rem] uppercase text-bone hover:border-amber/60 hover:text-amber disabled:opacity-40">{busy === `restore:${item.target}` ? "Restoring…" : "Restore"}</button></div></div>)}</div></div></section> : null}
+      {!loading && !tabLoading && tabDataReady && tab === "safety" ? <section className="space-y-4"><OutreachReadiness /><div className="rounded-xl border border-moss/40 bg-moss/10 p-4"><h2 className="font-display text-lg text-bone">Safety rules are active</h2><ul className="mt-3 space-y-2 text-sm text-bone/80"><li>• Email requires approval of the exact draft. SendPilot requires confirmation of the exact person and mapped campaign.</li><li>• Every email uses the assigned sender’s own connected mailbox and verified sending address{sender?.senderEmail ? `, currently ${sender.senderEmail}` : ""}.</li><li>• Maximum {OUTREACH_DAILY_HARD_LIMIT} sends or SendPilot handoffs per sender per London calendar day.</li><li>• New CRM leads can enter outreach. Engaged, dormant and unclassified CRM relationships remain blocked.</li><li>• Replies and blocked addresses stop outreach.</li><li>• Exact email addresses are checked across the whole team, including duplicate CRM records.</li><li>• The same email address cannot be active in two campaigns or receive two messages on the same day.</li><li>• Different people at the same company remain available for outreach.</li><li>• A 30 day pause applies before moving a contacted email address to another campaign. Manager overrides require a saved reason.</li><li>• The database checks every send or handoff again immediately before it leaves.</li><li>• No tracking pixels or hidden open tracking.</li></ul></div><div className="rounded-xl border border-edge bg-panel p-4"><h2 className="font-display text-lg text-bone">Do not contact list</h2><p className="mt-1 text-sm text-muted">Block a person’s email or an entire company domain. You can restore access without losing history.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input className={input} value={blockTarget} onChange={(e) => setBlockTarget(e.target.value)} placeholder="person@company.com or company.com" /><button onClick={addSuppression} disabled={!!busy || !blockTarget.trim()} className={primary}>Block</button></div><div className="mt-4 space-y-2">{suppressions.map((item) => <div key={item.target} className="flex items-center justify-between gap-3 rounded-lg border border-edge bg-ink/30 px-3 py-2"><div className="min-w-0"><p className="truncate text-sm text-bone">{item.target}</p><p className="text-xs text-muted">{item.reason}</p></div><div className="flex items-center gap-2"><span className="font-mono text-[0.54rem] uppercase text-muted">{item.kind}</span><button type="button" onClick={() => restoreSuppression(item.target)} disabled={!!busy} className="min-h-9 rounded-lg border border-edge px-2 font-mono text-[0.5rem] uppercase text-bone hover:border-amber/60 hover:text-amber disabled:opacity-40">{busy === `restore:${item.target}` ? "Restoring…" : "Restore"}</button></div></div>)}</div></div></section> : null}
     </main>
   );
 }
