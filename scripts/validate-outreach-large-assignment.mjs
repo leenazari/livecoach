@@ -197,6 +197,9 @@ const getRoute = compile("app/api/crm/outreach/route.ts", {
   "@/lib/outreach-team-safety": { isActiveOutreachEnrolmentStatus: () => false },
   "@/lib/outreach-import-access": { canStageOutreachImports: async () => true },
   "@/lib/outreach-prospect-memberships": membershipModule,
+  "@/lib/crm-read-error": compile("lib/crm-read-error.ts", {
+    "@/lib/crm-blocker": compile("lib/crm-blocker.ts", {}),
+  }),
 });
 const getResponse = await getRoute.GET({ nextUrl: new URL("https://crm.invalid/api/crm/outreach") });
 const getPayload = await getResponse.json();
@@ -217,6 +220,11 @@ assert.equal(memberDatabase.requests.length, membershipRequestCount);
 getDb.failProspect = prospectIds[150];
 const failedGet = await getRoute.GET({ nextUrl: new URL("https://crm.invalid/api/crm/outreach") });
 assert.equal(failedGet.status, 500, "Never return a successful partial list after a batch fails");
+const failedPayload = await failedGet.json();
+assert.equal(failedPayload.blocker.code, "crm_read_failed");
+assert.match(failedPayload.error, /Outreach prospects could not load/);
+assert.doesNotMatch(failedPayload.error, /A batch failed|action not confirmed/);
+assert.match(failedPayload.error, /[0-9a-f]{8}-[0-9a-f-]{27,}/, "Failed reads have a traceable reference");
 
 const companyDb = { companies: Array.from({ length: 646 }, (_, i) => ({ id: uuid(20_000 + i), workspace_id: workspace, is_confidential: false, name: `Company ${i}`, notes: "Must remain private", attributes: { secret: true } })) };
 companyDb.companies.push({ ...companyDb.companies[0], id: uuid(30_000), is_confidential: true });

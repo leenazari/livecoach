@@ -6,6 +6,8 @@
     "node": "22.x"
   },
   "scripts": {
+    "validate:outreach-load-recovery": "node scripts/validate-outreach-load-recovery.mjs",
+    "validate:outreach-history-batches": "node scripts/validate-outreach-history-batches.mjs",
     "validate:scoped-staff-imports": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-scoped-staff-imports.mjs",
     "validate:import-access-ui": "node scripts/validate-outreach-import-access-ui.mjs",
     "validate:live-focus-cues": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-live-focus-cues.mjs",
