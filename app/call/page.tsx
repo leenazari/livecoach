@@ -22,6 +22,7 @@ import { validMeetingUrl } from "@/lib/meeting-url";
 import { cleanResearchBackground } from "@/lib/research-format";
 import { pickPrimaryAttendee } from "@/lib/calendar-subject";
 import { scheduledCallSessionId } from "@/lib/scheduled-call-session";
+import { captureElapsedSeconds, type CallCaptureState } from "@/lib/call-capture-lifecycle";
 import {
   estimateCost,
   usageCostUSD,
@@ -626,9 +627,9 @@ export default function CallPage() {
       // ended, freeze at the end time so the meter stops climbing (it never
       // resets to zero - the accrued cost is preserved).
       const start = callStartedAtRef.current;
-      const until = callLiveRef.current ? Date.now() : callEndedAtRef.current || 0;
-      const transcribing =
-        start && until ? Math.max(0, (until - start) / 1000) : 0;
+      const transcribing = callLiveRef.current || callEndedAtRef.current !== null
+        ? captureElapsedSeconds(start, callEndedAtRef.current)
+        : 0;
       const meet = sourceRef.current === "meet";
       const c = estimateCost(transcribing, 0, {
         deepgramStreams: meet ? 0 : 2,
@@ -1511,7 +1512,10 @@ export default function CallPage() {
       if (!historical && !callLiveRef.current && text && text.trim().length > 1) {
         goLiveRef.current(false);
       }
-      setLines((prev) => {
+      // Keep the ref synchronous so terminal backfill can immediately queue the
+      // complete transcript, without waiting for React's batched paint.
+      {
+        const prev = linesRef.current;
         const last = prev[prev.length - 1];
         let next: Line[];
         if (
@@ -1528,8 +1532,8 @@ export default function CallPage() {
           next = [...prev, { role: r, text, speaker }];
         }
         linesRef.current = next;
-        return next;
-      });
+        setLines(next);
+      }
     },
     []
   );
@@ -2423,6 +2427,25 @@ export default function CallPage() {
     }
   }, [room, goLive]);
 
+  const receiveCaptureState = useCallback((sessionId: string, state: CallCaptureState) => {
+    if (sessionId !== room || endRequestedRef.current) return;
+    const providerStart = Date.parse(state.startedAt || "");
+    if (Number.isFinite(providerStart)) callStartedAtRef.current = providerStart;
+    if (!state.terminal) {
+      callEndedAtRef.current = null;
+      return;
+    }
+    const providerEnd = Date.parse(state.endedAt || "");
+    callEndedAtRef.current = Number.isFinite(providerEnd) ? Math.min(providerEnd, Date.now()) : Date.now();
+    callLiveRef.current = false;
+    setCallLive(false);
+    cueAbortRef.current?.abort();
+    setCost(estimateCost(captureElapsedSeconds(callStartedAtRef.current, callEndedAtRef.current), 0, {
+      deepgramStreams: 0, transport: "recall", aiUsd: aiUsdRef.current,
+    }));
+    setStatus(state.message);
+  }, [room]);
+
   // Manual starts open the actual meeting and LiveCoach together. Keeping
   // window.open in this click handler is essential because browsers block
   // meeting tabs created later from an effect or after an awaited request.
@@ -2670,6 +2693,13 @@ export default function CallPage() {
   }, []);
 
   const endAndSummarise = useCallback(async () => {
+    // Stopping capture and freezing its estimate must not depend on there being
+    // enough speech for a summary. A failed admission is not a running call.
+    if (endRequestedRef.current) return;
+    callEndedAtRef.current ??= Date.now();
+    callLiveRef.current = false;
+    setCallLive(false);
+    cueAbortRef.current?.abort();
     // Stop any Meet bot tied to this session so it can't linger billing - works
     // by session id, so it doesn't matter that the browser holds no bot id.
     // No-op for in-app calls (no active bot for this room). Fire and forget.
@@ -2690,7 +2720,7 @@ export default function CallPage() {
       setStatus(
         manualRecap
           ? "add a little more to your recap to summarise"
-          : "not enough conversation yet to summarise"
+          : "notetaker ended. No usable transcript was captured. Retry the bot if the meeting is still running, or use Recap by voice"
       );
       return;
     }
@@ -2703,7 +2733,6 @@ export default function CallPage() {
     // summarising still works - but the live state stops: the cost meter
     // freezes at this moment (no more penny-by-penny ticking) and the
     // transcription stage unmounts so nothing keeps listening or billing.
-    callEndedAtRef.current = Date.now();
     callLiveRef.current = false;
     setCallLive(false);
     setEnded(true);
@@ -2711,10 +2740,7 @@ export default function CallPage() {
     // throttled or backgrounded on-screen meter can never save a too-low or zero
     // cost. The server keeps a duration-based fallback as a second guard.
     const meetCall = sourceRef.current === "meet";
-    const finalSecs =
-      callStartedAtRef.current && callEndedAtRef.current
-        ? Math.max(0, (callEndedAtRef.current - callStartedAtRef.current) / 1000)
-        : 0;
+    const finalSecs = captureElapsedSeconds(callStartedAtRef.current, callEndedAtRef.current);
     const finalCostGBP = estimateCost(finalSecs, 0, {
       deepgramStreams: meetCall ? 0 : 2,
       transport: meetCall ? "recall" : "livekit",
@@ -3257,7 +3283,7 @@ export default function CallPage() {
                 callLive && callStartedAtRef.current
                   ? projectHourlyGBP(
                       cost.totalGBP,
-                      (Date.now() - callStartedAtRef.current) / 1000
+                      captureElapsedSeconds(callStartedAtRef.current, callEndedAtRef.current)
                     )
                   : estimateCost(3600, 25, {
                       knowledgeTokens: knowledgeTokensFromText(
@@ -4660,7 +4686,7 @@ export default function CallPage() {
               cost && callStartedAtRef.current
                 ? projectHourlyGBP(
                     cost.totalGBP,
-                    (Date.now() - callStartedAtRef.current) / 1000
+                    captureElapsedSeconds(callStartedAtRef.current, callEndedAtRef.current)
                   )
                 : 0
             }
@@ -4761,6 +4787,10 @@ export default function CallPage() {
               onFinalTranscript={onFinalTranscript}
               onCandidateTurnEnd={handleCandidateTurnEnd}
               onSessionRecovered={resumeExistingSession}
+              onCaptureState={receiveCaptureState}
+              onCaptureEnded={(sessionId) => {
+                if (sessionId === room) void endAndSummarise();
+              }}
               meetingUrl={meetingUrl}
               onMeetingUrlChange={setMeetingUrl}
               upcomingId={upcomingId}

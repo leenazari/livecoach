@@ -5,6 +5,7 @@
 // cues, running summary, intent %, scorecard - works unchanged. The transcript
 // arrives from the Railway worker websocket (Recall.ai -> worker -> here).
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { CallCaptureState } from "@/lib/call-capture-lifecycle";
 import {
   CALL_SILENCE_WARNING_MS,
   callSilenceRemainingMs,
@@ -15,6 +16,8 @@ type Props = {
   onFinalTranscript: (role: string, text: string, speaker?: string, historical?: boolean) => void;
   onCandidateTurnEnd: () => void;
   onSessionRecovered: (sessionId: string, live: boolean) => void;
+  onCaptureState: (sessionId: string, state: CallCaptureState) => void;
+  onCaptureEnded: (sessionId: string) => void;
   // Optional controlled meeting URL (entered up in the setup step). Falls back
   // to internal state if not provided.
   meetingUrl?: string;
@@ -52,6 +55,7 @@ type ProviderBotState = {
     | "unknown";
   message: string;
   terminal: boolean;
+  startedAt: string | null;
   endedAt: string | null;
   changedAt: string | null;
   joined: boolean;
@@ -94,6 +98,8 @@ export default function MeetStage({
   onFinalTranscript,
   onCandidateTurnEnd,
   onSessionRecovered,
+  onCaptureState,
+  onCaptureEnded,
   meetingUrl: meetingUrlProp,
   onMeetingUrlChange,
   upcomingId = null,
@@ -129,6 +135,10 @@ export default function MeetStage({
   const onFinalRef = useRef(onFinalTranscript);
   const onTurnEndRef = useRef(onCandidateTurnEnd);
   const onRecoveredRef = useRef(onSessionRecovered);
+  const onCaptureStateRef = useRef(onCaptureState);
+  const onCaptureEndedRef = useRef(onCaptureEnded);
+  const captureTerminalRef = useRef(false);
+  const finalisedBotRef = useRef("");
   const liveCaptureRef = useRef(false);
   const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chunkCountRef = useRef(0);
@@ -143,6 +153,7 @@ export default function MeetStage({
   const retryRef = useRef(0); // backoff attempt counter
   const deliveredKeysRef = useRef(new Set<string>());
   const sendingRef = useRef(false); // in-flight guard so a double-tap can't send two bots
+  const retryInProgressRef = useRef(false);
   const connectingRef = useRef(false);
   const connectionAttemptRef = useRef(0);
   const botIdRef = useRef(""); // synchronous mirror of botId (closures + retry)
@@ -169,6 +180,10 @@ export default function MeetStage({
   useEffect(() => {
     onRecoveredRef.current = onSessionRecovered;
   }, [onSessionRecovered]);
+  useEffect(() => {
+    onCaptureStateRef.current = onCaptureState;
+    onCaptureEndedRef.current = onCaptureEnded;
+  }, [onCaptureState, onCaptureEnded]);
   useEffect(() => {
     onSilenceTimeoutRef.current = onSilenceTimeout;
   }, [onSilenceTimeout]);
@@ -200,7 +215,7 @@ export default function MeetStage({
 
   const handleUtterance = useCallback(
     (speaker: string, recallRole: string, text: string, timestamp?: string) => {
-      if (!text) return;
+      if (!text || captureTerminalRef.current) return;
       // The worker broadcasts and persists the same timestamp. Deduplicate by
       // that identity so speech arriving during backfill is neither repeated
       // nor counted as one of the older lines we still need to recover.
@@ -384,7 +399,7 @@ export default function MeetStage({
   }, [room]);
 
   const connect = useCallback(async () => {
-    if (connectingRef.current) return;
+    if (connectingRef.current || captureTerminalRef.current) return;
     connectingRef.current = true;
     const connectionAttempt = ++connectionAttemptRef.current;
     closedRef.current = false;
@@ -445,7 +460,7 @@ export default function MeetStage({
           streamAccessRef.current = null;
         }
         // Auto-reconnect with backoff unless we're intentionally tearing down.
-        if (closedRef.current) return;
+        if (closedRef.current || captureTerminalRef.current) return;
         const delay = Math.min(8000, 800 * Math.pow(2, retryRef.current));
         retryRef.current += 1;
         if (reconnectRef.current) clearTimeout(reconnectRef.current);
@@ -471,7 +486,7 @@ export default function MeetStage({
       setWsState("error");
       setStatus(error?.message || "Private transcript access failed");
       if (
-        !closedRef.current &&
+        !closedRef.current && !captureTerminalRef.current &&
         connectionAttempt === connectionAttemptRef.current
       ) {
         reconnectRef.current = setTimeout(() => connect(), 2000);
@@ -626,6 +641,8 @@ export default function MeetStage({
         return;
       }
       setBotId(d.botId);
+      captureTerminalRef.current = false;
+      finalisedBotRef.current = "";
       if (typeof d.botName === "string" && d.botName.trim()) {
         setBotName(d.botName.trim());
       }
@@ -657,30 +674,46 @@ export default function MeetStage({
       setStatus("error: " + e.message);
     } finally {
       sendingRef.current = false;
+      retryInProgressRef.current = false;
     }
   }, [recovering, meetingUrl, room, upcomingId, wsState, connect, deliverBackfill]);
 
   // Recall accepts a create request before the meeting platform has accepted
   // the bot. Poll the exact provider lifecycle while joining so LiveCoach never
-  // guesses that a missing bot is in a waiting room. Run on mount too so an
+  // guesses that a missing bot is in a waiting room. Continue after speech starts
+  // so provider auto-leave is observed even when the stream disconnects. Run on mount so an
   // automatic notetaker is attached before opening the live stream. POST only
   // resumes an existing subscription and can never create a provider bot.
   useEffect(() => {
-    if (botId && transcribing) return;
     let cancelled = false;
+    let inFlight = false;
+    let finished = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const poll = async () => {
+      if (cancelled || inFlight || finished) return;
+      if (retryInProgressRef.current || sendingRef.current) {
+        timer = setTimeout(poll, 1000);
+        return;
+      }
+      inFlight = true;
+      if (timer) clearTimeout(timer);
       let terminal = false;
+      let delay = 10000;
       try {
         const params = new URLSearchParams({ session: room });
         if (upcomingId) params.set("upcoming", upcomingId);
         const response = await fetch(`/api/meet/status?${params.toString()}`, {
           method: "POST",
           cache: "no-store",
+          signal: AbortSignal.timeout(10000),
         });
         const data = await response.json();
         if (cancelled) return;
+        if (retryInProgressRef.current || sendingRef.current) {
+          timer = setTimeout(poll, 1000);
+          return;
+        }
         if (response.status === 404) {
           setRecovering(false);
           setStreamReady(true);
@@ -704,12 +737,15 @@ export default function MeetStage({
           setBotId(data.botId);
           if (data.botName) setBotName(data.botName);
           liveCaptureRef.current = data.canResume === true;
+          captureTerminalRef.current = next.terminal;
           setRecovering(false);
-          setStreamReady(true);
+          if (!next.terminal) setStreamReady(true);
+          if (next.terminal || data.canResume) onCaptureStateRef.current(room, next);
           if (data.canResume) onRecoveredRef.current(room, true);
           setProviderState(next);
           setStatus(next.message);
           terminal = next.terminal;
+          delay = next.recording ? 30000 : 10000;
           if (
             next.phase === "waiting_room" ||
             next.phase === "in_call_not_recording" ||
@@ -718,28 +754,56 @@ export default function MeetStage({
             setJoinWarn(false);
           }
           if (terminal) {
+            setTranscribing(false);
+            setCaptureStalled(false);
+            setSilenceRemainingMs(null);
             setJoinWarn(true);
+            if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
             if (joinWatchdogRef.current) {
               clearTimeout(joinWatchdogRef.current);
               joinWatchdogRef.current = null;
+            }
+            // Freeze the parent immediately, but recover any final stored speech
+            // before asking it to summarise. Failed reads retry without AI work.
+            const recovered = await deliverBackfill();
+            if (cancelled) return;
+            if (retryInProgressRef.current || sendingRef.current) {
+              timer = setTimeout(poll, 1000);
+              return;
+            }
+            if (recovered) {
+              setStreamReady(false);
+              if (finalisedBotRef.current !== data.botId) {
+                finalisedBotRef.current = data.botId;
+                onCaptureEndedRef.current(room);
+              }
+            } else {
+              terminal = false;
+              setStatus(`${next.message} Recovering saved speech before summarising...`);
             }
           }
         }
       } catch {
         // A transient status read must not interrupt the transcript connection.
         // The fallback watchdog still warns if no verified state ever arrives.
-      }
+      } finally { inFlight = false; }
+      finished = terminal;
       if (!cancelled && !terminal) {
-        timer = setTimeout(poll, 10000);
+        timer = setTimeout(poll, delay);
       }
     };
 
+    const onWake = () => { if (document.visibilityState !== "hidden") void poll(); };
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
     void poll();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
     };
-  }, [botId, room, upcomingId, transcribing]);
+  }, [botId, room, upcomingId, deliverBackfill]);
 
   const handledStartRequestRef = useRef(0);
   useEffect(() => {
@@ -752,12 +816,19 @@ export default function MeetStage({
   // Retry: stop the (non-joined) bot and send a fresh one. Forces the synchronous
   // botId mirror clear so the re-send isn't blocked by the in-flight guard.
   async function retryBot() {
-    await stopBot();
+    if (retryInProgressRef.current) return;
+    retryInProgressRef.current = true;
+    if (!(await stopBot())) {
+      retryInProgressRef.current = false;
+      return;
+    }
     botIdRef.current = "";
     setBotId("");
     setJoinWarn(false);
     setTranscribing(false);
     setProviderState(null);
+    captureTerminalRef.current = false;
+    finalisedBotRef.current = "";
     setCaptureStalled(false);
     lastUtterAtRef.current = 0; // restart the stall clock for the fresh bot
     silenceEndRequestedRef.current = false;
@@ -766,7 +837,7 @@ export default function MeetStage({
   }
 
   async function stopBot() {
-    if (!botId) return;
+    if (!botId) return true;
     setStatus("removing bot...");
     try {
       const r = await fetch("/api/meet/stop", {
@@ -781,6 +852,12 @@ export default function MeetStage({
       }
       setStatus(r.ok ? "bot removed" : "stop error: " + (d.error || r.status));
       if (r.ok) {
+        liveCaptureRef.current = false;
+        captureTerminalRef.current = true;
+        const stoppedAt = new Date().toISOString();
+        onCaptureStateRef.current(room, {
+          terminal: true, startedAt: null, endedAt: stoppedAt, message: "notetaker stopped",
+        });
         setBotId("");
         botIdRef.current = "";
         setTranscribing(false);
@@ -788,8 +865,10 @@ export default function MeetStage({
         setProviderState(null);
         setSilenceRemainingMs(null);
       }
+      return r.ok;
     } catch (e: any) {
       setStatus("error: " + e.message);
+      return false;
     }
   }
 

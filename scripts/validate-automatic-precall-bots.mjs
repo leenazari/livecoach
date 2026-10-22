@@ -91,8 +91,8 @@ assert.match(call, /scheduledCallSessionId\(upcoming\)/);
 
 // Provider-side abandoned-call protection remains in force after the bot's
 // scheduled five-minute arrival.
-assert.match(start, /preActivityTimeoutSeconds = automaticDispatch \? 900 : 300/);
-assert.match(start, /waiting_room_timeout: Math.min\(\s*preActivityTimeoutSeconds/);
+assert.match(start, /captureAdmissionTimeouts\(meetingUrl, botHardLimitSeconds\)/);
+assert.match(start, /waiting_room_timeout: waitingRoomTimeoutSeconds/);
 assert.match(start, /activate_after: automaticDispatch \? 600 : 60/);
 assert.match(start, /timeout: 300/);
 

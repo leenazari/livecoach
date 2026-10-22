@@ -171,16 +171,25 @@ export function currentRecallBotState(payload: unknown) {
     ].includes(normaliseCode(change.code))
   );
   const latestTimestamp = latest ? changeTimestamp(latest) : Number.NaN;
+  const terminalTimestamp = terminalCause ? changeTimestamp(terminalCause) : Number.NaN;
   const endedAt =
-    TERMINAL_CODES.has(latestCode) && Number.isFinite(latestTimestamp)
-      ? new Date(latestTimestamp).toISOString()
+    TERMINAL_CODES.has(latestCode) && Number.isFinite(terminalTimestamp)
+      ? new Date(terminalTimestamp).toISOString()
       : null;
+  const joiningTimes = changes
+    .filter((change) => normaliseCode(change.code) === "joining_call")
+    .map(changeTimestamp)
+    .filter(Number.isFinite);
+  const startedAt = joiningTimes.length
+    ? new Date(Math.min(...joiningTimes)).toISOString()
+    : null;
   return {
     code,
     subCode,
     phase,
     message: messageFor(phase, code, subCode),
     terminal: TERMINAL_CODES.has(latestCode),
+    startedAt,
     endedAt,
     changedAt: Number.isFinite(latestTimestamp)
       ? new Date(latestTimestamp).toISOString()

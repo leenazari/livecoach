@@ -87,6 +87,8 @@ const endedThenDone = currentRecallBotState({
 assert.equal(endedThenDone.phase, "ended");
 assert.equal(endedThenDone.joined, true);
 assert.match(endedThenDone.message, /host ended/i);
+assert.equal(endedThenDone.endedAt, "2026-10-01T09:30:00.000Z", "Post-processing done is not extra capture time");
+assert.equal(joining.startedAt, "2026-10-01T08:59:33.000Z");
 
 const kicked = currentRecallBotState({
   status_changes: [
