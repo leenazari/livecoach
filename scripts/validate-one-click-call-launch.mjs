@@ -32,7 +32,7 @@ assert.match(launch, /sessionStorage\.setItem/);
 assert.match(launch, /sessionStorage\.removeItem/);
 assert.match(launch, /pending\.upcomingId === upcomingId\.trim\(\)/);
 assert.match(launch, /pending\.meetingUrl === meetingUrl\.trim\(\)/);
-assert.match(launch, /window\.open\(cleanUrl, "_blank", "noopener,noreferrer"\)/);
+assert.match(launch, /window\.open\(browserMeetingLaunchUrl\(cleanUrl\), "_blank", "noopener,noreferrer"\)/);
 
 // The dashboard opens the meeting inside the direct click and carries the
 // one-use launch marker into the same scheduled call.
@@ -52,7 +52,7 @@ assert.match(call, /consumeArmedCallLaunch\(upcoming, url\)/);
 assert.match(call, /p\.delete\("launch"\)/);
 assert.match(call, /window\.history\.replaceState/);
 assert.match(call, /const openMeetingAndGoLive = useCallback/);
-assert.match(call, /window\.open\(url, "_blank", "noopener,noreferrer"\)/);
+assert.match(call, /window\.open\(browserMeetingLaunchUrl\(url\), "_blank", "noopener,noreferrer"\)/);
 assert.match(call, /openMeetingAndGoLive/);
 assert.match(call, /Open meeting \+ start/);
 assert.match(call, /autoLaunchHandledRef\.current = true/);

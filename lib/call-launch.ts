@@ -1,4 +1,5 @@
 import { validMeetingUrl } from "@/lib/meeting-url";
+import { browserMeetingLaunchUrl } from "@/lib/meeting-account";
 
 const STORAGE_KEY = "livecoach:pending-call-launch";
 const MAX_AGE_MS = 2 * 60 * 1000;
@@ -39,7 +40,7 @@ export function openAndArmCallLaunch(
     // Opening the meeting is still useful. Without the one-use marker the call
     // screen stays safe and asks for one explicit Start press for the bot.
   }
-  window.open(cleanUrl, "_blank", "noopener,noreferrer");
+  window.open(browserMeetingLaunchUrl(cleanUrl), "_blank", "noopener,noreferrer");
   return armed;
 }
 
