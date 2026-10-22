@@ -11,6 +11,7 @@ import {
 import NavMenu from "@/components/crm/NavMenu";
 import InitialCalendarSync from "@/components/InitialCalendarSync";
 import McpChatGptConnection from "@/components/McpChatGptConnection";
+import MeetingAccountPreference from "@/components/MeetingAccountPreference";
 
 type Lesson = {
   id: string;
@@ -928,6 +929,7 @@ export default function SettingsPage() {
       </header>
 
       <InitialCalendarSync />
+      <MeetingAccountPreference />
 
       <div
         id="linkedin"

@@ -17,6 +17,7 @@ import CallActionDock from "@/components/crm/CallActionDock";
 import LiveFocusPanel from "@/components/LiveFocusPanel";
 import { validateRequestedFocus } from "@/lib/live-focus-cue";
 import { consumeArmedCallLaunch } from "@/lib/call-launch";
+import { browserMeetingLaunchUrl } from "@/lib/meeting-account";
 import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { validMeetingUrl } from "@/lib/meeting-url";
 import { cleanResearchBackground } from "@/lib/research-format";
@@ -2467,7 +2468,7 @@ export default function CallPage() {
         setExpandSetup(true);
         return;
       }
-      window.open(url, "_blank", "noopener,noreferrer");
+      window.open(browserMeetingLaunchUrl(url), "_blank", "noopener,noreferrer");
       setStatus("meeting opened - starting LiveCoach and requesting your notetaker");
     }
     goLive();
