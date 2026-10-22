@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
 import { PRECALL_LEAD_MS, precallJoinAt, precallScheduleAction } from "@/lib/precall-schedule";
 import { currentRecallBotState } from "@/lib/recall-bot-status";
+import { captureAdmissionTimeouts } from "@/lib/call-capture-lifecycle";
 import {
   cancelRecallBotRequest,
   cancelScheduledNotetakers,
@@ -632,9 +633,10 @@ export async function POST(req: NextRequest) {
       TRANSCRIBER_HARD_LIMIT_SECONDS,
       scheduledDispatch ? dailyLimitMinutes * 60 : usage.remainingSeconds
     );
-    // An automatically dispatched bot arrives five minutes before the calendar
-    // start, so it needs a longer pre-activity runway than a manually sent bot.
-    const preActivityTimeoutSeconds = automaticDispatch ? 900 : 300;
+    // Both entry points can arrive early. Do not time out a manual Start before
+    // the booked meeting begins. Preserve the provider's platform-specific cap.
+    const { preActivity: preActivityTimeoutSeconds, waitingRoom: waitingRoomTimeoutSeconds } =
+      captureAdmissionTimeouts(meetingUrl, botHardLimitSeconds);
 
     const endpoint = `https://${region}.recall.ai/api/v1/bot/`;
     const captureBotName = sharedInstanceKey
@@ -709,10 +711,7 @@ export async function POST(req: NextRequest) {
           activate_after: automaticDispatch ? 600 : 60,
           timeout: 300,
         },
-        waiting_room_timeout: Math.min(
-          preActivityTimeoutSeconds,
-          botHardLimitSeconds
-        ),
+        waiting_room_timeout: waitingRoomTimeoutSeconds,
         noone_joined_timeout: Math.min(
           preActivityTimeoutSeconds,
           botHardLimitSeconds
@@ -921,7 +920,7 @@ export async function POST(req: NextRequest) {
           everyoneLeftSeconds: 30,
           silentFallbackMinutes: 5,
           preActivityMinutes: Math.floor(preActivityTimeoutSeconds / 60),
-          waitingRoomMinutes: Math.floor(preActivityTimeoutSeconds / 60),
+          waitingRoomMinutes: Math.floor(waitingRoomTimeoutSeconds / 60),
           hardLimitMinutes: Math.floor(botHardLimitSeconds / 60),
           dailyRemainingMinutes: usage.remainingMinutes,
         },

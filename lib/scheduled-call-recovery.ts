@@ -4,7 +4,8 @@ import { resolveRecordScope } from "@/lib/record-scope";
 import { supabaseService } from "@/lib/supabase";
 
 // Reuse the existing summary recovery job. No provider poll, new AI pass or
-// duplicate transcript store is needed to recover an unattended scheduled call.
+// duplicate transcript store is needed to recover an unattended call, including
+// a manual Start whose tab closed before saving its transcript.
 export async function recoverScheduledCallInputs(
   haveSummary: Set<string>,
   dueForRetry: (attempts: number, lastTry: string | null) => boolean,
@@ -28,7 +29,7 @@ export async function recoverScheduledCallInputs(
     .select("id,bot_id,status,ended_at")
     .eq("workspace_id", scope.workspaceId)
     .in("id", Array.from(new Set(pending.map((row) => row.capture_id))))
-    .gte("scheduled_join_at", since);
+    .or(`scheduled_join_at.gte.${since},created_at.gte.${since}`);
   if (captureError) throw captureError;
   const captureById = new Map((captures || []).map((row) => [row.id, row]));
   const sessionIds = pending.filter((row) => captureById.has(row.capture_id)).map((row) => row.session_id);
@@ -59,7 +60,11 @@ export async function recoverScheduledCallInputs(
       .limit(1)
       .maybeSingle();
     if (lastError) throw lastError;
-    if (!last || nowMs - Date.parse(last.created_at) < 15 * 60000) continue;
+    if (!last) continue;
+    // A verified ended capture can be recovered on the next existing sweep.
+    // Otherwise retain the conservative quiet window, never summarising live speech.
+    const captureEnded = capture.status === "left" && !!capture.ended_at;
+    if (!captureEnded && nowMs - Date.parse(last.created_at) < 15 * 60000) continue;
 
     const lines: string[] = [];
     // Supabase caps page sizes. Read the complete stored capture in bounded

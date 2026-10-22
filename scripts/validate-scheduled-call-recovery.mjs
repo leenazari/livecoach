@@ -41,6 +41,11 @@ const db = { from(table) {
     eq(key, value) { query.filters.push([key, value]); predicates.push((row) => row[key] === value); return this; },
     in(key, values) { predicates.push((row) => values.includes(row[key])); return this; },
     gte(key, value) { predicates.push((row) => row[key] >= value); return this; },
+    or(expression) {
+      const filters = expression.split(",").map((item) => item.split(".gte."));
+      predicates.push((row) => filters.some(([key, value]) => row[key] >= value));
+      return this;
+    },
     is(key, value) { predicates.push((row) => row[key] === value); return this; },
     order() { return this; },
     limit(value) { limit = value; return this; },
@@ -86,6 +91,16 @@ rows.meet_utterances[0].created_at = stamp(2);
 const live = await recover(new Set(), () => true, now);
 assert.equal(live.recovered.length, 0, "Recent canonical speech prevents mid-call summaries");
 assert.equal(live.scheduledSessionIds[0], "alice-room", "Old browser notes must also be excluded for this live capture");
+
+rows.meet_bots[0].scheduled_join_at = null;
+rows.meet_bots[0].created_at = stamp(90);
+rows.meet_bots[0].status = "left";
+rows.meet_bots[0].ended_at = stamp(1);
+assert.equal((await recover(new Set(), () => true, now)).recovered.length, 1,
+  "A manual Start with a verified ended capture must recover without waiting fifteen minutes");
+rows.meet_utterances[0].text = "";
+assert.equal((await recover(new Set(), () => true, now)).recovered.length, 0,
+  "An empty failed admission never generates a fabricated summary");
 
 scope = { workspaceId: "workspace-a", userId: "bob" };
 const bob = await recover(new Set(), () => true, now);

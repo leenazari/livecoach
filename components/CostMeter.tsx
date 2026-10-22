@@ -27,6 +27,7 @@ export default function CostMeter({
   const gbp3 = (usd: number) => `£${(usd * 0.79).toFixed(3)}`;
 
   const title = [
+    "Estimated usage, not a provider invoice. Capture time stops when the notetaker ends.",
     `Deepgram (transcription): ${gbp3(cost.deepgram)}`,
     `${transportLabel} (transport): ${gbp3(cost.transport)}`,
     `OpenAI (cues + scorecard): ${gbp3(cost.ai)}`,
@@ -47,7 +48,7 @@ export default function CostMeter({
       }`}
     >
       <span className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-muted">
-        cost
+        est. cost
       </span>
       <span
         className={`font-display text-sm leading-none tabular-nums ${

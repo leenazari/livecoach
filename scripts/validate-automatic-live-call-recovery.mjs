@@ -139,6 +139,7 @@ if (savedRegion === undefined) delete process.env.RECALL_REGION; else process.en
 const dom = new JSDOM('<!doctype html><div id="root"></div>', { url: "https://crm.test/call" });
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true });
 const sockets = [], calls = [], recovered = [], transcript = [];
+const captureStates = [], captureEnds = [];
 const savedUtterances = [{ speaker: "Lee Nazari", text: "Good morning, everyone.", ts: "2026-10-05T09:00:01Z" }, { speaker: "Buyer", text: "Let us discuss the product release plan.", ts: "2026-10-05T09:00:02Z" }];
 let turns = 0, phase = "recording", available = true, canonicalRoom = "lc-lee-room";
 let deferBackfill = null;
@@ -150,7 +151,7 @@ globalThis.fetch = async (url, options) => {
   calls.push({ url: String(url), options });
   if (String(url).startsWith("/api/meet/status")) return Response.json(available ? {
     sessionId: canonicalRoom, botId: "bot-a", botName: "Lee's notetaker", canResume: phase === "recording",
-    state: { phase, terminal: phase === "ended", message: phase, recording: phase === "recording", joined: phase === "recording" },
+    state: { phase, terminal: phase === "ended", message: phase, recording: phase === "recording", joined: phase === "recording", startedAt: "2026-10-05T09:00:00Z", endedAt: phase === "ended" ? "2026-10-05T10:00:00Z" : null },
   } : { error: "No notetaker request exists" }, { status: available ? 200 : 404 });
   if (url === "/api/meet/access") return Response.json({ token: "test", workerWs: "wss://worker.test", expiresAt: new Date(Date.now() + 3600000).toISOString(), coachHints: ["Lee Nazari"], teamHints: ["Kam"], botName: "Lee's notetaker" });
   if (String(url).startsWith("/api/meet/backfill")) {
@@ -165,7 +166,7 @@ const MeetStage = load("components/MeetStage.tsx", (name) => {
 }).default;
 const root = createRoot(document.getElementById("root"));
 let key = 0;
-const props = () => ({ key: ++key, room: "lc-lee-room", upcomingId: eventA, meetingUrl: "https://meet.google.com/abc-defg-hij", onFinalTranscript: (...args) => transcript.push(args), onCandidateTurnEnd: () => turns++, onSessionRecovered: (...args) => recovered.push(args), onSilenceTimeout: () => { throw new Error("Unexpected silence stop"); } });
+const props = () => ({ key: ++key, room: "lc-lee-room", upcomingId: eventA, meetingUrl: "https://meet.google.com/abc-defg-hij", onFinalTranscript: (...args) => transcript.push(args), onCandidateTurnEnd: () => turns++, onSessionRecovered: (...args) => recovered.push(args), onCaptureState: (...args) => captureStates.push(args), onCaptureEnded: (...args) => captureEnds.push({ args, speech: transcript.length }), onSilenceTimeout: () => { throw new Error("Unexpected silence stop"); } });
 const render = async (overrides = {}) => act(async () => { root.render(React.createElement(MeetStage, { ...props(), ...overrides })); });
 await render();
 assert.match(document.body.textContent, /On air/i);
@@ -191,9 +192,20 @@ assert.equal(calls.some((c) => c.url === "/api/meet/start"), false, "Opening a r
 
 phase = "ended";
 recovered.length = 0;
+const endsBefore = captureEnds.length;
+await act(async () => { window.dispatchEvent(new window.Event("focus")); });
+assert.equal(captureStates.at(-1)[1].endedAt, "2026-10-05T10:00:00Z", "Waking a live tab observes the provider end, not the later wall clock");
+assert.equal(captureEnds.length, endsBefore + 1, "A bot ending after speech triggers automatic finalisation once");
+assert.equal(captureEnds.at(-1).speech, 3, "Finalisation follows the final transcript backfill");
+await act(async () => { window.dispatchEvent(new window.Event("focus")); });
+assert.equal(captureEnds.length, endsBefore + 1, "Repeated wake events cannot re-summarise a closed bot");
 await render();
 assert.match(document.body.textContent, /Ended/);
 assert.equal(recovered.length, 0, "Old transcript never turns an ended call live again");
+savedUtterances.length = 0;
+await render();
+assert.match(document.body.textContent, /Ended/);
+assert.equal(captureStates.at(-1)[1].terminal, true, "A no-speech terminal bot also freezes the parent timer");
 phase = "scheduled";
 await render();
 assert.match(document.body.textContent, /Scheduled/);
