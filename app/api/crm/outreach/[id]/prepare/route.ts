@@ -46,6 +46,7 @@ import {
   salesProfileContextBlock,
 } from "@/lib/sales-profile";
 import { shouldIncludePersonalOutreachBookingLink } from "@/lib/outreach-booking-link";
+import { loadOutreachPreparation } from "@/lib/outreach-preparation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -157,8 +158,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const startedAt = Date.now();
   try {
     const sender = await resolveOutreachIdentity();
-    const profileId = await ensureWorkspaceProfileId();
     const prospectId = params.id;
+    const preparation = await loadOutreachPreparation({
+      client: supabaseAdmin, scope: sender, prospectId, today: londonDate(), fullRecords: true,
+    });
+    if (!preparation.ok) {
+      return NextResponse.json({ error: preparation.error, blocker: preparation.blocker },
+        { status: preparation.status });
+    }
+    const { prospect, enrolment, campaign } = preparation;
+    const profileId = await ensureWorkspaceProfileId();
     const body = await req.json().catch(() => ({}));
     const generationMode =
       body?.generationMode === "overnight" ? "overnight" : "manual";
@@ -166,19 +175,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       typeof body.guidance === "string" ? body.guidance.trim().slice(0, 1000) : "";
     console.log(JSON.stringify({ level: "info", msg: "outreach prepare started", route: "/api/crm/outreach/[id]/prepare", prospectId, generationMode, requestId: req.headers.get("x-vercel-id") }));
     const [
-      { data: prospect },
-      { data: enrolments },
       { data: brain },
       { data: revenueConfig },
       { data: offerConfig },
       personalProfile,
     ] = await Promise.all([
-      supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", sender.workspaceId).eq("id", prospectId).single(),
-      // Shared campaigns are created by one teammate, so their untouched
-      // membership rows can retain that creator as owner. The prospect
-      // assignment is the authority for who may prepare the work. RLS already
-      // permits the assignee to read and update the related enrolment.
-      supabaseAdmin.from("outreach_enrolments").select("*").eq("workspace_id", sender.workspaceId).eq("prospect_id", prospectId).eq("queued_for", londonDate()).in("status", ["queued", "researched", "drafted"]).limit(2),
       supabaseAdmin.from("workspace_profile").select("knowledge,learned").eq("id", profileId).maybeSingle(),
       getAppConfigValue("revenue_target_gbp").then((data) => ({ data })),
       getAppConfigValue("interviewa_outreach_offer_truth").then((data) => ({ data })),
@@ -187,17 +188,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         workspaceId: sender.workspaceId,
       }),
     ]);
-    const enrolment = enrolments?.[0];
-    if (!prospect || !enrolment) return NextResponse.json({ error: "This person is not in today's queue" }, { status: 400 });
-    if (prospect.assigned_to_user_id !== sender.userId)
-      return NextResponse.json({ error: "Assign this prospect to yourself before preparing outreach" }, { status: 403 });
-    if ((enrolments || []).length > 1)
-      return NextResponse.json(
-        { error: "This person has more than one active item in today's queue. Ask a manager to resolve it before research runs." },
-        { status: 409 }
-      );
-    const { data: campaign } = await supabaseAdmin.from("outreach_campaigns").select("*").eq("workspace_id", sender.workspaceId).eq("id", enrolment.campaign_id).single();
-    if (!campaign || campaign.status !== "active") return NextResponse.json({ error: "The campaign is not active" }, { status: 400 });
     const { data: learnings } = await supabaseAdmin.from("outreach_learnings").select("dimension,label,insight,confidence,sent_count,positive_reply_count,meeting_count").eq("workspace_id", sender.workspaceId).eq("owner_id", sender.userId).eq("campaign_id", campaign.id).eq("status", "promoted").order("meeting_count", { ascending: false }).limit(8);
 
     const step = Number(enrolment.current_step) || 1;
