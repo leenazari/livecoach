@@ -67,6 +67,8 @@ import {
 import { calendarRecurrence } from "@/lib/calendar-create";
 import { privateRecordFields } from '@/lib/record-scope';
 import { loadBrainSendPilotStopTargets } from "@/lib/brain-sendpilot";
+import { loadOutreachPreparation } from "@/lib/outreach-preparation";
+import { londonDate } from "@/lib/outreach";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -1377,6 +1379,20 @@ async function resolveActions(
         .trim() || prospect.email;
 
       if (it.type === "prepare_outreach") {
+        const scope = getRequestScope();
+        if (!scope) continue;
+        const preparation = await loadOutreachPreparation({
+          client: supabaseAdmin, scope, prospectId: prospect.id, today: londonDate(),
+        });
+        if (!preparation.ok) {
+          out.push({
+            key, type: it.type,
+            label: `Research ${prospectName} and prepare their email and voice script for review`,
+            unavailable: true, batchSafe: false,
+            failureReason: preparation.error, blocker: preparation.blocker,
+          });
+          continue;
+        }
         out.push({
           key,
           type: it.type,
@@ -2123,7 +2139,7 @@ async function resolveActions(
   ]);
   return out.map((action) => ({
     ...action,
-    batchSafe: !excludedFromBatch.has(action.type) && !action.choices,
+    batchSafe: !action.unavailable && !excludedFromBatch.has(action.type) && !action.choices,
   }));
 }
 

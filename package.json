@@ -6,6 +6,7 @@
     "node": "22.x"
   },
   "scripts": {
+    "validate:brain-prepare": "node scripts/validate-brain-outreach-preparation.mjs",
     "validate:kamm-blockers": "node scripts/validate-kamm-blocker-recovery.mjs",
     "validate:meeting-account": "node scripts/validate-meeting-account.mjs",
     "validate:capture-finalisation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-capture-finalisation.mjs",

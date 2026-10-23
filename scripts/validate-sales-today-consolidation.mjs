@@ -41,7 +41,7 @@ assert.doesNotMatch(lane, /approve-all|messages\/\$\{.*\}\/approve/);
 assert.match(nav, /const OUTREACH_ITEM/);
 assert.match(
   nav,
-  /salesHome\s*\?\s*\[homeItem, TASKS_ITEM, CHAT_ITEM, \.\.\.SALES_CORE_ITEMS, NOTIFICATIONS_ITEM\]/
+  /salesHome\s*\?\s*\[homeItem, TASKS_ITEM, CHAT_ITEM, MARKETING_ITEM, \.\.\.SALES_CORE_ITEMS, NOTIFICATIONS_ITEM\]/
 );
 assert.match(nav, /const SALES_OUTREACH_ITEM: Item = \{[\s\S]*?href: "\/crm\/outreach\?tab=prospects"/);
 assert.match(nav, /const SALES_CORE_ITEMS: Item\[\] = \[[\s\S]*?SALES_OUTREACH_ITEM/);
@@ -51,6 +51,7 @@ assert.doesNotMatch(nav, /CAMPAIGNS_ITEM/);
 assert.match(queueRoute, /assigned_to_user_id === userId/);
 assert.match(queueRoute, /reservedEmailsForAnotherCampaign/);
 assert.match(queueRoute, /isInsideCrossCampaignCooldown/);
-assert.match(prepareRoute, /Assign this prospect to yourself before preparing outreach/);
+assert.match(prepareRoute, /loadOutreachPreparation/);
+assert.match(read("lib/outreach-preparation.ts"), /Assign this prospect to yourself before preparing outreach/);
 
 console.log("Sales Today consolidation checks passed");
