@@ -458,7 +458,11 @@ export async function stopSendPilotLead(
   if (!prospect || !link?.sendpilot_lead_id) {
     throw Object.assign(
       new Error("This prospect is not linked to your SendPilot account"),
-      { status: 404 }
+      {
+        status: 404,
+        code: "sendpilot_lead_not_linked",
+        nextAction: "Open this prospect's outreach history to check how they were contacted. A SendPilot stop action requires a lead linked to your connected SendPilot account",
+      }
     );
   }
   if (link.external_status === "DONE" && link.sync_status === "completed") {

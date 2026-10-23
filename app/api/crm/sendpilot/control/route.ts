@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireRequestScope } from "@/lib/request-scope";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 import {
   controlSendPilotCampaign,
   stopSendPilotLead,
@@ -41,6 +42,15 @@ export async function POST(request: NextRequest) {
       : 500;
     if (status === 500) {
       console.error("SendPilot control failed", error?.message || error);
+    }
+    if (error?.code === "sendpilot_lead_not_linked") {
+      return NextResponse.json(crmBlockerPayload({
+        code: "sendpilot_lead_not_linked",
+        title: "SendPilot stop unavailable",
+        reason: "This prospect has no verified lead linked to your connected SendPilot account. The stop action was not performed",
+        nextAction: error.nextAction,
+        responsible: "system",
+      }), { status, headers: noStore });
     }
     return NextResponse.json(
       {
