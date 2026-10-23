@@ -18,6 +18,7 @@ import {
   loadSafeSharedCompany,
 } from "@/lib/team-client-sharing";
 import { resolveOutreachCampaignSelection } from "@/lib/outreach-campaign-selection";
+import { loadBrainSendPilotStopTargets } from "@/lib/brain-sendpilot";
 
 import { loadTeamLeadCoverCompanies, loadTeamLeadCoverCompany, loadTeamLeadNotes } from "@/lib/team-lead-cover";
 
@@ -1386,6 +1387,9 @@ export async function gatherOutreachContext(
   // Named evidence must precede generic roll-ups so the defensive prompt cap
   // can never trim away the answer to the user's specific follow-up.
   if (named.length) {
+    const stopTargets = requestScope
+      ? await loadBrainSendPilotStopTargets(requestScope, named.map((p) => p.id))
+      : new Set<string>();
     lines.push(
       "NAMED OUTREACH REFERENCE CANDIDATES. These are ranked by exact identity and overlap between the user's referenced fact and research already saved for this account. If one candidate uniquely contains that fact, answer with that person's full name and the saved source detail. Ask only when the evidence remains genuinely tied: " +
         named
@@ -1396,7 +1400,7 @@ export async function gatherOutreachContext(
               researchFacts.length
                 ? `Saved research: ${researchFacts.join(" | ")}`
                 : "No saved research evidence."
-            }`;
+            } SendPilot stop ${stopTargets.has(p.id) ? "available for this account" : "unavailable: no verified lead linked to this account. Do not offer a SendPilot stop action or claim outreach was stopped"}.`;
           })
           .join(" | ")
     );

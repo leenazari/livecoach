@@ -7,6 +7,7 @@ import {
   crmFallbackBlockerPayload,
   type CrmBlocker,
 } from "@/lib/crm-blocker";
+import { reportCrmBlocker } from "@/lib/crm-blocker-diagnostics";
 
 export type FieldType =
   | "text"
@@ -222,7 +223,9 @@ export function notifyCrmRequestError(
   url: string,
   method: string
 ): void {
-  if (typeof window === "undefined" || method.toUpperCase() === "GET") return;
+  if (typeof window === "undefined") return;
+  reportCrmBlocker(error.blocker, url, method, error.status);
+  if (method.toUpperCase() === "GET") return;
   window.dispatchEvent(
     new CustomEvent<CrmBlockerEventDetail>(CRM_BLOCKER_EVENT, {
       detail: {

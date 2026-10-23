@@ -66,6 +66,7 @@ import {
 } from "@/lib/brain-authority";
 import { calendarRecurrence } from "@/lib/calendar-create";
 import { privateRecordFields } from '@/lib/record-scope';
+import { loadBrainSendPilotStopTargets } from "@/lib/brain-sendpilot";
 
 export const runtime = "nodejs";
 export const maxDuration = 40;
@@ -1423,6 +1424,8 @@ async function resolveActions(
       }
 
       if (it.type === "sendpilot_stop_lead") {
+        const scope = getRequestScope();
+        if (!scope || !(await loadBrainSendPilotStopTargets(scope, [prospect.id])).has(prospect.id)) continue;
         out.push({
           key,
           type: it.type,
@@ -2185,6 +2188,9 @@ function flagUnresolvedActions(requested: any[], resolved: any[]): any[] {
       failureReason:
         sendEmailFailure ||
         namedTaskFailure ||
+        (type === "sendpilot_stop_lead"
+          ? "SendPilot stop requires one exact assigned prospect with a verified lead in your connected SendPilot account. Check their outreach history. No stop action was performed."
+          : "") ||
         "Brain could not safely identify the exact record or a required edit value was missing. No change was made.",
     });
   }
