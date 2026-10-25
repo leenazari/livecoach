@@ -46,6 +46,7 @@ const client = createClient("https://database.invalid", "test-only", { global: {
 } } });
 const blockers = compile("lib/crm-blocker.ts");
 const preparation = compile("lib/outreach-preparation.ts", { "@/lib/crm-blocker": blockers });
+const queueRepair = compile("lib/outreach-queue-repair.ts");
 const check = fullRecords => preparation.loadOutreachPreparation({ client, scope, prospectId, today, fullRecords });
 let signatures = 0, generationHandoffs = 0;
 const assistant = compile("app/api/crm/assistant/route.ts", {
@@ -53,6 +54,7 @@ const assistant = compile("app/api/crm/assistant/route.ts", {
   "@/lib/request-scope": { getRequestScope: () => scope },
   "@/lib/outreach": { londonDate: () => today },
   "@/lib/outreach-preparation": preparation,
+  "@/lib/outreach-queue-repair": queueRepair,
   "@/lib/brain-authority": {
     brainAuthorityProfile: () => ({ requiresSeparateApproval: true, actionKind: "paid_generation", risk: "paid_generation" }),
     signBrainAction: () => { signatures++; return "test-execution-token"; },
@@ -63,6 +65,7 @@ const prepare = compile("app/api/crm/outreach/[id]/prepare/route.ts", {
   "@/lib/outreach-identity": { resolveOutreachIdentity: async () => scope },
   "@/lib/outreach": { londonDate: () => today },
   "@/lib/outreach-preparation": preparation,
+  "@/lib/outreach-queue-repair": queueRepair,
   "@/lib/workspace-profile": { ensureWorkspaceProfileId: async () => { generationHandoffs++; throw Error("READY_FOR_EXISTING_GENERATION"); } },
 });
 const requested = [{ type: "prepare_outreach", prospect: "Example Prospect", guidance: "Use saved facts" }];

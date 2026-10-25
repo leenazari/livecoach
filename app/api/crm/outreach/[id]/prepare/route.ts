@@ -47,6 +47,9 @@ import {
 } from "@/lib/sales-profile";
 import { shouldIncludePersonalOutreachBookingLink } from "@/lib/outreach-booking-link";
 import { loadOutreachPreparation } from "@/lib/outreach-preparation";
+import { loadOutreachQueueRepair, sameOutreachQueueRepair, type OutreachQueueRepair } from "@/lib/outreach-queue-repair";
+import { POST as addToOutreachQueue } from "@/app/api/crm/outreach/queue/route";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -156,19 +159,54 @@ const completeDraft = (value: any): value is CompleteOutreachDraft => !!(
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const startedAt = Date.now();
+  let queueRepair: OutreachQueueRepair | null = null;
   try {
     const sender = await resolveOutreachIdentity();
     const prospectId = params.id;
-    const preparation = await loadOutreachPreparation({
+    const body = await req.json().catch(() => ({}));
+    let preparation = await loadOutreachPreparation({
       client: supabaseAdmin, scope: sender, prospectId, today: londonDate(), fullRecords: true,
     });
+    if (body.queueRepair) {
+      const readyPlan = preparation.ok && Number(preparation.enrolment.current_step) === 1 &&
+        !preparation.enrolment.last_sent_at && !preparation.enrolment.next_action_at ? {
+        prospectId, enrolmentId: preparation.enrolment.id,
+        campaignId: preparation.campaign.id, campaignName: "", date: londonDate(),
+      } : null;
+      const plan = readyPlan || (!preparation.ok && preparation.blocker.code === "outreach_prepare_queue_required"
+        ? await loadOutreachQueueRepair({ client: supabaseAdmin, scope: sender, prospectId, today: londonDate() }) : null);
+      if (!plan || !sameOutreachQueueRepair(body.queueRepair, plan)) {
+        return NextResponse.json(crmBlockerPayload({ code: "outreach_repair_changed",
+          title: "Repair needs a fresh review", reason: "The prospect, queue date or campaign no longer matches the proposed repair",
+          nextAction: "Ask Brain to check this prospect again before making another change" }), { status: 409 });
+      }
+      if (!readyPlan) {
+        // Reuse every queue safety check; one bounded attempt, then re-read.
+        const response = await addToOutreachQueue(new NextRequest(new URL("/api/crm/outreach/queue", req.url), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prospectId, campaignId: plan.campaignId, preparationRepair: plan }),
+        }));
+        const result = await response.json();
+        if (!response.ok) {
+          if (result.blocker || result.queueRepair) return NextResponse.json(result, { status: response.status });
+          return NextResponse.json(crmBlockerPayload({ code: "outreach_queue_repair_blocked",
+            title: "Queue repair needs review",
+            reason: response.status < 500 ? result.error || "A queue restriction prevented the repair" : "The queue repair could not be confirmed",
+            nextAction: "Review this prospect's Outreach queue and contact restrictions. Ask a manager if the restriction needs attention",
+            responsible: "manager" }), { status: response.status });
+        }
+        queueRepair = plan;
+        preparation = await loadOutreachPreparation({
+          client: supabaseAdmin, scope: sender, prospectId, today: londonDate(), fullRecords: true,
+        });
+      }
+    }
     if (!preparation.ok) {
-      return NextResponse.json({ error: preparation.error, blocker: preparation.blocker },
+      return NextResponse.json({ error: preparation.error, blocker: preparation.blocker, queueRepair },
         { status: preparation.status });
     }
     const { prospect, enrolment, campaign } = preparation;
     const profileId = await ensureWorkspaceProfileId();
-    const body = await req.json().catch(() => ({}));
     const generationMode =
       body?.generationMode === "overnight" ? "overnight" : "manual";
     const senderGuidance =
@@ -237,6 +275,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             actionType: sequenceStep.actionType,
             purpose: sequenceStep.purpose,
           },
+          queueRepair,
         },
         { status: 409 }
       );
@@ -413,7 +452,7 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
     }
     if (!completeDraft(parsed)) {
       console.error(JSON.stringify({ level: "error", msg: "outreach prepare format repair failed", prospectId, ms: Date.now() - startedAt }));
-      return NextResponse.json({ error: "The research response could not be formatted after an automatic repair. Nothing was saved or sent." }, { status: 502 });
+      return NextResponse.json({ error: `${queueRepair ? "The queue entry was fixed. " : ""}The research response could not be formatted after an automatic repair. No draft was saved or sent.`, queueRepair }, { status: 502 });
     }
     const verifiedJobSignals = sanitiseJobResearchSignals(parsed.research.jobSignals, prospect);
     const jobSignals = candidatePreparationCampaign
@@ -645,9 +684,10 @@ ${originalText.slice(0, 9000) || "No usable formatted text was returned. Use onl
       ]),
     ]);
     console.log(JSON.stringify({ level: "info", msg: "outreach prepare completed", prospectId, generationMode, qualityScore, needsExtraReview, formatRepaired, ms: Date.now() - startedAt }));
-    return NextResponse.json({ research, sources, strategy, qualityScore, needsExtraReview, formatRepaired, generationMode, checks: { wordCount, questionCount, bannedHits, voiceWordCount, voiceCharacterCount, emailHasDemoReplyCta, voiceHasDemoReplyCta }, message: draft });
+    return NextResponse.json({ research, sources, strategy, qualityScore, needsExtraReview, formatRepaired, generationMode, queueRepair, checks: { wordCount, questionCount, bannedHits, voiceWordCount, voiceCharacterCount, emailHasDemoReplyCta, voiceHasDemoReplyCta }, message: draft });
   } catch (error: any) {
     console.error(JSON.stringify({ level: "error", msg: "outreach prepare failed", prospectId: params.id, error: error?.message || "unknown error", ms: Date.now() - startedAt }));
-    return NextResponse.json({ error: error?.name === "AbortError" ? "Research timed out, try this person again" : error?.message || "failed to prepare outreach" }, { status: 500 });
+    const reason = error?.name === "AbortError" ? "Research timed out, try this person again" : error?.message || "failed to prepare outreach";
+    return NextResponse.json({ error: `${queueRepair ? "The queue entry was fixed, but preparation did not complete. " : ""}${reason}`, queueRepair }, { status: 500 });
   }
 }

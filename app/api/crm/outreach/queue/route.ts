@@ -24,6 +24,7 @@ import {
   outreachAssignmentConflict,
 } from "@/lib/outreach-assignment-service";
 import { outreachCrmBlocker } from "@/lib/outreach-crm-blocker";
+import { loadOutreachQueueRepair, sameOutreachQueueRepair } from "@/lib/outreach-queue-repair";
 import {
   verifiedCompanyResearchEvidence,
   verifiedJobResearchEvidence,
@@ -130,18 +131,18 @@ async function loadQueue(
   const enrolmentIds = (enrolments || []).map((row: any) => row.id);
   const campaignIds = [...new Set((enrolments || []).map((row: any) => row.campaign_id))];
   const [
-    { data: prospects },
-    { data: messages },
-    { data: campaigns },
-    { data: learnings },
-    { data: suppressions },
+    { data: prospects, error: prospectError },
+    { data: messages, error: messageError },
+    { data: campaigns, error: campaignError },
+    { data: learnings, error: learningError },
+    { data: suppressions, error: suppressionError },
     crmGuard,
     sendpilotContext,
   ] = await Promise.all([
-    prospectIds.length ? supabaseAdmin.from("outreach_prospects").select("*").in("id", prospectIds) : Promise.resolve({ data: [] }),
-    enrolmentIds.length ? supabaseAdmin.from("outreach_messages").select("*").in("enrolment_id", enrolmentIds) : Promise.resolve({ data: [] }),
-    campaignIds.length ? supabaseAdmin.from("outreach_campaigns").select("*").in("id", campaignIds) : Promise.resolve({ data: [] }),
-    campaignIds.length ? supabaseAdmin.from("outreach_learnings").select("*").in("campaign_id", campaignIds).eq("status", "promoted") : Promise.resolve({ data: [] }),
+    prospectIds.length ? supabaseAdmin.from("outreach_prospects").select("*").in("id", prospectIds) : Promise.resolve({ data: [], error: null }),
+    enrolmentIds.length ? supabaseAdmin.from("outreach_messages").select("*").in("enrolment_id", enrolmentIds) : Promise.resolve({ data: [], error: null }),
+    campaignIds.length ? supabaseAdmin.from("outreach_campaigns").select("*").in("id", campaignIds) : Promise.resolve({ data: [], error: null }),
+    campaignIds.length ? supabaseAdmin.from("outreach_learnings").select("*").in("campaign_id", campaignIds).eq("status", "promoted") : Promise.resolve({ data: [], error: null }),
     supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", workspaceId),
     outreachCrmGuard(),
     loadSendPilotOutreachContext(
@@ -149,6 +150,8 @@ async function loadQueue(
       { prospectIds, campaignIds }
     ),
   ]);
+  const queueReadError = prospectError || messageError || campaignError || learningError || suppressionError;
+  if (queueReadError) throw queueReadError;
   const prospectMap = new Map((prospects || []).map((row: any) => [row.id, row]));
   const campaignMap = new Map((campaigns || []).map((row: any) => [row.id, row]));
   const messagesByEnrolment = new Map<string, any[]>();
@@ -304,6 +307,13 @@ export async function POST(req: NextRequest) {
     const account = await resolveRecordScope();
     const requestScope = getRequestScope();
     const body = await req.json().catch(() => ({}));
+    const repair = body.preparationRepair
+      ? await loadOutreachQueueRepair({ client: supabaseAdmin, scope: account,
+          prospectId: String(body.prospectId || ""), today: londonDate() }) : null;
+    if (body.preparationRepair && (!repair ||
+      !sameOutreachQueueRepair(body.preparationRepair, repair) || body.campaignId !== repair.campaignId)) {
+      return NextResponse.json({ error: "This queue repair changed. Ask Brain to check the prospect again." }, { status: 409 });
+    }
     const campaignSelection = await resolveOutreachCampaignSelection(
       account.userId,
       account.workspaceId
@@ -353,10 +363,12 @@ export async function POST(req: NextRequest) {
     if (requestedProspectId) {
       if (!remaining)
         return NextResponse.json({ error: `Today's queue already has ${limit} people` }, { status: 400 });
-      const [{ data: prospect }, { data: suppressions }] = await Promise.all([
+      const [{ data: prospect, error: prospectError }, { data: suppressions, error: suppressionError }] = await Promise.all([
         supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", account.workspaceId).eq("id", requestedProspectId).maybeSingle(),
         supabaseAdmin.from("outreach_suppressions").select("target").eq("workspace_id", account.workspaceId),
       ]);
+      if (prospectError) throw prospectError;
+      if (suppressionError) throw suppressionError;
       if (!prospect) return NextResponse.json({ error: "Prospect not found" }, { status: 404 });
       const crmGuard = await outreachCrmGuard({
         prospectCompanyIds: prospect.crm_company_id
@@ -423,7 +435,7 @@ export async function POST(req: NextRequest) {
         isInsideCrossCampaignCooldown(row.last_sent_at)
       );
       const overrideReason = String(body.cooldownOverrideReason || "").trim();
-      if (cooldownConflict && !overrideReason) {
+      if (cooldownConflict && (repair || !overrideReason)) {
         return NextResponse.json(
           { error: "This person was contacted through another campaign within the last 30 days. A workspace owner or manager may override this safety pause with a recorded reason." },
           { status: 409 }
@@ -449,7 +461,13 @@ export async function POST(req: NextRequest) {
       }
       if (previous && ["contacted", "replied", "booked", "completed"].includes(previous.status))
         return NextResponse.json({ error: "This person already has outreach history. Open their history instead." }, { status: 400 });
-      try {
+      if (repair && (!previous || previous.id !== repair.enrolmentId ||
+        prospect.assigned_to_user_id !== account.userId ||
+        !["queued", "researched", "drafted"].includes(previous.status) ||
+        !canResumeUnsentFirstTouch(previous, today) || previous.next_action_at)) {
+        return NextResponse.json({ error: "This queue repair is no longer safe. Ask Brain to review it again." }, { status: 409 });
+      }
+      if (!repair) try {
         // Re-running the atomic assignment is intentional. It repairs any
         // older assignment which predates automatic safe company sharing.
         await assignOutreachProspectsWithCompanyAccess({
@@ -480,15 +498,23 @@ export async function POST(req: NextRequest) {
         const resumedStatus = ["researched", "drafted", "approved"].includes(previous.status)
           ? previous.status
           : "queued";
-        const { error } = await supabaseAdmin
+        let update = supabaseAdmin
           .from("outreach_enrolments")
           .update({ queued_for: today, status: resumedStatus, next_action_at: null, updated_at: now, ...overrideFields })
           .eq("id", previous.id);
+        if (repair) {
+          update = update.eq("workspace_id", account.workspaceId).eq("prospect_id", requestedProspectId)
+            .eq("status", previous.status).eq("current_step", 1)
+            .is("last_sent_at", null).is("next_action_at", null);
+          update = previous.queued_for == null ? update.is("queued_for", null) : update.eq("queued_for", previous.queued_for);
+        }
+        const { data: updated, error } = await update.select("id").maybeSingle();
         if (error) {
           const response = safetyResponse(error);
           if (response) return response;
           throw error;
         }
+        if (!updated) return NextResponse.json({ error: "The queue entry changed before it could be saved. Refresh the prospect before retrying." }, { status: 409 });
       } else {
         const { data: enrolment, error } = await supabaseAdmin
           .from("outreach_enrolments")
@@ -502,7 +528,15 @@ export async function POST(req: NextRequest) {
         }
         enrolmentId = enrolment.id;
       }
-      await Promise.all([
+      if (repair) {
+        const { error } = await supabaseAdmin.from("outreach_events").insert({
+          workspace_id: account.workspaceId, owner_id: account.userId, visibility: "team",
+          campaign_id: campaign.id, prospect_id: requestedProspectId, kind: "queued",
+          metadata: { date: today, enrolment_id: enrolmentId, source: "brain_simple_error_repair" },
+        });
+        if (error) return NextResponse.json({ error: "The queue entry was fixed, but its activity receipt could not be saved. Refresh the prospect before continuing.", queueRepair: repair }, { status: 502 });
+        return NextResponse.json({ date: today, queueRepair: repair, added: 0 });
+      } else await Promise.all([
         supabaseAdmin.from("outreach_prospects").update({ status: "queued", updated_at: now }).eq("id", requestedProspectId),
         supabaseAdmin.from("outreach_events").insert({ campaign_id: campaign.id, prospect_id: requestedProspectId, kind: "queued", metadata: { date: today, enrolment_id: enrolmentId, source: "prospects_tracker" } }),
       ]);
