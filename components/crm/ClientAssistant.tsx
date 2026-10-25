@@ -28,6 +28,8 @@ function fullActionLabel(action: any): string {
 }
 
 function actionResultSummary(action: any, result: any): string | undefined {
+  if (action?.type === "prepare_outreach" && result?.queueRepair)
+    return "Fixed the missing queue entry and prepared research, email and voice script for review. Nothing was sent.";
   if (action?.type !== "pull_emails") return undefined;
   const answer =
     typeof result?.emailAnswer?.answer === "string"

@@ -68,6 +68,7 @@ import { calendarRecurrence } from "@/lib/calendar-create";
 import { privateRecordFields } from '@/lib/record-scope';
 import { loadBrainSendPilotStopTargets } from "@/lib/brain-sendpilot";
 import { loadOutreachPreparation } from "@/lib/outreach-preparation";
+import { loadOutreachQueueRepair } from "@/lib/outreach-queue-repair";
 import { londonDate } from "@/lib/outreach";
 
 export const runtime = "nodejs";
@@ -1385,6 +1386,18 @@ async function resolveActions(
           client: supabaseAdmin, scope, prospectId: prospect.id, today: londonDate(),
         });
         if (!preparation.ok) {
+          const queueRepair = preparation.blocker.code === "outreach_prepare_queue_required"
+            ? await loadOutreachQueueRepair({ client: supabaseAdmin, scope,
+                prospectId: prospect.id, today: londonDate() }) : null;
+          if (queueRepair) {
+            out.push({
+              key, type: it.type,
+              label: `Fix ${prospectName}'s missing queue entry in "${queueRepair.campaignName}", then research and prepare their email and voice script for review`,
+              endpoint: `/api/crm/outreach/${prospect.id}/prepare`, method: "POST",
+              body: { generationMode: "manual", guidance: String(it.guidance || "").trim().slice(0, 1000), queueRepair },
+            });
+            continue;
+          }
           out.push({
             key, type: it.type,
             label: `Research ${prospectName} and prepare their email and voice script for review`,
@@ -2657,6 +2670,7 @@ Use update_client for the relationship-level client stage and core facts. Use up
 Only a canonical opportunity record means a client is in the pipeline. A company relationship stage such as Discovery is never proof of pipeline membership. When the user explicitly asks to add or move an existing permitted client or assigned prospect into their pipeline and no canonical opportunity is shown, use promote_to_pipeline. It starts without invented value, probability, outlook or lifecycle evidence and always waits for confirmation.
 When the user explicitly says a company is a partner, supplier, internal organisation or other non-buyer and should not appear in prospecting or the sales pipeline, include removeFromPipeline:true with update_client. Do not include it merely because the relationship stage is Partner, because a partner can still have a genuine expansion deal. This action dismisses active revenue opportunities but preserves the client, calls, tasks and immutable deal history.
 Use update_contact to correct or clear an existing person's core details. Use upsert_stakeholder when the change is specifically about their buying role or when the named contact may need to be created.
+SIMPLE ERROR REPAIR: when a user asks to fix an outreach preparation error for one exact prospect, use prepare_outreach. The server can offer a confirmed fix-and-prepare action for a missing queue entry only when one existing active campaign and an unsent first touch are verified. Explain the exact proposed repair and wait for its receipt before claiming success. Never activate a campaign, unpause work, change assignment, override a contact restriction or invent a campaign to clear an error. Ambiguous records, permissions, duplicate memberships, provider failures and software bugs need an explanation and escalation, not repeated retries. Research still needs its separate action approval and this repair never sends outreach.
 Use link_contact_to_client only to repair one existing contact with one exact existing CRM company. It must never invent or fuzzy-create a company. Exact email duplicates at the target company are blocked for review.
 Use upsert_stakeholder when the user identifies a decision-maker, champion, influencer, user or blocker. It updates an existing contact or clearly proposes creating the named contact when none exists. Do not guess buying roles from a job title alone.
 Use update_task when the user explicitly asks to complete, rename, pin, unpin or reschedule an existing to-do. If several match, the interface will ask which one.
