@@ -11,6 +11,8 @@ export type PrimaryAttendeeMatch = {
   name: string;
   email: string;
   matchedBy:
+    | "manual_selection"
+    | "verified_email"
     | "meeting_title"
     | "company_contact"
     | "company_domain"

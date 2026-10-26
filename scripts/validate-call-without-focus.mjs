@@ -16,6 +16,10 @@ const source = readFileSync(new URL("../app/call/page.tsx", import.meta.url), "u
 const compiled = ts.transpileModule(source, { compilerOptions: {
   module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
 } }).outputText;
+const pickerModule = { exports: {} };
+new Function('require', 'module', 'exports', ts.transpileModule(readFileSync(new URL('../components/MeetingLeadPicker.tsx', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText)(require, pickerModule, pickerModule.exports);
 const upcomingId = "46482c8f-182c-46dc-9c25-46ea99fdeb81";
 const companyId = "64883abe-8824-450a-a826-e1dbfa9e163f";
 const meetingUrl = "https://meet.google.com/abc-defg-hij";
@@ -27,6 +31,7 @@ const savedFetch = globalThis.fetch;
 for (const scenario of [
   "no-focus", "focus-only", "full-plan", "existing-live", "prep-failed",
   "call-loading", "call-denied", "call-mismatch", "stale-meeting", "invalid-meeting", "new-call",
+  "lead-choice", "lead-choice-partial",
 ]) {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     url: `https://crm.test/call${scenario === "new-call" ? "" : `?upcoming=${upcomingId}`}${scenario === "stale-meeting" ? "&meetingUrl=https%3A%2F%2Fmeet.google.com%2Fold-link-xxx" : ""}`,
@@ -54,15 +59,29 @@ for (const scenario of [
       { id: "project-a", name: "Programme — Recruitment" },
       { id: "project-b", name: "Programme — Teaching" },
     ],
+    ...(scenario.startsWith('lead-choice') ? { leadChoices: [{ name: 'Robin', email: 'robin@vendor.test' }, { name: 'Pat', email: 'pat@vendor.test' }], needsLeadConfirmation: true } : {}),
   };
+  let leadConfirmed = false;
   const crmFetch = async (url, options) => {
     requests.push({ url, options });
     if (url === "/api/crm/ai-mode") return { mode: "economical" };
     if (url === `/api/crm/upcoming/${upcomingId}` && !options) {
       if (scenario === "call-loading") return new Promise(() => {});
       if (scenario === "call-denied") throw new Error("Call unavailable");
-      return { call };
+      if (leadConfirmed && scenario === 'lead-choice-partial') throw new Error('Read interrupted');
+      return { call: structuredClone(call) };
     }
+    if (url === `/api/crm/upcoming/${upcomingId}/lead`) {
+      assert.equal(JSON.parse(options.body).leadEmail, 'robin@vendor.test');
+      leadConfirmed = true;
+      call.primaryAttendee = { name: 'Robin', email: 'robin@vendor.test', matchedBy: 'manual_selection' };
+      call.needsLeadConfirmation = false;
+      call.leadSelectionVersion = 'version';
+      call.prep = { candidate: 'Robin', planStage: 'none', selectedComps: [], suggestedComps: [] };
+      call.workstream_id = null;
+      return { ok: true, notice: 'Lead saved. Matching email context will be used before other history.' };
+    }
+    if (url === '/api/crm/email-pull') return { ok: true, emailContext: 'Relevant supplier offer for Robin' };
     if (url === `/api/crm/companies/${companyId}`) return {
       company: { name: call.company },
       workstreams: call.workstreamChoices.map(item => ({ ...item, status: "active" })),
@@ -70,6 +89,7 @@ for (const scenario of [
     if (url.endsWith("/prep-intent")) {
       if (scenario === "prep-failed") throw new Error("Intent service unavailable");
       await prepPending;
+      if (leadConfirmed) return { intent: 'Evaluate the supplier offer with Robin' };
       return { intent: "", needsIdentityConfirmation: true, notice: "Confirm the meeting context or enter your own intent." };
     }
     if (url === "/api/crm/link-session") return { ok: true };
@@ -112,6 +132,7 @@ for (const scenario of [
     };
     if (name === "@/components/crm/CallActionDock") return { default: props =>
       React.createElement("div", { role: "region", "aria-label": "Call actions" }, props.children) };
+    if (name === '@/components/MeetingLeadPicker') return pickerModule.exports;
     if (name.startsWith("@/components/")) return { default: Empty };
     return require(name);
   };
@@ -131,7 +152,21 @@ for (const scenario of [
     const preCall = button("Pre-call brief", document.querySelector("nav"));
     assert.equal(preCall.disabled, stage !== "full", "Only the brief needs a completed plan");
 
-    if (["call-loading", "call-denied", "call-mismatch"].includes(scenario)) {
+    if (scenario.startsWith('lead-choice')) {
+      await act(async () => releasePrep());
+      assert.match(document.body.textContent, /Who is leading this conversation/);
+      const select = document.querySelector('select[aria-label="Meeting lead"]');
+      await act(async () => { select.value = 'robin@vendor.test'; select.dispatchEvent(new dom.window.Event('change', { bubbles: true })); });
+      await click(button('Use this lead'));
+      assert.equal(leadConfirmed, true);
+      if (scenario === 'lead-choice') {
+        assert.match(document.body.textContent, /Preparing for Robin/);
+        assert.match(document.body.textContent, /Your choice is saved for this meeting/);
+        assert.ok([...document.querySelectorAll('textarea')].some(el => el.value === 'Evaluate the supplier offer with Robin'));
+      } else assert.match(document.body.textContent, /Your lead was saved, but the updated prep could not be loaded/);
+      assert.equal(opened.length, 0, 'Lead selection never opens or starts a meeting');
+      assert.equal(botRequests.length, 0);
+    } else if (["call-loading", "call-denied", "call-mismatch"].includes(scenario)) {
       assert.equal(live.disabled, true, "Unverified scheduled call cannot start");
       assert.equal(button("Start call", dock).disabled, true);
       assert.equal(opened.length, 0);

@@ -6,6 +6,7 @@ import { verifiedCalendarGroupIntent } from '../lib/calendar-call-identity.ts';
 import { normaliseCompanyDomain } from '../lib/company-identity.ts';
 import { refreshCallPrepContext } from '../lib/call-prep-refresh.ts';
 import { pickPrimaryAttendee } from '../lib/calendar-subject.ts';
+import * as leadContext from '../lib/call-lead-context.ts';
 
 const company = { id: 'school', name: 'School of Coding & AI', domain: 'schoolofcoding.co.uk' };
 const event = {
@@ -94,6 +95,7 @@ for (const owner of ['lee', 'kam']) {
     } };
     const exports = {};
     const deps = {
+      '@/lib/call-lead-context': leadContext,
       'next/server': { NextResponse: { json: (data, init) => Response.json(data, init) } },
       '@/lib/supabase': { supabaseAdmin: db },
       '@/lib/openai': {}, '@/lib/usage': {}, '@/lib/commercial-memory': {}, '@/lib/workspace': {}, '@/lib/workstreams': {},

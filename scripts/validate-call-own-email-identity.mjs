@@ -6,6 +6,7 @@ import * as calendar from '../lib/calendar-subject.ts';
 import { inferLink, deriveNewClientFromAttendees } from '../lib/attendee-linking.ts';
 import { cachedIntentForCalendarAttendee } from '../lib/calendar-call-identity.ts';
 import { normaliseCompanyDomain } from '../lib/company-identity.ts';
+import * as leadContext from '../lib/call-lead-context.ts';
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 function compile(path, deps) {
@@ -92,6 +93,7 @@ await assert.rejects(loadOwn('lee', { absentMember: true }), /not active/);
 for (const errorTable of ['workspace_members', 'profiles', 'google_oauth', 'microsoft_oauth']) await assert.rejects(loadOwn('lee', { errorTable }), /Identity read failed/);
 
 const resolver = compile('lib/call-subject.ts', {
+  '@/lib/call-lead-context': leadContext,
   '@/lib/company-identity': { normaliseCompanyDomain }, '@/lib/calendar-subject': calendar,
   '@/lib/own-account-emails': { loadOwnAccountEmails: async () => selfEmails },
   '@/lib/workspace-profile': { ensureWorkspaceProfileId: async () => 'profile' },

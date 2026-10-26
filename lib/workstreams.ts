@@ -124,7 +124,7 @@ export async function resolveCallScope(opts: {
   if (uuid(opts.upcomingId)) {
     const { data: upcoming, error } = await supabaseAdmin
       .from("upcoming_calls")
-      .select("id, company_id, workstream_id, title, attendees")
+      .select("id, company_id, workstream_id, title, attendees, prep")
       .eq("id", opts.upcomingId)
       .maybeSingle();
     if (error) throw error;

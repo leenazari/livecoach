@@ -14,12 +14,14 @@ import {
 import { supabaseAdmin } from "@/lib/supabase";
 import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 import { loadOwnAccountEmails } from "@/lib/own-account-emails";
+import { resolveCallLeadContext } from "@/lib/call-lead-context";
 
 export type UpcomingCallSubjectRecord = {
   id: string;
   company_id?: string | null;
   title?: string | null;
   attendees?: CalendarAttendee[] | null;
+  prep?: any;
 };
 
 const FALLBACK_INTERNAL_DOMAINS = [
@@ -42,9 +44,9 @@ export async function loadProtectedIntentDomains(): Promise<string[]> {
   ];
 }
 
-export async function resolvePrimaryAttendeeForCall(
+export async function resolveCallLead(
   call: UpcomingCallSubjectRecord
-): Promise<PrimaryAttendeeMatch | null> {
+) {
   const selfEmails = await loadOwnAccountEmails();
   const attendees = markOwnCalendarAttendees(call.attendees, selfEmails);
   const profileId = await ensureWorkspaceProfileId();
@@ -97,8 +99,7 @@ export async function resolvePrimaryAttendeeForCall(
   // internal guest list, the named internal person remains selectable. The real
   // external lead can still win by name, contact or company domain regardless
   // of calendar ordering or RSVP status.
-  const eligibleAttendees = companyResult.data
-    ? attendees.filter(
+  const eligibleAttendees = attendees.filter(
         (attendee) =>
           attendee?.self === true ||
           !attendee?.email ||
@@ -110,13 +111,12 @@ export async function resolvePrimaryAttendeeForCall(
                 calendarEmailDomain(attendee.email as string)
             )
           ) &&
-            emailMayInfluenceCompanyIntent(attendee.email, {
+            (!companyResult.data || emailMayInfluenceCompanyIntent(attendee.email, {
               companyDomain,
               companyInternal: companyInternal && !hasExternalGuest,
               protectedDomains: internalDomains,
-            }))
-      )
-    : attendees;
+            })))
+      );
   const primary = pickPrimaryAttendee(eligibleAttendees, {
     title: call.title,
     companyDomain,
@@ -124,21 +124,25 @@ export async function resolvePrimaryAttendeeForCall(
     internalDomains,
     selfEmails,
   });
-  if (!primary) return null;
-
-  const savedContact = contacts.find(
+  const savedContact = primary && contacts.find(
     (contact: any) =>
       String(contact.email || "").toLowerCase().trim() === primary.email
   );
-  return savedContact?.name
-    ? { ...primary, name: String(savedContact.name).trim() }
-    : primary;
+  return resolveCallLeadContext(call, eligibleAttendees,
+    primary && savedContact?.name ? { ...primary, name: String(savedContact.name).trim() } : primary,
+    contacts);
+}
+
+export async function resolvePrimaryAttendeeForCall(
+  call: UpcomingCallSubjectRecord
+): Promise<PrimaryAttendeeMatch | null> {
+  return (await resolveCallLead(call)).primaryAttendee;
 }
 
 export async function loadPrimaryAttendeeForUpcoming(upcomingId: string) {
   const { data: call, error } = await supabaseAdmin
     .from("upcoming_calls")
-    .select("id,company_id,title,attendees")
+    .select("id,company_id,title,attendees,prep")
     .eq("id", upcomingId)
     .maybeSingle();
   if (error) throw error;

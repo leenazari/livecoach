@@ -4,7 +4,9 @@ import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 import { inferLink, loadAttendeeConfig } from "@/lib/attendees";
 import { getWorkstreamScope, resolveCallScope } from "@/lib/workstreams";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
-import { resolvePrimaryAttendeeForCall } from "@/lib/call-subject";
+import { resolveCallLead, resolvePrimaryAttendeeForCall } from "@/lib/call-subject";
+import { preserveCallLeadMetadata } from "@/lib/call-lead-context";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 import { calendarEmailDomain } from "@/lib/calendar-subject";
 import { appendBrainCallFocusNote } from "@/lib/brain-call-actions";
 import {
@@ -75,6 +77,7 @@ export async function GET(
           ...(Array.isArray(ownPrep.privateNotes)
             ? { privateNotes: ownPrep.privateNotes }
             : {}),
+          ...(ownPrep.leadSelection ? { leadSelection: ownPrep.leadSelection } : {}),
         };
         data.prepped = Boolean(occurrence.canonical.prepped);
       }
@@ -133,7 +136,8 @@ export async function GET(
       const access = await loadAssignedClientAccess(data.company_id, account);
       company = access?.company?.name || null;
     }
-    const primaryAttendee = await resolvePrimaryAttendeeForCall(data);
+    const lead = await resolveCallLead(data);
+    const primaryAttendee = lead.primaryAttendee;
     const scope = await resolveCallScope({
       companyId: data.company_id,
       upcomingId: data.id,
@@ -186,6 +190,10 @@ export async function GET(
         ...data,
         company,
         primaryAttendee,
+        leadChoices: lead.leadChoices,
+        needsLeadConfirmation: lead.needsLeadConfirmation,
+        meetingEmail: lead.meetingEmail,
+        leadSelectionVersion: data.prep?.leadSelection?.savedAt || null,
         workstream: scope.workstream,
         workstreamChoices,
         sharedCall: occurrence
@@ -231,6 +239,14 @@ export async function PATCH(
     const currentPrep =
       current?.prep && typeof current.prep === "object" ? current.prep : {};
     const currentIntentMeta = (currentPrep as any).intentMeta;
+    if (body.prep && currentPrep.leadSelection &&
+        body.prep.leadSelectionVersion !== currentPrep.leadSelection.savedAt) {
+      return NextResponse.json(crmBlockerPayload({
+        code: "meeting_lead_snapshot_changed", title: "Preparation save paused",
+        reason: "The meeting lead was confirmed or changed after this tab loaded",
+        nextAction: "Keep your notes and reopen prep to use the saved lead. The old plan has not replaced it",
+      }), { status: 409 });
+    }
     // An open browser tab may still autosave an older generated snapshot. Once
     // the user has manually corrected the intent, that stale snapshot must not
     // overwrite either the canonical intent or the prep brief.
@@ -272,7 +288,7 @@ export async function PATCH(
         ...prep,
         intentMeta: {
           ...(prep as any).intentMeta,
-          source: body.intentSource,
+          source: protectManualIntent ? "manual" : body.intentSource,
           savedAt: new Date().toISOString(),
         },
       };
@@ -304,7 +320,7 @@ export async function PATCH(
           patch.prep?.intentMeta ||
           currentIntentMeta || null;
         patch.prep = {
-          ...body.prep,
+          ...preserveCallLeadMetadata(currentPrep, body.prep),
           ...(protectManualIntent && current?.intent
             ? { brief: current.intent }
             : {}),
@@ -326,7 +342,7 @@ export async function PATCH(
           ...(intentMeta ? { intentMeta } : {}),
         };
       } else {
-        patch.prep = body.prep ?? null;
+        patch.prep = preserveCallLeadMetadata(currentPrep, null);
       }
     }
     const appendIntentNote =
@@ -462,12 +478,17 @@ export async function PATCH(
         account.userId
       );
     }
-    const { data, error } = await supabaseAdmin
+    let saveQuery = supabaseAdmin
       .from("upcoming_calls")
       .update(patch)
       .eq("id", params.id)
       .eq("workspace_id", account.workspaceId)
-      .eq("owner_id", account.userId)
+      .eq("owner_id", account.userId);
+    if ("prep" in patch) {
+      saveQuery = current.prep == null ? saveQuery.is("prep", null)
+        : saveQuery.eq("prep", JSON.stringify(current.prep));
+    }
+    const { data, error } = await saveQuery
       .select("id, title, scheduled_at, meeting_url, intent, prepped, completed_at, company_id, workstream_id, prep")
       .maybeSingle();
     if (error || !data) {
@@ -487,7 +508,11 @@ export async function PATCH(
         }
       }
       if (error) throw error;
-      return NextResponse.json({ error: "call not found" }, { status: 404 });
+      return NextResponse.json(crmBlockerPayload({
+        code: "meeting_prep_changed", title: "Preparation save not confirmed",
+        reason: "The call or its saved preparation changed while this tab was saving",
+        nextAction: "Keep your notes, reopen prep and check the saved lead and intent before editing again",
+      }), { status: 409 });
     }
     let notetakerWarning: string | null = null;
     if (
