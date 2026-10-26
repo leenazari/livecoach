@@ -179,7 +179,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (!enrolment)
         throw new Error("database did not confirm the campaign enrolment");
     }
-    const events: Record<string, any>[] = [];
+    const events: Array<{
+      workspace_id: string;
+      owner_id: string;
+      visibility: "team";
+      campaign_id: string | null;
+      prospect_id: string;
+      message_id: string;
+      kind: "voice_script_approved" | "approved";
+      metadata: Record<string, unknown>;
+    }> = [];
     if (voiceApprovalRecorded) {
       events.push({
         workspace_id: sender.workspaceId,
@@ -210,6 +219,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         prospect_id: data.prospect_id,
         message_id: data.id,
         kind: "approved",
+        // Bulk inserts use the union of row columns. Omitting this when the
+        // voice approval row has metadata inserts NULL, not the DB default.
+        metadata: {},
       });
     }
     if (events.length) {

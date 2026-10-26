@@ -147,6 +147,7 @@
     "validate:brain-controlled-authority": "node scripts/validate-brain-controlled-authority.mjs",
     "validate:brain-workflow-completion": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-brain-workflow-completion.mjs",
     "validate:outreach-voice-notes": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-outreach-voice-notes.mjs",
+    "validate:outreach-draft-save": "node scripts/validate-outreach-draft-save.mjs",
     "validate:canonical-navigation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-canonical-entity-navigation.mjs",
     "validate:clickable-performance": "node scripts/validate-clickable-metrics-performance.mjs",
     "validate:staff-mcp": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-staff-mcp.mjs",
