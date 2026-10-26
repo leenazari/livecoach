@@ -23,7 +23,19 @@ export type PrimaryAttendeeContext = {
   companyDomain?: string | null;
   contactEmails?: string[] | null;
   internalDomains?: string[] | Set<string> | null;
+  selfEmails?: string[] | Set<string> | null;
 };
+
+export function markOwnCalendarAttendees<T extends CalendarAttendee>(
+  attendees: T[] | null | undefined,
+  selfEmails?: string[] | Set<string> | null
+): T[] {
+  const own = new Set(Array.from(selfEmails || [], (email) =>
+    String(email || "").trim().toLowerCase()).filter(Boolean));
+  return (attendees || []).map((attendee) =>
+    own.has(String(attendee?.email || "").trim().toLowerCase())
+      ? { ...attendee, self: true } : attendee);
+}
 
 const DEFAULT_INTERNAL_DOMAINS = new Set(["ai13.com", "interviewa.com"]);
 
@@ -252,7 +264,7 @@ export function pickPrimaryAttendee(
   attendees: CalendarAttendee[] | null | undefined,
   context: PrimaryAttendeeContext = {}
 ): PrimaryAttendeeMatch | null {
-  const guests = (Array.isArray(attendees) ? attendees : [])
+  const guests = markOwnCalendarAttendees(Array.isArray(attendees) ? attendees : [], context.selfEmails)
     .filter(
       (attendee) =>
         attendee &&

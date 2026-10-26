@@ -59,6 +59,7 @@ const bindings = {
   focusBasisBriefRef: ref('Outdated intent'), focusBasisEmailRef: ref('Old email'),
   setPrepContextChanged: noop, setPlanStage: noop, docsAtFocusRef: ref(0),
   loadedDocsCountRef: ref(0), setNewDocFlag: noop,
+  activityContextRef: ref(null), setActivityContextSeen: noop,
 };
 let prep = callback('prep', '  const persistSession =', bindings);
 await prep('refocus');

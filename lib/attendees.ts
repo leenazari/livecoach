@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
 import type { AttendeeConfig } from "@/lib/attendee-linking";
+import { loadOwnAccountEmails } from "@/lib/own-account-emails";
 
 export {
   deriveNewClientFromAttendees,
@@ -17,6 +18,7 @@ export type {
 // Load the config once per sync. Every query uses the signed-in request scope,
 // so contact and company identities cannot cross accounts or workspaces.
 export async function loadAttendeeConfig(): Promise<AttendeeConfig> {
+  const selfEmails = await loadOwnAccountEmails();
   const profileId = await ensureWorkspaceProfileId();
   const [{ data: profile, error: profileError }, { data: companies, error: companiesError }, { data: contacts, error: contactsError }] =
     await Promise.all([
@@ -83,6 +85,7 @@ export async function loadAttendeeConfig(): Promise<AttendeeConfig> {
   for (const domain of ambiguousDomains) companyByDomain.delete(domain);
 
   return {
+    selfEmails,
     internalDomains,
     internalCompanyId,
     contactEmailToCompany,

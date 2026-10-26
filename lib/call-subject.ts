@@ -6,12 +6,14 @@ import {
   calendarHasExternalGuest,
   DEFAULT_PROTECTED_INTENT_DOMAINS,
   emailMayInfluenceCompanyIntent,
+  markOwnCalendarAttendees,
   pickPrimaryAttendee,
   type CalendarAttendee,
   type PrimaryAttendeeMatch,
 } from "@/lib/calendar-subject";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ensureWorkspaceProfileId } from "@/lib/workspace-profile";
+import { loadOwnAccountEmails } from "@/lib/own-account-emails";
 
 export type UpcomingCallSubjectRecord = {
   id: string;
@@ -43,6 +45,8 @@ export async function loadProtectedIntentDomains(): Promise<string[]> {
 export async function resolvePrimaryAttendeeForCall(
   call: UpcomingCallSubjectRecord
 ): Promise<PrimaryAttendeeMatch | null> {
+  const selfEmails = await loadOwnAccountEmails();
+  const attendees = markOwnCalendarAttendees(call.attendees, selfEmails);
   const profileId = await ensureWorkspaceProfileId();
   const companyId = String(call.company_id || "").trim();
   const [{ data: profile, error: profileError }, companyResult, contactsResult] =
@@ -85,7 +89,7 @@ export async function resolvePrimaryAttendeeForCall(
   const companyInternal =
     (companyResult.data as any)?.profile?.internal === true;
   const hasExternalGuest = calendarHasExternalGuest(
-    call.attendees,
+    attendees,
     internalDomains
   );
   // When any outside guest is present, protected internal attendees are only
@@ -94,7 +98,7 @@ export async function resolvePrimaryAttendeeForCall(
   // external lead can still win by name, contact or company domain regardless
   // of calendar ordering or RSVP status.
   const eligibleAttendees = companyResult.data
-    ? (call.attendees || []).filter(
+    ? attendees.filter(
         (attendee) =>
           attendee?.self === true ||
           !attendee?.email ||
@@ -112,12 +116,13 @@ export async function resolvePrimaryAttendeeForCall(
               protectedDomains: internalDomains,
             }))
       )
-    : call.attendees;
+    : attendees;
   const primary = pickPrimaryAttendee(eligibleAttendees, {
     title: call.title,
     companyDomain,
     contactEmails: contacts.map((contact: any) => contact.email),
     internalDomains,
+    selfEmails,
   });
   if (!primary) return null;
 
