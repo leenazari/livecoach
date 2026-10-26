@@ -162,6 +162,9 @@ for (const status of ["sending", "sent"]) {
   seed({ status });
   response = await patch({ approve_voice_script: true });
   assert.equal(response.status, 400);
+  const delivered = await response.json();
+  assert.equal(delivered.blocker.code, "outreach_draft_delivery_started");
+  assert.match(delivered.blocker.nextAction, /Do not send the same email again/);
   assert.ok(requests.every(row => row.method === "GET"), "Never edit or resend a delivered email");
 }
 for (const override of [{ userId: bob }, { workspaceId: outside }]) {
@@ -172,7 +175,18 @@ for (const override of [{ userId: bob }, { workspaceId: outside }]) {
   sender = original;
 }
 seed({ from_email: "another@example.invalid" });
-assert.equal((await patch({ approve_voice_script: true })).status, 403);
+response = await patch({ approve_voice_script: true }); result = await response.json();
+assert.equal(response.status, 403);
+assert.equal(result.blocker.code, "outreach_draft_sender_mismatch");
+assert.doesNotMatch(result.error, /another@example.invalid/);
+assert.match(result.blocker.nextAction, /connected mailbox and sender address/);
+assert.ok(requests.every(row => row.method === "GET"));
+seed({ voice_status: "generating" });
+response = await patch({ approve_voice_script: true }); result = await response.json();
+assert.equal(response.status, 409);
+assert.equal(result.blocker.code, "outreach_voice_already_generating");
+assert.match(result.blocker.outcome, /did not change.*or start another generation/);
+assert.ok(requests.every(row => row.method === "GET"));
 seed(); failHistory = true;
 response = await patch({ approve_voice_script: true });
 assert.equal(response.status, 500, "Genuine history failures must not claim success");

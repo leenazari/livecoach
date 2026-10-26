@@ -42,9 +42,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (!existing)
       return NextResponse.json({ error: "Draft not found" }, { status: 404 });
     if (["sending", "sent"].includes(existing.status))
-      return NextResponse.json({ error: "An email being delivered or already sent cannot be changed" }, { status: 400 });
+      return NextResponse.json(crmBlockerPayload({
+        code: "outreach_draft_delivery_started",
+        title: "This email can no longer be edited",
+        reason: "The email is being delivered or has already been sent",
+        outcome: "This edit was blocked before changing the email",
+        nextAction: "Check Activity for its delivery status. If you need to add or correct something, prepare a separate follow-up. Do not send the same email again",
+        responsible: "user",
+      }), { status: 400 });
     if (existing.from_email !== sender.senderEmail)
-      return NextResponse.json({ error: "Sender safety check failed" }, { status: 403 });
+      return NextResponse.json(crmBlockerPayload({
+        code: "outreach_draft_sender_mismatch",
+        title: "This draft uses a different sending address",
+        reason: "The sending address saved on the draft does not match your current outreach sender settings",
+        outcome: "This edit was blocked before changing the draft",
+        nextAction: "Check your connected mailbox and sender address in Settings. Prepare a new draft with the correct sender, or ask a workspace owner to check the mismatch",
+        responsible: "user",
+      }), { status: 403 });
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     const nextSubject = typeof body.subject === "string" && body.subject.trim()
       ? removeDashesFromProse(body.subject.trim()).slice(0, 120)
@@ -99,7 +113,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         );
       if (existing.voice_status === "generating")
         return NextResponse.json(
-          { error: "Wait for the current voice note to finish" },
+          crmBlockerPayload({
+            code: "outreach_voice_already_generating",
+            title: "Your voice note is already being generated",
+            reason: "A voice generation request is still in progress for this draft",
+            outcome: "This request did not change the draft or start another generation",
+            nextAction: "Wait for the player to appear, then listen to the note. If it stays stuck, share the support code with a workspace owner before generating another paid note",
+            responsible: "user",
+          }),
           { status: 409 }
         );
       if (outreachVoiceHasFalseSenderIdentity(nextVoiceScript, sender.senderName))
