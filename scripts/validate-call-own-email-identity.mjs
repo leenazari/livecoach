@@ -104,6 +104,8 @@ const resolver = compile('lib/call-subject.ts', {
   } } },
 });
 assert.equal((await resolver.resolvePrimaryAttendeeForCall({ id: 'event', title, attendees: invite, company_id: 'wrong-old-link' })).email, 'robin@vendor.example', 'A stale saved self-contact cannot replace the real external guest');
+assert.equal((await resolver.resolvePrimaryAttendeeForCall({ id: 'unlinked', title: 'Colleague introduction', attendees: invite })).email,
+  'robin@vendor.example', 'An unlinked call must also exclude the named internal colleague before matching');
 
 // Real email endpoint rejects self before mailbox search, model calls or writes.
 let searched = false;
