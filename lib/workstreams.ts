@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolvePrimaryAttendeeForCall, type UpcomingCallSubjectRecord } from "@/lib/call-subject";
 
 export type WorkstreamScope = {
   id: string;
@@ -117,12 +118,13 @@ export async function resolveCallScope(opts: {
   );
   const leadEmail =
     typeof opts.leadEmail === "string" ? opts.leadEmail.trim().toLowerCase() : "";
-  const leadOnlyAttendees = leadEmail ? [{ email: leadEmail }] : [];
+  let leadOnlyAttendees = leadEmail ? [{ email: leadEmail }] : [];
+  let scheduledCall: UpcomingCallSubjectRecord | null = null;
 
   if (uuid(opts.upcomingId)) {
     const { data: upcoming, error } = await supabaseAdmin
       .from("upcoming_calls")
-      .select("company_id, workstream_id, attendees")
+      .select("id, company_id, workstream_id, title, attendees")
       .eq("id", opts.upcomingId)
       .maybeSingle();
     if (error) throw error;
@@ -134,26 +136,12 @@ export async function resolveCallScope(opts: {
     if (upcoming) {
       companyId = uuid(upcoming.company_id) ? upcoming.company_id : null;
       if (!companyId) return { companyId: null, workstream: null };
+      scheduledCall = upcoming;
     }
     if (upcoming?.workstream_id) {
       const workstream = await getWorkstreamScope(upcoming.workstream_id);
-      return { companyId, workstream };
-    }
-    if (companyId) {
-      const workstream = await resolveWorkstreamFromAttendees({
-        companyId,
-        attendees: hasLeadDecision
-          ? leadOnlyAttendees
-          : upcoming?.attendees || opts.attendees,
-      });
-      if (workstream) {
-        await supabaseAdmin
-          .from("upcoming_calls")
-          .update({ workstream_id: workstream.id })
-          .eq("id", opts.upcomingId)
-          .is("workstream_id", null);
+      if (workstream?.companyId === companyId)
         return { companyId, workstream };
-      }
     }
   }
 
@@ -163,10 +151,26 @@ export async function resolveCallScope(opts: {
   }
 
   if (companyId) {
+    // Session persistence and unattended summaries do not supply leadEmail.
+    // Resolve the same verified lead used by Prep, never fall back to scanning
+    // everyone invited. An explicitly unresolved lead also stays unresolved.
+    if (scheduledCall && !hasLeadDecision) {
+      const primary = await resolvePrimaryAttendeeForCall(scheduledCall);
+      leadOnlyAttendees = primary?.email ? [{ email: primary.email }] : [];
+    }
     const workstream = await resolveWorkstreamFromAttendees({
       companyId,
-      attendees: hasLeadDecision ? leadOnlyAttendees : opts.attendees,
+      attendees: leadOnlyAttendees,
     });
+    if (scheduledCall && workstream) {
+      const { error } = await supabaseAdmin
+        .from("upcoming_calls")
+        .update({ workstream_id: workstream.id })
+        .eq("id", scheduledCall.id)
+        .eq("company_id", companyId)
+        .is("workstream_id", null);
+      if (error) throw error;
+    }
     return { companyId, workstream };
   }
   return { companyId: null, workstream: null };

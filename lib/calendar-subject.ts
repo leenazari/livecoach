@@ -264,7 +264,7 @@ export function pickPrimaryAttendee(
   attendees: CalendarAttendee[] | null | undefined,
   context: PrimaryAttendeeContext = {}
 ): PrimaryAttendeeMatch | null {
-  const guests = markOwnCalendarAttendees(Array.isArray(attendees) ? attendees : [], context.selfEmails)
+  const invitedGuests = markOwnCalendarAttendees(Array.isArray(attendees) ? attendees : [], context.selfEmails)
     .filter(
       (attendee) =>
         attendee &&
@@ -276,7 +276,22 @@ export function pickPrimaryAttendee(
       ...attendee,
       email: String(attendee.email).toLowerCase().trim(),
     }));
-  if (!guests.length) return null;
+  if (!invitedGuests.length) return null;
+
+  // A colleague may be named in the title, organise the call or already be a
+  // saved contact. None of those facts makes an external client meeting theirs.
+  // Apply this boundary before ALL identity scores, including for unlinked calls.
+  const internalDomains = new Set(DEFAULT_PROTECTED_INTENT_DOMAINS);
+  for (const domain of context.internalDomains || []) {
+    const clean = cleanDomain(domain);
+    if (clean) internalDomains.add(clean);
+  }
+  const outsideGuests = invitedGuests.filter(
+    (attendee) => !internalDomains.has(calendarEmailDomain(attendee.email))
+  );
+  // Direct internal/partner meetings remain valid. Mixed meetings can only use
+  // an outside lead and still return null if the outside guests are ambiguous.
+  const guests = outsideGuests.length ? outsideGuests : invitedGuests;
 
   const meaningfulTitleTokens = tokens(context.title).filter(
     (token) => token.length >= 3 && !GENERIC_TITLE_WORDS.has(token)
@@ -345,11 +360,6 @@ export function pickPrimaryAttendee(
     }
   }
 
-  const internalDomains = new Set(DEFAULT_INTERNAL_DOMAINS);
-  for (const domain of context.internalDomains || []) {
-    const clean = String(domain || "").toLowerCase().trim();
-    if (clean) internalDomains.add(clean);
-  }
   const externalGuest = unique(
     guests.filter(
       (attendee) =>
