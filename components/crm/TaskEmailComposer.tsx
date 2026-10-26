@@ -7,6 +7,7 @@ import {
   foldDictationEvent,
   stabiliseLiveDictationPreview,
 } from "@/lib/dictation";
+import type { ReplyMeetingOptions } from "@/lib/reply-meeting-options";
 
 type Recipient = {
   email: string;
@@ -25,6 +26,7 @@ type Draft = {
   status: string;
   last_error: string | null;
   sent_at: string | null;
+  meeting_options?: ReplyMeetingOptions | null;
 };
 
 type Workspace = {
@@ -32,6 +34,8 @@ type Workspace = {
   recipients: Recipient[];
   selectedRecipientEmail: string | null;
   draft: Draft | null;
+  suggestedIntent?: string;
+  sourceSummary?: string;
   capabilities: {
     mailboxConnected: boolean;
     rehearsalReady: boolean;
@@ -50,12 +54,17 @@ export default function TaskEmailComposer({
   taskText,
   onClose,
   onSent,
+  notificationId,
 }: {
   taskId: string;
   taskText: string;
   onClose: () => void;
   onSent: (draft: Draft) => void | Promise<void>;
+  notificationId?: string;
 }) {
+  const workspaceUrl = notificationId
+    ? `/api/crm/notifications/${notificationId}/email`
+    : `/api/crm/tasks/${taskId}/email`;
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState<"" | "draft" | "save" | "send">("");
   const [recipients, setRecipients] = useState<Recipient[]>([]);
@@ -71,6 +80,7 @@ export default function TaskEmailComposer({
   const [listening, setListening] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [sourceSummary, setSourceSummary] = useState("");
   const recognitionRef = useRef<any>(null);
   const keepListeningRef = useRef(false);
   const intentRef = useRef("");
@@ -96,7 +106,7 @@ export default function TaskEmailComposer({
     let alive = true;
     setLoading(true);
     setError("");
-    void crmFetch<Workspace>(`/api/crm/tasks/${taskId}/email`)
+    void crmFetch<Workspace>(workspaceUrl)
       .then((result) => {
         if (!alive) return;
         setRecipients(result.recipients || []);
@@ -106,6 +116,8 @@ export default function TaskEmailComposer({
         setMailboxEmail(result.capabilities?.mailboxEmail || "");
         setProvider(result.capabilities?.provider || null);
         applyDraft(result.draft || null);
+        if (!result.draft?.intent && result.suggestedIntent) setIntent(result.suggestedIntent);
+        setSourceSummary(result.sourceSummary || "");
       })
       .catch((reason: any) => {
         if (alive) setError(reason?.message || "This email task could not be opened.");
@@ -116,7 +128,7 @@ export default function TaskEmailComposer({
     return () => {
       alive = false;
     };
-  }, [taskId]);
+  }, [workspaceUrl]);
 
   useEffect(
     () => () => {
@@ -232,18 +244,19 @@ export default function TaskEmailComposer({
     setNotice("");
     try {
       const result = await crmFetch<{ ok: boolean; draft: Draft }>(
-        `/api/crm/tasks/${taskId}/email`,
+        workspaceUrl,
         {
           method: "POST",
           body: JSON.stringify({
             recipient_email: recipientEmail,
             intent: intent.trim(),
+            ...(notificationId ? { regenerate: Boolean(draft) } : {}),
           }),
         }
       );
       if (!result.ok || !result.draft?.id) {
         throw crmConfirmationError({
-          url: `/api/crm/tasks/${taskId}/email`,
+          url: workspaceUrl,
           method: "POST",
           reason: "LiveCoach did not confirm the optimised email",
         });
@@ -343,10 +356,10 @@ export default function TaskEmailComposer({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="font-mono text-[0.54rem] uppercase tracking-[0.15em] text-sky">
-            Speak the email intent
+            {notificationId ? "Reply without leaving Notifications" : "Speak the email intent"}
           </p>
           <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">
-            Say what you want to communicate. LiveCoach will shape it in your saved email tone. You review the exact email before anything is sent.
+            {notificationId ? "Draft only when you ask. Review the exact reply, type changes or speak instructions to revise it. Meeting options use your connected calendar and are rechecked before sending." : "Say what you want to communicate. LiveCoach will shape it in your saved email tone. You review the exact email before anything is sent."}
           </p>
         </div>
         <button
@@ -366,6 +379,7 @@ export default function TaskEmailComposer({
         <p className="mt-4 text-sm text-muted">Opening the private email workspace…</p>
       ) : (
         <>
+          {sourceSummary ? <p className="mt-3 text-sm leading-6 text-bone/85">{sourceSummary}</p> : null}
           <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(12rem,.65fr)_minmax(0,1.35fr)]">
             <label>
               <span className="mb-1 block font-mono text-[0.5rem] uppercase tracking-wider text-muted">
@@ -452,13 +466,22 @@ export default function TaskEmailComposer({
               {working === "draft"
                 ? "Optimising…"
                 : draft
-                  ? "Optimise again"
-                  : "Optimise email"}
+                  ? notificationId ? "Revise draft and refresh times" : "Optimise again"
+                  : notificationId ? "Draft reply" : "Optimise email"}
             </button>
           </div>
 
           {draft ? (
             <div className="mt-4 rounded-xl border border-edge bg-ink/45 p-3">
+              {draft.meeting_options ? (
+                <section className="mb-3 rounded-lg border border-sky/35 p-3 text-xs leading-5 text-muted" aria-label="Verified meeting options">
+                  <p className="font-medium text-bone">{draft.meeting_options.status === "available" ? "Calendar-checked meeting options" : "Meeting availability needs attention"}</p>
+                  <p>{draft.meeting_options.note}</p>
+                  {draft.meeting_options.slots.map(slot => <p key={slot.start} className="mt-1 text-sky">{slot.label} · {draft.meeting_options?.timezone}</p>)}
+                  <p className="mt-1">{draft.meeting_options.request.durationMinutes} minutes · Checked {new Date(draft.meeting_options.checkedAt).toLocaleString("en-GB")} · Nothing booked</p>
+                  <p className="mt-1">To change the proposed times, speak or type the change above and use Revise draft and refresh times. Only the listed options are calendar-checked.</p>
+                </section>
+              ) : null}
               <div className="grid min-w-0 grid-cols-1 gap-3">
                 <label>
                   <span className="mb-1 block font-mono text-[0.5rem] uppercase tracking-wider text-muted">

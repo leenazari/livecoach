@@ -290,3 +290,31 @@ export async function listConnectedCalendarSnapshot(
   }
   return null;
 }
+
+// Availability must cover every provider connected to this exact user. Do not
+// prefer Google and silently omit a busy Outlook calendar (or vice versa).
+// This read-only path does not change calendar sync or the event-creation default.
+export async function listConnectedCalendarAvailability(
+  timeMinIso: string,
+  timeMaxIso: string,
+  ownerId: string
+) {
+  const [google, microsoft] = await Promise.all([googleConnected(ownerId), microsoftConnected(ownerId)]);
+  const snapshots = await Promise.all([
+    ...(google.connected ? [(async () => {
+      const access = await getAccessToken(false, ownerId);
+      if (!access || !google.email) throw new Error("Google calendar connection is unavailable");
+      return { ...await listAllEventsSnapshot(access, timeMinIso, timeMaxIso), accountKey: `google:${google.email.toLowerCase()}` };
+    })()] : []),
+    ...(microsoft.connected ? [(async () => {
+      if (!microsoft.email) throw new Error("Microsoft calendar connection is unavailable");
+      return { ...await listAllMicrosoftEventsSnapshot(timeMinIso, timeMaxIso, ownerId), accountKey: `microsoft:${microsoft.email.toLowerCase()}` };
+    })()] : []),
+  ]);
+  return {
+    events: snapshots.flatMap(snapshot => snapshot.events),
+    complete: snapshots.length > 0 && snapshots.every(snapshot => snapshot.complete),
+    failedCalendars: snapshots.flatMap(snapshot => snapshot.failedCalendars),
+    accountKeys: snapshots.map(snapshot => snapshot.accountKey).sort(),
+  };
+}
