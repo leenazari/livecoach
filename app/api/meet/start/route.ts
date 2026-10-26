@@ -6,6 +6,7 @@ import { PRECALL_LEAD_MS, precallJoinAt, precallScheduleAction } from "@/lib/pre
 import { currentRecallBotState } from "@/lib/recall-bot-status";
 import { captureAdmissionTimeouts } from "@/lib/call-capture-lifecycle";
 import {
+  alignSharedNotetakerTime,
   cancelRecallBotRequest,
   cancelScheduledNotetakers,
 } from "@/lib/recall-scheduled-bot";
@@ -386,7 +387,19 @@ export async function POST(req: NextRequest) {
         reservationById.set(String(reservation.id), reservation);
       }
       const reservations = Array.from(reservationById.values());
-      const exactReservation = reservations.find(
+      const sharedReservation = sharedInstanceKey && reservations.find(
+        (capture: any) => capture.meeting_instance_key === sharedInstanceKey
+          && meetingUrlsMatch(capture.scheduled_meeting_url, meetingUrl)
+          && Date.parse(capture.scheduled_join_at) > now.getTime()
+          && expectedJoinAtMs > now.getTime()
+      );
+      if (sharedReservation) {
+        await alignSharedNotetakerTime({
+          workspaceId: accountScope.workspaceId, instanceKey: sharedInstanceKey!,
+          capture: sharedReservation, joinAt: new Date(expectedJoinAtMs).toISOString(), region, key,
+        });
+      }
+      const exactReservation = sharedReservation || reservations.find(
         (capture: any) =>
           capture.meeting_instance_key === sharedInstanceKey &&
           meetingUrlsMatch(capture.scheduled_meeting_url, meetingUrl) &&
@@ -556,6 +569,13 @@ export async function POST(req: NextRequest) {
       );
       const sharedCapture = matchingCaptures[0];
       if (sharedCapture) {
+        if (verifiedScheduledAt) {
+          await alignSharedNotetakerTime({
+            workspaceId: accountScope.workspaceId, instanceKey: sharedInstanceKey,
+            capture: sharedCapture,
+            joinAt: new Date(Date.parse(verifiedScheduledAt) - PRECALL_LEAD_MS).toISOString(), region, key,
+          });
+        }
         if (sharedOccurrence) {
           const { error: hostError } = await supabaseService
             .from("meet_bots")

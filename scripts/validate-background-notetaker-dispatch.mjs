@@ -27,7 +27,8 @@ const rows = {
     meeting_url: "https://meet.google.com/abc-defg-hij", source: "manual", completed_at: null, title: "Team call", prep: null, visibility: "private" })),
   meet_bots: [], meet_capture_subscribers: [], meet_stream_tokens: [], interview_sessions: [],
 };
-const queries = [], providerCreates = [];
+const queries = [], providerCreates = [], providerEdits = [];
+let editStatus = 200;
 let counter = 0;
 const db = { from(table) {
   assert.ok(rows[table], `Unexpected database table ${table}`);
@@ -88,7 +89,11 @@ const dependencies = (name) => {
   if (name.endsWith("supabase")) return database;
   if (name.endsWith("record-scope")) return scoped;
   if (name.endsWith("shared-call-access")) return { resolveSharedCalendarOccurrence: async () => null, grantSharedCaptureAccess: async () => { throw new Error("Unexpected shared grant"); } };
-  if (name.endsWith("recall-scheduled-bot")) return { cancelScheduledNotetakers: async () => {}, cancelRecallBotRequest: async () => { throw new Error("Unexpected bot removal"); } };
+  if (name.endsWith("recall-scheduled-bot")) return {
+    ...load("lib/recall-scheduled-bot.ts", dependencies),
+    cancelScheduledNotetakers: async () => { throw new Error("Unexpected reservation detach"); },
+    cancelRecallBotRequest: async () => { throw new Error("Unexpected bot removal"); },
+  };
   if (name.endsWith("transcriber")) return {
     ...load("lib/transcriber.ts", dependencies), getTranscriberIdentity: async (id) => ({ botName: `Notetaker ${id}`, coachHints: [], languageCode: "en" }),
   };
@@ -102,6 +107,12 @@ const env = { key: process.env.RECALL_API_KEY, region: process.env.RECALL_REGION
 process.env.RECALL_API_KEY = "fixture-not-a-credential";
 process.env.RECALL_REGION = "fixture";
 globalThis.fetch = async (_url, init) => {
+  if (!init?.method) return Response.json({ status_changes: [], join_at: rows.meet_bots[0].scheduled_join_at });
+  if (init?.method === "PATCH") {
+    const body = JSON.parse(init.body);
+    providerEdits.push(body);
+    return Response.json(editStatus === 200 ? { id: "bot-1", ...body } : { code: "update_bot_failed" }, { status: editStatus });
+  }
   assert.equal(init?.method, "POST", "Only one mocked provider create is expected per private calendar event");
   const body = JSON.parse(init.body);
   providerCreates.push(body);
@@ -142,9 +153,56 @@ try {
   }) }));
   assert.equal(manual.status, 200, "Browser opening keeps the same reserved bot");
   assert.equal(providerCreates.length, 2);
+
+  // Both users already share an old five-minute reservation. A detach/recreate
+  // loop would reattach to that same old bot forever while another subscriber
+  // remains. Exercise the real provider PATCH and scoped compare-and-set.
+  browser = false;
+  rows.workspace_members[1].status = "active";
+  rows.upcoming_calls.forEach((call) => { call.source = "google"; call.external_id = "same-provider-occurrence"; });
+  const { meetingInstanceKey } = load("lib/shared-meet-capture.ts", dependencies);
+  const capture = rows.meet_bots[0];
+  capture.meeting_instance_key = meetingInstanceKey(rows.upcoming_calls[0].meeting_url, scheduledAt);
+  const oldTime = new Date(Date.parse(scheduledAt) - 300000).toISOString();
+  capture.scheduled_join_at = oldTime;
+  rows.meet_bots[1].status = "left";
+  rows.meet_capture_subscribers[1].capture_id = capture.id;
+  const sessions = rows.meet_capture_subscribers.map((row) => row.session_id);
+  const sharedStart = (id, room) => route.POST(new Request("https://crm.test/api/meet/start", { method: "POST", body: JSON.stringify({
+    meetingUrl: rows.upcoming_calls[0].meeting_url, sessionId: room, upcomingId: id, autoStart: true,
+  }) }));
+  assert.equal((await sharedStart(eventA, sessions[0])).status, 200);
+  assert.equal(providerEdits.length, 1);
+  assert.equal(capture.scheduled_join_at, new Date(Date.parse(scheduledAt) - 60000).toISOString());
+  assert.deepEqual(rows.meet_capture_subscribers.map((row) => row.session_id), sessions, "Both private rooms survive retiming");
+  assert.ok(rows.meet_capture_subscribers.every((row) => row.capture_id === capture.id));
+  scope = { workspaceId: ws, userId: bob };
+  assert.equal((await sharedStart(eventB, sessions[1])).status, 200);
+  assert.equal(providerEdits.length, 1, "Second attendee reuses the confirmed timing without another PATCH");
+  capture.scheduled_join_at = oldTime;
+  editStatus = 400;
+  assert.equal((await sharedStart(eventB, sessions[1])).status, 200, "A provider-locked reservation is kept, not cancelled or duplicated");
+  assert.equal(capture.scheduled_join_at, oldTime, "Do not falsely claim an unconfirmed provider change");
+  editStatus = 503;
+  const savedError = console.error;
+  try {
+    console.error = () => {};
+    assert.equal((await sharedStart(eventB, sessions[1])).status, 500, "Unconfirmed provider failures retain the reservation for retry");
+  } finally { console.error = savedError; }
+  assert.equal(providerCreates.length, 2, "Shared retiming never creates another bot");
+  assert.equal(capture.scheduled_join_at, oldTime);
+  editStatus = 200;
+  rows.meet_capture_subscribers.splice(1, 1);
+  assert.equal((await sharedStart(eventB, sessions[1])).status, 200, "An attendee without an existing subscription can align the same verified occurrence");
+  assert.equal(capture.scheduled_join_at, new Date(Date.parse(scheduledAt) - 60000).toISOString());
+  assert.equal(rows.meet_capture_subscribers.length, 2);
+  assert.deepEqual(rows.meet_capture_subscribers.map((row) => row.session_id), sessions);
+  assert.equal(providerCreates.length, 2);
+  assert.ok(queries.filter((q) => q.table === "meet_bots" && q.operation === "update").every((q) =>
+    ["workspace_id", "id", "bot_id", "meeting_instance_key", "status", "scheduled_join_at"].every((key) => q.filters.some(([field]) => field === key))));
   assert.ok(queries.filter((q) => q.table === "workspace_members").every((q) =>
     ["workspace_id", "user_id", "status"].every((key) => q.filters.some(([field]) => field === key))));
-  console.log("Background notetaker dispatch passes through the real service boundary, one-minute timing, idempotency, manual focus preservation and two-user isolation");
+  console.log("Background dispatch, one-minute timing, shared reservation retiming, locked-provider safety, manual focus preservation and two-user isolation passed");
 } finally {
   globalThis.fetch = savedFetch;
   if (env.key === undefined) delete process.env.RECALL_API_KEY; else process.env.RECALL_API_KEY = env.key;
