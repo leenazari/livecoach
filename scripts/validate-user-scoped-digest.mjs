@@ -71,10 +71,11 @@ assert.doesNotMatch(digest, /@\/lib\/(?:openai|anthropic)/);
 
 // Background reads remain restricted to this workspace and either the exact
 // owner or deliberately team-visible records.
-assert.match(supabase, /\.eq\("workspace_id", scope\.workspaceId\)/);
+assert.match(supabase, /\.eq\(['"]workspace_id['"], scope\.workspaceId\)/);
 assert.match(
   supabase,
   /\.or\(`owner_id\.eq\.\$\{scope\.userId\},visibility\.eq\.team`\)/
 );
 
 console.log("Per-user daily and Sunday digest isolation checks passed");
+

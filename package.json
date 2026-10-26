@@ -6,6 +6,7 @@
     "node": "22.x"
   },
   "scripts": {
+    "validate:digest-calendar": "node scripts/validate-digest-calendar-account.mjs",
     "validate:brain-repair": "node scripts/validate-brain-simple-error-repair.mjs",
     "validate:brain-prepare": "node scripts/validate-brain-outreach-preparation.mjs",
     "validate:kamm-blockers": "node scripts/validate-kamm-blocker-recovery.mjs",
@@ -183,3 +184,4 @@
     "typescript": "^5"
   }
 }
+

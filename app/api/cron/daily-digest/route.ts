@@ -134,7 +134,19 @@ async function runDigestForAccount(
     // The email must be built from calendar truth at send time. A separate
     // scheduled sync can race this cron or be hours old after a late invite
     // edit, so reconcile first and refuse to send a confidently stale brief.
-    const syncResponse = await runCalendarSync();
+    // The calendar service route requires the same exact account as this
+    // digest, even though both handlers execute within this service scope.
+    const syncResponse = await runCalendarSync(new NextRequest(
+      new URL("/api/crm/calendar-sync", req.url),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: account.userId,
+          workspaceId: account.workspaceId,
+        }),
+      }
+    ));
     const syncResult = await syncResponse.json().catch(() => ({}));
     if (
       !syncResponse.ok ||
@@ -690,3 +702,4 @@ function renderEmail(data: {
     <p style="margin:24px 0 0;font-size:12px;line-height:1.5;color:#8a857c;">This snapshot is built from saved CRM, task and calendar data. It uses no AI generation, so it adds no model-token cost.</p>
   </td></tr></table></td></tr></table></body></html>`;
 }
+
