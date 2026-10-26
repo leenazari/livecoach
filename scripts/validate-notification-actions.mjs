@@ -225,5 +225,7 @@ assert.equal(activity.outreachLastActivityAt({last_reply_at:'invalid'}),null);
 assert.doesNotMatch(read('app/api/crm/notifications/[id]/action/route.ts'),/openai|sendConnectedMail|generateTaskEmailDraft/);
 assert.match(read('app/call/page.tsx'),/ok && !degraded[\s\S]*setActivityContextSeen\(contextUsed\)/);
 assert.match(read('lib/notification-action-context.ts'),/eq\("owner_id", scope.userId\)/);
+assert.match(read('app/api/interview/context/route.ts'),/actionQuery[\s\S]*eq\("owner_id", account.userId\)/);
+assert.match(read('app/api/crm/upcoming/[id]/route.ts'),/clientActivityContextSeen: ownPrep.clientActivityContextSeen/);
 await db.close();
 console.log('PASS notification actions. Atomic PostgreSQL writes and rollback, exact task/reply identity, private two-user isolation, safe sales cover, protected clients, replay safety, HTTP validation, typed/visible speech, no automatic drafts, and activity sorting.');

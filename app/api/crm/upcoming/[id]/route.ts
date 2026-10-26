@@ -69,6 +69,9 @@ export async function GET(
       if (safeHostPrep) {
         data.prep = {
           ...safeHostPrep,
+          ...(typeof ownPrep.clientActivityContextSeen === "string"
+            ? { clientActivityContextSeen: ownPrep.clientActivityContextSeen }
+            : {}),
           ...(Array.isArray(ownPrep.privateNotes)
             ? { privateNotes: ownPrep.privateNotes }
             : {}),
