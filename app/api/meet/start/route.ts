@@ -225,6 +225,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Membership is not a CRM record table. The scoped CRM client intentionally
+    // refuses it during service jobs, which previously broke every unattended
+    // reservation while browser starts worked. Read only this verified account
+    // through the explicit service client, before reusing or creating any bot.
+    const { data: membership, error: membershipError } = await supabaseService
+      .from("workspace_members")
+      .select("transcriber_daily_minutes_limit")
+      .eq("workspace_id", accountScope.workspaceId)
+      .eq("user_id", accountScope.userId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (membershipError) throw membershipError;
+    if (!membership) {
+      return NextResponse.json(
+        { error: "This account does not have active workspace access. Ask the workspace owner to restore access before starting the notetaker.", code: "notetaker_account_inactive" },
+        { status: 403, headers: { "Cache-Control": "private, no-store" } }
+      );
+    }
+
     const key = process.env.RECALL_API_KEY;
     const region = process.env.RECALL_REGION;
     if (!key) {
@@ -300,7 +319,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Calendar sync reserves one provider bot as soon as the event is known.
-    // The five-minute lead time is derived from the exact owned calendar row,
+    // The one-minute lead time is derived from the exact owned calendar row,
     // never from an arbitrary timestamp supplied by a browser.
     const scheduledJoinAt = automaticDispatch
       ? precallJoinAt(verifiedScheduledAt, now.getTime())
@@ -589,14 +608,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const { data: membership, error: membershipError } = await supabaseAdmin
-      .from("workspace_members")
-      .select("transcriber_daily_minutes_limit")
-      .eq("workspace_id", accountScope.workspaceId)
-      .eq("user_id", accountScope.userId)
-      .eq("status", "active")
-      .single();
-    if (membershipError) throw membershipError;
     const dailyLimitMinutes = normaliseDailyTranscriberLimit(
       membership?.transcriber_daily_minutes_limit ??
         TRANSCRIBER_DAILY_LIMIT_DEFAULT
@@ -928,8 +939,9 @@ export async function POST(req: NextRequest) {
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (e: any) {
+    console.error("Notetaker start failed", { code: e?.code || "notetaker_start_failed", message: e?.message || "unknown error" });
     return NextResponse.json(
-      { error: e?.message || "unknown error" },
+      { error: "The notetaker could not be scheduled or connected. Your calendar event is still saved. Open the call to check its notetaker status before retrying.", code: "notetaker_start_failed" },
       { status: 500 }
     );
   }

@@ -1,0 +1,152 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import ts from "typescript";
+
+const require = createRequire(import.meta.url);
+const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+const load = (file, dependency) => {
+  const module = { exports: {} };
+  const source = ts.transpileModule(read(file), { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
+  } }).outputText;
+  new Function("require", "module", "exports", source)(dependency, module, module.exports);
+  return module.exports;
+};
+const ws = "00000000-0000-4000-8000-000000000001";
+const alice = "11111111-1111-4111-8111-111111111111";
+const bob = "22222222-2222-4222-8222-222222222222";
+const eventA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const eventB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+let scope = { workspaceId: ws, userId: alice };
+let browser = false;
+const scheduledAt = new Date(Date.now() + 86400000).toISOString();
+const rows = {
+  workspace_members: [alice, bob].map((user_id) => ({ user_id, workspace_id: ws, status: "active", transcriber_daily_minutes_limit: 360 })),
+  upcoming_calls: [eventA, eventB].map((id, i) => ({ id, owner_id: i ? bob : alice, workspace_id: ws, scheduled_at: scheduledAt,
+    meeting_url: "https://meet.google.com/abc-defg-hij", source: "manual", completed_at: null, title: "Team call", prep: null, visibility: "private" })),
+  meet_bots: [], meet_capture_subscribers: [], meet_stream_tokens: [], interview_sessions: [],
+};
+const queries = [], providerCreates = [];
+let counter = 0;
+const db = { from(table) {
+  assert.ok(rows[table], `Unexpected database table ${table}`);
+  const query = { table, filters: [], operation: "select" };
+  queries.push(query);
+  const predicates = [];
+  let payload, single = false, limit = Infinity, options = {};
+  const builder = {
+    select() { return this; }, order() { return this; },
+    insert(value) { query.operation = "insert"; payload = value; return this; },
+    upsert(value, valueOptions = {}) { query.operation = "upsert"; payload = value; options = valueOptions; return this; },
+    update(value) { query.operation = "update"; payload = value; return this; },
+    eq(key, value) { query.filters.push([key, value]); predicates.push((r) => r[key] === value); return this; },
+    in(key, values) { predicates.push((r) => values.includes(r[key])); return this; },
+    is(key, value) { predicates.push((r) => r[key] === value); return this; },
+    not(key, _operator, value) { predicates.push((r) => r[key] !== value); return this; },
+    gte(key, value) { predicates.push((r) => r[key] >= value); return this; },
+    lt(key, value) { predicates.push((r) => r[key] < value); return this; },
+    // Exercise the real service-scoping wrapper, including its owner/team OR.
+    or(value) { const owner = value.match(/^owner_id\.eq\.([^,]+),visibility.eq.team$/)?.[1]; assert.ok(owner); predicates.push((r) => r.owner_id === owner || r.visibility === "team"); return this; },
+    limit(value) { limit = value; return this; },
+    single() { single = true; return this; }, maybeSingle() { single = true; return this; },
+    then(resolve, reject) {
+      let found;
+      if (["insert", "upsert"].includes(query.operation)) {
+        found = (Array.isArray(payload) ? payload : [payload]).map((value) => {
+          const existing = query.operation === "upsert" && options.onConflict && rows[table].find((r) => options.onConflict.split(",").every((key) => r[key] === value[key]));
+          if (existing) { if (!options.ignoreDuplicates) Object.assign(existing, value); return existing; }
+          const row = { id: `row-${++counter}`, created_at: new Date().toISOString(), ended_at: null, ...value };
+          rows[table].push(row);
+          return row;
+        });
+      } else {
+        found = rows[table].filter((r) => predicates.every((p) => p(r))).slice(0, limit);
+        if (query.operation === "update") found.forEach((r) => Object.assign(r, payload));
+      }
+      return Promise.resolve({ data: single ? found[0] || null : found, error: null }).then(resolve, reject);
+    },
+  };
+  return builder;
+} };
+
+// Load the real database gateway. The regression only occurred on unattended
+// service requests, because workspace_members is not a CRM record table.
+const database = load("lib/supabase.ts", (name) => {
+  if (name === "server-only") return {};
+  if (name === "@supabase/supabase-js") return { createClient: () => db };
+  if (name.endsWith("request-scope")) return { getRequestScope: () => browser ? { ...scope, accessToken: "fixture" } : null, isVerifiedServiceRequest: () => !browser };
+  if (name.endsWith("service-scope")) return { getServiceRecordScope: () => scope };
+  throw new Error(name);
+});
+assert.throws(() => database.supabaseAdmin.from("workspace_members"), /explicit admin client/, "Do not relax the shared database boundary to fix scheduling");
+const scoped = { resolveRecordScope: async () => scope, privateRecordFields: (s) => ({ workspace_id: s.workspaceId, owner_id: s.userId, visibility: "private" }) };
+const next = { NextRequest: Request, NextResponse: { json: (data, options) => Response.json(data, options) } };
+const dependencies = (name) => {
+  if (name === "server-only") return {};
+  if (name === "next/server") return next;
+  if (name.endsWith("supabase")) return database;
+  if (name.endsWith("record-scope")) return scoped;
+  if (name.endsWith("shared-call-access")) return { resolveSharedCalendarOccurrence: async () => null, grantSharedCaptureAccess: async () => { throw new Error("Unexpected shared grant"); } };
+  if (name.endsWith("recall-scheduled-bot")) return { cancelScheduledNotetakers: async () => {}, cancelRecallBotRequest: async () => { throw new Error("Unexpected bot removal"); } };
+  if (name.endsWith("transcriber")) return {
+    ...load("lib/transcriber.ts", dependencies), getTranscriberIdentity: async (id) => ({ botName: `Notetaker ${id}`, coachHints: [], languageCode: "en" }),
+  };
+  if (name.startsWith("@/lib/")) return load(`${name.slice(2)}.ts`, dependencies);
+  return require(name);
+};
+const route = load("app/api/meet/start/route.ts", dependencies);
+const scheduler = load("lib/automatic-precall.ts", (name) => name === "@/app/api/meet/start/route" ? route : dependencies(name));
+const savedFetch = globalThis.fetch;
+const env = { key: process.env.RECALL_API_KEY, region: process.env.RECALL_REGION };
+process.env.RECALL_API_KEY = "fixture-not-a-credential";
+process.env.RECALL_REGION = "fixture";
+globalThis.fetch = async (_url, init) => {
+  assert.equal(init?.method, "POST", "Only one mocked provider create is expected per private calendar event");
+  const body = JSON.parse(init.body);
+  providerCreates.push(body);
+  return Response.json({ id: `bot-${providerCreates.length}` });
+};
+try {
+  const result = await scheduler.scheduleAutomaticNotetakersForUpcomingIds([eventA, eventB]);
+  assert.equal(result.failed, 0, `Unattended scheduling must work through the real service boundary, got ${JSON.stringify(result)}`);
+  assert.equal(result.scheduled, 1);
+  assert.equal(providerCreates.length, 1, "The other account's event is not scheduled by this account");
+  assert.equal(providerCreates[0].join_at, new Date(Date.parse(scheduledAt) - 60000).toISOString());
+  assert.equal(providerCreates[0].metadata.owner_id, alice);
+  assert.equal(providerCreates[0].metadata.workspace_id, ws);
+  const saved = rows.interview_sessions[0];
+  saved.brief = "Manually curated focus stays intact";
+  await scheduler.scheduleAutomaticNotetakersForUpcomingIds([eventA]);
+  assert.equal(providerCreates.length, 1, "Repeated calendar notifications reuse the reservation");
+  assert.equal(saved.brief, "Manually curated focus stays intact");
+
+  scope = { workspaceId: ws, userId: bob };
+  await scheduler.scheduleAutomaticNotetakersForUpcomingIds([eventB]);
+  assert.equal(providerCreates.length, 2);
+  assert.equal(providerCreates[1].metadata.owner_id, bob);
+  assert.notEqual(rows.meet_capture_subscribers[0].session_id, rows.meet_capture_subscribers[1].session_id);
+
+  rows.workspace_members[1].status = "suspended";
+  const start = () => route.POST(new Request("https://crm.test/api/meet/start", { method: "POST", body: JSON.stringify({
+    meetingUrl: rows.upcoming_calls[1].meeting_url, sessionId: rows.meet_capture_subscribers[1].session_id, upcomingId: eventB, autoStart: true,
+  }) }));
+  assert.equal((await start()).status, 403, "Suspended members cannot reattach even to an existing reservation");
+  scope = { workspaceId: "another-workspace", userId: alice };
+  assert.equal((await start()).status, 403, "Membership from a different workspace is not authority");
+  assert.equal(providerCreates.length, 2);
+
+  scope = { workspaceId: ws, userId: alice }; browser = true;
+  const manual = await route.POST(new Request("https://crm.test/api/meet/start", { method: "POST", body: JSON.stringify({
+    meetingUrl: rows.upcoming_calls[0].meeting_url, sessionId: rows.meet_capture_subscribers[0].session_id, upcomingId: eventA,
+  }) }));
+  assert.equal(manual.status, 200, "Browser opening keeps the same reserved bot");
+  assert.equal(providerCreates.length, 2);
+  assert.ok(queries.filter((q) => q.table === "workspace_members").every((q) =>
+    ["workspace_id", "user_id", "status"].every((key) => q.filters.some(([field]) => field === key))));
+  console.log("Background notetaker dispatch passes through the real service boundary, one-minute timing, idempotency, manual focus preservation and two-user isolation");
+} finally {
+  globalThis.fetch = savedFetch;
+  if (env.key === undefined) delete process.env.RECALL_API_KEY; else process.env.RECALL_API_KEY = env.key;
+  if (env.region === undefined) delete process.env.RECALL_REGION; else process.env.RECALL_REGION = env.region;
+}

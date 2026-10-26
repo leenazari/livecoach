@@ -577,6 +577,8 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
       calendarReconnectRequired,
       warning: calendarReconnectRequired
         ? "Reconnect Google once to include secondary and shared calendars. The primary calendar was synced safely."
+        : notetakerSchedule.failed
+        ? `Your calendar is synced, but ${notetakerSchedule.failed} notetaker reservation${notetakerSchedule.failed === 1 ? " needs" : "s need"} attention. Automatic retry is queued. Open the call to check its notetaker status before the meeting.`
         : null,
       outreachLinked,
       total: rows.length,

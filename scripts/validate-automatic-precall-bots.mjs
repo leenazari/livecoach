@@ -27,10 +27,13 @@ assert.equal(
 assert.equal(scheduledCallSessionId("not-a-call"), null);
 
 const nowMs = Date.parse("2026-10-04T09:00:00Z");
-assert.equal(precallJoinAt("2026-10-05T09:00:00Z", nowMs), "2026-10-05T08:55:00.000Z");
+assert.equal(precallJoinAt("2026-10-05T09:00:00Z", nowMs), "2026-10-05T08:59:00.000Z");
 // BST -> GMT uses the event's offset, never a server-local date.
-assert.equal(precallJoinAt("2026-10-25T10:00:00+00:00", nowMs), "2026-10-25T09:55:00.000Z");
-assert.equal(precallJoinAt("2026-10-04T09:04:00Z", nowMs), null);
+assert.equal(precallJoinAt("2026-10-25T10:00:00+00:00", nowMs), "2026-10-25T09:59:00.000Z");
+assert.equal(precallJoinAt("2026-10-04T09:04:00Z", nowMs), "2026-10-04T09:03:00.000Z");
+assert.equal(precallJoinAt("2026-10-04T09:01:00Z", nowMs), null);
+assert.equal(precallJoinAt("2026-10-04T09:01:20Z", nowMs), "2026-10-04T09:00:20.000Z", "A late calendar update still respects the future launch time");
+assert.equal(precallJoinAt("2026-10-24T10:00:00+01:00", nowMs), "2026-10-24T08:59:00.000Z");
 assert.equal(precallJoinAt("bad-date", nowMs), null);
 for (const input of [
   { scheduledAt: "2026-10-05T09:00:00Z", completed: false, supportedLink: true, expected: "schedule" },
@@ -61,7 +64,7 @@ assert.match(scheduler, /ignoreDuplicates: true/);
 assert.match(scheduler, /startBot\(/);
 assert.match(scheduler, /autoStart: true/);
 
-// The exact five-minute join is reserved with Recall. A repeated sync reuses
+// The one-minute-before launch is reserved with Recall. A repeated sync reuses
 // the reservation, while time/link changes and cancellations remove the old
 // provider bot before replacing or deleting its source event.
 assert.match(start, /precallJoinAt\(verifiedScheduledAt, now\.getTime\(\)\)/);
@@ -90,10 +93,10 @@ assert.match(usage, /row\.scheduled_join_at \|\| row\.created_at/);
 assert.match(call, /scheduledCallSessionId\(upcoming\)/);
 
 // Provider-side abandoned-call protection remains in force after the bot's
-// scheduled five-minute arrival.
+// scheduled one-minute arrival.
 assert.match(start, /captureAdmissionTimeouts\(meetingUrl, botHardLimitSeconds\)/);
 assert.match(start, /waiting_room_timeout: waitingRoomTimeoutSeconds/);
 assert.match(start, /activate_after: automaticDispatch \? 600 : 60/);
 assert.match(start, /timeout: 300/);
 
-console.log("Event-scheduled five-minute pre-call bot validation passed");
+console.log("Event-scheduled one-minute pre-call bot validation passed");

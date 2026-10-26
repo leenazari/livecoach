@@ -1,10 +1,10 @@
-export const PRECALL_LEAD_MS = 5 * 60 * 1000;
+export const PRECALL_LEAD_MS = 60 * 1000;
 
 export function precallJoinAt(scheduledAt: unknown, nowMs = Date.now()) {
   const start = typeof scheduledAt === "string" ? Date.parse(scheduledAt) : NaN;
   if (!Number.isFinite(start)) return null;
   const joinAt = start - PRECALL_LEAD_MS;
-  return joinAt > nowMs + 30_000 ? new Date(joinAt).toISOString() : null;
+  return joinAt > nowMs ? new Date(joinAt).toISOString() : null;
 }
 
 export function precallScheduleAction(input: {
