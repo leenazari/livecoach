@@ -15,6 +15,7 @@ async function recallRequest(
       headers: {
         Authorization: authorization,
         Accept: "application/json",
+        "Content-Type": "application/json",
       },
     });
   let response = await call(key);
@@ -22,6 +23,56 @@ async function recallRequest(
     response = await call(`Token ${key}`);
   }
   return response;
+}
+
+// A lead-time policy change affects the same shared occurrence for everyone.
+// Update the unstarted reservation in place, preserving every subscriber and
+// private room. Detach/recreate would simply reattach to the old shared bot.
+export async function alignSharedNotetakerTime(input: {
+  workspaceId: string;
+  instanceKey: string;
+  capture: { id: string; bot_id: string; scheduled_join_at?: string | null };
+  joinAt: string;
+  region: string;
+  key: string;
+}) {
+  const previous = input.capture.scheduled_join_at;
+  const now = Date.now();
+  if (!previous || !Number.isFinite(Date.parse(previous)) || !Number.isFinite(Date.parse(input.joinAt))
+    || Date.parse(previous) <= now || Date.parse(input.joinAt) <= now
+    || Math.abs(Date.parse(previous) - Date.parse(input.joinAt)) < 1000) return false;
+
+  const response = await recallRequest(
+    `https://${input.region}.recall.ai/api/v1/bot/${encodeURIComponent(input.capture.bot_id)}/`,
+    input.key, { method: "PATCH", body: JSON.stringify({ join_at: input.joinAt }) },
+  );
+  const result = await response.json().catch(() => null);
+  // A provider-locked bot may already be starting. Keep it and its subscribers
+  // intact instead of forcing a cancellation or creating a duplicate.
+  if (response.status === 400 && result?.code === "update_bot_failed") return false;
+  if (!response.ok || result?.id !== input.capture.bot_id
+    || Math.abs(Date.parse(result?.join_at) - Date.parse(input.joinAt)) >= 1000
+    || !Number.isFinite(Date.parse(result?.join_at))) {
+    throw new Error("The existing notetaker timing could not be confirmed. Its reservation is retained for a safe retry.");
+  }
+  const { data, error } = await supabaseService.from("meet_bots")
+    .update({ scheduled_join_at: input.joinAt })
+    .eq("workspace_id", input.workspaceId).eq("id", input.capture.id)
+    .eq("bot_id", input.capture.bot_id).eq("meeting_instance_key", input.instanceKey)
+    .eq("status", "active").eq("scheduled_join_at", previous)
+    .select("id").maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    // A parallel attendee sync may have confirmed the same provider update.
+    const { data: confirmed, error: readError } = await supabaseService.from("meet_bots")
+      .select("id").eq("workspace_id", input.workspaceId).eq("id", input.capture.id)
+      .eq("bot_id", input.capture.bot_id).eq("meeting_instance_key", input.instanceKey)
+      .eq("status", "active").eq("scheduled_join_at", input.joinAt).maybeSingle();
+    if (readError) throw readError;
+    if (!confirmed) throw new Error("The notetaker reservation changed during confirmation. Its status needs to be rechecked.");
+  }
+  input.capture.scheduled_join_at = input.joinAt;
+  return true;
 }
 
 export async function cancelRecallBotRequest(input: {
