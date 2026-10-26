@@ -123,6 +123,7 @@
     "validate:sales-campaign-editing": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sales-campaign-editing.mjs",
     "validate:native-outreach-sequence": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-native-outreach-sequence.mjs",
     "validate:calendar-primary-attendee": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-calendar-primary-attendee.mjs",
+    "validate:call-own-email-identity": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-call-own-email-identity.mjs",
     "validate:calendar-call-identity": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-calendar-call-identity.mjs",
     "validate:group-meeting-prep": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-group-meeting-prep.mjs",
     "validate:calendar-event-create": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-crm-calendar-event-create.mjs",

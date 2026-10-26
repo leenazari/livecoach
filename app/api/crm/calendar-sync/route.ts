@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { markOwnCalendarAttendees } from "@/lib/calendar-subject";
 import { meetingUrlOf, titleOf } from "@/lib/google";
 import { listConnectedCalendarSnapshot } from "@/lib/calendar-provider";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -217,6 +218,9 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
     // still need their actual organisation, not a default internal company.
     // Protected colleagues cannot replace the lead when an outside guest joins.
     const attendeeConfig = await loadAttendeeConfig();
+    for (const row of rows) {
+      row.attendees = markOwnCalendarAttendees(row.attendees, attendeeConfig.selfEmails);
+    }
     // One lookup for the whole calendar snapshot. This keeps the daily repair
     // fast even when there are dozens of existing meetings.
     const outreachByEmail = await loadOutreachProspectsForAttendees(

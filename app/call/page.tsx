@@ -1195,8 +1195,10 @@ export default function CallPage() {
         `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ""}${window.location.hash}`
       );
     }
-    if (cid && cname) handleLinkCompany({ id: cid, name: cname });
-    if (intent) setBrief(intent);
+    // For a scheduled call the verified row is authoritative. Old bookmarks
+    // may still carry the company/intent from before a corrected calendar link.
+    if (cid && cname && !upcoming) handleLinkCompany({ id: cid, name: cname });
+    if (intent && !upcoming) setBrief(intent);
     if (url) {
       setMeetingUrl(url);
       setSource("meet");

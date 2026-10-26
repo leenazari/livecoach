@@ -5,6 +5,7 @@ import ts from 'typescript';
 import { inferLink, deriveNewClientFromAttendees, shouldRepairStaleCalendarCompanyLink } from '../lib/attendee-linking.ts';
 import { cachedIntentForCalendarAttendee, inheritVerifiedCalendarCompany, verifiedCalendarGroupIntent } from '../lib/calendar-call-identity.ts';
 import { normaliseCompanyDomain } from '../lib/company-identity.ts';
+import { markOwnCalendarAttendees } from '../lib/calendar-subject.ts';
 
 const internalDomains = new Set(['ai13.com', 'interviewa.com', 'schoolofcoding.co.uk']);
 const school = { id: 'school', domain: 'schoolofcoding.co.uk', name: 'School of Coding', profile: {} };
@@ -74,6 +75,7 @@ async function loadConfigWith(errorTable) {
       return query;
     } } },
     '@/lib/workspace-profile': { ensureWorkspaceProfileId: async () => 'profile' },
+    '@/lib/own-account-emails': { loadOwnAccountEmails: async () => new Set() },
     '@/lib/attendee-linking': { inferLink, deriveNewClientFromAttendees, shouldRepairStaleCalendarCompanyLink },
   });
   return module.loadAttendeeConfig();
@@ -139,6 +141,7 @@ async function runSync(owner) {
   ].map(e => ({ ...e, start: { dateTime: stamp }, meeting_url: 'https://meet.google.com/test-only' }));
   const endpoint = compile('../app/api/crm/calendar-sync/route.ts', {
     'next/server': { NextResponse },
+    '@/lib/calendar-subject': { markOwnCalendarAttendees },
     '@/lib/google': { titleOf: e => e.title, meetingUrlOf: e => e.meeting_url },
     '@/lib/calendar-provider': { listConnectedCalendarSnapshot: async () => ({ source: 'google', provider: 'google', events: calendarEvents, complete: false }) },
     '@/lib/supabase': { supabaseAdmin: db, supabaseService: db },

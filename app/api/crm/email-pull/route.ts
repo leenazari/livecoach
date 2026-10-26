@@ -16,7 +16,7 @@ import {
   connectedMailProvider,
   type MailMessage,
 } from "@/lib/mail";
-import { resolveOutreachIdentity } from "@/lib/outreach-identity";
+import { loadOwnAccountEmails } from "@/lib/own-account-emails";
 import {
   loadPrimaryAttendeeForUpcoming,
   loadProtectedIntentDomains,
@@ -55,20 +55,7 @@ const houseStyle = (s: string) =>
     .trim();
 
 async function myAddresses(ownerId: string): Promise<Set<string>> {
-  const set = new Set<string>();
-  try {
-    const identity = await resolveOutreachIdentity(ownerId);
-    set.add(identity.senderEmail.toLowerCase());
-    set.add(identity.mailboxEmail.toLowerCase());
-  } catch {
-    try {
-      const connection = await connectedMailProvider(ownerId);
-      if (connection.email) set.add(connection.email.toLowerCase());
-    } catch {
-      /* best-effort */
-    }
-  }
-  return set;
+  return loadOwnAccountEmails(ownerId);
 }
 
 type EmailQuestionAnswer = {
@@ -616,6 +603,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const mine = await myAddresses(scope.userId);
+    if (email && mine.has(email.toLowerCase().trim())) {
+      return NextResponse.json(crmBlockerPayload({
+        code: "email_target_is_self",
+        title: "Choose the other person's email",
+        reason: "That address belongs to your own account, so its mailbox history cannot become a client's context",
+        nextAction: "Choose the meeting guest's email address. No client context was changed",
+        responsible: "user",
+      }), { status: 409 });
+    }
     let msgs: Awaited<ReturnType<typeof recentMessages>> = [];
     try {
       msgs = await recentMessages(query, 25, scope.userId);
@@ -657,7 +654,6 @@ export async function POST(req: NextRequest) {
 
     // Work out who the OTHER party is (not the user's own addresses). If an email
     // was given, that is them; otherwise take the most frequent counterparty.
-    const mine = await myAddresses(scope.userId);
     let counterparty = email;
     if (!counterparty) {
       const tally = new Map<string, number>();

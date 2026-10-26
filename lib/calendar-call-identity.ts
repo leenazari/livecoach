@@ -66,6 +66,7 @@ export function cachedIntentForCalendarAttendee(
   const company = config.companyById?.get(companyId);
   if (!company || typeof cached?.intent !== "string" || !cached.intent.trim()) return null;
   const primary = pickPrimaryAttendee(event.attendees, {
+    selfEmails: config.selfEmails,
     title: event.title,
     internalDomains: config.internalDomains,
     companyDomain: company.domain,

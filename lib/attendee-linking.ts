@@ -1,4 +1,4 @@
-import { pickPrimaryAttendee } from "./calendar-subject.ts";
+import { markOwnCalendarAttendees, pickPrimaryAttendee } from "./calendar-subject.ts";
 
 const domainOf = (email: string) => {
   const match = String(email || "").toLowerCase().match(/@([^@\s]+)$/);
@@ -23,6 +23,7 @@ export type Attendee = {
 };
 
 export type AttendeeConfig = {
+  selfEmails?: Set<string>;
   internalDomains: Set<string>;
   internalCompanyId: string | null;
   contactEmailToCompany: Map<string, string>;
@@ -63,6 +64,7 @@ export function shouldRepairStaleCalendarCompanyLink(
   config: AttendeeConfig
 ): boolean {
   if (!existing?.id) return false;
+  attendees = markOwnCalendarAttendees(attendees, config.selfEmails);
   const profile = existing.profile || {};
   const exclusionReason = String(
     (profile as any)?.pipeline_exclusion?.reason || ""
@@ -123,6 +125,7 @@ export function inferLink(
   config: AttendeeConfig,
   context: AttendeeEventContext = {}
 ): { companyId: string | null; isInternal: boolean } {
+  attendees = markOwnCalendarAttendees(attendees, config.selfEmails);
   const emails = (attendees || [])
     .filter((attendee) => attendee?.email && !attendee.self)
     .map((attendee) => String(attendee.email).toLowerCase().trim())
@@ -203,6 +206,7 @@ export function deriveNewClientFromAttendees(
   config: AttendeeConfig,
   context: AttendeeEventContext = {}
 ): { domain: string; name: string; website: string; email: string } | null {
+  attendees = markOwnCalendarAttendees(attendees, config.selfEmails);
   const workAttendees = (attendees || [])
     .filter((attendee) => attendee?.email && !attendee.self)
     .map((attendee) => ({
