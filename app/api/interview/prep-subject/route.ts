@@ -18,6 +18,7 @@ import {
 } from "@/lib/call-subject";
 import { emailMayInfluenceCompanyIntent } from "@/lib/calendar-subject";
 import { normaliseCompanyDomain } from "@/lib/company-identity";
+import { verifiedCallEmail } from "@/lib/call-lead-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,7 +80,7 @@ export async function GET(req: NextRequest) {
     // another invitee's relationship history.
     const fromTitle = call ? guestFromTitle(call.title || "") : null;
 
-    let person = (guest && guest.name) || (fromTitle && fromTitle.name) || "";
+    let person = (guest && guest.name) || (!call && fromTitle && fromTitle.name) || "";
     let personEmail = (guest && guest.email) || "";
     let role = "";
     const protectedDomains = companyId
@@ -111,7 +112,7 @@ export async function GET(req: NextRequest) {
     // No guest and no title match: if the client has exactly one contact, that
     // is who this is with. More than one and we stay honest and say we do not
     // know, rather than guessing wrong and briefing a stranger.
-    if (!person && companyId) {
+    if (!call && !person && companyId) {
       const { data: contacts } = await supabaseAdmin
         .from("contacts")
         .select("id, name, role, email, company_id, attributes")
@@ -201,7 +202,10 @@ export async function GET(req: NextRequest) {
     const canUseSavedEmailContext = call
       ? emailContextMatchesLead
       : !internal;
-    const emailContext = canUseSavedEmailContext
+    const pinnedEmail = call ? verifiedCallEmail(call) : null;
+    const emailContext = pinnedEmail?.email === personEmail && pinnedEmail
+      ? pinnedEmail.context
+      : canUseSavedEmailContext
       ? workstream
         ? workstreamEmailContext
         : company && typeof company.email_context === "string"

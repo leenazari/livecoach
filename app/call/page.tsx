@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { refreshCallPrepContext } from "@/lib/call-prep-refresh";
+import MeetingLeadPicker, { type MeetingLeadState } from "@/components/MeetingLeadPicker";
 import { foldDictationEvent } from "@/lib/dictation";
 import CallCarryover from "@/components/crm/CallCarryover";
 import KnowledgePanel from "@/components/KnowledgePanel";
@@ -447,6 +448,8 @@ export default function CallPage() {
   const [emailCtxUpdatedAt, setEmailCtxUpdatedAt] = useState<string | null>(null);
   const [emailPullNote, setEmailPullNote] = useState("");
   const [prepIdentityNotice, setPrepIdentityNotice] = useState("");
+  const [meetingLead, setMeetingLead] = useState<MeetingLeadState | null>(null);
+  const [leadSaving, setLeadSaving] = useState(false);
   const [emailCtxSaving, setEmailCtxSaving] = useState(false);
   const [emailCtxSaved, setEmailCtxSaved] = useState(false);
   const [suggestedComps, setSuggestedComps] = useState<string[]>([]);
@@ -1028,7 +1031,7 @@ export default function CallPage() {
       setClientEmailCtx(emailContext);
       setEmailCtxUpdatedAt(result.mail.emailContextUpdatedAt || null);
     }
-    if (result.mail) setEmailPullNote("Latest matching email checked");
+    if (result.mail) setEmailPullNote(result.mail.pinned ? `Using selected email “${result.mail.subject}”` : "Latest matching email checked");
     setPrepIdentityNotice(result.notice || "");
     if (result.needsIdentityConfirmation && !intentEditedRef.current) setBrief("");
     if (result.intent && !intentEditedRef.current) setBrief(result.intent);
@@ -1126,6 +1129,61 @@ export default function CallPage() {
       /* ignore a malformed snapshot */
     }
   }, []);
+
+  const confirmMeetingLead = useCallback(async (email: string) => {
+    const callId = upcomingIdRef.current;
+    if (!callId || callLiveRef.current) return;
+    setLeadSaving(true);
+    prepHydratedRef.current = false;
+    let confirmed = false;
+    try {
+      // Preserve words entered in this tab before changing the person.
+      if (intentEditedRef.current) {
+        await crmFetch(`/api/crm/upcoming/${callId}`, { method: "PATCH", body: JSON.stringify({ intent: brief, intentSource: "manual" }) });
+      }
+      const saved = await crmFetch<{ ok: boolean; notice: string }>(`/api/crm/upcoming/${callId}/lead`, {
+        method: "POST", body: JSON.stringify({ leadEmail: email }),
+      });
+      if (!saved.ok) throw new Error("The lead save was not confirmed. Reopen prep to check the saved person.");
+      confirmed = true;
+      const { call } = await crmFetch<{ call: any }>(`/api/crm/upcoming/${callId}`);
+      if (upcomingIdRef.current !== callId || !call) throw new Error("The call changed. Reopen its prep.");
+      setMeetingLead(call);
+      linkedWorkstreamRef.current = call.workstream || null;
+      setLinkedWorkstream(call.workstream || null);
+      setWorkstreamChoices(call.workstreamChoices || []);
+      const person = call.primaryAttendee;
+      candidateRef.current = person?.name || "";
+      setCandidate(person?.name || "");
+      setContactEmail(person?.email || "");
+      if (person?.email !== meetingLead?.primaryAttendee?.email) {
+        setBackground(""); backgroundRef.current = "";
+        setClientEmailCtx(""); clientEmailCtxRef.current = "";
+        emailEditedRef.current = false;
+        setEmailCtxUpdatedAt(null);
+        setPublicLink(websiteFromEmail(person?.email || "") || "");
+        setSuggestions(previous => previous.filter(item => item.kind !== "opening"));
+        setPlanStage("none");
+        setPrepContextChanged(true);
+        if (!intentEditedRef.current) setBrief(call.intent || "");
+      }
+      hydrateFromPrep({ ...call.prep, privateNotes });
+      setPrepIdentityNotice(saved.notice);
+      try {
+        await refreshPrepContext(call);
+        setPrepIdentityNotice(saved.notice);
+      } catch {
+        setPrepIdentityNotice(`${saved.notice} The matching email could not be refreshed. Your lead is saved. Check the email connection before rebuilding focus.`);
+      }
+    } catch (error: any) {
+      setPrepIdentityNotice(confirmed
+        ? "Your lead was saved, but the updated prep could not be loaded. Keep your notes and reopen this call."
+        : error?.message || "The lead save could not be confirmed. Keep your notes and reopen prep to check it.");
+    } finally {
+      prepHydratedRef.current = true;
+      setLeadSaving(false);
+    }
+  }, [brief, privateNotes, meetingLead, hydrateFromPrep, refreshPrepContext]);
 
   useEffect(() => {
     const updated = (event: Event) => {
@@ -1252,6 +1310,8 @@ export default function CallPage() {
               );
             }
             hydrateFromPrep(call?.prep);
+            setMeetingLead(call && Array.isArray(call.leadChoices) ? call : null);
+            if (call?.needsLeadConfirmation) setPrepIdentityNotice("Choose the lead for this meeting or enter your own intent. Supporting invitees will not set the agenda.");
             // Reload any saved people-research so the brief and its focus
             // influence survive without spending on the search again.
             if (call?.research?.background) {
@@ -1315,7 +1375,7 @@ export default function CallPage() {
             setCallEntryState("ready");
             // Saved focus does not freeze the relationship. Always check the
             // exact guest's latest mail before updating the generated intent.
-            if (call?.company_id) {
+            if (call?.company_id || call?.needsLeadConfirmation) {
               try {
                 await refreshPrepContext({ ...call, id: upcoming, primaryAttendee: guest });
               } catch (error: any) {
@@ -1339,6 +1399,7 @@ export default function CallPage() {
             if (
               !autoHelpedRef.current &&
               !call?.company_id &&
+              !call?.needsLeadConfirmation &&
               !hasIntent &&
               !call?.prep &&
               (autoCompany || autoPerson)
@@ -1416,12 +1477,13 @@ export default function CallPage() {
   // nothing has changed.
   useEffect(() => {
     if (!upcomingIdRef.current || !prepHydratedRef.current) return;
-    if (callLiveRef.current || planStage === "none" || intentLoading || prepping) return;
+    if (callLiveRef.current || planStage === "none" || intentLoading || prepping || leadSaving) return;
     const openingQuestions = suggestions
       .filter((s) => s.kind === "opening")
       .map((s) => ({ text: s.text, why: s.why }));
     const snapshot = {
       version: 1,
+      leadSelectionVersion: meetingLead?.leadSelectionVersion || null,
       brief,
       role,
       callType,
@@ -1465,15 +1527,17 @@ export default function CallPage() {
             });
           lastPrepSigRef.current = sig;
         })
-        .catch(() =>
+        .catch((error: any) =>
           setStatus(
-            "prep did not save to the scheduled call — make one small edit to retry"
+            error?.message || "The preparation save could not be confirmed. Keep your notes and reopen this call to check the saved lead and intent."
           )
         );
     }, 1200);
     return () => clearTimeout(t);
   }, [
     intentLoading,
+    leadSaving,
+    meetingLead,
     prepping,
     brief,
     role,
@@ -3595,6 +3659,10 @@ export default function CallPage() {
             )}
           </div>
         )}
+
+      {meetingLead && !callLive && (
+        <MeetingLeadPicker lead={meetingLead} disabled={intentLoading || prepping || leadSaving} onConfirm={confirmMeetingLead} />
+      )}
 
       {setupCollapsed ? (
         <button

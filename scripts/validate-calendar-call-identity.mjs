@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import * as leadContext from '../lib/call-lead-context.ts';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
@@ -190,6 +191,7 @@ for (const scenario of [
   { call: { id: 'event', company_id: 'school', intent: 'My confirmed agenda', prep: { intentMeta: { source: 'manual' } } }, primaryAttendee: null, status: 200 },
 ]) {
   const endpoint = compile('../app/api/crm/companies/[id]/prep-intent/route.ts', {
+    '@/lib/call-lead-context': leadContext,
     'next/server': { NextResponse }, '@/lib/supabase': { supabaseAdmin: { from: table => {
       assert.ok(['upcoming_calls', 'companies'].includes(table), 'Must not read unrelated company history');
       return { select(fields) { if (table === 'companies') assert.equal(fields, 'id,name,domain,website'); return this; },
@@ -233,6 +235,7 @@ for (const manual of [false, true]) {
       } };
   } };
   const endpoint = compile('../app/api/crm/companies/[id]/prep-intent/route.ts', {
+    '@/lib/call-lead-context': leadContext,
     'next/server': { NextResponse }, '@/lib/supabase': { supabaseAdmin: db },
     '@/lib/openai': { openai: { messages: { create: async args => { modelRequest = args; return { content: [] }; } } } },
     '@/lib/usage': { logModelUsage: async () => {} },
