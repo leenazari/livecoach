@@ -122,7 +122,7 @@ function phaseFor(code: string): RecallBotPhase {
 
 function messageFor(phase: RecallBotPhase, code: string, subCode: string) {
   if (phase === "scheduled") {
-    return "The notetaker is scheduled to join five minutes before the meeting. It is not in the waiting room yet.";
+    return "The notetaker is reserved to join before the meeting. It is not in the waiting room yet.";
   }
   if (phase === "joining") {
     return "The notetaker is launching. It has not reached the meeting yet.";

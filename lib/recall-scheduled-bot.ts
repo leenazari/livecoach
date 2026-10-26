@@ -97,7 +97,7 @@ export async function cancelScheduledNotetakers(input: {
   for (const capture of [...(subscribedCaptures || []), ...(ownedCaptures || [])]) {
     if (captureById.has(String(capture.id))) continue;
     if (capture.scheduled_join_at <= nowIso) {
-      // A cancellation inside the five-minute lead window must remove a bot
+      // A cancellation inside the pre-call lead window must remove a bot
       // already waiting to join. Never interrupt a conversation started early.
       const { data: speech, error: speechError } = await supabaseService.from("meet_utterances")
         .select("id").eq("workspace_id", input.workspaceId).eq("bot_id", capture.bot_id).limit(1);

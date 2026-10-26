@@ -97,10 +97,11 @@ export async function GET(
       supabaseAdmin
         .from("upcoming_calls")
         .select("id, title, scheduled_at, intent, prepped, completed_at")
+        .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId)
         .eq("company_id", params.id)
         .is("completed_at", null)
-        .gte("scheduled_at", new Date().toISOString())
+        .gte("scheduled_at", new Date(now - 3 * 3600000).toISOString())
         .order("scheduled_at", { ascending: true })
         .limit(20),
       supabaseAdmin

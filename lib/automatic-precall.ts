@@ -57,6 +57,7 @@ async function scheduleOne(call: UpcomingCall) {
       started_at: call.scheduled_at,
     }, { onConflict: "owner_id,session_id", ignoreDuplicates: true });
   if (sessionError) {
+    console.error("Notetaker session could not be saved", { callId: call.id, code: sessionError.code });
     return { outcome: "failed" as const, code: "session_not_persisted" };
   }
 
@@ -150,6 +151,14 @@ export async function scheduleAutomaticNotetakersForUpcomingIds(
         .map((result) => result.code)
     )
   );
+  if (failureCodes.length) {
+    console.error("Calendar notetaker reservations need attention", {
+      workspaceId: scope.workspaceId,
+      ownerId: scope.userId,
+      failed: results.filter((result) => result.outcome === "failed").length,
+      failureCodes,
+    });
+  }
   return {
     eligible: eligible.length,
     scheduled: results.filter((result) => result.outcome === "scheduled").length,

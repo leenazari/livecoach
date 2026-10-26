@@ -58,7 +58,9 @@ export async function GET(req: NextRequest) {
     if (horizonIso) {
       callsQuery = callsQuery
         .not("scheduled_at", "is", null)
-        .gte("scheduled_at", nowIso)
+        // A call must not disappear at its start time while the notetaker is
+        // joining or recording. Keep the same short live/recovery window.
+        .gte("scheduled_at", pastCutoff)
         .lte("scheduled_at", horizonIso);
     } else {
       callsQuery = callsQuery.or(

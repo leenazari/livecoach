@@ -225,6 +225,10 @@ assert.match(document.body.textContent, /Send bot/);
 assert.equal(document.querySelector("button").disabled, false, "Manual send remains available when no reservation exists");
 
 available = true;
+await act(async () => { await new Promise((resolve) => setTimeout(resolve, 15500)); });
+assert.match(document.body.textContent, /In call/i, "A reservation created after opening the screen reconnects without refreshing or sending another bot");
+assert.deepEqual(recovered.at(-1), ["lc-lee-room", true]);
+
 let release;
 deferBackfill = new Promise((resolve) => { release = resolve; });
 await render();

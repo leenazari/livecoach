@@ -6,8 +6,10 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { validMeetingUrl } from "../lib/meeting-url.ts";
+import { browserMeetingLaunchUrl } from "../lib/meeting-account.ts";
 import { scheduledCallSessionId } from "../lib/scheduled-call-session.ts";
 import { refreshCallPrepContext } from "../lib/call-prep-refresh.ts";
+import { captureElapsedSeconds } from "../lib/call-capture-lifecycle.ts";
 
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL("../app/call/page.tsx", import.meta.url), "utf8");
@@ -95,7 +97,9 @@ for (const scenario of [
       String(loader).includes("MeetStage") ? MockMeetStage : Empty };
     if (name === "@/lib/crm") return { crmFetch, crmConfirmationError: () => new Error("Not confirmed") };
     if (name === "@/lib/call-prep-refresh") return { refreshCallPrepContext };
+    if (name === "@/lib/call-capture-lifecycle") return { captureElapsedSeconds };
     if (name === "@/lib/meeting-url") return { validMeetingUrl };
+    if (name === "@/lib/meeting-account") return { browserMeetingLaunchUrl };
     if (name === "@/lib/scheduled-call-session") return { scheduledCallSessionId };
     if (name === "@/lib/call-launch") return { consumeArmedCallLaunch: () => false };
     if (name === "@/lib/calendar-subject") return { pickPrimaryAttendee: () => null };
@@ -158,7 +162,7 @@ for (const scenario of [
         assert.match(document.querySelector('[aria-label="Call actions"]').textContent, /Call live/);
         assert.equal(opened.length, scenario === "new-call" ? 0 : 1);
         if (scenario !== "new-call") {
-          assert.deepEqual(opened[0], [meetingUrl, "_blank", "noopener,noreferrer"]);
+          assert.deepEqual(opened[0], [browserMeetingLaunchUrl(meetingUrl), "_blank", "noopener,noreferrer"]);
           assert.deepEqual(botRequests, [1]);
         }
         await click(button("Intent & focus", document.querySelector("nav")));

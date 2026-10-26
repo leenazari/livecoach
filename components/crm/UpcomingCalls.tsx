@@ -172,7 +172,7 @@ export default function UpcomingCalls({
         bits.push("reconnect Google once in Settings to include all calendars");
       else if (r.reconciled === false)
         bits.push("partial sync - cancellations kept safely");
-      setSyncMsg(bits.length ? `synced - ${bits.join(", ")}` : "already up to date");
+      setSyncMsg(r.warning || (bits.length ? `synced - ${bits.join(", ")}` : "already up to date"));
     } catch (e: any) {
       setSyncMsg(e?.message || "sync failed");
     } finally {
@@ -458,7 +458,7 @@ export default function UpcomingCalls({
 
   // Open the call screen preloaded from this scheduled call. The /call screen IS
   // the prep screen: it opens at the plan stage with this client, intent and link
-  // already loaded, and only goes live when speech starts or you hit Go live. Both
+  // already loaded, and resumes an existing automatic notetaker immediately. Both
   // "prep" and "start" route here - prep = prepare ahead, start = jump in now.
   const callHref = (c: Upcoming, launch = false) => {
     const qs = new URLSearchParams();
@@ -751,6 +751,9 @@ export default function UpcomingCalls({
         <>
         <ul className="flex flex-col gap-2">
           {shown.map((c) => {
+            const callIsDue = Boolean(
+              c.meeting_url && c.scheduled_at && Date.parse(c.scheduled_at) <= Date.now() + 60000,
+            );
             const canMarkDone =
               !c.scheduled_at ||
               new Date(c.scheduled_at).getTime() <= Date.now() + 15 * 60 * 1000;
@@ -789,7 +792,9 @@ export default function UpcomingCalls({
                 <Link
                   href={callHref(c)}
                   title={
-                    c.prepped
+                    callIsDue
+                      ? "Open this scheduled call and reconnect to its existing notetaker, transcript and live coaching."
+                      : c.prepped
                       ? "Prepped and ready. Tap to review the prep again."
                       : "Review past call summaries and get a fresh, suggested intent for this call before you go in."
                   }
@@ -799,12 +804,13 @@ export default function UpcomingCalls({
                       : "border-amber/60 bg-amber/15 text-amber hover:bg-amber/25"
                   }`}
                 >
-                  {c.prepped ? "prepped ✓" : "prep ▸"}
+                  {callIsDue
+                    ? "open call ▸" : c.prepped ? "prepped ✓" : "prep ▸"}
                 </Link>
                 <button
                   type="button"
                   onClick={() => launchCall(c)}
-                  title="Open the meeting, start LiveCoach and request your notetaker"
+                  title="Open the meeting and LiveCoach. Reuse the scheduled notetaker if it is already reserved."
                   className="rounded-full border border-sage/60 bg-sage/15 px-3 py-1 font-mono text-[0.54rem] uppercase tracking-wider text-sage transition hover:bg-sage/25"
                 >
                   start call ▸

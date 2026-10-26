@@ -652,7 +652,7 @@ export default function MeetStage({
       setProviderState(null);
       setStatus(
         d.status === "scheduled"
-          ? `notetaker scheduled for ${new Date(d.scheduledJoinAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}, five minutes before the meeting`
+          ? `notetaker scheduled for ${new Date(d.scheduledJoinAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
           : d.sharedCapture
           ? d.status === "shared_active"
             ? "shared notetaker connected, loading this call"
@@ -718,6 +718,9 @@ export default function MeetStage({
           setRecovering(false);
           setStreamReady(true);
           setStatus("not connected");
+          // A calendar change can create the reservation after this screen
+          // opens. Keep read-only recovery alive without sending another bot.
+          timer = setTimeout(poll, 15000);
           return;
         }
         if (!response.ok) {

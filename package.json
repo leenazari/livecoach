@@ -84,6 +84,8 @@
     "validate:call-launch": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-one-click-call-launch.mjs",
     "validate:call-without-focus": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-call-without-focus.mjs",
     "validate:auto-precall-bot": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-automatic-precall-bots.mjs",
+    "validate:background-notetaker": "node scripts/validate-background-notetaker-dispatch.mjs",
+    "validate:client-scheduled-call": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-client-scheduled-call.mjs",
     "validate:auto-live-recovery": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-automatic-live-call-recovery.mjs",
     "validate:calendar-notifications": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-calendar-change-notifications.mjs",
     "validate:unified-call-prep": "node scripts/validate-unified-call-prep.mjs",

@@ -29,6 +29,7 @@ import {
   RELATIONSHIP_STAGE_OPTIONS,
 } from "@/lib/relationship-stages";
 import { capitaliseSentenceStarts } from "@/lib/text";
+import { clientScheduledCalls } from "@/lib/client-scheduled-call";
 
 const inputCls =
   "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
@@ -104,6 +105,7 @@ export default function CompanyDetailPage() {
   const [opps, setOpps] = useState<any[]>([]);
   const [followUps, setFollowUps] = useState<any[]>([]);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
+  const bookedCalls = clientScheduledCalls(timeline);
   const [timelineFilter, setTimelineFilter] = useState("all");
   const [copiedId, setCopiedId] = useState<string>("");
   const [attrs, setAttrs] = useState<Record<string, any>>({});
@@ -626,13 +628,13 @@ export default function CompanyDetailPage() {
                 ＋ log a call
               </Link>
               <Link
-                href={`/call?company=${id}&companyName=${encodeURIComponent(
+                href={bookedCalls.preferred?.href || (bookedCalls.current.length > 1 ? "#client-scheduled-calls" : `/call?company=${id}&companyName=${encodeURIComponent(
                   company.name
-                )}`}
-                title="Open the call workspace to review intent, research, build focus and start the next call"
+                )}`)}
+                title="Open your booked call and reconnect to its existing notetaker, transcript and live coaching. If there is no booking, prepare a new call."
                 className="min-h-10 flex-1 rounded-full border border-amber/60 bg-amber/15 px-3 py-2 text-center font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 sm:flex-none sm:px-4 sm:text-[0.62rem]"
               >
-                ✶ prepare next call
+                {bookedCalls.current.length ? "Open scheduled call" : "✶ prepare next call"}
               </Link>
             </>
           ) : null}
@@ -659,6 +661,23 @@ export default function CompanyDetailPage() {
       </header>
 
       {err && <p className="mb-3 font-mono text-[0.66rem] text-rust">{err}</p>}
+
+      {bookedCalls.current.length > 0 && (
+        <section id="client-scheduled-calls" className="mb-3 scroll-mt-20 rounded-xl border border-sage/45 bg-sage/[0.07] p-4">
+          <h2 className="font-mono text-xs uppercase tracking-wider text-sage">Your scheduled call workspace</h2>
+          <p className="mt-1 text-sm text-muted">Open the booked call to see its notetaker status, transcript and your live coaching. This reconnects to the same session.</p>
+          <ul className="mt-3 flex flex-col gap-2">
+            {bookedCalls.current.map((call) => (
+              <li key={call.href}>
+                <Link href={call.href!} className="flex min-h-11 flex-wrap items-center justify-between gap-2 rounded-lg border border-sage/40 px-3 py-2 text-sm text-bone hover:bg-sage/15">
+                  <span>{call.title} · {new Date(call.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  <span className="text-sage">Open call →</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {access?.mode === "shared_sales" ? (
         <section className="mb-3 rounded-xl border border-sage/45 bg-sage/[0.07] p-4">
