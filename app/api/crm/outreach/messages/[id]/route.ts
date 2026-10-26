@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
+import { crmBlockerPayload, crmFallbackBlockerPayload } from "@/lib/crm-blocker";
 import { supabaseAdmin } from "@/lib/supabase";
 import { removeDashesFromProse } from "@/lib/outreach-voice";
 import { ensureOutreachEmailSimpleOptOut } from "@/lib/outreach-demo-reply-cta";
@@ -16,6 +18,10 @@ import { outreachVoiceHasFalseSenderIdentity } from "@/lib/outreach-voice-policy
 import { getOptionalSalesProfile } from "@/lib/sales-profile";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  let stage: "checking" | "loading" | "saving" | "campaign" | "history" = "checking";
+  let draftSaved = false;
+  let alreadyQueued = false;
+  let approvingVoice = false;
   try {
     const sender = await resolveOutreachIdentity();
     const personalProfile = await getOptionalSalesProfile({
@@ -23,13 +29,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       workspaceId: sender.workspaceId,
     });
     const body = await req.json();
-    const { data: existing } = await supabaseAdmin
+    stage = "loading";
+    const { data: existing, error: readError } = await supabaseAdmin
       .from("outreach_messages")
       .select("*")
       .eq("workspace_id", sender.workspaceId)
       .eq("sender_user_id", sender.userId)
       .eq("id", params.id)
       .maybeSingle();
+    if (readError) throw readError;
+    stage = "checking";
     if (!existing)
       return NextResponse.json({ error: "Draft not found" }, { status: 404 });
     if (["sending", "sent"].includes(existing.status))
@@ -57,6 +66,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       nextBody !== existing.body_text ||
       voiceChanged;
     const voiceApprovalRequested = body.approve_voice_script === true;
+    approvingVoice = voiceApprovalRequested;
     let voiceApprovalRecorded = false;
     let voiceApprovalBudget: ReturnType<typeof assertOutreachVoiceWithinBudget> | null = null;
     patch.subject = nextSubject;
@@ -155,6 +165,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       patch.scheduled_at = null;
     }
     if (body.status === "draft") { patch.status = "draft"; patch.approved_at = null; patch.scheduled_at = null; }
+    stage = "saving";
     const { data, error } = await supabaseAdmin
       .from("outreach_messages")
       .update(patch)
@@ -164,7 +175,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       .select("*")
       .single();
     if (error) throw error;
+    if (!data) throw new Error("Draft save was not confirmed");
+    draftSaved = true;
+    alreadyQueued = data.status === "approved" && Boolean(data.scheduled_at);
     if (data.message_source !== "brain_direct") {
+      stage = "campaign";
       const { data: enrolment, error: enrolmentError } = await supabaseAdmin
         .from("outreach_enrolments")
         .update({
@@ -225,6 +240,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       });
     }
     if (events.length) {
+      stage = "history";
       const { error: eventError } = await supabaseAdmin
         .from("outreach_events")
         .insert(events);
@@ -247,15 +263,53 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     });
   } catch (error: any) {
     const safetyMessage = outreachSafetyError(error);
+    const status = safetyMessage ? 409
+      : error instanceof OutreachVoiceBudgetError ? error.status : 500;
+    const reference = randomUUID();
+    // Safe correlation only. Never log draft text, recipients, credentials,
+    // database error messages or the contents of another user's records.
+    if (status >= 500 || draftSaved) {
+      const code = String(error?.code || "");
+      console.error("outreach_draft_save_failed", {
+        reference, stage, draftSaved,
+        code: /^[A-Z0-9_]{1,32}$/.test(code) ? code : "request_failed",
+      });
+    }
+    if (draftSaved) {
+      return NextResponse.json(crmBlockerPayload({
+        code: `outreach_draft_${stage}_incomplete`,
+        title: "Draft saved, but a follow-up step failed",
+        reason: stage === "history"
+          ? "The activity history could not be updated"
+          : "The campaign could not be updated to match the saved draft",
+        outcome: [
+          "Your draft changes were saved",
+          approvingVoice ? "The voice-script choice was saved, but this step did not generate audio" : "",
+          alreadyQueued ? "The email is still queued and may send at its scheduled time" : "",
+        ].filter(Boolean).join(". "),
+        nextAction: "Reopen the draft and check Activity and its send status before continuing. Do not send another copy if it is already queued or sent. Share the support reference with a workspace owner",
+        responsible: "system",
+        reference,
+      }), { status: 500 });
+    }
+    if (stage === "loading" && status >= 500) {
+      return NextResponse.json(crmBlockerPayload({
+        code: "outreach_draft_load_failed",
+        title: "Email draft could not be opened for editing",
+        reason: "LiveCoach could not load the draft and sender settings needed to check this edit",
+        outcome: "This request stopped before changing the draft",
+        nextAction: "Keep your text and reopen the draft. If it still fails, share the support reference with a workspace owner",
+        responsible: "system",
+        reference,
+      }), { status: 500 });
+    }
+    const fallback = crmFallbackBlockerPayload({
+      status, url: `/api/crm/outreach/messages/${params.id}`, method: "PATCH",
+      serverMessage: safetyMessage || (error instanceof Error ? error.message : undefined),
+    });
     return NextResponse.json(
-      { error: safetyMessage || error?.message || "failed to save draft" },
-      {
-        status: safetyMessage
-          ? 409
-          : error instanceof OutreachVoiceBudgetError
-            ? error.status
-            : 500,
-      }
+      crmBlockerPayload({ ...fallback.blocker, reference }),
+      { status }
     );
   }
 }

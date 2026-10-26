@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { crmFetch } from "@/lib/crm";
+import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import { foldDictationEvent, stabiliseLiveDictationPreview } from "@/lib/dictation";
 import type { NotificationActionReceipt } from "@/lib/notification-actions";
 
@@ -91,7 +91,10 @@ export default function NotificationActionComposer({ notificationId, title, onSa
         method: "POST", body: JSON.stringify({ requestId: requestId.current, mode: "log", note, channel,
           complete, nextAction, dueAt: due ? new Date(due).toISOString() : null }),
       });
-      if (receipt.ok !== true || !receipt.contextId) throw new Error("The save was not confirmed. Try again to check it.");
+      if (receipt.ok !== true || !receipt.contextId) throw crmConfirmationError({
+        url: `/api/crm/notifications/${notificationId}/action`,
+        reason: "LiveCoach did not receive a complete confirmation for your note",
+      });
       onSaved(receipt);
     } catch (reason: any) { setError(reason?.message || "Your action could not be saved. Your note is still here."); }
     finally { busy.current = false; setSaving(false); }

@@ -116,7 +116,7 @@ const fallbackCases = [
       serverMessage: "duplicate key violates database constraint",
     },
     code: "crm_task_500",
-    title: "To-do action not confirmed.",
+    title: "To-do could not be confirmed.",
     responsible: "system",
   },
   {
@@ -127,7 +127,7 @@ const fallbackCases = [
       serverMessage: "permission denied for table crm_notifications",
     },
     code: "crm_notification_500",
-    title: "Notification action not confirmed.",
+    title: "Notification could not be confirmed.",
     responsible: "system",
   },
 ];
@@ -217,10 +217,10 @@ assert.match(assistant, /role="alert"/);
 assert.match(assistant, /crmErrorFromResponse/);
 assert.match(assistant, /crmConfirmationError/);
 
-assert.match(blockerAlert, /Why it stopped/);
+assert.match(blockerAlert, /What happened/);
 assert.match(blockerAlert, /What to do next/);
 assert.match(blockerAlert, /RESPONSIBLE_LABEL/);
-assert.match(blockerAlert, /Blocker code/);
+assert.match(blockerAlert, /Support code/);
 assert.match(blockerAlert, /role="alert"/);
 assert.match(rootLayout, /<CrmBlockerAlert \/>/);
 
