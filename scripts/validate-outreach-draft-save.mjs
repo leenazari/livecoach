@@ -33,7 +33,7 @@ await db.exec(`create table outreach_events (
 );`);
 const alice = randomUUID(), bob = randomUUID(), workspace = randomUUID(), outside = randomUUID();
 let sender = { userId: alice, workspaceId: workspace, senderEmail: "alice@example.invalid", senderName: "Alice" };
-let message, enrolment, requests = [], failHistory = false;
+let message, enrolment, requests = [], failHistory = false, failRead = false, failSave = false, failCampaign = false;
 const hash = text => createHash("sha256").update(text).digest("hex");
 function seed(extra = {}) {
   message = {
@@ -70,6 +70,10 @@ const fetch = async (input, init = {}) => {
       return new Response(null, { status: 201 });
     }
     assert.ok(["outreach_messages", "outreach_enrolments"].includes(table), "No provider or send endpoint may be called");
+    if ((table === "outreach_messages" && ((method === "GET" && failRead) || (method === "PATCH" && failSave))) ||
+        (table === "outreach_enrolments" && failCampaign)) {
+      return Response.json({ code: "XX000", message: "database unavailable for private_fixture_table" }, { status: 500 });
+    }
     const row = table === "outreach_messages" ? message : enrolment;
     const matches = [...url.searchParams].every(([key, value]) =>
       key === "select" || !value.startsWith("eq.") || String(row[key]) === value.slice(3));
@@ -90,6 +94,7 @@ const voice = {
   OutreachVoiceBudgetError: class extends Error {},
 };
 const route = compile("app/api/crm/outreach/messages/[id]/route.ts", {
+  "@/lib/crm-blocker": compile("lib/crm-blocker.ts", {}),
   "next/server": { NextResponse: { json: (data, options) => Response.json(data, options) } },
   "@/lib/supabase": { supabaseAdmin: client },
   "@/lib/outreach-identity": { resolveOutreachIdentity: async () => sender },
@@ -157,6 +162,9 @@ for (const status of ["sending", "sent"]) {
   seed({ status });
   response = await patch({ approve_voice_script: true });
   assert.equal(response.status, 400);
+  const delivered = await response.json();
+  assert.equal(delivered.blocker.code, "outreach_draft_delivery_started");
+  assert.match(delivered.blocker.nextAction, /Do not send the same email again/);
   assert.ok(requests.every(row => row.method === "GET"), "Never edit or resend a delivered email");
 }
 for (const override of [{ userId: bob }, { workspaceId: outside }]) {
@@ -167,12 +175,54 @@ for (const override of [{ userId: bob }, { workspaceId: outside }]) {
   sender = original;
 }
 seed({ from_email: "another@example.invalid" });
-assert.equal((await patch({ approve_voice_script: true })).status, 403);
+response = await patch({ approve_voice_script: true }); result = await response.json();
+assert.equal(response.status, 403);
+assert.equal(result.blocker.code, "outreach_draft_sender_mismatch");
+assert.doesNotMatch(result.error, /another@example.invalid/);
+assert.match(result.blocker.nextAction, /connected mailbox and sender address/);
+assert.ok(requests.every(row => row.method === "GET"));
+seed({ voice_status: "generating" });
+response = await patch({ approve_voice_script: true }); result = await response.json();
+assert.equal(response.status, 409);
+assert.equal(result.blocker.code, "outreach_voice_already_generating");
+assert.match(result.blocker.outcome, /did not change.*or start another generation/);
+assert.ok(requests.every(row => row.method === "GET"));
 seed(); failHistory = true;
 response = await patch({ approve_voice_script: true });
 assert.equal(response.status, 500, "Genuine history failures must not claim success");
+result = await response.json();
+assert.equal(result.blocker.code, "outreach_draft_history_incomplete");
+assert.match(result.blocker.outcome, /draft changes were saved/i);
+assert.match(result.blocker.outcome, /did not generate audio/i);
+assert.match(result.blocker.outcome, /still queued/i);
+assert.match(result.blocker.nextAction, /Do not send another copy/);
+assert.match(result.blocker.reference, /^[a-f0-9-]{36}$/);
 failHistory = false;
 assert.equal((await patch({ approve_voice_script: true })).status, 200, "A previously partially saved approval can retry without generation");
+seed({ status: "draft", scheduled_at: null }); failCampaign = true;
+response = await patch({ body_text: "Updated. I will not follow up if not relevant." });
+result = await response.json();
+assert.equal(result.blocker.code, "outreach_draft_campaign_incomplete");
+assert.match(result.blocker.reason, /campaign could not be updated/);
+assert.match(result.blocker.outcome, /draft changes were saved/i);
+assert.doesNotMatch(result.blocker.outcome, /still queued|voice-script/);
+assert.match(message.body_text, /Updated/);
+failCampaign = false;
+seed(); failRead = true;
+response = await patch({ approve_voice_script: true }); result = await response.json();
+assert.equal(response.status, 500, "A read failure must not masquerade as a missing/foreign draft");
+assert.equal(result.blocker.code, "outreach_draft_load_failed");
+assert.match(result.blocker.outcome, /before changing the draft/);
+assert.doesNotMatch(result.error, /private_fixture_table|not found/i);
+assert.ok(requests.every(row => row.method === "GET"));
+failRead = false;
+seed(); failSave = true;
+response = await patch({ approve_voice_script: true }); result = await response.json();
+assert.equal(response.status, 500);
+assert.match(result.blocker.outcome, /could not verify/);
+assert.doesNotMatch(result.error, /private_fixture_table/);
+assert.equal(message.voice_script_approved_at, null);
+failSave = false;
 assert.ok(requests.every(row => ["outreach_messages", "outreach_enrolments", "outreach_events"].includes(row.table)));
 await db.close();
-console.log("PASS outreach draft save. Reproduced production metadata failure, mixed approvals persist, retries, sender/workspace isolation and sent-message protection. No live writes or provider calls.");
+console.log("PASS outreach draft save. Mixed approvals, partial-save explanations, load/save failures, safe retry advice, sender/workspace isolation and sent-message protection. No live writes or provider calls.");

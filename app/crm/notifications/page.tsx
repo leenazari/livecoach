@@ -15,7 +15,7 @@ import TaskEmailComposer from "@/components/crm/TaskEmailComposer";
 import NotificationActionComposer from "@/components/crm/NotificationActionComposer";
 import NotificationActionHistory from "@/components/crm/NotificationActionHistory";
 import { announceNotificationAction, type NotificationActionReceipt } from "@/lib/notification-actions";
-import { crmFetch } from "@/lib/crm";
+import { crmConfirmationError, crmFetch } from "@/lib/crm";
 import {
   type CrmNotificationKind,
   type NotificationPreferences,
@@ -180,7 +180,10 @@ export default function NotificationsPage() {
       const receipt = await crmFetch<NotificationActionReceipt>(`/api/crm/notifications/${notification.id}/action`, {
         method: "POST", body: JSON.stringify({ requestId: doneRequests.current[notification.id], mode: "done" }),
       });
-      if (!receipt.ok || !receipt.contextId) throw new Error("The action was not confirmed. Try again to check the same save.");
+      if (!receipt.ok || !receipt.contextId) throw crmConfirmationError({
+        url: `/api/crm/notifications/${notification.id}/action`,
+        reason: "LiveCoach did not receive a complete confirmation for this action",
+      });
       actionSaved(receipt);
     } catch (reason: any) { setError(reason?.message || "The action could not be saved."); }
     finally { actionSaving.current = false; setBusy(""); }

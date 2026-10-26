@@ -14,7 +14,7 @@ const RESPONSIBLE_LABEL: Record<
   user: "You can resolve this",
   manager: "A manager needs to resolve this",
   owner: "A workspace owner needs to resolve this",
-  system: "LiveCoach needs to complete this safely",
+  system: "A technical check may be needed",
 };
 
 export default function CrmBlockerAlert() {
@@ -37,12 +37,12 @@ export default function CrmBlockerAlert() {
       role="alert"
       aria-live="assertive"
       aria-label="CRM action blocker"
-      className="fixed left-1/2 top-3 z-[100] w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 rounded-2xl border border-rust/55 bg-panel/98 p-4 text-bone shadow-2xl backdrop-blur sm:top-5"
+      className="fixed left-1/2 top-3 z-[100] max-h-[calc(100dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 overflow-y-auto rounded-2xl border border-rust/55 bg-panel/98 p-4 text-bone shadow-2xl backdrop-blur sm:top-5"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="font-mono text-[0.58rem] uppercase tracking-[0.18em] text-rust">
-            Action not completed
+            Action needs attention
           </p>
           <h2 className="mt-1 font-display text-lg text-bone">
             {detail.blocker.title}
@@ -61,7 +61,7 @@ export default function CrmBlockerAlert() {
       <div className="mt-3 grid gap-3 text-sm leading-relaxed sm:grid-cols-2">
         <div className="rounded-xl border border-edge bg-ink/45 p-3">
           <p className="font-mono text-[0.54rem] uppercase tracking-wider text-muted">
-            Why it stopped
+            What happened
           </p>
           <p className="mt-1 text-bone/85">{detail.blocker.reason}</p>
         </div>
@@ -73,13 +73,26 @@ export default function CrmBlockerAlert() {
         </div>
       </div>
 
+      {detail.blocker.outcome && (
+        <div className="mt-3 rounded-xl border border-edge bg-ink/45 p-3 text-sm leading-relaxed">
+          <p className="font-mono text-[0.54rem] uppercase tracking-wider text-muted">
+            What this means for your work
+          </p>
+          <p className="mt-1 text-bone/90">{detail.blocker.outcome}</p>
+        </div>
+      )}
+
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[0.66rem]">
         <span className="text-muted">
           {RESPONSIBLE_LABEL[detail.blocker.responsible]}
         </span>
-        <span className="font-mono uppercase tracking-wider text-muted/80">
-          Blocker code {detail.blocker.code}
-        </span>
+        <details className="min-w-0 text-muted/80">
+          <summary className="cursor-pointer">Support details</summary>
+          <p className="mt-1 select-text break-all font-mono">Support code {detail.blocker.code}</p>
+          {detail.blocker.reference && (
+            <p className="mt-1 select-text break-all font-mono">Reference {detail.blocker.reference}</p>
+          )}
+        </details>
       </div>
     </aside>
   );

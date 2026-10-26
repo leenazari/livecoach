@@ -205,9 +205,17 @@ export function crmRequestErrorFromData(input: {
 }): CrmRequestError {
   const status = Number(input.status || 0);
   const method = String(input.method || "GET").toUpperCase();
+  // Reads use an inline error instead of the global popup. Include the same
+  // support details there, otherwise "share the support code" has no code.
+  const requestError = (payload: ReturnType<typeof crmBlockerPayload>) => {
+    const support = ["GET", "HEAD"].includes(method)
+      ? ` Support code ${payload.blocker.code}.${payload.blocker.reference ? ` Reference ${payload.blocker.reference}.` : ""}`
+      : "";
+    return new CrmRequestError(payload.error + support, status, payload.blocker);
+  };
   if (hasStructuredBlocker(input.data?.blocker)) {
     const payload = crmBlockerPayload(input.data.blocker);
-    return new CrmRequestError(payload.error, status, payload.blocker);
+    return requestError(payload);
   }
   const payload = crmFallbackBlockerPayload({
     status,
@@ -215,7 +223,7 @@ export function crmRequestErrorFromData(input: {
     method,
     serverMessage: input.data?.reason || input.data?.error,
   });
-  return new CrmRequestError(payload.error, status, payload.blocker);
+  return requestError(payload);
 }
 
 export function notifyCrmRequestError(
@@ -223,6 +231,14 @@ export function notifyCrmRequestError(
   url: string,
   method: string
 ): void {
+  if (!["GET", "HEAD"].includes(method.toUpperCase()) &&
+      (!error.status || error.status === 408 || error.status >= 500)) {
+    // A partial save or lost reply may have changed the canonical record.
+    // Reopening it must not seed the old pre-save snapshot from memory.
+    _cacheEpoch += 1;
+    _getCache.clear();
+    _getInflight.clear();
+  }
   if (typeof window === "undefined") return;
   reportCrmBlocker(error.blocker, url, method, error.status);
   if (method.toUpperCase() === "GET") return;
@@ -269,7 +285,7 @@ export async function crmErrorFromResponse(
 }
 
 // A write can return HTTP 200 while still omitting or contradicting the saved
-// record the screen expects. Treat that contract mismatch as a failed action,
+// record the screen expects. Treat that contract mismatch as an unknown outcome,
 // surface the same actionable blocker as every other CRM write, and never let
 // an optimistic UI imply that an unconfirmed change was saved.
 export function crmConfirmationError(input: {
@@ -332,7 +348,16 @@ export function crmFetch<T = any>(
       notifyCrmRequestError(error, url, method);
       throw error;
     }
-    const text = await res.text();
+    let text: string;
+    try {
+      text = await res.text();
+    } catch {
+      // The connection can fail after headers arrive. Keep that uncertainty
+      // visible instead of leaking a browser exception or retrying a mutation.
+      const error = crmRequestErrorFromData({ status: 0, url, method });
+      notifyCrmRequestError(error, url, method);
+      throw error;
+    }
     let data: any = {};
     try {
       data = text ? JSON.parse(text) : {};
