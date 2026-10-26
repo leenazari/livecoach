@@ -21,6 +21,7 @@ import {
 } from "@/lib/shared-call-access";
 import { scheduleAutomaticNotetakersForUpcomingIds } from "@/lib/automatic-precall";
 import { cancelScheduledNotetakers } from "@/lib/recall-scheduled-bot";
+import { latestNotificationActionContext } from "@/lib/notification-action-context";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -68,6 +69,9 @@ export async function GET(
       if (safeHostPrep) {
         data.prep = {
           ...safeHostPrep,
+          ...(typeof ownPrep.clientActivityContextSeen === "string"
+            ? { clientActivityContextSeen: ownPrep.clientActivityContextSeen }
+            : {}),
           ...(Array.isArray(ownPrep.privateNotes)
             ? { privateNotes: ownPrep.privateNotes }
             : {}),
@@ -172,6 +176,10 @@ export async function GET(
           ? departmentNames.get(thread.department_id) || null
           : null,
       }));
+    }
+    if (company && data.company_id) {
+      const activityId = await latestNotificationActionContext(account, data.company_id, data.workstream_id);
+      if (activityId) data.prep = { ...(data.prep || {}), clientActivityContextId: activityId };
     }
     return NextResponse.json({
       call: {
