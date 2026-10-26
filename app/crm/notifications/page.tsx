@@ -5,12 +5,16 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
 import MatrixRain from "@/components/MatrixRain";
 import NavMenu from "@/components/crm/NavMenu";
 import TaskEmailComposer from "@/components/crm/TaskEmailComposer";
+import NotificationActionComposer from "@/components/crm/NotificationActionComposer";
+import NotificationActionHistory from "@/components/crm/NotificationActionHistory";
+import { announceNotificationAction, type NotificationActionReceipt } from "@/lib/notification-actions";
 import { crmFetch } from "@/lib/crm";
 import {
   type CrmNotificationKind,
@@ -126,6 +130,10 @@ export default function NotificationsPage() {
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [error, setError] = useState("");
   const [replyNotificationId, setReplyNotificationId] = useState<string | null>(null);
+  const [actionNotificationId, setActionNotificationId] = useState<string | null>(null);
+  const [actionReceipt, setActionReceipt] = useState<NotificationActionReceipt | null>(null);
+  const doneRequests = useRef<Record<string, string>>({});
+  const actionSaving = useRef(false);
   const [permission, setPermission] =
     useState<BrowserPermission>("unsupported");
   const [permissionChecked, setPermissionChecked] = useState(false);
@@ -155,6 +163,28 @@ export default function NotificationsPage() {
       setLoading(false);
     }
   }, []);
+
+  function actionSaved(receipt: NotificationActionReceipt) {
+    setActionReceipt(receipt);
+    setActionNotificationId(null);
+    announceNotificationAction(receipt);
+    void load();
+  }
+
+  async function markActionDone(notification: CrmNotification) {
+    if (actionSaving.current) return;
+    actionSaving.current = true;
+    setBusy(notification.id); setError("");
+    doneRequests.current[notification.id] ||= crypto.randomUUID();
+    try {
+      const receipt = await crmFetch<NotificationActionReceipt>(`/api/crm/notifications/${notification.id}/action`, {
+        method: "POST", body: JSON.stringify({ requestId: doneRequests.current[notification.id], mode: "done" }),
+      });
+      if (!receipt.ok || !receipt.contextId) throw new Error("The action was not confirmed. Try again to check the same save.");
+      actionSaved(receipt);
+    } catch (reason: any) { setError(reason?.message || "The action could not be saved."); }
+    finally { actionSaving.current = false; setBusy(""); }
+  }
 
   useEffect(() => {
     syncDesktopPermission();
@@ -601,6 +631,20 @@ export default function NotificationsPage() {
         </section>
       ) : null}
 
+      <NotificationActionHistory />
+      {actionReceipt ? (
+        <div role="status" className="mb-4 rounded-xl border border-sage/40 bg-sage/10 p-4 text-sm text-bone">
+          <p>{actionReceipt.completed ? "Action logged and notification completed." : "Action logged. The notification’s action is still open."}
+            {actionReceipt.nextTaskId ? " Your next step has been added to Tasks." : ""}
+            {actionReceipt.callId ? " Your next call has new context available when you refresh its focus." : ""}
+            {actionReceipt.pipelineNeedsSelection ? " There is more than one matching deal. The note is saved, but no deal was changed." : ""}</p>
+          <div className="mt-2 flex flex-wrap gap-4">
+            {actionReceipt.companyId ? <a className="underline text-sage" href={`/crm/${actionReceipt.companyId}`}>View client log</a> : null}
+            {actionReceipt.nextTaskId ? <a className="underline text-sage" href="/crm/board?tab=tasks">View tasks</a> : null}
+            <button type="button" className="underline text-muted" onClick={() => setActionReceipt(null)}>Close</button>
+          </div>
+        </div>
+      ) : null}
       {error ? (
         <p
           role="alert"
@@ -776,10 +820,22 @@ export default function NotificationsPage() {
                       {notification.body}
                     </p>
                     <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                      {notification.kind !== "chat_message" ? <>
+                        <button type="button" className={`${primary} w-full sm:w-auto`} disabled={!!busy}
+                          title="Record that you completed this action and close its linked task. This does not send a message."
+                          onClick={() => void markActionDone(notification)}>
+                          {busy === notification.id ? "Saving…" : "✓ Done"}
+                        </button>
+                        <button type="button" className={`${button} w-full sm:w-auto`} disabled={!!busy}
+                          aria-expanded={actionNotificationId === notification.id}
+                          onClick={() => { setReplyNotificationId(null); setActionNotificationId(current => current === notification.id ? null : notification.id); }}>
+                          {actionNotificationId === notification.id ? "Close action" : "Log action"}
+                        </button>
+                      </> : null}
                       {notification.kind === "important_email" ? (
                         <button type="button" className={`${primary} w-full sm:w-auto`}
                           aria-expanded={replyNotificationId === notification.id}
-                          onClick={() => setReplyNotificationId(current => current === notification.id ? null : notification.id)}>
+                          onClick={() => { setActionNotificationId(null); setReplyNotificationId(current => current === notification.id ? null : notification.id); }}>
                           {replyNotificationId === notification.id ? "Close reply" : "Reply here"}
                         </button>
                       ) : null}
@@ -835,6 +891,10 @@ export default function NotificationsPage() {
                         Dismiss
                       </button>
                     </div>
+                    {actionNotificationId === notification.id ? (
+                      <NotificationActionComposer key={`action-${notification.id}`} notificationId={notification.id}
+                        title={notification.title} onClose={() => setActionNotificationId(null)} onSaved={actionSaved} />
+                    ) : null}
                     {replyNotificationId === notification.id ? (
                       <TaskEmailComposer key={notification.id} taskId="" notificationId={notification.id}
                         taskText={notification.title} onClose={() => setReplyNotificationId(null)}

@@ -418,6 +418,9 @@ export default function CallPage() {
   // Raised when a document is uploaded AFTER the focus was built, so the user
   // can fold it in. Cleared whenever the focus is (re)built.
   const [newDocFlag, setNewDocFlag] = useState(false);
+  const [activityContextId, setActivityContextId] = useState<string | null>(null);
+  const [activityContextSeen, setActivityContextSeen] = useState<string | null>(null);
+  const activityContextRef = useRef<string | null>(null);
   // CRM link: the company this call is attached to (its history feeds the plan
   // later, and its scorecard rolls up under the company).
   const [linkedCompany, setLinkedCompany] = useState<{
@@ -1043,6 +1046,10 @@ export default function CallPage() {
   const hydrateFromPrep = useCallback((prep: any) => {
     if (!prep || typeof prep !== "object") return;
     try {
+      const activityId = typeof prep.clientActivityContextId === "string" ? prep.clientActivityContextId : null;
+      activityContextRef.current = activityId;
+      setActivityContextId(activityId);
+      setActivityContextSeen(typeof prep.clientActivityContextSeen === "string" ? prep.clientActivityContextSeen : null);
       if (typeof prep.brief === "string" && prep.brief) setBrief(prep.brief);
       if (typeof prep.role === "string") setRole(prep.role);
       if (typeof prep.callType === "string") setCallType(prep.callType);
@@ -1118,6 +1125,30 @@ export default function CallPage() {
     } catch {
       /* ignore a malformed snapshot */
     }
+  }, []);
+
+  useEffect(() => {
+    const updated = (event: Event) => {
+      const receipt = (event as CustomEvent).detail;
+      if (receipt?.callId !== upcomingIdRef.current || !receipt?.contextId) return;
+      activityContextRef.current = receipt.contextId;
+      setActivityContextId(receipt.contextId);
+    };
+    // Returning from Notifications in another tab must also notice the change.
+    const refreshMarker = () => {
+      if (!upcomingIdRef.current || callLiveRef.current) return;
+      crmFetch<{ call?: { prep?: { clientActivityContextId?: string } } }>(`/api/crm/upcoming/${upcomingIdRef.current}`)
+        .then(result => {
+          const marker = result.call?.prep?.clientActivityContextId;
+          if (marker) { activityContextRef.current = marker; setActivityContextId(marker); }
+        }).catch(() => {});
+    };
+    window.addEventListener("lc:client-activity-updated", updated);
+    window.addEventListener("focus", refreshMarker);
+    return () => {
+      window.removeEventListener("lc:client-activity-updated", updated);
+      window.removeEventListener("focus", refreshMarker);
+    };
   }, []);
 
   // A confirmed Brain action can change this call while its prep screen is
@@ -1405,6 +1436,7 @@ export default function CallPage() {
       planStage,
       focusBasisBrief: focusBasisBriefRef.current,
       focusBasisEmailContext: focusBasisEmailRef.current,
+      clientActivityContextSeen: activityContextSeen,
     };
     const sig = JSON.stringify(snapshot);
     if (sig === lastPrepSigRef.current) return;
@@ -1455,6 +1487,7 @@ export default function CallPage() {
     privateNotes,
     planStage,
     suggestions,
+    activityContextSeen,
   ]);
   useEffect(() => {
     selectedCompsRef.current = selectedComps;
@@ -2007,6 +2040,8 @@ export default function CallPage() {
     });
     const ctx = await res.json();
     knowledgeRef.current = ctx.context || "";
+    activityContextRef.current = ctx.clientActivityContextId || null;
+    setActivityContextId(ctx.clientActivityContextId || null);
     const sources = Array.isArray(ctx.sources) ? ctx.sources : [];
     setLoadedDocs(sources);
     loadedDocsCountRef.current = sources.length;
@@ -2313,14 +2348,16 @@ export default function CallPage() {
           }
         }
         await loadContext();
+        const contextUsed = activityContextRef.current;
         const { ok, degraded, added, upgraded } = await generatePlan(mode, freshContext);
         if (mode === "focus") setPlanStage(ok ? "focus" : "none");
         else if (mode === "full" && ok) setPlanStage("full");
         // refocus keeps the current stage - it only re-derives the focus.
         // The focus now reflects the current documents, so clear the prompt.
-        if (mode === "focus" || mode === "refocus") {
+        if (ok && !degraded && (mode === "focus" || mode === "refocus")) {
           docsAtFocusRef.current = loadedDocsCountRef.current;
           setNewDocFlag(false);
+          setActivityContextSeen(contextUsed);
         }
         // Honest, specific status for a rebuild: say what actually changed.
         const refocusMsg = () => {
@@ -4145,13 +4182,11 @@ export default function CallPage() {
                 )}
                 {/* NEW DOCUMENT prompt: a doc was added after the focus was
                     built. Offer to fold it in by rebuilding the focus. */}
-                {newDocFlag && suggestedComps.length > 0 && (
+                {(newDocFlag || (activityContextId && activityContextId !== activityContextSeen)) && suggestedComps.length > 0 && (
                   <div className="flex items-center gap-3 rounded-xl border border-sky/45 bg-sky/[0.08] px-3.5 py-3">
                     <span className="text-base text-sky">{"\u2295"}</span>
                     <p className="flex-1 font-sans text-[0.78rem] leading-snug text-bone/90">
-                      <span className="text-sky">New document added</span> - it
-                      isn't reflected in your focus yet. Rebuild the focus to fold
-                      it in.
+                      <span className="text-sky">{activityContextId && activityContextId !== activityContextSeen ? "New client action logged" : "New document added"}</span> — rebuild the focus to include it. Your saved intent and manual focus have not been changed.
                     </p>
                     <button
                       onClick={() => prep("refocus")}

@@ -1,4 +1,5 @@
 "use client";
+import { outreachLastActivityAt } from "@/lib/outreach-last-activity";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -2031,14 +2032,7 @@ export default function OutreachPage() {
   const needle = useDeferredValue(q).trim().toLowerCase();
   const shown = useMemo(() => {
     const priorityRank: Record<Priority, number> = { high: 3, medium: 2, low: 1 };
-    const activityTime = (prospect: Prospect) => new Date(
-      prospect.last_reply_at ||
-      prospect.source_metadata?.latest_manual_call?.occurredAt ||
-      prospect.outreach?.latestSentMessage?.sent_at ||
-      prospect.outreach?.latestMessage?.updated_at ||
-      prospect.updated_at ||
-      0
-    ).getTime();
+    const activityTime = (prospect: Prospect) => new Date(outreachLastActivityAt(prospect) || 0).getTime();
     const rows = prospects.filter((prospect) => {
       if (focusedProspectId) return prospect.id === focusedProspectId;
       const stage = outreachStage(prospect).key;
@@ -2471,7 +2465,7 @@ export default function OutreachPage() {
               ? prospect.source_metadata.chatgpt_mcp.context_notes
               : [];
             const latestMcpContext = String(mcpContextNotes[mcpContextNotes.length - 1]?.text || "").trim();
-            const lastActivity = prospect.last_reply_at || latestManualCall?.occurredAt || prospect.outreach?.latestSentMessage?.sent_at || prospect.outreach?.latestMessage?.updated_at || prospect.updated_at;
+            const lastActivity = outreachLastActivityAt(prospect);
             const pendingStatus = prospect.outreach?.latestMessage?.status;
             const prepareStatus = prepareJobs[prospect.id];
             const preparePending = prepareStatus === "adding" || prepareStatus === "queued" || prepareStatus === "researching" || prepareStatus === "done";
