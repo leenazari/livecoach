@@ -10,6 +10,7 @@ import {
 import { useRouter } from "next/navigation";
 import MatrixRain from "@/components/MatrixRain";
 import NavMenu from "@/components/crm/NavMenu";
+import TaskEmailComposer from "@/components/crm/TaskEmailComposer";
 import { crmFetch } from "@/lib/crm";
 import {
   type CrmNotificationKind,
@@ -124,6 +125,7 @@ export default function NotificationsPage() {
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [error, setError] = useState("");
+  const [replyNotificationId, setReplyNotificationId] = useState<string | null>(null);
   const [permission, setPermission] =
     useState<BrowserPermission>("unsupported");
   const [permissionChecked, setPermissionChecked] = useState(false);
@@ -774,13 +776,20 @@ export default function NotificationsPage() {
                       {notification.body}
                     </p>
                     <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                      {notification.kind === "important_email" ? (
+                        <button type="button" className={`${primary} w-full sm:w-auto`}
+                          aria-expanded={replyNotificationId === notification.id}
+                          onClick={() => setReplyNotificationId(current => current === notification.id ? null : notification.id)}>
+                          {replyNotificationId === notification.id ? "Close reply" : "Reply here"}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => void openSource(notification)}
                         disabled={busy === notification.id}
                         className={`${primary} w-full sm:w-auto`}
                       >
-                        Open in CRM
+                        {notification.kind === "outreach_reply" ? "Review reply and next step" : notification.kind === "lead_assigned" ? "Review lead and plan contact" : "Open in CRM"}
                       </button>
                       <button
                         type="button"
@@ -826,6 +835,16 @@ export default function NotificationsPage() {
                         Dismiss
                       </button>
                     </div>
+                    {replyNotificationId === notification.id ? (
+                      <TaskEmailComposer key={notification.id} taskId="" notificationId={notification.id}
+                        taskText={notification.title} onClose={() => setReplyNotificationId(null)}
+                        onSent={async () => {
+                          setReplyNotificationId(null);
+                          window.dispatchEvent(new CustomEvent("lc:tasks-updated"));
+                          window.dispatchEvent(new CustomEvent("lc:notifications-updated"));
+                          await load();
+                        }} />
+                    ) : null}
                   </div>
                 </div>
               </article>

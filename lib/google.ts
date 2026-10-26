@@ -323,15 +323,20 @@ export async function listEvents(
     orderBy: "startTime",
     maxResults: "250",
   });
-  const res = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
-      calendarId
-    )}/events?${p.toString()}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  if (!res.ok) throw new Error(`calendar list failed (${res.status})`);
-  const d = await res.json();
-  return Array.isArray(d.items) ? d.items : [];
+  const events: any[] = [];
+  for (let page = 0; page < 20; page++) {
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${p.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store", signal: AbortSignal.timeout(12_000) }
+    );
+    if (!res.ok) throw new Error(`calendar list failed (${res.status})`);
+    const d = await res.json();
+    if (!Array.isArray(d.items) && d.items != null) throw new Error("Google calendar returned invalid events");
+    events.push(...(d.items || []).map((event: any) => ({ ...event, calendar_timezone: d.timeZone || event.start?.timeZone })));
+    if (!d.nextPageToken) return events;
+    p.set("pageToken", d.nextPageToken);
+  }
+  throw new Error("Google calendar pagination was incomplete");
 }
 
 export type GoogleCalendarEventInput = {
@@ -552,6 +557,12 @@ export async function listAllEventsSnapshot(
     );
   }
   const NOISE = /#(holiday|contacts|weather|birthday)/i;
+  for (const calendar of cals) {
+    if (calendar?.accessRole === "freeBusyReader" && !NOISE.test(String(calendar.id || ""))) {
+      complete = false;
+      failedCalendars.push(String(calendar.id || "availability-only calendar"));
+    }
+  }
   const eligible = cals.filter((c) => {
     const id = String(c?.id || "");
     if (!id || NOISE.test(id)) return false;
@@ -566,7 +577,8 @@ export async function listAllEventsSnapshot(
   for (const id of ids) {
     try {
       const evs = await listEvents(accessToken, timeMinIso, timeMaxIso, id);
-      for (const e of evs) all.push(e);
+      const timezone = eligible.find((calendar) => calendar.id === id)?.timeZone;
+      for (const e of evs) all.push({ ...e, calendar_timezone: timezone || e.calendar_timezone || e.start?.timeZone });
     } catch {
       // Keep the usable events, but flag the snapshot as incomplete. Callers
       // may safely add/update from it, but must not infer that absent events

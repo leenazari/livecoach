@@ -38,6 +38,8 @@ import {
 } from "@/lib/email-assistant-voice-policy";
 import { supabaseService } from "@/lib/supabase";
 import { logModelUsage } from "@/lib/usage";
+import type { ReplyMeetingOptions } from "@/lib/reply-meeting-options";
+import { assertReplyMeetingOptionsCurrent } from "@/lib/reply-calendar";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -93,6 +95,7 @@ export type EmailAssistantDraft = {
   due_at: string | null;
   meeting_cta_recommended: boolean;
   booking_url: string | null;
+  meeting_options?: ReplyMeetingOptions | null;
   voice_script: string | null;
   voice_status: "none" | "script_ready" | "generating" | "ready" | "failed";
   voice_audio_path: string | null;
@@ -148,7 +151,7 @@ export type EmailAssistantRehearsalResult = {
 };
 
 export const EMAIL_ASSISTANT_DRAFT_SELECT =
-  "id,workspace_id,owner_id,company_id,outreach_prospect_id,source_task_id,mail_provider,source_message_id,source_thread_id,source_received_at,recipient_email,recipient_name,draft_subject,draft_body,intent,next_step,evidence_summary,confidence,urgency,generation_mode,due_at,meeting_cta_recommended,booking_url,voice_script,voice_status,voice_audio_path,voice_audio_mime,voice_generated_at,voice_script_hash,voice_public_token,voice_model_id,voice_provider_voice_id,voice_provider_request_id,voice_estimated_seconds,voice_character_count,voice_estimated_cost_gbp,voice_error,voice_script_approved_at,voice_script_approved_by,voice_script_approved_hash,status,provider_draft_id,provider_draft_url,provider_message_id,approved_at,sent_at,last_error,created_at,updated_at";
+  "id,workspace_id,owner_id,company_id,outreach_prospect_id,source_task_id,mail_provider,source_message_id,source_thread_id,source_received_at,recipient_email,recipient_name,draft_subject,draft_body,intent,next_step,evidence_summary,confidence,urgency,generation_mode,due_at,meeting_cta_recommended,booking_url,meeting_options,voice_script,voice_status,voice_audio_path,voice_audio_mime,voice_generated_at,voice_script_hash,voice_public_token,voice_model_id,voice_provider_voice_id,voice_provider_request_id,voice_estimated_seconds,voice_character_count,voice_estimated_cost_gbp,voice_error,voice_script_approved_at,voice_script_approved_by,voice_script_approved_hash,status,provider_draft_id,provider_draft_url,provider_message_id,approved_at,sent_at,last_error,created_at,updated_at";
 
 const clean = (value: unknown, maximum: number) =>
   String(value || "")
@@ -1086,6 +1089,8 @@ export async function handOffEmailAssistantDraft(
       { status: 409 }
     );
   }
+
+  await assertReplyMeetingOptionsCurrent(scope, draft.meeting_options, draft.draft_body);
 
   // Claim the handoff before touching the provider. If the process is
   // interrupted after Gmail or Outlook creates a draft, a retry fails closed

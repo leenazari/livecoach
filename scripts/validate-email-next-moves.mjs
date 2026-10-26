@@ -63,16 +63,14 @@ assert.match(assistant, /source: "human"/);
 assert.match(assistant, /rehearseEmailAssistantDraft/);
 assert.match(assistant, /to: mailboxEmail/);
 
-assert.match(monitor, /"draftMode":"immediate\|overnight\|none"/);
-assert.match(monitor, /generateEmailAssistantDraft/);
-assert.match(monitor, /generationMode: "immediate"/);
+assert.doesNotMatch(monitor, /generateEmailAssistantDraft/);
+assert.match(monitor, /Drafts are created only when the user requests one/);
 assert.match(monitor, /outreachReplyDraftPlan/);
 assert.match(monitor, /outreach\.summary/);
-assert.match(monitor, /draftMode = knownSender \? "overnight" : "none"/);
-assert.match(monitor, /draftMode,/);
-assert.match(overnight, /generationMode: "overnight"/);
-assert.match(overnight, /runWithServiceRecordScope/);
-assert.match(overnight, /\.eq\("owner_id", account\.userId\)/);
+assert.match(monitor, /draftMode: shouldDraft \? "on_request" : "none"/);
+assert.doesNotMatch(overnight, /generateEmailAssistantDraft|supabase|openai/);
+assert.match(overnight, /skipped: "on_request", created: 0/);
+assert.match(overnight, /request.headers.get\("authorization"\)/);
 
 assert.match(google, /GMAIL_COMPOSE_SCOPE/);
 assert.match(gmail, /gmailFetch\([\s\S]*?"\/drafts"/);

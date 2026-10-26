@@ -5,7 +5,7 @@ import { sendTaskEmailDraft } from "@/lib/task-email";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 45;
+export const maxDuration = 120;
 
 const noStore = {
   "Cache-Control": "private, no-store, no-cache, max-age=0, must-revalidate",

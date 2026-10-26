@@ -530,7 +530,7 @@ async function listCalendarEvents(
     endDateTime: timeMaxIso,
     $top: "250",
     $select:
-      "id,subject,start,end,isCancelled,onlineMeeting,onlineMeetingUrl,webLink,location,attendees,organizer,bodyPreview,responseStatus",
+      "id,subject,start,end,isCancelled,isAllDay,showAs,onlineMeeting,onlineMeetingUrl,webLink,location,attendees,organizer,bodyPreview,responseStatus",
   });
   let url = `${path}?${params.toString()}`;
   const events: any[] = [];
@@ -545,6 +545,7 @@ async function listCalendarEvents(
     if (Array.isArray(data.value)) events.push(...data.value);
     url = typeof data["@odata.nextLink"] === "string" ? data["@odata.nextLink"] : "";
   }
+  if (url) throw new Error("Microsoft calendar pagination was incomplete");
   return events;
 }
 
@@ -566,6 +567,7 @@ export async function listAllMicrosoftEventsSnapshot(
     ? calendars.map((calendar: any) => ({ id: String(calendar.id), name: String(calendar.name || calendar.id) }))
     : [{ id: null, name: "primary" }];
   const failedCalendars: string[] = [];
+  if (!calendarResponse?.ok || calendarData?.["@odata.nextLink"]) failedCalendars.push("calendar list incomplete");
   const batches = await Promise.all(
     targets.map(async (calendar: { id: string | null; name: string }) => {
       try {
@@ -617,6 +619,10 @@ export async function listAllMicrosoftEventsSnapshot(
       start: {
         dateTime: cleanGraphDate(event?.start?.dateTime, event?.start?.timeZone),
       },
+      end: {
+        dateTime: cleanGraphDate(event?.end?.dateTime, event?.end?.timeZone),
+      },
+      transparency: event.showAs === "free" || event.responseStatus?.response === "declined" ? "transparent" : "opaque",
       attendees,
       htmlLink: event.webLink || null,
       meeting_url: meetingUrlFromMicrosoftEvent(event),
