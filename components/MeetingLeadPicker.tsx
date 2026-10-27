@@ -8,6 +8,7 @@ export type MeetingLeadState = {
   needsLeadConfirmation?: boolean;
   meetingEmail?: { subject: string } | null;
   leadSelectionVersion?: string | null;
+  intentVersion?: string | null;
 };
 
 export default function MeetingLeadPicker({ lead, disabled, onConfirm }: {
