@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import {
   openai,
   OPENAI_MODEL_LIVE,
@@ -10,6 +11,13 @@ import {
   getRelevantPitchingLessons,
 } from "@/lib/workspace";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveRecordScope } from "@/lib/record-scope";
+import {
+  FocusPersistenceError,
+  persistFocusBuild,
+  verifyFocusBuildTarget,
+} from "@/lib/call-focus-persistence";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -295,32 +303,156 @@ function buildFallback(brief: string, role: string, callTypeIn: string) {
   };
 }
 
+async function buildFocusOnly(input: {
+  brief: string;
+  role: string;
+  context: string;
+  internalBlock: string;
+  authoritativeName: string;
+  nameRule: string;
+  existingFocus: string[];
+}) {
+  const reconcile = input.existingFocus.length > 0;
+  const deriveSystem = `${input.internalBlock}You are an expert conversation planner. From the INTENT brief and any supporting document, return ONLY this and nothing else:
+- callType: one of "interview", "sales", "support", "general".
+- subjectName: the person/party being spoken with if discernible from the brief/context, else "".
+- focusAreas: 5-8 strategic focus statements, RANKED most-important-first. Each should be 4-10 words, concrete and specific enough to guide a real conversation. Prioritise the intent's desired outcome, the newest call's unfinished commitments, risks, decisions and evidence needed. Name the actual product, people, deliverable, number or mechanism. Do not reduce important reasoning to vague noun labels. A reader should be UNABLE to reuse them for another call. BANNED generic filler: "Phase 1 deliverables", "Timeline and resources", "Data privacy", "Decision authority", "Content integration". GOOD: "agree admissions-search acceptance criteria", "confirm owner and date for access fixes", "test whether the 100 books improve replies", "settle the 50/50 JV terms". Every focus must be appropriate to raise OPENLY with the other party - never the caller's own internal/sensitive matters.
+- character: 1-2 sentences - the caller's read on who/what they're dealing with and what they want from this call.
+
+Output ONLY valid JSON: { "callType": "...", "subjectName": "...", "focusAreas": ["..."], "character": "..." }`;
+
+  const reconcileSystem = `${input.internalBlock}You are an expert conversation planner RECONCILING the caller's EXISTING focus list against new information (a freshly added document plus the intent). Return ONLY JSON.
+
+EXISTING FOCUS LIST - the caller has ranked and edited these; treat them as the source of truth and do NOT restate them:
+${input.existingFocus.map((focus, index) => `${index + 1}. ${focus}`).join("\n")}
+
+Produce:
+- additions: 0-5 GENUINELY NEW strategic focus statements the document/intent surface that are NOT already covered, even loosely, by any existing focus. Judge overlap by MEANING, not wording. Use 4-10 words, concrete and specific to THIS call, prioritising decisions, unfinished commitments, risks and evidence needed. Empty array if the document adds nothing new.
+- upgrades: 0-3 in-place improvements. ONLY when the new information yields a CLEARLY more specific / better version of an EXISTING focus. Each is {"from":"<copy the existing focus label VERBATIM from the list above>","to":"<the improved, more specific label>"}. Do NOT upgrade unless it is clearly better. Never list a focus in both additions and upgrades.
+- callType: one of "interview", "sales", "support", "general".
+- subjectName: the person/party being spoken with if discernible, else "".
+- character: 1-2 sentences - the caller's read on who/what they're dealing with.
+
+CRITICAL - NO DUPLICATES: an addition must not overlap any existing focus OR another addition. When in doubt, prefer an upgrade over an addition, or leave it out entirely.
+
+Output ONLY valid JSON: { "additions": ["..."], "upgrades": [{"from":"...","to":"..."}], "callType":"...", "subjectName":"...", "character":"..." }`;
+
+  const system = reconcile ? reconcileSystem : deriveSystem;
+  const user = `INTENT BRIEF (top priority): ${input.brief || "(none given)"}
+ROLE / TITLE: ${input.role || "(not specified)"}${input.nameRule}
+
+SUPPORTING CONTEXT - the substance of this call:
+${input.context || "(none provided)"}
+
+Return the JSON now.`;
+  let usage: any = null;
+  let raw = "";
+  try {
+    const message = await callModelWithTimeout(system, user, 30000, {
+      model: OPENAI_MODEL_PRO,
+      maxTokens: 1100,
+    });
+    usage = message.usage;
+    raw = message.content
+      .filter((block: any) => block.type === "text")
+      .map((block: any) => block.text)
+      .join("")
+      .trim();
+  } catch (error) {
+    console.error("Focus-only model call failed:", error);
+  }
+
+  const plan = extractPlan(raw) || {};
+  const callType = ["interview", "sales", "support", "general"].includes(
+    plan.callType
+  )
+    ? plan.callType
+    : "general";
+  const subjectName =
+    input.authoritativeName ||
+    (typeof plan.subjectName === "string" ? plan.subjectName.trim() : "");
+  const character =
+    typeof plan.character === "string" ? plan.character : "";
+  const cost = callCostUSD("pro", usage);
+
+  if (reconcile) {
+    const additions = Array.isArray(plan.additions)
+      ? plan.additions
+          .filter((value: any) => typeof value === "string" && value.trim())
+          .map((value: string) => value.trim())
+          .slice(0, 6)
+      : [];
+    const upgrades = Array.isArray(plan.upgrades)
+      ? plan.upgrades
+          .filter(
+            (upgrade: any) =>
+              upgrade &&
+              typeof upgrade.from === "string" &&
+              typeof upgrade.to === "string" &&
+              upgrade.from.trim() &&
+              upgrade.to.trim()
+          )
+          .map((upgrade: any) => ({
+            from: String(upgrade.from).trim(),
+            to: String(upgrade.to).trim(),
+          }))
+          .slice(0, 5)
+      : [];
+    return {
+      cost,
+      result: {
+        callType,
+        subjectName,
+        character,
+        additions,
+        upgrades,
+        focusOnly: true,
+        reconcile: true,
+        degraded: false,
+      },
+    };
+  }
+
+  let focusAreas = Array.isArray(plan.focusAreas)
+    ? plan.focusAreas
+        .filter((value: any) => typeof value === "string" && value.trim())
+        .slice(0, 10)
+    : [];
+  if (!focusAreas.length) focusAreas = salvageFocusAreas(raw).slice(0, 10);
+  if (!focusAreas.length) {
+    const fallback = buildFallback(input.brief, input.role, callType);
+    return {
+      cost,
+      result: {
+        callType: fallback.callType,
+        subjectName: fallback.subjectName,
+        focusAreas: fallback.focusAreas,
+        character: fallback.character,
+        focusOnly: true,
+        degraded: true,
+      },
+    };
+  }
+  return {
+    cost,
+    result: {
+      callType,
+      subjectName,
+      focusAreas,
+      character,
+      focusOnly: true,
+      degraded: false,
+    },
+  };
+}
+
 export async function POST(req: NextRequest) {
   let brief = "";
   let role = "";
   try {
-    const biz = await workspaceContextBlock();
     const body = await req.json();
     brief = typeof body.brief === "string" ? body.brief : "";
     role = typeof body.role === "string" ? body.role : "";
-    // Only genuine sales prep reads the manually curated pitching library.
-    // Other call types cannot be contaminated by prospect/demo techniques.
-    const likelySales =
-      body.callType === "sales" || inferCallType(brief) === "sales";
-    const [lessons, pitchLessons] = await Promise.all([
-      getLessonsBlock(["negotiation", "psychology"]),
-      likelySales
-        ? getRelevantPitchingLessons(
-            [brief, role, body.subjectName, body.knowledgeContext]
-              .filter((value) => typeof value === "string" && value.trim())
-              .join(" ")
-              .slice(0, 5000)
-          )
-        : Promise.resolve(""),
-    ]);
-    // Internal (board/strategy) calls flip the whole framing - computed from the
-    // linked client's internal flag.
-    const internalBlock = await internalFramingBlock(body.companyId);
     const knowledgeContext = body.knowledgeContext;
     const curatedFocus: string[] = Array.isArray(body.focusAreas)
       ? body.focusAreas
@@ -340,154 +472,108 @@ export async function POST(req: NextRequest) {
       context = context.slice(0, MAX_CONTEXT_CHARS) + "\n[context truncated]";
     }
 
-    // STEP 1 of the two-step build: focus areas only. Focus determines every
-    // downstream question and cue, so this one compact pass uses Terra for
-    // judgement while remaining far smaller than the full plan. The result is
-    // saved against the scheduled call and normally paid for only once.
+    // STEP 1 of the two-step build. Register the whole model-and-save promise
+    // with the server runtime before doing any slow work. If the user changes
+    // screens, the request can lose its browser listener without cancelling the
+    // build. A scheduled call is written here, not by a later React autosave.
     if (body.focusOnly === true) {
-      // When the caller already has a focus list and is REBUILDING after adding
-      // a document, reconcile against it instead of deriving from scratch - so
-      // the model judges overlap by MEANING and never produces near-duplicates.
       const existingFocus: string[] = Array.isArray(body.existingFocus)
         ? body.existingFocus
             .filter((x: any) => typeof x === "string" && x.trim())
             .map((x: string) => x.trim())
             .slice(0, 12)
         : [];
-      const reconcile = existingFocus.length > 0;
-
-      const deriveSystem = `${internalBlock}You are an expert conversation planner. From the INTENT brief and any supporting document, return ONLY this and nothing else:
-- callType: one of "interview", "sales", "support", "general".
-- subjectName: the person/party being spoken with if discernible from the brief/context, else "".
-- focusAreas: 5-8 strategic focus statements, RANKED most-important-first. Each should be 4-10 words, concrete and specific enough to guide a real conversation. Prioritise the intent's desired outcome, the newest call's unfinished commitments, risks, decisions and evidence needed. Name the actual product, people, deliverable, number or mechanism. Do not reduce important reasoning to vague noun labels. A reader should be UNABLE to reuse them for another call. BANNED generic filler: "Phase 1 deliverables", "Timeline and resources", "Data privacy", "Decision authority", "Content integration". GOOD: "agree admissions-search acceptance criteria", "confirm owner and date for access fixes", "test whether the 100 books improve replies", "settle the 50/50 JV terms". Every focus must be appropriate to raise OPENLY with the other party - never the caller's own internal/sensitive matters.
-- character: 1-2 sentences - the caller's read on who/what they're dealing with and what they want from this call.
-
-Output ONLY valid JSON: { "callType": "...", "subjectName": "...", "focusAreas": ["..."], "character": "..." }`;
-
-      const reconcileSystem = `${internalBlock}You are an expert conversation planner RECONCILING the caller's EXISTING focus list against new information (a freshly added document plus the intent). Return ONLY JSON.
-
-EXISTING FOCUS LIST - the caller has ranked and edited these; treat them as the source of truth and do NOT restate them:
-${existingFocus.map((f, i) => `${i + 1}. ${f}`).join("\n")}
-
-Produce:
-- additions: 0-5 GENUINELY NEW strategic focus statements the document/intent surface that are NOT already covered, even loosely, by any existing focus. Judge overlap by MEANING, not wording. Use 4-10 words, concrete and specific to THIS call, prioritising decisions, unfinished commitments, risks and evidence needed. Empty array if the document adds nothing new.
-- upgrades: 0-3 in-place improvements. ONLY when the new information yields a CLEARLY more specific / better version of an EXISTING focus. Each is {"from":"<copy the existing focus label VERBATIM from the list above>","to":"<the improved, more specific label>"}. Do NOT upgrade unless it is clearly better. Never list a focus in both additions and upgrades.
-- callType: one of "interview", "sales", "support", "general".
-- subjectName: the person/party being spoken with if discernible, else "".
-- character: 1-2 sentences - the caller's read on who/what they're dealing with.
-
-CRITICAL - NO DUPLICATES: an addition must not overlap any existing focus OR another addition. When in doubt, prefer an upgrade over an addition, or leave it out entirely.
-
-Output ONLY valid JSON: { "additions": ["..."], "upgrades": [{"from":"...","to":"..."}], "callType":"...", "subjectName":"...", "character":"..." }`;
-
-      const fSystem = reconcile ? reconcileSystem : deriveSystem;
-      const fUser = `INTENT BRIEF (top priority): ${brief || "(none given)"}
-ROLE / TITLE: ${role || "(not specified)"}${nameRule}
-
-SUPPORTING CONTEXT - the substance of this call:
-${context || "(none provided)"}
-
-Return the JSON now.`;
-      let fUsage: any = null;
-      let fRaw = "";
-      try {
-        const fMsg = await callModelWithTimeout(fSystem, fUser, 30000, {
-          model: OPENAI_MODEL_PRO,
-          maxTokens: 1100,
+      const mode = body.focusBuildMode === "refocus" ? "refocus" : "focus";
+      const upcomingId =
+        typeof body.upcomingId === "string" ? body.upcomingId.trim() : "";
+      const focusTask = (async () => {
+        const scope = upcomingId ? await resolveRecordScope() : null;
+        const target =
+          upcomingId && scope
+            ? await verifyFocusBuildTarget(scope, upcomingId)
+            : null;
+        const internalBlock = await internalFramingBlock(
+          target?.company_id || body.companyId
+        );
+        const built = await buildFocusOnly({
+          brief,
+          role,
+          context,
+          internalBlock,
+          authoritativeName,
+          nameRule,
+          existingFocus,
         });
-        fUsage = fMsg.usage;
-        fRaw = fMsg.content
-          .filter((b: any) => b.type === "text")
-          .map((b: any) => b.text)
-          .join("")
-          .trim();
-      } catch (e) {
-        console.error("Focus-only model call failed:", e);
-      }
-      const fPlan = extractPlan(fRaw) || {};
-      const fCallType = ["interview", "sales", "support", "general"].includes(
-        fPlan.callType
-      )
-        ? fPlan.callType
-        : "general";
-      const fSubject =
-        authoritativeName ||
-        (typeof fPlan.subjectName === "string" ? fPlan.subjectName.trim() : "");
-      const fCharacter =
-        typeof fPlan.character === "string" ? fPlan.character : "";
-      const costHeader = { "x-cost-usd": String(callCostUSD("pro", fUsage)) };
-
-      // RECONCILE: return additions + in-place upgrades, deduped by meaning.
-      if (reconcile) {
-        const additions: string[] = Array.isArray(fPlan.additions)
-          ? fPlan.additions
-              .filter((x: any) => typeof x === "string" && x.trim())
-              .map((x: string) => x.trim())
-              .slice(0, 6)
-          : [];
-        const upgrades = Array.isArray(fPlan.upgrades)
-          ? fPlan.upgrades
-              .filter(
-                (u: any) =>
-                  u &&
-                  typeof u.from === "string" &&
-                  typeof u.to === "string" &&
-                  u.from.trim() &&
-                  u.to.trim()
-              )
-              .map((u: any) => ({
-                from: String(u.from).trim(),
-                to: String(u.to).trim(),
-              }))
-              .slice(0, 5)
-          : [];
-        return NextResponse.json(
-          {
-            callType: fCallType,
-            subjectName: fSubject,
-            character: fCharacter,
-            additions,
-            upgrades,
-            focusOnly: true,
-            reconcile: true,
-            degraded: false,
+        let persisted: Awaited<ReturnType<typeof persistFocusBuild>> | null = null;
+        if (upcomingId && scope) {
+          persisted = await persistFocusBuild({
+            scope,
+            upcomingId,
+            mode,
+            replaceFocus: body.replaceFocus === true,
+            brief,
+            role,
+            subjectName: authoritativeName,
+            emailContext:
+              typeof body.focusBasisEmailContext === "string"
+                ? body.focusBasisEmailContext
+                : "",
+            existingFocus,
+            selectedFocus: body.selectedFocus,
+            planStage: body.planStage,
+            leadSelectionVersion: body.leadSelectionVersion,
+            intentSource: body.intentSource,
+            intentVersion: body.intentVersion,
+            clientActivityContextSeen: body.clientActivityContextSeen,
+            result: built.result,
+          });
+        }
+        return {
+          cost: built.cost,
+          result: {
+            ...built.result,
+            persisted: !!persisted,
+            ...(persisted
+              ? {
+                  persistedFocus: persisted.suggestedFocus,
+                  persistedSelectedFocus: persisted.selectedFocus,
+                  added: persisted.added,
+                  upgraded: persisted.upgraded,
+                }
+              : {}),
           },
-          { headers: costHeader }
-        );
-      }
-
-      let fFocus = Array.isArray(fPlan.focusAreas)
-        ? fPlan.focusAreas
-            .filter((x: any) => typeof x === "string" && x.trim())
-            .slice(0, 10)
-        : [];
-      if (fFocus.length === 0) fFocus = salvageFocusAreas(fRaw).slice(0, 10);
-      if (fFocus.length === 0) {
-        const fb = buildFallback(brief, role, fCallType);
-        return NextResponse.json(
-          {
-            callType: fb.callType,
-            subjectName: fb.subjectName,
-            focusAreas: fb.focusAreas,
-            character: fb.character,
-            focusOnly: true,
-            degraded: true,
-          },
-          { headers: costHeader }
-        );
-      }
-      return NextResponse.json(
-        {
-          callType: fCallType,
-          subjectName: fSubject,
-          focusAreas: fFocus,
-          character: fCharacter,
-          focusOnly: true,
-          degraded: false,
-        },
-        { headers: costHeader }
+        };
+      })();
+      waitUntil(
+        focusTask.then(() => undefined).catch((error) => {
+          console.error("Background focus build failed", error);
+        })
       );
+      const completed = await focusTask;
+      return NextResponse.json(completed.result, {
+        headers: { "x-cost-usd": String(completed.cost) },
+      });
     }
+
+    const biz = await workspaceContextBlock();
+    // Only genuine sales prep reads the manually curated pitching library.
+    // Other call types cannot be contaminated by prospect/demo techniques.
+    const likelySales =
+      body.callType === "sales" || inferCallType(brief) === "sales";
+    const [lessons, pitchLessons] = await Promise.all([
+      getLessonsBlock(["negotiation", "psychology"]),
+      likelySales
+        ? getRelevantPitchingLessons(
+            [brief, role, body.subjectName, body.knowledgeContext]
+              .filter((value) => typeof value === "string" && value.trim())
+              .join(" ")
+              .slice(0, 5000)
+          )
+        : Promise.resolve(""),
+    ]);
+    // Internal (board/strategy) calls flip the whole framing - computed from the
+    // linked client's internal flag.
+    const internalBlock = await internalFramingBlock(body.companyId);
 
     const system = `${biz}${lessons}${pitchLessons}${internalBlock}You are an expert conversation planner. You are given the INTENT of an upcoming conversation plus any optional supporting context (a CV, a document, notes about the person or topic).
 
@@ -929,6 +1015,17 @@ Return the JSON object (playbook + pitchKit + salesScript) now.`;
       }
     );
   } catch (err: any) {
+    if (err instanceof FocusPersistenceError) {
+      return NextResponse.json(
+        crmBlockerPayload({
+          code: err.code,
+          title: "Focus save not completed",
+          reason: err.message,
+          nextAction: err.nextAction,
+        }),
+        { status: err.status }
+      );
+    }
     // Never 500 the page: return an empty-but-valid plan shape so the client
     // renders gracefully instead of throwing.
     console.error("Plan error:", err);

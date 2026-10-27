@@ -78,6 +78,7 @@
     "validate:call-summary-resilience": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-call-summary-resilience.mjs",
     "validate:empty-call-recovery": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-empty-call-recovery.mjs",
     "validate:background-resilience": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-background-resilience.mjs",
+    "validate:background-focus": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-background-focus-build.mjs",
     "validate:transcript-navigation": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-transcript-download-latest-call.mjs",
     "validate:shared-outreach-pool": "node scripts/validate-shared-outreach-pool.mjs",
     "validate:sales-tutorial": "node scripts/validate-sales-outreach-tutorial.mjs",

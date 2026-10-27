@@ -2132,10 +2132,7 @@ export default function CallPage() {
       (focusBasisBriefRef.current.trim() !== planIntent.trim() ||
        focusBasisEmailRef.current.trim() !== planEmailContext.trim());
     aiCallsRef.current += 1;
-    const res = await fetch("/api/interview/plan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const planBody = JSON.stringify({
         brief: planIntent || null,
         role: role || null,
         // The linked client, so the planner can tell an INTERNAL board/strategy
@@ -2146,6 +2143,19 @@ export default function CallPage() {
         // derive a fresh list, so don't pin the existing one.
         focusAreas: mode === "full" ? suggestedCompsRef.current : [],
         focusOnly: mode !== "full",
+        // A scheduled-call focus is saved inside the planner request itself.
+        // React may unmount when the user changes screens, so a later browser
+        // autosave cannot be the only place the completed focus is persisted.
+        upcomingId: upcomingIdRef.current || null,
+        focusBuildMode: mode,
+        replaceFocus: resetStaleFocus,
+        selectedFocus: selectedCompsRef.current,
+        planStage,
+        leadSelectionVersion: meetingLead?.leadSelectionVersion || null,
+        intentSource: intentEditedRef.current ? "manual" : undefined,
+        intentVersion: meetingLead?.intentVersion || null,
+        focusBasisEmailContext: planEmailContext,
+        clientActivityContextSeen: activityContextRef.current,
         // refocus passes the current list so the model reconciles against it
         // (dedupes by meaning + upgrades in place) instead of deriving blind.
         existingFocus:
@@ -2166,7 +2176,18 @@ export default function CallPage() {
         ]
           .filter(Boolean)
           .join("\n\n"),
-      }),
+      });
+    const keepFocusAlive =
+      mode !== "full" &&
+      new TextEncoder().encode(planBody).byteLength <= 60 * 1024;
+    const res = await fetch("/api/interview/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // Let a focus request finish reaching the server during navigation. The
+      // browser caps keepalive bodies, so oversized manual briefs use ordinary
+      // fetch rather than failing before the server can accept the build.
+      keepalive: keepFocusAlive,
+      body: planBody,
     });
     addUsageToRef(aiUsdRef, res);
     // Be tolerant of a non-JSON body. If the planner is killed by the platform
@@ -2185,9 +2206,24 @@ export default function CallPage() {
     const focus: string[] = Array.isArray(data.focusAreas)
       ? data.focusAreas
       : [];
+    const persistedFocus: string[] = Array.isArray(data.persistedFocus)
+      ? data.persistedFocus
+      : [];
+    const persistedSelectedFocus: string[] = Array.isArray(
+      data.persistedSelectedFocus
+    )
+      ? data.persistedSelectedFocus
+      : persistedFocus;
     let refocusAdded = 0;
     let refocusUpgraded = 0;
-    if (mode === "refocus" && resetStaleFocus) {
+    if (data.persisted === true && persistedFocus.length > 0) {
+      // Use the exact lists confirmed by the server. This keeps the visible
+      // page and the version that will reload later identical.
+      setSuggestedComps(persistedFocus);
+      setSelectedComps(persistedSelectedFocus);
+      refocusAdded = Number(data.added) || 0;
+      refocusUpgraded = Number(data.upgraded) || 0;
+    } else if (mode === "refocus" && resetStaleFocus) {
       // Re-deriving from a changed intent is a replacement, not a merge. This
       // prevents one person's focus surviving into another person's call.
       setSuggestedComps(focus.slice(0, 12));
@@ -2298,7 +2334,10 @@ export default function CallPage() {
     }
     setCharacter(typeof data.character === "string" ? data.character : "");
     if (typeof data.callType === "string") setCallType(data.callType);
-    if ((mode === "focus" || mode === "refocus") && focus.length > 0) {
+    if (
+      (mode === "focus" || mode === "refocus") &&
+      (focus.length > 0 || persistedFocus.length > 0)
+    ) {
       focusBasisBriefRef.current = planIntent;
       focusBasisEmailRef.current = planEmailContext;
       setPrepContextChanged(false);
@@ -2364,14 +2403,17 @@ export default function CallPage() {
 
     // Report whether a real plan came back, and whether it's the generic
     // fallback, so the status line stays honest.
-    const ok = focus.length > 0 || suggestedCompsRef.current.length > 0;
+    const ok =
+      focus.length > 0 ||
+      persistedFocus.length > 0 ||
+      suggestedCompsRef.current.length > 0;
     return {
       ok,
       degraded: data.degraded === true,
       added: refocusAdded,
       upgraded: refocusUpgraded,
     };
-  }, [brief, role, clientEmailCtx]);
+  }, [brief, role, clientEmailCtx, meetingLead, planStage]);
 
 
   const prep = useCallback(

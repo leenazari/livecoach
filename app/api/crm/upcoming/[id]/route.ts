@@ -194,6 +194,7 @@ export async function GET(
         needsLeadConfirmation: lead.needsLeadConfirmation,
         meetingEmail: lead.meetingEmail,
         leadSelectionVersion: data.prep?.leadSelection?.savedAt || null,
+        intentVersion: data.prep?.intentMeta?.savedAt || null,
         workstream: scope.workstream,
         workstreamChoices,
         sharedCall: occurrence
