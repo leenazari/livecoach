@@ -18,6 +18,8 @@ export type StaffMcpPrincipal = {
   accessToken: string;
 };
 
+export type StaffConnectorClientType = "mcp" | "chatgpt_action";
+
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -99,7 +101,8 @@ function invalidToken(message: string): never {
 }
 
 export async function verifyStaffMcpAccessToken(
-  accessToken: string
+  accessToken: string,
+  clientType: StaffConnectorClientType = "mcp"
 ): Promise<AuthInfo> {
   const supabase = createStaffMcpClient(accessToken);
   const [{ data: claimData, error: claimError }, { data: userData, error: userError }] =
@@ -135,9 +138,7 @@ export async function verifyStaffMcpAccessToken(
   }
 
   const allowedClientIds = configuredClientIds();
-  if (allowedClientIds.size && !allowedClientIds.has(clientId)) {
-    invalidToken("This OAuth client is not approved for the LiveCoach staff connector");
-  }
+  const approvedByEnvironment = allowedClientIds.has(clientId);
 
   const tokenResource = String(claims.resource || claims.resource_server || "").trim();
   if (tokenResource && tokenResource !== staffMcpResourceUrl().href) {
@@ -163,6 +164,30 @@ export async function verifyStaffMcpAccessToken(
   const role = String(membership.role || "");
   if (!UUID.test(workspaceId) || !["owner", "manager", "sales"].includes(role)) {
     invalidToken("This LiveCoach workspace membership is not valid");
+  }
+
+  const { data: actionClient, error: actionClientError } = await supabase
+    .from("chatgpt_action_clients")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .eq("oauth_client_id", clientId)
+    .eq("active", true)
+    .maybeSingle();
+  if (actionClientError) {
+    invalidToken("LiveCoach could not confirm which connector issued this token");
+  }
+
+  if (clientType === "chatgpt_action") {
+    if (!actionClient) {
+      invalidToken("This OAuth client is not approved for the LiveCoach Custom GPT");
+    }
+  } else {
+    if (actionClient) {
+      invalidToken("Custom GPT clients cannot use the full LiveCoach MCP connector");
+    }
+    if (allowedClientIds.size && !approvedByEnvironment) {
+      invalidToken("This OAuth client is not approved for the LiveCoach staff connector");
+    }
   }
 
   const scopes = claimScopes(claims);

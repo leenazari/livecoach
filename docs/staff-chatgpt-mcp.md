@@ -47,20 +47,32 @@ client and redirect hosts on `chatgpt.com` or `openai.com`.
 `LIVECOACH_MCP_ACTIONS_PER_HOUR` optionally changes the per-user call cap. It
 defaults to 120 and accepts values from 20 to 1000.
 
-## ChatGPT connection
+## ChatGPT connections
 
-Official setup reference: https://developers.openai.com/api/docs/guides/developer-mode
+### ChatGPT Plus
 
-Developer mode is available on the web for Plus, Pro, Business, Enterprise and Education accounts. Managed workspaces may restrict who can create or use the connection.
+ChatGPT Plus staff use the shared LiveCoach Custom GPT Action configured by the workspace owner. It exposes only six personal CRM actions. Staff can find and list their assigned leads, add one exact-email lead, append verified context, create a follow-up and list their own tasks. It cannot send outreach, start campaigns, book meetings or access the larger Brain connector.
 
-1. In ChatGPT web, open Settings, Security and login, and enable Developer mode.
-2. In ChatGPT Plugins, choose the plus button and add the MCP address shown in LiveCoach Settings, with OAuth authentication.
+1. The owner creates one Custom GPT and imports the Action schema shown in LiveCoach Settings.
+2. The owner saves the GPT, then pastes its `g-` address into LiveCoach Settings to generate the one-time OAuth details.
+3. The owner copies those OAuth details into the GPT Action and shares the finished GPT link with staff.
+4. Each staff member opens the shared GPT and signs in with their own LiveCoach account.
+5. Each person reviews consequential actions before ChatGPT runs them.
+
+The Custom GPT OAuth client is workspace allowlisted. Its token is rejected by the full MCP endpoint even when the same user has broader LiveCoach permissions.
+
+### Managed ChatGPT workspaces
+
+ChatGPT Business, Enterprise and Education workspaces can use the larger MCP connector when their administrator has enabled developer mode and MCP access. Managed workspaces may restrict who can create or use the connection.
+
+1. In ChatGPT web, enable Developer mode in the managed workspace settings.
+2. Add the MCP address shown in LiveCoach Settings using OAuth authentication.
 3. Sign in with your own LiveCoach account and review the consent screen.
-4. Select LiveCoach for the conversation. Try “Give me my to-do list” or “Show my marketing campaigns”.
-5. Read the current record before requesting changes. Review write actions in ChatGPT before approving.
-6. For a managed team, an authorised administrator can publish the connection to the approved staff group using the workspace's available plugin controls.
+4. Select LiveCoach for the conversation, then read the current record before requesting changes.
+5. Review write actions in ChatGPT before approving them.
+6. An authorised administrator can publish the connection to the approved staff group using the workspace controls available to that plan.
 
-This extends the same existing MCP server, not a second connector. Existing connections must refresh tools in ChatGPT to discover the expanded surface. Do not reconnect using Lee's login for a staff member.
+The Custom GPT Action and MCP connector use separate OAuth client classes. Existing MCP connections must refresh tools in ChatGPT to discover an expanded MCP surface. Do not connect any staff route using Lee's login.
 
 Revoke the grant from the ChatGPT connector card in LiveCoach Settings. This stops future MCP access and invalidates the client's refresh grant.
 

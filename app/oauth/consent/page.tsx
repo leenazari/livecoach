@@ -28,6 +28,7 @@ type ConsentDetails = {
 export default function OAuthConsentPage() {
   const supabase = useMemo(() => createSupabaseBrowser(), []);
   const [details, setDetails] = useState<ConsentDetails | null>(null);
+  const [customGptActionClient, setCustomGptActionClient] = useState<boolean | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"approve" | "deny" | "">("");
 
@@ -73,6 +74,22 @@ export default function OAuthConsentPage() {
         setDetails(next);
         return;
       }
+      const { data: actionRegistration, error: actionRegistrationError } =
+        await supabase
+          .from("chatgpt_action_clients")
+          .select("id")
+          .eq("oauth_client_id", next.client.id)
+          .eq("active", true)
+          .maybeSingle();
+      if (!active) return;
+      if (actionRegistrationError) {
+        setError(
+          "LiveCoach could not confirm which connector is requesting access. No connection was approved."
+        );
+        setDetails(next);
+        return;
+      }
+      setCustomGptActionClient(Boolean(actionRegistration));
       setDetails(next);
     };
     void load();
@@ -83,11 +100,13 @@ export default function OAuthConsentPage() {
 
   const approvedClient = Boolean(
     details &&
+      customGptActionClient !== null &&
       isAllowedChatGptOAuthClient({
         clientUri: details.client.uri,
         redirectUri: details.redirect_uri,
       })
   );
+  const isCustomGptAction = customGptActionClient === true;
   const redirectHost = (() => {
     try {
       return details ? new URL(details.redirect_uri).hostname : "";
@@ -139,7 +158,7 @@ export default function OAuthConsentPage() {
 
       <section className="mt-8 rounded-2xl border border-edge bg-panel/70 p-5 sm:p-7">
         <p className="font-mono text-[0.62rem] uppercase tracking-[0.22em] text-sky">
-          Staff ChatGPT connection
+          {isCustomGptAction ? "LiveCoach Custom GPT connection" : "Staff ChatGPT connection"}
         </p>
         <h1 className="mt-2 font-display text-3xl text-bone">
           Connect ChatGPT to your LiveCoach work
@@ -173,13 +192,18 @@ export default function OAuthConsentPage() {
               <li>Add one private lead with exact email deduplication</li>
               <li>Add verified context to your own lead</li>
               <li>Create or reschedule your own follow-up</li>
-              <li>Read your own tasks, marketing records, calls, calendar, documents and Brain history</li>
-              <li>Read your own connected email and saved Analytics snapshot</li>
-              <li>Create, complete or reschedule your own tasks and marketing plans</li>
-              <li>Update your own campaign records and marketing leads; append notes to your own records</li>
-              <li>Ask your existing Brain for advice, coaching and actions allowed by your normal role</li>
-              <li>Execute a reviewed Brain proposal with the same role, assignment and approval checks as LiveCoach</li>
-              <li>Check your action receipts and undo eligible reversible changes</li>
+              <li>Read your own LiveCoach tasks</li>
+              {!isCustomGptAction ? (
+                <>
+                  <li>Read your own marketing records, calls, calendar, documents and Brain history</li>
+                  <li>Read your own connected email and saved Analytics snapshot</li>
+                  <li>Create, complete or reschedule your own tasks and marketing plans</li>
+                  <li>Update your own campaign records and marketing leads, and append notes to your own records</li>
+                  <li>Ask your existing Brain for advice, coaching and actions allowed by your normal role</li>
+                  <li>Execute a reviewed Brain proposal with the same role, assignment and approval checks as LiveCoach</li>
+                  <li>Check your action receipts and undo eligible reversible changes</li>
+                </>
+              ) : null}
             </ul>
           </div>
           <div className="rounded-xl border border-rust/35 bg-rust/[0.06] p-4">
@@ -187,6 +211,7 @@ export default function OAuthConsentPage() {
             <ul className="mt-2 space-y-2 text-sm leading-5 text-muted">
               <li>Read another person&apos;s private records</li>
               <li>Act outside your role or approved assignments</li>
+              {isCustomGptAction ? <li>Send outreach, start campaigns or book meetings</li> : null}
               <li>Send messages, change calendars, spend on paid work or make destructive changes without separate approval</li>
               <li>Launch advertising or spend campaign budget</li>
               <li>Change LiveCoach code, roles or permissions</li>

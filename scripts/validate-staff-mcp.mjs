@@ -95,9 +95,12 @@ assert.match(consent, /another person&apos;s private records/);
 assert.match(consent, /Change LiveCoach code, roles or permissions/);
 assert.match(settings, /revokeGrant/);
 assert.match(settings, /their own LiveCoach login/);
-assert.match(settings, /same Brain role, assignment and approval rules/);
-assert.match(settings, /Plus, Pro, Business, Enterprise and Education/);
-assert.match(settings, /In ChatGPT Plugins/);
+assert.match(settings, /same role, assignment and approval rules/);
+assert.match(settings, /Route 1 · ChatGPT Plus/);
+assert.match(settings, /Shared LiveCoach Custom GPT/);
+assert.match(settings, /Route 2 · Managed ChatGPT workspace/);
+assert.match(settings, /Business, Enterprise and Education/);
+assert.doesNotMatch(settings, /Developer mode is available[^\n]+Plus/);
 
 assert.match(middleware, /path\.startsWith\("\/oauth\/consent"\)/);
 assert.match(middleware, /url\.searchParams\.set\("redirect"/);
