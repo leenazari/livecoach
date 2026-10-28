@@ -1,6 +1,9 @@
 # LiveCoach staff ChatGPT connector
 
-The production MCP endpoint is `https://www.livecoachcrm.com/mcp`.
+The production MCP endpoints are
+
+- `https://www.livecoachcrm.com/mcp/chatgpt` for the narrow personal ChatGPT plugin
+- `https://www.livecoachcrm.com/mcp` for the larger managed-workspace connector
 
 ## What staff can do
 
@@ -51,28 +54,31 @@ defaults to 120 and accepts values from 20 to 1000.
 
 ### ChatGPT Plus
 
-ChatGPT Plus staff use the shared LiveCoach Custom GPT Action configured by the workspace owner. It exposes only six personal CRM actions. Staff can find and list their assigned leads, add one exact-email lead, append verified context, create a follow-up and list their own tasks. It cannot send outreach, start campaigns, book meetings or access the larger Brain connector.
+ChatGPT Plus staff add the narrow LiveCoach CRM plugin separately in their own ChatGPT account. It exposes only six personal CRM actions. Staff can find and list their assigned leads, add one exact-email lead, append verified context, create a follow-up and list their own tasks. It cannot send outreach, start campaigns, book meetings, change permissions or access the larger Brain connector.
 
-1. The owner creates one Custom GPT and imports the Action schema shown in LiveCoach Settings.
-2. The owner saves the GPT, then pastes its `g-` address into LiveCoach Settings to generate the one-time OAuth details.
-3. The owner copies those OAuth details into the GPT Action and shares the finished GPT link with staff.
-4. Each staff member opens the shared GPT and signs in with their own LiveCoach account.
-5. Each person reviews consequential actions before ChatGPT runs them.
+1. In ChatGPT, open Plugins.
+2. Choose Add, then Add custom MCP server.
+3. Name it LiveCoach CRM and use `https://www.livecoachcrm.com/mcp/chatgpt` as the server address.
+4. Use OAuth discovery, review the six tools and create the private plugin.
+5. Sign in with your own LiveCoach account and approve the connection.
+6. Review the exact proposal before approving any write action.
 
-The Custom GPT OAuth client is workspace allowlisted. Its token is rejected by the full MCP endpoint even when the same user has broader LiveCoach permissions.
+Repeat this once for each salesperson in their own ChatGPT account. Never connect Kamm, Sharon or another member using Lee's LiveCoach login. The OAuth token is bound to the narrow plugin resource and is rejected by the full MCP endpoint even when the same user has broader LiveCoach permissions.
+
+Existing Custom GPT Actions remain supported only for already-created GPTs during OpenAI's retirement period. Do not create new staff connections through that route.
 
 ### Managed ChatGPT workspaces
 
-ChatGPT Business, Enterprise and Education workspaces can use the larger MCP connector when their administrator has enabled developer mode and MCP access. Managed workspaces may restrict who can create or use the connection.
+The LiveCoach workspace owner can use the larger MCP connector from ChatGPT Business, Enterprise or Education when MCP access is enabled. Salespeople and managers cannot approve or use this route, even if they know its address.
 
 1. In ChatGPT web, enable Developer mode in the managed workspace settings.
 2. Add the MCP address shown in LiveCoach Settings using OAuth authentication.
 3. Sign in with your own LiveCoach account and review the consent screen.
 4. Select LiveCoach for the conversation, then read the current record before requesting changes.
 5. Review write actions in ChatGPT before approving them.
-6. An authorised administrator can publish the connection to the approved staff group using the workspace controls available to that plan.
+6. Keep the full connector private to the LiveCoach workspace owner.
 
-The Custom GPT Action and MCP connector use separate OAuth client classes. Existing MCP connections must refresh tools in ChatGPT to discover an expanded MCP surface. Do not connect any staff route using Lee's login.
+The personal plugin and managed connector use separate OAuth resource bindings. Existing MCP connections must refresh tools in ChatGPT to discover an expanded MCP surface. Do not connect any staff route using Lee's login.
 
 Revoke the grant from the ChatGPT connector card in LiveCoach Settings. This stops future MCP access and invalidates the client's refresh grant.
 

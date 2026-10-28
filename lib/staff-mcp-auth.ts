@@ -18,7 +18,10 @@ export type StaffMcpPrincipal = {
   accessToken: string;
 };
 
-export type StaffConnectorClientType = "mcp" | "chatgpt_action";
+export type StaffConnectorClientType =
+  | "mcp"
+  | "chatgpt_action"
+  | "chatgpt_plugin";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -36,6 +39,15 @@ function requiredEnvironment(name: string): string {
 export function staffMcpResourceUrl(): URL {
   const configured = String(process.env.LIVECOACH_MCP_RESOURCE_URL || "").trim();
   const url = new URL(configured || "/mcp", publicAppOrigin());
+  url.hash = "";
+  return url;
+}
+
+export function chatGptPluginMcpResourceUrl(): URL {
+  const configured = String(
+    process.env.LIVECOACH_CHATGPT_PLUGIN_MCP_RESOURCE_URL || ""
+  ).trim();
+  const url = new URL(configured || "/mcp/chatgpt", publicAppOrigin());
   url.hash = "";
   return url;
 }
@@ -100,6 +112,16 @@ function invalidToken(message: string): never {
   throw new OAuthError(OAuthErrorCode.InvalidToken, message);
 }
 
+function normaliseResourceUrl(value: string | URL): string {
+  try {
+    const url = new URL(String(value));
+    url.hash = "";
+    return url.href.replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
 export async function verifyStaffMcpAccessToken(
   accessToken: string,
   clientType: StaffConnectorClientType = "mcp"
@@ -140,8 +162,15 @@ export async function verifyStaffMcpAccessToken(
   const allowedClientIds = configuredClientIds();
   const approvedByEnvironment = allowedClientIds.has(clientId);
 
+  const expectedResource =
+    clientType === "chatgpt_plugin"
+      ? chatGptPluginMcpResourceUrl()
+      : staffMcpResourceUrl();
   const tokenResource = String(claims.resource || claims.resource_server || "").trim();
-  if (tokenResource && tokenResource !== staffMcpResourceUrl().href) {
+  if (
+    tokenResource &&
+    normaliseResourceUrl(tokenResource) !== normaliseResourceUrl(expectedResource)
+  ) {
     invalidToken("The LiveCoach connection was issued for a different resource");
   }
 
@@ -176,14 +205,31 @@ export async function verifyStaffMcpAccessToken(
   if (actionClientError) {
     invalidToken("LiveCoach could not confirm which connector issued this token");
   }
+  const { data: pluginClient, error: pluginClientError } = await supabase
+    .from("chatgpt_plugin_clients")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .eq("oauth_client_id", clientId)
+    .eq("active", true)
+    .maybeSingle();
+  if (pluginClientError) {
+    invalidToken("LiveCoach could not confirm the personal ChatGPT plugin client");
+  }
 
   if (clientType === "chatgpt_action") {
-    if (!actionClient) {
+    if (!actionClient || pluginClient) {
       invalidToken("This OAuth client is not approved for the LiveCoach Custom GPT");
     }
+  } else if (clientType === "chatgpt_plugin") {
+    if (actionClient || !pluginClient) {
+      invalidToken("This OAuth client is not approved for the narrow LiveCoach CRM plugin");
+    }
   } else {
-    if (actionClient) {
-      invalidToken("Custom GPT clients cannot use the full LiveCoach MCP connector");
+    if (actionClient || pluginClient) {
+      invalidToken("Narrow ChatGPT clients cannot use the full LiveCoach MCP connector");
+    }
+    if (role !== "owner") {
+      invalidToken("The full LiveCoach Brain connector is restricted to a workspace owner");
     }
     if (allowedClientIds.size && !approvedByEnvironment) {
       invalidToken("This OAuth client is not approved for the LiveCoach staff connector");
@@ -196,7 +242,7 @@ export async function verifyStaffMcpAccessToken(
     clientId,
     scopes,
     expiresAt,
-    resource: staffMcpResourceUrl(),
+    resource: expectedResource,
     extra: {
       userId,
       workspaceId,

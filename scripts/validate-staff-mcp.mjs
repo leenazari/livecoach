@@ -9,6 +9,7 @@ const read = (file) => readFileSync(path.join(root, file), "utf8");
 const tools = read("lib/staff-mcp-tools.ts");
 const auth = read("lib/staff-mcp-auth.ts");
 const handler = read("app/mcp/route.ts");
+const httpRoute = read("lib/staff-mcp-http.ts");
 const protectedResource = read(
   "app/.well-known/oauth-protected-resource/mcp/route.ts"
 );
@@ -74,13 +75,16 @@ assert.match(auth, /claims\.client_id/);
 assert.match(auth, /audienceIncludesAuthenticated/);
 assert.match(auth, /memberships\.length !== 1/);
 assert.match(auth, /\.eq\("status", "active"\)/);
-assert.match(auth, /tokenResource.*staffMcpResourceUrl/);
+assert.match(auth, /const expectedResource =/);
+assert.match(auth, /normaliseResourceUrl\(tokenResource\)/);
 
-assert.match(handler, /requireBearerAuth/);
-assert.match(handler, /hostHeaderValidationResponse/);
-assert.match(handler, /originValidationResponse/);
-assert.match(handler, /mcpHandler\.fetch\(request, \{ authInfo \}\)/);
-assert.match(handler, /Cache-Control", "private, no-store"/);
+assert.match(handler, /createStaffMcpHttpRoute/);
+assert.match(handler, /clientType: "mcp"/);
+assert.match(httpRoute, /requireBearerAuth/);
+assert.match(httpRoute, /hostHeaderValidationResponse/);
+assert.match(httpRoute, /originValidationResponse/);
+assert.match(httpRoute, /mcpHandler\.fetch\(request, \{ authInfo \}\)/);
+assert.match(httpRoute, /Cache-Control", "private, no-store"/);
 assert.match(protectedResource, /staffMcpProtectedResourceMetadata/);
 assert.match(authorizationServer, /staffMcpAuthorizationServerMetadata/);
 assert.match(metadata, /authorization_servers: \[staffMcpIssuer\(\)\]/);
@@ -95,11 +99,13 @@ assert.match(consent, /another person&apos;s private records/);
 assert.match(consent, /Change LiveCoach code, roles or permissions/);
 assert.match(settings, /revokeGrant/);
 assert.match(settings, /their own LiveCoach login/);
-assert.match(settings, /same role, assignment and approval rules/);
+assert.match(settings, /same role, assignment and approval\s+rules/);
 assert.match(settings, /Route 1 · ChatGPT Plus/);
-assert.match(settings, /Shared LiveCoach Custom GPT/);
-assert.match(settings, /Route 2 · Managed ChatGPT workspace/);
-assert.match(settings, /Business, Enterprise and Education/);
+assert.match(settings, /Personal LiveCoach CRM plugin/);
+assert.match(settings, /Add custom MCP server/);
+assert.match(settings, /Route 2 · Workspace owner only/);
+assert.match(settings, /workspace\s+owner can use the larger Brain connector/);
+assert.match(settings, /Salespeople\s+cannot approve or use this route/);
 assert.doesNotMatch(settings, /Developer mode is available[^\n]+Plus/);
 
 assert.match(middleware, /path\.startsWith\("\/oauth\/consent"\)/);

@@ -3,7 +3,10 @@ import { requireRequestScope } from "@/lib/request-scope";
 import {
   staffMcpAuthorizationServerMetadata,
 } from "@/lib/staff-mcp-metadata";
-import { staffMcpResourceUrl } from "@/lib/staff-mcp-auth";
+import {
+  chatGptPluginMcpResourceUrl,
+  staffMcpResourceUrl,
+} from "@/lib/staff-mcp-auth";
 import { chatGptActionSchemaUrl } from "@/lib/chatgpt-action";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -32,6 +35,7 @@ export async function GET() {
     return NextResponse.json(
       {
         endpoint: staffMcpResourceUrl().href,
+        pluginEndpoint: chatGptPluginMcpResourceUrl().href,
         actionSchemaUrl: chatGptActionSchemaUrl(),
         actionConfigured: Boolean(actionClients?.length),
         oauthEnabled,
