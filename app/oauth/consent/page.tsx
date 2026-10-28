@@ -25,10 +25,12 @@ type ConsentDetails = {
   };
 };
 
+type ConnectorKind = "chatgpt_action" | "chatgpt_plugin" | "staff_mcp";
+
 export default function OAuthConsentPage() {
   const supabase = useMemo(() => createSupabaseBrowser(), []);
   const [details, setDetails] = useState<ConsentDetails | null>(null);
-  const [customGptActionClient, setCustomGptActionClient] = useState<boolean | null>(null);
+  const [connectorKind, setConnectorKind] = useState<ConnectorKind | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"approve" | "deny" | "">("");
 
@@ -89,7 +91,31 @@ export default function OAuthConsentPage() {
         setDetails(next);
         return;
       }
-      setCustomGptActionClient(Boolean(actionRegistration));
+      if (actionRegistration) {
+        setConnectorKind("chatgpt_action");
+        setDetails(next);
+        return;
+      }
+      const { data: classified, error: classificationError } = await supabase.rpc(
+        "classify_chatgpt_authorization",
+        {
+          p_authorization_id: next.authorization_id,
+          p_register_plugin: false,
+        }
+      );
+      if (!active) return;
+      if (
+        classificationError ||
+        !["chatgpt_plugin", "staff_mcp"].includes(String(classified || ""))
+      ) {
+        setError(
+          classificationError?.message ||
+            "LiveCoach could not confirm which connector is requesting access. No connection was approved."
+        );
+        setDetails(next);
+        return;
+      }
+      setConnectorKind(classified as ConnectorKind);
       setDetails(next);
     };
     void load();
@@ -100,13 +126,14 @@ export default function OAuthConsentPage() {
 
   const approvedClient = Boolean(
     details &&
-      customGptActionClient !== null &&
+      connectorKind !== null &&
       isAllowedChatGptOAuthClient({
         clientUri: details.client.uri,
         redirectUri: details.redirect_uri,
       })
   );
-  const isCustomGptAction = customGptActionClient === true;
+  const isNarrowConnector =
+    connectorKind === "chatgpt_action" || connectorKind === "chatgpt_plugin";
   const redirectHost = (() => {
     try {
       return details ? new URL(details.redirect_uri).hostname : "";
@@ -123,6 +150,23 @@ export default function OAuthConsentPage() {
     }
     setBusy(decision);
     setError("");
+    if (decision === "approve" && connectorKind === "chatgpt_plugin") {
+      const { data: registered, error: registrationError } = await supabase.rpc(
+        "classify_chatgpt_authorization",
+        {
+          p_authorization_id: details.authorization_id,
+          p_register_plugin: true,
+        }
+      );
+      if (registrationError || registered !== "chatgpt_plugin") {
+        setError(
+          registrationError?.message ||
+            "LiveCoach could not bind this OAuth client to the narrow CRM plugin. No connection was approved."
+        );
+        setBusy("");
+        return;
+      }
+    }
     const result =
       decision === "approve"
         ? await supabase.auth.oauth.approveAuthorization(details.authorization_id, {
@@ -158,7 +202,7 @@ export default function OAuthConsentPage() {
 
       <section className="mt-8 rounded-2xl border border-edge bg-panel/70 p-5 sm:p-7">
         <p className="font-mono text-[0.62rem] uppercase tracking-[0.22em] text-sky">
-          {isCustomGptAction ? "LiveCoach Custom GPT connection" : "Staff ChatGPT connection"}
+          {isNarrowConnector ? "LiveCoach CRM plugin connection" : "Owner Brain connection"}
         </p>
         <h1 className="mt-2 font-display text-3xl text-bone">
           Connect ChatGPT to your LiveCoach work
@@ -193,7 +237,7 @@ export default function OAuthConsentPage() {
               <li>Add verified context to your own lead</li>
               <li>Create or reschedule your own follow-up</li>
               <li>Read your own LiveCoach tasks</li>
-              {!isCustomGptAction ? (
+              {!isNarrowConnector ? (
                 <>
                   <li>Read your own marketing records, calls, calendar, documents and Brain history</li>
                   <li>Read your own connected email and saved Analytics snapshot</li>
@@ -211,7 +255,7 @@ export default function OAuthConsentPage() {
             <ul className="mt-2 space-y-2 text-sm leading-5 text-muted">
               <li>Read another person&apos;s private records</li>
               <li>Act outside your role or approved assignments</li>
-              {isCustomGptAction ? <li>Send outreach, start campaigns or book meetings</li> : null}
+              {isNarrowConnector ? <li>Send outreach, start campaigns or book meetings</li> : null}
               <li>Send messages, change calendars, spend on paid work or make destructive changes without separate approval</li>
               <li>Launch advertising or spend campaign budget</li>
               <li>Change LiveCoach code, roles or permissions</li>

@@ -1,6 +1,11 @@
 import "server-only";
 
-import { staffMcpDiscoveryUrl, staffMcpIssuer, staffMcpResourceUrl } from "@/lib/staff-mcp-auth";
+import {
+  chatGptPluginMcpResourceUrl,
+  staffMcpDiscoveryUrl,
+  staffMcpIssuer,
+  staffMcpResourceUrl,
+} from "@/lib/staff-mcp-auth";
 
 export const STAFF_MCP_SCOPES = [
   "openid",
@@ -9,15 +14,32 @@ export const STAFF_MCP_SCOPES = [
   "offline_access",
 ] as const;
 
-export function staffMcpProtectedResourceMetadata() {
+function protectedResourceMetadata(input: {
+  resource: URL;
+  name: string;
+}) {
   return {
-    resource: staffMcpResourceUrl().href,
+    resource: input.resource.href,
     authorization_servers: [staffMcpIssuer()],
     scopes_supported: [...STAFF_MCP_SCOPES],
     bearer_methods_supported: ["header"],
-    resource_name: "LiveCoach Staff CRM",
-    resource_documentation: `${staffMcpResourceUrl().origin}/settings#chatgpt-mcp`,
+    resource_name: input.name,
+    resource_documentation: `${input.resource.origin}/settings#chatgpt-mcp`,
   };
+}
+
+export function staffMcpProtectedResourceMetadata() {
+  return protectedResourceMetadata({
+    resource: staffMcpResourceUrl(),
+    name: "LiveCoach Staff CRM",
+  });
+}
+
+export function chatGptPluginMcpProtectedResourceMetadata() {
+  return protectedResourceMetadata({
+    resource: chatGptPluginMcpResourceUrl(),
+    name: "LiveCoach CRM for ChatGPT",
+  });
 }
 
 export async function staffMcpAuthorizationServerMetadata(): Promise<Record<string, unknown>> {
