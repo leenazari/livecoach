@@ -2,7 +2,11 @@ import { logBrainAudit } from '@/lib/brain-audit';
 import "server-only";
 
 import { createHash } from "crypto";
-import { McpServer, type ServerContext } from "@modelcontextprotocol/server";
+import {
+  McpServer,
+  type RegisteredTool,
+  type ServerContext,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   createStaffMcpClient,
@@ -38,15 +42,25 @@ const LEAD_FIELDS = [
 ].join(",");
 
 type JsonObject = Record<string, unknown>;
+export const STAFF_CORE_ACTIONS = [
+  "find_my_lead",
+  "list_my_leads",
+  "add_lead",
+  "add_lead_context",
+  "create_my_follow_up",
+  "list_my_tasks",
+] as const;
+
+export type StaffCoreActionName = (typeof STAFF_CORE_ACTIONS)[number];
+
 type McpToolName =
-  | "find_my_lead"
-  | "list_my_leads"
-  | "add_lead"
-  | "add_lead_context"
-  | "create_my_follow_up"
-  | "list_my_tasks"
+  | StaffCoreActionName
   | PersonalToolName
   | BrainMcpToolName;
+
+type StaffMcpServerOptions = {
+  onCoreTool?: (name: StaffCoreActionName, tool: RegisteredTool) => void;
+};
 
 type Receipt = {
   id: string;
@@ -575,7 +589,63 @@ const cursorField = z
   .optional()
   .describe("Opaque nextCursor returned by the previous list call.");
 
-export function buildStaffMcpServer(principal: StaffMcpPrincipal): McpServer {
+export function isStaffCoreActionName(value: string): value is StaffCoreActionName {
+  return (STAFF_CORE_ACTIONS as readonly string[]).includes(value);
+}
+
+function actionServerContext(requestId: string): ServerContext {
+  const controller = new AbortController();
+  return {
+    mcpReq: {
+      id: requestId,
+      method: "tools/call",
+      signal: controller.signal,
+      requestState: () => undefined,
+      send: async () => {
+        throw new Error("Server-to-client MCP requests are unavailable in GPT Actions");
+      },
+      notify: async () => undefined,
+      log: async () => undefined,
+      elicitInput: async () => {
+        throw new Error("MCP elicitation is unavailable in GPT Actions");
+      },
+      requestSampling: async () => {
+        throw new Error("MCP sampling is unavailable in GPT Actions");
+      },
+    },
+  } as ServerContext;
+}
+
+export async function executeStaffCoreAction(input: {
+  principal: StaffMcpPrincipal;
+  action: StaffCoreActionName;
+  arguments: unknown;
+  requestId: string;
+}) {
+  let registered: RegisteredTool | null = null;
+  buildStaffMcpServer(input.principal, {
+    onCoreTool: (name, tool) => {
+      if (name === input.action) registered = tool;
+    },
+  });
+  const tool = registered as RegisteredTool | null;
+  if (!tool) throw new Error("The requested LiveCoach action is unavailable");
+  const validation = tool.inputSchema
+    ? await tool.inputSchema["~standard"].validate(input.arguments ?? {})
+    : { value: input.arguments };
+  if ("issues" in validation) {
+    throw new Error("The requested LiveCoach action details are invalid");
+  }
+  return tool.executor(
+    validation.value,
+    actionServerContext(input.requestId)
+  );
+}
+
+export function buildStaffMcpServer(
+  principal: StaffMcpPrincipal,
+  options: StaffMcpServerOptions = {}
+): McpServer {
   const server = new McpServer(
     { name: "LiveCoach Staff CRM", version: "2.1.0" },
     {
@@ -584,7 +654,9 @@ export function buildStaffMcpServer(principal: StaffMcpPrincipal): McpServer {
     }
   );
 
-  server.registerTool(
+  const coreTools = new Map<StaffCoreActionName, RegisteredTool>();
+
+  coreTools.set("find_my_lead", server.registerTool(
     "find_my_lead",
     {
       title: "Find my LiveCoach lead",
@@ -611,9 +683,9 @@ export function buildStaffMcpServer(principal: StaffMcpPrincipal): McpServer {
           targetId: lead ? String(lead.id) : undefined,
         };
       })
-  );
+  ));
 
-  server.registerTool(
+  coreTools.set("list_my_leads", server.registerTool(
     "list_my_leads",
     {
       title: "List my LiveCoach leads",
@@ -689,9 +761,9 @@ export function buildStaffMcpServer(principal: StaffMcpPrincipal): McpServer {
           };
         }
       )
-  );
+  ));
 
-  server.registerTool(
+  coreTools.set("add_lead", server.registerTool(
     "add_lead",
     {
       title: "Add a lead to my LiveCoach CRM",
@@ -842,9 +914,9 @@ export function buildStaffMcpServer(principal: StaffMcpPrincipal): McpServer {
           targetId: String(inserted.id),
         };
       })
-  );
+  ));
 
-  server.registerTool(
+  coreTools.set("add_lead_context", server.registerTool(
     "add_lead_context",
     {
       title: "Add context to my LiveCoach lead",
@@ -913,9 +985,9 @@ export function buildStaffMcpServer(principal: StaffMcpPrincipal): McpServer {
           };
         }
       )
-  );
+  ));
 
-  server.registerTool(
+  coreTools.set("create_my_follow_up", server.registerTool(
     "create_my_follow_up",
     {
       title: "Create my LiveCoach follow-up",
@@ -1096,9 +1168,9 @@ export function buildStaffMcpServer(principal: StaffMcpPrincipal): McpServer {
           };
         }
       )
-  );
+  ));
 
-  server.registerTool(
+  coreTools.set("list_my_tasks", server.registerTool(
     "list_my_tasks",
     {
       title: "List my LiveCoach tasks",
@@ -1169,7 +1241,9 @@ export function buildStaffMcpServer(principal: StaffMcpPrincipal): McpServer {
           };
         }
       )
-  );
+  ));
+
+  for (const [name, tool] of coreTools) options.onCoreTool?.(name, tool);
 
   registerPersonalMcpTools(server, principal, (name, args, ctx, run) => auditedTool(principal, name, args, ctx, run));
   registerBrainMcpTools(server, principal, (name, args, ctx, run) => auditedTool(principal, name, args, ctx, run));
