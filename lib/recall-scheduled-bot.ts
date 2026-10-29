@@ -75,6 +75,104 @@ export async function alignSharedNotetakerTime(input: {
   return true;
 }
 
+const MANUAL_DISPATCH_CLAIM_MS = 2 * 60 * 1000;
+
+type ScheduledCaptureClaim = {
+  id: string;
+  bot_id: string;
+  scheduled_join_at?: string | null;
+};
+
+// Recall cannot retime a scheduled bot to an on-demand launch. Claim the exact
+// active capture before deleting its untouched reservation and replacing the
+// provider bot in place. The stale-claim repair keeps a crashed request from
+// blocking a later manual start while the original reservation remains safe.
+export async function claimManualNotetakerDispatch(input: {
+  workspaceId: string;
+  capture: ScheduledCaptureClaim;
+  now?: Date;
+}) {
+  const now = input.now || new Date();
+  const claimedAt = now.toISOString();
+  const staleBefore = new Date(
+    now.getTime() - MANUAL_DISPATCH_CLAIM_MS
+  ).toISOString();
+
+  const { error: staleError } = await supabaseService
+    .from("meet_bots")
+    .update({ manual_dispatch_claimed_at: null })
+    .eq("workspace_id", input.workspaceId)
+    .eq("id", input.capture.id)
+    .eq("bot_id", input.capture.bot_id)
+    .eq("status", "active")
+    .lt("manual_dispatch_claimed_at", staleBefore);
+  if (staleError) throw staleError;
+
+  let claim = supabaseService
+    .from("meet_bots")
+    .update({ manual_dispatch_claimed_at: claimedAt })
+    .eq("workspace_id", input.workspaceId)
+    .eq("id", input.capture.id)
+    .eq("bot_id", input.capture.bot_id)
+    .eq("status", "active")
+    .is("manual_dispatch_claimed_at", null);
+  if (input.capture.scheduled_join_at) {
+    claim = claim.eq(
+      "scheduled_join_at",
+      input.capture.scheduled_join_at
+    );
+  }
+  const { data, error } = await claim.select("id").maybeSingle();
+  if (error) throw error;
+  return data ? claimedAt : null;
+}
+
+export async function releaseManualNotetakerDispatch(input: {
+  workspaceId: string;
+  captureId: string;
+  botId: string;
+  claimedAt: string;
+}) {
+  const { error } = await supabaseService
+    .from("meet_bots")
+    .update({ manual_dispatch_claimed_at: null })
+    .eq("workspace_id", input.workspaceId)
+    .eq("id", input.captureId)
+    .eq("bot_id", input.botId)
+    .eq("status", "active")
+    .eq("manual_dispatch_claimed_at", input.claimedAt);
+  if (error) throw error;
+}
+
+// This deliberately does not fall back to leave_call. A rejected DELETE means
+// Recall has already dispatched the reserved bot, which is the immediate result
+// the user asked for. Stopping that bot and creating another would cause delay
+// and a visible duplicate in the meeting.
+export async function deleteScheduledRecallBotForImmediateLaunch(input: {
+  region: string;
+  key: string;
+  botId: string;
+}) {
+  const endpoint = `https://${input.region}.recall.ai/api/v1/bot/${encodeURIComponent(
+    input.botId
+  )}/`;
+  const response = await recallRequest(endpoint, input.key, {
+    method: "DELETE",
+  });
+  if (response.ok || response.status === 404) return "deleted" as const;
+
+  const result = await response.json().catch(() => null);
+  if (
+    [400, 405].includes(response.status) &&
+    result?.code === "cannot_delete_bot"
+  ) {
+    return "already_started" as const;
+  }
+  throw new Error(
+    "The reserved notetaker could not be safely handed over to an immediate launch. Its reservation has been retained."
+  );
+}
+
 export async function cancelRecallBotRequest(input: {
   region: string;
   key: string;
