@@ -7,8 +7,11 @@ import { currentRecallBotState } from "@/lib/recall-bot-status";
 import { captureAdmissionTimeouts } from "@/lib/call-capture-lifecycle";
 import {
   alignSharedNotetakerTime,
+  claimManualNotetakerDispatch,
   cancelRecallBotRequest,
   cancelScheduledNotetakers,
+  deleteScheduledRecallBotForImmediateLaunch,
+  releaseManualNotetakerDispatch,
 } from "@/lib/recall-scheduled-bot";
 import {
   meetingInstanceKey,
@@ -93,6 +96,11 @@ type ActiveSubscriptionRow = {
   capture_id: string;
   session_id: string;
   upcoming_id: string | null;
+};
+
+type ManualReplacementReservation = ActiveBotRow & {
+  scheduled_join_at: string;
+  scheduled_meeting_url: string | null;
 };
 
 async function finishCapture(
@@ -203,6 +211,22 @@ async function attachSubscriber(input: {
 }
 
 export async function POST(req: NextRequest) {
+  let pendingManualReplacement: {
+    workspaceId: string;
+    reservation: ManualReplacementReservation;
+    claimedAt: string;
+  } | null = null;
+  const releasePendingManualReplacement = async () => {
+    if (!pendingManualReplacement) return;
+    const pending = pendingManualReplacement;
+    await releaseManualNotetakerDispatch({
+      workspaceId: pending.workspaceId,
+      captureId: pending.reservation.id,
+      botId: pending.reservation.bot_id,
+      claimedAt: pending.claimedAt,
+    });
+    pendingManualReplacement = null;
+  };
   try {
     const accountScope = await resolveRecordScope();
     const { meetingUrl, sessionId, upcomingId, autoStart } = await req.json();
@@ -327,6 +351,7 @@ export async function POST(req: NextRequest) {
       : null;
     const scheduledDispatch = scheduledJoinAt !== null;
     const scheduledJoinAtMs = scheduledJoinAt ? Date.parse(scheduledJoinAt) : NaN;
+    let manualReplacement: ManualReplacementReservation | null = null;
 
     // Repeated calendar syncs are idempotent. A changed time or meeting link
     // cancels the old provider reservation before creating its replacement.
@@ -354,11 +379,10 @@ export async function POST(req: NextRequest) {
           ? await supabaseService
               .from("meet_bots")
               .select(
-                "id,bot_id,bot_name,owner_id,meeting_instance_key,scheduled_join_at,scheduled_meeting_url"
+                "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key,scheduled_join_at,scheduled_meeting_url"
               )
               .eq("workspace_id", accountScope.workspaceId)
               .eq("status", "active")
-              .not("scheduled_join_at", "is", null)
               .in("id", subscribedCaptureIds)
           : { data: [], error: null };
       if (subscribedReservationError) throw subscribedReservationError;
@@ -370,13 +394,12 @@ export async function POST(req: NextRequest) {
         await supabaseService
           .from("meet_bots")
           .select(
-            "id,bot_id,bot_name,owner_id,meeting_instance_key,scheduled_join_at,scheduled_meeting_url"
+            "id,bot_id,bot_name,session_id,owner_id,meeting_instance_key,scheduled_join_at,scheduled_meeting_url"
           )
           .eq("workspace_id", accountScope.workspaceId)
           .eq("owner_id", accountScope.userId)
           .eq("source_upcoming_id", verifiedUpcomingId)
           .eq("status", "active")
-          .not("scheduled_join_at", "is", null)
           .limit(2);
       if (ownedReservationError) throw ownedReservationError;
       const reservationById = new Map<string, any>();
@@ -387,13 +410,52 @@ export async function POST(req: NextRequest) {
         reservationById.set(String(reservation.id), reservation);
       }
       const reservations = Array.from(reservationById.values());
+      const immediateCapture = reservations.find(
+        (capture: any) =>
+          !capture.scheduled_join_at &&
+          capture.meeting_instance_key === sharedInstanceKey &&
+          meetingUrlsMatch(capture.scheduled_meeting_url, meetingUrl)
+      );
+      if (automaticDispatch && immediateCapture) {
+        const existingSubscription = (reservedSubscriptions || []).find(
+          (row: any) =>
+            String(row.capture_id) === String(immediateCapture.id)
+        );
+        const { error: attachError } = await attachSubscriber({
+          captureId: immediateCapture.id,
+          workspaceId: accountScope.workspaceId,
+          ownerId: accountScope.userId,
+          sessionId,
+          upcomingId: verifiedUpcomingId,
+          status:
+            existingSubscription?.status === "active" ? "active" : "scheduled",
+        });
+        if (attachError) throw attachError;
+        if (sharedOccurrence) {
+          await grantSharedCaptureAccess({
+            captureId: immediateCapture.id,
+            occurrence: sharedOccurrence,
+            captureOwnerId: immediateCapture.owner_id,
+          });
+        }
+        return NextResponse.json(
+          {
+            botId: immediateCapture.bot_id,
+            botName: immediateCapture.bot_name || "LiveCoach Notetaker",
+            status: "joining",
+            sharedCapture: Boolean(sharedInstanceKey),
+            scheduledJoinAt: null,
+          },
+          { headers: { "Cache-Control": "private, no-store" } }
+        );
+      }
       const sharedReservation = sharedInstanceKey && reservations.find(
         (capture: any) => capture.meeting_instance_key === sharedInstanceKey
           && meetingUrlsMatch(capture.scheduled_meeting_url, meetingUrl)
           && Date.parse(capture.scheduled_join_at) > now.getTime()
           && expectedJoinAtMs > now.getTime()
       );
-      if (sharedReservation) {
+      if (sharedReservation && automaticDispatch) {
         await alignSharedNotetakerTime({
           workspaceId: accountScope.workspaceId, instanceKey: sharedInstanceKey!,
           capture: sharedReservation, joinAt: new Date(expectedJoinAtMs).toISOString(), region, key,
@@ -408,47 +470,83 @@ export async function POST(req: NextRequest) {
           ) < 1000
       );
       if (exactReservation) {
-        const existingSubscription = (reservedSubscriptions || []).find(
-          (row: any) =>
-            String(row.capture_id) === String(exactReservation.id)
-        );
-        const subscriptionStatus =
-          !automaticDispatch || existingSubscription?.status === "active" ? "active" : "scheduled";
-        const { error: attachError } = await attachSubscriber({
-          captureId: exactReservation.id,
-          workspaceId: accountScope.workspaceId,
-          ownerId: accountScope.userId,
-          sessionId,
-          upcomingId: verifiedUpcomingId,
-          status: subscriptionStatus,
-        });
-        if (attachError?.code === "23505") {
+        if (!automaticDispatch) {
+          const claimedAt = await claimManualNotetakerDispatch({
+            workspaceId: accountScope.workspaceId,
+            capture: exactReservation,
+            now,
+          });
+          if (!claimedAt) {
+            return NextResponse.json(
+              {
+                error:
+                  "This notetaker is already being launched for the call. Wait a few seconds before trying again.",
+                code: "notetaker_launch_in_progress",
+              },
+              {
+                status: 409,
+                headers: { "Cache-Control": "private, no-store" },
+              }
+            );
+          }
+          pendingManualReplacement = {
+            workspaceId: accountScope.workspaceId,
+            reservation: exactReservation,
+            claimedAt,
+          };
+          manualReplacement = exactReservation;
+        }
+
+        if (manualReplacement) {
+          // Continue to the normal create-bot path without `join_at`.
+        } else {
+          const existingSubscription = (reservedSubscriptions || []).find(
+            (row: any) =>
+              String(row.capture_id) === String(exactReservation.id)
+          );
+          const subscriptionStatus =
+            !automaticDispatch || existingSubscription?.status === "active"
+              ? "active"
+              : "scheduled";
+          const { error: attachError } = await attachSubscriber({
+            captureId: exactReservation.id,
+            workspaceId: accountScope.workspaceId,
+            ownerId: accountScope.userId,
+            sessionId,
+            upcomingId: verifiedUpcomingId,
+            status: subscriptionStatus,
+          });
+          if (attachError?.code === "23505") {
+            return NextResponse.json(
+              {
+                error:
+                  "End your other LiveCoach session before opening this call.",
+                code: "transcriber_already_active",
+              },
+              { status: 409 }
+            );
+          }
+          if (attachError) throw attachError;
+          if (sharedOccurrence) {
+            await grantSharedCaptureAccess({
+              captureId: exactReservation.id,
+              occurrence: sharedOccurrence,
+              captureOwnerId: exactReservation.owner_id,
+            });
+          }
           return NextResponse.json(
-            { error: "End your other LiveCoach session before opening this call.", code: "transcriber_already_active" },
-            { status: 409 }
+            {
+              botId: exactReservation.bot_id,
+              botName: exactReservation.bot_name || "LiveCoach Notetaker",
+              status: automaticDispatch ? "scheduled" : "joining",
+              sharedCapture: Boolean(sharedInstanceKey),
+              scheduledJoinAt: exactReservation.scheduled_join_at,
+            },
+            { headers: { "Cache-Control": "private, no-store" } }
           );
         }
-        if (attachError) throw attachError;
-        if (sharedOccurrence) {
-          await grantSharedCaptureAccess({
-            captureId: exactReservation.id,
-            occurrence: sharedOccurrence,
-            captureOwnerId: exactReservation.owner_id,
-          });
-        }
-        return NextResponse.json(
-          {
-            botId: exactReservation.bot_id,
-            botName: exactReservation.bot_name || "LiveCoach Notetaker",
-            status: Date.parse(exactReservation.scheduled_join_at) > now.getTime()
-              ? "scheduled" : "already_active",
-            sharedCapture: Boolean(sharedInstanceKey),
-            scheduledJoinAt: exactReservation.scheduled_join_at,
-          },
-          { headers: { "Cache-Control": "private, no-store" } }
-        );
       }
-      if (reservations.length) {
+      if (reservations.length && !manualReplacement) {
         await cancelScheduledNotetakers({
           workspaceId: accountScope.workspaceId,
           ownerId: accountScope.userId,
@@ -471,8 +569,9 @@ export async function POST(req: NextRequest) {
     if (staleBotError) throw staleBotError;
     const staleCaptures = ((staleCaptureRows || []) as ActiveBotRow[]).filter(
       (capture) =>
-        !capture.scheduled_join_at ||
-        Date.parse(capture.scheduled_join_at) < staleBefore.getTime()
+        capture.id !== manualReplacement?.id &&
+        (!capture.scheduled_join_at ||
+          Date.parse(capture.scheduled_join_at) < staleBefore.getTime())
     );
     for (const staleCapture of staleCaptures) {
       await finishCapture(
@@ -526,6 +625,7 @@ export async function POST(req: NextRequest) {
     );
     if (existingSubscription) {
       const capture = activeCaptureById.get(existingSubscription.capture_id)!;
+      await releasePendingManualReplacement();
       return NextResponse.json(
         {
           botId: capture.bot_id,
@@ -537,6 +637,7 @@ export async function POST(req: NextRequest) {
       );
     }
     if (activeSubscriptions.length) {
+      await releasePendingManualReplacement();
       return NextResponse.json(
         {
           error:
@@ -549,7 +650,7 @@ export async function POST(req: NextRequest) {
 
     // Only an exact Google or Microsoft calendar occurrence can share an
     // existing capture. Ad hoc URLs remain private and create their own bot.
-    if (sharedInstanceKey && verifiedUpcomingId) {
+    if (!manualReplacement && sharedInstanceKey && verifiedUpcomingId) {
       const { data: matchingCaptureRows, error: matchingCaptureError } =
         await supabaseService
           .from("meet_bots")
@@ -650,7 +751,7 @@ export async function POST(req: NextRequest) {
       dailyLimitMinutes,
       now
     );
-    if (!scheduledDispatch && usage.remainingSeconds < 60) {
+    if (!scheduledDispatch && !manualReplacement && usage.remainingSeconds < 60) {
       return NextResponse.json(
         {
           error: `Today's ${dailyLimitMinutes} minute notetaker allowance has been used. The workspace owner can raise it in Team access.`,
@@ -662,8 +763,60 @@ export async function POST(req: NextRequest) {
     }
     const botHardLimitSeconds = Math.min(
       TRANSCRIBER_HARD_LIMIT_SECONDS,
-      scheduledDispatch ? dailyLimitMinutes * 60 : usage.remainingSeconds
+      scheduledDispatch || manualReplacement
+        ? dailyLimitMinutes * 60
+        : usage.remainingSeconds
     );
+
+    if (manualReplacement) {
+      const handover = await deleteScheduledRecallBotForImmediateLaunch({
+        region,
+        key,
+        botId: manualReplacement.bot_id,
+      });
+      if (handover === "already_started") {
+        // Recall has already dispatched the reservation. Activating this exact
+        // private subscriber is enough. Stopping it would create a duplicate.
+        await releasePendingManualReplacement();
+        const { error: attachError } = await attachSubscriber({
+          captureId: manualReplacement.id,
+          workspaceId: accountScope.workspaceId,
+          ownerId: accountScope.userId,
+          sessionId,
+          upcomingId: verifiedUpcomingId,
+          status: "active",
+        });
+        if (attachError?.code === "23505") {
+          return NextResponse.json(
+            {
+              error:
+                "End your other LiveCoach session before opening this call.",
+              code: "transcriber_already_active",
+            },
+            { status: 409 }
+          );
+        }
+        if (attachError) throw attachError;
+        if (sharedOccurrence) {
+          await grantSharedCaptureAccess({
+            captureId: manualReplacement.id,
+            occurrence: sharedOccurrence,
+            captureOwnerId: manualReplacement.owner_id,
+          });
+        }
+        return NextResponse.json(
+          {
+            botId: manualReplacement.bot_id,
+            botName:
+              manualReplacement.bot_name || "LiveCoach Notetaker",
+            status: "joining",
+            sharedCapture: Boolean(sharedInstanceKey),
+            scheduledJoinAt: manualReplacement.scheduled_join_at,
+          },
+          { headers: { "Cache-Control": "private, no-store" } }
+        );
+      }
+    }
     // Both entry points can arrive early. Do not time out a manual Start before
     // the booked meeting begins. Preserve the provider's platform-specific cap.
     const { preActivity: preActivityTimeoutSeconds, waitingRoom: waitingRoomTimeoutSeconds } =
@@ -757,8 +910,8 @@ export async function POST(req: NextRequest) {
       // Recall returns this signed metadata on every webhook. The worker still
       // checks it against the canonical meet_bots row before relaying anything.
       metadata: {
-        session_id: sessionId,
-        owner_id: accountScope.userId,
+        session_id: manualReplacement?.session_id || sessionId,
+        owner_id: manualReplacement?.owner_id || accountScope.userId,
         workspace_id: accountScope.workspaceId,
         dispatch_mode: automaticDispatch ? "automatic" : "manual",
       },
@@ -789,6 +942,7 @@ export async function POST(req: NextRequest) {
 
     const raw = await res.text();
     if (!res.ok) {
+      await releasePendingManualReplacement();
       return NextResponse.json(
         {
           error: `Recall create-bot failed (${res.status})`,
@@ -800,14 +954,13 @@ export async function POST(req: NextRequest) {
 
     const recallBot = JSON.parse(raw);
     if (!recallBot?.id || typeof recallBot.id !== "string") {
+      await releasePendingManualReplacement();
       throw new Error("Recall returned a bot without an identifier");
     }
 
     // A bot without a scoped database record cannot be stopped safely and its
     // transcript cannot be assigned safely. Remove it immediately on failure.
-    const { data: insertedCapture, error: botInsertError } = await supabaseAdmin
-      .from("meet_bots")
-      .insert({
+    const captureRecord = {
         session_id: String(sessionId),
         bot_id: recallBot.id,
         bot_name: captureBotName,
@@ -820,14 +973,52 @@ export async function POST(req: NextRequest) {
         canonical_upcoming_id:
           sharedOccurrence?.canonical.id || verifiedUpcomingId,
         scheduled_join_at: scheduledJoinAt,
-        scheduled_meeting_url: scheduledJoinAt ? meetingUrl : null,
+        scheduled_meeting_url: verifiedUpcomingId ? meetingUrl : null,
         status: "active",
         ...privateRecordFields(accountScope),
-      })
-      .select("id")
-      .single();
+      };
+    const persistence = manualReplacement && pendingManualReplacement
+      ? await supabaseService
+          .from("meet_bots")
+          .update({
+            bot_id: captureRecord.bot_id,
+            bot_name: captureRecord.bot_name,
+            provider: captureRecord.provider,
+            webhook_token_hash: captureRecord.webhook_token_hash,
+            webhook_token_expires_at:
+              captureRecord.webhook_token_expires_at,
+            scheduled_join_at: null,
+            scheduled_meeting_url: meetingUrl,
+            manual_dispatch_claimed_at: null,
+            created_at: now.toISOString(),
+            ended_at: null,
+          })
+          .eq("workspace_id", accountScope.workspaceId)
+          .eq("id", manualReplacement.id)
+          .eq("bot_id", manualReplacement.bot_id)
+          .eq("status", "active")
+          .eq(
+            "manual_dispatch_claimed_at",
+            pendingManualReplacement.claimedAt
+          )
+          .select("id")
+          .maybeSingle()
+      : await supabaseAdmin
+          .from("meet_bots")
+          .insert(captureRecord)
+          .select("id")
+          .single();
+    const { data: insertedCapture, error: botInsertError } = persistence;
+    if (manualReplacement && !insertedCapture && !botInsertError) {
+      await leaveUntrackedBot(region, key, recallBot.id);
+      await releasePendingManualReplacement();
+      throw new Error(
+        "The notetaker launch changed before its immediate provider bot could be confirmed"
+      );
+    }
     if (botInsertError) {
       await leaveUntrackedBot(region, key, recallBot.id);
+      await releasePendingManualReplacement();
       if (botInsertError.code === "23505") {
         // Two teammates can press Start at almost the same instant. The unique
         // instance index chooses one capture. Remove this losing provider bot,
@@ -890,6 +1081,7 @@ export async function POST(req: NextRequest) {
       }
       throw botInsertError;
     }
+    pendingManualReplacement = null;
 
     // The database trigger seeds first-time sessions. This explicit upsert also
     // reattaches a scheduled room whose earlier bot ended, so a manual retry
@@ -936,7 +1128,8 @@ export async function POST(req: NextRequest) {
       await grantSharedCaptureAccess({
         captureId: insertedCapture.id,
         occurrence: sharedOccurrence,
-        captureOwnerId: accountScope.userId,
+        captureOwnerId:
+          manualReplacement?.owner_id || accountScope.userId,
       });
     }
 
@@ -959,6 +1152,11 @@ export async function POST(req: NextRequest) {
       { headers: { "Cache-Control": "private, no-store" } }
     );
   } catch (e: any) {
+    try {
+      await releasePendingManualReplacement();
+    } catch (releaseError) {
+      console.error("Could not release manual notetaker launch claim", releaseError);
+    }
     console.error("Notetaker start failed", { code: e?.code || "notetaker_start_failed", message: e?.message || "unknown error" });
     return NextResponse.json(
       { error: "The notetaker could not be scheduled or connected. Your calendar event is still saved. Open the call to check its notetaker status before retrying.", code: "notetaker_start_failed" },
