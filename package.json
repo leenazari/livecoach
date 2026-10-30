@@ -6,6 +6,7 @@
     "node": "22.x"
   },
   "scripts": {
+    "validate:import-campaign-link": "node scripts/validate-imported-lead-campaign.mjs",
     "validate:notification-actions": "node scripts/validate-notification-actions.mjs",
     "validate:notification-replies": "node scripts/validate-notification-replies.mjs",
     "validate:digest-calendar": "node scripts/validate-digest-calendar-account.mjs",

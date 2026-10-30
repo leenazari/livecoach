@@ -26,7 +26,8 @@ assert.match(prospects, /enrolmentsQuery = enrolmentsQuery\.eq\("owner_id", acco
 // silently move it into whichever campaign the salesperson last selected.
 assert.match(queue, /const requestedCampaignId = String\(body\.campaignId \|\| ""\)\.trim\(\)/);
 assert.match(queue, /row\.id === requestedCampaignId && row\.status === "active"/);
-assert.match(page, /const campaignIds = prospect\.outreach\?\.campaignIds \|\| \[\]/);
+assert.match(page, /const choice = prospectCampaignChoice\(prospect, campaigns,/);
+assert.match(page, /addToCampaign: choice.needsCampaign/);
 assert.match(page, /campaignId: targetCampaign\.id/);
 assert.match(page, /This prospect's campaign is not active/);
 

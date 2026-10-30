@@ -139,6 +139,6 @@ await act(async () => root.unmount());
 dom.window.close();
 
 const page = read("app/crm/outreach/page.tsx");
-assert.match(page, /\{tab === "prospects" \? <StagedOutreachImports onApplied=\{loadProspects\}/);
+assert.match(page, /\{tab === "prospects" \? <StagedOutreachImports onApplied=\{async \(\) => \{ setProspectCampaignId\("all"\); await loadProspects\(\); \}\}/);
 assert.doesNotMatch(page, /canStageImports|setCanStageImports/);
 console.log("Import access and UI passed. Active membership, private capabilities, self-assignment, independent loading, saved receipts and retry verified.");

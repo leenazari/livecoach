@@ -133,7 +133,7 @@ export default function StagedOutreachImports({
         { method: "POST", body: JSON.stringify({ confirmed: true }) }
       );
       setNotice(
-        `${Number(data.result?.inserted || 0)} clean leads were imported. Nothing was contacted or researched.`
+        `${Number(data.result?.inserted || 0)} clean leads were imported. Nothing was contacted or researched. They are saved in All campaigns, with no campaign selected yet. Choose a campaign beside each lead and press Add and prepare when you are ready.`
       );
       setBatches((current) => current.map((item) => item.id === batch.id ? {
         ...item, status: "applied", applied_result: data.result,
@@ -179,7 +179,7 @@ export default function StagedOutreachImports({
           </p>
           <h2 className="mt-1 font-display text-base text-bone">Stage a lead list before it enters Outreach</h2>
           <p className="mt-1 text-xs leading-5 text-muted">
-            Exact email duplicates, invalid rows and missing companies stay out. Applying never starts research or contact.
+            Exact email duplicates, invalid rows and missing companies stay out. Applying never starts research or contact. Imported leads appear in All campaigns. Choose their campaign when you prepare them.
           </p>
         </div>
         <button type="button" onClick={() => setOpen((value) => !value)} disabled={accessLoading || !access} className={button}>

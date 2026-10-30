@@ -1144,7 +1144,11 @@ export default function CallPage() {
       const saved = await crmFetch<{ ok: boolean; notice: string }>(`/api/crm/upcoming/${callId}/lead`, {
         method: "POST", body: JSON.stringify({ leadEmail: email }),
       });
-      if (!saved.ok) throw new Error("The lead save was not confirmed. Reopen prep to check the saved person.");
+      if (!saved.ok) throw crmConfirmationError({
+        url: `/api/crm/upcoming/${callId}/lead`,
+        method: "POST",
+        reason: "The meeting lead save could not be confirmed. Reopen prep to check the saved person before making another change",
+      });
       confirmed = true;
       const { call } = await crmFetch<{ call: any }>(`/api/crm/upcoming/${callId}`);
       if (upcomingIdRef.current !== callId || !call) throw new Error("The call changed. Reopen its prep.");
