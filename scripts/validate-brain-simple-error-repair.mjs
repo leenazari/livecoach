@@ -81,6 +81,7 @@ const common = {
   "@/lib/outreach-preparation": preparation,
   "@/lib/outreach-queue-repair": repair,
   "@/lib/crm-blocker": blockers,
+  "@/lib/uuid": compile("lib/uuid.ts"),
 };
 const queue = compile("app/api/crm/outreach/queue/route.ts", {
   ...common,

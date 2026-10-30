@@ -24,6 +24,8 @@ import {
   outreachAssignmentConflict,
 } from "@/lib/outreach-assignment-service";
 import { outreachCrmBlocker } from "@/lib/outreach-crm-blocker";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
+import { isUuid } from "@/lib/uuid";
 import { loadOutreachQueueRepair, sameOutreachQueueRepair } from "@/lib/outreach-queue-repair";
 import {
   verifiedCompanyResearchEvidence,
@@ -303,6 +305,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  let directQueueSaved = false;
+  let directAssignmentSaved = false;
   try {
     const account = await resolveRecordScope();
     const requestScope = getRequestScope();
@@ -361,7 +365,12 @@ export async function POST(req: NextRequest) {
     // exact-email and daily-limit protections as the ranked queue.
     const requestedProspectId = String(body.prospectId || "").trim();
     if (requestedProspectId) {
-      if (!remaining)
+      if (!isUuid(requestedProspectId)) return NextResponse.json(crmBlockerPayload({
+        code: "outreach_prospect_id_invalid", title: "Choose a saved lead",
+        reason: "The preparation request does not identify a valid lead",
+        nextAction: "Open Prospects and choose the saved lead there. You do not need to upload it again",
+      }), { status: 400 });
+      if (!remaining && !existing.some((row: any) => row.prospect_id === requestedProspectId))
         return NextResponse.json({ error: `Today's queue already has ${limit} people` }, { status: 400 });
       const [{ data: prospect, error: prospectError }, { data: suppressions, error: suppressionError }] = await Promise.all([
         supabaseAdmin.from("outreach_prospects").select("*").eq("workspace_id", account.workspaceId).eq("id", requestedProspectId).maybeSingle(),
@@ -391,7 +400,7 @@ export async function POST(req: NextRequest) {
       }
       const [
         { data: previous, error: previousError },
-        { count: campaignMembershipCount, error: membershipCountError },
+        { data: otherMemberships, error: membershipError },
         { data: otherCampaigns, error: otherCampaignsError },
       ] = await Promise.all([
         supabaseAdmin
@@ -403,9 +412,10 @@ export async function POST(req: NextRequest) {
           .maybeSingle(),
         supabaseAdmin
           .from("outreach_enrolments")
-          .select("id", { count: "exact", head: true })
+          .select("id")
           .eq("workspace_id", account.workspaceId)
-          .eq("campaign_id", campaign.id),
+          .eq("prospect_id", requestedProspectId)
+          .neq("campaign_id", campaign.id),
         supabaseAdmin
           .from("outreach_enrolments")
           .select("id,campaign_id,status,last_sent_at")
@@ -414,13 +424,25 @@ export async function POST(req: NextRequest) {
           .neq("campaign_id", campaign.id),
       ]);
       if (previousError) throw previousError;
-      if (membershipCountError) throw membershipCountError;
+      if (membershipError) throw membershipError;
       if (otherCampaignsError) throw otherCampaignsError;
-      if ((campaignMembershipCount || 0) > 0 && !previous) {
-        return NextResponse.json(
-          { error: "This prospect is not part of your selected campaign" },
-          { status: 400 }
-        );
+      if (!previous && otherMemberships?.length) {
+        return NextResponse.json(crmBlockerPayload({
+          code: "outreach_existing_campaign", title: "This lead already has a campaign",
+          reason: "Preparing a draft cannot move the lead or restart its outreach in a different campaign",
+          nextAction: "Open the lead in All campaigns and continue its existing campaign. Ask a workspace owner if it needs changing",
+        }), { status: 409 });
+      }
+      // Imports create prospects, not campaign membership. Explicitly adding
+      // an individual lead is distinct from ranking a campaign's fixed audience.
+      // Never silently enrol it into the last selected/default campaign.
+      if (!previous && (!requestedCampaignId || body.addToCampaign !== true || repair)) {
+        return NextResponse.json(crmBlockerPayload({
+          code: "outreach_campaign_choice_required", title: "Choose a campaign for this saved lead",
+          reason: "The lead is saved, but has not been added to a campaign yet",
+          nextAction: "Open Prospects, select All campaigns, then choose a campaign beside this lead and press Add and prepare. Do not upload the file again",
+          outcome: "No campaign membership or outreach was created",
+        }), { status: 409 });
       }
       const activeOtherCampaign = (otherCampaigns || []).find((row: any) =>
         isActiveOutreachEnrolmentStatus(row.status)
@@ -476,6 +498,7 @@ export async function POST(req: NextRequest) {
           prospectIds: [requestedProspectId],
           assignedToUserId: account.userId,
         });
+        directAssignmentSaved = true;
       } catch (error) {
         const conflict = outreachAssignmentConflict(error);
         if (!conflict) throw error;
@@ -528,6 +551,7 @@ export async function POST(req: NextRequest) {
         }
         enrolmentId = enrolment.id;
       }
+      directQueueSaved = true;
       if (repair) {
         const { error } = await supabaseAdmin.from("outreach_events").insert({
           workspace_id: account.workspaceId, owner_id: account.userId, visibility: "team",
@@ -536,10 +560,15 @@ export async function POST(req: NextRequest) {
         });
         if (error) return NextResponse.json({ error: "The queue entry was fixed, but its activity receipt could not be saved. Refresh the prospect before continuing.", queueRepair: repair }, { status: 502 });
         return NextResponse.json({ date: today, queueRepair: repair, added: 0 });
-      } else await Promise.all([
-        supabaseAdmin.from("outreach_prospects").update({ status: "queued", updated_at: now }).eq("id", requestedProspectId),
-        supabaseAdmin.from("outreach_events").insert({ campaign_id: campaign.id, prospect_id: requestedProspectId, kind: "queued", metadata: { date: today, enrolment_id: enrolmentId, source: "prospects_tracker" } }),
-      ]);
+      } else {
+        const results = await Promise.all([
+          supabaseAdmin.from("outreach_prospects").update({ status: "queued", updated_at: now }).eq("workspace_id", account.workspaceId).eq("id", requestedProspectId).select("id").maybeSingle(),
+          supabaseAdmin.from("outreach_events").insert({ campaign_id: campaign.id, prospect_id: requestedProspectId, kind: "queued", metadata: { date: today, enrolment_id: enrolmentId, source: "prospects_tracker", campaignJoined: !previous } }),
+        ]);
+        const writeError = results.find((result) => result.error)?.error;
+        if (writeError) throw writeError;
+        if (!results[0].data) throw new Error("Queued prospect status was not confirmed");
+      }
       const directIsFollowUp = Boolean(previous?.last_sent_at) ||
         Number(previous?.current_step || 1) > 1;
       const queue = await loadQueue(account.userId, account.workspaceId);
@@ -764,6 +793,20 @@ export async function POST(req: NextRequest) {
       selection,
     });
   } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "failed to build queue" }, { status: 500 });
+    console.error("Outreach queue could not be completed", { code: error?.code, directQueueSaved, directAssignmentSaved });
+    return NextResponse.json(crmBlockerPayload({
+      code: directQueueSaved ? "outreach_queue_partial_save" : "outreach_queue_unconfirmed",
+      title: directQueueSaved ? "Lead added, but preparation could not finish" : "Outreach preparation could not be confirmed",
+      reason: directQueueSaved
+        ? "The campaign and queue entry were saved, but the activity log, lead status or refreshed list could not be confirmed"
+        : "LiveCoach could not complete the checks or save for this preparation request",
+      outcome: directQueueSaved
+        ? "Your saved campaign entry has not been removed. No email was sent by this action"
+        : directAssignmentSaved
+          ? "The lead is assigned to you. The campaign entry may already be saved, but could not be confirmed"
+          : "The final result could not be verified. No email was sent by this action",
+      nextAction: "Open Prospects or Today and check the saved lead before preparing again. Do not re-upload the file. If it is still blocked, share this support code with a workspace owner",
+      responsible: "system",
+    }), { status: 500 });
   }
 }

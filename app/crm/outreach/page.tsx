@@ -1,5 +1,6 @@
 "use client";
 import { outreachLastActivityAt } from "@/lib/outreach-last-activity";
+import { prospectCampaignChoice } from "@/lib/outreach-prospect-campaign";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -603,6 +604,7 @@ export default function OutreachPage() {
     cachedCampaigns?.selectedCampaignId || cachedQueue?.selectedCampaignId || ""
   );
   const [expandedCampaignId, setExpandedCampaignId] = useState("");
+  const [newLeadCampaignIds, setNewLeadCampaignIds] = useState<Record<string, string>>({});
   const [campaignEditorView, setCampaignEditorView] = useState<CampaignEditorView>("setup");
   const [canEditCampaignContent, setCanEditCampaignContent] = useState(
     cachedCampaigns?.canEditCampaignContent === true
@@ -1869,23 +1871,16 @@ export default function OutreachPage() {
   };
 
   const addProspectToTeamQueue = async (prospect: Prospect) => {
-    const campaignIds = prospect.outreach?.campaignIds || [];
-    const savedCampaignId = prospect.outreach?.enrolment?.campaign_id;
-    const prospectCampaign = campaigns.find(
-      (campaign) =>
-        campaign.status === "active" && campaign.id === savedCampaignId
-    ) || campaigns.find(
-      (campaign) =>
-        campaign.status === "active" && campaignIds.includes(campaign.id)
-    );
-    if (campaignIds.length && !prospectCampaign) {
+    const choice = prospectCampaignChoice(prospect, campaigns, newLeadCampaignIds[prospect.id] || activeCampaign?.id);
+    if (!choice.needsCampaign && !choice.campaign) {
       throw new Error("This prospect's campaign is not active");
     }
-    const targetCampaign = prospectCampaign || activeCampaign;
+    const targetCampaign = choice.campaign;
     if (!targetCampaign) throw new Error("Choose an active campaign first");
     const payload = {
       prospectId: prospect.id,
       campaignId: targetCampaign.id,
+      addToCampaign: choice.needsCampaign,
       limit: clampOutreachDailyLimit(targetCampaign.daily_limit),
     };
     try {
@@ -1921,7 +1916,7 @@ export default function OutreachPage() {
     try {
       if (!queue.some((row) => row.prospect?.id === prospect.id && row.status === "queued"))
         await addProspectToTeamQueue(prospect);
-      await loadCore();
+      await Promise.all([loadCore(), loadProspects()]);
       // This handler has already marked the row as `adding` while it creates
       // the queue item. Calling enqueuePrepare here would mistake that local
       // display state for an existing server job and return early, leaving the
@@ -2230,7 +2225,7 @@ export default function OutreachPage() {
       {loading ? <MatrixRain size="panel" messages={["loading outreach", "checking today's queue", "refreshing campaign activity"]} /> : null}
       {!loading && tabLoading ? <MatrixRain size="compact" messages={["loading this outreach view"]} /> : null}
 
-      {tab === "prospects" ? <StagedOutreachImports onApplied={loadProspects} /> : null}
+      {tab === "prospects" ? <StagedOutreachImports onApplied={async () => { setProspectCampaignId("all"); await loadProspects(); }} /> : null}
 
       {!loading && !tabLoading && tabDataReady && tab === "queue" ? <section data-sales-tour="outreach-queue">
         <RevenueToday />
@@ -2472,8 +2467,8 @@ export default function OutreachPage() {
             const openTab: Tab = prospect.last_reply_at ? "replies" : prospect.outreach?.latestMessage ? "activity" : "queue";
             const membershipIds = prospect.outreach?.campaignIds || [];
             const membershipCampaigns = campaigns.filter((campaign) => membershipIds.includes(campaign.id));
-            const savedCampaignId = prospect.outreach?.enrolment?.campaign_id;
-            const workCampaign = campaigns.find((campaign) => campaign.status === "active" && campaign.id === savedCampaignId) || membershipCampaigns.find((campaign) => campaign.status === "active") || (!membershipIds.length ? activeCampaign : null);
+            const campaignChoice = prospectCampaignChoice(prospect, campaigns, newLeadCampaignIds[prospect.id] || activeCampaign?.id);
+            const workCampaign = campaignChoice.campaign;
             const campaignReady = Boolean(workCampaign);
             const isMine = prospect.assigned_to_user_id === currentUser;
             const canClaim = !prospect.assigned_to_user_id && !canManageAssignments;
@@ -2487,7 +2482,17 @@ export default function OutreachPage() {
               <div><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Last activity</span><p className="text-xs text-bone/80">{formatActivityDate(lastActivity)}</p>{latestManualCall ? <p className="mt-1 line-clamp-2 text-[0.65rem] text-sky">☎ {latestManualCall.interpretation?.summary || latestManualCall.notePreview || "Manual call logged"}</p> : null}{prospect.next_action_at || prospect.outreach?.enrolment?.next_action_at ? <p className="mt-1 text-[0.65rem] text-amber">Next {formatActivityDate(prospect.next_action_at || prospect.outreach.enrolment.next_action_at)}</p> : null}</div>
               <div><span className="mb-1 block font-mono text-[0.48rem] uppercase text-muted sm:hidden">Owner</span>{canManageAssignments ? <select aria-label={`Owner for ${prospect.first_name} ${prospect.last_name}`} value={prospect.assigned_to_user_id || ""} onChange={(event) => updateAssignment(prospect.id, event.target.value)} className="min-h-10 w-full rounded-lg border border-edge bg-ink px-2 text-xs text-bone"><option value="">Unassigned</option>{team.map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}</select> : <span className={`inline-flex rounded-full border px-2 py-1 font-mono text-[0.49rem] uppercase ${prospect.assigned_to_user_id === currentUser ? "border-moss/45 bg-moss/10 text-moss" : "border-edge text-muted"}`}>{prospect.assigned_to_user_id === currentUser ? "Mine" : assignedMember?.name || "Unassigned"}</span>}</div>
               <div className="flex flex-wrap gap-2 sm:justify-end">
-                {!isMine ? canClaim ? <button type="button" onClick={() => updateAssignment(prospect.id, currentUser)} disabled={!!busy} className={`${button} min-h-10 px-3`}>Claim</button> : <span className="inline-flex min-h-10 items-center rounded-lg border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted">Assigned to {assignedMember?.name || "another user"}</span> : isBrainDirect && stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab("activity")} className={`${primary} min-h-10 px-3`}>{pendingStatus === "sent" ? "View sent email" : pendingStatus === "sending" ? "View sending email" : "View queued email"}</button> : !campaignReady && stage.key !== "suppressed" ? <span className="inline-flex min-h-10 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 font-mono text-[0.5rem] uppercase text-amber">{membershipCampaigns[0]?.name || "Campaign"} is not active</span> : canPrepare ? <button type="button" onClick={() => prepareFromProspects(prospect)} disabled={preparePending} className={`${primary} min-h-10 px-3`}>{prepareStatus === "adding" ? "Adding…" : prepareStatus === "researching" ? "Researching…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : "Queue research"}</button> : ["draft", "approved"].includes(stage.key) ? <button type="button" onClick={() => openProspectWork(prospect)} disabled={!!busy} className={`${primary} min-h-10 px-3`}>{busy === `prospect-open:${prospect.id}` ? "Opening…" : pendingStatus === "approved" ? "Review to send" : "Review draft"}</button> : stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab(openTab)} className={`${button} min-h-10 px-3`}>{openTab === "replies" ? "View reply" : "View history"}</button> : null}
+                {isMine && campaignChoice.needsCampaign && !isBrainDirect && (stage.key === "not_started" || stage.key === "queued") ? (
+                  <label className="w-full min-w-0 sm:max-w-48">
+                    <span className="mb-1 block font-mono text-[0.48rem] uppercase text-amber">Not in a campaign yet</span>
+                    <select aria-label={`Campaign for ${prospect.first_name} ${prospect.last_name}`} value={workCampaign?.id || ""} disabled={preparePending} onChange={(event) => setNewLeadCampaignIds((current) => ({ ...current, [prospect.id]: event.target.value }))} className="min-h-10 w-full rounded-lg border border-edge bg-ink px-2 text-xs text-bone">
+                      <option value="" disabled>Choose a campaign</option>
+                      {selectableCampaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+                    </select>
+                    <span className="mt-1 block text-[0.65rem] leading-4 text-muted">Add and prepare links this lead and prepares a draft. It does not send.</span>
+                  </label>
+                ) : null}
+                {!isMine ? canClaim ? <button type="button" onClick={() => updateAssignment(prospect.id, currentUser)} disabled={!!busy} className={`${button} min-h-10 px-3`}>Claim</button> : <span className="inline-flex min-h-10 items-center rounded-lg border border-edge px-3 font-mono text-[0.5rem] uppercase text-muted">Assigned to {assignedMember?.name || "another user"}</span> : isBrainDirect && stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab("activity")} className={`${primary} min-h-10 px-3`}>{pendingStatus === "sent" ? "View sent email" : pendingStatus === "sending" ? "View sending email" : "View queued email"}</button> : !campaignReady && stage.key !== "suppressed" ? <span className="inline-flex min-h-10 items-center rounded-lg border border-amber/45 bg-amber/10 px-3 font-mono text-[0.5rem] uppercase text-amber">{membershipCampaigns[0]?.name || "Campaign"} is not active</span> : canPrepare ? <button type="button" onClick={() => prepareFromProspects(prospect)} disabled={preparePending} className={`${primary} min-h-10 px-3`}>{prepareStatus === "adding" ? "Adding…" : prepareStatus === "researching" ? "Researching…" : prepareStatus === "queued" ? "Queued" : prepareStatus === "done" ? "Draft ready" : campaignChoice.needsCampaign ? "Add and prepare" : "Queue research"}</button> : ["draft", "approved"].includes(stage.key) ? <button type="button" onClick={() => openProspectWork(prospect)} disabled={!!busy} className={`${primary} min-h-10 px-3`}>{busy === `prospect-open:${prospect.id}` ? "Opening…" : pendingStatus === "approved" ? "Review to send" : "Review draft"}</button> : stage.key !== "suppressed" ? <button type="button" onClick={() => selectTab(openTab)} className={`${button} min-h-10 px-3`}>{openTab === "replies" ? "View reply" : "View history"}</button> : null}
                 {isMine && stage.key !== "suppressed" ? (
                   <details className="relative">
                     <summary className={`${button} flex min-h-10 cursor-pointer list-none items-center px-3 [&::-webkit-details-marker]:hidden`}>
@@ -2553,7 +2558,7 @@ export default function OutreachPage() {
                 ) : null}
               </div>
               {removalProspectId === prospect.id ? <div className="rounded-lg border border-rust/40 bg-rust/[0.07] p-3 sm:col-span-7"><p className="text-sm text-bone/80">Keep the history, but stop future outreach to:</p><div className="mt-2 flex flex-col gap-2 sm:flex-row"><button type="button" onClick={() => removeFromOutreach(prospect, "person")} disabled={!!busy} className={`${button} border-rust/50 text-rust`}>This person only</button>{prospect.company_domain ? <button type="button" onClick={() => removeFromOutreach(prospect, "company")} disabled={!!busy} className={`${button} border-rust/50 text-rust`}>Everyone at {prospect.company_name}</button> : null}<button type="button" onClick={() => setRemovalProspectId("")} className={button}>Cancel</button></div></div> : null}
-              {manualCallProspectId === prospect.id ? <div className="sm:col-span-7"><ProspectManualCall prospect={prospect} campaignId={workCampaign?.id || savedCampaignId || null} onCancel={() => setManualCallProspectId("")} onSaved={async () => { setManualCallProspectId(""); setNotice("Call saved. The next action is already in your work queue while the concise read finishes in the background."); await Promise.all([loadProspects(), loadCore(), loadMetrics()]); }} /></div> : null}
+              {manualCallProspectId === prospect.id ? <div className="sm:col-span-7"><ProspectManualCall prospect={prospect} campaignId={campaignChoice.callCampaignId} onCancel={() => setManualCallProspectId("")} onSaved={async () => { setManualCallProspectId(""); setNotice("Call saved. The next action is already in your work queue while the concise read finishes in the background."); await Promise.all([loadProspects(), loadCore(), loadMetrics()]); }} /></div> : null}
               {followUpProspectId === prospect.id ? <div className="sm:col-span-7"><ProspectFollowUpReminder prospect={prospect} onCancel={() => setFollowUpProspectId("")} onSaved={async (result) => { setFollowUpProspectId(""); setNotice(result.rescheduled ? "Follow-up reminder updated. The new date and time now apply in Today, To-dos and Calls." : "Follow-up reminder saved. It is now in Today, To-dos and Calls."); }} /></div> : null}
               {taskProspectId === prospect.id ? (
                 <div className="sm:col-span-7">
