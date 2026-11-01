@@ -119,6 +119,7 @@ const emailPull = compile('app/api/crm/email-pull/route.ts', {
   '@/lib/mail': { recentMessages: async () => { searched = true; return []; } },
   '@/lib/crm-blocker': { crmBlockerPayload: value => value },
   '@/lib/company-resolver': {}, '@/lib/company-identity': {}, '@/lib/openai': {}, '@/lib/usage': {}, crypto: {},
+  '@/lib/lead-clash': { automatedCompanyCreateHeld: async () => false },
   '@/lib/workstreams': {}, '@/lib/call-subject': {}, '@/lib/calendar-subject': {}, '@/lib/assigned-client-access': {},
 });
 const response = await emailPull.POST({ json: async () => ({ email: 'ALEX.OWNER@GMAIL.COM' }) });

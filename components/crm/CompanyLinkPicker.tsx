@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { crmFetch, type Company } from "@/lib/crm";
+import { CrmRequestError, crmFetch, type Company } from "@/lib/crm";
+import LeadClashCard from "@/components/crm/LeadClashCard";
+import type { LeadClashMatch } from "@/lib/lead-clash-rules";
 
 // Compact picker to link a call or task to an accessible CRM company. Callers
 // can disable company creation when a new record would be an unsafe side effect.
@@ -27,6 +29,7 @@ export default function CompanyLinkPicker({
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState("");
+  const [clash, setClash] = useState<LeadClashMatch[] | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -63,7 +66,7 @@ export default function CompanyLinkPicker({
     setOpen(false);
   };
 
-  const createAndPick = async () => {
+  const createAndPick = async (extra?: { acknowledgeClash: boolean; clashReason: string }) => {
     if (!allowCreate) return;
     const name = (creating ? newName : q).trim();
     if (!name) return;
@@ -72,13 +75,20 @@ export default function CompanyLinkPicker({
     try {
       const { company } = await crmFetch<{ company: Company }>(
         "/api/crm/companies",
-        { method: "POST", body: JSON.stringify({ name, stage: "New" }) }
+        { method: "POST", body: JSON.stringify({ name, stage: "New", ...extra }) }
       );
+      setClash(null);
       pick(company);
       setCreating(false);
       setNewName("");
     } catch (e: any) {
-      setError(e?.message || "That client could not be created. Try again.");
+      const matches = e instanceof CrmRequestError ? e.leadClash?.matches : null;
+      if (matches?.length) {
+        setClash(matches);
+        setError("");
+      } else {
+        setError(e?.message || "That client could not be created. Try again.");
+      }
     } finally {
       setBusy(false);
     }
@@ -122,19 +132,32 @@ export default function CompanyLinkPicker({
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") createAndPick();
+              if (e.key === "Enter") void createAndPick();
               if (e.key === "Escape") setCreating(false);
             }}
             placeholder="Client or contact name"
             className="w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-sage/60"
           />
+          {clash ? (
+            <div className="mt-2">
+              <LeadClashCard
+                matches={clash}
+                busy={busy}
+                confirmLabel="Create anyway"
+                onCancel={() => setClash(null)}
+                onProceed={(reason) =>
+                  createAndPick({ acknowledgeClash: true, clashReason: reason })
+                }
+              />
+            </div>
+          ) : null}
           {error && (
             <p className="mt-1.5 font-mono text-[0.55rem] text-rust">{error}</p>
           )}
           <div className="mt-2 flex gap-2">
             <button
               type="button"
-              onClick={createAndPick}
+              onClick={() => void createAndPick()}
               disabled={busy || !newName.trim()}
               className="rounded-full border border-sage/50 bg-sage/10 px-3 py-1.5 font-mono text-[0.56rem] uppercase tracking-wider text-sage transition hover:bg-sage/20 disabled:opacity-40"
             >

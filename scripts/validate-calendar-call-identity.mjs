@@ -155,6 +155,7 @@ async function runSync(owner) {
     '@/lib/calendar-sync-recovery': { shouldReopenScheduledCalendarCall: () => false },
     '@/lib/automatic-precall': { scheduleAutomaticNotetakersForUpcomingIds: async () => ({ eligible: 0, failed: 0 }) },
     '@/lib/recall-scheduled-bot': {}, '@vercel/functions': { waitUntil: () => {} },
+    '@/lib/lead-clash': { automatedCompanyCreateHeld: async () => false },
     '@/lib/calendar-sync-jobs': { requestCalendarSync: async () => {}, claimCalendarSync: async () => claimed ? null : (claimed = true, { requested_mode: 'near-term' }), finishCalendarSync: async () => {} },
     '@/lib/calendar-watches': { ensureCalendarWatches: async () => ({}) },
     '@/lib/request-scope': { isVerifiedServiceRequest: () => false },

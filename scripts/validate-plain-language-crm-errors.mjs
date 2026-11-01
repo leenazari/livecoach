@@ -79,6 +79,7 @@ const diagnostics = [];
 const crm = compile("lib/crm.ts", {
   "@/lib/crm-blocker": blockers,
   "@/lib/crm-blocker-diagnostics": { reportCrmBlocker: (...args) => diagnostics.push(args) },
+  "@/lib/lead-clash-rules": compile("lib/lead-clash-rules.ts"),
 });
 const Alert = compile("components/crm/CrmBlockerAlert.tsx", { "@/lib/crm": crm }).default;
 const root = createRoot(document.getElementById("root"));

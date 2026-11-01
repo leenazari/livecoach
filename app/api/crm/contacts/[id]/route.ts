@@ -7,6 +7,11 @@ import {
   validateContactStakeholderPatch,
   validateContactStakeholderValues,
 } from "@/lib/contact-stakeholder-fields";
+import {
+  domainFromEmail,
+  guardManualLeadClash,
+  linkedinValuesFromBody,
+} from "@/lib/lead-clash";
 
 export const runtime = "nodejs";
 
@@ -175,6 +180,34 @@ export async function PATCH(
       }
       patch.department_id = departmentId;
     }
+    const nextEmail = Object.prototype.hasOwnProperty.call(patch, "email")
+      ? patch.email
+      : current.email;
+    const linkedinChanged =
+      Object.prototype.hasOwnProperty.call(patch, "attributes") &&
+      linkedinValuesFromBody({ attributes: patch.attributes }).join("|") !==
+        linkedinValuesFromBody({ attributes: current.attributes }).join("|");
+    const identityChanged =
+      (Object.prototype.hasOwnProperty.call(patch, "email") &&
+        String(patch.email || "") !== String(current.email || "")) ||
+      (Object.prototype.hasOwnProperty.call(patch, "company_id") &&
+        patch.company_id !== current.company_id) ||
+      linkedinChanged;
+    if (identityChanged) {
+      const clashResponse = await guardManualLeadClash({
+        scope,
+        trigger: "contact_update",
+        domain: domainFromEmail(String(nextEmail || "")),
+        emails: nextEmail ? [String(nextEmail)] : [],
+        linkedin: linkedinValuesFromBody({
+          attributes: patch.attributes || current.attributes,
+        }),
+        excludeContactId: params.id,
+        body,
+      });
+      if (clashResponse) return clashResponse;
+    }
+
     if (Object.keys(patch).length === 0) {
       return NextResponse.json({ error: "nothing to update" }, { status: 400 });
     }
