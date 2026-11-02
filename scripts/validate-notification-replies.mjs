@@ -183,6 +183,8 @@ const taskEmail = compile("lib/task-email.ts", {
   "@/lib/usage": { logModelUsage: async () => {} },
   "@/lib/outreach-demo-reply-cta": { deduplicateOutreachEmailSignoff: ({ body }) => body },
   "@/lib/reply-meeting-options": options, "@/lib/reply-calendar": calendar,
+  "@/lib/email-reply-policy": compile("lib/email-reply-policy.ts"),
+  "@/lib/email-reply-policy-lookup": { loadEmailReplyPolicyGuidance: async () => "" },
 });
 const notification = compile("lib/notification-email.ts", {
   "@/lib/request-scope": { requireRequestScope: () => scope }, "@/lib/supabase": { supabaseService: client },
