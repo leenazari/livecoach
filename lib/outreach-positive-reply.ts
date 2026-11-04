@@ -15,6 +15,12 @@ import {
 import { getOptionalSalesProfile } from "@/lib/sales-profile";
 import { supabaseService } from "@/lib/supabase";
 import { logModelUsage } from "@/lib/usage";
+import {
+  appendEmailReplyPolicyGuidance,
+  applyPolicyGuidanceToDraft,
+  policySystemAddendum,
+} from "@/lib/email-reply-policy";
+import { loadEmailReplyPolicyGuidance } from "@/lib/email-reply-policy-lookup";
 
 type Scope = { userId: string; workspaceId: string };
 
@@ -114,15 +120,17 @@ export async function preparePositiveReplyForApproval(
   const emailSignoff =
     personalProfile.emailSignoff || sender.senderName.split(" ")[0];
   const firstName = clean(prospect.first_name || "there", 80) || "there";
+  const replyText = `${prospect.last_reply_text || ""}\n${prospect.reply_summary || ""}`;
+  const policyGuidance = await loadEmailReplyPolicyGuidance(scope, replyText).catch(() => "");
   const message = await openai.messages.create(
     {
       model: OPENAI_MODEL_PRO,
-      max_tokens: 800,
-      system: `Prepare two approval ready responses from ${sender.senderName} after a positive B2B reply about Interviewa. Return only JSON with subject, bodyText, voiceScript and reasoning. The email must acknowledge only what the person actually said, use the exact booking link once, contain 35 to 90 words, use short paragraphs, one clear next step, and be signed exactly "${emailSignoff}". End gently with "If the timing is not right, no problem and I won't follow up." The separate voice script must sound welcoming, upbeat, positive and natural. Start exactly "Hi ${firstName}, I hope you are doing well today." The opening must use the same steady conversational cadence as the rest, without a long pause. Aim for 80 to 120 words. Do not read out the booking URL, email opt out or subject. The synthetic voice must not claim to be ${sender.senderName}. Use "We are Interviewa" if the brand needs introducing. Use British English. Do not use hyphens, dashes or semicolons. Never invent what the recipient said, their needs, facts, results or urgency.`,
+      max_tokens: 800 + (policyGuidance ? 400 : 0),
+      system: `Prepare two approval ready responses from ${sender.senderName} after a positive B2B reply about Interviewa. Return only JSON with subject, bodyText, voiceScript and reasoning. The email must acknowledge only what the person actually said, use the exact booking link once, contain 35 to 90 words, use short paragraphs, one clear next step, and be signed exactly "${emailSignoff}". End gently with "If the timing is not right, no problem and I won't follow up." The separate voice script must sound welcoming, upbeat, positive and natural. Start exactly "Hi ${firstName}, I hope you are doing well today." The opening must use the same steady conversational cadence as the rest, without a long pause. Aim for 80 to 120 words. Do not read out the booking URL, email opt out or subject. The synthetic voice must not claim to be ${sender.senderName}. Use "We are Interviewa" if the brand needs introducing. Use British English. Do not use hyphens, dashes or semicolons. Never invent what the recipient said, their needs, facts, results or urgency.${policySystemAddendum(policyGuidance)}`,
       messages: [
         {
           role: "user",
-          content: `PERSON: ${prospect.first_name || ""} ${prospect.last_name || ""}, ${prospect.job_title || ""} at ${prospect.company_name || ""}\nTHEIR REPLY:\n${prospect.last_reply_text || prospect.reply_summary || "Positive reply received."}\nOUR PREVIOUS SUBJECT: ${lastSent?.subject || "Interviewa"}\nSAVED RESEARCH: ${JSON.stringify(enrolment.research || prospect.research || {}).slice(0, 2200)}\nBOOKING LINK: ${bookingUrl}`,
+          content: appendEmailReplyPolicyGuidance(`PERSON: ${prospect.first_name || ""} ${prospect.last_name || ""}, ${prospect.job_title || ""} at ${prospect.company_name || ""}\nTHEIR REPLY:\n${prospect.last_reply_text || prospect.reply_summary || "Positive reply received."}\nOUR PREVIOUS SUBJECT: ${lastSent?.subject || "Interviewa"}\nSAVED RESEARCH: ${JSON.stringify(enrolment.research || prospect.research || {}).slice(0, 2200)}\nBOOKING LINK: ${bookingUrl}`, policyGuidance),
         },
       ],
     },
@@ -141,12 +149,12 @@ export async function preparePositiveReplyForApproval(
     120
   );
   const bodyText = ensureOutreachEmailSimpleOptOut({
-    body: clean(parsed?.bodyText, 4000),
+    body: applyPolicyGuidanceToDraft(clean(parsed?.bodyText, 4000), policyGuidance),
     signoff: emailSignoff,
     maximumCharacters: 4000,
   });
   const voiceScript = normaliseOutreachVoiceScript(
-    clean(parsed?.voiceScript, 1200)
+    applyPolicyGuidanceToDraft(clean(parsed?.voiceScript, 1200), policyGuidance)
   );
   if (!bodyText || !bodyText.includes(bookingUrl)) {
     throw fail(502, "The booking reply did not pass its link check, try again");
