@@ -60,11 +60,11 @@ export const OPENAI_MODEL_PRO = pickModel(
 );
 export const OPENAI_MODEL_THINK = pickModel(
   process.env.OPENAI_MODEL_THINK,
-  "gpt-5.6-sol"
+  "gpt-6.1-sol"
 );
 export const OPENAI_MODEL_BRAIN = pickModel(
   process.env.OPENAI_MODEL_BRAIN,
-  "gpt-5.6-sol"
+  "gpt-6.1-sol"
 );
 
 function tierForModel(model: string): ModelTier {
@@ -91,7 +91,9 @@ function requestBody(body: LegacyRequest, stream: boolean) {
   // on hidden reasoning. Longer strategic calls get measured reasoning depth.
   const effort =
     maxOutput <= 500 || tier === "live"
-      ? "none"
+      // GPT-6.1 Sol requires at least low reasoning, including short calls
+      // and deployments that explicitly route another tier to Sol.
+      ? (/^gpt-6\.1-sol(?:-|$)/.test(body.model) ? "low" : "none")
       : tier === "pro"
       ? "low"
       : "medium";

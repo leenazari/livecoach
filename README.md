@@ -15,7 +15,7 @@ Built for a **GitHub → Vercel** workflow. No local dev needed.
 | -------------- | -------------------------------------- |
 | Frontend / API | Next.js 14 (App Router) on Vercel      |
 | Transcription  | Deepgram (live, browser → WebSocket)   |
-| Suggestions    | OpenAI **GPT-5.6** tiered router        |
+| Suggestions    | OpenAI GPT-5.6 Luna/Terra + **GPT-6.1 Sol** |
 | Store          | Supabase (text chunks; no vectors yet) |
 
 ---
@@ -102,7 +102,11 @@ exact LiveCoach user who connected it.
 ## Two things to verify on first run
 1. **Model strings** — `lib/openai.ts` reads `OPENAI_MODEL_LIVE`
    (default `gpt-5.6-luna`). Terra handles synthesis; Sol is reserved for
-   strategic research and brain-learning work.
+   strategic research and brain-learning work. `OPENAI_MODEL_THINK` and
+   `OPENAI_MODEL_BRAIN` default to `gpt-6.1-sol`. Short Sol requests use `low`
+   reasoning because this model does not support `none`; longer requests keep
+   `medium`. Explicit model environment overrides still take precedence, so
+   replace any deployed `gpt-5.6-sol` overrides before redeploying.
 2. **Deepgram auth** — browser connects via WebSocket subprotocol
    `["token", access_token]`. 401 on connect? Flip `"token"` → `"bearer"` in
    `components/InterviewConsole.tsx`.

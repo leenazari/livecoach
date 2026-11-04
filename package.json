@@ -6,6 +6,7 @@
     "node": "22.x"
   },
   "scripts": {
+    "validate:sol-migration": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-sol-migration.mjs",
     "validate:import-campaign-link": "node scripts/validate-imported-lead-campaign.mjs",
     "validate:notification-actions": "node scripts/validate-notification-actions.mjs",
     "validate:notification-replies": "node scripts/validate-notification-replies.mjs",

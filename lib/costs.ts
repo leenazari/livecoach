@@ -7,7 +7,8 @@
 //   Deepgram streaming (Nova): $0.0077 / min  (PER audio stream)
 //   GPT-5.6 Luna:  $0.20 / M input,  $1.20 / M output
 //   GPT-5.6 Terra: $2 / M input,     $12 / M output
-//   GPT-5.6 Sol:   $4 / M input,     $20 / M output
+//   GPT-6.1 Sol (November 2026): $2 / M input, $10 / M output
+//   GPT-6.1 Sol cache read: 0.05x input rate
 //   Prompt cache read: ~0.1x input rate;  cache write: ~1.25x input rate
 //   OpenAI web search: $0.01 / call, plus search content tokens
 //
@@ -34,13 +35,14 @@ export const RATES = {
   sonnetInPerM: 2.0,
   sonnetOutPerM: 12.0,
 
-  // GPT-5.6 Sol (the THINK tier + the brain's smart chat).
-  opusInPerM: 4.0,
-  opusOutPerM: 20.0,
+  // GPT-6.1 Sol (the THINK tier + the brain's smart chat).
+  opusInPerM: 2.0,
+  opusOutPerM: 10.0,
+  solCacheReadMultiplier: 0.05,
 
   // Kept as a compatibility label for any older stored usage rows.
-  fableInPerM: 4.0,
-  fableOutPerM: 20.0,
+  fableInPerM: 2.0,
+  fableOutPerM: 10.0,
 
   // Transport / real-time layer. ESTIMATES — verify against invoices.
   livekitPerHour: 1.5, // in-app two-party real-time
@@ -137,10 +139,13 @@ export function usageCostUSD(
   const cw = Number(usage.cache_creation_input_tokens) || 0;
   const cr = Number(usage.cache_read_input_tokens) || 0;
   const webSearchCalls = Math.max(0, Number(usage.web_search_calls) || 0);
+  const cacheReadMultiplier = model === "think" || model === "brain"
+    ? RATES.solCacheReadMultiplier
+    : RATES.haikuCacheReadPerM;
   return (
     (inp / 1_000_000) * inRate +
     (cw / 1_000_000) * inRate * RATES.haikuCacheWritePerM +
-    (cr / 1_000_000) * inRate * RATES.haikuCacheReadPerM +
+    (cr / 1_000_000) * inRate * cacheReadMultiplier +
     (out / 1_000_000) * outRate +
     webSearchCalls * RATES.webSearchPerCall
   );
