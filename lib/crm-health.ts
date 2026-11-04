@@ -33,7 +33,13 @@ export type HealthReport = {
 export type DuplicateCompany = {
   id: string;
   reason: string;
-  records: { id: string; name: string; updatedAt: string | null }[];
+  records: {
+    id: string;
+    name: string;
+    updatedAt: string | null;
+    ownerId?: string | null;
+    ownerName?: string | null;
+  }[];
 };
 
 type DuplicateCompanyInput = {
@@ -43,6 +49,8 @@ type DuplicateCompanyInput = {
   website?: string | null;
   profile?: Record<string, unknown> | null;
   updated_at?: string | null;
+  owner_id?: string | null;
+  owner_name?: string | null;
 };
 
 type DuplicateContactInput = {
@@ -138,7 +146,7 @@ export function findDuplicateCompanies(
   );
 
   return [...pairReasons.entries()]
-    .map(([id, reasons]) => {
+    .map(([id, reasons]): DuplicateCompany | null => {
       const [aId, bId] = id.split(":");
       const a = byId.get(aId);
       const b = byId.get(bId);
@@ -150,10 +158,12 @@ export function findDuplicateCompanies(
           id: company.id,
           name: company.name,
           updatedAt: company.updated_at || null,
+          ...(company.owner_id ? { ownerId: company.owner_id } : {}),
+          ...(company.owner_name ? { ownerName: company.owner_name } : {}),
         })),
       };
     })
-    .filter((row): row is DuplicateCompany => !!row)
+    .filter((row): row is DuplicateCompany => row !== null)
     .slice(0, Math.max(0, limit));
 }
 

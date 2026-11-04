@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
+  CrmRequestError,
   crmConfirmationError,
   crmFetch,
   type Company,
@@ -30,6 +31,8 @@ import {
 } from "@/lib/relationship-stages";
 import { capitaliseSentenceStarts } from "@/lib/text";
 import { clientScheduledCalls } from "@/lib/client-scheduled-call";
+import LeadClashCard from "@/components/crm/LeadClashCard";
+import type { LeadClashMatch } from "@/lib/lead-clash-rules";
 
 const inputCls =
   "w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none transition placeholder:text-muted/50 focus:border-amber/60";
@@ -135,6 +138,10 @@ export default function CompanyDetailPage() {
   const [cName, setCName] = useState("");
   const [cRole, setCRole] = useState("");
   const [cEmail, setCEmail] = useState("");
+  const [clash, setClash] = useState<null | {
+    target: "company" | "contact";
+    matches: LeadClashMatch[];
+  }>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -227,7 +234,7 @@ export default function CompanyDetailPage() {
     load();
   }, [load]);
 
-  const save = async () => {
+  const save = async (extra?: { acknowledgeClash: boolean; clashReason: string }) => {
     setSaving(true);
     setErr("");
     try {
@@ -235,13 +242,20 @@ export default function CompanyDetailPage() {
         `/api/crm/companies/${id}`,
         {
           method: "PATCH",
-          body: JSON.stringify({ ...core, attributes: attrs }),
+          body: JSON.stringify({ ...core, attributes: attrs, ...extra }),
         }
       );
       setCompany(company);
+      setClash(null);
       setSavedAt(new Date().toLocaleTimeString());
     } catch (e: any) {
-      setErr(e.message || "could not save");
+      const matches = e instanceof CrmRequestError ? e.leadClash?.matches : null;
+      if (matches?.length) {
+        setClash({ target: "company", matches });
+        setErr("");
+      } else {
+        setErr(e.message || "could not save");
+      }
     } finally {
       setSaving(false);
     }
@@ -262,7 +276,7 @@ export default function CompanyDetailPage() {
     }
   };
 
-  const addContact = async () => {
+  const addContact = async (extra?: { acknowledgeClash: boolean; clashReason: string }) => {
     if (!cName.trim()) return;
     try {
       const { contact } = await crmFetch<{ contact: Contact }>(
@@ -274,6 +288,7 @@ export default function CompanyDetailPage() {
             name: cName.trim(),
             role: cRole.trim() || undefined,
             email: cEmail.trim() || undefined,
+            ...extra,
           }),
         }
       );
@@ -281,8 +296,15 @@ export default function CompanyDetailPage() {
       setCName("");
       setCRole("");
       setCEmail("");
+      setClash(null);
     } catch (e: any) {
-      setErr(e.message || "could not add the contact");
+      const matches = e instanceof CrmRequestError ? e.leadClash?.matches : null;
+      if (matches?.length) {
+        setClash({ target: "contact", matches });
+        setErr("");
+      } else {
+        setErr(e.message || "could not add the contact");
+      }
     }
   };
 
@@ -651,7 +673,7 @@ export default function CompanyDetailPage() {
           ) : null}
           <button
             type="button"
-            onClick={save}
+            onClick={() => save()}
             disabled={saving || !access?.canEdit}
             className="min-h-10 flex-1 rounded-full border border-amber/60 bg-amber/15 px-4 py-2 font-mono text-[0.58rem] uppercase tracking-wider text-amber transition hover:bg-amber/25 disabled:opacity-40 sm:flex-none sm:px-5 sm:text-[0.62rem]"
           >
@@ -661,6 +683,21 @@ export default function CompanyDetailPage() {
       </header>
 
       {err && <p className="mb-3 font-mono text-[0.66rem] text-rust">{err}</p>}
+      {clash ? (
+        <div className="mb-3">
+          <LeadClashCard
+            matches={clash.matches}
+            busy={saving}
+            confirmLabel={clash.target === "contact" ? "Add contact anyway" : "Save anyway"}
+            onCancel={() => setClash(null)}
+            onProceed={(reason) =>
+              clash.target === "contact"
+                ? addContact({ acknowledgeClash: true, clashReason: reason })
+                : save({ acknowledgeClash: true, clashReason: reason })
+            }
+          />
+        </div>
+      ) : null}
 
       {bookedCalls.current.length > 0 && (
         <section id="client-scheduled-calls" className="mb-3 scroll-mt-20 rounded-xl border border-sage/45 bg-sage/[0.07] p-4">
@@ -1407,7 +1444,7 @@ export default function CompanyDetailPage() {
               </div>
               <button
                 type="button"
-                onClick={addContact}
+                onClick={() => addContact()}
                 disabled={!cName.trim()}
                 className="self-start rounded-full border border-sage/60 bg-sage/15 px-4 py-1.5 font-mono text-[0.6rem] uppercase tracking-wider text-sage transition hover:bg-sage/25 disabled:opacity-40"
               >

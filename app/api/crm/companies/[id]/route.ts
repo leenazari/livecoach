@@ -11,6 +11,7 @@ import {
 import { pickContactStakeholderAttributes } from "@/lib/contact-stakeholder-fields";
 
 import { loadTeamLeadCoverCompany } from "@/lib/team-lead-cover";
+import { guardManualLeadClash } from "@/lib/lead-clash";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -281,7 +282,7 @@ export async function PATCH(
     const body = await req.json();
     const { data: current, error: currentError } = await supabaseAdmin
       .from("companies")
-      .select("id,name,stage,profile,owner_id,workspace_id")
+      .select("id,name,domain,website,stage,profile,owner_id,workspace_id")
       .eq("id", params.id)
       .eq("workspace_id", scope.workspaceId)
       .maybeSingle();
@@ -378,6 +379,27 @@ export async function PATCH(
         ? new Date().toISOString()
         : null;
     }
+    const identityChanged =
+      ("name" in patch && patch.name !== current?.name) ||
+      ("domain" in patch && (patch.domain || null) !== (current?.domain || null)) ||
+      ("website" in patch && (patch.website || null) !== (current?.website || null));
+    if (identityChanged) {
+      const clashResponse = await guardManualLeadClash({
+        scope,
+        trigger: "company_update",
+        name: patch.name || current?.name || "",
+        domain:
+          "domain" in patch
+            ? patch.domain
+            : "website" in patch
+              ? patch.website
+              : current?.domain || current?.website,
+        excludeCompanyId: params.id,
+        body,
+      });
+      if (clashResponse) return clashResponse;
+    }
+
     if (Object.keys(patch).length === 0 && !removeFromPipeline) {
       return NextResponse.json(
         crmBlockerPayload({

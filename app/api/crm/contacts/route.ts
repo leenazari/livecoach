@@ -4,6 +4,11 @@ import { requireRequestScope } from "@/lib/request-scope";
 import { privateRecordFields } from "@/lib/record-scope";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 import { crmBlockerPayload } from "@/lib/crm-blocker";
+import {
+  domainFromEmail,
+  guardManualLeadClash,
+  linkedinValuesFromBody,
+} from "@/lib/lead-clash";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -163,6 +168,32 @@ export async function POST(req: NextRequest) {
         alreadyExists: true,
       });
     }
+    let companyName: string | null = null;
+    let companyDomain = domainFromEmail(email);
+    if (companyId) {
+      const { data: company, error: companyLookupError } = await supabaseAdmin
+        .from("companies")
+        .select("name,domain,website")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("id", companyId)
+        .maybeSingle();
+      if (!companyLookupError && company) {
+        companyName = company.name || null;
+        companyDomain = companyDomain || company.domain || company.website || null;
+      }
+    }
+    const clashResponse = await guardManualLeadClash({
+      scope,
+      trigger: "contact_create",
+      name: companyName,
+      domain: companyDomain,
+      emails: email ? [email] : [],
+      linkedin: linkedinValuesFromBody(body),
+      excludeCompanyId: companyId,
+      body,
+    });
+    if (clashResponse) return clashResponse;
+
     const row: Record<string, any> = {
       name,
       company_id: companyId,

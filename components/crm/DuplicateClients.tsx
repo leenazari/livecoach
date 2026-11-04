@@ -7,12 +7,25 @@ import { crmFetch } from "@/lib/crm";
 type Duplicate = {
   id: string;
   reason: string;
-  records: { id: string; name: string; updatedAt: string | null }[];
+  records: {
+    id: string;
+    name: string;
+    updatedAt: string | null;
+    ownerId?: string | null;
+    ownerName?: string | null;
+  }[];
+};
+
+type LeadClashState = {
+  enabled: boolean;
+  available: boolean;
+  forcedOff: boolean;
 };
 
 type ReviewRecord = {
   id: string;
   name: string;
+  ownerId?: string | null;
   domain: string | null;
   website: string | null;
   sector: string | null;
@@ -30,6 +43,7 @@ type ReviewRecord = {
 
 type Preview = {
   reason: string;
+  crossOwner?: boolean;
   keep: ReviewRecord;
   merge: ReviewRecord;
 };
@@ -110,11 +124,20 @@ export default function DuplicateClients() {
   const [merging, setMerging] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [leadClash, setLeadClash] = useState<LeadClashState | null>(null);
+  const [keepOwnerId, setKeepOwnerId] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const [excludeDomain, setExcludeDomain] = useState("");
 
   const loadDuplicates = () => {
     setLoading(true);
-    crmFetch<{ duplicates: Duplicate[] }>("/api/crm/duplicates")
-      .then((data) => setItems(data.duplicates || []))
+    crmFetch<{ duplicates: Duplicate[]; leadClash?: LeadClashState }>(
+      "/api/crm/duplicates?scope=workspace"
+    )
+      .then((data) => {
+        setItems(data.duplicates || []);
+        setLeadClash(data.leadClash || null);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -137,6 +160,7 @@ export default function DuplicateClients() {
         `/api/crm/duplicates/merge?keepId=${encodeURIComponent(keepId)}&mergeId=${encodeURIComponent(mergeId)}`
       );
       setPreview(data);
+      setKeepOwnerId(data.keep.ownerId || "");
     } catch (err: any) {
       setError(err?.message || "Could not prepare this review");
     } finally {
@@ -163,6 +187,8 @@ export default function DuplicateClients() {
           expectedMergeUpdatedAt: preview.merge.updatedAt,
           confirmed: true,
           confirmName: preview.keep.name,
+          acknowledgeIrreversible: true,
+          ...(preview.crossOwner && keepOwnerId ? { keepOwnerId } : {}),
         }),
       });
       setItems((current) => current.filter((item) => item.id !== activePair));
@@ -178,7 +204,41 @@ export default function DuplicateClients() {
     }
   };
 
-  if (!loading && !items.length && !notice) return null;
+  const setSwitch = async (enabled: boolean) => {
+    setSwitching(true);
+    setError("");
+    try {
+      const data = await crmFetch<{ leadClash: LeadClashState }>(
+        "/api/crm/lead-clash/settings",
+        { method: "POST", body: JSON.stringify({ enabled }) }
+      );
+      setLeadClash(data.leadClash);
+      loadDuplicates();
+    } catch (err: any) {
+      setError(err?.message || "The lead clash switch was not confirmed");
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  const exclude = async () => {
+    const domain = excludeDomain.trim();
+    if (!domain) return;
+    setError("");
+    try {
+      await crmFetch("/api/crm/lead-clash/exclusions", {
+        method: "POST",
+        body: JSON.stringify({ domain, reason: "Excluded from the duplicate report" }),
+      });
+      setExcludeDomain("");
+      setNotice(`Excluded ${domain}. Refresh the report after the next check.`);
+      loadDuplicates();
+    } catch (err: any) {
+      setError(err?.message || "The exclusion was not saved");
+    }
+  };
+
+  if (!loading && !items.length && !notice && !leadClash?.available) return null;
 
   return (
     <div
@@ -190,7 +250,49 @@ export default function DuplicateClients() {
       </p>
       <p className="mt-1 font-sans text-[0.76rem] leading-snug text-bone/65">
         Review both records, choose which one to keep, then approve the merge. Nothing merges automatically.
+        {leadClash?.enabled
+          ? " Cross-team matches are included. A merge across owners is irreversible; the before-state is saved for a manual restore."
+          : ""}
       </p>
+      {leadClash?.available ? (
+        <div className="mt-3 flex flex-col gap-2 rounded-lg border border-edge bg-ink/30 p-3">
+          <p className="font-sans text-xs leading-relaxed text-bone/70">
+            {leadClash.enabled
+              ? "Lead clash checks are on. New companies, contact identity edits, and calendar or email sync warn instead of quietly creating a second private company."
+              : "Lead clash checks are off, so company creation and calendar sync behave as they do today."}
+            {leadClash.forcedOff ? " The server environment is holding the checks off." : ""}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={switching || leadClash.forcedOff}
+              onClick={() => setSwitch(!leadClash.enabled)}
+              className="rounded-lg border border-amber/45 px-3 py-2 font-mono text-[0.56rem] uppercase tracking-wider text-amber disabled:opacity-40"
+            >
+              {switching
+                ? "Saving switch…"
+                : leadClash.enabled
+                  ? "Turn lead clash checks off"
+                  : "Turn lead clash checks on"}
+            </button>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              value={excludeDomain}
+              onChange={(event) => setExcludeDomain(event.target.value)}
+              placeholder="Exclude a test domain"
+              className="min-w-0 flex-1 rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone outline-none"
+            />
+            <button
+              type="button"
+              onClick={exclude}
+              className="rounded-lg border border-edge px-3 py-2 font-mono text-[0.56rem] uppercase tracking-wider text-muted hover:text-bone"
+            >
+              Exclude domain
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {notice ? (
         <p className="mt-3 rounded-lg border border-sage/35 bg-sage/10 px-3 py-2 font-sans text-sm text-sage">
@@ -221,6 +323,11 @@ export default function DuplicateClients() {
                     >
                       {record.name} ↗
                     </Link>
+                    {record.ownerName ? (
+                      <p className="mt-1 font-mono text-[0.55rem] uppercase tracking-wider text-muted">
+                        Owner {record.ownerName}
+                      </p>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => review(item, record.id)}
@@ -249,6 +356,27 @@ export default function DuplicateClients() {
                     <RecordSummary record={preview.keep} label="Keep" />
                     <RecordSummary record={preview.merge} label="Merge into kept record" />
                   </div>
+                  {preview.crossOwner ? (
+                    <label className="mt-3 block">
+                      <span className="mb-1 block font-mono text-[0.55rem] uppercase tracking-wider text-muted">
+                        Owner of the kept record
+                      </span>
+                      <select
+                        value={keepOwnerId}
+                        onChange={(event) => setKeepOwnerId(event.target.value)}
+                        className="w-full rounded-lg border border-edge bg-ink/60 px-3 py-2 font-sans text-sm text-bone"
+                      >
+                        {[preview.keep, preview.merge]
+                          .filter((record) => record.ownerId)
+                          .filter((record, index, list) => list.findIndex((item) => item.ownerId === record.ownerId) === index)
+                          .map((record) => (
+                            <option key={record.ownerId} value={record.ownerId || ""}>
+                              Keep owner of {record.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  ) : null}
                   <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-edge bg-ink/35 p-3">
                     <input
                       type="checkbox"
@@ -258,6 +386,9 @@ export default function DuplicateClients() {
                     />
                     <span className="font-sans text-xs leading-relaxed text-bone/75">
                       I have reviewed both records. Keep <strong className="text-bone">{preview.keep.name}</strong> and remove only the duplicate record after its full history has moved.
+                      {preview.crossOwner
+                        ? " This crosses owners and cannot be undone automatically. The before-state is saved for a manual restore."
+                        : ""}
                     </span>
                   </label>
                   <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

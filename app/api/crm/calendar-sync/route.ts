@@ -28,6 +28,7 @@ import { shouldReopenScheduledCalendarCall } from "@/lib/calendar-sync-recovery"
 import { scheduleAutomaticNotetakersForUpcomingIds } from "@/lib/automatic-precall";
 import { cancelScheduledNotetakers } from "@/lib/recall-scheduled-bot";
 import { waitUntil } from "@vercel/functions";
+import { automatedCompanyCreateHeld } from "@/lib/lead-clash";
 import { claimCalendarSync, finishCalendarSync, kickCalendarSync, requestCalendarSync } from "@/lib/calendar-sync-jobs";
 import { ensureCalendarWatches } from "@/lib/calendar-watches";
 import { isVerifiedServiceRequest } from "@/lib/request-scope";
@@ -233,7 +234,8 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
     // standard so the plan has context from the first invite.
     const resolveCompanyForEvent = async (
       atts: any[],
-      title: string
+      title: string,
+      event: { external_id?: string | null; meeting_url?: string | null } = {}
     ): Promise<string | null> => {
       const eventContext = { title };
       const link = inferLink(atts, attendeeConfig, eventContext);
@@ -247,6 +249,18 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
       if (!spec) return null;
       const existingId = attendeeConfig.companyByDomain.get(spec.domain);
       if (existingId) return existingId;
+      const held = await automatedCompanyCreateHeld({
+        workspaceId: scope.workspaceId,
+        actorUserId: scope.userId,
+        trigger: "calendar_sync",
+        name: spec.name,
+        domain: spec.domain,
+        emails: spec.email ? [spec.email] : [],
+        attendeeEmails: (atts || []).map((attendee) => attendee?.email),
+        externalIds: event.external_id ? [event.external_id] : [],
+        meetingUrls: event.meeting_url ? [event.meeting_url] : [],
+      });
+      if (held) return null;
       const { data: created } = await supabaseAdmin
         .from("companies")
         .insert({
@@ -322,7 +336,7 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
       // auto-creating a second company from the same attendee domain.
       let company_id = outreachProspect
         ? outreachContext?.companyId || null
-        : await resolveCompanyForEvent(r.attendees, r.title);
+        : await resolveCompanyForEvent(r.attendees, r.title, r);
       let intent: string | null = null;
       if (outreachContext) intent = firstOutreachCallIntent(outreachContext);
       // Only fall back to inherited curation when the guest list gave us
@@ -436,7 +450,7 @@ async function runCalendarSync(mode: CalendarSyncMode = "full") {
         ))
       )
         continue;
-      const companyId = await resolveCompanyForEvent(r.attendees, r.title);
+      const companyId = await resolveCompanyForEvent(r.attendees, r.title, r);
       if (companyId && companyId !== currentCompanyId)
         repairedCompany.set(r.external_id, companyId);
     }

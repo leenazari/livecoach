@@ -8,6 +8,7 @@ import {
   type CrmBlocker,
 } from "@/lib/crm-blocker";
 import { reportCrmBlocker } from "@/lib/crm-blocker-diagnostics";
+import { parseLeadClashMatches } from "@/lib/lead-clash-rules";
 
 export type FieldType =
   | "text"
@@ -172,17 +173,48 @@ export type CrmBlockerEventDetail = {
 export class CrmRequestError extends Error {
   status: number;
   blocker: CrmRequestBlocker | null;
+  leadClash: {
+    canProceed: boolean;
+    matches: {
+      otherUserId: string;
+      otherDisplayName: string;
+      companyName: string | null;
+      contactLabel: string | null;
+      lastTouchAt: string | null;
+      lastTouchKind: string | null;
+      nextTouchAt: string | null;
+      matchType: "person" | "domain" | "name";
+      matchValue: string | null;
+      otherCompanyId: string | null;
+      confidential: boolean;
+      disposition: "clash" | "shared";
+    }[];
+  } | null;
 
   constructor(
     message: string,
     status: number,
-    blocker: CrmRequestBlocker | null = null
+    blocker: CrmRequestBlocker | null = null,
+    leadClash: CrmRequestError["leadClash"] = null
   ) {
     super(message);
     this.name = "CrmRequestError";
     this.status = status;
     this.blocker = blocker;
+    this.leadClash = leadClash;
   }
+}
+
+function readLeadClash(value: unknown): CrmRequestError["leadClash"] {
+  if (!value || typeof value !== "object") return null;
+  const matches = parseLeadClashMatches(
+    (value as { matches?: unknown }).matches
+  ).filter((match) => match.disposition === "clash");
+  if (!matches.length) return null;
+  return {
+    canProceed: (value as { canProceed?: boolean }).canProceed !== false,
+    matches,
+  };
 }
 
 function hasStructuredBlocker(value: any): value is CrmRequestBlocker {
@@ -211,7 +243,12 @@ export function crmRequestErrorFromData(input: {
     const support = ["GET", "HEAD"].includes(method)
       ? ` Support code ${payload.blocker.code}.${payload.blocker.reference ? ` Reference ${payload.blocker.reference}.` : ""}`
       : "";
-    return new CrmRequestError(payload.error + support, status, payload.blocker);
+    return new CrmRequestError(
+      payload.error + support,
+      status,
+      payload.blocker,
+      readLeadClash(input.data?.leadClash)
+    );
   };
   if (hasStructuredBlocker(input.data?.blocker)) {
     const payload = crmBlockerPayload(input.data.blocker);

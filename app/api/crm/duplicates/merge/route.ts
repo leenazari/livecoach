@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findDuplicateCompanies } from "@/lib/crm-health";
-import { requireWorkspaceOwner, type RequestScope } from "@/lib/request-scope";
-import { supabaseAdmin } from "@/lib/supabase";
+import { isLeadClashEnabled } from "@/lib/lead-clash";
+import { crmBlockerPayload } from "@/lib/crm-blocker";
+import {
+  requireRequestScope,
+  requireWorkspaceOwner,
+  type RequestScope,
+} from "@/lib/request-scope";
+import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +47,7 @@ type PairCompany = {
   commercial_memory: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+  owner_id?: string | null;
 };
 
 const noStore = {
@@ -55,8 +62,24 @@ function validateIds(keepId: string, mergeId: string) {
   }
 }
 
+async function requireMergeActor() {
+  try {
+    return requireWorkspaceOwner();
+  } catch (error) {
+    const scope = requireRequestScope();
+    if (
+      scope.role === "manager" &&
+      scope.status === "active" &&
+      (await isLeadClashEnabled(scope.workspaceId))
+    ) {
+      return scope;
+    }
+    throw error;
+  }
+}
+
 async function loadPair(
-  scope: Pick<RequestScope, "userId" | "workspaceId">,
+  scope: Pick<RequestScope, "userId" | "workspaceId" | "role">,
   keepId: string,
   mergeId: string
 ) {
@@ -66,7 +89,7 @@ async function loadPair(
       supabaseAdmin
         .from("companies")
         .select(
-          "id,name,domain,website,sector,stage,notes,profile,attributes,email_context,commercial_memory,created_at,updated_at"
+          "id,name,domain,website,sector,stage,notes,profile,attributes,email_context,commercial_memory,created_at,updated_at,owner_id"
         )
         .eq("workspace_id", scope.workspaceId)
         .eq("owner_id", scope.userId)
@@ -82,9 +105,7 @@ async function loadPair(
   if (companyError) throw companyError;
   if (contactError) throw contactError;
   if (!companies || companies.length !== 2) {
-    const error = new Error("One of these client records no longer exists");
-    (error as any).status = 404;
-    throw error;
+    return loadCrossOwnerPair(scope, keepId, mergeId);
   }
 
   const duplicate = findDuplicateCompanies(companies, contacts || [], 5).find(
@@ -104,21 +125,79 @@ async function loadPair(
     keep: byId.get(keepId)!,
     merge: byId.get(mergeId)!,
     reason: duplicate.reason,
+    crossOwner: false,
+  };
+}
+
+async function loadCrossOwnerPair(
+  scope: Pick<RequestScope, "userId" | "workspaceId" | "role">,
+  keepId: string,
+  mergeId: string
+) {
+  if (
+    !(await isLeadClashEnabled(scope.workspaceId)) ||
+    (scope.role !== "owner" && scope.role !== "manager")
+  ) {
+    const error = new Error("One of these client records no longer exists");
+    (error as any).status = 404;
+    throw error;
+  }
+  const [{ data: companies, error: companyError }, { data: contacts, error: contactError }] =
+    await Promise.all([
+      supabaseService
+        .from("companies")
+        .select(
+          "id,name,domain,website,sector,stage,notes,profile,attributes,email_context,commercial_memory,created_at,updated_at,owner_id"
+        )
+        .eq("workspace_id", scope.workspaceId)
+        .in("id", [keepId, mergeId]),
+      supabaseService
+        .from("contacts")
+        .select("company_id,email")
+        .eq("workspace_id", scope.workspaceId)
+        .in("company_id", [keepId, mergeId])
+        .limit(1000),
+    ]);
+  if (companyError) throw companyError;
+  if (contactError) throw contactError;
+  if (!companies || companies.length !== 2) {
+    const error = new Error("One of these client records no longer exists");
+    (error as any).status = 404;
+    throw error;
+  }
+  const duplicate = findDuplicateCompanies(companies, contacts || [], 5).find(
+    (item) =>
+      item.records.some((record) => record.id === keepId) &&
+      item.records.some((record) => record.id === mergeId)
+  );
+  if (!duplicate) {
+    const error = new Error("These records no longer meet the safe duplicate rules");
+    (error as any).status = 409;
+    throw error;
+  }
+  const byId = new Map((companies as PairCompany[]).map((company) => [company.id, company]));
+  return {
+    keep: byId.get(keepId)!,
+    merge: byId.get(mergeId)!,
+    reason: duplicate.reason,
+    crossOwner: true,
   };
 }
 
 async function recordCounts(
-  scope: Pick<RequestScope, "userId" | "workspaceId">,
-  companyId: string
+  scope: Pick<RequestScope, "userId" | "workspaceId" | "role">,
+  companyId: string,
+  crossOwner = false
 ) {
+  const client = crossOwner ? supabaseService : supabaseAdmin;
   const rows = await Promise.all(
     COUNT_SOURCES.map(async (source) => {
-      let query = supabaseAdmin
+      let query = client
         .from(source.table)
         .select("*", { count: "exact", head: true })
         .eq("workspace_id", scope.workspaceId)
-        .eq("owner_id", scope.userId)
         .eq(source.column, companyId);
+      if (!crossOwner) query = query.eq("owner_id", scope.userId);
       if ("extra" in source) query = query.eq(source.extra[0], source.extra[1]);
       const { count, error } = await query;
       if (error) throw error;
@@ -132,6 +211,7 @@ function reviewRecord(company: PairCompany, counts: Awaited<ReturnType<typeof re
   return {
     id: company.id,
     name: company.name,
+    ownerId: company.owner_id || null,
     domain: company.domain,
     website: company.website,
     sector: company.sector,
@@ -151,18 +231,19 @@ function reviewRecord(company: PairCompany, counts: Awaited<ReturnType<typeof re
 
 export async function GET(req: NextRequest) {
   try {
-    const scope = requireWorkspaceOwner();
+    const scope = await requireMergeActor();
     const keepId = req.nextUrl.searchParams.get("keepId") || "";
     const mergeId = req.nextUrl.searchParams.get("mergeId") || "";
     const pair = await loadPair(scope, keepId, mergeId);
     const [keepCounts, mergeCounts] = await Promise.all([
-      recordCounts(scope, keepId),
-      recordCounts(scope, mergeId),
+      recordCounts(scope, keepId, pair.crossOwner),
+      recordCounts(scope, mergeId, pair.crossOwner),
     ]);
 
     return NextResponse.json(
       {
         reason: pair.reason,
+        crossOwner: pair.crossOwner,
         keep: reviewRecord(pair.keep, keepCounts),
         merge: reviewRecord(pair.merge, mergeCounts),
       },
@@ -178,11 +259,25 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const scope = requireWorkspaceOwner();
+    const scope = await requireMergeActor();
     const body = await req.json();
     const keepId = String(body.keepId || "");
     const mergeId = String(body.mergeId || "");
     const pair = await loadPair(scope, keepId, mergeId);
+
+    if (pair.crossOwner && body.acknowledgeIrreversible !== true) {
+      return NextResponse.json(
+        crmBlockerPayload({
+          code: "cross_owner_merge_unconfirmed",
+          title: "Cross-owner merge was not started",
+          reason: "Merging companies owned by different people is irreversible.",
+          nextAction: "Review both records, confirm the irreversible merge, then submit again. Nothing was changed.",
+          responsible: "owner",
+          outcome: "Nothing was changed.",
+        }),
+        { status: 400, headers: noStore }
+      );
+    }
 
     if (body.confirmed !== true || String(body.confirmName || "") !== pair.keep.name) {
       return NextResponse.json(
@@ -200,10 +295,104 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const keepOwnerId = typeof body.keepOwnerId === "string" ? body.keepOwnerId.trim() : "";
+    if (pair.crossOwner && keepOwnerId) {
+      if (!UUID_RE.test(keepOwnerId)) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "cross_owner_merge_owner_invalid",
+            title: "Merge was not started",
+            reason: "The owner to keep is not a valid team member.",
+            nextAction: "Choose the current owner of one of the two records. Nothing was changed.",
+            responsible: "user",
+            outcome: "Nothing was changed.",
+          }),
+          { status: 400, headers: noStore }
+        );
+      }
+      const { data: member, error: memberError } = await supabaseService
+        .from("workspace_members")
+        .select("user_id")
+        .eq("workspace_id", scope.workspaceId)
+        .eq("user_id", keepOwnerId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (memberError) throw memberError;
+      if (!member) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "cross_owner_merge_owner_invalid",
+            title: "Merge was not started",
+            reason: "The owner to keep is not an active member of this workspace.",
+            nextAction: "Choose an active teammate. Nothing was changed.",
+            responsible: "user",
+            outcome: "Nothing was changed.",
+          }),
+          { status: 400, headers: noStore }
+        );
+      }
+    }
+
+    let auditId: string | null = null;
+    if (pair.crossOwner) {
+      const { data: snapshots, error: snapshotError } = await supabaseService
+        .from("companies")
+        .select("*")
+        .eq("workspace_id", scope.workspaceId)
+        .in("id", [keepId, mergeId]);
+      if (snapshotError) throw snapshotError;
+      const beforeKeep = (snapshots || []).find((row: any) => row.id === keepId);
+      const beforeMerge = (snapshots || []).find((row: any) => row.id === mergeId);
+      if (!beforeKeep || !beforeMerge) {
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "cross_owner_merge_snapshot_missing",
+            title: "Merge was not started",
+            reason: "LiveCoach could not save the before-state of both company records.",
+            nextAction: "Refresh the review and try again. Nothing was merged.",
+            responsible: "system",
+            outcome: "Nothing was changed.",
+          }),
+          { status: 409, headers: noStore }
+        );
+      }
+      const { data: audit, error: auditError } = await supabaseService
+        .from("crm_company_merge_audit")
+        .insert({
+          workspace_id: scope.workspaceId,
+          actor_user_id: scope.userId,
+          keep_id: keepId,
+          merge_id: mergeId,
+          keep_owner_before: beforeKeep.owner_id || null,
+          merge_owner_before: beforeMerge.owner_id || null,
+          requested_keep_owner_id: keepOwnerId || beforeKeep.owner_id || null,
+          before_keep: beforeKeep,
+          before_merge: beforeMerge,
+        })
+        .select("id")
+        .single();
+      if (auditError || !audit?.id) {
+        console.error("Cross-owner merge snapshot was not saved", auditError?.code || auditError?.message);
+        return NextResponse.json(
+          crmBlockerPayload({
+            code: "cross_owner_merge_snapshot_missing",
+            title: "Merge was not started",
+            reason: "LiveCoach could not save the before-state of both company records.",
+            nextAction: "Refresh the review and try again. Nothing was merged.",
+            responsible: "system",
+            outcome: "Nothing was changed.",
+          }),
+          { status: 409, headers: noStore }
+        );
+      }
+      auditId = audit.id;
+    }
+
     const rpcName = pair.reason.includes("saved alias matches name")
       ? "merge_crm_companies_by_alias"
       : "merge_crm_companies";
-    const { data, error } = await supabaseAdmin.rpc(rpcName, {
+    const rpcClient = pair.crossOwner ? supabaseService : supabaseAdmin;
+    const { data, error } = await rpcClient.rpc(rpcName, {
       p_keep_id: keepId,
       p_merge_id: mergeId,
       p_expected_keep_updated_at: pair.keep.updated_at,
@@ -211,7 +400,40 @@ export async function POST(req: NextRequest) {
     });
     if (error) throw error;
 
-    return NextResponse.json({ ok: true, result: data }, { headers: noStore });
+    if (auditId) {
+      await supabaseService
+        .from("crm_company_merge_audit")
+        .update({ applied_at: new Date().toISOString() })
+        .eq("id", auditId)
+        .eq("workspace_id", scope.workspaceId);
+    }
+
+    let ownerUpdate: "unchanged" | "saved" | "not_confirmed" = "unchanged";
+    if (pair.crossOwner && keepOwnerId && keepOwnerId !== pair.keep.owner_id) {
+      const { data: owned, error: ownerError } = await supabaseService
+        .from("companies")
+        .update({ owner_id: keepOwnerId })
+        .eq("workspace_id", scope.workspaceId)
+        .eq("id", keepId)
+        .select("id")
+        .maybeSingle();
+      ownerUpdate = !ownerError && owned?.id ? "saved" : "not_confirmed";
+    }
+
+    return NextResponse.json(
+      {
+        ok: true,
+        result: data,
+        ownerUpdate,
+        ...(ownerUpdate === "not_confirmed"
+          ? {
+              warning:
+                "The duplicate was merged into the kept company. The owner change was not confirmed. Check the kept company before trying anything else.",
+            }
+          : {}),
+      },
+      { headers: noStore }
+    );
   } catch (err: any) {
     const message = err?.message || "failed to merge duplicate clients";
     const status = /changed|no longer meet/i.test(message)

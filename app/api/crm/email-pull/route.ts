@@ -26,6 +26,7 @@ import {
   emailMayInfluenceCompanyIntent,
 } from "@/lib/calendar-subject";
 import { privateRecordFields, resolveRecordScope } from "@/lib/record-scope";
+import { automatedCompanyCreateHeld } from "@/lib/lead-clash";
 import { loadAssignedClientAccess } from "@/lib/assigned-client-access";
 import { crmBlockerPayload } from "@/lib/crm-blocker";
 
@@ -1071,6 +1072,30 @@ export async function POST(req: NextRequest) {
         if (!savedThread) throw new Error("The relationship email context was not updated");
       }
     } else {
+      const held = await automatedCompanyCreateHeld({
+        workspaceId: scope.workspaceId,
+        actorUserId: scope.userId,
+        trigger: "email_pull",
+        name: companyName,
+        domain: isCompanyDomain ? domain : null,
+        emails: counterparty ? [counterparty] : [],
+      });
+      if (held) {
+        return NextResponse.json({
+          ok: true,
+          companyId: null,
+          workstreamId: workstream?.id || null,
+          name: companyName,
+          person: personName,
+          email: counterparty,
+          created: false,
+          leadClashHeld: true,
+          messages: msgs.length,
+          emailContext,
+          emailContextUpdatedAt: nowIso,
+          emailAnswer,
+        });
+      }
       const { data: ins, error: insertCompanyError } = await supabaseAdmin
         .from("companies")
         .insert({

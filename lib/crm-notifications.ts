@@ -3,7 +3,8 @@ export type CrmNotificationKind =
   | "important_email"
   | "lead_assigned"
   | "work_assigned"
-  | "chat_message";
+  | "chat_message"
+  | "lead_clash";
 
 export type NotificationPreferences = {
   replyAlerts: boolean;
@@ -66,6 +67,8 @@ export const notificationKindEnabled = (
   if (kind === "outreach_reply" || kind === "important_email")
     return preferences.replyAlerts;
   if (kind === "chat_message") return preferences.chatAlerts;
+  // Lead clashes reuse assignment alerts so existing preference rows keep working.
+  if (kind === "lead_clash") return preferences.assignmentAlerts;
   return preferences.assignmentAlerts;
 };
 

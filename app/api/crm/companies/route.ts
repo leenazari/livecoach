@@ -8,6 +8,7 @@ import {
 } from "@/lib/team-client-sharing";
 
 import { loadTeamLeadCoverCompanies } from "@/lib/team-lead-cover";
+import { guardManualLeadClash } from "@/lib/lead-clash";
 
 export const runtime = "nodejs";
 // Live CRM data: without force-dynamic Next caches this GET response and
@@ -124,6 +125,20 @@ export async function POST(req: NextRequest) {
         shared: true,
       });
     }
+
+    const clashResponse = await guardManualLeadClash({
+      scope,
+      trigger: "company_create",
+      name,
+      domain:
+        typeof body.domain === "string"
+          ? body.domain
+          : typeof body.website === "string"
+            ? body.website
+            : null,
+      body,
+    });
+    if (clashResponse) return clashResponse;
 
     // Generic client creation fails closed to private. Dedicated outreach and
     // approved sharing flows set team visibility explicitly, so a manually

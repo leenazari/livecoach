@@ -235,7 +235,9 @@ export default function NotificationAlerts({
                     ? "Important pipeline email"
                     : notification.kind === "outreach_reply"
                       ? "New outreach reply"
-                      : "New CRM notification"}
+                      : notification.kind === "lead_clash"
+                        ? "Lead clash"
+                        : "New CRM notification"}
               </p>
               <p className="mt-1 text-sm font-medium text-bone">{notification.title}</p>
               <p className="mt-1 line-clamp-3 text-xs leading-5 text-muted">
