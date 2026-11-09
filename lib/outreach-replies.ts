@@ -300,6 +300,21 @@ export async function processOutreachReplyMessage(input: {
     });
   }
 
+  if (["replied", "qualified", "suppressed"].includes(prospectStatus)) {
+    try {
+      const { writeAdamReplyStatus } = await import("@/lib/adam-outbound-server");
+      await writeAdamReplyStatus({
+        prospect,
+        status: prospectStatus,
+        summary: classified.summary,
+        senderUserId: input.sender.userId,
+        workspaceId: input.sender.workspaceId,
+      });
+    } catch (error) {
+      console.error("Adam sheet writeback failed", error);
+    }
+  }
+
   return {
     processed: true,
     category: classified.category,
