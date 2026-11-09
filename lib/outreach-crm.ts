@@ -10,6 +10,8 @@ import {
   verifiedCompanyResearchEvidence,
   verifiedJobResearchEvidence,
 } from "@/lib/job-research-sources";
+import { adamHandoverFields } from "@/lib/adam-outbound";
+import { createCanonicalOpenRevenueOpportunity } from "@/lib/canonical-opportunity";
 
 const asText = (value: any, max = 1000) => String(value || "").trim().slice(0, max);
 
@@ -328,6 +330,9 @@ export async function ensureOutreachCompany(
     prospect
   );
   const resolution = await resolveOutreachCompany(prospect, options);
+  const adamFields = prospect.source_metadata?.campaign_slug === "adam_daily_leads"
+    ? adamHandoverFields(prospect)
+    : null;
   let company = resolution.company;
   let companyId = company?.id || null;
   let created = false;
@@ -376,10 +381,13 @@ export async function ensureOutreachCompany(
         sector: prospect.industry || null,
         // A booked first conversation is discovery, not proof of qualification.
         stage: "Discovery",
-        profile: {
-          auto_created_from: "outreach",
-          outreach_prospect_id: prospect.id,
-        },
+        notes: adamFields?.company.notes || null,
+        profile: adamFields
+          ? { ...adamFields.company.profile, outreach_prospect_id: prospect.id }
+          : {
+              auto_created_from: "outreach",
+              outreach_prospect_id: prospect.id,
+            },
         visibility: "team",
       })
       .select("*")
@@ -409,10 +417,12 @@ export async function ensureOutreachCompany(
         role: prospect.job_title || null,
         email: prospect.email,
         sector: prospect.industry || null,
-        attributes: {
-          source: "outreach",
-          personLinkedIn: prospect.person_linkedin_url || null,
-        },
+        attributes: adamFields
+          ? adamFields.contact.attributes
+          : {
+              source: "outreach",
+              personLinkedIn: prospect.person_linkedin_url || null,
+            },
         visibility: "team",
       })
       .select("id")
@@ -430,14 +440,15 @@ export async function ensureOutreachCompany(
     prospect.created_at ||
     new Date().toISOString();
   if (contactId) {
-    const existingAttributes =
+    const existingAttributes: Record<string, any> =
       contacts?.[0]?.attributes && typeof contacts[0].attributes === "object"
         ? contacts[0].attributes
         : {};
     const nextAttributes = {
         ...existingAttributes,
-        source: "outreach",
-        personLinkedIn: prospect.person_linkedin_url || null,
+        source: adamFields && !existingAttributes.source ? "Adam outbound" : existingAttributes.source || "outreach",
+        personLinkedIn: existingAttributes.personLinkedIn || prospect.person_linkedin_url || null,
+        phone: existingAttributes.phone || adamFields?.contact.attributes.phone || null,
         research: {
           ...research,
           subject: fullName,
@@ -557,7 +568,7 @@ export async function ensureOutreachCompany(
       prospectId: prospect.id,
       research,
       replyCategory: prospect.reply_category,
-      source: "Interviewa outreach",
+      source: adamFields ? "Adam outbound" : "Interviewa outreach",
       updatedAt: contextUpdatedAt,
       dealValueDeferred: true,
       latestManualCall: latestManualCall
@@ -573,14 +584,33 @@ export async function ensureOutreachCompany(
       relationships,
     },
   };
+  if (adamFields) {
+    const profile = nextProfile as Record<string, any>;
+    profile.source = profile.source || "Adam outbound";
+    profile.auto_created_from = profile.auto_created_from || "adam_outbound";
+    profile.companyLinkedIn = profile.companyLinkedIn || adamFields.company.profile.companyLinkedIn;
+    profile.employeeRange = profile.employeeRange || adamFields.company.profile.employeeRange;
+    profile.location = profile.location || adamFields.company.profile.location;
+    if (!profile.research.background && adamFields.company.notes) {
+      profile.research.background = adamFields.company.notes;
+    }
+  }
+  const adamCompanyFill: Record<string, unknown> = {};
+  if (adamFields) {
+    if (!company?.sector && adamFields.company.sector) adamCompanyFill.sector = adamFields.company.sector;
+    if (!company?.website && adamFields.company.website) adamCompanyFill.website = adamFields.company.website;
+    if (!company?.domain && adamFields.company.domain) adamCompanyFill.domain = adamFields.company.domain;
+    if (!company?.notes && adamFields.company.notes) adamCompanyFill.notes = adamFields.company.notes;
+  }
   const companyChanged =
     company?.stage !== nextStage ||
     company?.email_context !== nextEmailContext ||
     JSON.stringify(existingProfile) !== JSON.stringify(nextProfile);
   const writes: PromiseLike<any>[] = [];
-  if (companyChanged) {
+  if (companyChanged || Object.keys(adamCompanyFill).length) {
     writes.push(
       supabaseAdmin.from("companies").update({
+        ...adamCompanyFill,
         stage: nextStage,
         email_context: nextEmailContext,
         email_context_updated_at: contextUpdatedAt,
@@ -598,6 +628,22 @@ export async function ensureOutreachCompany(
     );
   }
   await Promise.all(writes);
+
+  if (adamFields && reason === "interested" && companyId && prospect.workspace_id) {
+    try {
+      await createCanonicalOpenRevenueOpportunity(
+        {
+          id: companyId,
+          workspace_id: prospect.workspace_id,
+          owner_id: prospect.owner_id,
+          visibility: "team",
+        },
+        adamFields.opportunity
+      );
+    } catch (error) {
+      console.error("Adam client was saved, but the opportunity was not confirmed", error);
+    }
+  }
 
   if (created) {
     await supabaseAdmin.from("outreach_events").insert({
