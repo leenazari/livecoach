@@ -81,6 +81,13 @@ export type AdamSheetLead = {
   emailSource: string | null;
   decisionMakerSubject: string | null;
   decisionMakerBody: string | null;
+  sector: string | null;
+  companySize: string | null;
+  location: string | null;
+  city: string | null;
+  country: string | null;
+  businessDescription: string | null;
+  companyLinkedIn: string | null;
 };
 
 export type AdamWorkspaceMember = {
@@ -334,6 +341,81 @@ function cell(row: unknown[], index: number) {
   return clean(row[index], 2000);
 }
 
+function headerKey(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_/]+/g, " ")
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function headerIndex(row: unknown[]) {
+  const index = new Map<string, number>();
+  row.forEach((value, position) => {
+    const key = headerKey(value);
+    if (key && !index.has(key)) index.set(key, position);
+  });
+  return index;
+}
+
+function headerPosition(headers: Map<string, number>, aliases: string[]) {
+  for (const [key, position] of headers) {
+    if (aliases.some((alias) => key === alias || key.startsWith(`${alias} `))) return position;
+  }
+  return null;
+}
+
+function namedCell(row: unknown[], headers: Map<string, number>, aliases: string[]) {
+  const position = headerPosition(headers, aliases);
+  return position == null ? null : cell(row, position);
+}
+
+function namedOrPositional(
+  row: unknown[],
+  headers: Map<string, number>,
+  aliases: string[],
+  positional: number
+) {
+  const position = headerPosition(headers, aliases);
+  return cell(row, position == null ? positional : position);
+}
+
+export function splitAdamLocation(value: string | null) {
+  const text = String(value || "").trim();
+  if (!text) return { city: null as string | null, country: null as string | null };
+  const parts = text.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return { city: text.slice(0, 120), country: null };
+  return {
+    city: parts[0].slice(0, 120),
+    country: parts.slice(1).join(", ").slice(0, 120),
+  };
+}
+
+export const ADAM_SHEET_EXTRA_COLUMNS = [
+  {
+    name: "Sector",
+    allowed: "Free text, for example Hospitality, Recruitment, Dental or Trades. Blank is allowed.",
+  },
+  {
+    name: "Company size",
+    allowed: "Free text, for example 1-10, 11-50, 51-200, 201-500 or 500+. Blank is allowed.",
+  },
+  {
+    name: "Location",
+    allowed: "Free text, preferably City, Country. Blank is allowed.",
+  },
+  {
+    name: "Business description",
+    allowed: "One or two sentences on what the business does. Blank is allowed.",
+  },
+  {
+    name: "Company LinkedIn URL",
+    allowed: "An https LinkedIn company URL, or blank.",
+  },
+] as const;
+
 export function parseAdamSheet(values: unknown[]): {
   leads: AdamSheetLead[];
   headerSkipped: boolean;
@@ -344,6 +426,7 @@ export function parseAdamSheet(values: unknown[]): {
   const first = asRow(rows[0]);
   const headerSkipped = /date/i.test(String(first[0] || "")) ||
     /company/i.test(String(first[1] || ""));
+  const headers = headerSkipped ? headerIndex(first) : new Map<string, number>();
   if (headerSkipped) start = 1;
   const leads: AdamSheetLead[] = [];
   let truncated = false;
@@ -356,16 +439,27 @@ export function parseAdamSheet(values: unknown[]): {
       truncated = true;
       break;
     }
-    const contact = cell(row, 3);
+    const contact = namedOrPositional(row, headers, ["contact"], 3);
     const person = splitPerson(contact);
-    const website = cell(row, 2);
-    const generalEmail = normaliseAdamEmail(cell(row, 14));
-    const decisionMakerEmail = normaliseAdamEmail(cell(row, 19));
+    const website = namedOrPositional(row, headers, ["website"], 2);
+    const generalEmail = normaliseAdamEmail(
+      namedOrPositional(row, headers, ["email address", "general email"], 14)
+    );
+    const decisionMakerEmail = normaliseAdamEmail(
+      namedOrPositional(row, headers, ["decision maker email"], 19)
+    );
     const domain =
       normaliseWebsiteDomain(website) ||
       normaliseWebsiteDomain(generalEmail?.split("@")[1]) ||
       normaliseWebsiteDomain(decisionMakerEmail?.split("@")[1]);
-    const linkedinUrl = cell(row, 5);
+    const linkedinUrl = namedOrPositional(row, headers, ["linkedin url", "linkedin"], 5);
+    const location = namedCell(row, headers, ["location", "city"]);
+    const place = splitAdamLocation(location);
+    const companyLinkedIn = namedCell(row, headers, [
+      "company linkedin url",
+      "company linkedin",
+      "linkedin company",
+    ]);
     leads.push({
       rowNumber: index + 1,
       company: company || "",
@@ -394,6 +488,13 @@ export function parseAdamSheet(values: unknown[]): {
       emailSource: cell(row, 20),
       decisionMakerSubject: cell(row, 21),
       decisionMakerBody: cleanBlock(row[22], 4000),
+      sector: namedCell(row, headers, ["sector", "industry"]),
+      companySize: namedCell(row, headers, ["company size", "employee size", "employees", "size"]),
+      location,
+      city: place.city,
+      country: place.country,
+      businessDescription: namedCell(row, headers, ["business description", "description", "about"]),
+      companyLinkedIn,
     });
   }
   return { leads, headerSkipped, truncated };
@@ -583,11 +684,13 @@ export function decideAdamLead(input: {
       `${lead.company} matches a CRM company that is not a new lead, or it already has an open opportunity.`,
       "Open the existing company and its pipeline before adding another cold email."
     );
-  } else if (pageStatusKey(lead.pageStatus) === "sent") {
+  } else if (pageStatusKey(lead.pageStatus) === "sent" || pageStatusKey(lead.pageStatus) === "live") {
     leadHold = hold(
-      "already_sent_on_sheet",
-      "The sheet page status is sent, so LiveCoach will not draft another email from this row.",
-      "Confirm whether that email already went out before drafting anything new."
+      "already_contacted_on_sheet",
+      pageStatusKey(lead.pageStatus) === "live"
+        ? "The sheet page status is live, so this lead is treated as already contacted."
+        : "The sheet page status is sent, so this lead is treated as already contacted.",
+      "Confirm the earlier email before drafting anything new."
     );
   }
   const sheetStatus = prospectStatusFromSheet(lead.sheetStatus);
@@ -726,8 +829,89 @@ export function adamMetadataFromLead(input: {
     general_body: lead.generalBody,
     decision_maker_subject: lead.decisionMakerSubject,
     decision_maker_body: lead.decisionMakerBody,
+    sector: lead.sector,
+    company_size: lead.companySize,
+    location: lead.location,
+    business_description: lead.businessDescription,
+    company_linkedin: lead.companyLinkedIn,
     owner_note: plan.ownerNote,
     adam_hold: plan.audiences.find((item) => item.audience === audience)?.hold || plan.hold,
+  };
+}
+
+export function adamCompanyNotes(prospect: {
+  source_metadata?: Record<string, unknown> | null;
+}) {
+  const meta = prospect.source_metadata || {};
+  const text = (key: string) => {
+    const value = meta[key];
+    return typeof value === "string" && value.trim() ? value.trim() : "";
+  };
+  return [
+    text("business_description") ? `Business: ${text("business_description")}` : "",
+    text("why_adam_fits") ? `Why Adam fits: ${text("why_adam_fits")}` : "",
+    text("signal") ? `Buying signal: ${text("signal")}` : "",
+    text("signal_link") ? `Signal link: ${text("signal_link")}` : "",
+    text("demo_link") ? `Demo: ${text("demo_link")}` : "",
+  ].filter(Boolean).join("\n\n").slice(0, 4000);
+}
+
+export function adamHandoverFields(prospect: {
+  company_name?: string | null;
+  company_domain?: string | null;
+  website?: string | null;
+  industry?: string | null;
+  employee_range?: string | null;
+  city?: string | null;
+  country?: string | null;
+  company_linkedin_url?: string | null;
+  phone?: string | null;
+  person_linkedin_url?: string | null;
+  job_title?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  email?: string | null;
+  source_metadata?: Record<string, unknown> | null;
+}) {
+  const notes = adamCompanyNotes(prospect);
+  const location = [prospect.city, prospect.country].filter(Boolean).join(", ");
+  const website = prospect.website || (prospect.company_domain ? `https://${prospect.company_domain}` : null);
+  const name = [prospect.first_name, prospect.last_name].filter(Boolean).join(" ").trim() || prospect.email || "";
+  return {
+    company: {
+      name: prospect.company_name || "",
+      domain: prospect.company_domain || null,
+      website,
+      sector: prospect.industry || null,
+      stage: "Discovery",
+      notes: notes || null,
+      profile: {
+        source: "Adam outbound",
+        auto_created_from: "adam_outbound",
+        companyLinkedIn: prospect.company_linkedin_url || null,
+        employeeRange: prospect.employee_range || null,
+        location: location || null,
+      },
+    },
+    contact: {
+      name,
+      role: prospect.job_title || null,
+      email: prospect.email || null,
+      sector: prospect.industry || null,
+      attributes: {
+        source: "Adam outbound",
+        personLinkedIn: prospect.person_linkedin_url || null,
+        phone: prospect.phone || null,
+      },
+    },
+    opportunity: {
+      title: `Adam for ${prospect.company_name || "this company"}`.slice(0, 180),
+      detail: notes || null,
+      source: "Adam outbound",
+      pipelineStage: "discovery" as const,
+      surfacedByAi: false,
+      rationale: "Created when an Adam outbound reply showed interest.",
+    },
   };
 }
 
@@ -750,6 +934,7 @@ export function leadFromProspect(prospect: {
   };
   const contact = [prospect.first_name, prospect.last_name].filter(Boolean).join(" ") || null;
   const linkedinUrl = prospect.person_linkedin_url || null;
+  const place = splitAdamLocation(text("location"));
   return {
     rowNumber: Number(meta.sheet_row) || 0,
     company: String(prospect.company_name || ""),
@@ -769,6 +954,13 @@ export function leadFromProspect(prospect: {
     ownerName: text("sheet_owner_name"),
     notes: text("sheet_notes"),
     phone: prospect.phone || null,
+    sector: text("sector"),
+    companySize: text("company_size"),
+    location: text("location"),
+    city: place.city,
+    country: place.country,
+    businessDescription: text("business_description"),
+    companyLinkedIn: text("company_linkedin"),
     generalEmail: text("general_email") || (meta.audience === "general_inbox" ? normaliseAdamEmail(prospect.email) : null),
     demoLink: text("demo_link"),
     generalSubject: text("general_subject"),

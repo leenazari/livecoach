@@ -351,7 +351,7 @@ export async function syncAdamSheet(actor: Actor) {
   let members: Awaited<ReturnType<typeof workspaceMembers>> = [];
   try {
     [prospects, contacts, members, touches] = await Promise.all([
-      rowsByEmail("outreach_prospects", emails, "id,email,person_linkedin_url,status,source_metadata,assigned_to_user_id,company_name,company_domain,website,phone,job_title,first_name,last_name"),
+      rowsByEmail("outreach_prospects", emails, "id,email,person_linkedin_url,company_linkedin_url,status,source_metadata,assigned_to_user_id,company_name,company_domain,website,phone,job_title,first_name,last_name,industry,employee_range,city,country"),
       rowsByEmail("contacts", emails, "email"),
       workspaceMembers(actor),
       sendPilotTouches(actor, emails, linkedins),
@@ -538,6 +538,11 @@ async function saveAdamAudience(input: {
     website: preferText(input.lead.website, input.existing?.website),
     phone: preferText(input.lead.phone, input.existing?.phone),
     person_linkedin_url: preferText(input.lead.linkedinUrl, input.existing?.person_linkedin_url),
+    company_linkedin_url: preferText(input.lead.companyLinkedIn, input.existing?.company_linkedin_url),
+    industry: preferText(input.lead.sector, input.existing?.industry),
+    employee_range: preferText(input.lead.companySize, input.existing?.employee_range),
+    city: preferText(input.lead.city, input.existing?.city),
+    country: preferText(input.lead.country, input.existing?.country),
     status: input.hold?.code === "do_not_contact" && status !== "qualified" && status !== "replied" ? "suppressed" : status,
     source_file: "Adam daily leads",
     source_sheet: "Leads",
@@ -982,7 +987,7 @@ async function ensureDraftEnrolment(
 
 async function liveAdamHold(actor: Actor, prospect: any, lead: AdamSheetLead): Promise<AdamHold | null> {
   const stored = prospect.source_metadata?.adam_hold;
-  if (stored && ["do_not_contact", "already_sent_on_sheet", "already_contacted"].includes(stored.code)) {
+  if (stored && ["do_not_contact", "already_sent_on_sheet", "already_contacted_on_sheet", "already_contacted"].includes(stored.code)) {
     return stored as AdamHold;
   }
   const email = normaliseAdamEmail(prospect.email);

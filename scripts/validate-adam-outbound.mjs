@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import {
   ADAM_CAMPAIGN_SLUG,
+  adamCompanyNotes,
   adamDraftFacts,
+  adamHandoverFields,
   adamLinkedinKey,
   adamOutboundPlaybook,
   adamSheetNote,
@@ -128,7 +130,69 @@ const sentHeld = decideAdamLead({
   ...baseInput,
   lead: { ...parsed.leads[0], pageStatus: "sent" },
 });
-assert.equal(sentHeld.hold.code, "already_sent_on_sheet");
+assert.equal(sentHeld.hold.code, "already_contacted_on_sheet");
+const liveHeld = decideAdamLead({
+  ...baseInput,
+  lead: { ...parsed.leads[0], pageStatus: "live" },
+});
+assert.equal(liveHeld.hold.code, "already_contacted_on_sheet");
+assert.match(liveHeld.hold.reason, /live/);
+
+const extraHeader = [...header, "Sector", "Company size", "Location", "Business description", "Company LinkedIn URL"];
+const extraRow = [...row, "Hospitality", "11-50", "York, UK", "A seaside hotel.", "https://www.linkedin.com/company/northwind"];
+const extra = parseAdamSheet([extraHeader, extraRow]);
+assert.equal(extra.leads[0].sector, "Hospitality");
+assert.equal(extra.leads[0].companySize, "11-50");
+assert.equal(extra.leads[0].city, "York");
+assert.equal(extra.leads[0].country, "UK");
+assert.equal(extra.leads[0].businessDescription, "A seaside hotel.");
+assert.equal(extra.leads[0].companyLinkedIn, "https://www.linkedin.com/company/northwind");
+assert.equal(extra.leads[0].domain, "northwind.example");
+const oldSheet = parseAdamSheet([header, row]);
+assert.equal(oldSheet.leads[0].sector, null);
+assert.equal(oldSheet.leads[0].businessDescription, null);
+
+const handover = adamHandoverFields({
+  company_name: "Northwind",
+  company_domain: "northwind.example",
+  website: "https://northwind.example",
+  industry: "Hospitality",
+  employee_range: "11-50",
+  city: "York",
+  country: "UK",
+  company_linkedin_url: "https://www.linkedin.com/company/northwind",
+  phone: "01234567890",
+  person_linkedin_url: "https://www.linkedin.com/in/ada",
+  job_title: "Owner",
+  first_name: "Ada",
+  last_name: "Lovelace",
+  email: "ada@northwind.example",
+  source_metadata: {
+    business_description: "A seaside hotel.",
+    why_adam_fits: "Missed calls are up 30 percent",
+    signal: "Hiring a receptionist",
+    demo_link: "https://demo.example/northwind",
+  },
+});
+assert.equal(handover.company.sector, "Hospitality");
+assert.equal(handover.company.stage, "Discovery");
+assert.equal(handover.company.profile.source, "Adam outbound");
+assert.equal(handover.company.profile.employeeRange, "11-50");
+assert.equal(handover.company.profile.location, "York, UK");
+assert.match(handover.company.notes, /Why Adam fits/);
+assert.match(adamCompanyNotes({ source_metadata: handover ? {
+  business_description: "A seaside hotel.",
+  why_adam_fits: "Missed calls are up 30 percent",
+  signal: "Hiring a receptionist",
+  demo_link: "https://demo.example/northwind",
+} : {} }), /Demo:/);
+assert.equal(handover.contact.attributes.source, "Adam outbound");
+assert.equal(handover.contact.attributes.phone, "01234567890");
+assert.equal(handover.opportunity.pipelineStage, "discovery");
+assert.equal(handover.opportunity.source, "Adam outbound");
+const promoted = readFileSync(new URL("../lib/outreach-crm.ts", import.meta.url), "utf8");
+assert.match(promoted, /adamHandoverFields/);
+assert.match(promoted, /createCanonicalOpenRevenueOpportunity/);
 
 const existing = decideAdamLead({
   ...baseInput,

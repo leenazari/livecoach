@@ -211,6 +211,12 @@ export function AdamLeadFacts({
           <dt className="text-muted">Why Adam fits</dt>
           <dd>{meta.why_adam_fits || "Not recorded"}</dd>
         </div>
+        {meta.sector || meta.company_size || meta.location ? (
+          <div>
+            <dt className="text-muted">Client details</dt>
+            <dd>{[meta.sector, meta.company_size, meta.location].filter(Boolean).join(" · ")}</dd>
+          </div>
+        ) : null}
       </dl>
       {hold?.reason ? <p className="mt-2 text-sm leading-6 text-amber" role="status">{hold.reason} {hold.nextAction}</p> : null}
       {canDraft && !hold ? (
