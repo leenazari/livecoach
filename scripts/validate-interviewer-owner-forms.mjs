@@ -36,7 +36,7 @@ const { toSpokenPlain, stripAgentContext, toolReplyForAgent } = loadTs(new URL("
 const { effectiveCallMinutes, twoMinuteLine, formatCountdown, timeLimitChapters, remainingCallSeconds } = loadTs(new URL("../lib/interviewer/call-limit.ts", import.meta.url).pathname);
 const { keywordsFor, matchSpokenSlide } = loadTs(new URL("../lib/interviewer/slide-match.ts", import.meta.url).pathname);
 const { isHoldRequest, nextSilenceCue } = loadTs(new URL("../lib/interviewer/silence.ts", import.meta.url).pathname);
-const { parseBrief, fallbackBrief } = loadTs(new URL("../lib/interviewer/brief.ts", import.meta.url).pathname);
+const { parseBrief, fallbackBrief, objectionsFromLines, objectionCountLabel } = loadTs(new URL("../lib/interviewer/brief.ts", import.meta.url).pathname);
 const { cleanSlideText, isInternalCostLine } = loadTs(new URL("../lib/interviewer/slide-notes.ts", import.meta.url).pathname);
 
 const notes = [{ title: "What Adam is", body: "Adam is a website sales agent. It books demos." }];
@@ -97,6 +97,23 @@ const facts = { name: "Lee", email: "lee@example.com", disposition: "Hot", reaso
 const parsed = parseBrief({ lead: { phone: "not a phone", interest: "Solar" }, intent: { label: "HOT", reasons: ["Asked about price"] } }, facts);
 if (parsed.lead.phone !== null || parsed.lead.email !== "lee@example.com" || parsed.intent.reasons.length !== 3) throw new Error("brief parser drifted");
 if (fallbackBrief(facts).source !== "record") throw new Error("fallback brief missing");
+const objectionLines = [
+  { id: "1", speaker: "lead", text: "This is too expensive for a small team.", atSeconds: 40 },
+  { id: "2", speaker: "agent", text: "It starts from 39 pounds a month, with no long-term contract. Shall I show what that covers?", atSeconds: 48 },
+  { id: "3", speaker: "lead", text: "Ok, tell me more.", atSeconds: 55 },
+  { id: "4", speaker: "lead", text: "We already have a chatbot.", atSeconds: 70 },
+  { id: "5", speaker: "agent", text: "This one books the conversation, it does not only answer questions. Want to see that part?", atSeconds: 78 },
+  { id: "6", speaker: "lead", text: "I am still not convinced.", atSeconds: 86 },
+];
+const tracked = objectionsFromLines(objectionLines);
+if (tracked.length !== 2) throw new Error(`expected two objections, got ${tracked.length}`);
+if (tracked[0].outcome !== "positive" || !tracked[0].handle.includes("39 pounds") || tracked[0].quote !== "Ok, tell me more.") {
+  throw new Error(`first objection was not handled positively: ${JSON.stringify(tracked[0])}`);
+}
+if (tracked[1].outcome !== "negative" || !/chatbot/.test(tracked[1].text)) throw new Error("second objection was not still resistant");
+if (objectionCountLabel(tracked) !== "2 raised, 1 handled positively") throw new Error(`count was ${objectionCountLabel(tracked)}`);
+const fromTranscript = parseBrief({}, { ...facts, lines: objectionLines });
+if (fromTranscript.objections.length !== 2) throw new Error("the summary dropped transcript objections");
 if (isInternalCostLine("More leads. Lower cost. Always on.")) throw new Error("a benefit slogan was treated as an internal cost");
 if (!isInternalCostLine("Deepgram cost is seven cents a minute")) throw new Error("supplier cost was kept");
 if (cleanSlideText("More leads. Lower cost. Always on.\nOur cost per minute is hidden.").includes("Our cost")) {

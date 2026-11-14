@@ -8,7 +8,16 @@ export type BriefQuestion = {
   answer?: string;
   atSeconds?: number;
 };
-export type BriefObjection = { text: string; tag: "Softened" | "Resolved" | "Open"; heat: number; atSeconds?: number };
+export type ObjectionOutcome = "positive" | "neutral" | "negative";
+export type BriefObjection = {
+  text: string;
+  tag: "Softened" | "Resolved" | "Open";
+  heat: number;
+  atSeconds?: number;
+  handle?: string;
+  outcome?: ObjectionOutcome;
+  quote?: string;
+};
 export type BriefProvider = { name: string; kind: "current" | "competitor"; atSeconds: number };
 export type BriefProfile = {
   businessType: string;
@@ -109,6 +118,52 @@ function emptyProfile(): BriefProfile {
 
 const QUESTION_CUE = /\?|(?:^|\b)(?:what|how|where|when|why|who|can you|do you|did they|is there|tell me)\b/i;
 
+const OBJECTION_CUE = /\b(too expensive|no budget|can'?t afford|cannot afford|already have|chatbot|live chat|won'?t talk|will not talk|impersonal|say something wrong|too small|not much (?:website )?traffic|no time|set(?:ting)? up|integrat|gdpr|privacy|data protection|think about it|send me|doesn'?t work|does not work|out of hours|not the decision|decision maker|not right now|too much|pricey)\b/i;
+const RESISTANCE = /\b(no thanks|not convinced|still not|still too|too expensive|can'?t afford|cannot afford|don'?t want|do not want|not for us|won'?t work|will not work|not interested)\b/i;
+const ACCEPTANCE = /\b(yes|yeah|yep|ok|okay|fair enough|makes sense|that helps|sounds good|let'?s|book|alright|all right|go on|tell me more|interested)\b/i;
+const HEDGE = /\b(maybe|not sure|i'?ll think|let me think|perhaps)\b/i;
+
+export function objectionOutcome(reply: string): ObjectionOutcome {
+  const text = reply.replace(/\s+/g, " ").trim();
+  if (!text) return "neutral";
+  if (RESISTANCE.test(text) || OBJECTION_CUE.test(text)) return "negative";
+  if (HEDGE.test(text)) return "neutral";
+  if (ACCEPTANCE.test(text)) return "positive";
+  return "positive";
+}
+
+export function objectionsFromLines(lines: BriefLine[]): BriefObjection[] {
+  const found: BriefObjection[] = [];
+  lines.forEach((line, index) => {
+    if (line.speaker !== "lead" || !OBJECTION_CUE.test(line.text)) return;
+    const words = clip(line.text, 180);
+    if (!words || found.some((item) => item.text.toLowerCase() === words.toLowerCase())) return;
+    const after = lines.slice(index + 1);
+    const agent = after.find((next) => next.speaker === "agent");
+    const agentIndex = agent ? after.indexOf(agent) : -1;
+    const reply = after.slice(agentIndex + 1).find((next) => next.speaker === "lead");
+    const quote = reply ? clip(reply.text, 180) : "";
+    found.push({
+      text: words,
+      tag: quote && objectionOutcome(quote) === "negative" ? "Open" : "Softened",
+      heat: quote && objectionOutcome(quote) === "negative" ? 70 : 30,
+      atSeconds: line.atSeconds,
+      handle: agent ? clip(agent.text, 220) : "",
+      outcome: reply ? objectionOutcome(quote) : "neutral",
+      quote,
+    });
+  });
+  return found.slice(0, 12);
+}
+
+export function objectionCountLabel(items: Array<Pick<BriefObjection, "outcome">>): string {
+  if (!items.length) return "None raised";
+  const positive = items.filter((item) => item.outcome === "positive").length;
+  const raised = items.length === 1 ? "1 raised" : `${items.length} raised`;
+  const handled = positive === 1 ? "1 handled positively" : `${positive} handled positively`;
+  return `${raised}, ${handled}`;
+}
+
 export function questionsFromLines(lines: BriefLine[]): BriefQuestion[] {
   const questions: BriefQuestion[] = [];
   lines.forEach((line, index) => {
@@ -195,7 +250,7 @@ export function fallbackBrief(facts: BriefFacts): CallBrief {
     service: serviceFromTranscript(facts.transcript),
     interests: agendaFromLines(facts.lines || [], catalogFromSlides(facts.slides || [])).map((item) => ({ label: item.label, covered: item.covered })),
     questions: questionsFromLines(facts.lines || []),
-    objections: [],
+    objections: objectionsFromLines(facts.lines || []),
     providers: providersFromLines(facts.lines || []),
     slides: facts.slides || [],
     chapters: [],
@@ -266,14 +321,25 @@ export function parseBrief(raw: unknown, facts: BriefFacts): CallBrief {
     return question ? [{ question, askedBy, status, answer: clip(row.answer, 220), atSeconds: Number(row.atSeconds) || 0 }] : [];
   }) : [];
   const questions = mergeQuestions(questionsFromLines(facts.lines || []), modelQuestions);
-  const objections: BriefObjection[] = Array.isArray(record.objections) ? record.objections.flatMap((item) => {
+  const fromLines = objectionsFromLines(facts.lines || []);
+  const fromModel: BriefObjection[] = Array.isArray(record.objections) ? record.objections.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const row = item as Record<string, unknown>;
     const text = clip(row.text, 180);
     if (!text || /no objections/i.test(text)) return [];
     const tag: BriefObjection["tag"] = row.tag === "Softened" || row.tag === "Resolved" || row.tag === "Open" ? row.tag : "Open";
-    return [{ text, tag, heat: clamp(row.heat), atSeconds: Number(row.atSeconds) || 0 }];
+    const stated = row.outcome === "positive" || row.outcome === "neutral" || row.outcome === "negative" ? row.outcome : tag === "Open" ? "negative" : "positive";
+    return [{
+      text,
+      tag,
+      heat: clamp(row.heat),
+      atSeconds: Number(row.atSeconds) || 0,
+      handle: clip(row.handle, 220),
+      outcome: stated,
+      quote: clip(row.quote, 180),
+    }];
   }) : [];
+  const objections = fromLines.length ? fromLines : fromModel;
   const profileRecord = record.profile && typeof record.profile === "object" ? record.profile as Record<string, unknown> : {};
   const profile: BriefProfile = {
     businessType: clip(profileRecord.businessType, 80) || base.profile?.businessType || EMPTY,
@@ -357,8 +423,8 @@ export function briefPrompt(facts: BriefFacts): string {
   return `You are writing an internal pre-call brief. Use only the transcript. Do not invent a phone number, email, price, provider, objection, or promise. If it was not said, use "Not established on this call."
 Choose intent.label from the transcript: HOT if they booked or were ready to buy, WARM if they engaged and a next conversation is likely, NOT INTERESTED if they declined, otherwise NURTURE. The first reason is one sentence a rep can read.
 Return JSON:
-{"lead":{"phone":"","interest":"","cameFrom":""},"profile":{"businessType":"","size":"","sites":"","location":"","role":"","setup":"","painPoints":""},"service":{"howTheyServe":"","improvements":[{"fit":"","suggestion":""}]},"interests":[{"label":"","covered":false}],"intent":{"label":"HOT|WARM|NURTURE|NOT INTERESTED","reasons":["","",""],"scale":0},"appointment":{"agenda":""},"openingLine":"","howItWent":{"summary":"","sentiment":0,"engagement":0,"mood":""},"questions":[{"question":"","askedBy":"lead|agent","answer":"","status":"answered|partly|unanswered","atSeconds":0}],"objections":[{"text":"","tag":"Softened|Resolved|Open","heat":0,"atSeconds":0}],"providers":[{"name":"","kind":"current|competitor","atSeconds":0}],"nextSteps":[""]}
-Include every question. askedBy is lead when the customer asked, and agent when Interviewa asked. For a lead question, answer is one sentence summarising what the agent said. For an agent question, answer is a short quote or paraphrase of what the lead actually replied. If nobody replied, status is unanswered and answer is empty. Copy atSeconds from the transcript tag. objections is an empty array when none were raised. providers lists who they use today and any competitor they named. service.howTheyServe is how they work today, in their words. service.improvements lists only gains that fit what they said and that appear in the deck. Leave improvements empty if they did not describe the current process. Do not name a product that is not in the transcript. interests lists each feature or need the lead named, in that order. covered is true only if the agent actually showed or explained it.
+{"lead":{"phone":"","interest":"","cameFrom":""},"profile":{"businessType":"","size":"","sites":"","location":"","role":"","setup":"","painPoints":""},"service":{"howTheyServe":"","improvements":[{"fit":"","suggestion":""}]},"interests":[{"label":"","covered":false}],"intent":{"label":"HOT|WARM|NURTURE|NOT INTERESTED","reasons":["","",""],"scale":0},"appointment":{"agenda":""},"openingLine":"","howItWent":{"summary":"","sentiment":0,"engagement":0,"mood":""},"questions":[{"question":"","askedBy":"lead|agent","answer":"","status":"answered|partly|unanswered","atSeconds":0}],"objections":[{"text":"","handle":"","outcome":"positive|neutral|negative","quote":"","tag":"Softened|Resolved|Open","heat":0,"atSeconds":0}],"providers":[{"name":"","kind":"current|competitor","atSeconds":0}],"nextSteps":[""]}
+Include every question. askedBy is lead when the customer asked, and agent when Interviewa asked. For a lead question, answer is one sentence summarising what the agent said. For an agent question, answer is a short quote or paraphrase of what the lead actually replied. If nobody replied, status is unanswered and answer is empty. Copy atSeconds from the transcript tag. objections lists each pushback the lead actually said. text is their words. handle is the reply the agent gave. outcome is positive if they accepted it or moved on, neutral if they only hedged, and negative if they were still resistant. quote is a short line from their response. Leave objections empty when none were raised. Do not invent an objection. providers lists who they use today and any competitor they named. service.howTheyServe is how they work today, in their words. service.improvements lists only gains that fit what they said and that appear in the deck. Leave improvements empty if they did not describe the current process. Do not name a product that is not in the transcript. interests lists each feature or need the lead named, in that order. covered is true only if the agent actually showed or explained it.
 Facts: name ${facts.name}. email ${facts.email || "none"}. stored outcome ${facts.disposition || "none"}. meeting ${facts.scheduledAt || "none"}.
 Transcript, times are seconds from the start:
 ${facts.transcript || "No transcript."}`;

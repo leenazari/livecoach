@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import type { CallBrief as Brief } from "@/lib/interviewer/brief";
+import { objectionCountLabel, type CallBrief as Brief } from "@/lib/interviewer/brief";
 import { toSpokenPlain } from "@/lib/interviewer/spoken-text";
 import styles from "@/components/interviewer/interviewa.module.css";
 
@@ -218,14 +218,23 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
           <QuestionList title="Questions we asked" empty="We did not ask a question." items={brief.questions.filter((item) => item.askedBy === "agent")} seek={seek} />
         </section>
         <section className={styles.card}>
-          <h2 className={styles.cardTitle}>Objections that nearly lost it</h2>
-          {brief.objections.length ? null : <p>No objections raised</p>}
-          {brief.objections.map((item) => (
-            <div key={item.text} style={{ marginTop: 10 }}>
-              <div className={styles.headRow}><span>{item.text}</span><span className={item.tag === "Resolved" ? styles.ok : styles.warn}>{item.tag}</span></div>
-              <div className={styles.heat}><span style={{ width: `${item.heat}%` }} /></div>
-            </div>
-          ))}
+          <h2 className={styles.cardTitle}>Objections</h2>
+          <p className={styles.note}>{objectionCountLabel(brief.objections)}</p>
+          {brief.objections.length ? (
+            <ol>
+              {brief.objections.map((item, index) => (
+                <li key={`${item.atSeconds}-${item.text}`} style={{ marginTop: 10 }}>
+                  <button type="button" className={styles.link} onClick={() => seek(item.atSeconds || 0)}>{index + 1}.</button>{" "}
+                  {item.text}
+                  <p className={styles.note}>Handle: {item.handle || "Not recorded"}</p>
+                  <p className={styles.note}>
+                    {item.outcome === "positive" ? "Accepted or moved on" : item.outcome === "negative" ? "Still resistant" : "Neutral"}
+                    {item.quote ? `. "${item.quote}"` : ""}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          ) : <p>No objections raised</p>}
         </section>
       </div>
 
