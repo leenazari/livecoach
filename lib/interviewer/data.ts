@@ -1,5 +1,6 @@
 import "server-only";
 
+import { isMissingSourceColumn, preferKnowledgeNotes } from "@/lib/interviewer/knowledge";
 import { supabaseService } from "@/lib/supabase";
 
 export class InterviewerDataError extends Error {
@@ -81,23 +82,25 @@ export async function loadOpenInvite(token: string): Promise<InterviewerInviteRo
 }
 
 export async function loadCampaignDocuments(campaignId: string) {
-  const { data, error } = await supabaseService
+  const rich = await supabaseService
     .from("interviewer_documents")
-    .select("title, body, created_at")
+    .select("title, body, created_at, source")
     .eq("campaign_id", campaignId)
     .order("created_at", { ascending: false })
     .limit(40);
-  raiseInterviewerError(error);
-  const seen = new Set<string>();
-  const documents: Array<{ title: string; body: string }> = [];
-  for (const row of (data || []) as Array<{ title: string; body: string }>) {
-    const key = row.title.trim().toLowerCase();
-    if (!key || seen.has(key) || key === "source website") continue;
-    seen.add(key);
-    documents.push({ title: row.title, body: row.body });
-    if (documents.length >= 8) break;
+  let rows = (rich.data || []) as Array<{ title: string; body: string; source?: string | null }>;
+  if (rich.error) {
+    if (!isMissingSourceColumn(rich.error)) raiseInterviewerError(rich.error);
+    const plain = await supabaseService
+      .from("interviewer_documents")
+      .select("title, body, created_at")
+      .eq("campaign_id", campaignId)
+      .order("created_at", { ascending: false })
+      .limit(40);
+    raiseInterviewerError(plain.error);
+    rows = (plain.data || []) as Array<{ title: string; body: string; source?: string | null }>;
   }
-  return documents.reverse();
+  return preferKnowledgeNotes(rows).slice(0, 12).reverse();
 }
 
 export async function recentConnectedSeconds(campaignId: string): Promise<number[]> {

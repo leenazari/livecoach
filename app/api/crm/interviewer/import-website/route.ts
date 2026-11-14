@@ -7,11 +7,16 @@ import { requireInterviewerOwner, interviewerOwnerError } from "@/lib/interviewe
 import { interviewerFieldError } from "@/lib/interviewer/field-error";
 import { llmUsd, loadCostRates, recordCostEvent } from "@/lib/interviewer/cost-store";
 import {
+  BROWSER_USER_AGENT,
+  MIN_IMPORT_CHARS,
   choosePages,
-  htmlToText,
+  dropInventedPrices,
   isBlockedAddress,
+  moduleScriptUrls,
   pickInternalLinks,
+  readablePageText,
   robotsAllows,
+  scriptRoutes,
   sitemapLocs,
 } from "@/lib/interviewer/website-pages";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -20,9 +25,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const USER_AGENT = "LiveCoachInterviewer/1.0";
-
-type ImportResult = { documents: Draft[]; pages: string[] };
+type FetchedPage = { url: string; chars: number };
+type ImportResult = { documents: Draft[]; pages: FetchedPage[] };
 const importInflight = new Map<string, Promise<ImportResult>>();
 const importRecent = new Map<string, { at: number; result: ImportResult }>();
 
@@ -44,7 +48,7 @@ async function readPage(target: URL, timeoutMs: number, hops = 0): Promise<{ url
   const blocked = await assertPublicUrl(target);
   if (blocked) return null;
   const response = await fetch(target, {
-    headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
+    headers: { "User-Agent": BROWSER_USER_AGENT, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
     redirect: "manual",
     signal: AbortSignal.timeout(timeoutMs),
     cache: "no-store",
@@ -56,7 +60,7 @@ async function readPage(target: URL, timeoutMs: number, hops = 0): Promise<{ url
   }
   if (!response.ok) return null;
   const type = response.headers.get("content-type") || "";
-  if (type && !/html|text|xml/i.test(type)) return null;
+  if (type && !/html|text|xml|javascript|json/i.test(type)) return null;
   return { url: target.toString(), html: await response.text() };
 }
 
@@ -76,10 +80,10 @@ async function draftNotes(pages: Array<{ url: string; text: string }>): Promise<
           role: "system",
           content: `Turn website text into voice-agent knowledge. Return JSON {"documents":[{"title":"","body":""}]}.
 Use only these titles, and omit a title when the pages do not state it: Business summary; Products and services; Pricing; FAQs and objections; Next step and booking.
-Never invent facts, prices, names, or numbers. Leave missing sections out.
-Write short plain sentences. Use lines that start with "- " for separate facts. Write prices the way they are spoken, and also keep the figure, for example "forty nine pounds a month (£49)".
-No markdown headings, no tables, no links. Each body must be under 1500 characters.
-End every body with one line: Source: and the page addresses you used, and say not to read the addresses aloud.`,
+Use only facts that are written in the page text. Do not add a product, price, name, or number from anywhere else.
+Copy each price exactly as it appears, including the £ sign. On that same line, add the page URL in parentheses. If the page text has no price, do not mention a price.
+Write short plain sentences. Use lines that start with "- " for separate facts.
+No markdown headings and no tables. Each body must be under 1500 characters.`,
         },
         { role: "user", content: source },
       ],
@@ -183,16 +187,26 @@ export async function POST(req: Request) {
     const scrape = async (): Promise<ImportResult> => {
     const home = await readPage(pageUrl, 8000);
     if (!home) throw new Error("empty_page");
+    const scripts: string[] = [];
+    for (const scriptUrl of moduleScriptUrls(home.html, pageUrl).slice(0, 3)) {
+      try {
+        const script = await readPage(new URL(scriptUrl), 8000);
+        if (!script || !/function|const |=>/.test(script.html) || script.html.length > 2_000_000) continue;
+        if (/<html[\s>]/i.test(script.html.slice(0, 200))) continue;
+        scripts.push(script.html);
+      } catch { /* a missing script is recorded as no extra text */ }
+    }
     const sitemapPages = ["/sitemap.xml", "/sitemap_index.xml"].map((path) => new URL(path, pageUrl.origin));
     const sitemapLinks: string[] = [];
     for (const sitemapUrl of sitemapPages) {
       try {
         const sitemap = await readPage(sitemapUrl, 8000);
-        if (sitemap) sitemapLinks.push(...sitemapLocs(sitemap.html, pageUrl));
+        if (sitemap && /<loc>/i.test(sitemap.html)) sitemapLinks.push(...sitemapLocs(sitemap.html, pageUrl));
       } catch { /* a missing sitemap is normal */ }
     }
+    const routeLinks = scripts.flatMap((script) => scriptRoutes(script).map((path) => new URL(path, pageUrl.origin).toString()));
     const links = choosePages(
-      [home.url, ...sitemapLinks, ...pickInternalLinks(home.html, pageUrl)],
+      [home.url, ...sitemapLinks, ...pickInternalLinks(home.html, pageUrl), ...routeLinks],
       pageUrl,
       25,
     ).filter((link) => {
@@ -204,13 +218,30 @@ export async function POST(req: Request) {
       try {
         const page = link === home.url ? home : await readPage(new URL(link), 8000);
         if (!page) continue;
-        const text = htmlToText(page.html);
-        if (text) pages.push({ url: page.url, text: text.slice(0, 2500) });
+        const read = readablePageText({ html: page.html, pathname: new URL(page.url).pathname, scripts });
+        if (read.text) pages.push({ url: page.url, text: read.text });
       } catch { /* skip a slow or blocked page */ }
     }
+    const fetched = pages.map((page) => ({ url: page.url, chars: page.text.length }));
+    const totalChars = fetched.reduce((sum, page) => sum + page.chars, 0);
+    console.info("interviewer website fetched", { url: pageUrl.toString(), pages: fetched, totalChars });
+    if (totalChars < MIN_IMPORT_CHARS) {
+      const error = new Error("thin_text") as Error & { pages?: FetchedPage[]; totalChars?: number };
+      error.pages = fetched;
+      error.totalChars = totalChars;
+      throw error;
+    }
     const drafted = await draftNotes(pages);
-    const documents = drafted.documents;
-    if (!documents.length) throw new Error("no_facts");
+    const source = pages.map((page) => page.text).join("\n");
+    const documents = drafted.documents.flatMap((document) => {
+      const body = dropInventedPrices(document.body, source);
+      return body ? [{ title: document.title, body }] : [];
+    });
+    if (!documents.length) {
+      const error = new Error("no_facts") as Error & { pages?: FetchedPage[] };
+      error.pages = fetched;
+      throw error;
+    }
     const rates = await loadCostRates();
     const campaignId = String(body?.campaignId || "");
     if (rates) {
@@ -222,7 +253,7 @@ export async function POST(req: Request) {
         detail: { pages: pages.length, inputTokens: drafted.inputTokens, outputTokens: drafted.outputTokens },
       });
     }
-    return { documents, pages: pages.map((page) => page.url) };
+    return { documents, pages: fetched };
     };
     const job = scrape();
     if (campaignKey) importInflight.set(campaignKey, job);
@@ -234,8 +265,19 @@ export async function POST(req: Request) {
       if (error instanceof Error && error.message === "empty_page") {
         return interviewerFieldError("interviewer_import_blocked", "Website was not read", { url: "The page did not return readable text." });
       }
+      if (error instanceof Error && error.message === "thin_text") {
+        const detail = error as Error & { pages?: FetchedPage[]; totalChars?: number };
+        const list = (detail.pages || []).map((page) => `${page.url} (${page.chars} characters)`).join("; ");
+        return interviewerFieldError("interviewer_import_blocked", "Website was not read", {
+          url: `Only ${detail.totalChars || 0} characters of page text were fetched, so nothing was written. ${list}`,
+        }, { pages: detail.pages || [] });
+      }
       if (error instanceof Error && error.message === "no_facts") {
-        return interviewerFieldError("interviewer_import_blocked", "Website was not read", { url: "No facts could be taken from those pages without guessing." });
+        const detail = error as Error & { pages?: FetchedPage[] };
+        const list = (detail.pages || []).map((page) => `${page.url} (${page.chars} characters)`).join("; ");
+        return interviewerFieldError("interviewer_import_blocked", "Website was not read", {
+          url: `No facts could be taken from those pages without guessing. ${list}`,
+        }, { pages: detail.pages || [] });
       }
       throw error;
     } finally {

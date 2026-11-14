@@ -5,7 +5,7 @@ import type { FieldErrors } from "@/lib/interviewer/form-fields";
 
 const noStore = { "Cache-Control": "private, no-store" };
 
-export function interviewerFieldError(code: string, title: string, fields: FieldErrors) {
+export function interviewerFieldError(code: string, title: string, fields: FieldErrors, extra?: Record<string, unknown>) {
   const reason = Object.values(fields)[0] || "Check the highlighted field.";
   return NextResponse.json(
     {
@@ -18,6 +18,7 @@ export function interviewerFieldError(code: string, title: string, fields: Field
         outcome: "No record was confirmed saved.",
       }),
       fields,
+      ...(extra || {}),
     },
     { status: 400, headers: noStore }
   );

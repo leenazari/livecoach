@@ -51,14 +51,20 @@ export async function GET(req: Request) {
       .eq("workspace_id", scope.workspaceId)
       .eq("campaign_id", campaignId)
       .order("created_at", { ascending: false });
-    if (decks.error) return NextResponse.json({ decks: [], ready: false }, { headers: noStore });
+    if (decks.error) {
+      console.error("interviewer deck list failed", decks.error.message);
+      return NextResponse.json({ decks: [], ready: false, error: "The deck could not be loaded." }, { headers: noStore });
+    }
     const slides = await supabaseService
       .from("interviewer_slides")
       .select("deck_id, slide_number, title, image_path")
       .eq("workspace_id", scope.workspaceId)
       .eq("campaign_id", campaignId)
       .order("slide_number", { ascending: true });
-    if (slides.error) return NextResponse.json({ decks: [], ready: false }, { headers: noStore });
+    if (slides.error) {
+      console.error("interviewer slide list failed", slides.error.message);
+      return NextResponse.json({ decks: [], ready: false, error: "The deck could not be loaded." }, { headers: noStore });
+    }
     const grouped = [];
     const ordered = decks.data || [];
     for (const [index, deck] of ordered.entries()) {
@@ -189,60 +195,98 @@ export async function POST(req: Request) {
       const deck = await supabaseService.from("interviewer_decks").select("id, campaign_id").eq("id", deckId).eq("workspace_id", scope.workspaceId).maybeSingle();
       if (deck.error) throw deck.error;
       if (!deck.data) return interviewerFieldError("interviewer_deck_blocked", "Slide notes were not saved", { file: "That deck is not on your account." });
+      const overwrite = record.overwrite === true;
       const slides = await supabaseService
         .from("interviewer_slides")
-        .select("id, slide_number, image_path")
+        .select("id, slide_number, image_path, title, one_line, talking_points, verbatim, stats")
         .eq("deck_id", deckId)
         .order("slide_number", { ascending: true });
       if (slides.error) throw slides.error;
-      const images = [];
+      const rows = slides.data || [];
+      const keep = (current: string | null | undefined, incoming: string) => {
+        const existing = String(current || "").trim();
+        if (!existing || (overwrite && incoming.trim())) return incoming;
+        return existing;
+      };
+      const keepTitle = (current: string | null | undefined, incoming: string) => {
+        const existing = String(current || "").trim();
+        if (!existing || isGenericSlideTitle(existing) || (overwrite && incoming.trim())) return incoming || existing;
+        return existing;
+      };
+      const needsModel = overwrite || rows.some((row) => (
+        isGenericSlideTitle(String(row.title || ""))
+        || !String(row.one_line || "").trim()
+        || !String(row.talking_points || "").trim()
+      ));
+      const stored = rows.map((row) => ({
+        id: row.id,
+        number: row.slide_number,
+        title: String(row.title || ""),
+        oneLine: String(row.one_line || ""),
+        talkingPoints: String(row.talking_points || ""),
+        verbatim: row.verbatim ? String(row.verbatim) : null,
+        stats: String(row.stats || ""),
+      }));
       const missing: number[] = [];
-      for (const slide of slides.data || []) {
-        const file = await supabaseService.storage.from("interviewer-slides").download(slide.image_path);
-        if (file.error || !file.data) {
-          missing.push(slide.slide_number);
-          continue;
+      if (needsModel) {
+        const images = [];
+        for (const slide of rows) {
+          const file = await supabaseService.storage.from("interviewer-slides").download(slide.image_path);
+          if (file.error || !file.data) {
+            missing.push(slide.slide_number);
+            continue;
+          }
+          images.push({
+            number: slide.slide_number,
+            bytes: new Uint8Array(await file.data.arrayBuffer()),
+            mime: mimeFor(slide.image_path),
+          });
         }
-        images.push({
-          number: slide.slide_number,
-          bytes: new Uint8Array(await file.data.arrayBuffer()),
-          mime: mimeFor(slide.image_path),
-        });
+        if (images.length) {
+          const pitch = await notesFromImages(images);
+          for (const note of pitch.slides) {
+            const row = stored.find((slide) => slide.number === note.number);
+            if (!row) continue;
+            row.title = keepTitle(row.title, note.title);
+            row.oneLine = keep(row.oneLine, note.oneLine);
+            row.talkingPoints = keep(row.talkingPoints, note.talkingPoints.join("\n"));
+            row.verbatim = keep(row.verbatim, note.verbatim || "") || null;
+            row.stats = keep(row.stats, note.stats);
+            await supabaseService.from("interviewer_slides").update({
+              title: row.title,
+              one_line: row.oneLine,
+              talking_points: row.talkingPoints,
+              verbatim: row.verbatim,
+              stats: row.stats,
+            }).eq("id", row.id);
+          }
+          const rates = await loadCostRates();
+          if (rates) {
+            await recordCostEvent({
+              workspaceId: scope.workspaceId,
+              campaignId: deck.data.campaign_id,
+              kind: "deck_vision",
+              usd: llmUsd(rates, pitch.inputTokens, pitch.outputTokens),
+              detail: { slides: images.length, inputTokens: pitch.inputTokens, outputTokens: pitch.outputTokens, overwrite },
+            });
+          }
+        }
       }
-      if (!images.length) {
-        return NextResponse.json({ updated: 0, missing, note: "The slide images are not in storage yet." }, { headers: noStore });
-      }
-      const pitch = await notesFromImages(images);
-      for (const note of pitch.slides) {
-        const row = (slides.data || []).find((slide) => slide.slide_number === note.number);
-        if (!row) continue;
-        await supabaseService.from("interviewer_slides").update({
-          title: note.title,
-          one_line: note.oneLine,
-          talking_points: note.talkingPoints.join("\n"),
-          verbatim: note.verbatim,
-          stats: note.stats,
-        }).eq("id", row.id);
-      }
-      const outline = formatDeckKnowledge(pitch.slides.map((slide) => ({
+      const outline = formatDeckKnowledge(stored.map((slide) => ({
         number: slide.number,
         title: slide.title,
-        facts: slide.talkingPoints,
+        facts: slide.talkingPoints.split("\n").filter(Boolean),
         prices: slide.stats,
       })));
       await supabaseService.from("interviewer_decks").update({ outline }).eq("id", deckId);
-      const warnings = [pitch.slides.map((slide) => slide.stats).join(" ")].filter((line) => isInternalCostLine(line));
-      const rates = await loadCostRates();
-      if (rates) {
-        await recordCostEvent({
-          workspaceId: scope.workspaceId,
-          campaignId: deck.data.campaign_id,
-          kind: "deck_vision",
-          usd: llmUsd(rates, pitch.inputTokens, pitch.outputTokens),
-          detail: { slides: images.length, inputTokens: pitch.inputTokens, outputTokens: pitch.outputTokens },
-        });
-      }
-      return NextResponse.json({ updated: pitch.slides.length, missing, warnings }, { headers: noStore });
+      const warnings = stored.map((slide) => slide.stats).filter((line) => isInternalCostLine(line));
+      return NextResponse.json({
+        updated: stored.length,
+        kept: overwrite ? 0 : stored.filter((slide) => !isGenericSlideTitle(slide.title)).length,
+        missing,
+        warnings,
+        preserved: !overwrite,
+      }, { headers: noStore });
     }
 
     if (action === "rename") {

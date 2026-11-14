@@ -25,6 +25,7 @@ type Campaign = {
 };
 
 type Slide = { number: number; title: string; url: string; missing?: boolean };
+type FetchedPage = { url: string; chars: number };
 type Deck = { id: string; title: string; active?: boolean; imagesMissing?: boolean; slides: Slide[] };
 type DeckJob = { phase: "rendering" | "uploading" | "notes" | "saved" | "error"; fileName: string; page: number; total: number; message: string };
 type CallRow = { id: string; created_at: string; disposition: string | null; status: string; billable_seconds: number | null };
@@ -54,6 +55,8 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [scrapedAt, setScrapedAt] = useState("");
   const [decks, setDecks] = useState<Deck[]>([]);
+  const [deckNote, setDeckNote] = useState("");
+  const [fetchedPages, setFetchedPages] = useState<FetchedPage[]>([]);
   const [deckJob, setDeckJob] = useState<DeckJob | null>(null);
   const [importing, setImporting] = useState(false);
   const [quotes, setQuotes] = useState(false);
@@ -120,19 +123,28 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
         if (!cancelled) setError("The campaign could not be loaded.");
       }
     })();
-    return () => { cancelled = true; };
     fetch(`/api/crm/interviewer/deck?campaignId=${campaignId}`, { cache: "no-store" })
       .then((response) => response.json())
-      .then((data) => setDecks(data.decks || []))
-      .catch(() => setDecks([]));
+      .then((data) => {
+        if (cancelled) return;
+        if (data.ready === false) {
+          setDecks([]);
+          setDeckNote(data.error || "The deck could not be loaded.");
+          return;
+        }
+        setDecks(data.decks || []);
+        setDeckNote((data.decks || []).length ? "" : "No deck is stored for this campaign.");
+      })
+      .catch(() => { if (!cancelled) setDeckNote("The deck could not be loaded."); });
     fetch(`/api/crm/interviewer/sessions?campaignId=${campaignId}`, { cache: "no-store" })
       .then((response) => response.json())
-      .then((data) => setCalls(data.sessions || []))
-      .catch(() => setCalls([]));
+      .then((data) => { if (!cancelled) setCalls(data.sessions || []); })
+      .catch(() => { if (!cancelled) setCalls([]); });
     fetch(`/api/crm/interviewer/costs?campaignId=${campaignId}`, { cache: "no-store" })
       .then((response) => response.json())
-      .then((data) => setCosts(data))
-      .catch(() => setCosts(null));
+      .then((data) => { if (!cancelled) setCosts(data); })
+      .catch(() => { if (!cancelled) setCosts(null); });
+    return () => { cancelled = true; };
   }, [campaignId]);
 
   const play = async (id: string) => {
@@ -168,16 +180,17 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
     if (creating && result.data.campaign?.id) window.location.href = `/crm/interviewer/campaigns/${result.data.campaign.id}`;
   };
 
-  const saveKnowledge = async (scraped = false) => {
-    if (!campaignId) { setError("Save the campaign name and voice first."); return; }
+  const saveKnowledge = async (scraped = false, next = sections) => {
+    if (!campaignId) { setError("Save the campaign name and voice first."); return false; }
     const result = await postJson("/api/crm/interviewer/documents", {
       campaignId,
       websiteUrl,
       scraped,
-      sections: KNOWLEDGE_SECTIONS.map((section) => ({ title: section.title, body: sections[section.key] })),
+      sections: KNOWLEDGE_SECTIONS.map((section) => ({ title: section.title, body: next[section.key] })),
     });
-    if (!result.ok) { setError(result.data.fields?.campaignId || "The knowledge was not saved."); return; }
+    if (!result.ok) { setError(result.data.fields?.url || result.data.fields?.campaignId || "The knowledge was not saved."); return false; }
     setNotice(result.data.websiteStored === false ? "Notes saved. The website address is stored with the notes until the migration is applied." : "Knowledge saved.");
+    return true;
   };
 
   const importSite = async () => {
@@ -186,12 +199,20 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
     setError("");
     try {
       const result = await postJson("/api/crm/interviewer/import-website", { url: websiteUrl, campaignId });
+      const pages = Array.isArray(result.data.pages) ? result.data.pages as FetchedPage[] : [];
+      setFetchedPages(pages);
       if (!result.ok) { setError(result.data.fields?.url || "The website could not be read."); return; }
       const next = knowledgeFromDocuments(result.data.documents || []);
-      setSections(next);
-      setScrapedAt(new Date().toISOString());
-      if (!result.data.reused) await saveKnowledge(true);
-      else setNotice("Using the website notes saved a moment ago.");
+      if (result.data.reused) {
+        setSections(next);
+        setNotice("Using the website notes saved a moment ago.");
+        return;
+      }
+      const saved = await saveKnowledge(true, next);
+      if (saved) {
+        setSections(next);
+        setScrapedAt(new Date().toISOString());
+      }
     } finally {
       setImporting(false);
     }
@@ -270,14 +291,19 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
 
   const rebuildDeck = async (deckId: string) => {
     if (deckBusy) return;
-    setDeckJob({ phase: "notes", fileName: "deck", page: 0, total: 0, message: "Reading every slide into the call knowledge…" });
-    const result = await postJson("/api/crm/interviewer/deck", { action: "rebuild", deckId });
+    const deck = decks.find((item) => item.id === deckId);
+    const hasWritten = (deck?.slides || []).some((slide) => customerHeadline(slide.title));
+    const overwrite = hasWritten
+      ? window.confirm("Replace the headlines and notes already on this deck? Cancel keeps them and only fills empty fields.")
+      : false;
+    setDeckJob({ phase: "notes", fileName: "deck", page: 0, total: 0, message: overwrite ? "Replacing the slide notes…" : "Keeping the written headlines and notes…" });
+    const result = await postJson("/api/crm/interviewer/deck", { action: "rebuild", deckId, overwrite });
     await reloadDecks();
     if (!result.ok) {
       setDeckJob({ phase: "error", fileName: "deck", page: 0, total: 0, message: result.data.fields?.file || "The deck knowledge was not rebuilt." });
       return;
     }
-    setDeckJob({ phase: "saved", fileName: "deck", page: Number(result.data.updated || 0), total: Number(result.data.updated || 0), message: `Deck knowledge rebuilt · ${result.data.updated || 0} slides · ${new Date().toLocaleString("en-GB")}` });
+    setDeckJob({ phase: "saved", fileName: "deck", page: Number(result.data.updated || 0), total: Number(result.data.updated || 0), message: `${result.data.preserved ? "Kept the written headlines" : "Replaced the slide notes"} · ${new Date().toLocaleString("en-GB")}` });
   };
 
   const costFor = (id: string) => costs?.calls?.find((call) => call.sessionId === id);
@@ -347,6 +373,13 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
           <button type="button" className={styles.btnGhost} disabled={importing} onClick={() => void importSite()}>
             {importing ? `Importing ${importHost}…` : "Import from website"}
           </button>
+          {fetchedPages.length ? (
+            <ul className={styles.stack}>
+              {fetchedPages.map((page) => (
+                <li key={page.url} className={styles.note}>{page.url} · {page.chars.toLocaleString("en-GB")} characters</li>
+              ))}
+            </ul>
+          ) : null}
           {KNOWLEDGE_SECTIONS.map((section) => (
             <label key={section.key} className={styles.label}>{section.title}
               <textarea className={styles.area} value={sections[section.key as KnowledgeSectionKey]} onChange={(event) => setSections({ ...sections, [section.key]: event.target.value })} />
@@ -360,6 +393,7 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
           <button type="button" className={styles.btn} onClick={() => void saveKnowledge(false)}>Save knowledge</button>
           <p className={styles.label}>Deck</p>
           <p className={styles.note}>One deck is used on calls. A new PDF replaces that deck. Pages are rendered in this browser. PDFs up to 50 MB.</p>
+          {deckNote ? <p className={deckNote.startsWith("No deck") ? styles.note : styles.err}>{deckNote}</p> : null}
           {deckJob ? <p className={deckJob.phase === "error" ? styles.err : styles.note}>{deckJob.message}</p> : null}
           <input type="file" accept="application/pdf,.pdf" disabled={deckBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadDeck(file); }} />
           {decks.map((deck) => (

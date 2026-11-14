@@ -27,7 +27,8 @@ function loadTs(file) {
 }
 
 const { buildInterviewerPrompt, campaignOpening, interviewerGreeting, knowledgeManifest } = loadTs(new URL("../lib/interviewer/prompt.ts", import.meta.url).pathname);
-const { choosePages, pickInternalLinks, sitemapLocs } = loadTs(new URL("../lib/interviewer/website-pages.ts", import.meta.url).pathname);
+const { choosePages, pickInternalLinks, sitemapLocs, routeScriptText, readablePageText, dropInventedPrices, scriptRoutes } = loadTs(new URL("../lib/interviewer/website-pages.ts", import.meta.url).pathname);
+const { websiteImportIds, knowledgeFromDocuments, WEBSITE_IMPORT_SOURCE } = loadTs(new URL("../lib/interviewer/knowledge.ts", import.meta.url).pathname);
 const { INTERVIEWER_VOICES, FALLBACK_INTERVIEWER_VOICE } = loadTs(new URL("../lib/interviewer/voices.ts", import.meta.url).pathname);
 const { knowledgeTitleFromNote, validateCampaignFields } = loadTs(new URL("../lib/interviewer/form-fields.ts", import.meta.url).pathname);
 const { presentTranscript } = loadTs(new URL("../lib/interviewer/transcript-display.ts", import.meta.url).pathname);
@@ -123,6 +124,27 @@ const crawled = choosePages([
 ], home, 25);
 if (!crawled.some((url) => url.includes("/get-kiosk"))) throw new Error("kiosk page was not crawled");
 if (crawled.some((url) => url.includes("other.example"))) throw new Error("left the site");
+const kept = websiteImportIds([
+  { id: "hand-1", source: null, title: "Products: tills, Waiter Mate handhelds and SoftPOS" },
+  { id: "hand-2", source: null, title: "Prices" },
+  { id: "hand-3", source: null, title: "Common questions and objections" },
+  { id: "import-1", source: WEBSITE_IMPORT_SOURCE, title: "Products and services" },
+]);
+if (kept.length !== 1 || kept[0] !== "import-1") throw new Error("a handwritten note was marked for deletion");
+const keptNotes = knowledgeFromDocuments([
+  { title: "Products and services", body: "invented", source: WEBSITE_IMPORT_SOURCE },
+  { title: "Products: tills, Waiter Mate handhelds and SoftPOS", body: "tills and Waiter Mate", source: null },
+]);
+if (!keptNotes.products.includes("Waiter Mate")) throw new Error("handwritten product note was hidden");
+const bundle = 'function U2(){return o.jsx(R0,{subheading:"Get a POS for Just £199/month",headingOne:"SELF SERVICE KIOSKS"})}function P2(){return o.jsx(R0,{subheading:"Get a POS for Just £60/month"})}o.jsx(bn,{path:"/get-kiosk",element:o.jsx(U2,{})}),o.jsx(bn,{path:"/get-pos",element:o.jsx(P2,{})})';
+if (!routeScriptText(bundle, "/get-kiosk").includes("£199")) throw new Error("kiosk price was not read from the script");
+if (!routeScriptText(bundle, "/get-pos").includes("£60")) throw new Error("POS price was not read from the script");
+if (routeScriptText(bundle, "/get-pos").includes("£199")) throw new Error("kiosk price was attached to the POS page");
+const thin = readablePageText({ html: "<html><body><div id=\"root\"></div></body></html>", pathname: "/get-kiosk", scripts: [bundle] });
+if (!thin.text.includes("£199")) throw new Error("thin page did not use the script");
+const priced = dropInventedPrices("Plans start at £39 a month. Kiosks are £199 a month.", "Get a POS for Just £199/month");
+if (priced.includes("£39") || !priced.includes("£199")) throw new Error("an invented price was kept");
+if (!scriptRoutes(bundle).includes("/get-kiosk")) throw new Error("script route missing");
 const greeting = interviewerGreeting({ campaignName: "Solar", prospectName: "Lee Nazari", personaOverride: null, promptOverride: null, maxMinutes: null, documents: notes, opener: "Welcome to the company. Let me tell you everything about our history and then a tip about muting." });
 if (greeting !== "Hi Lee, thanks for joining. What brings you here today?") throw new Error(`greeting was too long: ${greeting}`);
 if (/tip|mute|solar/i.test(greeting)) throw new Error("greeting included a pitch or a tip");

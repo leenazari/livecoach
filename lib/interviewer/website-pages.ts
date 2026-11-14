@@ -1,5 +1,9 @@
 const LINK_HINT = /pricing|prices|services|service|about|faq|faqs|contact|product|kiosk|pos|hardware|hospitality|solution|industr|demo|book|plan|feature|menu|order/i;
 
+export const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+export const MIN_IMPORT_CHARS = 1500;
+export const THIN_PAGE_CHARS = 400;
+
 const PAGE_SCORE: Array<[RegExp, number]> = [
   [/kiosk/, 100],
   [/pos|point-of-sale/, 90],
@@ -118,4 +122,149 @@ export function choosePages(urls: string[], home: URL, limit = 25): string[] {
     })
     .slice(0, limit)
     .map(([value]) => value);
+}
+
+export function moduleScriptUrls(html: string, pageUrl: URL): string[] {
+  const found: string[] = [];
+  for (const match of html.matchAll(/<script\b[^>]*>/gi)) {
+    const tag = match[0];
+    const src = tag.match(/\ssrc\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (!src) continue;
+    if (!/type\s*=\s*["']module["']/i.test(tag) && !/\.m?js(?:\?|$)/i.test(src)) continue;
+    let next: URL;
+    try { next = new URL(src, pageUrl); } catch { continue; }
+    if (next.host !== pageUrl.host || next.protocol !== pageUrl.protocol) continue;
+    const value = next.toString();
+    if (!found.includes(value)) found.push(value);
+  }
+  return found;
+}
+
+export function scriptRoutes(js: string): string[] {
+  const found: string[] = [];
+  for (const match of js.matchAll(/path\s*:\s*["'](\/[^"' #\s]*)["']/g)) {
+    const path = match[1];
+    if (path.includes(":") || path.includes("*")) continue;
+    if (!found.includes(path)) found.push(path);
+  }
+  return found;
+}
+
+function isHumanSentence(raw: string): boolean {
+  if (!/[a-z]/i.test(raw) || !/\s/.test(raw)) return false;
+  if (/[{}<>]|=>|\{\{|https?:|\/\/|\bfunction\b|className|\bjsx\b/.test(raw)) return false;
+  const words = raw.split(/\s+/);
+  if (words.length < 3) return false;
+  if (words.some((word) => /^[a-z]+[A-Z][A-Za-z]+$/.test(word))) return false;
+  return true;
+}
+
+export function humanSentences(source: string): string[] {
+  const found: string[] = [];
+  for (const match of source.matchAll(/"((?:\\.|[^"\\]){8,400})"/g)) {
+    const raw = match[1]
+      .replace(/\\n/g, " ")
+      .replace(/\\"/g, "\"")
+      .replace(/\\u00a3/gi, "£")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!isHumanSentence(raw)) continue;
+    if (!found.includes(raw)) found.push(raw);
+  }
+  return found;
+}
+
+function routeComponentName(js: string, pathname: string): string {
+  const escaped = pathname.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = js.match(new RegExp(`path\\s*:\\s*["']${escaped}["']\\s*,\\s*element\\s*:\\s*[A-Za-z0-9_$.]+\\(\\s*([A-Za-z0-9_$]+)`));
+  return match?.[1] || "";
+}
+
+export function functionSource(js: string, name: string): string {
+  if (!/^[A-Za-z0-9_$]+$/.test(name)) return "";
+  const start = js.search(new RegExp(`function\\s+${name}\\s*\\(|(?:const|let|var)\\s+${name}\\s*=\\s*(?:async\\s*)?\\(`));
+  if (start < 0) return "";
+  const open = js.indexOf("{", start);
+  if (open < 0) return "";
+  let depth = 0;
+  for (let index = open; index < Math.min(js.length, open + 150000); index += 1) {
+    const char = js[index];
+    if (char === "\"" || char === "'" || char === "`") {
+      index += 1;
+      while (index < js.length && js[index] !== char) {
+        if (js[index] === "\\") index += 1;
+        index += 1;
+      }
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return js.slice(open, index + 1);
+    }
+  }
+  return "";
+}
+
+export function routeScriptText(js: string, pathname: string): string {
+  const name = routeComponentName(js, pathname);
+  if (!name) return "";
+  return humanSentences(functionSource(js, name)).join("\n");
+}
+
+export function sharedScriptText(js: string): string {
+  const claimed = new Set<string>();
+  for (const path of scriptRoutes(js)) {
+    for (const line of routeScriptText(js, path).split("\n")) if (line) claimed.add(line);
+  }
+  const rank = (line: string) => {
+    if (/£\s?\d/.test(line)) return 3;
+    if (/kiosk|pos|till|loyalty|book|hospitality|price/i.test(line)) return 2;
+    return 1;
+  };
+  const lines = humanSentences(js).filter((line) => !claimed.has(line)).sort((left, right) => rank(right) - rank(left));
+  let used = 0;
+  const kept: string[] = [];
+  for (const line of lines) {
+    if (used + line.length > 6000) break;
+    kept.push(line);
+    used += line.length;
+  }
+  return kept.join("\n");
+}
+
+export function inlineScriptText(html: string): string {
+  const parts: string[] = [];
+  for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    if (/\ssrc\s*=/i.test(match[1])) continue;
+    if (/fbq\(|gtag\(|googletagmanager|facebook\.net/i.test(match[2])) continue;
+    const text = humanSentences(match[2]).join("\n");
+    if (text) parts.push(text);
+  }
+  return parts.join("\n");
+}
+
+export function readablePageText(input: { html: string; pathname: string; scripts: string[] }): { text: string; visibleChars: number } {
+  const visible = htmlToText(input.html);
+  if (visible.length >= THIN_PAGE_CHARS) return { text: visible.slice(0, 8000), visibleChars: visible.length };
+  const route = input.scripts.map((script) => routeScriptText(script, input.pathname)).filter(Boolean).join("\n");
+  const shared = input.pathname === "/" ? input.scripts.map((script) => sharedScriptText(script)).filter(Boolean).join("\n") : "";
+  const inline = inlineScriptText(input.html);
+  const text = [visible, inline, route, shared].filter(Boolean).join("\n\n").slice(0, 8000);
+  return { text, visibleChars: visible.length };
+}
+
+export function priceTokens(text: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const match of text.matchAll(/£\s?\d[\d,]*(?:\.\d+)?/g)) tokens.add(match[0].replace(/\s+/g, "").toLowerCase());
+  return tokens;
+}
+
+export function dropInventedPrices(body: string, source: string): string {
+  const allowed = priceTokens(source);
+  return body
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => [...priceTokens(sentence)].every((token) => allowed.has(token)))
+    .join(" ")
+    .trim();
 }
