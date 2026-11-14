@@ -10,7 +10,9 @@ import { isInternalCostLine } from "@/lib/interviewer/slide-notes";
 import { headlinesFromContent, notesFromImages } from "@/lib/interviewer/slide-vision";
 import { DECK_IMPORT_SOURCE } from "@/lib/interviewer/knowledge";
 import { QUALIFYING_TITLE } from "@/lib/interviewer/qualifying";
-import { deckNoteRows, qualifyingFromDeck, type DeckFact } from "@/lib/interviewer/salesTemplate";
+import { objectionNoteFromSource } from "@/lib/interviewer/knowledge-draft";
+import { headlineFromPageText } from "@/lib/interviewer/slide-headline";
+import { deckNoteRows, qualifyingFromDeck, websiteInBrochure, type DeckFact } from "@/lib/interviewer/salesTemplate";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -22,18 +24,29 @@ const UUID = /^[0-9a-f-]{36}$/i;
 
 async function syncBrochureNotes(campaignId: string, workspaceId: string, slides: DeckFact[]) {
   const campaign = await supabaseService.from("interviewer_campaigns").select("website_url").eq("id", campaignId).maybeSingle();
-  if (campaign.error || campaign.data?.website_url) return;
-  await supabaseService.from("interviewer_documents").delete().eq("campaign_id", campaignId).eq("workspace_id", workspaceId).eq("source", DECK_IMPORT_SOURCE);
-  const rows = deckNoteRows(slides).map((note) => ({
-    workspace_id: workspaceId,
-    campaign_id: campaignId,
-    title: note.title,
-    body: note.body,
-    source: DECK_IMPORT_SOURCE,
-  }));
-  const existing = await supabaseService.from("interviewer_documents").select("id, source").eq("campaign_id", campaignId).eq("title", QUALIFYING_TITLE).maybeSingle();
-  if (!existing.data || existing.data.source === DECK_IMPORT_SOURCE) {
-    if (existing.data) await supabaseService.from("interviewer_documents").delete().eq("id", existing.data.id);
+  const sourceText = slides.map((slide) => `${slide.title} ${slide.talkingPoints || ""}`).join("\n");
+  const notes = [
+    ...deckNoteRows(slides),
+    { title: "Objection handling", body: objectionNoteFromSource(sourceText) },
+  ];
+  if (campaign.error) return { saved: false, notes };
+  const existing = await supabaseService.from("interviewer_documents").select("id, title, source").eq("campaign_id", campaignId).eq("workspace_id", workspaceId);
+  const rows = [];
+  for (const note of notes) {
+    const match = (existing.data || []).find((row) => String(row.title).toLowerCase() === note.title.toLowerCase());
+    if (match && match.source !== DECK_IMPORT_SOURCE) continue;
+    if (match?.id) await supabaseService.from("interviewer_documents").delete().eq("id", match.id);
+    rows.push({
+      workspace_id: workspaceId,
+      campaign_id: campaignId,
+      title: note.title,
+      body: note.body,
+      source: DECK_IMPORT_SOURCE,
+    });
+  }
+  const qualifying = await supabaseService.from("interviewer_documents").select("id, source").eq("campaign_id", campaignId).eq("title", QUALIFYING_TITLE).maybeSingle();
+  if (!qualifying.data || qualifying.data.source === DECK_IMPORT_SOURCE) {
+    if (qualifying.data) await supabaseService.from("interviewer_documents").delete().eq("id", qualifying.data.id);
     rows.push({
       workspace_id: workspaceId,
       campaign_id: campaignId,
@@ -43,6 +56,7 @@ async function syncBrochureNotes(campaignId: string, workspaceId: string, slides
     });
   }
   if (rows.length) await supabaseService.from("interviewer_documents").insert(rows);
+  return { saved: true, notes };
 }
 
 function mimeFor(path: string): string {
@@ -85,7 +99,7 @@ export async function GET(req: Request) {
     }
     const slides = await supabaseService
       .from("interviewer_slides")
-      .select("deck_id, slide_number, title, image_path")
+      .select("deck_id, slide_number, title, one_line, talking_points, verbatim, image_path")
       .eq("workspace_id", scope.workspaceId)
       .eq("campaign_id", campaignId)
       .order("slide_number", { ascending: true });
@@ -127,7 +141,9 @@ export async function GET(req: Request) {
         slides: index === 0 ? pages : [],
       });
     }
-    return NextResponse.json({ decks: grouped, ready: true }, { headers: noStore });
+    const activeSlides = (slides.data || []).filter((slide) => slide.deck_id === ordered[0]?.id);
+    const websiteHint = websiteInBrochure(activeSlides.map((slide) => `${slide.title || ""} ${slide.one_line || ""} ${slide.talking_points || ""} ${slide.verbatim || ""}`).join("\n"));
+    return NextResponse.json({ decks: grouped, ready: true, websiteHint }, { headers: noStore });
   } catch (error) {
     return interviewerOwnerError(error);
   }
@@ -246,15 +262,20 @@ export async function POST(req: Request) {
         || !String(row.one_line || "").trim()
         || !String(row.talking_points || "").trim()
       ));
-      const stored = rows.map((row) => ({
-        id: row.id,
-        number: row.slide_number,
-        title: String(row.title || ""),
-        oneLine: String(row.one_line || ""),
-        talkingPoints: String(row.talking_points || ""),
-        verbatim: row.verbatim ? String(row.verbatim) : null,
-        stats: String(row.stats || ""),
-      }));
+      const pageText = Array.isArray(record.pageText) ? record.pageText.map((item) => String(item || "")) : [];
+      const stored = rows.map((row) => {
+        const text = pageText[Number(row.slide_number) - 1] || "";
+        const fromLayer = headlineFromPageText(text);
+        return {
+          id: row.id,
+          number: row.slide_number,
+          title: fromLayer || String(row.title || ""),
+          oneLine: String(row.one_line || ""),
+          talkingPoints: text && (overwrite || !String(row.talking_points || "").trim()) ? text : String(row.talking_points || ""),
+          verbatim: row.verbatim ? String(row.verbatim) : null,
+          stats: String(row.stats || ""),
+        };
+      });
       const missing: number[] = [];
       if (needsModel) {
         const images = [];
@@ -307,13 +328,13 @@ export async function POST(req: Request) {
         prices: slide.stats,
       })));
       await supabaseService.from("interviewer_decks").update({ outline }).eq("id", deckId);
-      await syncBrochureNotes(deck.data.campaign_id, scope.workspaceId, stored.map((slide) => ({
+      const brochureNotes = await syncBrochureNotes(deck.data.campaign_id, scope.workspaceId, stored.map((slide) => ({
         number: slide.number,
         title: slide.title,
         oneLine: slide.oneLine,
         talkingPoints: slide.talkingPoints,
         verbatim: slide.verbatim,
-      }))).catch(() => undefined);
+      }))).catch(() => null);
       const warnings = stored.map((slide) => slide.stats).filter((line) => isInternalCostLine(line));
       return NextResponse.json({
         updated: stored.length,
@@ -321,6 +342,8 @@ export async function POST(req: Request) {
         missing,
         warnings,
         preserved: !overwrite,
+        deckNotes: brochureNotes?.notes || [],
+        deckNotesSaved: brochureNotes?.saved === true,
       }, { headers: noStore });
     }
 

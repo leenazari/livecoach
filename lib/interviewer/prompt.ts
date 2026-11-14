@@ -102,6 +102,7 @@ export function buildInterviewerPrompt(input: InterviewerPromptInput): string {
   const brochure = input.brochureSend
     ? "If they want something to read, you may offer a brochure. Do not say it has already been sent."
     : "Do not offer to send a brochure.";
+  const spokenGreeting = interviewerGreeting(input);
   const prompt = `PERSONA
 You are a top sales agent on an inbound call. The person came to you. Build rapport, find out about them first, then paint a clear picture of the business, what it can do, and its products. Have a real conversation before you ever suggest a booking. Customers will not book until they have the information they want. You are friendly, warm, curious, positive and never pushy.
 The campaign name "${name}" is only a label. The business, the products, and every claim come from the website knowledge below, plus any extra notes and the deck. Do not invent a pitch from the name alone.
@@ -123,7 +124,7 @@ ${slides ? `Slide index. Show one slide at a time. Call show_slide immediately b
 ${INTERVIEWER_PLAYBOOK}
 
 RULES
-This is an inbound call. The opening line has already been spoken in full. Do not repeat it, shorten it, or speak over it. Do not call show_slide until they have answered. Do not add a company introduction, a pitch, or a tip before they answer. Do not say the mute tip yourself. It is added once, after their first answer.
+This is an inbound call. The opening line has already been spoken exactly as written: "${spokenGreeting}" Do not repeat it, shorten it, paraphrase it, reorder it, or add another hello or welcome. Do not call show_slide until they have answered. Do not add a company introduction, a pitch, or a tip before they answer. Do not say the mute tip yourself. It is added once, after their first answer.
 Speak British English, in plain spoken sentences only. Never use markdown, asterisks, hashes, bullets, backticks, or lists. Never read aloud a web address, a storage link, a code fragment, JSON, or a technical identifier. If a tool result contains one, ignore it. Say a price in words, for example sixty pounds a month. Be warm, not gushing. Never say "Great choice", "Oh, I see you're interested", or "Oh I see you are interested". One light acknowledgement at the start of some turns, not every turn, never stacked, never the same one twice in a row.
 After you understand their situation, explain the business from the website knowledge: how it works, the benefit that matches what they said, and an example. Answer "tell me more" and "show me more" from that knowledge. Do not send them to a meeting to hear the explanation.
 After you explain something, offer two next topics that are actually in the knowledge, in your own words: would you like to hear about one or the other next? Never leave the turn with nowhere to go.
@@ -143,10 +144,30 @@ Never invent facts. Never read slide text word for word unless it is marked verb
   return stripAgentContext(prompt);
 }
 
+function escapeName(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// The name goes in front of the opener. It must not be dropped into the middle
+// of "Thanks for joining the call", which is what produced "Sharon the call".
+export function greetingWithName(opener: string, fullName: string | null | undefined): string {
+  const line = String(opener || "").replace(/\s+/g, " ").trim();
+  const first = String(fullName || "").trim().split(/\s+/)[0] || "";
+  if (!first) return line;
+  if (line && new RegExp(`\\b${escapeName(first)}\\b`, "i").test(line)) return line;
+  if (/^thanks for joining the call\b/i.test(line)) {
+    return line.replace(/^thanks for joining the call/i, `Hi ${first}, thanks for joining the call`);
+  }
+  if (/^thanks for joining\b/i.test(line)) {
+    return line.replace(/^thanks for joining\b/i, `Hi ${first}, thanks for joining`);
+  }
+  if (/^hi\b/i.test(line)) return line.replace(/^hi\b,?/i, `Hi ${first},`);
+  if (!line) return `Hi ${first}, thanks for joining the call.`;
+  return `Hi ${first}, ${line}`;
+}
+
 export function interviewerGreeting(input: InterviewerPromptInput): string {
-  const first = (input.prospectName || "").trim().split(/\s+/)[0] || "";
   const custom = stripAgentContext(String(input.opener || "").replace(/\s+/g, " ").trim()).slice(0, 400);
-  if (custom && !/tip|mute|background|interested in/i.test(custom)) return custom;
-  const opener = defaultOpener(input.campaignName);
-  return first ? opener.replace("Thanks for joining", `Thanks for joining, ${first}`) : opener;
+  const opener = custom && !/tip|mute|background|interested in/i.test(custom) ? custom : defaultOpener(input.campaignName);
+  return greetingWithName(opener, input.prospectName);
 }

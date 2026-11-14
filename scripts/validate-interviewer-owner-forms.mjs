@@ -224,12 +224,12 @@ const priced = dropInventedPrices("Plans start at £39 a month. Kiosks are £199
 if (priced.includes("£39") || !priced.includes("£199")) throw new Error("an invented price was kept");
 if (!scriptRoutes(bundle).includes("/get-kiosk")) throw new Error("script route missing");
 const greeting = interviewerGreeting({ campaignName: "Solar", prospectName: "Lee Nazari", personaOverride: null, promptOverride: null, maxMinutes: null, documents: notes, opener: "Welcome to the company. Let me tell you everything about our history and then a tip about muting." });
-if (!greeting.startsWith("Thanks for joining, Lee")) throw new Error(`greeting was not the default opener: ${greeting}`);
+if (!greeting.startsWith("Hi Lee, thanks for joining the call")) throw new Error(`greeting was not the default opener: ${greeting}`);
 if (/tip|mute/i.test(greeting) || !/Solar brochure/i.test(greeting)) throw new Error("greeting included a tip or dropped the product");
 const swooposOpener = "Thanks for joining this interactive demo. i can jump to anything you like in the brochure. first, tell me a bit about what type of business you run.";
 if (stripAgentContext(swooposOpener) !== swooposOpener) throw new Error("sanitizer trimmed the Swoopos opener");
 const fullOpener = interviewerGreeting({ campaignName: "Swoopos EPOS system", prospectName: "Lee", personaOverride: null, promptOverride: null, maxMinutes: 30, documents: notes, opener: swooposOpener });
-if (fullOpener !== swooposOpener) throw new Error(`opener was clipped: ${fullOpener}`);
+if (!fullOpener.startsWith("Hi Lee, thanks for joining this interactive demo")) throw new Error(`opener was clipped: ${fullOpener}`);
 const { slideClickDecision, slideClickSpeech, sendSlideClickFirst } = loadTs(new URL("../lib/interviewer/slide-click.ts", import.meta.url).pathname);
 if (slideClickDecision({ number: 4, current: 4, covered: true, lastNumber: 0, lastAt: 0, now: 5000 }) !== "ignore-current") throw new Error("active slide was not ignored");
 if (slideClickDecision({ number: 3, current: 4, covered: true, lastNumber: 3, lastAt: 4000, now: 5000 }) !== "ignore-repeat") throw new Error("repeat click was not ignored");

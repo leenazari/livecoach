@@ -1,4 +1,5 @@
 import { cleanSlideText, isInternalCostLine } from "@/lib/interviewer/slide-notes";
+import { slideRole, walkOrderNote } from "@/lib/interviewer/slide-role";
 
 export const SLIDE_HEADLINE_MAX = 60;
 
@@ -20,6 +21,19 @@ export function clipHeadline(value: string): string {
   return (word.length >= 18 ? word : cut).slice(0, SLIDE_HEADLINE_MAX);
 }
 
+export function headlineFromPageText(text: string): string {
+  const lines = String(text || "")
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => line.length >= 3 && !/^\d+$/.test(line));
+  for (const line of lines) {
+    if (isGenericSlideTitle(line) || isInternalCostLine(line)) continue;
+    const headline = clipHeadline(line);
+    if (headline && !isGenericSlideTitle(headline)) return headline;
+  }
+  return "";
+}
+
 export function headlineFromNotes(input: { talkingPoints?: string; oneLine?: string; verbatim?: string | null }): string {
   const points = cleanSlideText(input.talkingPoints || "").split("\n").map((line) => line.replace(/^[-*]\s*/, "").trim()).filter(Boolean);
   const source = points[0] || cleanSlideText(input.verbatim || "") || "";
@@ -29,15 +43,18 @@ export function headlineFromNotes(input: { talkingPoints?: string; oneLine?: str
 }
 
 export function formatDeckKnowledge(slides: Array<{ number: number; title: string; facts: string[]; prices?: string }>): string {
-  return slides.map((slide) => {
-    const lines = [`${slide.number}. ${slide.title || "Untitled"}`];
+  const plan = walkOrderNote(slides.map((slide) => ({ number: slide.number, title: slide.title })));
+  const body = slides.map((slide) => {
+    const title = customerHeadline(slide.title) || headlineFromPageText(slide.facts.join("\n")) || `Slide ${slide.number}`;
+    const lines = [`${slide.number}. [${slideRole(title)}] ${title}`];
     for (const fact of slide.facts) {
       const clean = fact.replace(/\s+/g, " ").trim();
       if (clean) lines.push(`- ${clean}`);
     }
     if (slide.prices?.trim()) lines.push(`- Price on the page: ${slide.prices.replace(/\s+/g, " ").trim()}`);
     return lines.join("\n");
-  }).join("\n\n").slice(0, 8000);
+  }).join("\n\n");
+  return `${plan}\n\n${body}`.slice(0, 8000);
 }
 
 export function customerHeadline(title: string, deckTitle = ""): string {
