@@ -835,9 +835,9 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         }
         const agentTalking = nextAt > context.currentTime + 0.05;
         const slideQuiet = Date.now() - Math.max(lastSlideAt.current, callStartedAt);
-        if (greetingDoneRef.current && agentTalking && !silence.speaking && slideQuiet > 60000 && Date.now() - lastPaceAt > 60000 && Date.now() - leadQuestionAt.current > 15000) {
+        if (greetingDoneRef.current && agentTalking && !silence.speaking && slideQuiet > 40000 && Date.now() - lastPaceAt > 40000 && Date.now() - leadQuestionAt.current > 12000) {
           lastPaceAt = Date.now();
-          note("Note for you only. Do not read this aloud. You have stayed on this slide for about a minute. Call show_slide for the next feature that matches what they said. Two short sentences tied to their business, then move on. Skip setup slides.");
+          note("Note for you only. Do not read this aloud. About 40 seconds have passed on this slide. Acknowledge what they just said in one line, then call show_slide for the next relevant feature. One or two punchy sentences. Do not go back to a long intro. Skip setup slides unless they asked.");
         }
       }, 1000);
       heartbeat = window.setInterval(() => {

@@ -124,7 +124,7 @@ export function buildVoiceAgentSettings(input: InterviewerPromptInput & {
       },
       // Aura speaks the think text directly. When thinkUrl is set, that text is
       // filtered by /api/interviewer/think before it can reach the voice.
-      speak: { provider: { type: "deepgram", version: "v1", model: interviewerVoiceOrFallback(input.voiceId) } },
+      speak: { provider: { type: "deepgram", version: "v1", model: interviewerVoiceOrFallback(input.voiceId), speed: 1.1 } },
     },
   };
 }

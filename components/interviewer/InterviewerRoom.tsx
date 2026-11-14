@@ -169,6 +169,8 @@ export default function InterviewerRoom({
   const [bookingSaved, setBookingSaved] = useState<boolean | null>(null);
   const [slideBroken, setSlideBroken] = useState(false);
   const [talkOpen, setTalkOpen] = useState(false);
+  const [featuresOpen, setFeaturesOpen] = useState(false);
+  const slideStageRef = useRef<HTMLDivElement | null>(null);
 
   const meterRef = useRef<number | ReturnType<typeof setInterval> | null>(null);
   const showSlideImage = Boolean(call.slideUrl) && !slideBroken;
@@ -264,7 +266,7 @@ export default function InterviewerRoom({
         <header className={styles.callTop}>
           <p>Private conversation · {campaignName}</p>
         </header>
-        <section className={styles.callStage}>
+        <section className={`${styles.callStage} ${featuresOpen ? styles.featuresOpen : ""}`}>
           {call.slideIndex.length ? (
             <ol className={styles.slideList}>
               {call.slideIndex.map((slide) => {
@@ -292,9 +294,18 @@ export default function InterviewerRoom({
             </ol>
           ) : <div className={styles.slideList} />}
           <div className={styles.slideColumn}>
-            <div className={styles.slideStage}>
+            <div
+              className={styles.slideStage}
+              ref={slideStageRef}
+              onClick={() => {
+                const node = slideStageRef.current;
+                if (!node) return;
+                if (document.fullscreenElement === node) void document.exitFullscreen();
+                else void node.requestFullscreen?.();
+              }}
+            >
               {call.phase === "live" && call.remainingSeconds != null && call.remainingSeconds <= 120 ? (
-                <p className={styles.limitClock} role="timer" aria-live="assertive" aria-label={`${formatCountdown(call.remainingSeconds)} left on this call`}>
+                <p className={styles.limitClock} role="timer" aria-live="assertive" aria-label={`${formatCountdown(call.remainingSeconds)} left on this call`} onClick={(event) => event.stopPropagation()}>
                   {formatCountdown(call.remainingSeconds)}
                 </p>
               ) : null}
@@ -323,6 +334,9 @@ export default function InterviewerRoom({
               ))}
               {call.interim ? <p>You: {call.interim}</p> : null}
             </div>
+            <button type="button" className={styles.featuresToggle} aria-pressed={featuresOpen} onClick={() => setFeaturesOpen((open) => !open)}>
+              {featuresOpen ? "Hide points" : "Key points"}
+            </button>
             <button type="button" className={styles.expandBtn} onClick={() => setTalkOpen(true)}>Expand</button>
           </div>
         </section>
@@ -358,16 +372,21 @@ export default function InterviewerRoom({
           </div>
           {call.ending ? (
             <button type="button" className={styles.endSolid} onClick={call.hangUp} aria-busy="true">Ending…</button>
-          ) : call.endAsk ? (
-            <div className={styles.endAsk}>
-              <p>Are you sure you want to end the call?</p>
-              <button type="button" className={styles.endSolid} onClick={call.confirmHangUp}>End call</button>
-              <button type="button" className={styles.btnGhost} onClick={call.cancelHangUp}>Keep talking</button>
-            </div>
           ) : (
-            <button type="button" className={styles.endSolid} onClick={call.hangUp}>End conversation</button>
+            <button type="button" className={styles.endSolid} aria-label="End the conversation" onClick={call.hangUp}>End</button>
           )}
         </footer>
+        {call.endAsk ? (
+          <div className={styles.endSheet} role="dialog" aria-modal="true" aria-label="End the call">
+            <div className={styles.endSheetCard}>
+              <p>Are you sure you want to end the call?</p>
+              <div className={styles.endSheetActions}>
+                <button type="button" className={styles.endSolid} onClick={call.confirmHangUp}>End call</button>
+                <button type="button" className={styles.btnGhost} onClick={call.cancelHangUp}>Keep talking</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </main>
     );
   }
