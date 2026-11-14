@@ -9,6 +9,134 @@ import { INTERVIEWER_MIC_CONSTRAINTS } from "@/lib/interviewer/listen-url";
 import { useInterviewerCall } from "@/components/interviewer/useInterviewerCall";
 
 type Slot = { start: string; end: string; label: string };
+type Recap = {
+  summary: string;
+  businessType: string;
+  howTheyServe: string;
+  fits: Array<{ title: string; why: string; slideNumber: number | null; slideTitle: string }>;
+  answers: Array<{ question: string; answer: string }>;
+  booked: boolean;
+  when: string | null;
+  nextStep: string;
+} | null;
+
+function calendarStamp(value: Date): string {
+  return value.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+}
+
+function saveCalendar(when: string) {
+  const start = new Date(when);
+  if (Number.isNaN(start.getTime())) return;
+  const end = new Date(start.getTime() + 30 * 60 * 1000);
+  const body = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Interviewa//Call//EN",
+    "BEGIN:VEVENT",
+    `DTSTAMP:${calendarStamp(new Date())}`,
+    `DTSTART:${calendarStamp(start)}`,
+    `DTEND:${calendarStamp(end)}`,
+    "SUMMARY:Call with one of our human team",
+    "DESCRIPTION:A call with one of our human team. They can walk you through the real system and get you set up with a trial.",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  const url = URL.createObjectURL(new Blob([body], { type: "text/calendar" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "human-team-call.ics";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function whenLabel(when: string | null): string {
+  if (!when) return "";
+  const date = new Date(when);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function CallSummary({
+  recap,
+  slides,
+  bookedWhen,
+  slots,
+  note,
+  onBook,
+}: {
+  recap: Recap;
+  slides: Array<{ number: number; title: string; url?: string | null }>;
+  bookedWhen: string | null;
+  slots: Slot[];
+  note: string;
+  onBook: (slot: Slot) => void;
+}) {
+  const booked = Boolean(recap?.booked || bookedWhen);
+  const when = bookedWhen || recap?.when || null;
+  const picture = [recap?.businessType, recap?.howTheyServe].filter((item) => item && !/not established/i.test(item)).join(" ");
+  return (
+    <section className={`${styles.lightCard} mt-8`}>
+      <h2 className={styles.cardTitle}>Thanks for talking with us</h2>
+      <p className="mt-2 text-sm leading-6">{picture || recap?.summary || "Thanks for the conversation."}</p>
+      {(recap?.fits || []).length ? (
+        <div className="mt-4">
+          <p className={styles.label}>What fits your setup</p>
+          {(recap?.fits || []).map((fit) => {
+            const slide = slides.find((item) => item.number === fit.slideNumber);
+            return (
+              <div key={`${fit.title}-${fit.why}`} className={styles.fitRow}>
+                {slide?.url ? <img src={slide.url} alt="" className={styles.slideThumb} /> : <span className={styles.slideThumb} aria-hidden="true" />}
+                <div>
+                  <p>{fit.slideTitle || fit.title}</p>
+                  <p className={styles.note}>{fit.why}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+      {(recap?.answers || []).length ? (
+        <div className="mt-4">
+          <p className={styles.label}>Your questions</p>
+          {(recap?.answers || []).map((item) => (
+            <p key={item.question} className="mt-2 text-sm leading-6"><strong>{item.question}</strong> {item.answer}</p>
+          ))}
+        </div>
+      ) : null}
+      {booked ? (
+        <div className={`${styles.ready} mt-4`}>
+          <p className={styles.readyTitle}>You're booked</p>
+          <p className="mt-2">{whenLabel(when) || "The time is on the calendar."}</p>
+          <p className={styles.note}>With one of our human team.</p>
+          {when ? <button type="button" className={`${styles.btn} mt-3`} onClick={() => saveCalendar(when)}>Add to calendar</button> : null}
+        </div>
+      ) : (
+        <div className="mt-4">
+          <p className={styles.label}>Pick a time with one of our human team</p>
+          {slots.length ? (
+            <ul className="mt-2 space-y-2">
+              {slots.map((slot) => (
+                <li key={slot.start}>
+                  <button type="button" className={styles.btnGhost} onClick={() => onBook(slot)}>{slot.label}</button>
+                </li>
+              ))}
+            </ul>
+          ) : <p className={styles.note}>{note || "Checking the calendar for open times."}</p>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function recentSentences(lines: Array<{ speaker: string; text: string }>) {
+  const sentences: Array<{ speaker: string; text: string }> = [];
+  for (const line of lines) {
+    const parts = line.text.split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean);
+    const usable = parts.length ? parts : (line.text.trim() ? [line.text.trim()] : []);
+    for (const text of usable) sentences.push({ speaker: line.speaker, text });
+  }
+  return sentences.slice(-2);
+}
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
@@ -34,10 +162,11 @@ export default function InterviewerRoom({
   const holdRef = useRef<HTMLAudioElement | null>(null);
   const [holdSrc, setHoldSrc] = useState("/interviewer/hold-loop.wav");
   const [slots, setSlots] = useState<Slot[]>([]);
+  const [bookedWhen, setBookedWhen] = useState<string | null>(null);
   const [bookingNote, setBookingNote] = useState("");
   const [bookingSaved, setBookingSaved] = useState<boolean | null>(null);
   const [slideBroken, setSlideBroken] = useState(false);
-  const [talkOpen, setTalkOpen] = useState(true);
+  const [talkOpen, setTalkOpen] = useState(false);
 
   const meterRef = useRef<number | ReturnType<typeof setInterval> | null>(null);
   const showSlideImage = Boolean(call.slideUrl) && !slideBroken;
@@ -104,9 +233,14 @@ export default function InterviewerRoom({
     setBookingNote(data.note || "");
   };
 
+  useEffect(() => {
+    if (call.phase !== "ended" || !call.sessionId || call.recap?.booked || bookedWhen) return;
+    void suggest();
+  }, [bookedWhen, call.phase, call.recap?.booked, call.sessionId]);
+
   const book = async (slot: Slot) => {
     if (!call.sessionId || bookingSaved === false) return;
-    const data = await postJson<{ booked?: boolean; saved?: boolean; note?: string }>("/api/interviewer/book", {
+    const data = await postJson<{ booked?: boolean; saved?: boolean; note?: string; scheduledAt?: string }>("/api/interviewer/book", {
       token,
       sessionId: call.sessionId,
       action: "book",
@@ -115,7 +249,10 @@ export default function InterviewerRoom({
     });
     setBookingNote(data.note || "");
     setBookingSaved(data.saved !== false && data.booked === true);
-    if (data.booked) setSlots([]);
+    if (data.booked) {
+      setBookedWhen(data.scheduledAt || slot.start);
+      setSlots([]);
+    }
   };
 
   if (call.phase === "live") {
@@ -124,20 +261,19 @@ export default function InterviewerRoom({
       <main className={styles.callScreen}>
         <header className={styles.callTop}>
           <p>Private conversation · {campaignName}</p>
-          <button type="button" className={styles.transcriptToggle} onClick={() => setTalkOpen((open) => !open)}>
-            {talkOpen ? "Hide transcript" : "Transcript"}
-          </button>
         </header>
-        <section className={talkOpen ? styles.callStage : styles.callStageWide}>
+        <section className={styles.callStage}>
           {call.slideIndex.length ? (
             <ol className={styles.slideList}>
               {call.slideIndex.map((slide) => {
                 const title = slide.title || "Untitled";
+                const active = slide.number === call.slideNumber;
+                const seen = !active && call.seenSlides.includes(slide.number);
                 return (
                   <li key={slide.number}>
                     <button
                       type="button"
-                      className={`${styles.slideRow} ${slide.number === call.slideNumber ? styles.slideRowActive : ""}`}
+                      className={`${styles.slideRow} ${active ? styles.slideRowActive : ""} ${seen ? styles.slideRowSeen : ""}`}
                       title={title}
                       onClick={() => call.chooseSlide(slide)}
                     >
@@ -146,12 +282,13 @@ export default function InterviewerRoom({
                         <span className={styles.slideHeadline}>{title}</span>
                         <span className={styles.slideNumber}>Slide {slide.number}</span>
                       </span>
+                      {seen ? <span className={styles.seenTick} aria-label="Seen">✓</span> : null}
                     </button>
                   </li>
                 );
               })}
             </ol>
-          ) : <div />}
+          ) : <div className={styles.slideList} />}
           <div className={styles.slideColumn}>
             <div className={styles.slideStage}>
               {showSlideImage ? (
@@ -163,31 +300,40 @@ export default function InterviewerRoom({
                 </div>
               )}
             </div>
-            {points.length ? (
-              <aside className={styles.featurePanel}>
-                <p className={styles.slideKicker}>Key features</p>
-                <ul>
-                  {points.map((point) => <li key={point}>{point}</li>)}
-                </ul>
-              </aside>
-            ) : null}
           </div>
-          {talkOpen ? (
-            <div className={`${styles.callTalk} rounded-3xl border border-edge bg-panel/90 p-3`}>
-              <ul className="max-h-full space-y-3 overflow-auto">
-                {call.interim ? <li className="text-sm leading-6 text-muted">You, still speaking: {call.interim}</li> : null}
+          <aside className={styles.featurePanel}>
+            <p className={styles.slideKicker}>Key features</p>
+            {points.length ? (
+              <ul>
+                {points.map((point) => <li key={point}>{point}</li>)}
+              </ul>
+            ) : <p className={styles.note}>Key points appear with the slide.</p>}
+          </aside>
+          <div className={styles.captionStrip}>
+            <div className={styles.captionLines}>
+              {recentSentences(presentTranscript(call.captions)).map((line, index) => (
+                <p key={`${line.speaker}-${index}`}>{line.speaker === "agent" ? "Interviewa" : "You"}: {line.text}</p>
+              ))}
+              {call.interim ? <p>You: {call.interim}</p> : null}
+            </div>
+            <button type="button" className={styles.expandBtn} onClick={() => setTalkOpen(true)}>Expand</button>
+          </div>
+        </section>
+        {talkOpen ? (
+          <div className={styles.transcriptDrawer} role="dialog" aria-label="Full transcript">
+            <div className={styles.transcriptPanel}>
+              <button type="button" className={styles.expandBtn} onClick={() => setTalkOpen(false)}>Close</button>
+              <ul>
                 {presentTranscript(call.captions).map((line) => (
-                  <li key={line.id} className="text-sm leading-6 text-bone">
-                    <span className="mr-2 font-mono text-[0.65rem] uppercase tracking-wider text-amber">
-                      {line.speaker === "agent" ? "Interviewa" : "You"}
-                    </span>
+                  <li key={line.id}>
+                    <span>{line.speaker === "agent" ? "Interviewa" : "You"}</span>
                     {line.text}
                   </li>
                 ))}
               </ul>
             </div>
-          ) : null}
-        </section>
+          </div>
+        ) : null}
         <footer className={styles.controlBar}>
           <div className={styles.barLeft}>
             <p className={styles.countdown} aria-live="polite">
@@ -203,7 +349,9 @@ export default function InterviewerRoom({
               {call.muted ? "Muted" : "Mute"}
             </button>
           </div>
-          {call.endAsk ? (
+          {call.ending ? (
+            <button type="button" className={styles.endSolid} onClick={call.hangUp} aria-busy="true">Ending…</button>
+          ) : call.endAsk ? (
             <div className={styles.endAsk}>
               <p>Are you sure you want to end the call?</p>
               <button type="button" className={styles.endSolid} onClick={call.confirmHangUp}>End call</button>
@@ -223,9 +371,7 @@ export default function InterviewerRoom({
         <p className="font-mono text-[0.68rem] uppercase tracking-[0.22em] text-amber">Private conversation</p>
       </div>
       <h1 className="mt-3 font-display text-4xl text-bone">{campaignName}</h1>
-      <p className="mt-3 text-sm leading-6 text-muted">
-        A short voice conversation. You can interrupt at any time. Queue time is not charged.
-      </p>
+      <p className="mt-3 text-sm leading-6 text-muted">Ask anything, or tap a slide to jump to it.</p>
 
       {call.phase === "mic" && !call.connecting ? (
         <section className="mt-8 rounded-3xl border border-edge bg-panel/90 p-6">
@@ -258,10 +404,7 @@ export default function InterviewerRoom({
           <h2 className="font-display text-2xl text-bone">
             {call.connecting ? "Connecting you now" : "Holding your place"}
           </h2>
-          <p className="mt-2 text-sm text-muted">
-            {call.position > 0 ? `You are number ${call.position} in the queue.` : "You are at the front of the queue."}
-          </p>
-          <p className="mt-1 text-sm text-bone">{call.waitLabel}</p>
+          <p className="mt-2 text-sm text-muted">We'll connect you shortly.</p>
           {call.calmMessage ? <p className="mt-3 text-sm text-bone">{call.calmMessage}</p> : null}
           <audio
             ref={holdRef}
@@ -278,7 +421,7 @@ export default function InterviewerRoom({
           </p>
           {call.overTenMinutes ? (
             <div className="mt-5">
-              <p className="text-sm text-bone">Over 10 minutes. You can book a time instead.</p>
+              <p className="text-sm text-bone">You can book a time with one of our human team.</p>
               <button type="button" className="mt-3 rounded-full bg-amber px-4 py-2 text-sm text-ink" onClick={() => void suggest()}>
                 Book a time
               </button>
@@ -298,26 +441,20 @@ export default function InterviewerRoom({
             ))}
           </ul>
           <button type="button" className="mt-6 text-sm text-muted underline" onClick={() => void call.leaveQueue()}>
-            Leave the queue
+            Leave
           </button>
         </section>
       ) : null}
 
       {call.phase === "ended" ? (
-        <section className={`${styles.lightCard} mt-8`}>
-          <h2 className={styles.cardTitle}>Thank you</h2>
-          <p className="mt-2 text-sm leading-6">{call.recap?.summary || "Thanks for the conversation."}</p>
-          {call.recap?.topics?.length ? (
-            <ul className={styles.dotList}>{call.recap.topics.map((topic) => <li key={topic}>{topic}</li>)}</ul>
-          ) : null}
-          {call.recap?.nextStep ? <p className="mt-3 text-sm">{call.recap.nextStep}</p> : null}
-          <p className={`${styles.note} mt-2`}>
-            {call.billableSeconds === null
-              ? "The conversation is closed."
-              : `Connected time recorded: ${call.billableSeconds} seconds. Waiting time was not included.`}
-          </p>
-          {bookingNote ? <p className="mt-3 text-sm">{bookingNote}</p> : null}
-        </section>
+        <CallSummary
+          recap={call.recap}
+          slides={call.slideIndex}
+          bookedWhen={bookedWhen}
+          slots={slots}
+          note={bookingNote}
+          onBook={(slot) => void book(slot)}
+        />
       ) : null}
     </main>
   );

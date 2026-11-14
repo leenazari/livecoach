@@ -10,6 +10,7 @@ import { featureBullets } from "@/lib/interviewer/call-close";
 import { QUALIFYING_TITLE, qualifyingQuestionsFrom } from "@/lib/interviewer/qualifying";
 import { customerHeadline, formatDeckKnowledge, headlineFromNotes } from "@/lib/interviewer/slide-headline";
 import { keywordsFor } from "@/lib/interviewer/slide-match";
+import { interviewerThinkUrl } from "@/lib/interviewer/think-endpoint";
 import { interviewerVoiceOrFallback } from "@/lib/interviewer/voices";
 
 export const runtime = "nodejs";
@@ -21,6 +22,14 @@ async function queued(token: string, sessionId: string, campaignId: string) {
     return interviewerJson({ state: "queued", sessionId, waitLabel: "Waiting for a seat", overTenMinutes: false });
   }
   return interviewerJson(await presentQueue(status.state, campaignId));
+}
+
+function thinkEndpoint(request: Request, callEndsAtMs: number): string | null {
+  const key = (process.env.OPENAI_API_KEY || "").trim();
+  const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || "";
+  if (!key || !host || /^(localhost|127\.0\.0\.1)(:|$)/.test(host)) return null;
+  const proto = request.headers.get("x-forwarded-proto") || "https";
+  return interviewerThinkUrl(`${proto}://${host}`, callEndsAtMs + 60_000, key);
 }
 
 export async function POST(req: Request) {
@@ -167,6 +176,8 @@ export async function POST(req: Request) {
           quotesAllowed: extra?.quotes_allowed === true,
           brochureSend: extra?.brochure_send === true,
           deckKnowledge,
+          thinkUrl: thinkEndpoint(req, callEndsAtMs),
+          protectionBypass: (process.env.VERCEL_AUTOMATION_BYPASS_SECRET || "").trim() || null,
         });
     if (settings) {
       const manifest = knowledgeManifest(String((settings as { agent?: { think?: { prompt?: string } } }).agent?.think?.prompt || ""));

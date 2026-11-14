@@ -43,18 +43,62 @@ export function featureBullets(text: string): string[] {
   return bullets;
 }
 
-export function leadRecap(brief: CallBrief): { summary: string; topics: string[]; nextStep: string } {
-  const topics = [
-    ...brief.timeline.map((item) => item.label).filter((label) => !/call started|call ended/i.test(label)),
-    /not established/i.test(brief.lead.interest) ? "" : brief.lead.interest,
-  ].map((item) => item.trim()).filter(Boolean).slice(0, 5);
-  const when = brief.appointment.when ? ` for ${new Date(brief.appointment.when).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : "";
-  const nextStep = brief.appointment.booked
-    ? `A demo is booked${when}. ${brief.appointment.agenda}`.trim()
-    : (brief.nextSteps[0] || "No further step was agreed.");
+export type LeadRecapFit = { title: string; why: string; slideNumber: number | null; slideTitle: string };
+export type LeadRecapAnswer = { question: string; answer: string };
+
+export type LeadRecap = {
+  summary: string;
+  businessType: string;
+  howTheyServe: string;
+  fits: LeadRecapFit[];
+  answers: LeadRecapAnswer[];
+  booked: boolean;
+  when: string | null;
+  nextStep: string;
+};
+
+export function leadRecap(brief: CallBrief): LeadRecap {
+  const businessType = brief.profile?.businessType && !/not established/i.test(brief.profile.businessType)
+    ? brief.profile.businessType
+    : "";
+  const howTheyServe = brief.service?.howTheyServe && !/not established/i.test(brief.service.howTheyServe)
+    ? brief.service.howTheyServe
+    : "";
+  const slides = brief.slides || [];
+  const improvements = (brief.service?.improvements || []).slice(0, 3);
+  const fits: LeadRecapFit[] = (improvements.length ? improvements : slides.slice(0, 3).map((slide) => ({
+    fit: slide.title || `Slide ${slide.number}`,
+    suggestion: "This came up in the conversation.",
+  }))).slice(0, 3).map((item) => {
+    const slide = slides.find((entry) => {
+      const title = (entry.title || "").toLowerCase();
+      const fit = item.fit.toLowerCase();
+      return title.includes(fit.slice(0, 12)) || fit.includes(title.slice(0, 12));
+    }) || null;
+    return {
+      title: item.fit,
+      why: item.suggestion,
+      slideNumber: slide?.number ?? null,
+      slideTitle: slide?.title || "",
+    };
+  });
+  const answers = (brief.questions || [])
+    .filter((item) => item.askedBy !== "agent" && item.answer && item.status !== "unanswered")
+    .slice(0, 3)
+    .map((item) => ({ question: item.question, answer: item.answer || "" }));
+  const when = brief.appointment.when || null;
   return {
-    summary: brief.howItWent.summary,
-    topics,
-    nextStep,
+    summary: businessType
+      ? `You run ${businessType.replace(/\.$/, "")}.`
+      : "Thanks for talking with us.",
+    businessType,
+    howTheyServe,
+    fits,
+    answers,
+    booked: brief.appointment.booked,
+    when,
+    nextStep: brief.appointment.booked
+      ? "You're booked with one of our human team."
+      : "You can pick a time with one of our human team.",
   };
 }

@@ -194,5 +194,29 @@ const sendMs = sentAt - started;
 if (sendMs > 20) throw new Error(`slide click waited ${sendMs}ms before sending`);
 if (order.join(",") !== "send,after") throw new Error("slide click logged before it sent");
 console.log(`slide click send ${sendMs.toFixed(2)}ms before image and log`);
+const spokenPrompt = buildInterviewerPrompt({
+  campaignName: "Swoopos",
+  prospectName: null,
+  personaOverride: null,
+  promptOverride: null,
+  maxMinutes: 30,
+  documents: [{ title: "Notes", body: "**Kiosks** take the queue." }],
+  slides: [{ number: 9, title: "**Kiosks**", oneLine: "queues", talkingPoints: "**Orders** go to the kitchen.", verbatim: null }],
+});
+if (spokenPrompt.includes("**") || spokenPrompt.includes("*")) throw new Error("markdown stayed in the prompt");
+if (!spokenPrompt.includes("Kiosks") || !spokenPrompt.includes("kitchen display") || !spokenPrompt.includes("Waiter Mate")) throw new Error("service map missing");
+if (!spokenPrompt.includes("How do customers order")) throw new Error("service questions missing");
+const { createSpeechStreamFilter } = loadTs(new URL("../lib/interviewer/speech-stream.ts", import.meta.url).pathname);
+const filter = createSpeechStreamFilter();
+const heard = `${filter.push("**Kio")}${filter.push("sks**")}${filter.flush()}`;
+if (heard !== "Kiosks") throw new Error(`TTS heard ${JSON.stringify(heard)}`);
+const split = createSpeechStreamFilter();
+const splitHeard = `${split.push("*")}${split.push("*Kiosks*")}${split.push("*")}${split.flush()}`;
+if (splitHeard !== "Kiosks") throw new Error(`split stars heard ${JSON.stringify(splitHeard)}`);
+const { serviceFromTranscript } = loadTs(new URL("../lib/interviewer/brief.ts", import.meta.url).pathname);
+const service = serviceFromTranscript("We queue at the counter and send paper tickets to the kitchen. Phone orders are written down.");
+if (!/counter/.test(service.howTheyServe)) throw new Error("service picture missing");
+if (!service.improvements.some((item) => /kitchen display/i.test(item.suggestion))) throw new Error("paper tickets were not mapped");
+if (!service.improvements.some((item) => /kiosk/i.test(item.suggestion))) throw new Error("queues were not mapped");
 
 console.log("interviewer owner and prompt checks passed");

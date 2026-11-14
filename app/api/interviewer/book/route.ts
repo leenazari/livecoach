@@ -10,10 +10,6 @@ export async function POST(req: Request) {
     const body = await readJson(req);
     const linked = await linkedSession(String(body.token || ""), String(body.sessionId || ""));
     if (!linked?.campaign) return interviewerJson({ error: "This link is not available." }, 404);
-    if (linked.session.ended_at && body.action !== "suggest") {
-      return interviewerJson({ booked: false, note: "This conversation has already finished." });
-    }
-
     if (body.action === "book") {
       try {
         const result = await bookInterviewerMeeting({

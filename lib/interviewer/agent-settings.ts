@@ -85,7 +85,19 @@ export const INTERVIEWER_FUNCTIONS = [
   },
 ];
 
-export function buildVoiceAgentSettings(input: InterviewerPromptInput & { voiceId: InterviewerVoiceId }) {
+export function buildVoiceAgentSettings(input: InterviewerPromptInput & {
+  voiceId: InterviewerVoiceId;
+  thinkUrl?: string | null;
+  protectionBypass?: string | null;
+}) {
+  const endpoint = input.thinkUrl
+    ? {
+        url: input.thinkUrl,
+        ...(input.protectionBypass
+          ? { headers: { "x-vercel-protection-bypass": input.protectionBypass } }
+          : {}),
+      }
+    : undefined;
   return {
     type: "Settings",
     audio: {
@@ -106,10 +118,12 @@ export function buildVoiceAgentSettings(input: InterviewerPromptInput & { voiceI
       },
       think: {
         provider: { type: "open_ai", model: "gpt-4o-mini", temperature: 0.3 },
+        ...(endpoint ? { endpoint } : {}),
         prompt: buildInterviewerPrompt(input),
         functions: INTERVIEWER_FUNCTIONS,
       },
-      // Managed Aura speech reads the model text directly. These settings have no text filter, so the prompt and the saved transcript are cleaned first.
+      // Aura speaks the think text directly. When thinkUrl is set, that text is
+      // filtered by /api/interviewer/think before it can reach the voice.
       speak: { provider: { type: "deepgram", version: "v1", model: interviewerVoiceOrFallback(input.voiceId) } },
     },
   };

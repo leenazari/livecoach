@@ -49,7 +49,16 @@ type ReadyPayload = QueuePayload & {
 };
 
 type SlideChoice = { number: number; title: string; slogan?: string; url?: string | null; points?: string[]; keywords?: string[] };
-export type LeadRecap = { summary: string; topics: string[]; nextStep: string };
+export type LeadRecap = {
+  summary: string;
+  businessType: string;
+  howTheyServe: string;
+  fits: Array<{ title: string; why: string; slideNumber: number | null; slideTitle: string }>;
+  answers: Array<{ question: string; answer: string }>;
+  booked: boolean;
+  when: string | null;
+  nextStep: string;
+};
 
 async function postJson<T>(url: string, body: unknown): Promise<{ ok: boolean; data: T }> {
   const response = await fetch(url, {
@@ -81,6 +90,7 @@ export function useInterviewerCall(token: string) {
   const [muted, setMutedState] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [endAsk, setEndAsk] = useState(false);
+  const [ending, setEnding] = useState(false);
   const [recap, setRecap] = useState<LeadRecap | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -108,10 +118,20 @@ export function useInterviewerCall(token: string) {
   const pendingInjectRef = useRef("");
   const interruptRef = useRef<() => void>(() => undefined);
   const coveredSlidesRef = useRef<Set<number>>(new Set());
+  const [seenSlides, setSeenSlides] = useState<number[]>([]);
+  const rememberSeen = useCallback((number: number) => {
+    if (!number) return;
+    coveredSlidesRef.current.add(number);
+    setSeenSlides((current) => current.includes(number) ? current : [...current, number]);
+  }, []);
   const lastClickRef = useRef({ number: 0, at: 0 });
   const clickMarkRef = useRef<number | null>(null);
   const [slideAudioMs, setSlideAudioMs] = useState<number | null>(null);
   const endingSoon = useRef(false);
+  const goodbyeTimer = useRef<number | null>(null);
+  const offerOpen = useRef(false);
+  const offerReplied = useRef(false);
+  const goodbyeOwnsEnd = useRef(false);
   const silenceRef = useRef({
     lastActivityAt: Date.now(),
     lastSpeaker: "agent" as "agent" | "lead",
@@ -243,7 +263,7 @@ export function useInterviewerCall(token: string) {
         const openingNumber = Number(ready.data.openingSlide.number || 1);
         slideNumberRef.current = openingNumber;
         setSlideNumber(openingNumber);
-        coveredSlidesRef.current.add(openingNumber);
+        rememberSeen(openingNumber);
       }
       if (!ready.ok || ready.data.state !== "ready" || !ready.data.agentToken || !ready.data.listenToken || !ready.data.settings) {
         await postJson("/api/interviewer/slots/release", { token, sessionId: session, reason: "retry" });
@@ -415,53 +435,96 @@ export function useInterviewerCall(token: string) {
         setPhase("waiting");
       };
 
+      const boundedPost = async <T,>(url: string, body: unknown, ms: number): Promise<{ ok: boolean; data: T }> => {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), ms);
+        try {
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+          const data = await response.json().catch(() => ({}));
+          return { ok: response.ok, data: data as T };
+        } catch {
+          return { ok: false, data: {} as T };
+        } finally {
+          window.clearTimeout(timer);
+        }
+      };
       const finish = async () => {
+        if (goodbyeTimer.current) window.clearTimeout(goodbyeTimer.current);
+        goodbyeTimer.current = null;
+        offerOpen.current = false;
+        goodbyeOwnsEnd.current = false;
+        setEndAsk(false);
+        setEnding(false);
+        setConnecting(false);
+        setPhase("ended");
         if (settling) return;
         settling = true;
         holdPollRef.current = false;
         stopSockets();
         stopLead();
+        streamRef.current?.getTracks().forEach((track) => track.stop());
         if (heartbeat) window.clearInterval(heartbeat);
         stopSilence();
         if (capTimer) window.clearInterval(capTimer);
+        teardownRef.current = null;
         const blob = await new Promise<Blob>((resolve) => {
-          recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
-          if (recorder.state !== "inactive") recorder.stop();
-          else resolve(new Blob(chunks, { type: "audio/webm" }));
+          const giveUp = window.setTimeout(() => resolve(new Blob(chunks, { type: "audio/webm" })), 800);
+          recorder.onstop = () => {
+            window.clearTimeout(giveUp);
+            resolve(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+          };
+          try {
+            if (recorder.state !== "inactive") recorder.stop();
+            else {
+              window.clearTimeout(giveUp);
+              resolve(new Blob(chunks, { type: "audio/webm" }));
+            }
+          } catch {
+            window.clearTimeout(giveUp);
+            resolve(new Blob(chunks, { type: "audio/webm" }));
+          }
         });
         await context.close().catch(() => undefined);
-        const ended = await postJson<{ billableSeconds?: number; recap?: LeadRecap }>("/api/interviewer/sessions/end", { token, sessionId: session });
+        const ended = await boundedPost<{ billableSeconds?: number; recap?: LeadRecap }>("/api/interviewer/sessions/end", { token, sessionId: session }, 8000);
         if (ended.data.recap) setRecap(ended.data.recap);
+        if (Number.isFinite(Number(ended.data.billableSeconds))) setBillableSeconds(Number(ended.data.billableSeconds || 0));
         if (blob.size > 0) {
-          const upload = await postJson<{ signedUrl?: string; path?: string }>("/api/interviewer/recording", {
+          void boundedPost<{ signedUrl?: string; path?: string }>("/api/interviewer/recording", {
             token,
             sessionId: session,
             fileSize: blob.size,
-          });
-          if (upload.ok && upload.data.signedUrl && upload.data.path) {
-            const put = await fetch(upload.data.signedUrl, {
-              method: "PUT",
-              headers: { "Content-Type": blob.type || "audio/webm", "x-upsert": "true" },
-              body: blob,
-            });
-            if (put.ok) {
-              await postJson("/api/interviewer/recording/complete", {
-                token,
-                sessionId: session,
-                path: upload.data.path,
-                fileSize: blob.size,
+          }, 8000).then(async (upload) => {
+            if (!upload.ok || !upload.data.signedUrl || !upload.data.path) return;
+            const controller = new AbortController();
+            const timer = window.setTimeout(() => controller.abort(), 8000);
+            try {
+              const put = await fetch(upload.data.signedUrl, {
+                method: "PUT",
+                headers: { "Content-Type": blob.type || "audio/webm", "x-upsert": "true" },
+                body: blob,
+                signal: controller.signal,
               });
-            }
-          }
+              if (put.ok) {
+                await boundedPost("/api/interviewer/recording/complete", {
+                  token,
+                  sessionId: session,
+                  path: upload.data.path,
+                  fileSize: blob.size,
+                }, 8000);
+              }
+            } catch { /* the call is already closed */ }
+            finally { window.clearTimeout(timer); }
+          });
         }
-        teardownRef.current = null;
-        setBillableSeconds(Number(ended.data.billableSeconds || 0));
-        setConnecting(false);
-        setPhase("ended");
       };
 
       const showOne = (slide: { number: number; url: string; title: string; slogan: string }) => {
-        coveredSlidesRef.current.add(slide.number);
+        rememberSeen(slide.number);
         slideNumberRef.current = slide.number;
         setSlideNumber(slide.number);
         setSlideUrl(slide.url);
@@ -617,7 +680,7 @@ export function useInterviewerCall(token: string) {
           silenceRef.current.speaking = false;
           silenceRef.current.lastActivityAt = Date.now();
           silenceRef.current.lastSpeaker = "agent";
-          if (endAfterAudio) void finish();
+          if (endAfterAudio && !goodbyeOwnsEnd.current) void finish();
         }
       };
       agentSocket.onclose = (event) => {
@@ -643,6 +706,11 @@ export function useInterviewerCall(token: string) {
               silenceRef.current.lastActivityAt = Date.now();
               silenceRef.current.lastSpeaker = "lead";
               silenceRef.current.speaking = false;
+              if (offerOpen.current && !offerReplied.current && heard.text.trim()) {
+                offerReplied.current = true;
+                if (goodbyeTimer.current) window.clearTimeout(goodbyeTimer.current);
+                goodbyeTimer.current = window.setTimeout(() => { void finish(); }, 45000);
+              }
               if (isHoldRequest(heard.text)) {
                 if (silenceRef.current.holdSince == null) {
                   silenceRef.current.holdSince = Date.now();
@@ -733,7 +801,7 @@ export function useInterviewerCall(token: string) {
     } finally {
       connectingRef.current = false;
     }
-  }, [acceptAgent, acceptLead, rememberQueue, token]);
+  }, [acceptAgent, acceptLead, rememberQueue, rememberSeen, token]);
 
   const join = useCallback(async (stream: MediaStream) => {
     streamRef.current = stream;
@@ -782,6 +850,8 @@ export function useInterviewerCall(token: string) {
 
   const hangUp = useCallback(() => {
     if (endingSoon.current) {
+      if (goodbyeTimer.current) window.clearTimeout(goodbyeTimer.current);
+      goodbyeTimer.current = null;
       teardownRef.current?.("end");
       return;
     }
@@ -791,25 +861,32 @@ export function useInterviewerCall(token: string) {
   const cancelHangUp = useCallback(() => setEndAsk(false), []);
 
   const confirmHangUp = useCallback(() => {
-    setEndAsk(false);
     if (endingSoon.current) {
+      if (goodbyeTimer.current) window.clearTimeout(goodbyeTimer.current);
+      goodbyeTimer.current = null;
       teardownRef.current?.("end");
       return;
     }
+    setEndAsk(false);
+    setEnding(true);
     endingSoon.current = true;
+    goodbyeOwnsEnd.current = true;
     const socket = agentSocketRef.current;
     const declined = leadDeclinedDemo(leadLinesRef.current);
     const offer = !bookedRef.current && !declined;
+    offerOpen.current = offer;
+    offerReplied.current = false;
     if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "InjectUserMessage", content: "The lead pressed End call" }));
-      socket.send(JSON.stringify({
-        type: "InjectAgentMessage",
-        message: offer
-          ? HUMAN_TEAM_OFFER
-          : "Thanks for your time. Take care.",
-      }));
+      try {
+        socket.send(JSON.stringify({ type: "InjectUserMessage", content: "The lead pressed End call" }));
+        socket.send(JSON.stringify({
+          type: "InjectAgentMessage",
+          message: offer ? HUMAN_TEAM_OFFER : "Thanks for your time. Take care.",
+        }));
+      } catch { /* the timeout still closes the call */ }
     }
-    window.setTimeout(() => teardownRef.current?.("end"), offer ? 5000 : 2500);
+    if (goodbyeTimer.current) window.clearTimeout(goodbyeTimer.current);
+    goodbyeTimer.current = window.setTimeout(() => { teardownRef.current?.("end"); }, 8000);
   }, []);
 
   const setMuted = useCallback((next: boolean) => {
@@ -856,7 +933,7 @@ export function useInterviewerCall(token: string) {
       }
     }, () => {
       manualSlideUntil.current = Date.now() + 20000;
-      coveredSlidesRef.current.add(slide.number);
+      rememberSeen(slide.number);
       slideNumberRef.current = slide.number;
       setSlideNumber(slide.number);
       setSlideUrl(slide.url || "");
@@ -873,7 +950,7 @@ export function useInterviewerCall(token: string) {
         });
       }
     });
-  }, [token]);
+  }, [rememberSeen, token]);
 
   const leaveQueue = useCallback(async () => {
     const session = sessionRef.current;
@@ -899,12 +976,14 @@ export function useInterviewerCall(token: string) {
     slideSlogan,
     slideNumber,
     slideIndex,
+    seenSlides,
     chooseSlide,
     remainingSeconds,
     billableSeconds,
     muted,
     join,
     endAsk,
+    ending,
     recap,
     hangUp,
     confirmHangUp,

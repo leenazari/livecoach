@@ -149,6 +149,12 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
               <p className={styles.note}>Pain: {profile.painPoints}</p>
             </>
           ) : null}
+          <p className={styles.label}>How they serve today</p>
+          <p>{brief.service?.howTheyServe || "Not established on this call."}</p>
+          <p className={styles.label}>Suggested improvements</p>
+          {(brief.service?.improvements || []).length ? (
+            <ul>{brief.service?.improvements.map((item) => <li key={`${item.fit}-${item.suggestion}`}>{item.fit}: {item.suggestion}</li>)}</ul>
+          ) : <p className={styles.note}>None suggested from this call.</p>}
           <p className={styles.label}>Interest</p>
           <p>{brief.lead.interest}</p>
           <p className={styles.label}>Came from</p>

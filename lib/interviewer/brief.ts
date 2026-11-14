@@ -18,6 +18,8 @@ export type BriefProfile = {
   setup: string;
   painPoints: string;
 };
+export type ServiceImprovement = { fit: string; suggestion: string };
+export type BriefService = { howTheyServe: string; improvements: ServiceImprovement[] };
 export type BriefSlide = {
   number: number;
   title: string;
@@ -31,6 +33,7 @@ export type BriefLine = { id: string; speaker: "agent" | "lead"; text: string; a
 export type CallBrief = {
   lead: { name: string; email: string | null; phone: string | null; interest: string; cameFrom: string };
   profile?: BriefProfile;
+  service?: BriefService;
   intent: { label: "HOT" | "WARM" | "NURTURE" | "NOT INTERESTED"; reasons: string[]; scale: number };
   appointment: { booked: boolean; when: string | null; agenda: string; bookedBy: string };
   openingLine: string;
@@ -66,6 +69,27 @@ export type BriefFacts = {
 
 const LABELS = new Set(["HOT", "WARM", "NURTURE", "NOT INTERESTED"]);
 const EMPTY = "Not established on this call.";
+
+export function serviceFromTranscript(transcript: string): BriefService {
+  const text = transcript.toLowerCase();
+  const parts: string[] = [];
+  if (/at the counter|counter service/.test(text)) parts.push("Customers order at the counter.");
+  if (/table service|at the table|waiter/.test(text)) parts.push("Orders are taken at the table.");
+  if (/by phone|phone orders|over the phone/.test(text)) parts.push("They take orders by phone.");
+  if (/online|delivery app|deliveroo|uber eats/.test(text)) parts.push("They take online or delivery-app orders.");
+  if (/paper ticket|paper tickets|handwritten/.test(text)) parts.push("Orders go to the kitchen on paper.");
+  if (/\bpay\b|card machine|cash|square/.test(text)) parts.push("Payment was discussed.");
+  if (/queue|queues|wait time|busiest|stretched/.test(text)) parts.push("Busy periods or queues stretch the team.");
+  const improvements: ServiceImprovement[] = [];
+  if (/queue|queues|at the counter|wait time/.test(text)) improvements.push({ fit: "Queues", suggestion: "Self-service kiosks or mobile table ordering, so people are not waiting at the counter." });
+  if (/paper ticket|paper tickets|handwritten/.test(text)) improvements.push({ fit: "Paper tickets", suggestion: "A kitchen display, so each order is on screen instead of a paper ticket." });
+  if (/table service|slow table|at the table/.test(text)) improvements.push({ fit: "Table service", suggestion: "Waiter Mate, so staff send the order from the table." });
+  if (/by phone|phone orders|over the phone/.test(text)) improvements.push({ fit: "Phone orders", suggestion: "Online ordering, so phone orders are not written down by hand." });
+  return {
+    howTheyServe: parts.length ? parts.join(" ") : "Not established on this call.",
+    improvements,
+  };
+}
 
 function clip(value: unknown, max: number): string {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -173,6 +197,7 @@ export function fallbackBrief(facts: BriefFacts): CallBrief {
       mood: "Not scored",
     },
     profile: emptyProfile(),
+    service: serviceFromTranscript(facts.transcript),
     questions: questionsFromLines(facts.lines || []),
     objections: [],
     providers: providersFromLines(facts.lines || []),
@@ -273,6 +298,18 @@ export function parseBrief(raw: unknown, facts: BriefFacts): CallBrief {
     })
     : (base.providers || []);
   const steps = Array.isArray(record.nextSteps) ? record.nextSteps.map((item) => clip(item, 160)).filter(Boolean).slice(0, 4) : [];
+  const serviceRecord = record.service && typeof record.service === "object" ? record.service as Record<string, unknown> : {};
+  const modelImprovements: ServiceImprovement[] = Array.isArray(serviceRecord.improvements) ? serviceRecord.improvements.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    const suggestion = clip(row.suggestion, 220);
+    if (!suggestion) return [];
+    return [{ fit: clip(row.fit, 80) || "Fit", suggestion }];
+  }) : [];
+  const service: BriefService = {
+    howTheyServe: clip(serviceRecord.howTheyServe, 400) || base.service?.howTheyServe || EMPTY,
+    improvements: modelImprovements.length ? modelImprovements : (base.service?.improvements || []),
+  };
   return {
     lead: {
       name: facts.name || clip(lead.name, 160) || "Guest",
@@ -282,6 +319,7 @@ export function parseBrief(raw: unknown, facts: BriefFacts): CallBrief {
       cameFrom: clip(lead.cameFrom, 180) || base.lead.cameFrom,
     },
     profile,
+    service,
     intent: { label, reasons: reasons.slice(0, 3), scale: clamp(intent.scale ?? base.intent.scale) },
     appointment: {
       booked: Boolean(facts.scheduledAt),
@@ -314,8 +352,8 @@ export function briefPrompt(facts: BriefFacts): string {
   return `You are writing an internal pre-call brief. Use only the transcript. Do not invent a phone number, email, price, provider, objection, or promise. If it was not said, use "Not established on this call."
 Choose intent.label from the transcript: HOT if they booked or were ready to buy, WARM if they engaged and a next conversation is likely, NOT INTERESTED if they declined, otherwise NURTURE. The first reason is one sentence a rep can read.
 Return JSON:
-{"lead":{"phone":"","interest":"","cameFrom":""},"profile":{"businessType":"","size":"","sites":"","location":"","role":"","setup":"","painPoints":""},"intent":{"label":"HOT|WARM|NURTURE|NOT INTERESTED","reasons":["","",""],"scale":0},"appointment":{"agenda":""},"openingLine":"","howItWent":{"summary":"","sentiment":0,"engagement":0,"mood":""},"questions":[{"question":"","askedBy":"lead|agent","answer":"","status":"answered|partly|unanswered","atSeconds":0}],"objections":[{"text":"","tag":"Softened|Resolved|Open","heat":0,"atSeconds":0}],"providers":[{"name":"","kind":"current|competitor","atSeconds":0}],"nextSteps":[""]}
-Include every question. askedBy is lead when the customer asked, and agent when Interviewa asked. For a lead question, answer is one sentence summarising what the agent said. For an agent question, answer is a short quote or paraphrase of what the lead actually replied. If nobody replied, status is unanswered and answer is empty. Copy atSeconds from the transcript tag. objections is an empty array when none were raised. providers lists who they use today and any competitor they named.
+{"lead":{"phone":"","interest":"","cameFrom":""},"profile":{"businessType":"","size":"","sites":"","location":"","role":"","setup":"","painPoints":""},"service":{"howTheyServe":"","improvements":[{"fit":"","suggestion":""}]},"intent":{"label":"HOT|WARM|NURTURE|NOT INTERESTED","reasons":["","",""],"scale":0},"appointment":{"agenda":""},"openingLine":"","howItWent":{"summary":"","sentiment":0,"engagement":0,"mood":""},"questions":[{"question":"","askedBy":"lead|agent","answer":"","status":"answered|partly|unanswered","atSeconds":0}],"objections":[{"text":"","tag":"Softened|Resolved|Open","heat":0,"atSeconds":0}],"providers":[{"name":"","kind":"current|competitor","atSeconds":0}],"nextSteps":[""]}
+Include every question. askedBy is lead when the customer asked, and agent when Interviewa asked. For a lead question, answer is one sentence summarising what the agent said. For an agent question, answer is a short quote or paraphrase of what the lead actually replied. If nobody replied, status is unanswered and answer is empty. Copy atSeconds from the transcript tag. objections is an empty array when none were raised. providers lists who they use today and any competitor they named. service.howTheyServe is how customers order, how orders reach the kitchen, how they pay, and where it gets busy, in their words. service.improvements lists only gains that fit what they said, such as kiosks for a queue, a kitchen display for paper tickets, Waiter Mate for slow table service, or online ordering for phone orders. Leave improvements empty if they did not describe how they serve.
 Facts: name ${facts.name}. email ${facts.email || "none"}. stored outcome ${facts.disposition || "none"}. meeting ${facts.scheduledAt || "none"}.
 Transcript, times are seconds from the start:
 ${facts.transcript || "No transcript."}`;

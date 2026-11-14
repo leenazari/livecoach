@@ -319,8 +319,17 @@
   min-height: 0;
   flex: 1 1 auto;
 }
-.callStage { grid-template-columns: 260px minmax(0, 1fr) 300px; }
-.callStageWide, .callStagePlain { grid-template-columns: 260px minmax(0, 1fr); }
+.callStage, .callStageWide, .callStagePlain {
+  grid-template-columns: 260px minmax(0, 1fr) 280px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "list slide features"
+    "list caption features";
+}
+.slideList { grid-area: list; }
+.slideColumn { grid-area: slide; }
+.featurePanel { grid-area: features; }
+.captionStrip { grid-area: caption; }
 .slidesToggle {
   display: none;
   align-items: center;
@@ -368,6 +377,16 @@
   opacity: 1;
 }
 .slideRow:hover { background: #f6f7fa; }
+.slideRowSeen {
+  background: #ecfdf3;
+  border-color: #abefc6;
+  box-shadow: inset 4px 0 0 #12b76a;
+  opacity: 1;
+}
+.slideRowSeen .slideHeadline { color: #101828; opacity: 1; }
+.seenTick { flex: none; color: #12b76a; font-size: 16px; font-weight: 700; line-height: 1; }
+.fitRow { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; color: #101828; }
+.fitRow p { margin: 0; color: #101828; }
 .slideRowActive {
   background: #fff;
   border-color: #155dfc;
@@ -422,9 +441,69 @@
 }
 .slideStage .slideCard { width: 100%; height: 100%; min-height: 0; }
 .slideColumn { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.captionStrip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  max-height: 72px;
+  color: #f4efe6;
+  min-width: 0;
+}
+.captionLines {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.captionLines p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.expandBtn {
+  flex: none;
+  border: 1px solid #dce6ff;
+  background: #fff;
+  color: #1447e6;
+  border-radius: 10px;
+  min-height: 36px;
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.transcriptDrawer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(8, 10, 14, 0.72);
+  display: flex;
+  justify-content: flex-end;
+}
+.transcriptPanel {
+  width: min(420px, 100%);
+  height: 100%;
+  overflow: auto;
+  background: #171b22;
+  color: #f4efe6;
+  padding: 16px;
+  box-sizing: border-box;
+}
+.transcriptPanel ul { margin: 16px 0 0; padding: 0; list-style: none; }
+.transcriptPanel li { margin: 0 0 12px; line-height: 1.45; }
+.transcriptPanel li span {
+  display: block;
+  color: #e0a458;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
 .featurePanel {
   flex: 0 0 auto;
-  max-height: 22%;
+  max-height: 100%;
   overflow: auto;
   background: #fff;
   color: #101828;
@@ -674,10 +753,16 @@
 @media (max-width: 1023px) {
   .callStage, .callStageWide, .callStagePlain {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) auto auto auto;
+    grid-template-areas:
+      "slide"
+      "features"
+      "caption"
+      "list";
   }
   .callTalk { display: none; }
   .slideColumn { min-height: 0; }
+  .featurePanel { max-height: 96px; }
   .slideList {
     display: flex;
     height: 96px;
