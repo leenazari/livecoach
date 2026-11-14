@@ -8,6 +8,7 @@ import {
   publicSummary,
   type PublicCampaignView,
 } from "@/lib/interviewer/public-campaign";
+import { LANDING_ACCENT, LANDING_ON, accentFromPng } from "@/lib/interviewer/slide-colour";
 
 export type PublicCampaignCard = PublicCampaignView & {
   workspaceId: string;
@@ -27,21 +28,47 @@ export async function loadPublicCampaignCard(campaignId: string): Promise<Public
     .select("title, body")
     .eq("campaign_id", campaignId)
     .limit(40);
-  const slides = await supabaseService
-    .from("interviewer_slides")
-    .select("one_line, title, slide_number")
+  const deck = await supabaseService
+    .from("interviewer_decks")
+    .select("id")
     .eq("campaign_id", campaignId)
-    .order("slide_number", { ascending: true })
-    .limit(8);
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const slide = deck.data?.id
+    ? await supabaseService
+      .from("interviewer_slides")
+      .select("one_line, title, slide_number, image_path")
+      .eq("deck_id", deck.data.id)
+      .eq("slide_number", 1)
+      .maybeSingle()
+    : { data: null, error: null };
   const notes = documents.error ? [] : documents.data || [];
-  const first = (slides.data || []).find((slide) => Number(slide.slide_number) === 1) || slides.data?.[0];
-  const slideLine = String(first?.one_line || first?.title || "");
+  const slideLine = String(slide.data?.one_line || slide.data?.title || "");
+  const imagePath = slide.data?.image_path ? String(slide.data.image_path) : "";
+  let heroUrl: string | null = null;
+  let accent = LANDING_ACCENT;
+  let accentOn = LANDING_ON;
+  if (imagePath) {
+    const signed = await supabaseService.storage.from("interviewer-slides").createSignedUrl(imagePath, 60 * 30);
+    heroUrl = signed.data?.signedUrl || null;
+    const file = await supabaseService.storage.from("interviewer-slides").download(imagePath);
+    if (file.data) {
+      const colours = accentFromPng(Buffer.from(await file.data.arrayBuffer()));
+      accent = colours.accent;
+      accentOn = colours.on;
+    }
+  }
   return {
     id: String(campaign.data.id),
     name: String(campaign.data.name || "This campaign"),
     summary: publicSummary(String(campaign.data.name || ""), notes, slideLine),
     accepting: publicCallsOpen(notes),
     maxMinutes: publicCallMinutes(campaign.data.max_minutes),
+    heroUrl,
+    heroAlt: slideLine || "Opening slide",
+    accent,
+    accentOn,
     workspaceId: String(campaign.data.workspace_id),
     ownerId: String(campaign.data.owner_id),
   };

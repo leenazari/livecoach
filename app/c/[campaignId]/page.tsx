@@ -28,7 +28,21 @@ export default async function PublicCampaignPage({
         </main>
       );
     }
-    return <CampaignLanding card={{ id: card.id, name: card.name, summary: card.summary, accepting: card.accepting, maxMinutes: card.maxMinutes }} />;
+    return (
+      <CampaignLanding
+        card={{
+          id: card.id,
+          name: card.name,
+          summary: card.summary,
+          accepting: card.accepting,
+          maxMinutes: card.maxMinutes,
+          heroUrl: card.heroUrl,
+          heroAlt: card.heroAlt,
+          accent: card.accent,
+          accentOn: card.accentOn,
+        }}
+      />
+    );
   } catch {
     return (
       <main className="relative z-10 mx-auto flex min-h-screen max-w-xl items-center px-5">

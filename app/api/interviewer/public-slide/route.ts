@@ -4,15 +4,6 @@ import { supabaseService } from "@/lib/supabase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function mimeFor(path: string, stored: string | null): string {
-  if (stored && stored.startsWith("image/")) return stored;
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-  if (lower.endsWith(".svg")) return "image/svg+xml";
-  if (lower.endsWith(".webp")) return "image/webp";
-  return "image/png";
-}
-
 export async function GET(request: Request) {
   const campaignId = new URL(request.url).searchParams.get("campaign") || "";
   if (!isCampaignToken(campaignId)) return new Response(null, { status: 404 });
@@ -26,18 +17,12 @@ export async function GET(request: Request) {
   if (deck.error || !deck.data?.id) return new Response(null, { status: 404 });
   const slide = await supabaseService
     .from("interviewer_slides")
-    .select("image_path, image_mime")
+    .select("image_path")
     .eq("deck_id", deck.data.id)
     .eq("slide_number", 1)
     .maybeSingle();
   if (slide.error || !slide.data?.image_path) return new Response(null, { status: 404 });
-  const file = await supabaseService.storage.from("interviewer-slides").download(String(slide.data.image_path));
-  if (file.error || !file.data) return new Response(null, { status: 404 });
-  const bytes = await file.data.arrayBuffer();
-  return new Response(bytes, {
-    headers: {
-      "Content-Type": mimeFor(String(slide.data.image_path), slide.data.image_mime ? String(slide.data.image_mime) : null),
-      "Cache-Control": "private, max-age=300",
-    },
-  });
+  const signed = await supabaseService.storage.from("interviewer-slides").createSignedUrl(String(slide.data.image_path), 60 * 30);
+  if (signed.error || !signed.data?.signedUrl) return new Response(null, { status: 404 });
+  return Response.redirect(signed.data.signedUrl, 302);
 }

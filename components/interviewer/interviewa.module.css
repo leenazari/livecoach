@@ -915,39 +915,39 @@
   .ready { padding: 14px; }
   .readyTitle { font-size: 18px; }
   .linkField { font-size: 13px; }
-  .landingCard { margin-top: -28px; }
+  .landingCard { margin: 12px 12px 24px; }
 }
 
 .landing {
   --land-accent: #155dfc;
   --land-on: #ffffff;
-  --land-bg: #f4efe6;
-  --land-paper: #ffffff;
   min-height: 100vh;
   width: 100%;
   margin: 0 auto;
-  background: var(--land-bg);
+  background: #f6f7fa;
   color: #101828;
   box-sizing: border-box;
 }
-.landingHero, .landingHeroFallback {
+.landingHero {
   display: block;
   width: 100%;
-  height: 46vh;
-  min-height: 220px;
-  max-height: 520px;
-  object-fit: cover;
-  object-position: center top;
-  background:
-    linear-gradient(160deg, var(--land-accent), transparent 62%),
-    var(--land-paper);
+  height: auto;
+  background: #fff;
+  object-fit: contain;
+}
+.landingHeroFallback {
+  display: block;
+  width: 100%;
+  height: 12px;
+  background: #fff;
+  border-top: 4px solid var(--land-accent);
 }
 .landingCard {
   position: relative;
-  margin: -36px 16px 28px;
+  margin: 16px 16px 28px;
   padding: 22px 18px 20px;
   border-radius: 22px;
-  background: var(--land-paper);
+  background: #fff;
   color: #101828;
   box-shadow: 0 16px 40px rgba(16, 24, 40, 0.12);
 }
@@ -1016,8 +1016,8 @@
   opacity: 0;
 }
 @media (min-width: 800px) {
-  .landing { max-width: 880px; padding-top: 28px; }
-  .landingHero, .landingHeroFallback { height: 420px; border-radius: 28px; }
-  .landingCard { margin: -72px 48px 40px; padding: 28px 28px 24px; }
+  .landing { max-width: 1040px; padding: 28px 28px 40px; }
+  .landingHero { border-radius: 20px; box-shadow: 0 12px 32px rgba(16, 24, 40, 0.12); }
+  .landingCard { margin: 20px 0 0; padding: 28px 28px 24px; }
   .landingCard h1 { font-size: 40px; }
 }

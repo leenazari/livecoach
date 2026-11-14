@@ -166,6 +166,20 @@ const quietPrompt = buildInterviewerPrompt({
   documents: [{ title: "Public calls", body: "off" }, { title: "Business summary", body: "Adam answers the website." }],
 });
 if (/public calls/i.test(quietPrompt)) throw new Error("the agent was told the public on/off note");
+const { accentFromSamples, LANDING_ACCENT } = loadTs(new URL("../lib/interviewer/slide-colour.ts", import.meta.url).pathname);
+if (accentFromSamples([{ r: 250, g: 250, b: 250 }]).accent !== LANDING_ACCENT) {
+  throw new Error("a blank slide invented a colour");
+}
+if (accentFromSamples([{ r: 21, g: 93, b: 252 }]).accent !== "#155dfc") {
+  throw new Error("brand blue was not kept");
+}
+if (accentFromSamples([{ r: 15, g: 110, b: 86 }]).accent !== "#0f6e56") {
+  throw new Error("a colour actually in the slide was replaced");
+}
+const landingCss = readFileSync(new URL("../components/interviewer/interviewa.module.css", import.meta.url), "utf8");
+if (landingCss.includes("#0f6e56") || landingCss.includes("linear-gradient(160deg")) {
+  throw new Error("the landing hero still paints a placeholder colour");
+}
 if (!isPublicInterviewerApi("/api/interviewer/token") || !isPublicInterviewerApi("/api/interviewer/slots/claim")) {
   throw new Error("the call APIs were treated as private");
 }

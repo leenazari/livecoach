@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 
 import styles from "@/components/interviewer/interviewa.module.css";
 import type { PublicCampaignView } from "@/lib/interviewer/public-campaign";
@@ -15,57 +15,10 @@ function keepProtection(path: string): string {
   return `${next.pathname}${next.search}`;
 }
 
-function sampleBrand(image: HTMLImageElement, root: HTMLElement) {
-  const canvas = document.createElement("canvas");
-  const size = 24;
-  canvas.width = size;
-  canvas.height = size;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) return;
-  context.drawImage(image, 0, 0, size, size);
-  let pixels: Uint8ClampedArray;
-  try {
-    pixels = context.getImageData(0, 0, size, size).data;
-  } catch {
-    return;
-  }
-  let best = { score: 0, r: 21, g: 93, b: 252 };
-  let paperR = 0;
-  let paperG = 0;
-  let paperB = 0;
-  let paper = 0;
-  for (let index = 0; index < pixels.length; index += 4) {
-    const red = pixels[index];
-    const green = pixels[index + 1];
-    const blue = pixels[index + 2];
-    const max = Math.max(red, green, blue);
-    const min = Math.min(red, green, blue);
-    const sat = max - min;
-    const light = (max + min) / 2;
-    if (light > 214 && sat < 28) {
-      paperR += red;
-      paperG += green;
-      paperB += blue;
-      paper += 1;
-      continue;
-    }
-    const score = sat * (light > 36 && light < 220 ? 1 : 0.25);
-    if (score > best.score) best = { score, r: red, g: green, b: blue };
-  }
-  root.style.setProperty("--land-accent", `rgb(${best.r} ${best.g} ${best.b})`);
-  const luminance = (0.2126 * best.r) + (0.7152 * best.g) + (0.0722 * best.b);
-  root.style.setProperty("--land-on", luminance > 170 ? "#101828" : "#ffffff");
-  if (paper > 12) {
-    root.style.setProperty("--land-paper", `rgb(${Math.round(paperR / paper)} ${Math.round(paperG / paper)} ${Math.round(paperB / paper)})`);
-    root.style.setProperty("--land-bg", `rgb(${Math.round(paperR / paper)} ${Math.round(paperG / paper)} ${Math.round(paperB / paper)})`);
-  }
-}
-
 export default function CampaignLanding({ card }: { card: PublicCampaignView }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [fax, setFax] = useState("");
-  const [hero, setHero] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -112,16 +65,11 @@ export default function CampaignLanding({ card }: { card: PublicCampaignView }) 
     window.location.assign(keepProtection(data.path));
   };
 
+  const tone = { "--land-accent": card.accent, "--land-on": card.accentOn } as CSSProperties;
   return (
-    <main className={styles.landing}>
-      {hero ? (
-        <img
-          className={styles.landingHero}
-          src={`/api/interviewer/public-slide?campaign=${card.id}`}
-          alt=""
-          onLoad={(event) => sampleBrand(event.currentTarget, event.currentTarget.closest("main") || document.body)}
-          onError={() => setHero(false)}
-        />
+    <main className={styles.landing} style={tone}>
+      {card.heroUrl ? (
+        <img className={styles.landingHero} src={card.heroUrl} alt={card.heroAlt} />
       ) : <div className={styles.landingHeroFallback} />}
       <section className={styles.landingCard}>
         <p className={styles.landingKicker}>A short call</p>
