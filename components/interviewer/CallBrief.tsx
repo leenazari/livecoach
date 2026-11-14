@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { objectionCountLabel, type CallBrief as Brief } from "@/lib/interviewer/brief";
+import { objectionCountLabel, questionsFromLines, scoreHowItWent, type CallBrief as Brief } from "@/lib/interviewer/brief";
 import { toSpokenPlain } from "@/lib/interviewer/spoken-text";
 import styles from "@/components/interviewer/interviewa.module.css";
 
@@ -19,17 +19,36 @@ type Payload = {
   cost: { label: string; amount: string; estimated: boolean; voiceAgent: string; listen: string; llm: string; storage: string; vercel: string };
 };
 
-function QuestionList({ title, empty, items, seek }: { title: string; empty: string; items: Brief["questions"]; seek: (at: number) => void }) {
+function QuestionList({
+  title,
+  empty,
+  asker,
+  answerer,
+  items,
+  seek,
+}: {
+  title: string;
+  empty: string;
+  asker: string;
+  answerer: string;
+  items: Brief["questions"];
+  seek: (at: number) => void;
+}) {
   return (
     <div style={{ marginTop: 12 }}>
       <p className={styles.label}>{title}</p>
       {items.length ? (
         <ol>
-          {items.map((item) => (
-            <li key={`${item.atSeconds}-${item.question}`}>
-              <button type="button" className={styles.link} onClick={() => seek(item.atSeconds || 0)}>{formatStamp(item.atSeconds || 0)}</button>{" "}
-              {item.question}
-              {item.status === "unanswered" || !item.answer ? <span className={styles.red}> No answer</span> : <p className={styles.note}>{item.answer}</p>}
+          {items.map((item, index) => (
+            <li key={`${item.atSeconds}-${item.question}`} style={{ marginTop: 12 }}>
+              <p>
+                <button type="button" className={styles.link} onClick={() => seek(item.atSeconds || 0)}>{formatStamp(item.atSeconds || 0)}</button>{" "}
+                <strong>{index + 1}. {asker}.</strong> {item.question}
+              </p>
+              <p className={styles.note}>
+                <strong>{answerer}.</strong>{" "}
+                {item.status === "unanswered" || !item.answer ? <span className={styles.red}>No answer</span> : item.answer}
+              </p>
             </li>
           ))}
         </ol>
@@ -40,7 +59,21 @@ function QuestionList({ title, empty, items, seek }: { title: string; empty: str
 
 function formatStamp(seconds: number): string {
   const total = Math.max(0, Math.round(seconds));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function pointsOutOfTen(value: number): string {
+  return `${Math.max(0, Math.min(10, Math.round(value / 10)))}/10`;
+}
+
+function slideTimeline(brief: Brief): Array<{ at: string | null; label: string }> {
+  const start = brief.timeline.find((item) => item.label === "Call started");
+  const rest = brief.timeline.filter((item) => item.label !== "Call started" && !/slide/i.test(item.label));
+  const slides = (brief.slides || []).map((slide) => ({
+    at: null,
+    label: `${formatStamp(slide.atSeconds)} Slide ${slide.number} shown`,
+  }));
+  return [...(start ? [start] : []), ...slides, ...rest];
 }
 
 function initials(name: string): string {
@@ -59,11 +92,11 @@ function countdown(when: string | null): string {
   return delta >= 0 ? `In ${days} days` : `${days} days ago`;
 }
 
-function Meter({ label, value }: { label: string; value: number }) {
+function Meter({ label, value, text }: { label: string; value: number; text: string }) {
   return (
     <div>
-      <div className={styles.headRow}><span className={styles.label} style={{ margin: 0 }}>{label}</span><span>{value}</span></div>
-      <div className={styles.meter}><span style={{ width: `${value}%` }} /></div>
+      <div className={styles.headRow}><span className={styles.label} style={{ margin: 0 }}>{label}</span><span>{text}</span></div>
+      <div className={styles.meter}><span style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div>
     </div>
   );
 }
@@ -99,6 +132,21 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
     void audio.play().catch(() => undefined);
   };
   const brief = data?.brief;
+  const asked = questionsFromLines(transcript.flatMap((line) => {
+    if (String(line.text || "").startsWith("Voice log:")) return [];
+    const speaker = line.speaker === "lead" ? "lead" as const : "agent" as const;
+    return [{ id: line.id, speaker, text: line.text, atSeconds: line.atSeconds || 0 }];
+  }));
+  const questions = asked.length ? asked : (brief?.questions || []);
+  const scores = brief ? scoreHowItWent({
+    lines: transcript.length ? transcript : (brief.lines || []),
+    slides: brief.slides || [],
+    questions,
+    objections: brief.objections,
+    disposition: brief.intent.label === "HOT" ? "Hot" : brief.intent.label === "WARM" ? "Warm" : null,
+    intent: brief.intent.label,
+    booked: brief.appointment.booked,
+  }) : null;
   const profile = brief?.profile;
   const copy = async () => {
     if (!brief) return;
@@ -192,7 +240,7 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
 
       <section className={styles.card} style={{ marginTop: 16 }}>
         <div className={`${styles.scrollX} ${styles.timeline}`}>
-          {brief.timeline.map((item) => (
+          {slideTimeline(brief).map((item) => (
             <div key={`${item.label}-${item.at}`} className={styles.tick}>
               <i />
               <strong>{item.label}</strong>
@@ -207,15 +255,15 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>How it went</h2>
           <p>{brief.howItWent.summary}</p>
-          <Meter label="Sentiment" value={brief.howItWent.sentiment} />
-          <Meter label="Engagement" value={brief.howItWent.engagement} />
-          <Meter label="Lead talk share" value={brief.howItWent.talkShareLead} />
+          <Meter label="Sentiment" value={scores?.sentiment ?? brief.howItWent.sentiment} text={pointsOutOfTen(scores?.sentiment ?? brief.howItWent.sentiment)} />
+          <Meter label="Engagement" value={scores?.engagement ?? brief.howItWent.engagement} text={pointsOutOfTen(scores?.engagement ?? brief.howItWent.engagement)} />
+          <Meter label="Lead talk share" value={scores?.talkShareLead ?? brief.howItWent.talkShareLead} text={`${scores?.talkShareLead ?? brief.howItWent.talkShareLead}%`} />
           <p className={styles.note}>Mood: {brief.howItWent.mood}</p>
         </section>
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>Questions asked</h2>
-          <QuestionList title="Questions the lead asked" empty="The lead did not ask a question." items={brief.questions.filter((item) => item.askedBy !== "agent")} seek={seek} />
-          <QuestionList title="Questions we asked" empty="We did not ask a question." items={brief.questions.filter((item) => item.askedBy === "agent")} seek={seek} />
+          <QuestionList title="Questions the prospect asked" empty="The prospect did not ask a question." asker="Prospect" answerer="Agent" items={questions.filter((item) => item.askedBy !== "agent")} seek={seek} />
+          <QuestionList title="Questions the agent asked" empty="The agent did not ask a question." asker="Agent" answerer="Prospect" items={questions.filter((item) => item.askedBy === "agent")} seek={seek} />
         </section>
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>Objections</h2>

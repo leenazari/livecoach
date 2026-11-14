@@ -116,7 +116,7 @@ function emptyProfile(): BriefProfile {
   return { businessType: EMPTY, size: EMPTY, sites: EMPTY, location: EMPTY, role: EMPTY, setup: EMPTY, painPoints: EMPTY };
 }
 
-const QUESTION_CUE = /\?|(?:^|\b)(?:what|how|where|when|why|who|can you|do you|did they|is there|tell me)\b/i;
+const QUESTION_CUE = /\?|^(?:what|how|where|when|why|who|can you|could you|do you|would you|is there|tell me)\b/i;
 
 const OBJECTION_CUE = /\b(too expensive|no budget|can'?t afford|cannot afford|already have|chatbot|live chat|won'?t talk|will not talk|impersonal|say something wrong|too small|not much (?:website )?traffic|no time|set(?:ting)? up|integrat|gdpr|privacy|data protection|think about it|send me|doesn'?t work|does not work|out of hours|not the decision|decision maker|not right now|too much|pricey)\b/i;
 const RESISTANCE = /\b(no thanks|not convinced|still not|still too|too expensive|can'?t afford|cannot afford|don'?t want|do not want|not for us|won'?t work|will not work|not interested)\b/i;
@@ -204,6 +204,7 @@ export function talkShareLead(lines: Array<{ speaker: string; text: string }>): 
   let lead = 0;
   let agent = 0;
   for (const line of lines) {
+    if (String(line.text || "").startsWith("Voice log:")) continue;
     const words = line.text.trim().split(/\s+/).filter(Boolean).length;
     if (line.speaker === "lead") lead += words;
     else agent += words;
@@ -211,6 +212,46 @@ export function talkShareLead(lines: Array<{ speaker: string; text: string }>): 
   const total = lead + agent;
   if (!total) return 0;
   return Math.round((lead / total) * 100);
+}
+
+export function clockStamp(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+// Scores are 0 to 100 so the bar is a percentage. The page shows sentiment and
+// engagement as points out of 10. The model often returns 1 for "good" on an
+// unstated 0 to 1 scale, which the old parser stored as 1 out of 100.
+export function scoreHowItWent(input: {
+  lines: Array<{ speaker: string; text: string }>;
+  slides: Array<{ number: number }>;
+  questions: Array<{ status?: string; answer?: string }>;
+  objections: Array<{ outcome?: string }>;
+  disposition: string | null;
+  intent: string | null;
+  booked: boolean;
+}): { sentiment: number; engagement: number; talkShareLead: number } {
+  const spoken = input.lines.filter((line) => !String(line.text || "").startsWith("Voice log:"));
+  const uniqueSlides = new Set(input.slides.map((slide) => slide.number)).size;
+  const answered = input.questions.filter((item) => item.answer && item.status !== "unanswered").length;
+  const leadLines = spoken.filter((line) => line.speaker === "lead").length;
+  const positive = input.objections.filter((item) => item.outcome === "positive").length;
+  const negative = input.objections.filter((item) => item.outcome === "negative").length;
+  const hot = input.booked || input.intent === "HOT" || /hot/i.test(input.disposition || "");
+  const warm = !hot && (input.intent === "WARM" || /warm/i.test(input.disposition || ""));
+  let engagement = Math.min(30, uniqueSlides * 4) + Math.min(25, answered * 4) + Math.min(20, leadLines * 2) + Math.min(10, positive * 5);
+  if (hot) engagement += 20;
+  else if (warm) engagement += 15;
+  engagement = Math.max(0, Math.min(100, engagement));
+  if (warm) engagement = Math.max(engagement, 60);
+  if (hot) engagement = Math.max(engagement, 70);
+  let sentiment = hot ? 80 : warm ? 70 : 45;
+  sentiment += positive * 5;
+  sentiment -= negative * 8;
+  sentiment = Math.max(0, Math.min(100, sentiment));
+  if (warm) sentiment = Math.max(sentiment, 60);
+  if (hot) sentiment = Math.max(sentiment, 75);
+  return { sentiment, engagement, talkShareLead: talkShareLead(spoken) };
 }
 
 export function fallbackBrief(facts: BriefFacts): CallBrief {
@@ -241,9 +282,15 @@ export function fallbackBrief(facts: BriefFacts): CallBrief {
     timeline: timelineFromFacts(facts),
     howItWent: {
       summary: facts.transcript ? "The transcript is saved. A model summary was not stored." : "This call has no transcript yet.",
-      sentiment: 50,
-      engagement: facts.transcript ? 40 : 0,
-      talkShareLead: facts.talkShareLead,
+      ...scoreHowItWent({
+        lines: facts.lines || [],
+        slides: facts.slides || [],
+        questions: questionsFromLines(facts.lines || []),
+        objections: objectionsFromLines(facts.lines || []),
+        disposition: facts.disposition,
+        intent: label,
+        booked: Boolean(facts.scheduledAt),
+      }),
       mood: "Not scored",
     },
     profile: emptyProfile(),
@@ -265,8 +312,11 @@ export function timelineFromFacts(facts: BriefFacts): CallBrief["timeline"] {
   const items: CallBrief["timeline"] = [];
   if (facts.connectedAt) items.push({ at: facts.connectedAt, label: "Call started" });
   for (const slide of facts.slides || []) {
-    const title = typeof slide === "string" ? slide : slide.title || `Slide ${slide.number}`;
-    items.push({ at: null, label: `Slide shown: ${title}` });
+    if (typeof slide === "string") {
+      items.push({ at: null, label: slide });
+      continue;
+    }
+    items.push({ at: null, label: `${clockStamp(slide.atSeconds)} Slide ${slide.number} shown` });
   }
   if (facts.scheduledAt) items.push({ at: facts.scheduledAt, label: "Meeting booked" });
   if (facts.endedAt) items.push({ at: facts.endedAt, label: "Call ended" });
@@ -402,9 +452,15 @@ export function parseBrief(raw: unknown, facts: BriefFacts): CallBrief {
     timeline: timelineFromFacts(facts),
     howItWent: {
       summary: clip(how.summary, 500) || base.howItWent.summary,
-      sentiment: clamp(how.sentiment),
-      engagement: clamp(how.engagement),
-      talkShareLead: facts.talkShareLead,
+      ...scoreHowItWent({
+        lines: facts.lines || [],
+        slides: facts.slides || [],
+        questions,
+        objections,
+        disposition: facts.disposition,
+        intent: label,
+        booked: Boolean(facts.scheduledAt),
+      }),
       mood: clip(how.mood, 40) || "Not scored",
     },
     questions,

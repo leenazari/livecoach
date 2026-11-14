@@ -36,7 +36,7 @@ const { toSpokenPlain, stripAgentContext, toolReplyForAgent } = loadTs(new URL("
 const { effectiveCallMinutes, twoMinuteLine, formatCountdown, timeLimitChapters, remainingCallSeconds } = loadTs(new URL("../lib/interviewer/call-limit.ts", import.meta.url).pathname);
 const { keywordsFor, matchSpokenSlide } = loadTs(new URL("../lib/interviewer/slide-match.ts", import.meta.url).pathname);
 const { isHoldRequest, nextSilenceCue } = loadTs(new URL("../lib/interviewer/silence.ts", import.meta.url).pathname);
-const { parseBrief, fallbackBrief, objectionsFromLines, objectionCountLabel } = loadTs(new URL("../lib/interviewer/brief.ts", import.meta.url).pathname);
+const { parseBrief, fallbackBrief, objectionsFromLines, objectionCountLabel, questionsFromLines, scoreHowItWent, clockStamp } = loadTs(new URL("../lib/interviewer/brief.ts", import.meta.url).pathname);
 const { cleanSlideText, isInternalCostLine } = loadTs(new URL("../lib/interviewer/slide-notes.ts", import.meta.url).pathname);
 
 const notes = [{ title: "What Adam is", body: "Adam is a website sales agent. It books demos." }];
@@ -114,6 +114,38 @@ if (tracked[1].outcome !== "negative" || !/chatbot/.test(tracked[1].text)) throw
 if (objectionCountLabel(tracked) !== "2 raised, 1 handled positively") throw new Error(`count was ${objectionCountLabel(tracked)}`);
 const fromTranscript = parseBrief({}, { ...facts, lines: objectionLines });
 if (fromTranscript.objections.length !== 2) throw new Error("the summary dropped transcript objections");
+if (clockStamp(192) !== "03:12") throw new Error(`slide clock was ${clockStamp(192)}`);
+const warmCall = scoreHowItWent({
+  lines: [
+    ...Array.from({ length: 21 }, () => ({ speaker: "lead", text: "we run a cafe and I want to see more" })),
+    ...Array.from({ length: 40 }, () => ({ speaker: "agent", text: "let me walk you through that part of the brochure" })),
+  ],
+  slides: [1, 3, 4, 8, 9, 10, 7, 6].map((number) => ({ number })),
+  questions: Array.from({ length: 16 }, () => ({ status: "answered", answer: "yes" })),
+  objections: [],
+  disposition: "Warm",
+  intent: "WARM",
+  booked: false,
+});
+if (warmCall.engagement < 60 || warmCall.sentiment < 60) throw new Error(`warm call scored ${warmCall.engagement}/${warmCall.sentiment}`);
+if (Math.round(warmCall.engagement / 10) <= 1) throw new Error("warm engagement still displays as 1 out of 10");
+const tiny = parseBrief({ howItWent: { sentiment: 1, engagement: 1, mood: "Positive", summary: "The lead engaged." }, intent: { label: "WARM", reasons: ["Engaged"] } }, {
+  ...facts,
+  disposition: "Warm",
+  lines: objectionLines,
+  slides: [{ number: 4, title: "Slide 4", atSeconds: 192, durationSeconds: 10, triggeredBy: "agent" }],
+});
+if (tiny.howItWent.engagement <= 10 || tiny.howItWent.sentiment <= 10) throw new Error(`model 0 to 1 scores were kept: ${tiny.howItWent.engagement}, ${tiny.howItWent.sentiment}`);
+if (!tiny.timeline.some((item) => item.label === "03:12 Slide 4 shown")) throw new Error(`timeline missed the slide clock: ${JSON.stringify(tiny.timeline)}`);
+const chain = questionsFromLines([
+  { id: "a", speaker: "agent", text: "I can see how that would be frustrating.", atSeconds: 1 },
+  { id: "b", speaker: "lead", text: "How much is it?", atSeconds: 2 },
+  { id: "c", speaker: "agent", text: "It starts from 39 pounds a month. Want the detail?", atSeconds: 3 },
+]);
+if (chain.length !== 2) throw new Error(`a sentence with how in the middle was kept: ${chain.length}`);
+if (chain[0].askedBy !== "lead" || chain[0].answer !== "It starts from 39 pounds a month. Want the detail?") {
+  throw new Error("the prospect question did not keep the agent answer underneath");
+}
 if (isInternalCostLine("More leads. Lower cost. Always on.")) throw new Error("a benefit slogan was treated as an internal cost");
 if (!isInternalCostLine("Deepgram cost is seven cents a minute")) throw new Error("supplier cost was kept");
 if (cleanSlideText("More leads. Lower cost. Always on.\nOur cost per minute is hidden.").includes("Our cost")) {
