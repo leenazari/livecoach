@@ -29,6 +29,8 @@ const { guardSpokenText, unsafeSpeech, SAFE_REDIRECT, guardrailRules } = loadTs(
 const { buildInterviewerPrompt } = loadTs(new URL("../lib/interviewer/prompt.ts", import.meta.url).pathname);
 const { slideRole } = loadTs(new URL("../lib/interviewer/slide-role.ts", import.meta.url).pathname);
 const { noteBusiness, profileKnown, businessProfileNote } = loadTs(new URL("../lib/interviewer/business-profile.ts", import.meta.url).pathname);
+const { takeSpokenSlideCommands, incompleteSlideCommand } = loadTs(new URL("../lib/interviewer/slide-command.ts", import.meta.url).pathname);
+const { createSpeechStreamFilter, rewriteSpeechEvent } = loadTs(new URL("../lib/interviewer/speech-stream.ts", import.meta.url).pathname);
 
 if (forPrompt("ADAM and POS and AI") !== "Adam and POS and AI") throw new Error("brand capitals were not normalised");
 if (forSpeech("Interviewa meets ADAM") !== "Interviewer meets Adam") throw new Error("spoken brand names were wrong");
@@ -67,6 +69,21 @@ if (slideRole("Four setup steps") !== "setup" || slideRole("Live call") !== "fea
 const profile = noteBusiness("We're a dental practice and we sell check-ups.", { businessType: "", sells: "", customers: "", howTheyServe: "", pain: "" });
 if (!profileKnown(profile) || !businessProfileNote(profile).includes("dental practice")) throw new Error("business profile was not captured");
 if (!businessProfileNote(profile).includes("Do not read this note aloud")) throw new Error("profile note could be spoken");
+const commanded = takeSpokenSlideCommands("Let me show slide two. Appointments book themselves.");
+if (commanded.slides[0] !== 2 || /slide/i.test(commanded.text)) throw new Error(`spoken slide command stayed: ${commanded.text}`);
+if (takeSpokenSlideCommands("On this slide the bookings are clear.").slides.length) throw new Error("a content sentence was treated as a slide command");
+if (incompleteSlideCommand("Please show slide tw") < 4) throw new Error("an unfinished slide command was released");
+const filter = createSpeechStreamFilter();
+const heard = `${filter.push("Please show slide 2. Next feature.")}${filter.flush()}`;
+if (/slide/i.test(heard)) throw new Error(`the speech filter spoke a slide command: ${heard}`);
+const event = rewriteSpeechEvent(`data: ${JSON.stringify({ choices: [{ delta: { content: "Show slide two. The brochure follows." } }] })}`, createSpeechStreamFilter());
+const payload = JSON.parse(String(event).replace(/^data:\s*/, ""));
+const call = payload.choices?.[0]?.delta?.tool_calls?.[0];
+if (call?.function?.name !== "show_slide" || !String(call.function.arguments).includes("2")) {
+  throw new Error("a spoken slide number did not request show_slide");
+}
+if (/slide/i.test(payload.choices[0].delta.content || "")) throw new Error("the spoken event still contained the command");
+if (!prompt.includes("Never say")) throw new Error("the prompt still allows slide commands to be spoken");
 
 console.log("speech, guardrail, pacing and profile checks passed");
 console.log("Red team (filter, no live model):");

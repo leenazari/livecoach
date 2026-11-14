@@ -119,7 +119,7 @@ This is the base of the call. ${siteSaved ? "A source website was saved. Do not 
 These facts override the playbook. Do not add a product, industry, price, customer, or result that is not written here. Search the deck and these notes before you answer. If a fact is truly absent from both, say you will ask the team to confirm it, and offer to book that conversation. Never say that it is not in your notes or that you do not have the information. Only if they have left the subject entirely, say warmly that you are here to talk about ${name}, then go back to it.
 ${knowledgeBlock(input.documents)}
 
-${slides ? `Slide index. Show one slide at a time. Call show_slide immediately before you speak about that topic, and call it again only when you move to the next topic. Do not call several slides before you start speaking. Do not read a slide aloud.\n${slides}` : "No slides have been uploaded."}
+${slides ? `Slide index. Show one slide at a time. Call show_slide immediately before you speak about that topic, and call it again only when you move to the next topic. Do not call several slides before you start speaking. Never say "show slide", "slide two", or any slide number as a command. The tool call is silent. Talk only about what is on the slide.\n${slides}` : "No slides have been uploaded."}
 
 ${INTERVIEWER_PLAYBOOK}
 

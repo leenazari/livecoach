@@ -17,6 +17,7 @@ import {
 } from "@/lib/interviewer/listen-transcript";
 import { stripAgentContext, toSpokenPlain, toolReplyForAgent } from "@/lib/interviewer/spoken-text";
 import { forSpeech, forTranscript } from "@/lib/interviewer/pronunciations";
+import { takeSpokenSlideCommands } from "@/lib/interviewer/slide-command";
 import { businessProfileNote, emptyBusinessProfile, noteBusiness, type BusinessProfile } from "@/lib/interviewer/business-profile";
 import { catalogFromSlides, coverInterests, noteInterests, privateCoverNote, spokenReminder, type AgendaItem } from "@/lib/interviewer/interest-agenda";
 import { matchSpokenSlide } from "@/lib/interviewer/slide-match";
@@ -204,7 +205,31 @@ export function useInterviewerCall(token: string, capMinutes = "") {
   }, [saveCaption]);
 
   const acceptAgent = useCallback((text: string) => {
-    const clean = forTranscript(toSpokenPlain(text));
+    const directed = takeSpokenSlideCommands(forTranscript(toSpokenPlain(text)));
+    const clean = directed.text;
+    if (directed.slides.length) {
+      const number = directed.slides[directed.slides.length - 1];
+      const match = slideIndexRef.current.find((item) => item.number === number);
+      if (match && slideNumberRef.current !== number) {
+        manualSlideUntil.current = Date.now() + 20000;
+        slideNumberRef.current = number;
+        setSlideNumber(number);
+        setSlideUrl(match.url || "");
+        setSlideLabel(match.title);
+        setSlideSlogan(match.slogan || "");
+        rememberSeen(number);
+        const session = sessionRef.current;
+        if (session) {
+          void postJson("/api/interviewer/slides", {
+            token,
+            sessionId: session,
+            deckId: deckRef.current,
+            slideNumber: number,
+            reason: `Spoken slide ${number}`.slice(0, 240),
+          });
+        }
+      }
+    }
     if (!clean) return;
     const previous = agentTurnRef.current;
     const caption = previous && agentTurnExtends(previous.text, clean)
@@ -242,7 +267,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         });
       }
     }, 2000);
-  }, [saveCaption, token]);
+  }, [rememberSeen, saveCaption, token]);
 
   const connectVoice = useCallback(async () => {
     const session = sessionRef.current;
