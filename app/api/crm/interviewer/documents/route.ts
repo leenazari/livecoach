@@ -4,6 +4,7 @@ import { interviewerOwnerError, requireInterviewerOwner } from "@/lib/interviewe
 import { interviewerFieldError } from "@/lib/interviewer/field-error";
 import { validateKnowledgeNote } from "@/lib/interviewer/form-fields";
 import { KNOWLEDGE_SECTIONS, SOURCE_WEBSITE_TITLE, WEBSITE_IMPORT_SOURCE, isMissingSourceColumn, sectionKeyForTitle, websiteImportIds } from "@/lib/interviewer/knowledge";
+import { QUALIFYING_TITLE } from "@/lib/interviewer/qualifying";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -162,6 +163,9 @@ export async function POST(req: Request) {
       return interviewerFieldError("interviewer_document_missing_campaign", "Knowledge note was not saved", {
         campaignId: "That campaign is not available on your account.",
       });
+    }
+    if (title === QUALIFYING_TITLE) {
+      await supabaseService.from("interviewer_documents").delete().eq("campaign_id", campaign.id).eq("workspace_id", scope.workspaceId).eq("title", QUALIFYING_TITLE);
     }
     const { data, error } = await supabaseAdmin
       .from("interviewer_documents")

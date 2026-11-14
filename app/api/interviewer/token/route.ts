@@ -6,7 +6,10 @@ import { mintDeepgramGrant } from "@/lib/interviewer/deepgram-grant";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
 import { linkedSession, presentQueue, queueStatusForToken, type InterviewerQueueState } from "@/lib/interviewer/queue-view";
 import { supabaseService } from "@/lib/supabase";
+import { featureBullets } from "@/lib/interviewer/call-close";
+import { QUALIFYING_TITLE, qualifyingQuestionsFrom } from "@/lib/interviewer/qualifying";
 import { customerHeadline, formatDeckKnowledge, headlineFromNotes } from "@/lib/interviewer/slide-headline";
+import { keywordsFor } from "@/lib/interviewer/slide-match";
 import { interviewerVoiceOrFallback } from "@/lib/interviewer/voices";
 
 export const runtime = "nodejs";
@@ -138,6 +141,12 @@ export async function POST(req: Request) {
         }),
         slogan: String(slide.verbatim || slide.one_line || ""),
         url,
+        points: featureBullets(String(slide.talking_points || slide.one_line || "")),
+        keywords: keywordsFor({
+          title: String(slide.title || ""),
+          oneLine: String(slide.one_line || ""),
+          talkingPoints: String(slide.talking_points || ""),
+        }),
       };
     }));
     const openingSlide = slideIndex.find((slide) => slide.number === 1) || slideIndex[0] || null;
@@ -150,6 +159,7 @@ export async function POST(req: Request) {
           promptOverride: linked.campaign.prompt_override,
           maxMinutes: limitMinutes,
           documents,
+          qualifyingQuestions: qualifyingQuestionsFrom(documents.find((document) => document.title === QUALIFYING_TITLE)?.body),
           slides,
           voiceId,
           websiteUrl: extra?.website_url ? String(extra.website_url) : null,

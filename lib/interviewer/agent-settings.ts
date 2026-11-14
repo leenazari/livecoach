@@ -67,7 +67,7 @@ export const INTERVIEWER_FUNCTIONS = [
   },
   {
     name: "show_slide",
-    description: "Show the slide that best matches what the person is talking about. Jump to any number. Do not read the slide aloud.",
+    description: "Show one slide, immediately before you speak about it. Do not call this for several slides before you start speaking. Call it again only when you move to the next topic.",
     parameters: {
       type: "object",
       properties: {

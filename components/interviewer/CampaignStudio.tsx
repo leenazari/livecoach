@@ -6,6 +6,8 @@ import { putSlideImages, renderPdfPages } from "@/components/interviewer/pdf-pag
 import { customerHeadline } from "@/lib/interviewer/slide-headline";
 import styles from "@/components/interviewer/interviewa.module.css";
 import { KNOWLEDGE_CHAR_CAP, KNOWLEDGE_SECTIONS, SOURCE_WEBSITE_TITLE, emptyKnowledge, knowledgeFromDocuments, knowledgeLength, type KnowledgeSectionKey } from "@/lib/interviewer/knowledge";
+import { DEFAULT_QUALIFYING_QUESTIONS, QUALIFYING_TITLE } from "@/lib/interviewer/qualifying";
+import { formatCallLength } from "@/lib/interviewer/recording-clock";
 import { INTERVIEWER_VOICES, voiceLabel, type AuraVoice } from "@/lib/interviewer/voices";
 
 type Campaign = {
@@ -97,7 +99,7 @@ function TestLinkBlock({
   );
   const actions = (
     <div className={styles.linkActions}>
-      <button type="button" className={styles.btn} onClick={() => void onCopy()}>{copied ? "Copied ✓" : "Copy link"}</button>
+      <button type="button" className={styles.btn} onClick={() => void onCopy()}>{copied ? "Copied" : "Copy link"}</button>
       <button type="button" className={styles.btnGhost} onClick={() => onOpen(url)}>Open call</button>
     </div>
   );
@@ -144,6 +146,7 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
   const [quotes, setQuotes] = useState(false);
   const [brochure, setBrochure] = useState(false);
   const [opener, setOpener] = useState("");
+  const [qualifying, setQualifying] = useState(DEFAULT_QUALIFYING_QUESTIONS.join("\n"));
   const [calls, setCalls] = useState<CallRow[]>([]);
   const [costs, setCosts] = useState<{ label?: string; totals?: { cost: string; setup: string; callsCost: string; estimates?: boolean }; setup?: Array<{ kind: string; detail: string; amount: string }>; calls?: CostCall[] } | null>(null);
   const [links, setLinks] = useState<TestLink[]>([]);
@@ -200,6 +203,8 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
         setQuotes(found.quotes_allowed === true);
         setBrochure(found.brochure_send === true);
         setOpener(found.opener || "");
+        const qualifyingNote = docs.find((doc: { title: string; body: string }) => doc.title === QUALIFYING_TITLE);
+        setQualifying(qualifyingNote?.body || DEFAULT_QUALIFYING_QUESTIONS.join("\n"));
         setRate(String(found.rate_per_minute ?? 0));
         setCurrency(found.currency || "GBP");
         setMargin(String(found.margin_percent ?? 0));
@@ -535,7 +540,10 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
                   return (
                     <figure key={`${deck.id}-${slide.number}`}>
                       {slide.url && !slide.missing ? <img src={slide.url} alt={headline || `Slide ${slide.number}`} /> : <div className={styles.thumb} />}
-                      <figcaption className={styles.note}><span className={styles.pill}>{slide.number}</span> {headline || "Needs a headline"}</figcaption>
+                      <figcaption className={styles.thumbCaption}>
+                        <span className={styles.thumbTitle}>{headline || "Needs a headline"}</span>
+                        <span className={styles.thumbMeta}>Slide {slide.number}</span>
+                      </figcaption>
                     </figure>
                   );
                 })}
@@ -551,6 +559,11 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
           <label className={styles.label}>Opener
             <input className={styles.field} value={opener} placeholder="What got you interested in this business?" onChange={(event) => setOpener(event.target.value)} />
           </label>
+          <label className={styles.label}>Qualifying questions
+            <textarea className={styles.area} value={qualifying} onChange={(event) => setQualifying(event.target.value)} />
+          </label>
+          <p className={styles.note}>One question at a time, after an answer or a topic. Swoopos starts with location, business type, sites or tills, current provider, and timeline.</p>
+          <button type="button" className={styles.btnGhost} disabled={creating} onClick={() => void postJson("/api/crm/interviewer/documents", { campaignId, title: QUALIFYING_TITLE, body: qualifying })}>Save qualifying questions</button>
           <button type="button" className={styles.btn} disabled={creating} onClick={() => void saveBehaviour()}>Save behaviour</button>
         </section>
 
@@ -584,7 +597,7 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
                 <li key={call.id} className={styles.headRow}>
                   <a className={styles.link} href={`/crm/interviewer/calls/${call.id}`}>{new Date(call.created_at).toLocaleString("en-GB")}</a>
                   <span className={tone}>{call.disposition || "No outcome"}</span>
-                  <span className={styles.note}>{cost ? `${cost.cost}${cost.estimated ? " estimate" : ""}` : `${call.billable_seconds ?? 0}s`}</span>
+                  <span className={styles.note}>{formatCallLength(call.billable_seconds || 0)}{cost ? ` · ${cost.cost}${cost.estimated ? " estimate" : ""}` : ""}</span>
                 </li>
               );
             })}

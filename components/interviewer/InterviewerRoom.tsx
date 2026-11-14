@@ -257,6 +257,7 @@ export default function InterviewerRoom({
             </ol>
           ) : null}
           {showSlideImage || showSlideCard ? (
+            <div className={styles.slideColumn}>
             <div className={styles.slideStage}>
               {showSlideImage ? (
                 <img src={call.slideUrl} alt={call.slideLabel || "Current slide"} onError={() => setSlideBroken(true)} />
@@ -267,17 +268,39 @@ export default function InterviewerRoom({
                 </div>
               )}
             </div>
+            {(call.slideIndex.find((item) => item.number === call.slideNumber)?.points || []).length ? (
+              <aside className={styles.featurePanel}>
+                <p className={styles.slideKicker}>Key features</p>
+                <ul>
+                  {(call.slideIndex.find((item) => item.number === call.slideNumber)?.points || []).slice(0, 5).map((point) => <li key={point}>{point}</li>)}
+                </ul>
+              </aside>
+            ) : null}
+            <button
+              type="button"
+              className={call.muted ? styles.muteOff : styles.muteOn}
+              aria-pressed={call.muted}
+              aria-label={call.muted ? "Muted. Unmute microphone" : "Mute microphone"}
+              onClick={() => call.setMuted(!call.muted)}
+            >
+              {call.muted ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.8-1" />
+                  <path d="M5 10v2a7 7 0 0 0 12 4.9M12 19v3M8 22h8M4 4l16 16" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" />
+                </svg>
+              )}
+              {call.muted ? "Muted" : "Mute"}
+            </button>
+            </div>
           ) : null}
           <div className={`${styles.callTalk} rounded-3xl border border-edge bg-panel/90 p-4`}>
           <h2 className="font-display text-2xl text-bone">You are connected</h2>
           <p className="mt-2 text-sm text-muted">Speak normally. You can interrupt Interviewa.</p>
-          <button
-            type="button"
-            className={`mt-4 w-full rounded-2xl px-4 py-4 text-base font-semibold ${call.muted ? "bg-amber text-ink" : "bg-ink text-bone"}`}
-            onClick={() => call.setMuted(!call.muted)}
-          >
-            {call.muted ? "Microphone muted. Tap to unmute" : "Mute microphone"}
-          </button>
           <ul className="mt-5 max-h-80 space-y-3 overflow-auto">
             {call.interim ? (
               <li className="text-sm leading-6 text-muted">You, still speaking: {call.interim}</li>
@@ -311,9 +334,19 @@ export default function InterviewerRoom({
               ) : null}
             </div>
           ) : null}
-          <button type="button" className="mt-6 rounded-full bg-rust px-4 py-2 text-sm text-ink" onClick={call.hangUp}>
-            End conversation
-          </button>
+          {call.endAsk ? (
+            <div className={styles.endAsk}>
+              <p>Are you sure you want to end the call?</p>
+              <div className={styles.linkActions}>
+                <button type="button" className={styles.btn} onClick={call.confirmHangUp}>End call</button>
+                <button type="button" className={styles.btnGhost} onClick={call.cancelHangUp}>Keep talking</button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" className="mt-6 rounded-full bg-rust px-4 py-2 text-sm text-ink" onClick={call.hangUp}>
+              End conversation
+            </button>
+          )}
           </div>
         </section>
       ) : null}
@@ -321,6 +354,11 @@ export default function InterviewerRoom({
       {call.phase === "ended" ? (
         <section className="mt-8 rounded-3xl border border-edge bg-panel/90 p-6">
           <h2 className="font-display text-2xl text-bone">Thank you</h2>
+          <p className="mt-2 text-sm leading-6 text-bone">{call.recap?.summary || "Thanks for the conversation."}</p>
+          {call.recap?.topics?.length ? (
+            <ul className="mt-3 list-disc pl-5 text-sm text-muted">{call.recap.topics.map((topic) => <li key={topic}>{topic}</li>)}</ul>
+          ) : null}
+          {call.recap?.nextStep ? <p className="mt-3 text-sm text-bone">{call.recap.nextStep}</p> : null}
           <p className="mt-2 text-sm leading-6 text-muted">
             {call.billableSeconds === null
               ? "The conversation is closed."
