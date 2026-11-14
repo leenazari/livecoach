@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { floatToPcm16, playOfferChime, resampleLinear } from "@/components/interviewer/audio";
 import { startLeadListener } from "@/components/interviewer/lead-listener";
 import { isDeepgramConcurrencyRefusal } from "@/lib/interviewer/concurrency";
+import { TIME_LIMIT_GOODBYE, formatCountdown, twoMinuteLine } from "@/lib/interviewer/call-limit";
 import { isHoldRequest, nextSilenceCue, type SilencePhase } from "@/lib/interviewer/silence";
 import {
   agentTurnExtends,
@@ -12,6 +13,7 @@ import {
   utteranceKey,
   type LockedUtterance,
 } from "@/lib/interviewer/listen-transcript";
+import { toSpokenPlain } from "@/lib/interviewer/spoken-text";
 
 export type Caption = { id: string; speaker: "agent" | "lead"; text: string };
 
@@ -37,6 +39,7 @@ type ReadyPayload = QueuePayload & {
   settings?: Record<string, unknown> | null;
   voiceAgentUrl?: string;
   maxMinutes?: number | null;
+  callEndsAt?: string | null;
   deckId?: string | null;
   openingSlide?: { number?: number; title?: string; slogan?: string; url?: string | null } | null;
   slideIndex?: Array<{ number: number; title: string; slogan?: string; url?: string | null }>;
@@ -72,6 +75,7 @@ export function useInterviewerCall(token: string) {
   const [slideIndex, setSlideIndex] = useState<SlideChoice[]>([]);
   const [billableSeconds, setBillableSeconds] = useState<number | null>(null);
   const [muted, setMutedState] = useState(false);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<string | null>(null);
   const phaseRef = useRef(phase);
@@ -85,6 +89,7 @@ export function useInterviewerCall(token: string) {
   const deckRef = useRef<string | null>(null);
   const slideIndexRef = useRef<SlideChoice[]>([]);
   const agentSocketRef = useRef<WebSocket | null>(null);
+  const bookedRef = useRef(false);
   const silenceRef = useRef({
     lastActivityAt: Date.now(),
     lastSpeaker: "agent" as "agent" | "lead",
@@ -145,7 +150,7 @@ export function useInterviewerCall(token: string) {
   }, [saveCaption]);
 
   const acceptAgent = useCallback((text: string) => {
-    const clean = text.trim();
+    const clean = toSpokenPlain(text);
     if (!clean) return;
     const previous = agentTurnRef.current;
     const caption = previous && agentTurnExtends(previous.text, clean)
@@ -315,7 +320,7 @@ export function useInterviewerCall(token: string) {
         stopLead();
         if (heartbeat) window.clearInterval(heartbeat);
         stopSilence();
-        if (capTimer) window.clearTimeout(capTimer);
+        if (capTimer) window.clearInterval(capTimer);
         if (recorder.state !== "inactive") recorder.stop();
         await context.close().catch(() => undefined);
         teardownRef.current = null;
@@ -346,7 +351,7 @@ export function useInterviewerCall(token: string) {
         stopLead();
         if (heartbeat) window.clearInterval(heartbeat);
         stopSilence();
-        if (capTimer) window.clearTimeout(capTimer);
+        if (capTimer) window.clearInterval(capTimer);
         const blob = await new Promise<Blob>((resolve) => {
           recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
           if (recorder.state !== "inactive") recorder.stop();
@@ -402,6 +407,7 @@ export function useInterviewerCall(token: string) {
                 start: args.start,
                 end: args.end,
               })).data;
+              if ((content as { booked?: boolean }).booked) bookedRef.current = true;
             } else if (fn.name === "show_slide") {
               const shown = await postJson<{ shown?: boolean; url?: string | null; title?: string; slideNumber?: number; note?: string }>(
                 "/api/interviewer/slides",
@@ -554,12 +560,30 @@ export function useInterviewerCall(token: string) {
       }, 1000);
       heartbeat = window.setInterval(() => {
         void postJson<{ state?: string }>("/api/interviewer/slots/heartbeat", { token, sessionId: session }).then(({ data }) => {
-          if (data.state === "lost" && phaseRef.current === "live") void finish();
+          if (data.state === "time_limit" && phaseRef.current === "live" && !settling) {
+            say(TIME_LIMIT_GOODBYE);
+            window.setTimeout(() => { if (!settling) void finish(); }, 4000);
+          } else if (data.state === "lost" && phaseRef.current === "live") void finish();
         });
       }, 15000);
-      capTimer = ready.data.maxMinutes
-        ? window.setTimeout(() => { void finish(); }, ready.data.maxMinutes * 60 * 1000)
-        : null;
+      const endsAt = Date.parse(String(ready.data.callEndsAt || ""));
+      let warned = false;
+      let endingForLimit = false;
+      const clock = window.setInterval(() => {
+        if (!Number.isFinite(endsAt)) return;
+        const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+        setRemainingSeconds(left);
+        if (left <= 120 && left > 0 && !warned) {
+          warned = true;
+          say(twoMinuteLine(bookedRef.current));
+        }
+        if (left <= 0 && !endingForLimit) {
+          endingForLimit = true;
+          say(TIME_LIMIT_GOODBYE);
+          window.setTimeout(() => { if (!settling) void finish(); }, 4000);
+        }
+      }, 1000);
+      capTimer = clock;
 
       teardownRef.current = (mode) => {
         if (mode === "end") void finish();
@@ -688,6 +712,7 @@ export function useInterviewerCall(token: string) {
     slideNumber,
     slideIndex,
     chooseSlide,
+    remainingSeconds,
     billableSeconds,
     muted,
     join,

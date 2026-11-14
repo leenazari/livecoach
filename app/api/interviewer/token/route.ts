@@ -1,6 +1,7 @@
 import { buildVoiceAgentSettings, DEEPGRAM_VOICE_AGENT_URL } from "@/lib/interviewer/agent-settings";
 import { knowledgeManifest } from "@/lib/interviewer/prompt";
 import { interviewerRpc, loadCampaignDocuments } from "@/lib/interviewer/data";
+import { effectiveCallMinutes, remainingCallSeconds } from "@/lib/interviewer/call-limit";
 import { mintDeepgramGrant } from "@/lib/interviewer/deepgram-grant";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
 import { linkedSession, presentQueue, queueStatusForToken, type InterviewerQueueState } from "@/lib/interviewer/queue-view";
@@ -29,7 +30,15 @@ export async function POST(req: Request) {
     if (!linked?.campaign) return interviewerJson({ error: "This link is not available." }, 404);
     if (!linked.slot) return queued(token, sessionId, linked.invite.campaign_id);
 
-    const agentGrant = await mintDeepgramGrant();
+    const limitMinutes = effectiveCallMinutes(linked.campaign.max_minutes);
+    const connectedMs = linked.session.connected_at ? Date.parse(String(linked.session.connected_at)) : Date.now();
+    const callEndsAtMs = connectedMs + limitMinutes * 60 * 1000;
+    if (linked.session.connected_at && Date.now() >= callEndsAtMs) {
+      await interviewerRpc("end_interviewer_session", { p_token: token, p_session_id: sessionId });
+      return interviewerJson({ state: "time_limit", error: "This call has reached its time limit." }, 409);
+    }
+    const grantTtl = remainingCallSeconds(callEndsAtMs);
+    const agentGrant = await mintDeepgramGrant(grantTtl);
     if (!agentGrant.ok && agentGrant.reason === "concurrency") {
       const state = await interviewerRpc<InterviewerQueueState>("requeue_interviewer_priority", {
         p_token: token,
@@ -47,7 +56,7 @@ export async function POST(req: Request) {
 
     let listenToken = agentGrant.accessToken;
     if (purpose === "both") {
-      const listenGrant = await mintDeepgramGrant();
+      const listenGrant = await mintDeepgramGrant(grantTtl);
       if (!listenGrant.ok && listenGrant.reason === "concurrency") {
         const state = await interviewerRpc<InterviewerQueueState>("requeue_interviewer_priority", {
           p_token: token,
@@ -139,7 +148,7 @@ export async function POST(req: Request) {
           prospectName: linked.invite.prospect_name,
           personaOverride: linked.campaign.persona_override,
           promptOverride: linked.campaign.prompt_override,
-          maxMinutes: linked.campaign.max_minutes,
+          maxMinutes: limitMinutes,
           documents,
           slides,
           voiceId,
@@ -167,7 +176,9 @@ export async function POST(req: Request) {
       expiresIn: agentGrant.expiresIn,
       settings,
       voiceAgentUrl: DEEPGRAM_VOICE_AGENT_URL,
-      maxMinutes: linked.campaign.max_minutes,
+      maxMinutes: limitMinutes,
+      callLimitSeconds: limitMinutes * 60,
+      callEndsAt: new Date(callEndsAtMs).toISOString(),
       deckId,
       openingSlide,
       slideIndex,

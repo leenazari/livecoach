@@ -23,14 +23,11 @@ export function parseCampaignInput(body: Record<string, unknown>): { ok: true; v
     return { ok: false, message: "Choose the British male voice or the British female voice." };
   }
   const rawCap = body.maxMinutes;
-  let maxMinutes: number | null = null;
-  if (rawCap !== null && rawCap !== undefined && String(rawCap).trim() !== "") {
-    const cap = Number(rawCap);
-    if (!Number.isInteger(cap) || cap < 1 || cap > 180) {
-      return { ok: false, message: "The time cap must be empty, or a whole number of minutes from 1 to 180." };
-    }
-    maxMinutes = cap;
+  const cap = rawCap === null || rawCap === undefined || String(rawCap).trim() === "" ? 30 : Number(rawCap);
+  if (!Number.isInteger(cap) || cap < 1 || cap > 30) {
+    return { ok: false, message: "The call limit is a whole number of minutes from 1 to 30." };
   }
+  const maxMinutes = cap;
   const rate = Number(body.ratePerMinute ?? 0);
   if (!Number.isFinite(rate) || rate < 0 || rate > 100000) {
     return { ok: false, message: "The rate per minute needs to be a number that is zero or more." };

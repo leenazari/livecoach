@@ -37,7 +37,7 @@ export default function OwnerConsole() {
               <h2 className={styles.cardTitle}>{campaign.name}</h2>
               <span className={styles.ok}>Active</span>
             </div>
-            <p className={styles.note} style={{ marginTop: 8 }}>{voiceLabel(campaign.voice_id)} · {campaign.max_minutes ? `${campaign.max_minutes} min` : "No cap"}</p>
+            <p className={styles.note} style={{ marginTop: 8 }}>{voiceLabel(campaign.voice_id)} · {Math.min(30, campaign.max_minutes || 30)} min limit</p>
           </a>
         ))}
       </div>

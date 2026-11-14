@@ -1,3 +1,5 @@
+import { toSpokenPlain } from "./spoken-text";
+
 export type SpokenLine = {
   id: string;
   speaker: "agent" | "lead";
@@ -22,7 +24,7 @@ function joinFragments(left: string, right: string): string {
 export function presentTranscript(lines: SpokenLine[]): SpokenLine[] {
   const merged: SpokenLine[] = [];
   for (const line of lines) {
-    const text = line.text.trim();
+    const text = toSpokenPlain(line.text);
     if (!text) continue;
     const previous = merged[merged.length - 1];
     if (previous && previous.speaker === line.speaker) {

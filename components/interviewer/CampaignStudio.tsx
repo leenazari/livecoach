@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { putSlideImages, renderPdfPages } from "@/components/interviewer/pdf-pages";
 import { customerHeadline } from "@/lib/interviewer/slide-headline";
@@ -26,6 +26,7 @@ type Campaign = {
 
 type Slide = { number: number; title: string; url: string; missing?: boolean };
 type FetchedPage = { url: string; chars: number };
+type TestLink = { path: string; name: string; expiresAt: string };
 type Deck = { id: string; title: string; active?: boolean; imagesMissing?: boolean; slides: Slide[] };
 type DeckJob = { phase: "rendering" | "uploading" | "notes" | "saved" | "error"; fileName: string; page: number; total: number; message: string };
 type CallRow = { id: string; created_at: string; disposition: string | null; status: string; billable_seconds: number | null };
@@ -39,6 +40,87 @@ async function postJson(url: string, body: unknown) {
 
 function Tag({ children }: { children: string }) {
   return <span className={styles.pill}>{children}</span>;
+}
+
+function absoluteLink(path: string): string {
+  if (typeof window === "undefined") return path;
+  return path.startsWith("http") ? path : `${window.location.origin}${path}`;
+}
+
+function expiryLabel(iso: string): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return "";
+  const past = when.getTime() < Date.now();
+  const stamp = when.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return `${past ? "Expired" : "Expires"} ${stamp}`;
+}
+
+async function copyText(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+  } catch { /* use the selection fallback */ }
+  const area = document.createElement("textarea");
+  area.value = value;
+  area.setAttribute("readonly", "true");
+  area.style.position = "fixed";
+  area.style.top = "0";
+  area.style.left = "0";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.focus();
+  area.select();
+  document.execCommand("copy");
+  area.remove();
+}
+
+function TestLinkBlock({
+  link,
+  featured,
+  copied,
+  onCopy,
+  onOpen,
+}: {
+  link: TestLink;
+  featured?: boolean;
+  copied: boolean;
+  onCopy: () => void;
+  onOpen: (url: string) => void;
+}) {
+  const url = absoluteLink(link.path);
+  const field = (
+    <button type="button" className={styles.linkField} onClick={() => onOpen(url)} onDoubleClick={() => onOpen(url)}>
+      {url}
+    </button>
+  );
+  const actions = (
+    <div className={styles.linkActions}>
+      <button type="button" className={styles.btn} onClick={() => void onCopy()}>{copied ? "Copied ✓" : "Copy link"}</button>
+      <button type="button" className={styles.btnGhost} onClick={() => onOpen(url)}>Open call</button>
+    </div>
+  );
+  if (featured) {
+    return (
+      <article className={styles.ready}>
+        <h3 className={styles.readyTitle}>Test link ready</h3>
+        <p className={styles.note}>{link.name} · {expiryLabel(link.expiresAt)}</p>
+        {field}
+        {actions}
+      </article>
+    );
+  }
+  return (
+    <div className={styles.linkRow}>
+      <div>
+        <strong>{link.name}</strong>
+        <p className={styles.note}>{expiryLabel(link.expiresAt)}</p>
+        {field}
+      </div>
+      {actions}
+    </div>
+  );
 }
 
 export default function CampaignStudio({ campaignId }: { campaignId: string }) {
@@ -64,7 +146,11 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
   const [opener, setOpener] = useState("");
   const [calls, setCalls] = useState<CallRow[]>([]);
   const [costs, setCosts] = useState<{ label?: string; totals?: { cost: string; setup: string; callsCost: string; estimates?: boolean }; setup?: Array<{ kind: string; detail: string; amount: string }>; calls?: CostCall[] } | null>(null);
-  const [invitePath, setInvitePath] = useState("");
+  const [links, setLinks] = useState<TestLink[]>([]);
+  const [readyPath, setReadyPath] = useState("");
+  const [copiedPath, setCopiedPath] = useState("");
+  const copyTimer = useRef<number | null>(null);
+  const openedAt = useRef(0);
   const [prospectName, setProspectName] = useState("");
   const [prospectEmail, setProspectEmail] = useState("");
   const [rate, setRate] = useState("0");
@@ -140,6 +226,10 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
       .then((response) => response.json())
       .then((data) => { if (!cancelled) setCalls(data.sessions || []); })
       .catch(() => { if (!cancelled) setCalls([]); });
+    fetch(`/api/crm/interviewer/invites?campaignId=${campaignId}`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data) => { if (!cancelled) setLinks(data.invites || []); })
+      .catch(() => { if (!cancelled) setLinks([]); });
     fetch(`/api/crm/interviewer/costs?campaignId=${campaignId}`, { cache: "no-store" })
       .then((response) => response.json())
       .then((data) => { if (!cancelled) setCosts(data); })
@@ -277,9 +367,31 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
   };
 
   const createInvite = async () => {
+    setError("");
     const result = await postJson("/api/crm/interviewer/invites", { campaignId, prospectName, prospectEmail, expiresInHours: 24 * 7 });
     if (!result.ok || !result.data.path) { setError(result.data.fields?.prospectName || "The test link was not created."); return; }
-    setInvitePath(`${window.location.origin}${result.data.path}`);
+    const link: TestLink = {
+      path: String(result.data.path),
+      name: String(result.data.name || prospectName.trim() || "Guest"),
+      expiresAt: String(result.data.expiresAt || new Date(Date.now() + 7 * 24 * 3600_000).toISOString()),
+    };
+    setLinks((current) => [link, ...current.filter((item) => item.path !== link.path)]);
+    setReadyPath(link.path);
+  };
+
+  const copyLink = (link: TestLink) => {
+    void copyText(absoluteLink(link.path)).then(() => {
+      setCopiedPath(link.path);
+      if (copyTimer.current) window.clearTimeout(copyTimer.current);
+      copyTimer.current = window.setTimeout(() => setCopiedPath(""), 2000);
+    });
+  };
+
+  const openLink = (url: string) => {
+    const now = Date.now();
+    if (now - openedAt.current < 500) return;
+    openedAt.current = now;
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   const saveBilling = async () => {
@@ -306,6 +418,8 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
     setDeckJob({ phase: "saved", fileName: "deck", page: Number(result.data.updated || 0), total: Number(result.data.updated || 0), message: `${result.data.preserved ? "Kept the written headlines" : "Replaced the slide notes"} · ${new Date().toLocaleString("en-GB")}` });
   };
 
+  const featured = links.find((link) => link.path === readyPath) || links[0] || null;
+  const older = featured ? links.filter((link) => link.path !== featured.path) : [];
   const costFor = (id: string) => costs?.calls?.find((call) => call.sessionId === id);
   const knowledgeCount = knowledgeLength(sections);
   const deckBusy = Boolean(deckJob && deckJob.phase !== "saved" && deckJob.phase !== "error");
@@ -329,7 +443,8 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
         <section className={styles.card}>
           <div className={styles.sectionHead}><span className={styles.tile}>1</span> Basics</div>
           <label className={styles.label}>Name<input className={styles.field} value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <label className={styles.label}>Max length, optional<input className={styles.field} value={maxMinutes} placeholder="No cap" onChange={(event) => setMaxMinutes(event.target.value)} /></label>
+          <label className={styles.label}>Call limit, minutes<input className={styles.field} value={maxMinutes} placeholder="30" onChange={(event) => setMaxMinutes(event.target.value)} /></label>
+          <p className={styles.note}>30 minutes is the maximum. An empty field uses 30.</p>
           <p className={styles.label}>Voice shortlist</p>
           <p className={styles.note}>Tick the voices this account may use. The campaign picker below uses that shortlist. Tags are Deepgram’s own.</p>
           {shortNote ? <p className={styles.note}>{shortNote}</p> : null}
@@ -444,7 +559,15 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
           <label className={styles.label}>Lead name<input className={styles.field} value={prospectName} onChange={(event) => setProspectName(event.target.value)} /></label>
           <label className={styles.label}>Email, optional<input className={styles.field} value={prospectEmail} onChange={(event) => setProspectEmail(event.target.value)} /></label>
           <button type="button" className={styles.btn} disabled={creating} onClick={() => void createInvite()}>Create test link</button>
-          {invitePath ? <p className={styles.note}>{invitePath}</p> : null}
+          {featured ? <TestLinkBlock link={featured} featured copied={copiedPath === featured.path} onCopy={() => copyLink(featured)} onOpen={openLink} /> : null}
+          {older.length ? (
+            <div className={styles.linkList}>
+              <p className={styles.label}>Earlier links</p>
+              {older.map((link) => (
+                <TestLinkBlock key={link.path} link={link} copied={copiedPath === link.path} onCopy={() => copyLink(link)} onOpen={openLink} />
+              ))}
+            </div>
+          ) : null}
         </section>
 
         <details className={`${styles.card} ${styles.fold}`}>

@@ -109,6 +109,7 @@ export function buildVoiceAgentSettings(input: InterviewerPromptInput & { voiceI
         prompt: buildInterviewerPrompt(input),
         functions: INTERVIEWER_FUNCTIONS,
       },
+      // Managed Aura speech reads the model text directly. These settings have no text filter, so the prompt and the saved transcript are cleaned first.
       speak: { provider: { type: "deepgram", version: "v1", model: interviewerVoiceOrFallback(input.voiceId) } },
     },
   };

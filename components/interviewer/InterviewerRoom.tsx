@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import styles from "@/components/interviewer/interviewa.module.css";
+import { formatCountdown } from "@/lib/interviewer/call-limit";
 import { presentTranscript } from "@/lib/interviewer/transcript-display";
 import { INTERVIEWER_MIC_CONSTRAINTS } from "@/lib/interviewer/listen-url";
 import { useInterviewerCall } from "@/components/interviewer/useInterviewerCall";
@@ -136,7 +137,14 @@ export default function InterviewerRoom({
 
   return (
     <main className={`relative z-10 mx-auto flex min-h-screen w-full flex-col px-5 py-10 ${call.phase === "live" ? "max-w-6xl justify-start" : "max-w-xl justify-center"}`}>
-      <p className="font-mono text-[0.68rem] uppercase tracking-[0.22em] text-amber">Private conversation</p>
+      <div className="flex items-start justify-between gap-4">
+        <p className="font-mono text-[0.68rem] uppercase tracking-[0.22em] text-amber">Private conversation</p>
+        {call.phase === "live" && call.remainingSeconds != null ? (
+          <p className={`font-mono text-sm ${call.remainingSeconds <= 30 ? "text-rust" : call.remainingSeconds <= 120 ? "text-amber" : "text-muted"}`} aria-live="polite">
+            {formatCountdown(call.remainingSeconds)} left
+          </p>
+        ) : null}
+      </div>
       <h1 className="mt-3 font-display text-4xl text-bone">{campaignName}</h1>
       <p className="mt-3 text-sm leading-6 text-muted">
         A short voice conversation. You can interrupt at any time. Queue time is not charged.
@@ -219,53 +227,48 @@ export default function InterviewerRoom({
       ) : null}
 
       {call.phase === "live" ? (
-        <section className={`mt-8 grid w-full grid-cols-1 items-start gap-4 ${showSlideImage || showSlideCard || call.slideIndex.length ? "lg:grid-cols-[2fr_1fr]" : ""}`}>
-          {showSlideImage || showSlideCard || call.slideIndex.length ? (
-            <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[10.5rem_minmax(0,1fr)]">
-              {call.slideIndex.length ? (
-                <div>
-                  <button type="button" className="mb-2 text-sm text-bone underline lg:hidden" onClick={() => setListOpen((open) => !open)}>
-                    {listOpen ? "Hide slides" : "Slides"}
-                  </button>
-                  <ol className={`max-h-[70vh] space-y-1 overflow-auto rounded-2xl bg-white p-2 ${listOpen ? "block" : "hidden"} lg:block`}>
-                    {call.slideIndex.map((slide) => (
-                      <li key={slide.number}>
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm"
-                          style={slide.number === call.slideNumber ? { background: "#EEF3FF", color: "#1447E6", fontWeight: 600 } : { color: "#101828" }}
-                          onClick={() => call.chooseSlide(slide)}
-                        >
-                          {slide.url ? <img src={slide.url} alt="" className="h-8 w-12 shrink-0 rounded object-contain bg-[#F6F7FA]" /> : null}
-                          <span className="flex min-w-0 flex-col">
-                            <span className="line-clamp-2">{slide.title || "Untitled"}</span>
-                            <span className="text-[11px] text-[#717680]">Slide {slide.number}</span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              ) : null}
+        <section className={call.slideIndex.length ? styles.callStage : styles.callStagePlain}>
+          {call.slideIndex.length ? (
+            <button type="button" className={styles.slidesToggle} onClick={() => setListOpen((open) => !open)}>
+              {listOpen ? "Hide slides" : "Slides"}
+            </button>
+          ) : null}
+          {call.slideIndex.length ? (
+            <ol className={`${styles.slideList} ${listOpen ? styles.slideListOpen : ""}`}>
+              {call.slideIndex.map((slide) => {
+                const title = slide.title || "Untitled";
+                return (
+                  <li key={slide.number}>
+                    <button
+                      type="button"
+                      className={`${styles.slideRow} ${slide.number === call.slideNumber ? styles.slideRowActive : ""}`}
+                      title={title}
+                      onClick={() => call.chooseSlide(slide)}
+                    >
+                      {slide.url ? <img src={slide.url} alt="" className={styles.slideThumb} /> : <span className={styles.slideThumb} aria-hidden="true" />}
+                      <span className={styles.slideCopy}>
+                        <span className={styles.slideHeadline}>{title}</span>
+                        <span className={styles.slideNumber}>Slide {slide.number}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : null}
+          {showSlideImage || showSlideCard ? (
+            <div className={styles.slideStage}>
               {showSlideImage ? (
-                <div className="min-h-[62vh] rounded-3xl bg-[#F6F7FA] p-3">
-                  <img
-                    src={call.slideUrl}
-                    alt={call.slideLabel || "Current slide"}
-                    className="h-[70vh] w-full object-contain"
-                    onError={() => setSlideBroken(true)}
-                  />
-                </div>
-              ) : null}
-              {showSlideCard ? (
+                <img src={call.slideUrl} alt={call.slideLabel || "Current slide"} onError={() => setSlideBroken(true)} />
+              ) : (
                 <div className={styles.slideCard}>
                   <p className={styles.slideKicker}>{call.slideLabel || "Slide"}</p>
                   {call.slideSlogan ? <p className={styles.slideSlogan}>{call.slideSlogan}</p> : null}
                 </div>
-              ) : null}
+              )}
             </div>
           ) : null}
-          <div className="rounded-3xl border border-edge bg-panel/90 p-4">
+          <div className={`${styles.callTalk} rounded-3xl border border-edge bg-panel/90 p-4`}>
           <h2 className="font-display text-2xl text-bone">You are connected</h2>
           <p className="mt-2 text-sm text-muted">Speak normally. You can interrupt Interviewa.</p>
           <button

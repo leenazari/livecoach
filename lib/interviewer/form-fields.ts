@@ -43,14 +43,12 @@ export function validateCampaignFields(input: {
   else if (name.length > 160) fields.name = `Name is ${name.length} characters; the limit is 160.`;
   if (!input.voiceId) fields.voiceId = "Choose a voice.";
   else if (!isInterviewerVoiceId(input.voiceId)) fields.voiceId = "Choose a voice from the Deepgram list.";
-  let maxMinutes: number | null = null;
   const raw = input.maxMinutes.trim();
-  if (raw) {
-    const cap = Number(raw);
-    if (!Number.isInteger(cap) || cap < 1 || cap > 180) {
-      fields.maxMinutes = "Max minutes must be empty, or a whole number from 1 to 180.";
-    } else maxMinutes = cap;
-  }
+  const cap = raw === "" ? 30 : Number(raw);
+  let maxMinutes = 30;
+  if (!Number.isInteger(cap) || cap < 1 || cap > 30) {
+    fields.maxMinutes = "The call limit is a whole number of minutes from 1 to 30.";
+  } else maxMinutes = cap;
   return { fields, name, voiceId: isInterviewerVoiceId(input.voiceId) ? input.voiceId : null, maxMinutes };
 }
 

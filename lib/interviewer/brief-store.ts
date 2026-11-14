@@ -1,6 +1,8 @@
 import "server-only";
 
 import { briefPrompt, fallbackBrief, parseBrief, talkShareLead, type BriefFacts, type CallBrief } from "@/lib/interviewer/brief";
+import { effectiveCallMinutes } from "@/lib/interviewer/call-limit";
+import { toSpokenPlain } from "@/lib/interviewer/spoken-text";
 import { supabaseService } from "@/lib/supabase";
 
 const memory = new Map<string, CallBrief>();
@@ -22,9 +24,26 @@ async function factsFor(sessionId: string): Promise<{ facts: BriefFacts; workspa
     supabaseService.from("interviewer_slide_shows").select("slide_number, shown_at").eq("session_id", sessionId).order("shown_at", { ascending: true }),
   ]);
   const utterances = (lines || []) as Array<{ speaker: string; text: string }>;
-  let transcript = utterances.map((line) => `${line.speaker === "lead" ? "Lead" : "Agent"}: ${line.text}`).join("\n");
+  let transcript = utterances.map((line) => `${line.speaker === "lead" ? "Lead" : "Agent"}: ${toSpokenPlain(line.text)}`).join("\n");
   if (transcript.length > 12000) transcript = transcript.slice(0, 12000);
-  const slideLabels = slides.error ? [] : (slides.data || []).map((slide) => `Slide ${slide.slide_number}`);
+  const campaign = await supabaseService.from("interviewer_campaigns").select("max_minutes").eq("id", session.campaign_id).maybeSingle();
+  const limitSeconds = effectiveCallMinutes(campaign.data?.max_minutes) * 60;
+  const durationSeconds = session.connected_at && session.ended_at
+    ? Math.max(0, Math.round((Date.parse(String(session.ended_at)) - Date.parse(String(session.connected_at))) / 1000))
+    : 0;
+  const anchor = session.connected_at ? Date.parse(String(session.connected_at)) : 0;
+  const shown = slides.error ? [] : (slides.data || []);
+  const timedSlides = shown.map((slide, index) => {
+    const at = anchor ? Math.max(0, Math.round((Date.parse(String(slide.shown_at)) - anchor) / 1000)) : 0;
+    const nextAt = shown[index + 1] ? Math.round((Date.parse(String(shown[index + 1].shown_at)) - anchor) / 1000) : durationSeconds;
+    return {
+      number: Number(slide.slide_number),
+      title: `Slide ${slide.slide_number}`,
+      atSeconds: at,
+      durationSeconds: Math.max(0, nextAt - at),
+      triggeredBy: "agent" as const,
+    };
+  });
   return {
     workspaceId: String(session.workspace_id),
     campaignId: String(session.campaign_id),
@@ -38,7 +57,9 @@ async function factsFor(sessionId: string): Promise<{ facts: BriefFacts; workspa
       endedAt: session.ended_at ? String(session.ended_at) : null,
       scheduledAt: session.calendar_scheduled_at ? String(session.calendar_scheduled_at) : null,
       talkShareLead: talkShareLead(utterances),
-      slides: slideLabels,
+      durationSeconds,
+      limitSeconds,
+      slides: timedSlides,
       transcript,
     },
   };

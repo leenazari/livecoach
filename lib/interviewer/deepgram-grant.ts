@@ -8,7 +8,7 @@ export type DeepgramGrant =
 
 // Short-lived Deepgram JWT. The member API key stays on the server.
 // Callers must already have confirmed an active interviewer slot.
-export async function mintDeepgramGrant(): Promise<DeepgramGrant> {
+export async function mintDeepgramGrant(ttlSeconds = 60): Promise<DeepgramGrant> {
   const apiKey = process.env.DEEPGRAM_API_KEY;
   if (!apiKey) return { ok: false, reason: "unconfigured" };
   let response: Response;
@@ -19,7 +19,7 @@ export async function mintDeepgramGrant(): Promise<DeepgramGrant> {
         Authorization: `Token ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ ttl_seconds: 60 }),
+      body: JSON.stringify({ ttl_seconds: Math.max(30, Math.min(1800, Math.round(ttlSeconds))) }),
       cache: "no-store",
     });
   } catch {

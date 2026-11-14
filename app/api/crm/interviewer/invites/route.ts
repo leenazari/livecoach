@@ -9,6 +9,33 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const noStore = { "Cache-Control": "private, no-store" };
+const UUID = /^[0-9a-f-]{36}$/i;
+
+export async function GET(req: Request) {
+  try {
+    const scope = await requireInterviewerOwner();
+    const campaignId = new URL(req.url).searchParams.get("campaignId") || "";
+    if (!UUID.test(campaignId)) return NextResponse.json({ invites: [] }, { headers: noStore });
+    const { data, error } = await supabaseAdmin
+      .from("interviewer_invites")
+      .select("token, prospect_name, expires_at, created_at")
+      .eq("workspace_id", scope.workspaceId)
+      .eq("campaign_id", campaignId)
+      .is("revoked_at", null)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (error) throw error;
+    return NextResponse.json({
+      invites: (data || []).map((row) => ({
+        path: `/i/${row.token}`,
+        name: String(row.prospect_name || "Guest"),
+        expiresAt: row.expires_at,
+      })),
+    }, { headers: noStore });
+  } catch (error) {
+    return interviewerOwnerError(error);
+  }
+}
 
 export async function POST(req: Request) {
   try {
@@ -60,6 +87,7 @@ export async function POST(req: Request) {
     if (error) throw error;
     return NextResponse.json({
       path: `/i/${data.token}`,
+      name,
       expiresAt: data.expires_at,
     }, { headers: noStore });
   } catch (error) {

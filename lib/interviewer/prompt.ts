@@ -1,5 +1,6 @@
 import { INTERVIEWER_DISPOSITIONS } from "./dispositions";
 import { INTERVIEWER_PLAYBOOK } from "./playbook";
+import { toSpokenPlain } from "./spoken-text";
 
 export type InterviewerPromptInput = {
   campaignName: string;
@@ -52,11 +53,11 @@ function knowledgeBlock(documents: InterviewerPromptInput["documents"]): string 
   const seen = new Set<string>();
   for (const document of rankedDocuments(documents)) {
     if (remaining <= 0) break;
-    const title = clip(document.title, 160);
+    const title = clip(toSpokenPlain(document.title), 160);
     const key = title.toLowerCase();
     if (!title || seen.has(key)) continue;
     seen.add(key);
-    const body = String(document.body || "").trim().slice(0, Math.min(DOCUMENT_CHAR_CAP, remaining));
+    const body = toSpokenPlain(document.body).slice(0, Math.min(DOCUMENT_CHAR_CAP, remaining));
     if (!body) continue;
     blocks.push(`## ${title}\n${body}`);
     remaining -= body.length;
@@ -78,14 +79,13 @@ export function knowledgeManifest(prompt: string): { sections: string[]; charact
 export function buildInterviewerPrompt(input: InterviewerPromptInput): string {
   const prospect = clip(input.prospectName, 160);
   const name = clip(input.campaignName, 160) || "this campaign";
-  const cap = input.maxMinutes
-    ? `Keep the conversation inside ${input.maxMinutes} minutes. When time is nearly gone, say so and offer to continue later. Do not turn the clock into a reason to book.`
-    : "There is no fixed time cap. Still be concise and do not linger once the person is ready to book or to finish.";
+  const minutes = Math.min(30, Math.max(1, Number(input.maxMinutes) || 30));
+  const cap = `This call ends after ${minutes} minutes. Two minutes before that, you are told to wrap up. When the time is gone, say a short goodbye and stop. Do not offer to keep talking past the limit.`;
   const manner = clip(input.personaOverride, 2000);
   const extra = clip(input.promptOverride, 4000);
   let slideBudget = 7000;
   const slides = (input.slides || []).flatMap((slide) => {
-    const line = `${slide.number}. ${clip(slide.title, 60) || "No headline yet"}. When to show: ${clip(slide.oneLine, 180) || "when the conversation reaches this point"}. Talking points: ${clip(slide.talkingPoints, 360) || "none saved"}.${slide.verbatim ? ` Verbatim line, only if you choose to say it: ${clip(slide.verbatim, 180)}` : ""}`;
+    const line = `${slide.number}. ${clip(toSpokenPlain(slide.title || ""), 60) || "No headline yet"}. When to show: ${clip(toSpokenPlain(slide.oneLine || ""), 180) || "when the conversation reaches this point"}. Talking points: ${clip(toSpokenPlain(slide.talkingPoints || ""), 360) || "none saved"}.${slide.verbatim ? ` Verbatim line, only if you choose to say it: ${clip(toSpokenPlain(slide.verbatim), 180)}` : ""}`;
     if (line.length > slideBudget) return [];
     slideBudget -= line.length;
     return [line];
@@ -107,7 +107,7 @@ ${prospect ? `The person's name, if they are happy for you to use it, is ${prosp
 
 DECK KNOWLEDGE
 Search this before you answer any product question. Each block is one slide: its headline, the facts on that page, and any price printed there.
-${clip(input.deckKnowledge, DECK_CAP) || "No deck knowledge has been saved yet."}
+${clip(toSpokenPlain(input.deckKnowledge || ""), DECK_CAP) || "No deck knowledge has been saved yet."}
 
 WEBSITE KNOWLEDGE
 This is the base of the call. ${site ? `The source website is ${site}. Do not read the address aloud.` : "No website address was saved."}
@@ -120,7 +120,7 @@ ${INTERVIEWER_PLAYBOOK}
 
 RULES
 This is an inbound call. The greeting is one short line and then you stop. Do not add a company introduction, a pitch, or a tip before they answer. Do not say the mute tip yourself. It is added once, after their first answer.
-Speak British English. Be warm, not gushing. Never say "Great choice", "Oh, I see you're interested", or "Oh I see you are interested". One light acknowledgement at the start of some turns, not every turn, never stacked, never the same one twice in a row.
+Speak British English, in plain sentences only. Never use markdown, asterisks, bullets, hashes, underscores, emojis, or a list. Do not read a web address aloud. Say a price in words, for example sixty pounds a month. Be warm, not gushing. Never say "Great choice", "Oh, I see you're interested", or "Oh I see you are interested". One light acknowledgement at the start of some turns, not every turn, never stacked, never the same one twice in a row.
 After you understand their situation, explain the business from the website knowledge: how it works, the benefit that matches what they said, and an example. Answer "tell me more" and "show me more" from that knowledge. Do not send them to a meeting to hear the explanation.
 After you explain something, offer two next topics that are actually in the knowledge, in your own words: would you like to hear about one or the other next? Never leave the turn with nowhere to go.
 Suggest a meeting only after clear interest, or when they ask. Ask once, softly. If they want more, keep going and do not ask again for several turns.

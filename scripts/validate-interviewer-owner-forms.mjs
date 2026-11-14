@@ -32,6 +32,8 @@ const { websiteImportIds, knowledgeFromDocuments, WEBSITE_IMPORT_SOURCE } = load
 const { INTERVIEWER_VOICES, FALLBACK_INTERVIEWER_VOICE } = loadTs(new URL("../lib/interviewer/voices.ts", import.meta.url).pathname);
 const { knowledgeTitleFromNote, validateCampaignFields } = loadTs(new URL("../lib/interviewer/form-fields.ts", import.meta.url).pathname);
 const { presentTranscript } = loadTs(new URL("../lib/interviewer/transcript-display.ts", import.meta.url).pathname);
+const { toSpokenPlain } = loadTs(new URL("../lib/interviewer/spoken-text.ts", import.meta.url).pathname);
+const { effectiveCallMinutes, twoMinuteLine, formatCountdown, timeLimitChapters, remainingCallSeconds } = loadTs(new URL("../lib/interviewer/call-limit.ts", import.meta.url).pathname);
 const { isHoldRequest, nextSilenceCue } = loadTs(new URL("../lib/interviewer/silence.ts", import.meta.url).pathname);
 const { parseBrief, fallbackBrief } = loadTs(new URL("../lib/interviewer/brief.ts", import.meta.url).pathname);
 const { cleanSlideText, isInternalCostLine } = loadTs(new URL("../lib/interviewer/slide-notes.ts", import.meta.url).pathname);
@@ -100,6 +102,16 @@ if (cleanSlideText("More leads. Lower cost. Always on.\nOur cost per minute is h
   throw new Error("internal cost line was left in the slide notes");
 }
 if (!prompt.includes("Talking points:")) throw new Error("talking points missing from the prompt");
+if (effectiveCallMinutes(null) !== 30 || effectiveCallMinutes(180) !== 30 || effectiveCallMinutes(12) !== 12) throw new Error("call limit was not capped at 30");
+if (!twoMinuteLine(false).startsWith("I only have around two minutes")) throw new Error("warning line is not first person");
+if (twoMinuteLine(true).includes("demo")) throw new Error("booked warning still offered a demo");
+if (formatCountdown(125) !== "2:05") throw new Error("countdown format drifted");
+const ends = Date.now() + 90_000;
+if (remainingCallSeconds(ends, Date.now()) < 80) throw new Error("remaining seconds drifted");
+const marks = timeLimitChapters(30 * 60, 30 * 60);
+if (!marks.some((item) => item.kind === "warning" && item.atSeconds === 28 * 60)) throw new Error("two minute chapter missing");
+if (!marks.some((item) => item.kind === "limit")) throw new Error("time limit chapter missing");
+if (timeLimitChapters(60, 1800).length) throw new Error("short call was given a time-limit chapter");
 const kioskPrompt = buildInterviewerPrompt({
   campaignName: "Swoopos",
   prospectName: "Lee",
@@ -111,7 +123,13 @@ const kioskPrompt = buildInterviewerPrompt({
   slides: [{ number: 9, title: "Self-service kiosks in your brand", oneLine: "When they ask about kiosks", talkingPoints: "Branded self-service kiosks.", verbatim: null }],
 });
 if (!kioskPrompt.includes("Self-service kiosks in your brand")) throw new Error("deck kiosk knowledge missing from the prompt");
-if (!kioskPrompt.includes("£199")) throw new Error("kiosk price missing from the prompt");
+if (!kioskPrompt.includes("one hundred and ninety nine pounds a month")) throw new Error("kiosk price was not spoken in words");
+if (kioskPrompt.includes("**") || kioskPrompt.includes("£")) throw new Error("markup or a pound sign reached the prompt");
+const spoken = toSpokenPlain("**Kitchen display**\n# KDS\n• loyalty\n- tipping\n£60/month\nhttps://swoopos.com/get-kiosk\n😀");
+if (/[*#_`•£]|https|😀/.test(spoken)) throw new Error(`markup survived: ${spoken}`);
+if (!spoken.includes("sixty pounds a month") || !spoken.includes("Kitchen display") || !spoken.includes("loyalty.")) throw new Error(`spoken text drifted: ${spoken}`);
+const marked = presentTranscript([{ id: "m", speaker: "agent", text: "The **kiosk** is £60/month." }]);
+if (marked.some((line) => line.text.includes("**") || line.text.includes("£"))) throw new Error("transcript still shows markup");
 if (!/Never say that it is not in your notes/i.test(kioskPrompt)) throw new Error("missing-notes deflection was not banned");
 if (!/Great choice/i.test(kioskPrompt)) throw new Error("gushing line was not banned");
 const asked = knowledgeManifest(kioskPrompt);

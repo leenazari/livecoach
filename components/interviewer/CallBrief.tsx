@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import type { CallBrief as Brief } from "@/lib/interviewer/brief";
+import { toSpokenPlain } from "@/lib/interviewer/spoken-text";
 import styles from "@/components/interviewer/interviewa.module.css";
 
 type Payload = {
@@ -185,7 +186,7 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
       </footer>
       {open === "transcript" ? (
         <section className={styles.card} style={{ marginTop: 12 }}>
-          {transcript.map((line) => <p key={line.id}><strong>{line.speaker === "agent" ? "Interviewa" : "Lead"}.</strong> {line.text}</p>)}
+          {transcript.map((line) => <p key={line.id}><strong>{line.speaker === "agent" ? "Interviewa" : "Lead"}.</strong> {toSpokenPlain(line.text)}</p>)}
         </section>
       ) : null}
       {open === "recording" ? <section className={styles.card} style={{ marginTop: 12 }}>{recording ? <audio controls src={recording} /> : <p>No recording saved.</p>}</section> : null}
