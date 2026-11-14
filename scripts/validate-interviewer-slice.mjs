@@ -64,12 +64,11 @@ const short = estimateInterviewerWait({
 });
 if (short.overTenMinutes) throw new Error("a short queue was marked over 10 minutes");
 
-if (INTERVIEWER_VOICES.map((voice) => voice.id).join() !== "aura-2-draco-en,aura-2-pandora-en") {
-  throw new Error("voice ids changed");
+if (INTERVIEWER_VOICES.length < 40) throw new Error("Aura English catalogue is incomplete");
+if (!isInterviewerVoiceId("aura-2-draco-en") || !isInterviewerVoiceId("aura-2-thalia-en") || !isInterviewerVoiceId("aura-helios-en")) {
+  throw new Error("documented English voices missing");
 }
-if (!isInterviewerVoiceId("aura-2-draco-en") || isInterviewerVoiceId("aura-2-thalia-en")) {
-  throw new Error("voice guard failed");
-}
+if (isInterviewerVoiceId("aura-2-sirio-es")) throw new Error("non-English voice was included");
 
 const prompt = buildInterviewerPrompt({
   campaignName: "Northwind",

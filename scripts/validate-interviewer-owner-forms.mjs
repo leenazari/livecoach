@@ -26,10 +26,13 @@ function loadTs(file) {
   return module.exports;
 }
 
-const { buildInterviewerPrompt, campaignOpening } = loadTs(new URL("../lib/interviewer/prompt.ts", import.meta.url).pathname);
+const { buildInterviewerPrompt, campaignOpening, interviewerGreeting } = loadTs(new URL("../lib/interviewer/prompt.ts", import.meta.url).pathname);
 const { INTERVIEWER_VOICES, FALLBACK_INTERVIEWER_VOICE } = loadTs(new URL("../lib/interviewer/voices.ts", import.meta.url).pathname);
 const { knowledgeTitleFromNote, validateCampaignFields } = loadTs(new URL("../lib/interviewer/form-fields.ts", import.meta.url).pathname);
 const { presentTranscript } = loadTs(new URL("../lib/interviewer/transcript-display.ts", import.meta.url).pathname);
+const { isHoldRequest, nextSilenceCue } = loadTs(new URL("../lib/interviewer/silence.ts", import.meta.url).pathname);
+const { parseBrief, fallbackBrief } = loadTs(new URL("../lib/interviewer/brief.ts", import.meta.url).pathname);
+const { cleanSlideText, isInternalCostLine } = loadTs(new URL("../lib/interviewer/slide-notes.ts", import.meta.url).pathname);
 
 const notes = [{ title: "What Adam is", body: "Adam is a website sales agent. It books demos." }];
 const prompt = buildInterviewerPrompt({
@@ -39,11 +42,13 @@ const prompt = buildInterviewerPrompt({
   promptOverride: null,
   maxMinutes: null,
   documents: notes,
+  slides: [{ number: 1, title: "Proof", oneLine: "After they describe the problem", talkingPoints: "Show the result they asked about", verbatim: null }],
 });
 if (!prompt.startsWith("PERSONA")) throw new Error("persona is not first");
 if (!prompt.includes("GLOBAL SALES PLAYBOOK")) throw new Error("playbook missing");
 if (!prompt.includes("mm-hm")) throw new Error("backchannels missing");
-if (prompt.indexOf("CAMPAIGN NOTES") > prompt.indexOf("GLOBAL SALES PLAYBOOK")) throw new Error("notes must come before the playbook");
+if (prompt.indexOf("WEBSITE KNOWLEDGE") > prompt.indexOf("GLOBAL SALES PLAYBOOK")) throw new Error("notes must come before the playbook");
+if (!prompt.includes("What brought you") && !prompt.toLowerCase().includes("inbound")) throw new Error("inbound opener missing");
 if (!prompt.includes("Adam is a website sales agent")) throw new Error("knowledge note missing from prompt");
 if (!prompt.includes("Never quote prices")) throw new Error("persona missing from prompt");
 if (prompt.toLowerCase().includes("per minute") || prompt.includes("GBP")) throw new Error("billing leaked into the prompt");
@@ -51,13 +56,12 @@ if (campaignOpening({ campaignName: "Adam test", documents: notes }) !== "Adam i
   throw new Error("opening did not use the note");
 }
 
-const ids = INTERVIEWER_VOICES.map((voice) => `${voice.id} ${voice.accent}`);
-if (ids.join("|") !== [
-  "aura-2-draco-en British",
-  "aura-2-pandora-en British",
-  "aura-helios-en British",
-  "aura-athena-en British",
-].join("|")) throw new Error(ids.join(", "));
+const ids = new Set(INTERVIEWER_VOICES.map((voice) => voice.id));
+if (!ids.has("aura-2-draco-en") || !ids.has("aura-2-thalia-en") || !ids.has("aura-athena-en")) {
+  throw new Error("catalogue missing a documented voice");
+}
+const draco = INTERVIEWER_VOICES.find((voice) => voice.id === "aura-2-draco-en");
+if (!draco || draco.accent !== "British" || draco.gender !== "masculine") throw new Error("Draco tags drifted from the docs");
 if (FALLBACK_INTERVIEWER_VOICE !== "aura-2-pandora-en") throw new Error("fallback changed");
 const emptyVoice = validateCampaignFields({ name: "Adam", voiceId: "", maxMinutes: "" });
 if (emptyVoice.fields.voiceId !== "Choose a voice.") throw new Error("empty voice was accepted");
@@ -75,5 +79,27 @@ if (shown[0].speaker !== "agent") throw new Error("newest speaker was not first"
 if (!shown.some((line) => line.speaker === "lead" && line.text.includes("I'm just in finding out"))) {
   throw new Error(`lead fragments were not merged: ${JSON.stringify(shown)}`);
 }
+
+if (!isHoldRequest("Can you hold on a second?")) throw new Error("hold phrase missed");
+if (isHoldRequest("I like the product")) throw new Error("ordinary line treated as a hold");
+const quiet = { now: 30_000, lastActivityAt: 0, lastSpeaker: "agent", phase: "clear", holdSince: null, muted: false, mutedSince: null, muteChecked: false, speaking: false };
+if (nextSilenceCue(quiet) !== "check") throw new Error("silence check missing");
+if (nextSilenceCue({ ...quiet, now: 20_000, phase: "checked" }) !== "warn") throw new Error("silence warning missing");
+if (nextSilenceCue({ ...quiet, now: 15_000, phase: "warned" }) !== "end") throw new Error("silence end missing");
+if (nextSilenceCue({ ...quiet, speaking: true }) !== "none") throw new Error("cut off while speaking");
+if (nextSilenceCue({ ...quiet, muted: true, mutedSince: 0, now: 4 * 60_000 }) !== "mute-check") throw new Error("mute check missing");
+const facts = { name: "Lee", email: "lee@example.com", disposition: "Hot", reason: null, timing: null, connectedAt: null, endedAt: null, scheduledAt: null, talkShareLead: 40, slides: [], transcript: "Lead: hello" };
+const parsed = parseBrief({ lead: { phone: "not a phone", interest: "Solar" }, intent: { label: "HOT", reasons: ["Asked about price"] } }, facts);
+if (parsed.lead.phone !== null || parsed.lead.email !== "lee@example.com" || parsed.intent.reasons.length !== 3) throw new Error("brief parser drifted");
+if (fallbackBrief(facts).source !== "record") throw new Error("fallback brief missing");
+if (isInternalCostLine("More leads. Lower cost. Always on.")) throw new Error("a benefit slogan was treated as an internal cost");
+if (!isInternalCostLine("Deepgram cost is seven cents a minute")) throw new Error("supplier cost was kept");
+if (cleanSlideText("More leads. Lower cost. Always on.\nOur cost per minute is hidden.").includes("Our cost")) {
+  throw new Error("internal cost line was left in the slide notes");
+}
+if (!prompt.includes("Talking points:")) throw new Error("talking points missing from the prompt");
+const greeting = interviewerGreeting({ campaignName: "Solar", prospectName: "Lee Nazari", personaOverride: null, promptOverride: null, maxMinutes: null, documents: notes, opener: "Welcome to the company. Let me tell you everything about our history and then a tip about muting." });
+if (greeting !== "Hi Lee, thanks for joining. What brings you here today?") throw new Error(`greeting was too long: ${greeting}`);
+if (/tip|mute|solar/i.test(greeting)) throw new Error("greeting included a pitch or a tip");
 
 console.log("interviewer owner and prompt checks passed");

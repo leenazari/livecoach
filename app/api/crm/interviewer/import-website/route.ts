@@ -69,7 +69,7 @@ async function draftNotes(pages: Array<{ url: string; text: string }>): Promise<
         {
           role: "system",
           content: `Turn website text into voice-agent knowledge. Return JSON {"documents":[{"title":"","body":""}]}.
-Use only these titles, and omit a title when the pages do not state it: business summary; products and services; pricing exactly as stated; who it's for; FAQs and objections; booking and next step.
+Use only these titles, and omit a title when the pages do not state it: Business summary; Products and services; Pricing; FAQs and objections; Next step and booking.
 Never invent facts, prices, names, or numbers. Leave missing sections out.
 Write short plain sentences. Use lines that start with "- " for separate facts. Write prices the way they are spoken, and also keep the figure, for example "forty nine pounds a month (£49)".
 No markdown headings, no tables, no links. Each body must be under 1500 characters.

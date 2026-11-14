@@ -71,19 +71,51 @@ export async function POST(req: Request) {
 
     const voiceId = interviewerVoiceOrFallback(linked.campaign.voice_id);
     const documents = purpose === "listen" ? [] : await loadCampaignDocuments(linked.campaign.id);
-    const slideResult = purpose === "listen"
-      ? { data: [] as Array<{ slide_number: number; title: string; one_line: string; verbatim: string | null }> }
+    const extras = await supabaseService
+      .from("interviewer_campaigns")
+      .select("website_url, opener, quotes_allowed, brochure_send")
+      .eq("id", linked.campaign.id)
+      .maybeSingle();
+    const extra = extras.error ? null : extras.data;
+    const deck = purpose === "listen"
+      ? { data: null }
+      : await supabaseService
+          .from("interviewer_decks")
+          .select("id")
+          .eq("campaign_id", linked.campaign.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+    const deckId = deck.data?.id ? String(deck.data.id) : null;
+    const slideResult = !deckId
+      ? { data: [] as Array<{ slide_number: number; title: string; one_line: string; talking_points: string | null; verbatim: string | null; image_path: string | null }> }
       : await supabaseService
           .from("interviewer_slides")
-          .select("slide_number, title, one_line, verbatim")
-          .eq("campaign_id", linked.campaign.id)
+          .select("slide_number, title, one_line, talking_points, verbatim, image_path")
+          .eq("deck_id", deckId)
           .order("slide_number", { ascending: true });
     const slides = (slideResult.data || []).map((slide) => ({
       number: Number(slide.slide_number),
       title: String(slide.title || ""),
       oneLine: String(slide.one_line || ""),
+      talkingPoints: slide.talking_points ? String(slide.talking_points) : "",
       verbatim: slide.verbatim ? String(slide.verbatim) : null,
     }));
+    const slideRows = purpose === "listen" ? [] : (slideResult.data || []);
+    const slideIndex = await Promise.all(slideRows.map(async (slide) => {
+      let url: string | null = null;
+      if (slide.image_path) {
+        const signed = await supabaseService.storage.from("interviewer-slides").createSignedUrl(String(slide.image_path), 600);
+        url = signed.data?.signedUrl || null;
+      }
+      return {
+        number: Number(slide.slide_number),
+        title: String(slide.title || `Slide ${slide.slide_number}`),
+        slogan: String(slide.verbatim || slide.one_line || ""),
+        url,
+      };
+    }));
+    const openingSlide = slideIndex.find((slide) => slide.number === 1) || slideIndex[0] || null;
     const settings = purpose === "listen"
       ? null
       : buildVoiceAgentSettings({
@@ -95,6 +127,10 @@ export async function POST(req: Request) {
           documents,
           slides,
           voiceId,
+          websiteUrl: extra?.website_url ? String(extra.website_url) : null,
+          opener: extra?.opener ? String(extra.opener) : null,
+          quotesAllowed: extra?.quotes_allowed === true,
+          brochureSend: extra?.brochure_send === true,
         });
 
     return interviewerJson({
@@ -105,6 +141,9 @@ export async function POST(req: Request) {
       settings,
       voiceAgentUrl: DEEPGRAM_VOICE_AGENT_URL,
       maxMinutes: linked.campaign.max_minutes,
+      deckId,
+      openingSlide,
+      slideIndex,
     });
   } catch (error) {
     return interviewerPublicError(error);

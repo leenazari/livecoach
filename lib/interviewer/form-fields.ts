@@ -42,7 +42,7 @@ export function validateCampaignFields(input: {
   if (!name) fields.name = "Add a campaign name.";
   else if (name.length > 160) fields.name = `Name is ${name.length} characters; the limit is 160.`;
   if (!input.voiceId) fields.voiceId = "Choose a voice.";
-  else if (!isInterviewerVoiceId(input.voiceId)) fields.voiceId = "Choose one of the British voices.";
+  else if (!isInterviewerVoiceId(input.voiceId)) fields.voiceId = "Choose a voice from the Deepgram list.";
   let maxMinutes: number | null = null;
   const raw = input.maxMinutes.trim();
   if (raw) {

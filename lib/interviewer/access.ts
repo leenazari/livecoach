@@ -31,7 +31,7 @@ export function interviewerOwnerError(error: unknown) {
     return NextResponse.json(
       crmBlockerPayload({
         code: "interviewer_owner_only",
-        title: "Interviewer is hidden",
+        title: "Interviewa is hidden",
         reason: "Only an owner with interviewer access can open this section.",
         nextAction: "Return to the CRM. This page is not part of the shared navigation.",
         responsible: "owner",
@@ -43,7 +43,7 @@ export function interviewerOwnerError(error: unknown) {
     return NextResponse.json(
       crmBlockerPayload({
         code: "interviewer_not_ready",
-        title: "Interviewer is not in this database yet",
+        title: "Interviewa is not in this database yet",
         reason: "The interviewer tables have not been applied here.",
         nextAction: "Apply the interviewer migration to a Supabase branch and review it before any live database.",
         responsible: "owner",
@@ -55,7 +55,7 @@ export function interviewerOwnerError(error: unknown) {
   return NextResponse.json(
     crmBlockerPayload({
       code: "interviewer_owner_failed",
-      title: "Interviewer could not be opened",
+      title: "Interviewa could not be opened",
       reason: "LiveCoach could not confirm interviewer access.",
       nextAction: "Reload this page. If it still fails, check the migration on a Supabase branch before trying again.",
       responsible: "owner",

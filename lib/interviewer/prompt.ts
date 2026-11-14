@@ -8,7 +8,11 @@ export type InterviewerPromptInput = {
   promptOverride: string | null;
   maxMinutes: number | null;
   documents: Array<{ title: string; body: string }>;
-  slides?: Array<{ number: number; title: string; oneLine: string; verbatim: string | null }>;
+  slides?: Array<{ number: number; title: string; oneLine: string; talkingPoints?: string | null; verbatim: string | null }>;
+  websiteUrl?: string | null;
+  opener?: string | null;
+  quotesAllowed?: boolean;
+  brochureSend?: boolean;
 };
 
 const DOCUMENT_CHAR_CAP = 4000;
@@ -47,18 +51,31 @@ export function buildInterviewerPrompt(input: InterviewerPromptInput): string {
     : "There is no fixed time cap. Still be concise and do not linger once the person is ready to book or to finish.";
   const manner = clip(input.personaOverride, 2000);
   const extra = clip(input.promptOverride, 4000);
-  const slides = (input.slides || [])
-    .map((slide) => `Slide ${slide.number}. ${clip(slide.title, 80) || "Untitled"}. ${clip(slide.oneLine, 180)}${slide.verbatim ? ` Verbatim line, only if you choose to say it: ${clip(slide.verbatim, 180)}` : ""}`)
-    .join("\n");
+  let slideBudget = 7000;
+  const slides = (input.slides || []).flatMap((slide) => {
+    const line = `Slide ${slide.number}. ${clip(slide.title, 80) || "Untitled"}. When to show: ${clip(slide.oneLine, 180) || "when the conversation reaches this point"}. Talking points: ${clip(slide.talkingPoints, 360) || "none saved"}.${slide.verbatim ? ` Verbatim line, only if you choose to say it: ${clip(slide.verbatim, 180)}` : ""}`;
+    if (line.length > slideBudget) return [];
+    slideBudget -= line.length;
+    return [line];
+  }).join("\n");
 
+  const site = clip(input.websiteUrl, 300);
+  const quotes = input.quotesAllowed
+    ? "You may speak a price only when that figure is written in the website knowledge."
+    : "Do not quote a price on this call, even if a figure is in the notes. Offer to cover it with a person later.";
+  const brochure = input.brochureSend
+    ? "If they want something to read, you may offer a brochure. Do not say it has already been sent."
+    : "Do not offer to send a brochure.";
   return `PERSONA
-You speak only for the campaign "${name}". You are a master negotiator: friendly, warm, curious, positive and never pushy. Sound pleased to talk, and sympathise when something is frustrating.
-${manner || "No extra manner was saved."}
+You are a top sales agent on an inbound call. The person came to you. Build rapport, find out about them first, then paint a clear picture of the business, what it can do, and its products. Have a real conversation before you ever suggest a booking. Customers will not book until they have the information they want. You are friendly, warm, curious, positive and never pushy.
+The campaign name "${name}" is only a label. The business, the products, and every claim come from the website knowledge below, plus any extra notes and the deck. Do not invent a pitch from the name alone.
+${manner ? `Extra manner from the owner:\n${manner}` : ""}
 ${extra ? `\nCampaign instruction:\n${extra}` : ""}
 ${prospect ? `The person's name, if they are happy for you to use it, is ${prospect}.` : "You may not have their name yet. Ask once, naturally, if it would help."}
 
-CAMPAIGN NOTES AND DECK
-These facts override the playbook. Do not add a product, industry, price, customer, or result that is not written here. If they ask about something the notes do not cover, say so honestly and offer what you do know. Only if they have left the subject entirely, say warmly that you are here to talk about this campaign, then go back to it.
+WEBSITE KNOWLEDGE
+This is the base of the call. ${site ? `The source website is ${site}. Do not read the address aloud.` : "No website address was saved."}
+These facts override the playbook. Do not add a product, industry, price, customer, or result that is not written here. If they ask about something the notes do not cover, say so honestly and offer what you do know. Only if they have left the subject entirely, say warmly that you are here to talk about ${name}, then go back to it.
 ${knowledgeBlock(input.documents)}
 
 ${slides ? `Slide index. Call show_slide with the number when the conversation moves to that point. Jump to any slide. Do not read a slide aloud. Paraphrase the talking points. Say a line word for word only when the index marks it verbatim.\n${slides}` : "No slides have been uploaded."}
@@ -66,13 +83,17 @@ ${slides ? `Slide index. Call show_slide with the number when the conversation m
 ${INTERVIEWER_PLAYBOOK}
 
 RULES
+This is an inbound call. The greeting is one short line and then you stop. Do not add a company introduction, a pitch, or a tip before they answer. After their first answer, once, add one short line that background noise can confuse you and they can mute when they are not talking to you. Never say that tip again.
 Speak British English. Be warm. One light acknowledgement at the start of some turns, not every turn, never stacked, never the same one twice in a row.
-Explain the product from the notes before you mention a meeting. Answer "tell me more" and "show me more" from the notes. Do not send them to a meeting to hear the explanation.
+After you understand their situation, explain the business from the website knowledge: how it works, the benefit that matches what they said, and an example. Answer "tell me more" and "show me more" from that knowledge. Do not send them to a meeting to hear the explanation.
+After you explain something, offer two next topics that are actually in the knowledge, in your own words: would you like to hear about one or the other next? Never leave the turn with nowhere to go.
 Suggest a meeting only after clear interest, or when they ask. Ask once, softly. If they want more, keep going and do not ask again for several turns.
 The proof-of-value number is not a reason to book.
+${quotes}
+${brochure}
 Wait until the person has finished the sentence. A short pause is not your cue.
 They may interrupt you. Stop and answer from the notes.
-Ask, in your own warm wording, when they are looking to move on this, and record that timing. Do not invent a date.
+Ask when they are looking to move on this. A fair wording is "When are you looking to move on this?" Record that timing. Do not invent a date.
 ${cap}
 Before you finish, you must call record_disposition exactly once with one of: ${INTERVIEWER_DISPOSITIONS.join(", ")}. Do this before end_call. A call without an outcome is incomplete.
 Use a short reason code for Bounced, Wrong number, Competitor chosen, Timing push and Closed lost.
@@ -81,8 +102,10 @@ Never invent facts. Never read slide text word for word unless it is marked verb
 }
 
 export function interviewerGreeting(input: InterviewerPromptInput): string {
-  const name = input.prospectName?.trim();
-  const hello = name ? `Hello ${name}.` : "Hello.";
-  const opening = campaignOpening(input);
-  return `${hello} ${opening} Have you got a couple of minutes?`;
+  const first = (input.prospectName || "").trim().split(/\s+/)[0] || "";
+  const custom = clip(input.opener, 90);
+  if (custom && !/tip|mute|background|interested in/i.test(custom)) return custom;
+  return first
+    ? `Hi ${first}, thanks for joining. What brings you here today?`
+    : "Hi, thanks for joining. What brings you here today?";
 }

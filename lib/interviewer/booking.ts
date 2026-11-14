@@ -119,7 +119,7 @@ export async function bookInterviewerMeeting(input: {
     () => createConnectedCalendarEvent(
       {
         requestId: input.sessionId,
-        title: `Interviewer: ${input.prospectName?.trim() || "Guest"} — ${input.campaignName}`.slice(0, 180),
+        title: `Interviewa: ${input.prospectName?.trim() || "Guest"} — ${input.campaignName}`.slice(0, 180),
         startIso: match.start,
         endIso: match.end,
         attendeeEmails: [],

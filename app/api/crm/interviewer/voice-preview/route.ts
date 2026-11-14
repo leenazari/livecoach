@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const cache = new Map<string, Uint8Array>();
-const MAX_CACHE = 32;
+const MAX_CACHE = 80;
 
 function sampleLine(name: string): string {
   const clean = name.replace(/\s+/g, " ").trim().slice(0, 80) || "the team";
@@ -22,7 +22,7 @@ export async function GET(req: Request) {
     const voiceId = url.searchParams.get("voiceId") || "";
     if (!isInterviewerVoiceId(voiceId)) {
       return NextResponse.json(
-        { error: "Choose one of the British voices." },
+        { error: "Choose a voice from the Deepgram list." },
         { status: 400, headers: { "Cache-Control": "private, no-store" } }
       );
     }

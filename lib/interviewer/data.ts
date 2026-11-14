@@ -83,12 +83,21 @@ export async function loadOpenInvite(token: string): Promise<InterviewerInviteRo
 export async function loadCampaignDocuments(campaignId: string) {
   const { data, error } = await supabaseService
     .from("interviewer_documents")
-    .select("title, body")
+    .select("title, body, created_at")
     .eq("campaign_id", campaignId)
-    .order("created_at", { ascending: true })
-    .limit(8);
+    .order("created_at", { ascending: false })
+    .limit(40);
   raiseInterviewerError(error);
-  return (data || []) as Array<{ title: string; body: string }>;
+  const seen = new Set<string>();
+  const documents: Array<{ title: string; body: string }> = [];
+  for (const row of (data || []) as Array<{ title: string; body: string }>) {
+    const key = row.title.trim().toLowerCase();
+    if (!key || seen.has(key) || key === "source website") continue;
+    seen.add(key);
+    documents.push({ title: row.title, body: row.body });
+    if (documents.length >= 8) break;
+  }
+  return documents.reverse();
 }
 
 export async function recentConnectedSeconds(campaignId: string): Promise<number[]> {

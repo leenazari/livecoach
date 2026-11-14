@@ -14,13 +14,23 @@ export async function POST(req: Request) {
     if (!Number.isInteger(number) || number < 1) {
       return interviewerJson({ shown: false, note: "That slide number is not on the deck." });
     }
+    let deckId = String(body.deckId || "");
+    if (!/^[0-9a-f-]{36}$/i.test(deckId)) {
+      const latest = await supabaseService
+        .from("interviewer_decks")
+        .select("id")
+        .eq("campaign_id", linked.session.campaign_id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      deckId = latest.data?.id ? String(latest.data.id) : "";
+    }
+    if (!deckId) return interviewerJson({ shown: false, note: "This campaign has no deck." });
     const { data: slide, error } = await supabaseService
       .from("interviewer_slides")
       .select("slide_number, title, one_line, image_path")
-      .eq("campaign_id", linked.session.campaign_id)
+      .eq("deck_id", deckId)
       .eq("slide_number", number)
-      .order("slide_number", { ascending: true })
-      .limit(1)
       .maybeSingle();
     if (error || !slide) return interviewerJson({ shown: false, note: "That slide is not on this campaign." });
     const signed = await supabaseService.storage.from("interviewer-slides").createSignedUrl(slide.image_path, 60 * 10);

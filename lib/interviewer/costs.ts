@@ -32,6 +32,19 @@ export type SessionCost = {
   marginPercent: number | null;
 };
 
+export const DEFAULT_COST_RATES: CostRates = {
+  voiceAgentUsdPerMinute: 0.075,
+  voiceAgentByoUsdPerMinute: null,
+  useByoLlm: false,
+  listenUsdPerMinute: 0.0077,
+  ttsUsdPer1kChars: 0.015,
+  openaiInputUsdPerMillion: 0.15,
+  openaiOutputUsdPerMillion: 0.6,
+  storageUsdPerGb: 0.021,
+  vercelUsdPerCall: 0.0002,
+  usdToGbp: 0.79,
+};
+
 const round6 = (value: number) => Math.round(value * 1_000_000) / 1_000_000;
 
 export function sessionCost(input: SessionCostInput): SessionCost {

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import styles from "@/components/interviewer/interviewa.module.css";
 import { presentTranscript } from "@/lib/interviewer/transcript-display";
 import { INTERVIEWER_MIC_CONSTRAINTS } from "@/lib/interviewer/listen-url";
 import { useInterviewerCall } from "@/components/interviewer/useInterviewerCall";
@@ -36,8 +37,16 @@ export default function InterviewerRoom({
   const [bookingSaved, setBookingSaved] = useState<boolean | null>(null);
   const [ownerDebug, setOwnerDebug] = useState(false);
   const [canDebug, setCanDebug] = useState(false);
+  const [slideBroken, setSlideBroken] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
 
   const meterRef = useRef<number | ReturnType<typeof setInterval> | null>(null);
+  const showSlideImage = Boolean(call.slideUrl) && !slideBroken;
+  const showSlideCard = !showSlideImage && Boolean(call.slideLabel || call.slideSlogan);
+
+  useEffect(() => {
+    setSlideBroken(false);
+  }, [call.slideUrl]);
 
   useEffect(() => {
     return () => {
@@ -126,7 +135,7 @@ export default function InterviewerRoom({
   };
 
   return (
-    <main className="relative z-10 mx-auto flex min-h-screen max-w-xl flex-col justify-center px-5 py-10">
+    <main className={`relative z-10 mx-auto flex min-h-screen w-full flex-col px-5 py-10 ${call.phase === "live" ? "max-w-6xl justify-start" : "max-w-xl justify-center"}`}>
       <p className="font-mono text-[0.68rem] uppercase tracking-[0.22em] text-amber">Private conversation</p>
       <h1 className="mt-3 font-display text-4xl text-bone">{campaignName}</h1>
       <p className="mt-3 text-sm leading-6 text-muted">
@@ -210,20 +219,59 @@ export default function InterviewerRoom({
       ) : null}
 
       {call.phase === "live" ? (
-        <section className="mt-8 grid gap-4 lg:grid-cols-3">
-          <div className="rounded-3xl border border-edge bg-panel/90 p-4 lg:col-span-2">
-            {call.slideUrl ? (
-              <img src={call.slideUrl} alt={call.slideLabel || "Current slide"} className="w-full rounded-2xl bg-ink" />
-            ) : (
-              <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed border-edge text-sm text-muted">
-                The slide will appear here when the conversation turns to it.
-              </div>
-            )}
-            {call.slideLabel ? <p className="mt-2 text-sm text-bone">{call.slideLabel}</p> : null}
-          </div>
+        <section className={`mt-8 grid w-full grid-cols-1 items-start gap-4 ${showSlideImage || showSlideCard || call.slideIndex.length ? "lg:grid-cols-[2fr_1fr]" : ""}`}>
+          {showSlideImage || showSlideCard || call.slideIndex.length ? (
+            <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[10.5rem_minmax(0,1fr)]">
+              {call.slideIndex.length ? (
+                <div>
+                  <button type="button" className="mb-2 text-sm text-bone underline lg:hidden" onClick={() => setListOpen((open) => !open)}>
+                    {listOpen ? "Hide slides" : "Slides"}
+                  </button>
+                  <ol className={`max-h-[70vh] space-y-1 overflow-auto rounded-2xl bg-white p-2 ${listOpen ? "block" : "hidden"} lg:block`}>
+                    {call.slideIndex.map((slide) => (
+                      <li key={slide.number}>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm"
+                          style={slide.number === call.slideNumber ? { background: "#EEF3FF", color: "#1447E6", fontWeight: 600 } : { color: "#101828" }}
+                          onClick={() => call.chooseSlide(slide)}
+                        >
+                          {slide.url ? <img src={slide.url} alt="" className="h-8 w-12 shrink-0 rounded object-contain bg-[#F6F7FA]" /> : <span className="w-6 shrink-0 text-xs text-[#717680]">{slide.number}</span>}
+                          <span className="line-clamp-2">{slide.title}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
+              {showSlideImage ? (
+                <div className="min-h-[62vh] rounded-3xl bg-[#F6F7FA] p-3">
+                  <img
+                    src={call.slideUrl}
+                    alt={call.slideLabel || "Current slide"}
+                    className="h-[70vh] w-full object-contain"
+                    onError={() => setSlideBroken(true)}
+                  />
+                </div>
+              ) : null}
+              {showSlideCard ? (
+                <div className={styles.slideCard}>
+                  <p className={styles.slideKicker}>{call.slideLabel || "Slide"}</p>
+                  {call.slideSlogan ? <p className={styles.slideSlogan}>{call.slideSlogan}</p> : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className="rounded-3xl border border-edge bg-panel/90 p-4">
           <h2 className="font-display text-2xl text-bone">You are connected</h2>
-          <p className="mt-2 text-sm text-muted">Speak normally. You can interrupt the interviewer.</p>
+          <p className="mt-2 text-sm text-muted">Speak normally. You can interrupt Interviewa.</p>
+          <button
+            type="button"
+            className={`mt-4 w-full rounded-2xl px-4 py-4 text-base font-semibold ${call.muted ? "bg-amber text-ink" : "bg-ink text-bone"}`}
+            onClick={() => call.setMuted(!call.muted)}
+          >
+            {call.muted ? "Microphone muted. Tap to unmute" : "Mute microphone"}
+          </button>
           <ul className="mt-5 max-h-80 space-y-3 overflow-auto">
             {call.interim ? (
               <li className="text-sm leading-6 text-muted">You, still speaking: {call.interim}</li>
@@ -231,7 +279,7 @@ export default function InterviewerRoom({
             {presentTranscript(call.captions).map((line) => (
               <li key={line.id} className="text-sm leading-6 text-bone">
                 <span className="mr-2 font-mono text-[0.65rem] uppercase tracking-wider text-amber">
-                  {line.speaker === "agent" ? "Interviewer" : "You"}
+                  {line.speaker === "agent" ? "Interviewa" : "You"}
                 </span>
                 {line.text}
               </li>

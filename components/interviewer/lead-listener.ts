@@ -4,6 +4,7 @@ import { createListenFold, type ListenDecision } from "@/lib/interviewer/listen-
 export type LeadListenHandlers = {
   onDecision: (decision: ListenDecision) => void;
   onRefusal: (detail: { closeCode?: number; message?: string }) => void;
+  onOverlap?: () => void;
 };
 
 // A second call closes the previous socket. React strict mode and a repeated
@@ -71,7 +72,11 @@ export function startLeadListener(input: {
     if (stopped || typeof event.data !== "string") return;
     try {
       const data = JSON.parse(event.data);
-      const transcript = String(data?.channel?.alternatives?.[0]?.transcript || "");
+      const alternative = data?.channel?.alternatives?.[0];
+      const words = Array.isArray(alternative?.words) ? alternative.words : [];
+      const speakers = new Set(words.map((word: { speaker?: number }) => word?.speaker).filter((speaker: number | undefined) => speaker != null));
+      if (speakers.size > 1) input.handlers.onOverlap?.();
+      const transcript = String(alternative?.transcript || "");
       if (!transcript.trim()) return;
       input.handlers.onDecision(fold.push({
         transcript,

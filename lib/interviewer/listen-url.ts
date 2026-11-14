@@ -11,6 +11,7 @@ export function interviewerListenUrl(): string {
     utterance_end_ms: "1500",
     language: "en",
     channels: "1",
+    diarize: "true",
   });
   return `wss://api.deepgram.com/v1/listen?${params.toString()}`;
 }

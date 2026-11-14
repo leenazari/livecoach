@@ -1,3 +1,4 @@
+import { loadOrCreateBrief } from "@/lib/interviewer/brief-store";
 import { recordSessionCost } from "@/lib/interviewer/cost-store";
 import { interviewerRpc, isUuid, loadOpenInvite } from "@/lib/interviewer/data";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
@@ -33,6 +34,7 @@ export async function POST(req: Request) {
         .eq("id", sessionId)
         .is("disposition", null);
     }
+    await loadOrCreateBrief(sessionId).catch(() => undefined);
     return interviewerJson({
       state: "ended",
       billableSeconds: Number(result?.billableSeconds || 0),
