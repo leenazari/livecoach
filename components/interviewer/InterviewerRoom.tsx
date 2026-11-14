@@ -6,6 +6,7 @@ import styles from "@/components/interviewer/interviewa.module.css";
 import { formatCountdown } from "@/lib/interviewer/call-limit";
 import { presentTranscript } from "@/lib/interviewer/transcript-display";
 import { INTERVIEWER_MIC_CONSTRAINTS } from "@/lib/interviewer/listen-url";
+import { micStartPlan, type MicStartPlan } from "@/lib/interviewer/mic-start";
 import { useInterviewerCall } from "@/components/interviewer/useInterviewerCall";
 
 type Slot = { start: string; end: string; label: string };
@@ -19,6 +20,18 @@ type Recap = {
   when: string | null;
   nextStep: string;
 } | null;
+
+function MuteMark({ muted }: { muted: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12 14.2a3.2 3.2 0 0 0 3.2-3.2V6.2a3.2 3.2 0 0 0-6.4 0v4.8a3.2 3.2 0 0 0 3.2 3.2Zm5.2-3.2a5.2 5.2 0 0 1-4.2 5.1V19h2.2v2h-6.4v-2H11v-2.9a5.2 5.2 0 0 1-4.2-5.1H9a3.2 3.2 0 0 0 6.4 0h1.8Z"
+      />
+      {muted ? <path d="M5 4.2 19.8 19" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /> : null}
+    </svg>
+  );
+}
 
 function calendarStamp(value: Date): string {
   return value.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
@@ -157,10 +170,10 @@ export default function InterviewerRoom({
   capMinutes?: string;
 }) {
   const call = useInterviewerCall(token, capMinutes);
-  const [micReady, setMicReady] = useState(false);
-  const [micLevel, setMicLevel] = useState(0);
+  const [micPlan, setMicPlan] = useState<MicStartPlan | "checking">("checking");
   const [micError, setMicError] = useState("");
   const streamRef = useRef<MediaStream | null>(null);
+  const micStarted = useRef(false);
   const holdRef = useRef<HTMLAudioElement | null>(null);
   const [holdSrc, setHoldSrc] = useState("/interviewer/hold-loop.wav");
   const [slots, setSlots] = useState<Slot[]>([]);
@@ -172,25 +185,62 @@ export default function InterviewerRoom({
   const [featuresOpen, setFeaturesOpen] = useState(false);
   const slideStageRef = useRef<HTMLDivElement | null>(null);
 
-  const meterRef = useRef<number | ReturnType<typeof setInterval> | null>(null);
   const showSlideImage = Boolean(call.slideUrl) && !slideBroken;
 
   useEffect(() => {
     setSlideBroken(false);
   }, [call.slideUrl]);
 
+  const startCall = async () => {
+    if (micStarted.current || call.phase !== "mic") return;
+    micStarted.current = true;
+    setMicError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: INTERVIEWER_MIC_CONSTRAINTS });
+      streamRef.current = stream;
+      await call.join(stream);
+    } catch {
+      micStarted.current = false;
+      try { window.sessionStorage.removeItem("interviewer-mic"); } catch { /* the message still shows */ }
+      setMicPlan("blocked");
+      setMicError("The microphone is blocked. Allow it in the browser, then start the call.");
+    }
+  };
+
   useEffect(() => {
     return () => {
-      if (meterRef.current) window.clearInterval(meterRef.current);
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
+  const startRef = useRef(startCall);
+  startRef.current = startCall;
+
   useEffect(() => {
-    if (call.phase !== "mic" && meterRef.current) {
-      window.clearInterval(meterRef.current);
-      meterRef.current = null;
-    }
+    if (call.phase !== "mic") return undefined;
+    let cancel = false;
+    const look = async () => {
+      let permission: "granted" | "denied" | "prompt" | "unknown" = "unknown";
+      try {
+        const status = await navigator.permissions.query({ name: "microphone" as PermissionName });
+        if (status.state === "granted" || status.state === "denied" || status.state === "prompt") permission = status.state;
+      } catch { /* some browsers do not report microphone permission */ }
+      if (permission === "unknown") {
+        try {
+          if (window.sessionStorage.getItem("interviewer-mic") === "granted") permission = "granted";
+        } catch { /* keep the start button */ }
+      }
+      if (cancel) return;
+      const plan = micStartPlan(permission);
+      setMicPlan(plan);
+      if (plan === "blocked") {
+        setMicError("The microphone is blocked. Allow it in the browser, then start the call.");
+        return;
+      }
+      if (plan === "auto") void startRef.current();
+    };
+    void look();
+    return () => { cancel = true; };
   }, [call.phase]);
 
   useEffect(() => {
@@ -199,31 +249,6 @@ export default function InterviewerRoom({
     if (call.phase === "waiting") void audio.play().catch(() => undefined);
     else audio.pause();
   }, [call.phase, holdSrc]);
-
-  const enableMic = async () => {
-    setMicError("");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: INTERVIEWER_MIC_CONSTRAINTS,
-      });
-      streamRef.current = stream;
-      const context = new AudioContext();
-      const source = context.createMediaStreamSource(stream);
-      const analyser = context.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      meterRef.current = window.setInterval(() => {
-        analyser.getByteTimeDomainData(data);
-        let peak = 0;
-        for (const value of data) peak = Math.max(peak, Math.abs(value - 128));
-        setMicLevel(Math.min(100, peak * 2));
-      }, 120);
-      setMicReady(true);
-    } catch {
-      setMicError("The microphone is blocked. Allow it in the browser, then try again.");
-    }
-  };
 
   const suggest = async () => {
     if (!call.sessionId) return;
@@ -367,6 +392,7 @@ export default function InterviewerRoom({
               aria-label={call.muted ? "Muted. Unmute microphone" : "Mute microphone"}
               onClick={() => call.setMuted(!call.muted)}
             >
+              <MuteMark muted={call.muted} />
               {call.muted ? "Muted" : "Mute"}
             </button>
           </div>
@@ -401,27 +427,20 @@ export default function InterviewerRoom({
 
       {call.phase === "mic" && !call.connecting ? (
         <section className="mt-8 rounded-3xl border border-edge bg-panel/90 p-6">
-          <h2 className="font-display text-2xl text-bone">Check your microphone</h2>
-          <p className="mt-2 text-sm leading-6 text-muted">
-            Allow the microphone, then speak. The bar should move before you join.
-          </p>
-          <div className="mt-5 h-2 overflow-hidden rounded-full bg-ink">
-            <div className="h-full bg-amber transition-all" style={{ width: `${micLevel}%` }} />
-          </div>
-          {micError ? <p className="mt-3 text-sm text-rust">{micError}</p> : null}
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button type="button" className="rounded-full bg-panel2 px-4 py-2 text-sm text-bone" onClick={() => void enableMic()}>
-              {micReady ? "Microphone allowed" : "Allow microphone"}
-            </button>
-            <button
-              type="button"
-              disabled={!micReady || !streamRef.current}
-              className="rounded-full bg-amber px-4 py-2 text-sm text-ink disabled:opacity-40"
-              onClick={() => streamRef.current && void call.join(streamRef.current)}
-            >
-              Join the conversation
-            </button>
-          </div>
+          {micPlan === "auto" || micPlan === "checking" ? (
+            <h2 className="font-display text-2xl text-bone">Starting the call</h2>
+          ) : (
+            <>
+              <h2 className="font-display text-2xl text-bone">Start the call</h2>
+              {micError ? <p className="mt-3 text-sm text-rust">{micError}</p> : (
+                <p className="mt-2 text-sm leading-6 text-muted">The microphone is requested when you start. If it is already allowed, the call begins on its own.</p>
+              )}
+              <button type="button" className="mt-5 rounded-full bg-amber px-4 py-2 text-sm text-ink" onClick={() => void startCall()}>
+                Start call
+              </button>
+            </>
+          )}
+          {call.calmMessage ? <p className="mt-3 text-sm text-bone">{call.calmMessage}</p> : null}
         </section>
       ) : null}
 

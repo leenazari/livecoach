@@ -618,22 +618,25 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  width: auto;
-  min-width: 88px;
-  min-height: 44px;
+  gap: 12px;
+  width: 176px;
+  min-width: 176px;
+  height: 88px;
+  min-height: 88px;
   border: 0;
-  border-radius: 12px;
-  padding: 12px 18px;
+  border-radius: 16px;
+  padding: 12px 16px;
   color: #fff;
   font: inherit;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
   cursor: pointer;
   flex: none;
 }
 .muteOn { background: #155dfc; }
 .muteOff { background: #d92d20; }
-.muteOn svg, .muteOff svg { width: 22px; height: 22px; flex: none; }
+.muteOn svg, .muteOff svg { width: 44px; height: 44px; flex: none; }
 .callTalk { min-width: 0; min-height: 0; overflow: auto; }
 .controlBar {
   flex: none;
@@ -664,9 +667,15 @@
   opacity: 1;
   white-space: nowrap;
 }
-.controlBar .muteOn, .controlBar .muteOff, .controlBar .endSolid {
+.controlBar .endSolid {
   width: auto;
   min-height: 44px;
+}
+.controlBar .muteOn, .controlBar .muteOff {
+  width: 176px;
+  min-width: 176px;
+  height: 88px;
+  min-height: 88px;
 }
 
 .quote {
@@ -838,8 +847,9 @@
   .featurePanel { max-height: 72px; }
   .countdown { font-size: 18px; }
   .limitClock { left: 10px; bottom: 10px; padding: 8px 12px; font-size: 36px; }
-  .controlBar { gap: 48px; width: 100%; }
-  .controlBar .muteOn, .controlBar .muteOff, .controlBar .endSolid { min-height: 44px; padding: 10px 14px; }
+  .controlBar { gap: 24px; width: 100%; }
+  .controlBar .endSolid { min-height: 44px; padding: 10px 14px; }
+  .controlBar .muteOn, .controlBar .muteOff { width: 176px; min-width: 176px; height: 88px; min-height: 88px; }
 }
 
 @media (max-width: 1024px) {
@@ -886,9 +896,12 @@
   .slideCopy, .slideList .seenTick { display: none; }
   .slideThumb { width: 56px; height: 36px; min-width: 56px; max-width: 56px; }
   .captionStrip { padding: 0 10px; max-height: 56px; min-height: 44px; }
-  .controlBar { gap: 8px; padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
-  .countdown { font-size: 15px; }
-  .controlBar .muteOn, .controlBar .muteOff, .controlBar .endSolid { padding: 10px 12px; }
+  .controlBar { gap: 12px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); }
+  .barLeft { gap: 8px; }
+  .countdown { font-size: 13px; }
+  .controlBar .endSolid { padding: 10px 12px; }
+  .controlBar .muteOn, .controlBar .muteOff { width: 176px; min-width: 176px; height: 88px; min-height: 88px; padding: 10px 12px; font-size: 26px; }
+  .controlBar .muteOn svg, .controlBar .muteOff svg { width: 40px; height: 40px; }
 }
 
 @media (max-width: 390px) {
@@ -897,8 +910,114 @@
   .h1 { font-size: 22px; }
   .cardTitle { font-size: 18px; }
   .btn, .btnGhost, .btnWarn { width: 100%; }
-  .controlBar .btn, .controlBar .btnGhost, .controlBar .endSolid, .controlBar .muteOn, .controlBar .muteOff { width: auto; min-height: 44px; }
+  .controlBar .btn, .controlBar .btnGhost, .controlBar .endSolid { width: auto; min-height: 44px; }
+  .controlBar .muteOn, .controlBar .muteOff { width: 176px; min-width: 176px; height: 88px; min-height: 88px; }
   .ready { padding: 14px; }
   .readyTitle { font-size: 18px; }
   .linkField { font-size: 13px; }
+  .landingCard { margin-top: -28px; }
+}
+
+.landing {
+  --land-accent: #155dfc;
+  --land-on: #ffffff;
+  --land-bg: #f4efe6;
+  --land-paper: #ffffff;
+  min-height: 100vh;
+  width: 100%;
+  margin: 0 auto;
+  background: var(--land-bg);
+  color: #101828;
+  box-sizing: border-box;
+}
+.landingHero, .landingHeroFallback {
+  display: block;
+  width: 100%;
+  height: 46vh;
+  min-height: 220px;
+  max-height: 520px;
+  object-fit: cover;
+  object-position: center top;
+  background:
+    linear-gradient(160deg, var(--land-accent), transparent 62%),
+    var(--land-paper);
+}
+.landingCard {
+  position: relative;
+  margin: -36px 16px 28px;
+  padding: 22px 18px 20px;
+  border-radius: 22px;
+  background: var(--land-paper);
+  color: #101828;
+  box-shadow: 0 16px 40px rgba(16, 24, 40, 0.12);
+}
+.landingKicker {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--land-accent);
+}
+.landingCard h1 {
+  margin: 8px 0 0;
+  font-family: var(--font-slab), "Roboto Slab", Georgia, serif;
+  font-size: 32px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+.landingSummary {
+  margin: 10px 0 0;
+  font-size: 16px;
+  line-height: 1.45;
+  color: #344054;
+}
+.landingLabel {
+  display: block;
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.landingField {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid #d0d5dd;
+  border-radius: 12px;
+  background: #fff;
+  color: #101828;
+  font: inherit;
+  font-size: 16px;
+}
+.landingStart {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  min-height: 52px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--land-accent);
+  color: var(--land-on);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.landingStart:disabled { opacity: 0.7; cursor: wait; }
+.landingError { margin: 8px 0 0; color: #b42318; font-size: 14px; line-height: 1.4; }
+.landingFine { margin: 10px 0 0; color: #667085; font-size: 13px; }
+.landingHoneypot {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+@media (min-width: 800px) {
+  .landing { max-width: 880px; padding-top: 28px; }
+  .landingHero, .landingHeroFallback { height: 420px; border-radius: 28px; }
+  .landingCard { margin: -72px 48px 40px; padding: 28px 28px 24px; }
+  .landingCard h1 { font-size: 40px; }
 }
