@@ -13,8 +13,10 @@ export const metadata: Metadata = {
 
 export default async function InterviewerInvitePage({
   params,
+  searchParams,
 }: {
   params: { token: string };
+  searchParams?: { capMinutes?: string };
 }) {
   try {
     const invite = await loadOpenInvite(params.token);
@@ -31,7 +33,7 @@ export default async function InterviewerInvitePage({
         </main>
       );
     }
-    return <InterviewerRoom token={params.token} campaignName={campaign.name} />;
+    return <InterviewerRoom token={params.token} campaignName={campaign.name} capMinutes={searchParams?.capMinutes || ""} />;
   } catch {
     return (
       <main className="relative z-10 mx-auto flex min-h-screen max-w-xl items-center px-5">

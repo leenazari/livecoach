@@ -1,7 +1,7 @@
 import { buildVoiceAgentSettings, DEEPGRAM_VOICE_AGENT_URL } from "@/lib/interviewer/agent-settings";
 import { knowledgeManifest } from "@/lib/interviewer/prompt";
 import { interviewerRpc, loadCampaignDocuments } from "@/lib/interviewer/data";
-import { effectiveCallMinutes, remainingCallSeconds } from "@/lib/interviewer/call-limit";
+import { cappedCallMinutes, remainingCallSeconds } from "@/lib/interviewer/call-limit";
 import { mintDeepgramGrant } from "@/lib/interviewer/deepgram-grant";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
 import { linkedSession, presentQueue, queueStatusForToken, type InterviewerQueueState } from "@/lib/interviewer/queue-view";
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
     if (!linked?.campaign) return interviewerJson({ error: "This link is not available." }, 404);
     if (!linked.slot) return queued(token, sessionId, linked.invite.campaign_id);
 
-    const limitMinutes = effectiveCallMinutes(linked.campaign.max_minutes);
+    const limitMinutes = cappedCallMinutes(linked.campaign.max_minutes, body.capMinutes, linked.campaign.name);
     const connectedMs = linked.session.connected_at ? Date.parse(String(linked.session.connected_at)) : Date.now();
     const callEndsAtMs = connectedMs + limitMinutes * 60 * 1000;
     if (linked.session.connected_at && Date.now() >= callEndsAtMs) {

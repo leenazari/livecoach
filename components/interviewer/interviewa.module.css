@@ -423,6 +423,7 @@
   opacity: 1;
 }
 .slideStage {
+  position: relative;
   flex: 1 1 auto;
   height: auto;
   min-width: 0;
@@ -433,6 +434,31 @@
   display: flex;
   align-items: stretch;
   justify-content: stretch;
+}
+.limitClock {
+  position: absolute;
+  z-index: 2;
+  left: 16px;
+  bottom: 16px;
+  margin: 0;
+  padding: 12px 18px;
+  border-radius: 14px;
+  background: #d92d20;
+  color: #fff;
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.28);
+  animation: limitPulse 1.6s ease-in-out infinite;
+}
+@keyframes limitPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.035); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .limitClock { animation: none; }
 }
 .slideStage img {
   width: 100%;
@@ -775,6 +801,7 @@
   .slideList li { flex: 0 0 220px; width: 220px; margin: 0; }
   .featurePanel { max-height: 72px; }
   .countdown { font-size: 18px; }
+  .limitClock { left: 10px; bottom: 10px; padding: 8px 12px; font-size: 36px; }
   .controlBar { gap: 48px; width: 100%; }
   .controlBar .muteOn, .controlBar .muteOff, .controlBar .endSolid { min-height: 44px; padding: 10px 14px; }
 }

@@ -150,11 +150,13 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 export default function InterviewerRoom({
   token,
   campaignName,
+  capMinutes = "",
 }: {
   token: string;
   campaignName: string;
+  capMinutes?: string;
 }) {
-  const call = useInterviewerCall(token);
+  const call = useInterviewerCall(token, capMinutes);
   const [micReady, setMicReady] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [micError, setMicError] = useState("");
@@ -291,6 +293,11 @@ export default function InterviewerRoom({
           ) : <div className={styles.slideList} />}
           <div className={styles.slideColumn}>
             <div className={styles.slideStage}>
+              {call.phase === "live" && call.remainingSeconds != null && call.remainingSeconds <= 120 ? (
+                <p className={styles.limitClock} role="timer" aria-live="assertive" aria-label={`${formatCountdown(call.remainingSeconds)} left on this call`}>
+                  {formatCountdown(call.remainingSeconds)}
+                </p>
+              ) : null}
               {showSlideImage ? (
                 <img src={call.slideUrl} alt={call.slideLabel || "Current slide"} onError={() => setSlideBroken(true)} />
               ) : (

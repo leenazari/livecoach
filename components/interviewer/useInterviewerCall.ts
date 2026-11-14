@@ -6,7 +6,7 @@ import { floatToPcm16, playOfferChime, resampleLinear } from "@/components/inter
 import { startLeadListener } from "@/components/interviewer/lead-listener";
 import { isDeepgramConcurrencyRefusal } from "@/lib/interviewer/concurrency";
 import { leadDeclinedDemo } from "@/lib/interviewer/call-close";
-import { HUMAN_TEAM_OFFER, TIME_LIMIT_GOODBYE, twoMinuteLine } from "@/lib/interviewer/call-limit";
+import { HUMAN_TEAM_OFFER, TIME_LIMIT_GOODBYE, TIME_WARNING_INJECT, shouldSpeakTimeWarning, twoMinuteLine } from "@/lib/interviewer/call-limit";
 import { sendSlideClickFirst, slideClickDecision, slideClickSpeech } from "@/lib/interviewer/slide-click";
 import { isHoldRequest, nextSilenceCue, type SilencePhase } from "@/lib/interviewer/silence";
 import {
@@ -16,6 +16,8 @@ import {
   type LockedUtterance,
 } from "@/lib/interviewer/listen-transcript";
 import { stripAgentContext, toSpokenPlain, toolReplyForAgent } from "@/lib/interviewer/spoken-text";
+import { forSpeech, forTranscript } from "@/lib/interviewer/pronunciations";
+import { businessProfileNote, emptyBusinessProfile, noteBusiness, type BusinessProfile } from "@/lib/interviewer/business-profile";
 import { catalogFromSlides, coverInterests, noteInterests, privateCoverNote, spokenReminder, type AgendaItem } from "@/lib/interviewer/interest-agenda";
 import { matchSpokenSlide } from "@/lib/interviewer/slide-match";
 
@@ -71,7 +73,7 @@ async function postJson<T>(url: string, body: unknown): Promise<{ ok: boolean; d
   return { ok: response.ok, data: data as T };
 }
 
-export function useInterviewerCall(token: string) {
+export function useInterviewerCall(token: string, capMinutes = "") {
   const [phase, setPhase] = useState<"mic" | "waiting" | "live" | "ended">("mic");
   const [connecting, setConnecting] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -116,6 +118,8 @@ export function useInterviewerCall(token: string) {
   const advanceTimer = useRef<number | null>(null);
   const advanceQueueRef = useRef<(speech: string) => boolean>(() => false);
   const agendaRef = useRef<AgendaItem[]>([]);
+  const profileRef = useRef<BusinessProfile>(emptyBusinessProfile());
+  const leadQuestionAt = useRef(Date.now());
   const remindTimer = useRef<number | null>(null);
   const remindRef = useRef<(speech: string) => void>(() => undefined);
   const greetingDoneRef = useRef(false);
@@ -193,12 +197,14 @@ export function useInterviewerCall(token: string) {
       return;
     }
     leadLinesRef.current = [...leadLinesRef.current.slice(-30), text];
+    profileRef.current = noteBusiness(text, profileRef.current);
+    if (/\?|\b(what|how|why|when|where|who|can you|do you)\b/i.test(text)) leadQuestionAt.current = Date.now();
     agendaRef.current = noteInterests(text, agendaRef.current, catalogFromSlides(slideIndexRef.current));
     saveCaption({ id: utterance.id, speaker: "lead", text });
   }, [saveCaption]);
 
   const acceptAgent = useCallback((text: string) => {
-    const clean = toSpokenPlain(text);
+    const clean = forTranscript(toSpokenPlain(text));
     if (!clean) return;
     const previous = agentTurnRef.current;
     const caption = previous && agentTurnExtends(previous.text, clean)
@@ -250,6 +256,7 @@ export function useInterviewerCall(token: string) {
         token,
         sessionId: session,
         purpose: "both",
+        ...(capMinutes ? { capMinutes } : {}),
       });
       const sentToQueue = ready.data.state === "queued" || ready.data.state === "offered";
       if (ready.data.priority || sentToQueue) {
@@ -358,16 +365,43 @@ export function useInterviewerCall(token: string) {
         noiseAt: 0,
       };
       let loudSince = 0;
-      const say = (line: string, behavior: "default" | "queue" = "default") => {
-        if (agentSocket.readyState !== WebSocket.OPEN) return;
-        const message = stripAgentContext(line);
+      const say = (line: string, behavior: "default" | "queue" | "interrupt" = "default") => {
+        if (agentSocket.readyState !== WebSocket.OPEN) return false;
+        const message = forSpeech(stripAgentContext(line));
+        if (!message) return false;
         agentSocket.send(JSON.stringify({ type: "InjectAgentMessage", behavior, message }));
+        return true;
+      };
+      let warningHeard = false;
+      let warningDue = false;
+      let warningSentAt = 0;
+      let endingForLimit = false;
+      const speakWarning = () => {
+        if (!warningDue || warningHeard || Date.now() - warningSentAt < 2000) return false;
+        warningSentAt = Date.now();
+        const privateNote = privateCoverNote(agendaRef.current);
+        if (privateNote) note(`Note for you only. Do not read this note aloud. The call is in its last two minutes. ${privateNote}`);
+        return say(twoMinuteLine(bookedRef.current), TIME_WARNING_INJECT);
+      };
+      const closeForLimit = () => {
+        if (settling) return;
+        say(TIME_LIMIT_GOODBYE, "interrupt");
+        window.setTimeout(() => { if (!settling) void finish(); }, 5000);
+      };
+      const beginLimitClose = () => {
+        if (endingForLimit || settling) return;
+        endingForLimit = true;
+        warningDue = true;
+        const heard = warningHeard;
+        if (!heard) speakWarning();
+        window.setTimeout(closeForLimit, heard ? 0 : 9000);
       };
       const note = (instruction: string) => {
         if (agentSocket.readyState !== WebSocket.OPEN) return;
+        const prompt = [businessProfileNote(profileRef.current), instruction].filter(Boolean).join("\n\n");
         agentSocket.send(JSON.stringify({
           type: "UpdatePrompt",
-          prompt: instruction,
+          prompt,
         }));
       };
       remindRef.current = (speech: string) => {
@@ -695,7 +729,10 @@ export function useInterviewerCall(token: string) {
           agentTurnRef.current = null;
           silenceRef.current.speaking = true;
           silenceRef.current.lastActivityAt = Date.now();
+        } else if (message.type === "InjectionRefused") {
+          if (warningDue && !warningHeard) speakWarning();
         } else if (message.type === "ConversationText" && message.content && (message.role === "assistant" || message.role === "agent")) {
+          if (/two minutes left/i.test(message.content)) warningHeard = true;
           acceptAgent(message.content);
         }
         else if (message.type === "Error") {
@@ -770,6 +807,8 @@ export function useInterviewerCall(token: string) {
 
       let tipSaid = false;
       let endingForSilence = false;
+      let lastPaceAt = 0;
+      const callStartedAt = Date.now();
       silenceTimer = window.setInterval(() => {
         const silence = silenceRef.current;
         const speaking = silence.speaking || nextAt > context.currentTime + 0.05;
@@ -794,34 +833,30 @@ export function useInterviewerCall(token: string) {
           endAfterAudio = true;
           window.setTimeout(() => { if (!settling) void finish(); }, 8000);
         }
+        const agentTalking = nextAt > context.currentTime + 0.05;
+        const slideQuiet = Date.now() - Math.max(lastSlideAt.current, callStartedAt);
+        if (greetingDoneRef.current && agentTalking && !silence.speaking && slideQuiet > 60000 && Date.now() - lastPaceAt > 60000 && Date.now() - leadQuestionAt.current > 15000) {
+          lastPaceAt = Date.now();
+          note("Note for you only. Do not read this aloud. You have stayed on this slide for about a minute. Call show_slide for the next feature that matches what they said. Two short sentences tied to their business, then move on. Skip setup slides.");
+        }
       }, 1000);
       heartbeat = window.setInterval(() => {
-        void postJson<{ state?: string }>("/api/interviewer/slots/heartbeat", { token, sessionId: session }).then(({ data }) => {
+        void postJson<{ state?: string }>("/api/interviewer/slots/heartbeat", { token, sessionId: session, ...(capMinutes ? { capMinutes } : {}) }).then(({ data }) => {
           if (data.state === "time_limit" && phaseRef.current === "live" && !settling) {
-            say(TIME_LIMIT_GOODBYE);
-            window.setTimeout(() => { if (!settling) void finish(); }, 4000);
+            beginLimitClose();
           } else if (data.state === "lost" && phaseRef.current === "live") void finish();
         });
       }, 15000);
       const endsAt = Date.parse(String(ready.data.callEndsAt || ""));
-      let warned = false;
-      let endingForLimit = false;
       const clock = window.setInterval(() => {
         if (!Number.isFinite(endsAt)) return;
         const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
         setRemainingSeconds(left);
-        if (left <= 120 && left > 0 && !warned) {
-          warned = true;
-          const warning = twoMinuteLine(bookedRef.current);
-          const privateNote = privateCoverNote(agendaRef.current);
-          if (privateNote) note(privateNote);
-          say(spokenReminder(agendaRef.current, warning) || warning);
+        if (shouldSpeakTimeWarning(left, warningHeard)) {
+          warningDue = true;
+          speakWarning();
         }
-        if (left <= 0 && !endingForLimit) {
-          endingForLimit = true;
-          say(TIME_LIMIT_GOODBYE);
-          window.setTimeout(() => { if (!settling) void finish(); }, 4000);
-        }
+        if (left <= 0) beginLimitClose();
       }, 1000);
       capTimer = clock;
 
@@ -832,7 +867,7 @@ export function useInterviewerCall(token: string) {
     } finally {
       connectingRef.current = false;
     }
-  }, [acceptAgent, acceptLead, rememberQueue, rememberSeen, token]);
+  }, [acceptAgent, acceptLead, capMinutes, rememberQueue, rememberSeen, token]);
 
   const join = useCallback(async (stream: MediaStream) => {
     streamRef.current = stream;

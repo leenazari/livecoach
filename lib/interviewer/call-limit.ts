@@ -7,6 +7,29 @@ export function effectiveCallMinutes(stored: number | null | undefined): number 
   return Math.min(value, CALL_LIMIT_CAP_MINUTES);
 }
 
+// A shorter cap for a test campaign only. It never lengthens a call, and it
+// is ignored unless the campaign name itself says "test", so a live campaign
+// keeps its saved limit even if the link carries the query.
+export function cappedCallMinutes(stored: number | null | undefined, requested: unknown, campaignName: string): number {
+  const base = effectiveCallMinutes(stored);
+  const raw = typeof requested === "string" ? requested.trim() : requested;
+  const asked = typeof raw === "number" || (typeof raw === "string" && raw) ? Number(raw) : NaN;
+  if (!Number.isInteger(asked) || asked < 1 || asked >= base) return base;
+  if (!/\btest\b/i.test(String(campaignName || ""))) return base;
+  return asked;
+}
+
+// Speak the warning once the last two minutes have started, including when a
+// throttled timer jumps straight to zero. A warning that was already heard
+// is not repeated.
+export function shouldSpeakTimeWarning(remainingSeconds: number, alreadyHeard: boolean): boolean {
+  return !alreadyHeard && remainingSeconds <= CALL_WARNING_SECONDS;
+}
+
+// Deepgram refuses InjectAgentMessage behavior "default" while either side
+// is mid-turn (InjectionRefused). The warning has to interrupt or it is dropped.
+export const TIME_WARNING_INJECT = "interrupt" as const;
+
 export function callEndsAt(connectedAt: string | number, minutes: number): number {
   const start = typeof connectedAt === "number" ? connectedAt : Date.parse(connectedAt);
   return start + effectiveCallMinutes(minutes) * 60 * 1000;
