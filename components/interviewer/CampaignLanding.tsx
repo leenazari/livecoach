@@ -18,7 +18,7 @@ function keepProtection(path: string): string {
 export default function CampaignLanding({ card }: { card: PublicCampaignView }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [fax, setFax] = useState("");
+  const [honeypot, setHoneypot] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -47,7 +47,7 @@ export default function CampaignLanding({ card }: { card: PublicCampaignView }) 
           campaignId: card.id,
           prospectName: name,
           prospectEmail: email,
-          company_fax: fax,
+          interviewer_hp: honeypot ? "1" : "",
         }),
       });
     } catch {
@@ -94,12 +94,13 @@ export default function CampaignLanding({ card }: { card: PublicCampaignView }) 
             {fields.prospectEmail ? <p className={styles.landingError}>{fields.prospectEmail}</p> : null}
             <input
               className={styles.landingHoneypot}
-              name="company_fax"
+              name="interviewer_hp"
+              type="checkbox"
               tabIndex={-1}
               autoComplete="off"
               aria-hidden="true"
-              value={fax}
-              onChange={(event) => setFax(event.target.value)}
+              checked={honeypot}
+              onChange={(event) => setHoneypot(event.target.checked)}
             />
             <button className={styles.landingStart} type="submit" disabled={busy}>
               {busy ? "Starting…" : "Start call"}
@@ -108,7 +109,7 @@ export default function CampaignLanding({ card }: { card: PublicCampaignView }) 
             <p className={styles.landingFine}>Up to {card.maxMinutes} minutes. No account needed.</p>
           </form>
         ) : (
-          <p className={styles.landingSummary}>This campaign is not taking calls right now.</p>
+          <p className={styles.landingSummary}>This campaign is not taking calls right now. Public calls are switched off.</p>
         )}
       </section>
     </main>

@@ -180,6 +180,14 @@ const landingCss = readFileSync(new URL("../components/interviewer/interviewa.mo
 if (landingCss.includes("#0f6e56") || landingCss.includes("linear-gradient(160deg")) {
   throw new Error("the landing hero still paints a placeholder colour");
 }
+const landingSource = readFileSync(new URL("../components/interviewer/CampaignLanding.tsx", import.meta.url), "utf8");
+const joinSource = readFileSync(new URL("../app/api/interviewer/public-join/route.ts", import.meta.url), "utf8");
+if (landingSource.includes("company_fax") || joinSource.includes("company_fax")) {
+  throw new Error("the public form still uses a fax field phones will autofill");
+}
+if (!joinSource.includes("reason: \"paused\"") || !joinSource.includes("reason: \"rate-email\"") || !joinSource.includes("reason: \"rate-network\"")) {
+  throw new Error("public start still hides the reason for a refusal");
+}
 if (!isPublicInterviewerApi("/api/interviewer/token") || !isPublicInterviewerApi("/api/interviewer/slots/claim")) {
   throw new Error("the call APIs were treated as private");
 }

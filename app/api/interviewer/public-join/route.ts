@@ -23,8 +23,13 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => null);
     const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
-    if (honeypotTripped(record.company_fax)) {
-      return interviewerJson({ started: false, error: "This campaign is not taking calls right now." });
+    if (honeypotTripped(record.interviewer_hp)) {
+      console.info("public-join refused", { reason: "honeypot", campaignId: String(record.campaignId || "") });
+      return interviewerJson({
+        started: false,
+        reason: "honeypot",
+        error: "The call was not started. Nothing was saved.",
+      }, 400);
     }
     const campaignId = String(record.campaignId || "");
     if (!isCampaignToken(campaignId)) {
@@ -44,12 +49,19 @@ export async function POST(request: Request) {
     const card = await loadPublicCampaignCard(campaignId);
     if (!card) return interviewerJson({ started: false, error: "This link is not available." }, 404);
     if (!card.accepting) {
-      return interviewerJson({ started: false, error: "This campaign is not taking calls right now." }, 409);
+      console.info("public-join refused", { reason: "paused", campaignId: card.id });
+      return interviewerJson({
+        started: false,
+        reason: "paused",
+        error: "This campaign is not taking calls right now. Public calls are switched off.",
+      }, 409);
     }
     const address = clientAddress(request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip"));
     if (!allowPublicJoin(`ip:${address || "missing"}`, PUBLIC_IP_LIMIT, PUBLIC_IP_WINDOW_MS)) {
+      console.info("public-join refused", { reason: "rate-network", campaignId: card.id });
       return interviewerJson({
         started: false,
+        reason: "rate-network",
         error: "Too many calls were started from this network. Wait a few minutes. Nothing new was started.",
       }, 429);
     }
@@ -74,10 +86,20 @@ export async function POST(request: Request) {
         error: "The call was not started. Nothing was saved. Wait a moment, then try again once.",
       }, 503);
     }
-    if ((emailCount.count || 0) >= PUBLIC_EMAIL_LIMIT || (campaignCount.count || 0) >= PUBLIC_CAMPAIGN_LIMIT) {
+    if ((emailCount.count || 0) >= PUBLIC_EMAIL_LIMIT) {
+      console.info("public-join refused", { reason: "rate-email", campaignId: card.id });
       return interviewerJson({
         started: false,
-        error: "Too many calls were started recently. Wait a while before another one. Nothing new was started.",
+        reason: "rate-email",
+        error: "Too many calls were started for this email in the last hour. Wait before another one. Nothing new was started.",
+      }, 429);
+    }
+    if ((campaignCount.count || 0) >= PUBLIC_CAMPAIGN_LIMIT) {
+      console.info("public-join refused", { reason: "rate-campaign", campaignId: card.id });
+      return interviewerJson({
+        started: false,
+        reason: "rate-campaign",
+        error: "This campaign has had too many new calls in the last few minutes. Wait a short while. Nothing new was started.",
       }, 429);
     }
     const expiresAt = new Date(Date.now() + PUBLIC_INVITE_HOURS * 3600_000).toISOString();
