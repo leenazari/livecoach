@@ -7,10 +7,12 @@ import { requireInterviewerOwner, interviewerOwnerError } from "@/lib/interviewe
 import { interviewerFieldError } from "@/lib/interviewer/field-error";
 import { llmUsd, loadCostRates, recordCostEvent } from "@/lib/interviewer/cost-store";
 import {
+  choosePages,
   htmlToText,
   isBlockedAddress,
   pickInternalLinks,
   robotsAllows,
+  sitemapLocs,
 } from "@/lib/interviewer/website-pages";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -54,7 +56,7 @@ async function readPage(target: URL, timeoutMs: number, hops = 0): Promise<{ url
   }
   if (!response.ok) return null;
   const type = response.headers.get("content-type") || "";
-  if (type && !type.includes("html") && !type.includes("text")) return null;
+  if (type && !/html|text|xml/i.test(type)) return null;
   return { url: target.toString(), html: await response.text() };
 }
 
@@ -181,17 +183,29 @@ export async function POST(req: Request) {
     const scrape = async (): Promise<ImportResult> => {
     const home = await readPage(pageUrl, 8000);
     if (!home) throw new Error("empty_page");
-    const links = pickInternalLinks(home.html, pageUrl).filter((link) => {
+    const sitemapPages = ["/sitemap.xml", "/sitemap_index.xml"].map((path) => new URL(path, pageUrl.origin));
+    const sitemapLinks: string[] = [];
+    for (const sitemapUrl of sitemapPages) {
+      try {
+        const sitemap = await readPage(sitemapUrl, 8000);
+        if (sitemap) sitemapLinks.push(...sitemapLocs(sitemap.html, pageUrl));
+      } catch { /* a missing sitemap is normal */ }
+    }
+    const links = choosePages(
+      [home.url, ...sitemapLinks, ...pickInternalLinks(home.html, pageUrl)],
+      pageUrl,
+      25,
+    ).filter((link) => {
       try { return allowed(new URL(link).pathname); } catch { return false; }
     });
-    const pages = [{ url: home.url, text: htmlToText(home.html) }];
+    const pages: Array<{ url: string; text: string }> = [];
     for (const link of links) {
-      if (pages.length >= 10) break;
+      if (pages.length >= 25) break;
       try {
-        const page = await readPage(new URL(link), 8000);
+        const page = link === home.url ? home : await readPage(new URL(link), 8000);
         if (!page) continue;
         const text = htmlToText(page.html);
-        if (text) pages.push({ url: page.url, text });
+        if (text) pages.push({ url: page.url, text: text.slice(0, 2500) });
       } catch { /* skip a slow or blocked page */ }
     }
     const drafted = await draftNotes(pages);

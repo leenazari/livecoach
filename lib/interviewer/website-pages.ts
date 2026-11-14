@@ -1,4 +1,18 @@
-const LINK_HINT = /pricing|prices|services|service|about|faq|faqs|contact|product/i;
+const LINK_HINT = /pricing|prices|services|service|about|faq|faqs|contact|product|kiosk|pos|hardware|hospitality|solution|industr|demo|book|plan|feature|menu|order/i;
+
+const PAGE_SCORE: Array<[RegExp, number]> = [
+  [/kiosk/, 100],
+  [/pos|point-of-sale/, 90],
+  [/pric|plan/, 80],
+  [/product|hardware|hospitality/, 70],
+  [/feature|solution|order|menu/, 50],
+  [/about|contact|faq|demo|book/, 30],
+];
+
+export function pageScore(url: URL): number {
+  const path = `${url.pathname} ${url.href}`.toLowerCase();
+  return PAGE_SCORE.reduce((best, [pattern, score]) => pattern.test(path) ? Math.max(best, score) : best, 0);
+}
 
 export function isBlockedAddress(ip: string): boolean {
   const value = ip.toLowerCase();
@@ -54,7 +68,7 @@ export function htmlToText(html: string): string {
     .slice(0, 6000);
 }
 
-export function pickInternalLinks(html: string, pageUrl: URL): string[] {
+export function pickInternalLinks(html: string, pageUrl: URL, limit = 40): string[] {
   const found: string[] = [];
   for (const match of html.matchAll(/href\s*=\s*["']([^"'#]+)["']/gi)) {
     let next: URL;
@@ -62,9 +76,46 @@ export function pickInternalLinks(html: string, pageUrl: URL): string[] {
     if (next.host !== pageUrl.host || next.protocol !== pageUrl.protocol) continue;
     if (!LINK_HINT.test(`${next.pathname} ${next.href}`)) continue;
     next.hash = "";
+    next.search = "";
     const value = next.toString();
     if (!found.includes(value) && value !== pageUrl.toString()) found.push(value);
-    if (found.length >= 9) break;
+    if (found.length >= limit) break;
   }
   return found;
+}
+
+export function sitemapLocs(xml: string, pageUrl: URL): string[] {
+  const found: string[] = [];
+  for (const match of xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)) {
+    let next: URL;
+    try { next = new URL(match[1], pageUrl); } catch { continue; }
+    if (next.host !== pageUrl.host || next.protocol !== pageUrl.protocol) continue;
+    if (!/\.html?$|\/$/i.test(next.pathname) && next.pathname.split("/").pop()?.includes(".")) continue;
+    next.hash = "";
+    next.search = "";
+    const value = next.toString();
+    if (!found.includes(value)) found.push(value);
+  }
+  return found;
+}
+
+export function choosePages(urls: string[], home: URL, limit = 25): string[] {
+  const unique = new Map<string, URL>();
+  for (const value of urls) {
+    let next: URL;
+    try { next = new URL(value, home); } catch { continue; }
+    if (next.host !== home.host || next.protocol !== home.protocol) continue;
+    next.hash = "";
+    next.search = "";
+    unique.set(next.toString(), next);
+  }
+  const homeKey = home.toString().replace(/\/$/, "");
+  return [...unique.entries()]
+    .sort((left, right) => {
+      const leftHome = left[0].replace(/\/$/, "") === homeKey ? 1 : 0;
+      const rightHome = right[0].replace(/\/$/, "") === homeKey ? 1 : 0;
+      return rightHome - leftHome || pageScore(right[1]) - pageScore(left[1]);
+    })
+    .slice(0, limit)
+    .map(([value]) => value);
 }

@@ -9,14 +9,17 @@ export type InterviewerPromptInput = {
   maxMinutes: number | null;
   documents: Array<{ title: string; body: string }>;
   slides?: Array<{ number: number; title: string; oneLine: string; talkingPoints?: string | null; verbatim: string | null }>;
+  deckKnowledge?: string | null;
   websiteUrl?: string | null;
   opener?: string | null;
   quotesAllowed?: boolean;
   brochureSend?: boolean;
 };
 
-const DOCUMENT_CHAR_CAP = 4000;
-const DOCUMENT_TOTAL_CAP = 12000;
+const DOCUMENT_CHAR_CAP = 5000;
+const WEBSITE_CAP = 10000;
+const DECK_CAP = 8000;
+export const PROMPT_CHAR_LIMIT = 24000;
 
 function clip(value: string | null | undefined, max: number): string {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -28,19 +31,48 @@ export function campaignOpening(input: Pick<InterviewerPromptInput, "campaignNam
   return clip(sentence || input.campaignName, 180);
 }
 
+const SECTION_RANK = [/product|kiosk|pos/, /pric/, /summary|about/, /faq|objection/, /book|next/];
+
+function rankedDocuments(documents: InterviewerPromptInput["documents"]) {
+  return documents
+    .map((document, index) => ({ document, index }))
+    .sort((left, right) => {
+      const rank = (title: string) => {
+        const found = SECTION_RANK.findIndex((pattern) => pattern.test(title.toLowerCase()));
+        return found === -1 ? SECTION_RANK.length : found;
+      };
+      return rank(left.document.title) - rank(right.document.title) || left.index - right.index;
+    })
+    .map((item) => item.document);
+}
+
 function knowledgeBlock(documents: InterviewerPromptInput["documents"]): string {
-  let remaining = DOCUMENT_TOTAL_CAP;
+  let remaining = WEBSITE_CAP;
   const blocks: string[] = [];
-  for (const document of documents) {
+  const seen = new Set<string>();
+  for (const document of rankedDocuments(documents)) {
     if (remaining <= 0) break;
     const title = clip(document.title, 160);
+    const key = title.toLowerCase();
+    if (!title || seen.has(key)) continue;
+    seen.add(key);
     const body = String(document.body || "").trim().slice(0, Math.min(DOCUMENT_CHAR_CAP, remaining));
-    if (!title || !body) continue;
+    if (!body) continue;
     blocks.push(`## ${title}\n${body}`);
     remaining -= body.length;
   }
-  if (!blocks.length) return "No campaign notes have been supplied. Do not describe a product.";
+  if (!blocks.length) return "No website notes have been supplied.";
   return blocks.join("\n\n");
+}
+
+export function knowledgeManifest(prompt: string): { sections: string[]; characters: number; mentionsKiosk: boolean } {
+  const sections = [...prompt.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
+  if (/^DECK KNOWLEDGE/m.test(prompt)) sections.unshift("Deck");
+  return {
+    sections,
+    characters: prompt.length,
+    mentionsKiosk: /self-service kiosk/i.test(prompt),
+  };
 }
 
 export function buildInterviewerPrompt(input: InterviewerPromptInput): string {
@@ -53,7 +85,7 @@ export function buildInterviewerPrompt(input: InterviewerPromptInput): string {
   const extra = clip(input.promptOverride, 4000);
   let slideBudget = 7000;
   const slides = (input.slides || []).flatMap((slide) => {
-    const line = `Slide ${slide.number}. ${clip(slide.title, 80) || "Untitled"}. When to show: ${clip(slide.oneLine, 180) || "when the conversation reaches this point"}. Talking points: ${clip(slide.talkingPoints, 360) || "none saved"}.${slide.verbatim ? ` Verbatim line, only if you choose to say it: ${clip(slide.verbatim, 180)}` : ""}`;
+    const line = `${slide.number}. ${clip(slide.title, 60) || "No headline yet"}. When to show: ${clip(slide.oneLine, 180) || "when the conversation reaches this point"}. Talking points: ${clip(slide.talkingPoints, 360) || "none saved"}.${slide.verbatim ? ` Verbatim line, only if you choose to say it: ${clip(slide.verbatim, 180)}` : ""}`;
     if (line.length > slideBudget) return [];
     slideBudget -= line.length;
     return [line];
@@ -73,9 +105,13 @@ ${manner ? `Extra manner from the owner:\n${manner}` : ""}
 ${extra ? `\nCampaign instruction:\n${extra}` : ""}
 ${prospect ? `The person's name, if they are happy for you to use it, is ${prospect}.` : "You may not have their name yet. Ask once, naturally, if it would help."}
 
+DECK KNOWLEDGE
+Search this before you answer any product question. Each block is one slide: its headline, the facts on that page, and any price printed there.
+${clip(input.deckKnowledge, DECK_CAP) || "No deck knowledge has been saved yet."}
+
 WEBSITE KNOWLEDGE
 This is the base of the call. ${site ? `The source website is ${site}. Do not read the address aloud.` : "No website address was saved."}
-These facts override the playbook. Do not add a product, industry, price, customer, or result that is not written here. If they ask about something the notes do not cover, say so honestly and offer what you do know. Only if they have left the subject entirely, say warmly that you are here to talk about ${name}, then go back to it.
+These facts override the playbook. Do not add a product, industry, price, customer, or result that is not written here. Search the deck and these notes before you answer. If a fact is truly absent from both, say you will ask the team to confirm it, and offer to book that conversation. Never say that it is not in your notes or that you do not have the information. Only if they have left the subject entirely, say warmly that you are here to talk about ${name}, then go back to it.
 ${knowledgeBlock(input.documents)}
 
 ${slides ? `Slide index. Call show_slide with the number when the conversation moves to that point. Jump to any slide. Do not read a slide aloud. Paraphrase the talking points. Say a line word for word only when the index marks it verbatim.\n${slides}` : "No slides have been uploaded."}
@@ -84,7 +120,7 @@ ${INTERVIEWER_PLAYBOOK}
 
 RULES
 This is an inbound call. The greeting is one short line and then you stop. Do not add a company introduction, a pitch, or a tip before they answer. Do not say the mute tip yourself. It is added once, after their first answer.
-Speak British English. Be warm. One light acknowledgement at the start of some turns, not every turn, never stacked, never the same one twice in a row.
+Speak British English. Be warm, not gushing. Never say "Great choice", "Oh, I see you're interested", or "Oh I see you are interested". One light acknowledgement at the start of some turns, not every turn, never stacked, never the same one twice in a row.
 After you understand their situation, explain the business from the website knowledge: how it works, the benefit that matches what they said, and an example. Answer "tell me more" and "show me more" from that knowledge. Do not send them to a meeting to hear the explanation.
 After you explain something, offer two next topics that are actually in the knowledge, in your own words: would you like to hear about one or the other next? Never leave the turn with nowhere to go.
 Suggest a meeting only after clear interest, or when they ask. Ask once, softly. If they want more, keep going and do not ask again for several turns.

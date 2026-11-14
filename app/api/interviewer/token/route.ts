@@ -1,9 +1,11 @@
 import { buildVoiceAgentSettings, DEEPGRAM_VOICE_AGENT_URL } from "@/lib/interviewer/agent-settings";
+import { knowledgeManifest } from "@/lib/interviewer/prompt";
 import { interviewerRpc, loadCampaignDocuments } from "@/lib/interviewer/data";
 import { mintDeepgramGrant } from "@/lib/interviewer/deepgram-grant";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
 import { linkedSession, presentQueue, queueStatusForToken, type InterviewerQueueState } from "@/lib/interviewer/queue-view";
 import { supabaseService } from "@/lib/supabase";
+import { customerHeadline, headlineFromNotes } from "@/lib/interviewer/slide-headline";
 import { interviewerVoiceOrFallback } from "@/lib/interviewer/voices";
 
 export const runtime = "nodejs";
@@ -78,14 +80,15 @@ export async function POST(req: Request) {
       .maybeSingle();
     const extra = extras.error ? null : extras.data;
     const deck = purpose === "listen"
-      ? { data: [] as Array<{ id: string }> }
+      ? { data: [] as Array<{ id: string; outline?: string | null }> }
       : await supabaseService
           .from("interviewer_decks")
-          .select("id")
+          .select("id, outline")
           .eq("campaign_id", linked.campaign.id)
           .order("created_at", { ascending: false })
           .limit(1);
     const deckId = deck.data?.[0]?.id ? String(deck.data[0].id) : null;
+    const deckKnowledge = deck.data?.[0]?.outline ? String(deck.data[0].outline) : "";
     const slideResult = !deckId
       ? { data: [] as Array<{ slide_number: number; title: string; one_line: string; talking_points: string | null; verbatim: string | null; image_path: string | null }> }
       : await supabaseService
@@ -95,7 +98,11 @@ export async function POST(req: Request) {
           .order("slide_number", { ascending: true });
     const slides = (slideResult.data || []).map((slide) => ({
       number: Number(slide.slide_number),
-      title: String(slide.title || ""),
+      title: customerHeadline(String(slide.title || "")) || headlineFromNotes({
+        talkingPoints: slide.talking_points ? String(slide.talking_points) : "",
+        oneLine: String(slide.one_line || ""),
+        verbatim: slide.verbatim ? String(slide.verbatim) : null,
+      }),
       oneLine: String(slide.one_line || ""),
       talkingPoints: slide.talking_points ? String(slide.talking_points) : "",
       verbatim: slide.verbatim ? String(slide.verbatim) : null,
@@ -109,7 +116,11 @@ export async function POST(req: Request) {
       }
       return {
         number: Number(slide.slide_number),
-        title: String(slide.title || `Slide ${slide.slide_number}`),
+        title: customerHeadline(String(slide.title || "")) || headlineFromNotes({
+          talkingPoints: slide.talking_points ? String(slide.talking_points) : "",
+          oneLine: String(slide.one_line || ""),
+          verbatim: slide.verbatim ? String(slide.verbatim) : null,
+        }),
         slogan: String(slide.verbatim || slide.one_line || ""),
         url,
       };
@@ -130,7 +141,18 @@ export async function POST(req: Request) {
           opener: extra?.opener ? String(extra.opener) : null,
           quotesAllowed: extra?.quotes_allowed === true,
           brochureSend: extra?.brochure_send === true,
+          deckKnowledge,
         });
+    if (settings) {
+      const manifest = knowledgeManifest(String((settings as { agent?: { think?: { prompt?: string } } }).agent?.think?.prompt || ""));
+      console.info("interviewer knowledge sent", {
+        campaignId: linked.campaign.id,
+        deckId,
+        sections: manifest.sections,
+        characters: manifest.characters,
+        mentionsKiosk: manifest.mentionsKiosk,
+      });
+    }
 
     return interviewerJson({
       state: "ready",

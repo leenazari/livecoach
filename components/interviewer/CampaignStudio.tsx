@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { putSlideImages, renderPdfPages } from "@/components/interviewer/pdf-pages";
+import { customerHeadline } from "@/lib/interviewer/slide-headline";
 import styles from "@/components/interviewer/interviewa.module.css";
 import { KNOWLEDGE_CHAR_CAP, KNOWLEDGE_SECTIONS, SOURCE_WEBSITE_TITLE, emptyKnowledge, knowledgeFromDocuments, knowledgeLength, type KnowledgeSectionKey } from "@/lib/interviewer/knowledge";
 import { INTERVIEWER_VOICES, voiceLabel, type AuraVoice } from "@/lib/interviewer/voices";
@@ -267,6 +268,18 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
     setNotice(result.ok ? "Internal billing saved." : "Billing was not saved.");
   };
 
+  const rebuildDeck = async (deckId: string) => {
+    if (deckBusy) return;
+    setDeckJob({ phase: "notes", fileName: "deck", page: 0, total: 0, message: "Reading every slide into the call knowledge…" });
+    const result = await postJson("/api/crm/interviewer/deck", { action: "rebuild", deckId });
+    await reloadDecks();
+    if (!result.ok) {
+      setDeckJob({ phase: "error", fileName: "deck", page: 0, total: 0, message: result.data.fields?.file || "The deck knowledge was not rebuilt." });
+      return;
+    }
+    setDeckJob({ phase: "saved", fileName: "deck", page: Number(result.data.updated || 0), total: Number(result.data.updated || 0), message: `Deck knowledge rebuilt · ${result.data.updated || 0} slides · ${new Date().toLocaleString("en-GB")}` });
+  };
+
   const costFor = (id: string) => costs?.calls?.find((call) => call.sessionId === id);
   const knowledgeCount = knowledgeLength(sections);
   const deckBusy = Boolean(deckJob && deckJob.phase !== "saved" && deckJob.phase !== "error");
@@ -362,13 +375,21 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
                 ) : null}
               </div>
               {deck.imagesMissing ? <p className={styles.err}>Images missing, click Replace images</p> : null}
+              {deck.active ? (
+                <button type="button" className={styles.btnGhost} disabled={deckBusy} onClick={() => void rebuildDeck(deck.id)}>
+                  {deckJob?.phase === "notes" ? "Reading the deck…" : "Rebuild knowledge from deck"}
+                </button>
+              ) : null}
               <div className={styles.thumbs}>
-                {deck.slides.map((slide) => (
-                  <figure key={`${deck.id}-${slide.number}`}>
-                    {slide.url && !slide.missing ? <img src={slide.url} alt={slide.title || `Slide ${slide.number}`} /> : <div className={styles.thumb} />}
-                    <figcaption className={styles.note}>{slide.number}. {slide.title}</figcaption>
-                  </figure>
-                ))}
+                {deck.slides.map((slide) => {
+                  const headline = customerHeadline(slide.title);
+                  return (
+                    <figure key={`${deck.id}-${slide.number}`}>
+                      {slide.url && !slide.missing ? <img src={slide.url} alt={headline || `Slide ${slide.number}`} /> : <div className={styles.thumb} />}
+                      <figcaption className={styles.note}><span className={styles.pill}>{slide.number}</span> {headline || "Needs a headline"}</figcaption>
+                    </figure>
+                  );
+                })}
               </div>
             </div>
           ))}

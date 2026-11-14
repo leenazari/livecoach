@@ -5,8 +5,9 @@ import { NextResponse } from "next/server";
 import { requireInterviewerOwner, interviewerOwnerError } from "@/lib/interviewer/access";
 import { llmUsd, loadCostRates, recordCostEvent } from "@/lib/interviewer/cost-store";
 import { interviewerFieldError } from "@/lib/interviewer/field-error";
+import { clipHeadline, formatDeckKnowledge, headlineFromNotes, isGenericSlideTitle } from "@/lib/interviewer/slide-headline";
 import { isInternalCostLine } from "@/lib/interviewer/slide-notes";
-import { notesFromImages } from "@/lib/interviewer/slide-vision";
+import { headlinesFromContent, notesFromImages } from "@/lib/interviewer/slide-vision";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -182,7 +183,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ deckId, uploads }, { headers: noStore });
     }
 
-    if (action === "notes") {
+    if (action === "notes" || action === "rebuild") {
       const deckId = String(record.deckId || "");
       if (!UUID.test(deckId)) return interviewerFieldError("interviewer_deck_blocked", "Slide notes were not saved", { file: "Choose a deck." });
       const deck = await supabaseService.from("interviewer_decks").select("id, campaign_id").eq("id", deckId).eq("workspace_id", scope.workspaceId).maybeSingle();
@@ -223,6 +224,13 @@ export async function POST(req: Request) {
           stats: note.stats,
         }).eq("id", row.id);
       }
+      const outline = formatDeckKnowledge(pitch.slides.map((slide) => ({
+        number: slide.number,
+        title: slide.title,
+        facts: slide.talkingPoints,
+        prices: slide.stats,
+      })));
+      await supabaseService.from("interviewer_decks").update({ outline }).eq("id", deckId);
       const warnings = [pitch.slides.map((slide) => slide.stats).join(" ")].filter((line) => isInternalCostLine(line));
       const rates = await loadCostRates();
       if (rates) {
@@ -235,6 +243,88 @@ export async function POST(req: Request) {
         });
       }
       return NextResponse.json({ updated: pitch.slides.length, missing, warnings }, { headers: noStore });
+    }
+
+    if (action === "rename") {
+      const deckId = String(record.deckId || "");
+      const slideNumber = Number(record.slideNumber);
+      const title = clipHeadline(String(record.title || ""));
+      if (!UUID.test(deckId) || !Number.isInteger(slideNumber)) {
+        return interviewerFieldError("interviewer_deck_blocked", "Headline was not saved", { file: "Choose a slide." });
+      }
+      if (!title || isGenericSlideTitle(title)) {
+        return interviewerFieldError("interviewer_deck_blocked", "Headline was not saved", { file: "Add a headline of up to 60 characters." });
+      }
+      if (isInternalCostLine(title)) {
+        return interviewerFieldError("interviewer_deck_blocked", "Headline was not saved", { file: "That headline mentions an internal cost." });
+      }
+      const updated = await supabaseService
+        .from("interviewer_slides")
+        .update({ title })
+        .eq("deck_id", deckId)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("slide_number", slideNumber)
+        .select("slide_number, title")
+        .maybeSingle();
+      if (updated.error) throw updated.error;
+      if (!updated.data) return interviewerFieldError("interviewer_deck_blocked", "Headline was not saved", { file: "That slide is not on your account." });
+      return NextResponse.json({ title: updated.data.title, slideNumber: updated.data.slide_number }, { headers: noStore });
+    }
+
+    if (action === "headlines") {
+      const deckId = String(record.deckId || "");
+      if (!UUID.test(deckId)) return interviewerFieldError("interviewer_deck_blocked", "Headlines were not written", { file: "Choose a deck." });
+      const deck = await supabaseService.from("interviewer_decks").select("id, title, campaign_id").eq("id", deckId).eq("workspace_id", scope.workspaceId).maybeSingle();
+      if (deck.error) throw deck.error;
+      if (!deck.data) return interviewerFieldError("interviewer_deck_blocked", "Headlines were not written", { file: "That deck is not on your account." });
+      const slides = await supabaseService
+        .from("interviewer_slides")
+        .select("id, slide_number, title, one_line, talking_points, verbatim, image_path")
+        .eq("deck_id", deckId)
+        .order("slide_number", { ascending: true });
+      if (slides.error) throw slides.error;
+      const generic = (slides.data || []).filter((slide) => isGenericSlideTitle(String(slide.title || ""), String(deck.data?.title || "")));
+      const written: Array<{ number: number; title: string }> = [];
+      const fromText = generic.flatMap((slide) => {
+        const text = [slide.talking_points, slide.one_line, slide.verbatim].filter(Boolean).join("\n").trim();
+        return text ? [{ number: slide.slide_number, text: text.slice(0, 1200), id: slide.id }] : [];
+      });
+      const modelTitles = await headlinesFromContent(fromText.map((slide) => ({ number: slide.number, text: slide.text })));
+      for (const slide of fromText) {
+        const title = modelTitles.get(slide.number) || headlineFromNotes({ talkingPoints: slide.text });
+        if (!title) continue;
+        await supabaseService.from("interviewer_slides").update({ title }).eq("id", slide.id);
+        written.push({ number: slide.number, title });
+      }
+      const unread = generic.filter((slide) => !fromText.some((item) => item.number === slide.slide_number));
+      const images = [];
+      for (const slide of unread) {
+        if (!slide.image_path) continue;
+        const file = await supabaseService.storage.from("interviewer-slides").download(slide.image_path);
+        if (file.error || !file.data) continue;
+        images.push({ number: slide.slide_number, id: slide.id, bytes: new Uint8Array(await file.data.arrayBuffer()), mime: mimeFor(slide.image_path) });
+      }
+      if (images.length) {
+        const pitch = await notesFromImages(images.map((image) => ({ number: image.number, bytes: image.bytes, mime: image.mime })));
+        for (const note of pitch.slides) {
+          const row = images.find((image) => image.number === note.number);
+          if (!row || !note.title) continue;
+          await supabaseService.from("interviewer_slides").update({
+            title: note.title,
+            one_line: note.oneLine,
+            talking_points: note.talkingPoints.join("\n"),
+            verbatim: note.verbatim,
+          }).eq("id", row.id);
+          written.push({ number: note.number, title: note.title });
+        }
+      }
+      const skipped = generic.length - written.length;
+      return NextResponse.json({
+        updated: written.length,
+        skipped,
+        headlines: written,
+        note: skipped ? "Some slides had no text or image to read." : "",
+      }, { headers: noStore });
     }
 
     return interviewerFieldError("interviewer_deck_blocked", "Deck was not saved", { file: "Choose a PDF. The pages are rendered in the browser." });

@@ -26,7 +26,8 @@ function loadTs(file) {
   return module.exports;
 }
 
-const { buildInterviewerPrompt, campaignOpening, interviewerGreeting } = loadTs(new URL("../lib/interviewer/prompt.ts", import.meta.url).pathname);
+const { buildInterviewerPrompt, campaignOpening, interviewerGreeting, knowledgeManifest } = loadTs(new URL("../lib/interviewer/prompt.ts", import.meta.url).pathname);
+const { choosePages, pickInternalLinks, sitemapLocs } = loadTs(new URL("../lib/interviewer/website-pages.ts", import.meta.url).pathname);
 const { INTERVIEWER_VOICES, FALLBACK_INTERVIEWER_VOICE } = loadTs(new URL("../lib/interviewer/voices.ts", import.meta.url).pathname);
 const { knowledgeTitleFromNote, validateCampaignFields } = loadTs(new URL("../lib/interviewer/form-fields.ts", import.meta.url).pathname);
 const { presentTranscript } = loadTs(new URL("../lib/interviewer/transcript-display.ts", import.meta.url).pathname);
@@ -98,6 +99,30 @@ if (cleanSlideText("More leads. Lower cost. Always on.\nOur cost per minute is h
   throw new Error("internal cost line was left in the slide notes");
 }
 if (!prompt.includes("Talking points:")) throw new Error("talking points missing from the prompt");
+const kioskPrompt = buildInterviewerPrompt({
+  campaignName: "Swoopos",
+  prospectName: "Lee",
+  personaOverride: null,
+  promptOverride: null,
+  maxMinutes: null,
+  documents: [{ title: "Products and services", body: "Self-service kiosks are one hundred and ninety nine pounds a month (£199)." }],
+  deckKnowledge: "9. Self-service kiosks in your brand\n- Self-service ordering\n- Price on the page: £199 a month",
+  slides: [{ number: 9, title: "Self-service kiosks in your brand", oneLine: "When they ask about kiosks", talkingPoints: "Branded self-service kiosks.", verbatim: null }],
+});
+if (!kioskPrompt.includes("Self-service kiosks in your brand")) throw new Error("deck kiosk knowledge missing from the prompt");
+if (!kioskPrompt.includes("£199")) throw new Error("kiosk price missing from the prompt");
+if (!/Never say that it is not in your notes/i.test(kioskPrompt)) throw new Error("missing-notes deflection was not banned");
+if (!/Great choice/i.test(kioskPrompt)) throw new Error("gushing line was not banned");
+const asked = knowledgeManifest(kioskPrompt);
+if (!asked.mentionsKiosk || !asked.sections.includes("Deck")) throw new Error("pre-call knowledge check missed the deck");
+const home = new URL("https://swoopos.com/");
+const crawled = choosePages([
+  "https://swoopos.com/",
+  ...sitemapLocs("<urlset><url><loc>https://swoopos.com/get-kiosk</loc></url><url><loc>https://other.example/no</loc></url></urlset>", home),
+  ...pickInternalLinks('<a href="/pos">POS</a><a href="https://swoopos.com/get-kiosk">Kiosk</a>', home),
+], home, 25);
+if (!crawled.some((url) => url.includes("/get-kiosk"))) throw new Error("kiosk page was not crawled");
+if (crawled.some((url) => url.includes("other.example"))) throw new Error("left the site");
 const greeting = interviewerGreeting({ campaignName: "Solar", prospectName: "Lee Nazari", personaOverride: null, promptOverride: null, maxMinutes: null, documents: notes, opener: "Welcome to the company. Let me tell you everything about our history and then a tip about muting." });
 if (greeting !== "Hi Lee, thanks for joining. What brings you here today?") throw new Error(`greeting was too long: ${greeting}`);
 if (/tip|mute|solar/i.test(greeting)) throw new Error("greeting included a pitch or a tip");

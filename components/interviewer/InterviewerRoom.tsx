@@ -236,8 +236,11 @@ export default function InterviewerRoom({
                           style={slide.number === call.slideNumber ? { background: "#EEF3FF", color: "#1447E6", fontWeight: 600 } : { color: "#101828" }}
                           onClick={() => call.chooseSlide(slide)}
                         >
-                          {slide.url ? <img src={slide.url} alt="" className="h-8 w-12 shrink-0 rounded object-contain bg-[#F6F7FA]" /> : <span className="w-6 shrink-0 text-xs text-[#717680]">{slide.number}</span>}
-                          <span className="line-clamp-2">{slide.title}</span>
+                          {slide.url ? <img src={slide.url} alt="" className="h-8 w-12 shrink-0 rounded object-contain bg-[#F6F7FA]" /> : null}
+                          <span className="flex min-w-0 flex-col">
+                            <span className="line-clamp-2">{slide.title || "Untitled"}</span>
+                            <span className="text-[11px] text-[#717680]">Slide {slide.number}</span>
+                          </span>
                         </button>
                       </li>
                     ))}
