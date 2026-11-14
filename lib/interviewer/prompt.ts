@@ -59,7 +59,7 @@ function knowledgeBlock(documents: InterviewerPromptInput["documents"]): string 
     if (remaining <= 0) break;
     const title = clip(toSpokenPlain(document.title), 160);
     const key = title.toLowerCase();
-    if (!title || seen.has(key) || key === "qualifying questions") continue;
+    if (!title || seen.has(key) || key === "qualifying questions" || key === "public calls") continue;
     seen.add(key);
     const body = toSpokenPlain(document.body).slice(0, Math.min(DOCUMENT_CHAR_CAP, remaining));
     if (!body) continue;

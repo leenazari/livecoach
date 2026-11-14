@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { interviewerOwnerError, requireInterviewerOwner } from "@/lib/interviewer/access";
 import { interviewerFieldError } from "@/lib/interviewer/field-error";
 import { validateBillingFields, validateCampaignFields } from "@/lib/interviewer/form-fields";
+import { PUBLIC_CALLS_OFF, PUBLIC_CALLS_TITLE } from "@/lib/interviewer/public-campaign";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -40,6 +41,36 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => null);
     const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
     const campaignId = typeof record.id === "string" ? record.id : "";
+
+    if (record.publicCallsOnly === true) {
+      if (!campaignId) return interviewerFieldError("interviewer_public_calls_blocked", "Public calls were not changed", { campaignId: "Pick a campaign." });
+      const owned = await supabaseAdmin
+        .from("interviewer_campaigns")
+        .select("id, workspace_id")
+        .eq("id", campaignId)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("owner_id", scope.userId)
+        .maybeSingle();
+      if (owned.error) throw owned.error;
+      if (!owned.data) return interviewerFieldError("interviewer_public_calls_missing", "Public calls were not changed", { campaignId: "That campaign was not found on your account." });
+      const removed = await supabaseAdmin
+        .from("interviewer_documents")
+        .delete()
+        .eq("campaign_id", campaignId)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("title", PUBLIC_CALLS_TITLE);
+      if (removed.error) throw removed.error;
+      if (record.acceptingCalls === false) {
+        const inserted = await supabaseAdmin.from("interviewer_documents").insert({
+          workspace_id: scope.workspaceId,
+          campaign_id: campaignId,
+          title: PUBLIC_CALLS_TITLE,
+          body: PUBLIC_CALLS_OFF,
+        });
+        if (inserted.error) throw inserted.error;
+      }
+      return NextResponse.json({ saved: true, acceptingCalls: record.acceptingCalls !== false }, { headers: noStore });
+    }
 
     if (record.billingOnly === true) {
       const billing = validateBillingFields({

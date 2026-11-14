@@ -69,7 +69,7 @@ export function preferKnowledgeNotes<T extends { title: string; body: string; so
   const chosen = new Map<string, T>();
   for (const row of rows) {
     const key = row.title.trim().toLowerCase();
-    if (!key || key === SOURCE_WEBSITE_TITLE.toLowerCase()) continue;
+    if (!key || key === SOURCE_WEBSITE_TITLE.toLowerCase() || key === "public calls") continue;
     const current = chosen.get(key);
     if (!current) {
       chosen.set(key, row);

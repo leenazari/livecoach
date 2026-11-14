@@ -126,9 +126,46 @@ const { isPublicInterviewerJoin, isPublicInterviewerApi } = loadTs(new URL("../l
 const { previewProtectionQuery, appendShareQuery } = loadTs(new URL("../lib/interviewer/share-link.ts", import.meta.url).pathname);
 const joinToken = "95e82fde-d618-4c05-87eb-fcaa7d0d9722";
 if (!isPublicInterviewerJoin(`/i/${joinToken}`)) throw new Error("the demo call route was treated as private");
-if (isPublicInterviewerJoin("/crm/interviewer") || isPublicInterviewerJoin("/i") || isPublicInterviewerJoin(`/i/${joinToken}/extra`)) {
+if (isPublicInterviewerJoin("/crm/interviewer") || isPublicInterviewerJoin("/i") || isPublicInterviewerJoin(`/i/${joinToken}/extra`) || isPublicInterviewerJoin("/c")) {
   throw new Error("a private or incomplete path was treated as the demo call");
 }
+if (!isPublicInterviewerJoin(`/c/${joinToken}`)) throw new Error("the shareable campaign link was treated as private");
+const { micStartPlan } = loadTs(new URL("../lib/interviewer/mic-start.ts", import.meta.url).pathname);
+if (micStartPlan("granted") !== "auto" || micStartPlan("prompt") !== "button" || micStartPlan("unknown") !== "button" || micStartPlan("denied") !== "blocked") {
+  throw new Error("microphone start still has a separate allow step");
+}
+const publicCampaign = loadTs(new URL("../lib/interviewer/public-campaign.ts", import.meta.url).pathname);
+if (publicCampaign.publicCallMinutes(180) !== 30 || publicCampaign.publicCallMinutes(null) !== 30) {
+  throw new Error("a public call could run past 30 minutes");
+}
+if (publicCampaign.publicCallsOpen([]) !== true || publicCampaign.publicCallsOpen([{ title: "Public calls", body: "off" }]) !== false) {
+  throw new Error("campaign on/off was not read from the existing note");
+}
+const nameless = publicCampaign.validatePublicLead({ name: " ", email: "not-an-email" });
+if (!nameless.fields.prospectName || !nameless.fields.prospectEmail) throw new Error("public name and email were not required");
+const named = publicCampaign.validatePublicLead({ name: "Sharon", email: "Sharon@Example.com" });
+if (named.email !== "sharon@example.com" || Object.keys(named.fields).length) throw new Error("a valid public lead was rejected");
+if (!publicCampaign.honeypotTripped("http://spam") || publicCampaign.honeypotTripped("  ")) throw new Error("the honeypot check is wrong");
+publicCampaign.resetPublicJoinLimits();
+for (let attempt = 0; attempt < 5; attempt += 1) {
+  if (!publicCampaign.allowPublicJoin("ip:203.0.113.8", 5, 1000, 5000)) throw new Error("an allowed public start was blocked");
+}
+if (publicCampaign.allowPublicJoin("ip:203.0.113.8", 5, 1000, 5000)) throw new Error("the IP limit did not trip");
+if (publicCampaign.publicSummary("Adam", [{ title: "Business summary", body: "Adam answers after hours. Extra detail." }], "") !== "Adam answers after hours.") {
+  throw new Error("the landing summary was not the first note sentence");
+}
+if (publicCampaign.publicSummary("Adam", [{ title: "Public calls", body: "off" }], "Answers the phone.") !== "Answers the phone.") {
+  throw new Error("the on/off note was used as the public summary");
+}
+const quietPrompt = buildInterviewerPrompt({
+  campaignName: "Adam",
+  prospectName: "Sharon",
+  personaOverride: null,
+  promptOverride: null,
+  maxMinutes: 30,
+  documents: [{ title: "Public calls", body: "off" }, { title: "Business summary", body: "Adam answers the website." }],
+});
+if (/public calls/i.test(quietPrompt)) throw new Error("the agent was told the public on/off note");
 if (!isPublicInterviewerApi("/api/interviewer/token") || !isPublicInterviewerApi("/api/interviewer/slots/claim")) {
   throw new Error("the call APIs were treated as private");
 }

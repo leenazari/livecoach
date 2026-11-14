@@ -32,8 +32,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next({ request: { headers: forwardedHeaders } });
   }
 
-  // Anyone with /i/[token] can join that call. No LiveCoach login, and no
-  // workspace headers. The CRM stays behind the private lists below.
+  // Anyone with /i/[token] or /c/[campaign] can open that call. No LiveCoach
+  // login, and no workspace headers. The CRM stays behind the private lists below.
   const publicPath = request.nextUrl.pathname;
   if (isPublicInterviewerJoin(publicPath) || isPublicInterviewerApi(publicPath)) {
     const opened = NextResponse.next({ request: { headers: forwardedHeaders } });

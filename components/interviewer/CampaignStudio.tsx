@@ -8,6 +8,7 @@ import styles from "@/components/interviewer/interviewa.module.css";
 import { findFactClashes, mergeKnowledge, type FactClash, type ResolvedClash } from "@/lib/interviewer/fact-clash";
 import { KNOWLEDGE_CHAR_CAP, KNOWLEDGE_SECTIONS, SOURCE_WEBSITE_TITLE, emptyKnowledge, knowledgeFromDocuments, knowledgeLength, type KnowledgeSectionKey } from "@/lib/interviewer/knowledge";
 import { DEFAULT_QUALIFYING_QUESTIONS, QUALIFYING_TITLE } from "@/lib/interviewer/qualifying";
+import { PUBLIC_CALLS_TITLE, publicCallsOpen, publicCampaignPath } from "@/lib/interviewer/public-campaign";
 import { appendShareQuery } from "@/lib/interviewer/share-link";
 import { defaultOpener } from "@/lib/interviewer/salesTemplate";
 import { formatCallLength } from "@/lib/interviewer/recording-clock";
@@ -204,6 +205,8 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
   const [error, setError] = useState("");
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ sources: true });
   const [sellSaved, setSellSaved] = useState(false);
+  const [acceptingCalls, setAcceptingCalls] = useState(true);
+  const [shareCopied, setShareCopied] = useState(false);
   const [clashes, setClashes] = useState<OpenClash[]>([]);
   const [pendingBrochure, setPendingBrochure] = useState(emptyKnowledge());
   const [pendingWebsite, setPendingWebsite] = useState(emptyKnowledge());
@@ -266,6 +269,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
         setOpener(found.opener || defaultOpener(found.name || ""));
         const qualifyingNote = docs.find((doc: { title: string; body: string }) => doc.title === QUALIFYING_TITLE);
         setQualifying(qualifyingNote?.body || DEFAULT_QUALIFYING_QUESTIONS.join("\n"));
+        setAcceptingCalls(publicCallsOpen(docs.filter((doc: { title: string }) => doc.title === PUBLIC_CALLS_TITLE)));
         setRate(String(found.rate_per_minute ?? 0));
         setCurrency(found.currency || "GBP");
         setMargin(String(found.margin_percent ?? 0));
@@ -594,6 +598,48 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
       <p style={{ margin: "12px 0" }}><a className={styles.link} href="/crm/interviewer">All campaigns</a></p>
       {notice ? <p className={styles.note}>{notice}</p> : null}
       {error ? <p className={styles.err}>{error}</p> : null}
+
+      {campaignId ? (
+        <section className={styles.ready}>
+          <h2 className={styles.readyTitle}>Shareable campaign link</h2>
+          <p className={styles.note}>Anyone with this link can enter their name and email and start a call. No login. Personal test links below still work.</p>
+          <button type="button" className={styles.linkField} onClick={() => openLink(absoluteLink(publicCampaignPath(campaignId), shareQuery))}>
+            {absoluteLink(publicCampaignPath(campaignId), shareQuery)}
+          </button>
+          <div className={styles.linkActions}>
+            <button
+              type="button"
+              className={styles.btn}
+              onClick={() => {
+                void copyText(absoluteLink(publicCampaignPath(campaignId), shareQuery)).then(() => {
+                  setShareCopied(true);
+                  window.setTimeout(() => setShareCopied(false), 1500);
+                });
+              }}
+            >
+              {shareCopied ? "Copied" : "Copy link"}
+            </button>
+          </div>
+          {shareQuery ? <p className={styles.note}>This preview link includes Vercel’s access pass, so someone outside the team can open it.</p> : null}
+          <label className={styles.switch}>
+            <input
+              type="checkbox"
+              checked={acceptingCalls}
+              onChange={(event) => {
+                const next = event.target.checked;
+                setAcceptingCalls(next);
+                void postJson("/api/crm/interviewer/campaigns", { id: campaignId, publicCallsOnly: true, acceptingCalls: next }).then((result) => {
+                  if (!result.ok) {
+                    setAcceptingCalls(!next);
+                    setError(result.data.reason || "Public calls were not changed. The previous setting is still in place.");
+                  }
+                });
+              }}
+            />
+            <span>Public calls on<span className={styles.note}>Turn this off to keep the page up and stop new calls. Calls already started are not ended.</span></span>
+          </label>
+        </section>
+      ) : null}
 
       <div className={styles.stack}>
         <section className={styles.card}>
