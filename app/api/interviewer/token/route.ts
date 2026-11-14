@@ -10,7 +10,7 @@ import { featureBullets } from "@/lib/interviewer/call-close";
 import { QUALIFYING_TITLE, qualifyingQuestionsFrom } from "@/lib/interviewer/qualifying";
 import { customerHeadline, formatDeckKnowledge, headlineFromNotes } from "@/lib/interviewer/slide-headline";
 import { keywordsFor } from "@/lib/interviewer/slide-match";
-import { interviewerThinkUrl } from "@/lib/interviewer/think-endpoint";
+import { customThinkUrl } from "@/lib/interviewer/think-endpoint";
 import { interviewerVoiceOrFallback } from "@/lib/interviewer/voices";
 
 export const runtime = "nodejs";
@@ -25,11 +25,14 @@ async function queued(token: string, sessionId: string, campaignId: string) {
 }
 
 function thinkEndpoint(request: Request, callEndsAtMs: number): string | null {
-  const key = (process.env.OPENAI_API_KEY || "").trim();
   const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || "";
-  if (!key || !host || /^(localhost|127\.0\.0\.1)(:|$)/.test(host)) return null;
   const proto = request.headers.get("x-forwarded-proto") || "https";
-  return interviewerThinkUrl(`${proto}://${host}`, callEndsAtMs + 60_000, key);
+  return customThinkUrl({
+    origin: host ? `${proto}://${host}` : null,
+    expiresAt: callEndsAtMs + 60_000,
+    openAiKey: process.env.OPENAI_API_KEY || "",
+    bypassSecret: process.env.VERCEL_AUTOMATION_BYPASS_SECRET || "",
+  });
 }
 
 export async function POST(req: Request) {

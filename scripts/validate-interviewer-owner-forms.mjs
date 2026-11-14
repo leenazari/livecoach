@@ -218,5 +218,12 @@ const service = serviceFromTranscript("We queue at the counter and send paper ti
 if (!/counter/.test(service.howTheyServe)) throw new Error("service picture missing");
 if (!service.improvements.some((item) => /kitchen display/i.test(item.suggestion))) throw new Error("paper tickets were not mapped");
 if (!service.improvements.some((item) => /kiosk/i.test(item.suggestion))) throw new Error("queues were not mapped");
+const { customThinkUrl } = loadTs(new URL("../lib/interviewer/think-endpoint.ts", import.meta.url).pathname);
+const soon = Date.now() + 60_000;
+if (customThinkUrl({ origin: "https://preview.vercel.app", expiresAt: soon, openAiKey: "sk-preview", bypassSecret: "" }) !== null) {
+  throw new Error("a preview without the bypass secret still used the filter");
+}
+const filtered = customThinkUrl({ origin: "https://preview.vercel.app", expiresAt: soon, openAiKey: "sk-preview", bypassSecret: "bypass" });
+if (!filtered || !filtered.includes("/api/interviewer/think")) throw new Error("the bypass secret did not enable the filter");
 
 console.log("interviewer owner and prompt checks passed");
