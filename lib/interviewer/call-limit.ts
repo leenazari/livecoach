@@ -23,10 +23,12 @@ export function formatCountdown(seconds: number): string {
   return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
+export const HUMAN_TEAM_OFFER = "Before you go, would it help to book a call with one of our human team? They can walk you through the real system and get you set up with a trial on the call.";
+
 export function twoMinuteLine(booked: boolean): string {
   return booked
     ? "I only have around two minutes left on this call. Is there anything important you'd still like to know?"
-    : "I only have around two minutes left on this call. Is there anything important you'd still like to know, or shall I book you in for a demo?";
+    : `I only have around two minutes left on this call. Is there anything important you'd still like to know? ${HUMAN_TEAM_OFFER}`;
 }
 
 export const TIME_LIMIT_GOODBYE = "That's the end of our time. Thank you for talking with me. Take care.";

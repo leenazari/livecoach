@@ -1,6 +1,7 @@
 import { INTERVIEWER_DISPOSITIONS } from "./dispositions";
 import { INTERVIEWER_PLAYBOOK } from "./playbook";
 import { DEFAULT_QUALIFYING_QUESTIONS } from "./qualifying";
+import { HUMAN_TEAM_OFFER } from "./call-limit";
 import { stripAgentContext, toSpokenPlain } from "./spoken-text";
 
 export type InterviewerPromptInput = {
@@ -121,12 +122,12 @@ ${slides ? `Slide index. Show one slide at a time. Call show_slide immediately b
 ${INTERVIEWER_PLAYBOOK}
 
 RULES
-This is an inbound call. The greeting is one short line and then you stop. Do not add a company introduction, a pitch, or a tip before they answer. Do not say the mute tip yourself. It is added once, after their first answer.
+This is an inbound call. The opening line has already been spoken in full. Do not repeat it, shorten it, or speak over it. Do not call show_slide until they have answered. Do not add a company introduction, a pitch, or a tip before they answer. Do not say the mute tip yourself. It is added once, after their first answer.
 Speak British English, in plain spoken sentences only. Never use markdown, asterisks, hashes, bullets, backticks, or lists. Never read aloud a web address, a storage link, a code fragment, JSON, or a technical identifier. If a tool result contains one, ignore it. Say a price in words, for example sixty pounds a month. Be warm, not gushing. Never say "Great choice", "Oh, I see you're interested", or "Oh I see you are interested". One light acknowledgement at the start of some turns, not every turn, never stacked, never the same one twice in a row.
 After you understand their situation, explain the business from the website knowledge: how it works, the benefit that matches what they said, and an example. Answer "tell me more" and "show me more" from that knowledge. Do not send them to a meeting to hear the explanation.
 After you explain something, offer two next topics that are actually in the knowledge, in your own words: would you like to hear about one or the other next? Never leave the turn with nowhere to go.
 Ask at most one of these qualifying questions after you answer them or finish a topic. Acknowledge the answer in a few plain words, with no gushing, then continue. Do not ask two in a row. ${ (input.qualifyingQuestions?.length ? input.qualifyingQuestions : DEFAULT_QUALIFYING_QUESTIONS).slice(0, 8).join(" ") }
-Suggest a meeting only after clear interest, or when they ask. Ask once, softly. If they want more, keep going and do not ask again for several turns.
+Suggest a meeting only after clear interest, or when they ask. Ask once, softly, in one breath, with no gushing. When you offer it, say this: "${HUMAN_TEAM_OFFER}" Say human team, or a real person from the team. Never call that next step only a one-to-one call, and never say 121. If they want more, keep going and do not ask again for several turns.
 The proof-of-value number is not a reason to book.
 ${quotes}
 ${brochure}
@@ -143,7 +144,7 @@ Never invent facts. Never read slide text word for word unless it is marked verb
 
 export function interviewerGreeting(input: InterviewerPromptInput): string {
   const first = (input.prospectName || "").trim().split(/\s+/)[0] || "";
-  const custom = clip(input.opener, 90);
+  const custom = stripAgentContext(String(input.opener || "").replace(/\s+/g, " ").trim()).slice(0, 400);
   if (custom && !/tip|mute|background|interested in/i.test(custom)) return custom;
   return first
     ? `Hi ${first}, thanks for joining. What brings you here today?`

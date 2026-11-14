@@ -105,7 +105,9 @@ if (cleanSlideText("More leads. Lower cost. Always on.\nOur cost per minute is h
 if (!prompt.includes("Talking points:")) throw new Error("talking points missing from the prompt");
 if (effectiveCallMinutes(null) !== 30 || effectiveCallMinutes(180) !== 30 || effectiveCallMinutes(12) !== 12) throw new Error("call limit was not capped at 30");
 if (!twoMinuteLine(false).startsWith("I only have around two minutes")) throw new Error("warning line is not first person");
-if (twoMinuteLine(true).includes("demo")) throw new Error("booked warning still offered a demo");
+if (!twoMinuteLine(false).includes("human team")) throw new Error("warning did not offer the human team");
+if (/one-to-one|\b121\b/i.test(twoMinuteLine(false))) throw new Error("warning used a one-to-one label");
+if (twoMinuteLine(true).includes("demo") || twoMinuteLine(true).includes("human team")) throw new Error("booked warning still offered a call");
 if (formatCountdown(125) !== "2:05") throw new Error("countdown format drifted");
 const ends = Date.now() + 90_000;
 if (remainingCallSeconds(ends, Date.now()) < 80) throw new Error("remaining seconds drifted");
@@ -175,5 +177,22 @@ if (!scriptRoutes(bundle).includes("/get-kiosk")) throw new Error("script route 
 const greeting = interviewerGreeting({ campaignName: "Solar", prospectName: "Lee Nazari", personaOverride: null, promptOverride: null, maxMinutes: null, documents: notes, opener: "Welcome to the company. Let me tell you everything about our history and then a tip about muting." });
 if (greeting !== "Hi Lee, thanks for joining. What brings you here today?") throw new Error(`greeting was too long: ${greeting}`);
 if (/tip|mute|solar/i.test(greeting)) throw new Error("greeting included a pitch or a tip");
+const swooposOpener = "Thanks for joining this interactive demo. i can jump to anything you like in the brochure. first, tell me a bit about what type of business you run.";
+if (stripAgentContext(swooposOpener) !== swooposOpener) throw new Error("sanitizer trimmed the Swoopos opener");
+const fullOpener = interviewerGreeting({ campaignName: "Swoopos EPOS system", prospectName: "Lee", personaOverride: null, promptOverride: null, maxMinutes: 30, documents: notes, opener: swooposOpener });
+if (fullOpener !== swooposOpener) throw new Error(`opener was clipped: ${fullOpener}`);
+const { slideClickDecision, slideClickSpeech, sendSlideClickFirst } = loadTs(new URL("../lib/interviewer/slide-click.ts", import.meta.url).pathname);
+if (slideClickDecision({ number: 4, current: 4, covered: true, lastNumber: 0, lastAt: 0, now: 5000 }) !== "ignore-current") throw new Error("active slide was not ignored");
+if (slideClickDecision({ number: 3, current: 4, covered: true, lastNumber: 3, lastAt: 4000, now: 5000 }) !== "ignore-repeat") throw new Error("repeat click was not ignored");
+if (slideClickDecision({ number: 3, current: 4, covered: true, lastNumber: 2, lastAt: 1000, now: 5000 }) !== "ask") throw new Error("covered slide did not ask");
+if (!slideClickSpeech("Kiosks", ["Orders go to the kitchen", "Your brand on screen"], false).includes("Orders go to the kitchen")) throw new Error("slide facts missing");
+const order = [];
+const started = performance.now();
+let sentAt = 0;
+sendSlideClickFirst(() => { sentAt = performance.now(); order.push("send"); }, () => order.push("after"));
+const sendMs = sentAt - started;
+if (sendMs > 20) throw new Error(`slide click waited ${sendMs}ms before sending`);
+if (order.join(",") !== "send,after") throw new Error("slide click logged before it sent");
+console.log(`slide click send ${sendMs.toFixed(2)}ms before image and log`);
 
 console.log("interviewer owner and prompt checks passed");

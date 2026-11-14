@@ -36,14 +36,11 @@ export default function InterviewerRoom({
   const [slots, setSlots] = useState<Slot[]>([]);
   const [bookingNote, setBookingNote] = useState("");
   const [bookingSaved, setBookingSaved] = useState<boolean | null>(null);
-  const [ownerDebug, setOwnerDebug] = useState(false);
-  const [canDebug, setCanDebug] = useState(false);
   const [slideBroken, setSlideBroken] = useState(false);
-  const [listOpen, setListOpen] = useState(false);
+  const [talkOpen, setTalkOpen] = useState(true);
 
   const meterRef = useRef<number | ReturnType<typeof setInterval> | null>(null);
   const showSlideImage = Boolean(call.slideUrl) && !slideBroken;
-  const showSlideCard = !showSlideImage && Boolean(call.slideLabel || call.slideSlogan);
 
   useEffect(() => {
     setSlideBroken(false);
@@ -69,20 +66,6 @@ export default function InterviewerRoom({
     if (call.phase === "waiting") void audio.play().catch(() => undefined);
     else audio.pause();
   }, [call.phase, holdSrc]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/crm/interviewer/campaigns", { credentials: "same-origin", cache: "no-store" })
-      .then((response) => {
-        if (!cancelled) setCanDebug(response.ok);
-      })
-      .catch(() => {
-        if (!cancelled) setCanDebug(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const enableMic = async () => {
     setMicError("");
@@ -135,15 +118,109 @@ export default function InterviewerRoom({
     if (data.booked) setSlots([]);
   };
 
+  if (call.phase === "live") {
+    const points = (call.slideIndex.find((item) => item.number === call.slideNumber)?.points || []).slice(0, 5);
+    return (
+      <main className={styles.callScreen}>
+        <header className={styles.callTop}>
+          <p>Private conversation · {campaignName}</p>
+          <button type="button" className={styles.transcriptToggle} onClick={() => setTalkOpen((open) => !open)}>
+            {talkOpen ? "Hide transcript" : "Transcript"}
+          </button>
+        </header>
+        <section className={talkOpen ? styles.callStage : styles.callStageWide}>
+          {call.slideIndex.length ? (
+            <ol className={styles.slideList}>
+              {call.slideIndex.map((slide) => {
+                const title = slide.title || "Untitled";
+                return (
+                  <li key={slide.number}>
+                    <button
+                      type="button"
+                      className={`${styles.slideRow} ${slide.number === call.slideNumber ? styles.slideRowActive : ""}`}
+                      title={title}
+                      onClick={() => call.chooseSlide(slide)}
+                    >
+                      {slide.url ? <img src={slide.url} alt="" className={styles.slideThumb} /> : <span className={styles.slideThumb} aria-hidden="true" />}
+                      <span className={styles.slideCopy}>
+                        <span className={styles.slideHeadline}>{title}</span>
+                        <span className={styles.slideNumber}>Slide {slide.number}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : <div />}
+          <div className={styles.slideColumn}>
+            <div className={styles.slideStage}>
+              {showSlideImage ? (
+                <img src={call.slideUrl} alt={call.slideLabel || "Current slide"} onError={() => setSlideBroken(true)} />
+              ) : (
+                <div className={styles.slideCard}>
+                  <p className={styles.slideKicker}>{call.slideLabel || "Slide"}</p>
+                  {call.slideSlogan ? <p className={styles.slideSlogan}>{call.slideSlogan}</p> : null}
+                </div>
+              )}
+            </div>
+            {points.length ? (
+              <aside className={styles.featurePanel}>
+                <p className={styles.slideKicker}>Key features</p>
+                <ul>
+                  {points.map((point) => <li key={point}>{point}</li>)}
+                </ul>
+              </aside>
+            ) : null}
+          </div>
+          {talkOpen ? (
+            <div className={`${styles.callTalk} rounded-3xl border border-edge bg-panel/90 p-3`}>
+              <ul className="max-h-full space-y-3 overflow-auto">
+                {call.interim ? <li className="text-sm leading-6 text-muted">You, still speaking: {call.interim}</li> : null}
+                {presentTranscript(call.captions).map((line) => (
+                  <li key={line.id} className="text-sm leading-6 text-bone">
+                    <span className="mr-2 font-mono text-[0.65rem] uppercase tracking-wider text-amber">
+                      {line.speaker === "agent" ? "Interviewa" : "You"}
+                    </span>
+                    {line.text}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+        <footer className={styles.controlBar}>
+          <p className={styles.countdown} aria-live="polite">
+            {call.remainingSeconds == null ? "" : `${formatCountdown(call.remainingSeconds)} left`}
+          </p>
+          {call.endAsk ? (
+            <div className={styles.endAsk}>
+              <p>Are you sure you want to end the call?</p>
+              <button type="button" className={styles.endSolid} onClick={call.confirmHangUp}>End call</button>
+              <button type="button" className={styles.btnGhost} onClick={call.cancelHangUp}>Keep talking</button>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={call.muted ? styles.muteOff : styles.muteOn}
+                aria-pressed={call.muted}
+                aria-label={call.muted ? "Muted. Unmute microphone" : "Mute microphone"}
+                onClick={() => call.setMuted(!call.muted)}
+              >
+                {call.muted ? "Muted" : "Mute"}
+              </button>
+              <button type="button" className={styles.endSolid} onClick={call.hangUp}>End conversation</button>
+            </>
+          )}
+        </footer>
+      </main>
+    );
+  }
+
   return (
-    <main className={`relative z-10 mx-auto flex min-h-screen w-full flex-col px-5 py-10 ${call.phase === "live" ? "max-w-6xl justify-start" : "max-w-xl justify-center"}`}>
+    <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-xl flex-col justify-center px-5 py-10">
       <div className="flex items-start justify-between gap-4">
         <p className="font-mono text-[0.68rem] uppercase tracking-[0.22em] text-amber">Private conversation</p>
-        {call.phase === "live" && call.remainingSeconds != null ? (
-          <p className={`font-mono text-sm ${call.remainingSeconds <= 30 ? "text-rust" : call.remainingSeconds <= 120 ? "text-amber" : "text-muted"}`} aria-live="polite">
-            {formatCountdown(call.remainingSeconds)} left
-          </p>
-        ) : null}
       </div>
       <h1 className="mt-3 font-display text-4xl text-bone">{campaignName}</h1>
       <p className="mt-3 text-sm leading-6 text-muted">
@@ -226,145 +303,20 @@ export default function InterviewerRoom({
         </section>
       ) : null}
 
-      {call.phase === "live" ? (
-        <section className={call.slideIndex.length ? styles.callStage : styles.callStagePlain}>
-          {call.slideIndex.length ? (
-            <button type="button" className={styles.slidesToggle} onClick={() => setListOpen((open) => !open)}>
-              {listOpen ? "Hide slides" : "Slides"}
-            </button>
-          ) : null}
-          {call.slideIndex.length ? (
-            <ol className={`${styles.slideList} ${listOpen ? styles.slideListOpen : ""}`}>
-              {call.slideIndex.map((slide) => {
-                const title = slide.title || "Untitled";
-                return (
-                  <li key={slide.number}>
-                    <button
-                      type="button"
-                      className={`${styles.slideRow} ${slide.number === call.slideNumber ? styles.slideRowActive : ""}`}
-                      title={title}
-                      onClick={() => call.chooseSlide(slide)}
-                    >
-                      {slide.url ? <img src={slide.url} alt="" className={styles.slideThumb} /> : <span className={styles.slideThumb} aria-hidden="true" />}
-                      <span className={styles.slideCopy}>
-                        <span className={styles.slideHeadline}>{title}</span>
-                        <span className={styles.slideNumber}>Slide {slide.number}</span>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
-          ) : null}
-          {showSlideImage || showSlideCard ? (
-            <div className={styles.slideColumn}>
-            <div className={styles.slideStage}>
-              {showSlideImage ? (
-                <img src={call.slideUrl} alt={call.slideLabel || "Current slide"} onError={() => setSlideBroken(true)} />
-              ) : (
-                <div className={styles.slideCard}>
-                  <p className={styles.slideKicker}>{call.slideLabel || "Slide"}</p>
-                  {call.slideSlogan ? <p className={styles.slideSlogan}>{call.slideSlogan}</p> : null}
-                </div>
-              )}
-            </div>
-            {(call.slideIndex.find((item) => item.number === call.slideNumber)?.points || []).length ? (
-              <aside className={styles.featurePanel}>
-                <p className={styles.slideKicker}>Key features</p>
-                <ul>
-                  {(call.slideIndex.find((item) => item.number === call.slideNumber)?.points || []).slice(0, 5).map((point) => <li key={point}>{point}</li>)}
-                </ul>
-              </aside>
-            ) : null}
-            <button
-              type="button"
-              className={call.muted ? styles.muteOff : styles.muteOn}
-              aria-pressed={call.muted}
-              aria-label={call.muted ? "Muted. Unmute microphone" : "Mute microphone"}
-              onClick={() => call.setMuted(!call.muted)}
-            >
-              {call.muted ? (
-                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.8-1" />
-                  <path d="M5 10v2a7 7 0 0 0 12 4.9M12 19v3M8 22h8M4 4l16 16" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect x="9" y="3" width="6" height="11" rx="3" />
-                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" />
-                </svg>
-              )}
-              {call.muted ? "Muted" : "Mute"}
-            </button>
-            </div>
-          ) : null}
-          <div className={`${styles.callTalk} rounded-3xl border border-edge bg-panel/90 p-4`}>
-          <h2 className="font-display text-2xl text-bone">You are connected</h2>
-          <p className="mt-2 text-sm text-muted">Speak normally. You can interrupt Interviewa.</p>
-          <ul className="mt-5 max-h-80 space-y-3 overflow-auto">
-            {call.interim ? (
-              <li className="text-sm leading-6 text-muted">You, still speaking: {call.interim}</li>
-            ) : null}
-            {presentTranscript(call.captions).map((line) => (
-              <li key={line.id} className="text-sm leading-6 text-bone">
-                <span className="mr-2 font-mono text-[0.65rem] uppercase tracking-wider text-amber">
-                  {line.speaker === "agent" ? "Interviewa" : "You"}
-                </span>
-                {line.text}
-              </li>
-            ))}
-          </ul>
-          {canDebug ? (
-            <div className="mt-4">
-              <button
-                type="button"
-                className="text-xs text-muted underline"
-                onClick={() => setOwnerDebug((current) => !current)}
-              >
-                {ownerDebug ? "Hide transcript debug" : "Show transcript debug"}
-              </button>
-              {ownerDebug ? (
-                <div className="mt-2 rounded-xl border border-edge bg-ink/40 p-3 text-xs leading-5 text-muted">
-                  <p>Interim, replaced in place: {call.interim || "—"}</p>
-                  <p className="mt-2">Saved lines: {call.captions.length}. Echoes dropped: {call.echoes.length}.</p>
-                  {call.echoes.map((echo, index) => (
-                    <p key={`${index}-${echo.slice(0, 24)}`} className="mt-1">Echo not saved: {echo}</p>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {call.endAsk ? (
-            <div className={styles.endAsk}>
-              <p>Are you sure you want to end the call?</p>
-              <div className={styles.linkActions}>
-                <button type="button" className={styles.btn} onClick={call.confirmHangUp}>End call</button>
-                <button type="button" className={styles.btnGhost} onClick={call.cancelHangUp}>Keep talking</button>
-              </div>
-            </div>
-          ) : (
-            <button type="button" className="mt-6 rounded-full bg-rust px-4 py-2 text-sm text-ink" onClick={call.hangUp}>
-              End conversation
-            </button>
-          )}
-          </div>
-        </section>
-      ) : null}
-
       {call.phase === "ended" ? (
-        <section className="mt-8 rounded-3xl border border-edge bg-panel/90 p-6">
-          <h2 className="font-display text-2xl text-bone">Thank you</h2>
-          <p className="mt-2 text-sm leading-6 text-bone">{call.recap?.summary || "Thanks for the conversation."}</p>
+        <section className={`${styles.lightCard} mt-8`}>
+          <h2 className={styles.cardTitle}>Thank you</h2>
+          <p className="mt-2 text-sm leading-6">{call.recap?.summary || "Thanks for the conversation."}</p>
           {call.recap?.topics?.length ? (
-            <ul className="mt-3 list-disc pl-5 text-sm text-muted">{call.recap.topics.map((topic) => <li key={topic}>{topic}</li>)}</ul>
+            <ul className={styles.dotList}>{call.recap.topics.map((topic) => <li key={topic}>{topic}</li>)}</ul>
           ) : null}
-          {call.recap?.nextStep ? <p className="mt-3 text-sm text-bone">{call.recap.nextStep}</p> : null}
-          <p className="mt-2 text-sm leading-6 text-muted">
+          {call.recap?.nextStep ? <p className="mt-3 text-sm">{call.recap.nextStep}</p> : null}
+          <p className={`${styles.note} mt-2`}>
             {call.billableSeconds === null
               ? "The conversation is closed."
               : `Connected time recorded: ${call.billableSeconds} seconds. Waiting time was not included.`}
           </p>
-          {bookingNote ? <p className="mt-3 text-sm text-bone">{bookingNote}</p> : null}
+          {bookingNote ? <p className="mt-3 text-sm">{bookingNote}</p> : null}
         </section>
       ) : null}
     </main>
