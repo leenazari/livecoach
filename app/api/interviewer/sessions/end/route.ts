@@ -1,3 +1,4 @@
+import { recordSessionCost } from "@/lib/interviewer/cost-store";
 import { interviewerRpc, isUuid, loadOpenInvite } from "@/lib/interviewer/data";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
 
@@ -15,6 +16,7 @@ export async function POST(req: Request) {
       "end_interviewer_session",
       { p_token: token, p_session_id: sessionId }
     );
+    await recordSessionCost(sessionId).catch(() => undefined);
     return interviewerJson({
       state: "ended",
       billableSeconds: Number(result?.billableSeconds || 0),

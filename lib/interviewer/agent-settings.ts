@@ -66,6 +66,18 @@ export const INTERVIEWER_FUNCTIONS = [
     },
   },
   {
+    name: "show_slide",
+    description: "Show the slide that best matches what the person is talking about. Jump to any number. Do not read the slide aloud.",
+    parameters: {
+      type: "object",
+      properties: {
+        slide_number: { type: "integer" },
+        reason: { type: "string", description: "A short reason, not spoken as a label." },
+      },
+      required: ["slide_number"],
+    },
+  },
+  {
     name: "end_call",
     description: "End the conversation after the disposition is recorded and you have said goodbye.",
     defer_until_eot: true,

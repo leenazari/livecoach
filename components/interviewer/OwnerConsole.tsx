@@ -83,6 +83,8 @@ export default function OwnerConsole() {
   const [noteErrors, setNoteErrors] = useState<FieldErrors>({});
   const [billingErrors, setBillingErrors] = useState<FieldErrors>({});
   const [siteErrors, setSiteErrors] = useState<FieldErrors>({});
+  const [costs, setCosts] = useState<{ ready: boolean; label?: string; totals?: { calls: number; minutes: number; cost: string; revenue: string; margin: string; marginPercent: string }; calls?: Array<{ sessionId: string; seconds: number; cost: string; revenue: string; margin: string; marginPercent: string }> } | null>(null);
+  const [deckNote, setDeckNote] = useState("");
 
   const explain = (error: unknown) => {
     if (error instanceof CrmRequestError) setNotice(error.message);
@@ -112,13 +114,17 @@ export default function OwnerConsole() {
     setCurrency(campaign.currency || "GBP");
     setMargin(String(campaign.margin_percent ?? 0));
     setGranularity(campaign.billing_granularity || "second");
+    fetch(`/api/crm/interviewer/costs?campaignId=${campaign.id}`, { cache: "no-store" })
+      .then((response) => response.json())
+      .then((data) => setCosts(data))
+      .catch(() => setCosts(null));
   }, [campaignId, campaigns]);
 
   const playVoice = async (id: string) => {
     setPlaying(id);
     try {
       const sampleName = name.trim() || campaigns.find((item) => item.id === campaignId)?.name || "the team";
-      const response = await fetch(`/api/crm/interviewer/voice-preview?voiceId=${encodeURIComponent(id)}&name=${encodeURIComponent(sampleName)}`);
+      const response = await fetch(`/api/crm/interviewer/voice-preview?voiceId=${encodeURIComponent(id)}&name=${encodeURIComponent(sampleName)}&campaignId=${encodeURIComponent(campaignId)}`);
       if (!response.ok) {
         setCampaignErrors({ voiceId: "That sample could not be played." });
         return;
@@ -230,6 +236,23 @@ export default function OwnerConsole() {
     }
     setDrafts([]);
     setNotice("Website notes saved into the campaign brain.");
+  };
+
+  const uploadDeck = async (file: File) => {
+    setDeckNote("");
+    const form = new FormData();
+    form.set("campaignId", campaignId);
+    form.set("file", file);
+    const response = await fetch("/api/crm/interviewer/deck", { method: "POST", body: form });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setDeckNote(data.fields?.file || data.fields?.campaignId || data.error || "The deck was not saved.");
+      return;
+    }
+    const warning = Array.isArray(data.warnings) && data.warnings.length
+      ? ` Warning: the deck mentions ${data.warnings.join(", ")}. Those lines were kept off the agent notes.`
+      : "";
+    setDeckNote(`Saved ${data.slides} slides.${warning}`);
   };
 
   const openSession = async (id: string) => {
@@ -378,6 +401,30 @@ export default function OwnerConsole() {
         <FieldNote message={billingErrors.campaignId || billingErrors.currency || billingErrors.marginPercent || billingErrors.billingGranularity} />
         <button className="mt-4 rounded-full bg-panel2 px-4 py-2 text-sm text-bone" type="button" onClick={() => void saveBilling()}>Save billing</button>
       </details>
+
+      <section className="mt-8 rounded-3xl border border-edge bg-panel/90 p-5">
+        <h2 className="font-display text-2xl">Deck</h2>
+        <p className="mt-2 text-sm text-muted">Upload a PDF. PowerPoint needs to be exported as PDF first. Each slide becomes a few spoken points, not a script to read out.</p>
+        <input className="mt-3 block text-sm" type="file" accept="application/pdf,.pdf" onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void uploadDeck(file);
+        }} />
+        {deckNote ? <p className="mt-2 text-sm text-bone">{deckNote}</p> : null}
+      </section>
+
+      <section className="mt-8 rounded-3xl border border-edge bg-panel/90 p-5">
+        <h2 className="font-display text-2xl">Internal: never share with clients</h2>
+        {costs?.ready && costs.totals ? (
+          <>
+            <p className="mt-3 text-sm text-bone">{costs.totals.calls} calls · {costs.totals.minutes} minutes · cost {costs.totals.cost} · billed {costs.totals.revenue} · margin {costs.totals.margin} ({costs.totals.marginPercent})</p>
+            <ul className="mt-3 space-y-2 text-sm text-muted">
+              {(costs.calls || []).map((call) => (
+                <li key={call.sessionId}>{call.seconds}s · voice {call.voiceAgent} · listen {call.listen} · storage {call.storage} · hosting {call.vercel} · our cost {call.cost} · billed {call.revenue} · margin {call.margin} ({call.marginPercent})</li>
+              ))}
+            </ul>
+          </>
+        ) : <p className="mt-3 text-sm text-muted">Cost figures appear after the cost migration is applied and a call ends.</p>}
+      </section>
 
       <section className="mt-8 rounded-3xl border border-edge bg-panel/90 p-5">
         <h2 className="font-display text-2xl">Conversations</h2>

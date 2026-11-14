@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireInterviewerOwner, interviewerOwnerError } from "@/lib/interviewer/access";
+import { loadCostRates, recordCostEvent, ttsPreviewUsd } from "@/lib/interviewer/cost-store";
 import { INTERVIEWER_VOICES, isInterviewerVoiceId } from "@/lib/interviewer/voices";
 
 export const runtime = "nodejs";
@@ -16,7 +17,7 @@ function sampleLine(name: string): string {
 
 export async function GET(req: Request) {
   try {
-    await requireInterviewerOwner();
+    const scope = await requireInterviewerOwner();
     const url = new URL(req.url);
     const voiceId = url.searchParams.get("voiceId") || "";
     if (!isInterviewerVoiceId(voiceId)) {
@@ -61,6 +62,17 @@ export async function GET(req: Request) {
         if (oldest) cache.delete(oldest);
       }
       cache.set(key, audio);
+      const rates = await loadCostRates();
+      const campaignId = url.searchParams.get("campaignId");
+      if (rates) {
+        await recordCostEvent({
+          workspaceId: scope.workspaceId,
+          campaignId: campaignId && /^[0-9a-f-]{36}$/i.test(campaignId) ? campaignId : null,
+          kind: "tts_preview",
+          usd: ttsPreviewUsd(rates, text.length),
+          detail: { characters: text.length, voiceId },
+        });
+      }
     }
     return new NextResponse(Buffer.from(audio), {
       headers: {

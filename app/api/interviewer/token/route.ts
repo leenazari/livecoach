@@ -71,6 +71,19 @@ export async function POST(req: Request) {
 
     const voiceId = interviewerVoiceOrFallback(linked.campaign.voice_id);
     const documents = purpose === "listen" ? [] : await loadCampaignDocuments(linked.campaign.id);
+    const slideResult = purpose === "listen"
+      ? { data: [] as Array<{ slide_number: number; title: string; one_line: string; verbatim: string | null }> }
+      : await supabaseService
+          .from("interviewer_slides")
+          .select("slide_number, title, one_line, verbatim")
+          .eq("campaign_id", linked.campaign.id)
+          .order("slide_number", { ascending: true });
+    const slides = (slideResult.data || []).map((slide) => ({
+      number: Number(slide.slide_number),
+      title: String(slide.title || ""),
+      oneLine: String(slide.one_line || ""),
+      verbatim: slide.verbatim ? String(slide.verbatim) : null,
+    }));
     const settings = purpose === "listen"
       ? null
       : buildVoiceAgentSettings({
@@ -80,6 +93,7 @@ export async function POST(req: Request) {
           promptOverride: linked.campaign.prompt_override,
           maxMinutes: linked.campaign.max_minutes,
           documents,
+          slides,
           voiceId,
         });
 

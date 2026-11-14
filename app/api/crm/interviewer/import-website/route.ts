@@ -5,6 +5,7 @@ import { isIP } from "node:net";
 
 import { requireInterviewerOwner, interviewerOwnerError } from "@/lib/interviewer/access";
 import { interviewerFieldError } from "@/lib/interviewer/field-error";
+import { llmUsd, loadCostRates, recordCostEvent } from "@/lib/interviewer/cost-store";
 import {
   htmlToText,
   isBlockedAddress,
@@ -53,7 +54,7 @@ async function readPage(target: URL, timeoutMs: number, hops = 0): Promise<{ url
   return { url: target.toString(), html: await response.text() };
 }
 
-async function draftNotes(pages: Array<{ url: string; text: string }>): Promise<Draft[]> {
+async function draftNotes(pages: Array<{ url: string; text: string }>): Promise<{ documents: Draft[]; inputTokens: number; outputTokens: number }> {
   const key = (process.env.OPENAI_API_KEY || "").trim();
   if (!key) throw new Error("not_configured");
   const source = pages.map((page) => `PAGE ${page.url}\n${page.text}`).join("\n\n").slice(0, 24000);
@@ -83,11 +84,15 @@ End every body with one line: Source: and the page addresses you used, and say n
   const payload = await response.json();
   const content = payload?.choices?.[0]?.message?.content || "{}";
   const parsed = JSON.parse(content) as { documents?: Array<{ title?: string; body?: string }> };
-  return (parsed.documents || []).flatMap((document) => {
-    const title = String(document.title || "").trim().slice(0, 160);
-    const body = String(document.body || "").trim().slice(0, 1500);
-    return title && body ? [{ title, body }] : [];
-  });
+  return {
+    documents: (parsed.documents || []).flatMap((document) => {
+      const title = String(document.title || "").trim().slice(0, 160);
+      const body = String(document.body || "").trim().slice(0, 1500);
+      return title && body ? [{ title, body }] : [];
+    }),
+    inputTokens: Number(payload?.usage?.prompt_tokens || 0),
+    outputTokens: Number(payload?.usage?.completion_tokens || 0),
+  };
 }
 
 export async function POST(req: Request) {
@@ -145,9 +150,21 @@ export async function POST(req: Request) {
         if (text) pages.push({ url: page.url, text });
       } catch { /* skip a slow or blocked page */ }
     }
-    const documents = await draftNotes(pages);
+    const drafted = await draftNotes(pages);
+    const documents = drafted.documents;
     if (!documents.length) {
       return interviewerFieldError("interviewer_import_blocked", "Website was not read", { url: "No facts could be taken from those pages without guessing." });
+    }
+    const rates = await loadCostRates();
+    const campaignId = String(body?.campaignId || "");
+    if (rates) {
+      await recordCostEvent({
+        workspaceId: scope.workspaceId,
+        campaignId: /^[0-9a-f-]{36}$/i.test(campaignId) ? campaignId : null,
+        kind: "website_import",
+        usd: llmUsd(rates, drafted.inputTokens, drafted.outputTokens),
+        detail: { pages: pages.length, inputTokens: drafted.inputTokens, outputTokens: drafted.outputTokens },
+      });
     }
     return Response.json({ documents, pages: pages.map((page) => page.url) }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {

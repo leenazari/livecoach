@@ -210,7 +210,18 @@ export default function InterviewerRoom({
       ) : null}
 
       {call.phase === "live" ? (
-        <section className="mt-8 rounded-3xl border border-edge bg-panel/90 p-6">
+        <section className="mt-8 grid gap-4 lg:grid-cols-3">
+          <div className="rounded-3xl border border-edge bg-panel/90 p-4 lg:col-span-2">
+            {call.slideUrl ? (
+              <img src={call.slideUrl} alt={call.slideLabel || "Current slide"} className="w-full rounded-2xl bg-ink" />
+            ) : (
+              <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed border-edge text-sm text-muted">
+                The slide will appear here when the conversation turns to it.
+              </div>
+            )}
+            {call.slideLabel ? <p className="mt-2 text-sm text-bone">{call.slideLabel}</p> : null}
+          </div>
+          <div className="rounded-3xl border border-edge bg-panel/90 p-4">
           <h2 className="font-display text-2xl text-bone">You are connected</h2>
           <p className="mt-2 text-sm text-muted">Speak normally. You can interrupt the interviewer.</p>
           <ul className="mt-5 max-h-80 space-y-3 overflow-auto">
@@ -249,6 +260,7 @@ export default function InterviewerRoom({
           <button type="button" className="mt-6 rounded-full bg-rust px-4 py-2 text-sm text-ink" onClick={call.hangUp}>
             End conversation
           </button>
+          </div>
         </section>
       ) : null}
 

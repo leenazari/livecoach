@@ -59,6 +59,8 @@ export function useInterviewerCall(token: string) {
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [interim, setInterim] = useState("");
   const [echoes, setEchoes] = useState<string[]>([]);
+  const [slideUrl, setSlideUrl] = useState("");
+  const [slideLabel, setSlideLabel] = useState("");
   const [billableSeconds, setBillableSeconds] = useState<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -292,7 +294,12 @@ export function useInterviewerCall(token: string) {
               body: blob,
             });
             if (put.ok) {
-              await postJson("/api/interviewer/recording/complete", { token, sessionId: session, path: upload.data.path });
+              await postJson("/api/interviewer/recording/complete", {
+                token,
+                sessionId: session,
+                path: upload.data.path,
+                fileSize: blob.size,
+              });
             }
           }
         }
@@ -322,6 +329,21 @@ export function useInterviewerCall(token: string) {
                 start: args.start,
                 end: args.end,
               })).data;
+            } else if (fn.name === "show_slide") {
+              const shown = await postJson<{ shown?: boolean; url?: string | null; title?: string; slideNumber?: number; note?: string }>(
+                "/api/interviewer/slides",
+                {
+                  token,
+                  sessionId: session,
+                  slideNumber: (args as { slide_number?: number }).slide_number,
+                  reason: (args as { reason?: string }).reason,
+                },
+              );
+              if (shown.data.url) {
+                setSlideUrl(shown.data.url);
+                setSlideLabel(shown.data.title || `Slide ${shown.data.slideNumber || ""}`);
+              }
+              content = shown.data;
             } else if (fn.name === "capture_timing" || fn.name === "record_disposition") {
               content = (await postJson("/api/interviewer/outcome", { token, sessionId: session, ...args })).data;
             } else if (fn.name === "end_call") {
@@ -476,6 +498,8 @@ export function useInterviewerCall(token: string) {
     captions,
     interim,
     echoes,
+    slideUrl,
+    slideLabel,
     billableSeconds,
     join,
     hangUp,

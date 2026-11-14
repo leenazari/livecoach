@@ -40,7 +40,10 @@ const prompt = buildInterviewerPrompt({
   maxMinutes: null,
   documents: notes,
 });
-if (!prompt.startsWith("CAMPAIGN BRAIN")) throw new Error("campaign brain is not first");
+if (!prompt.startsWith("PERSONA")) throw new Error("persona is not first");
+if (!prompt.includes("GLOBAL SALES PLAYBOOK")) throw new Error("playbook missing");
+if (!prompt.includes("mm-hm")) throw new Error("backchannels missing");
+if (prompt.indexOf("CAMPAIGN NOTES") > prompt.indexOf("GLOBAL SALES PLAYBOOK")) throw new Error("notes must come before the playbook");
 if (!prompt.includes("Adam is a website sales agent")) throw new Error("knowledge note missing from prompt");
 if (!prompt.includes("Never quote prices")) throw new Error("persona missing from prompt");
 if (prompt.toLowerCase().includes("per minute") || prompt.includes("GBP")) throw new Error("billing leaked into the prompt");
