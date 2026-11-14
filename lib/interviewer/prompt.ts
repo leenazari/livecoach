@@ -43,7 +43,7 @@ export function buildInterviewerPrompt(input: InterviewerPromptInput): string {
   const prospect = clip(input.prospectName, 160);
   const name = clip(input.campaignName, 160) || "this campaign";
   const cap = input.maxMinutes
-    ? `Keep the conversation inside ${input.maxMinutes} minutes. Offer to book a meeting before the time runs out.`
+    ? `Keep the conversation inside ${input.maxMinutes} minutes. When time is nearly gone, say so and offer to continue later. Do not turn the clock into a reason to book.`
     : "There is no fixed time cap. Still be concise and do not linger once the person is ready to book or to finish.";
   const manner = clip(input.personaOverride, 2000);
   const extra = clip(input.promptOverride, 4000);

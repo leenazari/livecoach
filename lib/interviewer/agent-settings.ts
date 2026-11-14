@@ -9,7 +9,7 @@ export const DEEPGRAM_VOICE_AGENT_URL = "wss://agent.deepgram.com/v1/agent/conve
 export const INTERVIEWER_FUNCTIONS = [
   {
     name: "suggest_meeting_times",
-    description: "Check the owner's connected calendar and return real free meeting times. Offer only these times.",
+    description: "Check the owner's connected calendar and return real free meeting times. Call this only after they have shown clear interest or asked to meet, and only after they agree a meeting would be useful. Do not call it because a proof-of-value number was agreed, or because they asked to hear more.",
     parameters: {
       type: "object",
       properties: {
@@ -22,7 +22,7 @@ export const INTERVIEWER_FUNCTIONS = [
   },
   {
     name: "book_meeting",
-    description: "Reserve one start and end previously returned by suggest_meeting_times on the owner's connected calendar.",
+    description: "Reserve one start and end previously returned by suggest_meeting_times on the owner's connected calendar. Call this only after they have chosen one of those times.",
     defer_until_eot: true,
     parameters: {
       type: "object",
