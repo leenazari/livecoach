@@ -43,10 +43,6 @@ export type InterviewerCampaignRow = {
   prompt_override: string | null;
   voice_id: string;
   max_minutes: number | null;
-  rate_per_minute: number | string;
-  currency: string;
-  margin_percent: number | string;
-  billing_granularity: "second" | "minute";
 };
 
 export type InterviewerInviteRow = {
@@ -72,7 +68,7 @@ export async function loadOpenInvite(token: string): Promise<InterviewerInviteRo
   const { data, error } = await supabaseService
     .from("interviewer_invites")
     .select(
-      "id, workspace_id, campaign_id, token, prospect_name, prospect_email, expires_at, revoked_at, campaign:interviewer_campaigns(id, name, owner_id, workspace_id, persona_override, prompt_override, voice_id, max_minutes, rate_per_minute, currency, margin_percent, billing_granularity)"
+      "id, workspace_id, campaign_id, token, prospect_name, prospect_email, expires_at, revoked_at, campaign:interviewer_campaigns(id, name, owner_id, workspace_id, persona_override, prompt_override, voice_id, max_minutes)"
     )
     .eq("token", token)
     .maybeSingle();

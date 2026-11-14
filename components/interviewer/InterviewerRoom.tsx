@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { presentTranscript } from "@/lib/interviewer/transcript-display";
 import { INTERVIEWER_MIC_CONSTRAINTS } from "@/lib/interviewer/listen-url";
 import { useInterviewerCall } from "@/components/interviewer/useInterviewerCall";
 
@@ -213,7 +214,10 @@ export default function InterviewerRoom({
           <h2 className="font-display text-2xl text-bone">You are connected</h2>
           <p className="mt-2 text-sm text-muted">Speak normally. You can interrupt the interviewer.</p>
           <ul className="mt-5 max-h-80 space-y-3 overflow-auto">
-            {call.captions.map((line) => (
+            {call.interim ? (
+              <li className="text-sm leading-6 text-muted">You, still speaking: {call.interim}</li>
+            ) : null}
+            {presentTranscript(call.captions).map((line) => (
               <li key={line.id} className="text-sm leading-6 text-bone">
                 <span className="mr-2 font-mono text-[0.65rem] uppercase tracking-wider text-amber">
                   {line.speaker === "agent" ? "Interviewer" : "You"}

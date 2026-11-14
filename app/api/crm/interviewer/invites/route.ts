@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { interviewerOwnerError, requireInterviewerOwner } from "@/lib/interviewer/access";
-import { crmBlockerPayload } from "@/lib/crm-blocker";
+import { interviewerFieldError } from "@/lib/interviewer/field-error";
+import { validateInviteFields } from "@/lib/interviewer/form-fields";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -13,49 +14,23 @@ export async function POST(req: Request) {
   try {
     const scope = await requireInterviewerOwner();
     const body = await req.json().catch(() => null);
-    const campaignId = String(body?.campaignId || "");
-    const name = String(body?.prospectName || "").trim();
-    const email = String(body?.prospectEmail || "").trim().toLowerCase();
-    const hours = Number(body?.expiresInHours ?? 24 * 7);
-    if (!/^[0-9a-f-]{36}$/i.test(campaignId)) {
-      return NextResponse.json(crmBlockerPayload({
-        code: "interviewer_invite_blocked",
-        title: "Test link was not created",
-        reason: "Choose a campaign first.",
-        nextAction: "Create a campaign, then create the test link again.",
-        responsible: "owner",
-        outcome: "No invite was created.",
-      }), { status: 400, headers: noStore });
+    const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
+    const fields = validateInviteFields({
+      campaignId: String(record.campaignId || ""),
+      prospectName: String(record.prospectName || ""),
+      prospectEmail: String(record.prospectEmail || ""),
+    });
+    if (Object.keys(fields).length) {
+      return interviewerFieldError("interviewer_invite_blocked", "Test link was not created", fields);
     }
-    if (!name || name.length > 160) {
-      return NextResponse.json(crmBlockerPayload({
-        code: "interviewer_invite_blocked",
-        title: "Test link was not created",
-        reason: "Add the prospect's name.",
-        nextAction: "Enter a name of up to 160 characters and try again.",
-        responsible: "owner",
-        outcome: "No invite was created.",
-      }), { status: 400, headers: noStore });
-    }
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return NextResponse.json(crmBlockerPayload({
-        code: "interviewer_invite_blocked",
-        title: "Test link was not created",
-        reason: "The email address does not look usable.",
-        nextAction: "Correct the email or leave it blank, then try again.",
-        responsible: "owner",
-        outcome: "No invite was created.",
-      }), { status: 400, headers: noStore });
-    }
+    const campaignId = String(record.campaignId || "");
+    const name = String(record.prospectName || "").trim();
+    const email = String(record.prospectEmail || "").trim().toLowerCase();
+    const hours = Number(record.expiresInHours ?? 24 * 7);
     if (!Number.isFinite(hours) || hours < 1 || hours > 24 * 30) {
-      return NextResponse.json(crmBlockerPayload({
-        code: "interviewer_invite_blocked",
-        title: "Test link was not created",
-        reason: "The link lifetime must be between 1 hour and 30 days.",
-        nextAction: "Choose a lifetime in that range and try again.",
-        responsible: "owner",
-        outcome: "No invite was created.",
-      }), { status: 400, headers: noStore });
+      return interviewerFieldError("interviewer_invite_blocked", "Test link was not created", {
+        expiresInHours: "The link lifetime must be between 1 hour and 30 days.",
+      });
     }
     const { data: campaign, error: campaignError } = await supabaseAdmin
       .from("interviewer_campaigns")
@@ -65,14 +40,9 @@ export async function POST(req: Request) {
       .maybeSingle();
     if (campaignError) throw campaignError;
     if (!campaign) {
-      return NextResponse.json(crmBlockerPayload({
-        code: "interviewer_invite_missing_campaign",
-        title: "Test link was not created",
-        reason: "That campaign is not available on your account.",
-        nextAction: "Reload the interviewer page and choose a campaign you can see.",
-        responsible: "owner",
-        outcome: "No invite was created.",
-      }), { status: 404, headers: noStore });
+      return interviewerFieldError("interviewer_invite_missing_campaign", "Test link was not created", {
+        campaignId: "That campaign is not available on your account.",
+      });
     }
     const expiresAt = new Date(Date.now() + hours * 3600_000).toISOString();
     const { data, error } = await supabaseAdmin

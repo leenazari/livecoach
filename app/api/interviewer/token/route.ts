@@ -4,7 +4,7 @@ import { mintDeepgramGrant } from "@/lib/interviewer/deepgram-grant";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
 import { linkedSession, presentQueue, queueStatusForToken, type InterviewerQueueState } from "@/lib/interviewer/queue-view";
 import { supabaseService } from "@/lib/supabase";
-import { isInterviewerVoiceId } from "@/lib/interviewer/voices";
+import { interviewerVoiceOrFallback } from "@/lib/interviewer/voices";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,7 +69,7 @@ export async function POST(req: Request) {
         .is("connected_at", null);
     }
 
-    const voiceId = isInterviewerVoiceId(linked.campaign.voice_id) ? linked.campaign.voice_id : "aura-2-pandora-en";
+    const voiceId = interviewerVoiceOrFallback(linked.campaign.voice_id);
     const documents = purpose === "listen" ? [] : await loadCampaignDocuments(linked.campaign.id);
     const settings = purpose === "listen"
       ? null

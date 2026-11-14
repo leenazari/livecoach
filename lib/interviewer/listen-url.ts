@@ -7,7 +7,8 @@ export function interviewerListenUrl(): string {
     smart_format: "true",
     punctuate: "true",
     interim_results: "true",
-    endpointing: "300",
+    endpointing: "1200",
+    utterance_end_ms: "1500",
     language: "en",
     channels: "1",
   });

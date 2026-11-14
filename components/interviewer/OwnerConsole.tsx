@@ -3,6 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { CrmRequestError, crmFetch } from "@/lib/crm";
+import {
+  preferredCampaignId,
+  validateBillingFields,
+  validateCampaignFields,
+  validateInviteFields,
+  validateKnowledgeNote,
+  type FieldErrors,
+} from "@/lib/interviewer/form-fields";
+import { presentTranscript } from "@/lib/interviewer/transcript-display";
 import { INTERVIEWER_VOICES } from "@/lib/interviewer/voices";
 
 type Campaign = {
@@ -14,26 +23,37 @@ type Campaign = {
   currency: string;
   margin_percent: number;
   billing_granularity: "second" | "minute";
-  interviewer_documents?: Array<{ id: string; title: string }>;
 };
 
 type SessionRow = {
   id: string;
   status: string;
   billable_seconds: number | null;
-  billed_amount: number | null;
   disposition: string | null;
   reason_code: string | null;
-  timing_target_date: string | null;
-  timing_precision: string | null;
   timing_raw_quote: string | null;
   calendar_event_id: string | null;
-  calendar_scheduled_at: string | null;
   hasRecording: boolean;
   created_at: string;
 };
 
 type Utterance = { id: string; speaker: "agent" | "lead"; text: string; ts: string };
+type Draft = { title: string; body: string };
+
+function FieldNote({ message }: { message?: string }) {
+  if (!message) return null;
+  return <p className="mt-1 text-sm text-rust">{message}</p>;
+}
+
+async function postForm(url: string, body: unknown) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  return { ok: response.ok, data: data as { fields?: FieldErrors; error?: string; campaign?: { id: string }; path?: string; documents?: Draft[]; saved?: number } };
+}
 
 export default function OwnerConsole() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -44,7 +64,7 @@ export default function OwnerConsole() {
   const [notice, setNotice] = useState("");
   const [campaignId, setCampaignId] = useState("");
   const [name, setName] = useState("");
-  const [voiceId, setVoiceId] = useState<string>(INTERVIEWER_VOICES[1].id);
+  const [voiceId, setVoiceId] = useState("");
   const [maxMinutes, setMaxMinutes] = useState("");
   const [rate, setRate] = useState("0");
   const [currency, setCurrency] = useState("GBP");
@@ -54,17 +74,27 @@ export default function OwnerConsole() {
   const [prospectEmail, setProspectEmail] = useState("");
   const [docTitle, setDocTitle] = useState("");
   const [docBody, setDocBody] = useState("");
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [playing, setPlaying] = useState("");
+  const [campaignErrors, setCampaignErrors] = useState<FieldErrors>({});
+  const [inviteErrors, setInviteErrors] = useState<FieldErrors>({});
+  const [noteErrors, setNoteErrors] = useState<FieldErrors>({});
+  const [billingErrors, setBillingErrors] = useState<FieldErrors>({});
+  const [siteErrors, setSiteErrors] = useState<FieldErrors>({});
 
   const explain = (error: unknown) => {
     if (error instanceof CrmRequestError) setNotice(error.message);
-    else setNotice("The interviewer page could not complete that action. Check the latest record before trying again.");
+    else setNotice("The interviewer page could not be loaded. Reload it and check whether the list is still there.");
   };
 
   const load = useCallback(async () => {
     const data = await crmFetch<{ campaigns: Campaign[] }>("/api/crm/interviewer/campaigns");
-    setCampaigns(data.campaigns || []);
-    const current = campaignId || data.campaigns?.[0]?.id || "";
-    if (!campaignId && current) setCampaignId(current);
+    const list = data.campaigns || [];
+    setCampaigns(list);
+    const current = preferredCampaignId(list, campaignId);
+    if (current !== campaignId) setCampaignId(current);
     if (current) {
       const rows = await crmFetch<{ sessions: SessionRow[] }>(`/api/crm/interviewer/sessions?campaignId=${current}`);
       setSessions(rows.sessions || []);
@@ -75,60 +105,131 @@ export default function OwnerConsole() {
     load().catch(explain);
   }, [load]);
 
-  const createCampaign = async () => {
-    setNotice("");
+  useEffect(() => {
+    const campaign = campaigns.find((item) => item.id === campaignId);
+    if (!campaign) return;
+    setRate(String(campaign.rate_per_minute ?? 0));
+    setCurrency(campaign.currency || "GBP");
+    setMargin(String(campaign.margin_percent ?? 0));
+    setGranularity(campaign.billing_granularity || "second");
+  }, [campaignId, campaigns]);
+
+  const playVoice = async (id: string) => {
+    setPlaying(id);
     try {
-      const saved = await crmFetch<{ campaign: { id: string } }>("/api/crm/interviewer/campaigns", {
-        method: "POST",
-        body: JSON.stringify({
-          name,
-          voiceId,
-          maxMinutes: maxMinutes.trim() === "" ? null : Number(maxMinutes),
-          ratePerMinute: Number(rate),
-          currency,
-          marginPercent: Number(margin),
-          billingGranularity: granularity,
-        }),
-      });
-      setCampaignId(saved.campaign.id);
-      setName("");
-      setNotice("Campaign saved.");
-      await load();
-    } catch (error) {
-      explain(error);
+      const sampleName = name.trim() || campaigns.find((item) => item.id === campaignId)?.name || "the team";
+      const response = await fetch(`/api/crm/interviewer/voice-preview?voiceId=${encodeURIComponent(id)}&name=${encodeURIComponent(sampleName)}`);
+      if (!response.ok) {
+        setCampaignErrors({ voiceId: "That sample could not be played." });
+        return;
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const audio = new Audio(url);
+      await audio.play();
+      audio.onended = () => URL.revokeObjectURL(url);
+    } finally {
+      setPlaying("");
     }
+  };
+
+  const createCampaign = async () => {
+    const checked = validateCampaignFields({ name, voiceId, maxMinutes });
+    setCampaignErrors(checked.fields);
+    if (Object.keys(checked.fields).length) return;
+    setNotice("");
+    const result = await postForm("/api/crm/interviewer/campaigns", {
+      name,
+      voiceId,
+      maxMinutes: maxMinutes.trim() === "" ? null : Number(maxMinutes),
+    });
+    if (!result.ok) {
+      setCampaignErrors(result.data.fields || { name: result.data.error || "The campaign was not saved." });
+      return;
+    }
+    setCampaignId(result.data.campaign?.id || campaignId);
+    setName("");
+    setVoiceId("");
+    setNotice("Campaign saved.");
+    await load();
+  };
+
+  const saveBilling = async () => {
+    const checked = validateBillingFields({ ratePerMinute: rate, currency, marginPercent: margin, billingGranularity: granularity });
+    if (!campaignId) checked.fields.campaignId = "Pick a campaign.";
+    setBillingErrors(checked.fields);
+    if (Object.keys(checked.fields).length) return;
+    const result = await postForm("/api/crm/interviewer/campaigns", {
+      billingOnly: true,
+      id: campaignId,
+      ratePerMinute: rate,
+      currency,
+      marginPercent: margin,
+      billingGranularity: granularity,
+    });
+    if (!result.ok) {
+      setBillingErrors(result.data.fields || { ratePerMinute: result.data.error || "Billing was not saved." });
+      return;
+    }
+    setNotice("Internal billing saved. Callers do not see it.");
+    await load();
   };
 
   const createInvite = async () => {
-    setNotice("");
+    const fields = validateInviteFields({ campaignId, prospectName, prospectEmail });
+    setInviteErrors(fields);
+    if (Object.keys(fields).length) return;
     setInvitePath("");
-    try {
-      const invite = await crmFetch<{ path: string; expiresAt: string }>("/api/crm/interviewer/invites", {
-        method: "POST",
-        body: JSON.stringify({ campaignId, prospectName, prospectEmail, expiresInHours: 24 * 7 }),
-      });
-      const link = `${window.location.origin}${invite.path}`;
-      setInvitePath(link);
-      setNotice("Test link created. It expires in 7 days. It has not been emailed.");
-    } catch (error) {
-      explain(error);
+    const result = await postForm("/api/crm/interviewer/invites", {
+      campaignId, prospectName, prospectEmail, expiresInHours: 24 * 7,
+    });
+    if (!result.ok || !result.data.path) {
+      setInviteErrors(result.data.fields || { campaignId: result.data.error || "The test link was not created." });
+      return;
     }
+    setInvitePath(`${window.location.origin}${result.data.path}`);
+    setNotice("Test link created. It expires in 7 days. It has not been emailed.");
   };
 
   const saveDocument = async () => {
-    setNotice("");
-    try {
-      await crmFetch("/api/crm/interviewer/documents", {
-        method: "POST",
-        body: JSON.stringify({ campaignId, title: docTitle, body: docBody }),
-      });
-      setDocTitle("");
-      setDocBody("");
-      setNotice("Knowledge note saved.");
-      await load();
-    } catch (error) {
-      explain(error);
+    const checked = validateKnowledgeNote({ campaignId, title: docTitle, body: docBody });
+    setNoteErrors(checked.fields);
+    if (Object.keys(checked.fields).length) return;
+    const result = await postForm("/api/crm/interviewer/documents", {
+      campaignId, title: checked.title, body: checked.body,
+    });
+    if (!result.ok) {
+      setNoteErrors(result.data.fields || { body: result.data.error || "The note was not saved." });
+      return;
     }
+    setDocTitle("");
+    setDocBody("");
+    setNotice(docTitle.trim() ? "Knowledge note saved." : `Knowledge note saved as “${checked.title}”.`);
+  };
+
+  const importWebsite = async () => {
+    setSiteErrors({});
+    setImporting(true);
+    const result = await postForm("/api/crm/interviewer/import-website", { url: websiteUrl });
+    setImporting(false);
+    if (!result.ok) {
+      setSiteErrors(result.data.fields || { url: result.data.error || "The website could not be read." });
+      return;
+    }
+    setDrafts(result.data.documents || []);
+  };
+
+  const saveDrafts = async () => {
+    const result = await postForm("/api/crm/interviewer/import-website", {
+      action: "save",
+      campaignId,
+      documents: drafts,
+    });
+    if (!result.ok) {
+      setSiteErrors(result.data.fields || { campaignId: result.data.error || "The notes were not saved." });
+      return;
+    }
+    setDrafts([]);
+    setNotice("Website notes saved into the campaign brain.");
   };
 
   const openSession = async (id: string) => {
@@ -145,54 +246,49 @@ export default function OwnerConsole() {
     }
   };
 
+  const shown = selected ? presentTranscript(selected.utterances.map((line) => ({
+    id: line.id, speaker: line.speaker, text: line.text,
+  }))) : [];
+
   return (
     <main className="relative z-10 mx-auto max-w-5xl px-5 py-10">
       <p className="font-mono text-[0.68rem] uppercase tracking-[0.22em] text-amber">Hidden section</p>
       <h1 className="mt-2 font-display text-4xl text-bone">Interviewer</h1>
       <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
-        This page is not in the CRM navigation. It is limited to an owner with interviewer access.
-        The rate already includes margin. A blank time cap means no limit.
+        This page is not in the CRM navigation. Choose a voice after you have heard it. The campaign notes are what the agent is allowed to talk about.
       </p>
       <a className="mt-4 inline-block text-sm text-amber underline" href="/crm">Back to CRM</a>
-      {notice ? <p className="mt-4 rounded-2xl border border-edge bg-panel px-4 py-3 text-sm text-bone">{notice}</p> : null}
+      {notice ? <p className="mt-4 text-sm text-bone">{notice}</p> : null}
 
       <section className="mt-8 grid gap-6 lg:grid-cols-2">
         <form className="rounded-3xl border border-edge bg-panel/90 p-5" onSubmit={(event) => { event.preventDefault(); void createCampaign(); }}>
           <h2 className="font-display text-2xl">New campaign</h2>
           <label className="mt-4 block text-sm">Name
-            <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={name} onChange={(event) => setName(event.target.value)} required />
+            <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={name} onChange={(event) => setName(event.target.value)} />
           </label>
-          <label className="mt-3 block text-sm">Voice
-            <select className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={voiceId} onChange={(event) => setVoiceId(event.target.value)}>
+          <FieldNote message={campaignErrors.name} />
+          <label className="mt-3 block text-sm">Max minutes, optional
+            <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={maxMinutes} onChange={(event) => setMaxMinutes(event.target.value)} placeholder="No cap" />
+          </label>
+          <FieldNote message={campaignErrors.maxMinutes} />
+          <fieldset className="mt-4">
+            <legend className="text-sm">Voice</legend>
+            <p className="mt-1 text-xs text-muted">British voices listed by Deepgram. Nothing is selected until you choose.</p>
+            <div className="mt-2 space-y-2">
               {INTERVIEWER_VOICES.map((voice) => (
-                <option key={voice.id} value={voice.id}>{voice.name} · {voice.gender} · {voice.accent}</option>
+                <div key={voice.id} className="flex items-center justify-between gap-2 rounded-xl border border-edge px-3 py-2">
+                  <label className="flex items-start gap-2 text-sm">
+                    <input type="radio" name="voice" checked={voiceId === voice.id} onChange={() => setVoiceId(voice.id)} />
+                    <span>{voice.name} · {voice.generation} · {voice.gender} · {voice.accent}</span>
+                  </label>
+                  <button type="button" className="text-sm text-amber underline" disabled={playing === voice.id} onClick={() => void playVoice(voice.id)}>
+                    {playing === voice.id ? "Playing" : "Play"}
+                  </button>
+                </div>
               ))}
-            </select>
-          </label>
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <label className="text-sm">Max minutes
-              <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={maxMinutes} onChange={(event) => setMaxMinutes(event.target.value)} placeholder="No cap" />
-            </label>
-            <label className="text-sm">Rate / minute
-              <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={rate} onChange={(event) => setRate(event.target.value)} />
-            </label>
-            <label className="text-sm">Currency
-              <select className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={currency} onChange={(event) => setCurrency(event.target.value)}>
-                <option>GBP</option>
-                <option>USD</option>
-                <option>EUR</option>
-              </select>
-            </label>
-            <label className="text-sm">Margin % included
-              <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={margin} onChange={(event) => setMargin(event.target.value)} />
-            </label>
-          </div>
-          <label className="mt-3 block text-sm">Billing granularity
-            <select className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={granularity} onChange={(event) => setGranularity(event.target.value)}>
-              <option value="second">Per second</option>
-              <option value="minute">Per started minute</option>
-            </select>
-          </label>
+            </div>
+            <FieldNote message={campaignErrors.voiceId} />
+          </fieldset>
           <button className="mt-4 rounded-full bg-amber px-4 py-2 text-sm text-ink" type="submit">Save campaign</button>
         </form>
 
@@ -200,21 +296,47 @@ export default function OwnerConsole() {
           <h2 className="font-display text-2xl">Test invite</h2>
           <label className="mt-4 block text-sm">Campaign
             <select className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+              <option value="">Choose a campaign</option>
               {campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
             </select>
           </label>
+          <FieldNote message={inviteErrors.campaignId} />
           <label className="mt-3 block text-sm">Prospect name
             <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={prospectName} onChange={(event) => setProspectName(event.target.value)} />
           </label>
+          <FieldNote message={inviteErrors.prospectName} />
           <label className="mt-3 block text-sm">Prospect email, optional
             <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={prospectEmail} onChange={(event) => setProspectEmail(event.target.value)} />
           </label>
+          <FieldNote message={inviteErrors.prospectEmail} />
           <button className="mt-4 rounded-full bg-amber px-4 py-2 text-sm text-ink" type="button" onClick={() => void createInvite()}>Create test link</button>
           {invitePath ? <p className="mt-3 break-all text-sm text-bone">{invitePath}</p> : null}
+
           <h3 className="mt-6 font-display text-xl">Knowledge note</h3>
-          <input className="mt-2 w-full rounded-xl border border-edge bg-ink px-3 py-2 text-sm" placeholder="Title" value={docTitle} onChange={(event) => setDocTitle(event.target.value)} />
+          <p className="mt-1 text-xs text-muted">Title is optional. A blank title uses the start of the note.</p>
+          <input className="mt-2 w-full rounded-xl border border-edge bg-ink px-3 py-2 text-sm" placeholder="Title, optional" value={docTitle} onChange={(event) => setDocTitle(event.target.value)} />
+          <FieldNote message={noteErrors.title} />
           <textarea className="mt-2 h-28 w-full rounded-xl border border-edge bg-ink px-3 py-2 text-sm" placeholder="Facts the interviewer may use" value={docBody} onChange={(event) => setDocBody(event.target.value)} />
+          <FieldNote message={noteErrors.body || noteErrors.campaignId} />
           <button className="mt-3 rounded-full bg-panel2 px-4 py-2 text-sm text-bone" type="button" onClick={() => void saveDocument()}>Save note</button>
+
+          <h3 className="mt-6 font-display text-xl">Client website</h3>
+          <input className="mt-2 w-full rounded-xl border border-edge bg-ink px-3 py-2 text-sm" placeholder="https://example.com" value={websiteUrl} onChange={(event) => setWebsiteUrl(event.target.value)} />
+          <FieldNote message={siteErrors.url} />
+          <button className="mt-3 rounded-full bg-panel2 px-4 py-2 text-sm text-bone" type="button" disabled={importing} onClick={() => void importWebsite()}>
+            {importing ? "Reading the website" : "Import from website"}
+          </button>
+          {drafts.map((draft, index) => (
+            <label key={`${draft.title}-${index}`} className="mt-3 block text-sm">{draft.title}
+              <textarea className="mt-1 h-24 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={draft.body} onChange={(event) => {
+                const next = drafts.slice();
+                next[index] = { ...draft, body: event.target.value };
+                setDrafts(next);
+              }} />
+            </label>
+          ))}
+          {drafts.length ? <button className="mt-3 rounded-full bg-amber px-4 py-2 text-sm text-ink" type="button" onClick={() => void saveDrafts()}>Save website notes</button> : null}
+          <FieldNote message={siteErrors.campaignId || siteErrors.body} />
         </div>
       </section>
 
@@ -224,11 +346,38 @@ export default function OwnerConsole() {
           {campaigns.map((campaign) => (
             <li key={campaign.id} className="rounded-2xl border border-edge px-3 py-2">
               <button type="button" className="text-bone" onClick={() => setCampaignId(campaign.id)}>{campaign.name}</button>
-              <span className="ml-2 text-muted">{campaign.voice_id} · {campaign.currency} {campaign.rate_per_minute}/min · margin {campaign.margin_percent}% included · {campaign.billing_granularity}</span>
+              <span className="ml-2 text-muted">{campaign.voice_id}</span>
             </li>
           ))}
         </ul>
       </section>
+
+      <details className="mt-8 rounded-3xl border border-edge bg-panel/90 p-5">
+        <summary className="cursor-pointer font-display text-2xl">Billing (internal)</summary>
+        <p className="mt-3 text-sm text-muted">What we charge this client per connected minute (never shown to callers)</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <label className="text-sm">Rate per minute
+            <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={rate} onChange={(event) => setRate(event.target.value)} />
+          </label>
+          <FieldNote message={billingErrors.ratePerMinute} />
+          <label className="text-sm">Currency
+            <select className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={currency} onChange={(event) => setCurrency(event.target.value)}>
+              <option>GBP</option><option>USD</option><option>EUR</option>
+            </select>
+          </label>
+          <label className="text-sm">Margin % included
+            <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={margin} onChange={(event) => setMargin(event.target.value)} />
+          </label>
+          <label className="text-sm">Billing granularity
+            <select className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={granularity} onChange={(event) => setGranularity(event.target.value)}>
+              <option value="second">Per second</option>
+              <option value="minute">Per started minute</option>
+            </select>
+          </label>
+        </div>
+        <FieldNote message={billingErrors.campaignId || billingErrors.currency || billingErrors.marginPercent || billingErrors.billingGranularity} />
+        <button className="mt-4 rounded-full bg-panel2 px-4 py-2 text-sm text-bone" type="button" onClick={() => void saveBilling()}>Save billing</button>
+      </details>
 
       <section className="mt-8 rounded-3xl border border-edge bg-panel/90 p-5">
         <h2 className="font-display text-2xl">Conversations</h2>
@@ -253,9 +402,9 @@ export default function OwnerConsole() {
             </p>
             {recordingUrl ? <audio className="mt-3 w-full" controls src={recordingUrl} /> : <p className="mt-3 text-sm text-muted">No recording saved yet.</p>}
             <ul className="mt-4 space-y-2">
-              {selected.utterances.map((line) => (
+              {shown.map((line) => (
                 <li key={line.id} className="text-sm text-bone">
-                  <span className="mr-2 font-mono text-[0.65rem] uppercase text-amber">{line.speaker}</span>
+                  <span className="mr-2 font-mono text-[0.65rem] uppercase text-amber">{line.speaker === "agent" ? "Interviewer" : "You"}</span>
                   {line.text}
                 </li>
               ))}

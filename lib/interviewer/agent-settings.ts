@@ -1,5 +1,5 @@
-import { buildInterviewerPrompt, type InterviewerPromptInput } from "./prompt";
-import type { InterviewerVoiceId } from "./voices";
+import { buildInterviewerPrompt, interviewerGreeting, type InterviewerPromptInput } from "./prompt";
+import { interviewerVoiceOrFallback, type InterviewerVoiceId } from "./voices";
 
 export const DEEPGRAM_VOICE_AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse";
 
@@ -73,12 +73,6 @@ export const INTERVIEWER_FUNCTIONS = [
   },
 ];
 
-export function interviewerGreeting(prospectName: string | null): string {
-  const name = prospectName?.trim();
-  const hello = name ? `Hello ${name}.` : "Hello.";
-  return `${hello} Thank you for taking the time. I would like to understand what you are hoping to sort out, and then we can see whether a proper meeting would help. What prompted you to join today?`;
-}
-
 export function buildVoiceAgentSettings(input: InterviewerPromptInput & { voiceId: InterviewerVoiceId }) {
   return {
     type: "Settings",
@@ -88,15 +82,22 @@ export function buildVoiceAgentSettings(input: InterviewerPromptInput & { voiceI
     },
     agent: {
       language: "en",
-      greeting: interviewerGreeting(input.prospectName),
-      listen: { provider: { type: "deepgram", model: "nova-3" } },
+      greeting: interviewerGreeting(input),
+      listen: {
+        provider: {
+          type: "deepgram",
+          version: "v2",
+          model: "flux-general-en",
+          eot_threshold: 0.9,
+          eot_timeout_ms: 4500,
+        },
+      },
       think: {
-        provider: { type: "open_ai", model: "gpt-4o-mini", temperature: 0.4 },
+        provider: { type: "open_ai", model: "gpt-4o-mini", temperature: 0.3 },
         prompt: buildInterviewerPrompt(input),
         functions: INTERVIEWER_FUNCTIONS,
       },
-      // version v1 selects Aura. Aura-2 model ids are British English for this product.
-      speak: { provider: { type: "deepgram", version: "v1", model: input.voiceId } },
+      speak: { provider: { type: "deepgram", version: "v1", model: interviewerVoiceOrFallback(input.voiceId) } },
     },
   };
 }
