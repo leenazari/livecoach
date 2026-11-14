@@ -507,6 +507,10 @@ export function useInterviewerCall(token: string) {
                 silenceRef.current.phase = "clear";
               }
             }
+            if (decision.lock && !tipSaid && !looksLikeSpeakerEcho(decision.lock.text, recentAgentRef.current)) {
+              tipSaid = true;
+              say("Quick tip, if there's background noise I can get a bit confused, so feel free to mute when you're not talking to me.", "queue");
+            }
             if (decision.lock) acceptLead(decision.lock);
             if (decision.revise) acceptLead(decision.revise);
           },
@@ -521,6 +525,7 @@ export function useInterviewerCall(token: string) {
         },
       });
 
+      let tipSaid = false;
       let endingForSilence = false;
       silenceTimer = window.setInterval(() => {
         const silence = silenceRef.current;

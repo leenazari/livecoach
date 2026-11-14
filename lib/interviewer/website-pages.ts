@@ -68,12 +68,3 @@ export function pickInternalLinks(html: string, pageUrl: URL): string[] {
   }
   return found;
 }
-
-export const KNOWLEDGE_SECTIONS = [
-  "business summary",
-  "products and services",
-  "pricing exactly as stated",
-  "who it's for",
-  "FAQs and objections",
-  "booking and next step",
-] as const;
