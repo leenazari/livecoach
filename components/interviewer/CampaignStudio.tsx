@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { putSlideImages, renderPdfPages } from "@/components/interviewer/pdf-pages";
 import { customerHeadline } from "@/lib/interviewer/slide-headline";
 import styles from "@/components/interviewer/interviewa.module.css";
+import { findFactClashes, mergeKnowledge, type FactClash, type ResolvedClash } from "@/lib/interviewer/fact-clash";
 import { KNOWLEDGE_CHAR_CAP, KNOWLEDGE_SECTIONS, SOURCE_WEBSITE_TITLE, emptyKnowledge, knowledgeFromDocuments, knowledgeLength, type KnowledgeSectionKey } from "@/lib/interviewer/knowledge";
 import { DEFAULT_QUALIFYING_QUESTIONS, QUALIFYING_TITLE } from "@/lib/interviewer/qualifying";
+import { appendShareQuery } from "@/lib/interviewer/share-link";
+import { defaultOpener } from "@/lib/interviewer/salesTemplate";
 import { formatCallLength } from "@/lib/interviewer/recording-clock";
 import { INTERVIEWER_VOICES, voiceLabel, type AuraVoice } from "@/lib/interviewer/voices";
 
@@ -33,6 +36,7 @@ type Deck = { id: string; title: string; active?: boolean; imagesMissing?: boole
 type DeckJob = { phase: "rendering" | "uploading" | "notes" | "saved" | "error"; fileName: string; page: number; total: number; message: string };
 type CallRow = { id: string; created_at: string; disposition: string | null; status: string; billable_seconds: number | null };
 type CostCall = { sessionId: string; cost: string; estimated: boolean; seconds: number };
+type OpenClash = FactClash & { choice: ResolvedClash["choice"] | ""; custom: string };
 
 async function postJson(url: string, body: unknown) {
   const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -44,9 +48,11 @@ function Tag({ children }: { children: string }) {
   return <span className={styles.pill}>{children}</span>;
 }
 
-function absoluteLink(path: string): string {
-  if (typeof window === "undefined") return path;
-  return path.startsWith("http") ? path : `${window.location.origin}${path}`;
+function absoluteLink(path: string, shareQuery = ""): string {
+  const absolute = typeof window === "undefined"
+    ? path
+    : path.startsWith("http") ? path : `${window.location.origin}${path}`;
+  return appendShareQuery(absolute, shareQuery);
 }
 
 function expiryLabel(iso: string): string {
@@ -82,16 +88,26 @@ function TestLinkBlock({
   link,
   featured,
   copied,
+  shareQuery,
   onCopy,
   onOpen,
 }: {
   link: TestLink;
   featured?: boolean;
   copied: boolean;
+  shareQuery: string;
   onCopy: () => void;
   onOpen: (url: string) => void;
 }) {
-  const url = absoluteLink(link.path);
+  const [shortCopied, setShortCopied] = useState(false);
+  const url = absoluteLink(link.path, shareQuery);
+  const shortUrl = `${url}${url.includes("?") ? "&" : "?"}capMinutes=3`;
+  const copyShort = () => {
+    void navigator.clipboard?.writeText(shortUrl).then(() => {
+      setShortCopied(true);
+      window.setTimeout(() => setShortCopied(false), 1500);
+    });
+  };
   const field = (
     <button type="button" className={styles.linkField} onClick={() => onOpen(url)} onDoubleClick={() => onOpen(url)}>
       {url}
@@ -110,6 +126,9 @@ function TestLinkBlock({
         <p className={styles.note}>{link.name} · {expiryLabel(link.expiresAt)}</p>
         {field}
         {actions}
+        <p className={styles.note}>A 3-minute test adds ?capMinutes=3. It only applies when the campaign name contains “test”. A live campaign keeps its saved limit.</p>
+        {shareQuery ? <p className={styles.note}>This preview link includes Vercel’s access pass, so someone outside the team can open it. Production links do not add that pass.</p> : null}
+        <button type="button" className={styles.btnGhost} onClick={copyShort}>{shortCopied ? "Copied" : "Copy 3-minute test"}</button>
       </article>
     );
   }
@@ -125,7 +144,28 @@ function TestLinkBlock({
   );
 }
 
-export default function CampaignStudio({ campaignId }: { campaignId: string }) {
+function Fold({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className={styles.card}>
+      <button type="button" className={styles.foldSummary} aria-expanded={open} onClick={onToggle}>
+        <span className={styles.sectionHead}>{title}</span>
+      </button>
+      {open ? <div className={styles.foldBody}>{children}</div> : null}
+    </section>
+  );
+}
+
+export default function CampaignStudio({ campaignId, shareQuery = "" }: { campaignId: string; shareQuery?: string }) {
   const creating = !campaignId;
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [name, setName] = useState("");
@@ -162,10 +202,31 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
   const [granularity, setGranularity] = useState("second");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({ sources: true });
+  const [sellSaved, setSellSaved] = useState(false);
+  const [clashes, setClashes] = useState<OpenClash[]>([]);
+  const [pendingBrochure, setPendingBrochure] = useState(emptyKnowledge());
+  const [pendingWebsite, setPendingWebsite] = useState(emptyKnowledge());
 
   const offered = shortlist.length
     ? voices.filter((voice) => shortlist.includes(voice.id) || voice.id === voiceId)
     : voices;
+
+  useEffect(() => {
+    const key = `interviewa-sections-${campaignId || "new"}`;
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(key) || "");
+      if (saved && typeof saved === "object") setOpenSections({ sources: true, ...saved });
+    } catch { /* a missing preference just uses the defaults */ }
+  }, [campaignId]);
+
+  const toggleSection = (id: string) => {
+    setOpenSections((current) => {
+      const next = { ...current, [id]: !current[id] };
+      try { window.localStorage.setItem(`interviewa-sections-${campaignId || "new"}`, JSON.stringify(next)); } catch { /* the page still opens and closes */ }
+      return next;
+    });
+  };
 
   useEffect(() => {
     fetch("/api/crm/interviewer/voices", { cache: "no-store" })
@@ -198,11 +259,11 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
         setName(found.name);
         setVoiceId(found.voice_id);
         setMaxMinutes(found.max_minutes == null ? "" : String(found.max_minutes));
-        setWebsiteUrl(found.website_url || (source ? String(source.body).split("\n")[0] : ""));
+        setWebsiteUrl((current) => found.website_url || (source ? String(source.body).split("\n")[0] : current));
         setScrapedAt(found.website_scraped_at || "");
         setQuotes(found.quotes_allowed === true);
         setBrochure(found.brochure_send === true);
-        setOpener(found.opener || "");
+        setOpener(found.opener || defaultOpener(found.name || ""));
         const qualifyingNote = docs.find((doc: { title: string; body: string }) => doc.title === QUALIFYING_TITLE);
         setQualifying(qualifyingNote?.body || DEFAULT_QUALIFYING_QUESTIONS.join("\n"));
         setRate(String(found.rate_per_minute ?? 0));
@@ -218,6 +279,7 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
       .then((response) => response.json())
       .then((data) => {
         if (cancelled) return;
+        if (data.websiteHint) setWebsiteUrl((current) => current || String(data.websiteHint));
         if (data.ready === false) {
           setDecks([]);
           setDeckNote(data.error || "The deck could not be loaded.");
@@ -288,6 +350,43 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
     return true;
   };
 
+  const stageClash = async (
+    brochureNotes: typeof sections,
+    websiteNotes: typeof sections,
+  ) => {
+    const review = await postJson("/api/crm/interviewer/knowledge-conflicts", { brochure: brochureNotes, website: websiteNotes });
+    const found = (Array.isArray(review.data.clashes) ? review.data.clashes : findFactClashes(brochureNotes, websiteNotes)) as FactClash[];
+    if (!found.length) {
+      const merged = mergeKnowledge(brochureNotes, websiteNotes, []);
+      const saved = await saveKnowledge(Boolean(websiteUrl), merged);
+      if (saved) setSections(merged);
+      setClashes([]);
+      return;
+    }
+    setPendingBrochure(brochureNotes);
+    setPendingWebsite(websiteNotes);
+    setClashes(found.map((clash) => ({ ...clash, choice: "", custom: "" })));
+    setNotice("Resolve every difference before the notes are saved.");
+  };
+
+  const chooseClash = (id: string, choice: OpenClash["choice"], custom?: string) => {
+    setClashes((current) => current.map((clash) => clash.id === id ? { ...clash, choice, custom: custom ?? clash.custom } : clash));
+  };
+
+  const saveResolved = async () => {
+    if (clashes.some((clash) => !clash.choice || (clash.choice === "custom" && !clash.custom.trim()))) {
+      setError("Choose brochure, website, a custom value, or keep both unconfirmed for every item.");
+      return;
+    }
+    const resolved = clashes.flatMap((clash) => clash.choice ? [{ ...clash, choice: clash.choice }] : []);
+    const merged = mergeKnowledge(pendingBrochure, pendingWebsite, resolved);
+    const saved = await saveKnowledge(Boolean(websiteUrl), merged);
+    if (!saved) return;
+    setSections(merged);
+    setClashes([]);
+    setNotice("Knowledge saved. Unconfirmed lines must not be quoted on a call.");
+  };
+
   const importSite = async () => {
     if (!campaignId || importing) { if (!campaignId) setError("Save the campaign name and voice first."); return; }
     setImporting(true);
@@ -301,6 +400,11 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
       if (result.data.reused) {
         setSections(next);
         setNotice("Using the website notes saved a moment ago.");
+        return;
+      }
+      if (knowledgeLength(sections) > 0) {
+        await stageClash(sections, next);
+        setScrapedAt(new Date().toISOString());
         return;
       }
       const saved = await saveKnowledge(true, next);
@@ -344,8 +448,17 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
         setDeckJob({ phase: "uploading", fileName: file.name, page, total, message: `Uploading ${page} of ${total}` });
       });
       setDeckJob({ phase: "notes", fileName: file.name, page: pages.length, total: pages.length, message: "Writing slide notes…" });
-      await postJson("/api/crm/interviewer/deck", { action: "notes", deckId: prepared.data.deckId });
+      const noted = await postJson("/api/crm/interviewer/deck", {
+        action: "notes",
+        deckId: prepared.data.deckId,
+        overwrite: true,
+        pageText: pages.map((page) => page.text),
+      });
       await reloadDecks();
+      const deckNotes = knowledgeFromDocuments(noted.data.deckNotes || []);
+      if (!noted.data.deckNotesSaved && knowledgeLength(deckNotes) > 0 && knowledgeLength(sections) > 0) {
+        await stageClash(deckNotes, sections);
+      }
       setDeckJob({
         phase: "saved",
         fileName: file.name,
@@ -360,15 +473,32 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
     }
   };
 
+  const reloadNotes = async () => {
+    const response = await fetch(`/api/crm/interviewer/documents?campaignId=${campaignId}`, { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    const docs = data.documents || [];
+    setSections(knowledgeFromDocuments(docs));
+    const qualifyingNote = docs.find((doc: { title: string; body: string }) => doc.title === QUALIFYING_TITLE);
+    if (qualifyingNote?.body) setQualifying(String(qualifyingNote.body));
+    return docs.filter((doc: { title: string }) => KNOWLEDGE_SECTIONS.some((section) => section.title === doc.title)).length;
+  };
+
   const saveBehaviour = async () => {
+    const spoken = opener.trim() || defaultOpener(name);
+    setOpener(spoken);
     const result = await postJson("/api/crm/interviewer/campaigns", {
       behaviourOnly: true,
       id: campaignId,
       quotesAllowed: quotes,
       brochureSend: brochure,
-      opener,
+      opener: spoken,
     });
-    setNotice(result.data.note || "Agent settings saved.");
+    if (campaignId) {
+      await postJson("/api/crm/interviewer/documents", { campaignId, title: QUALIFYING_TITLE, body: qualifying });
+    }
+    setSellSaved(true);
+    setNotice(result.ok ? "Saved" : "The selling settings were not saved.");
+    window.setTimeout(() => setSellSaved(false), 2000);
   };
 
   const createInvite = async () => {
@@ -385,7 +515,7 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
   };
 
   const copyLink = (link: TestLink) => {
-    void copyText(absoluteLink(link.path)).then(() => {
+    void copyText(absoluteLink(link.path, shareQuery)).then(() => {
       setCopiedPath(link.path);
       if (copyTimer.current) window.clearTimeout(copyTimer.current);
       copyTimer.current = window.setTimeout(() => setCopiedPath(""), 2000);
@@ -406,6 +536,18 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
     setNotice(result.ok ? "Internal billing saved." : "Billing was not saved.");
   };
 
+  const regenerateHeadlines = async (deckId: string) => {
+    setDeckJob({ phase: "notes", fileName: "deck", page: 0, total: 0, message: "Reading slide headlines…" });
+    const result = await postJson("/api/crm/interviewer/deck", { action: "headlines", deckId });
+    await reloadDecks();
+    if (!result.ok) {
+      setDeckJob({ phase: "error", fileName: "deck", page: 0, total: 0, message: result.data.fields?.file || "Headlines were not written." });
+      return;
+    }
+    setNotice(`Headlines updated, ${Number(result.data.updated || 0)} slides`);
+    setDeckJob({ phase: "saved", fileName: "deck", page: Number(result.data.updated || 0), total: Number(result.data.updated || 0), message: `Headlines updated, ${Number(result.data.updated || 0)} slides` });
+  };
+
   const rebuildDeck = async (deckId: string) => {
     if (deckBusy) return;
     const deck = decks.find((item) => item.id === deckId);
@@ -413,16 +555,25 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
     const overwrite = hasWritten
       ? window.confirm("Replace the headlines and notes already on this deck? Cancel keeps them and only fills empty fields.")
       : false;
-    setDeckJob({ phase: "notes", fileName: "deck", page: 0, total: 0, message: overwrite ? "Replacing the slide notes…" : "Keeping the written headlines and notes…" });
+    setDeckJob({ phase: "notes", fileName: "deck", page: 0, total: 0, message: "Updating knowledge notes…" });
     const result = await postJson("/api/crm/interviewer/deck", { action: "rebuild", deckId, overwrite });
     await reloadDecks();
+    const deckNotes = knowledgeFromDocuments(result.data.deckNotes || []);
+    const noteCount = Array.isArray(result.data.deckNotes) ? result.data.deckNotes.length : await reloadNotes();
+    if (result.ok && result.data.deckNotesSaved) await reloadNotes();
+    if (result.ok && !result.data.deckNotesSaved && knowledgeLength(deckNotes) > 0 && knowledgeLength(sections) > 0) {
+      setSections(mergeKnowledge(deckNotes, sections, []));
+      await stageClash(deckNotes, sections);
+    }
     if (!result.ok) {
       setDeckJob({ phase: "error", fileName: "deck", page: 0, total: 0, message: result.data.fields?.file || "The deck knowledge was not rebuilt." });
       return;
     }
-    setDeckJob({ phase: "saved", fileName: "deck", page: Number(result.data.updated || 0), total: Number(result.data.updated || 0), message: `${result.data.preserved ? "Kept the written headlines" : "Replaced the slide notes"} · ${new Date().toLocaleString("en-GB")}` });
+    setNotice(`Knowledge updated, ${noteCount} notes`);
+    setDeckJob({ phase: "saved", fileName: "deck", page: noteCount, total: noteCount, message: `Knowledge updated, ${noteCount} notes` });
   };
 
+  const activeDeck = decks.find((deck) => deck.active) || decks[0] || null;
   const featured = links.find((link) => link.path === readyPath) || links[0] || null;
   const older = featured ? links.filter((link) => link.path !== featured.path) : [];
   const costFor = (id: string) => costs?.calls?.find((call) => call.sessionId === id);
@@ -446,12 +597,130 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
 
       <div className={styles.stack}>
         <section className={styles.card}>
-          <div className={styles.sectionHead}><span className={styles.tile}>1</span> Basics</div>
-          <label className={styles.label}>Name<input className={styles.field} value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label className={styles.label}>Campaign name<input className={styles.field} value={name} onChange={(event) => setName(event.target.value)} /></label>
           <label className={styles.label}>Call limit, minutes<input className={styles.field} value={maxMinutes} placeholder="30" onChange={(event) => setMaxMinutes(event.target.value)} /></label>
-          <p className={styles.note}>30 minutes is the maximum. An empty field uses 30.</p>
-          <p className={styles.label}>Voice shortlist</p>
-          <p className={styles.note}>Tick the voices this account may use. The campaign picker below uses that shortlist. Tags are Deepgram’s own.</p>
+          <button type="button" className={styles.btn} style={{ marginTop: 12 }} onClick={() => void saveBasics()}>Save name</button>
+        </section>
+
+        <Fold title="Knowledge sources" open={openSections.sources !== false} onToggle={() => toggleSection("sources")}>
+          <p className={styles.note}>Upload a brochure, scan a website, or use both. Facts that disagree are reviewed before they are saved.</p>
+          <p className={styles.label}>Brochure</p>
+          <input type="file" accept="application/pdf,.pdf" disabled={deckBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadDeck(file); }} />
+          {activeDeck ? (
+            <div className={styles.headRow} style={{ marginTop: 12 }}>
+              <strong>{activeDeck.title}</strong>
+              <button type="button" className={styles.btn} disabled={deckBusy} onClick={() => void rebuildDeck(activeDeck.id)}>
+                {deckJob?.phase === "notes" ? "Updating knowledge notes…" : "Rebuild knowledge from deck"}
+              </button>
+              <button type="button" className={styles.btnGhost} disabled={deckBusy} onClick={() => void regenerateHeadlines(activeDeck.id)}>Regenerate headlines</button>
+            </div>
+          ) : <p className={styles.note}>No brochure yet.</p>}
+          {deckNote ? <p className={deckNote.startsWith("No deck") ? styles.note : styles.err}>{deckNote}</p> : null}
+          {deckJob ? <p className={deckJob.phase === "error" ? styles.err : styles.note}>{deckJob.message}</p> : null}
+          <label className={styles.label}>Website
+            <input className={styles.field} value={websiteUrl} placeholder="https://" onChange={(event) => setWebsiteUrl(event.target.value)} />
+          </label>
+          <p className={styles.note}>{websiteUrl ? `Filled from the brochure or typed here. Nothing is scanned until you choose Scan website.` : "No website yet. If the brochure names one, it is filled in here. Nothing is scanned until you choose Scan website."} {scrapedAt ? `Last scanned ${new Date(scrapedAt).toLocaleString("en-GB")}.` : ""}</p>
+          <button type="button" className={styles.btnGhost} disabled={importing} onClick={() => void importSite()}>
+            {importing ? `Scanning ${importHost}…` : "Scan website"}
+          </button>
+          {fetchedPages.length ? (
+            <ul className={styles.stack}>
+              {fetchedPages.map((page) => (
+                <li key={page.url} className={styles.note}>{page.url} · {page.chars.toLocaleString("en-GB")} characters</li>
+              ))}
+            </ul>
+          ) : null}
+        </Fold>
+        <Fold title="Knowledge notes" open={Boolean(openSections.notes)} onToggle={() => toggleSection("notes")}>
+          {clashes.length ? (
+            <div className={styles.card} style={{ marginBottom: 12 }}>
+              <p className={styles.label}>These facts disagree</p>
+              <p className={styles.note}>Choose one side, type your own line, or keep both as unconfirmed. The agent will not quote an unconfirmed line. Nothing is saved until every item is resolved.</p>
+              <ol className={styles.stack}>
+                {clashes.map((clash, index) => (
+                  <li key={`${clash.section}-${clash.brochure}`}>
+                    <strong>{index + 1}. {clash.kind}</strong>
+                    <p className={styles.note}>Brochure says {clash.brochure}</p>
+                    <p className={styles.note}>Website says {clash.website}</p>
+                    <div className={styles.headRow}>
+                      <button type="button" className={clash.choice === "brochure" ? styles.btn : styles.btnGhost} onClick={() => chooseClash(clash.id, "brochure")}>Use brochure</button>
+                      <button type="button" className={clash.choice === "website" ? styles.btn : styles.btnGhost} onClick={() => chooseClash(clash.id, "website")}>Use website</button>
+                      <button type="button" className={clash.choice === "unconfirmed" ? styles.btn : styles.btnGhost} onClick={() => chooseClash(clash.id, "unconfirmed")}>Keep both unconfirmed</button>
+                    </div>
+                    <input className={styles.field} value={clash.custom} placeholder="Or type the line to keep" onChange={(event) => chooseClash(clash.id, "custom", event.target.value)} />
+                  </li>
+                ))}
+              </ol>
+              <button type="button" className={styles.btn} disabled={clashes.some((clash) => !clash.choice)} onClick={() => void saveResolved()}>Save resolved notes</button>
+            </div>
+          ) : null}
+          {KNOWLEDGE_SECTIONS.map((section) => (
+            <label key={section.key} className={styles.label}>{section.title}
+              <textarea className={styles.area} value={sections[section.key as KnowledgeSectionKey]} onChange={(event) => setSections({ ...sections, [section.key]: event.target.value })} />
+            </label>
+          ))}
+          {knowledgeCount >= KNOWLEDGE_CHAR_CAP * 0.8 ? (
+            <p className={knowledgeCount >= KNOWLEDGE_CHAR_CAP ? styles.err : styles.note}>
+              Knowledge is {knowledgeCount.toLocaleString("en-GB")} characters. The call uses the first {KNOWLEDGE_CHAR_CAP.toLocaleString("en-GB")}.
+            </p>
+          ) : null}
+          <button type="button" className={styles.btn} onClick={() => void saveKnowledge(false)}>Save knowledge</button>
+          {activeDeck?.slides.length ? (
+            <div className={styles.thumbs} style={{ marginTop: 12 }}>
+              {activeDeck.slides.map((slide) => {
+                const headline = customerHeadline(slide.title);
+                return (
+                  <figure key={`${activeDeck.id}-${slide.number}`}>
+                    {slide.url && !slide.missing ? <img src={slide.url} alt={headline || `Slide ${slide.number}`} /> : <div className={styles.thumb} />}
+                    <figcaption className={styles.thumbCaption}>
+                      <span className={styles.thumbTitle}>{headline || "Needs a headline"}</span>
+                      <span className={styles.thumbMeta}>Slide {slide.number}</span>
+                    </figcaption>
+                  </figure>
+                );
+              })}
+            </div>
+          ) : null}
+        </Fold>
+
+        <Fold title="How the agent sells" open={Boolean(openSections.sells)} onToggle={() => toggleSection("sells")}>
+          <label className={styles.label}>Opener
+            <span className={styles.note}>The first thing the agent says when the call connects.</span>
+            <input className={styles.field} value={opener || defaultOpener(name)} onChange={(event) => setOpener(event.target.value)} />
+          </label>
+          <label className={styles.label}>Qualifying questions
+            <span className={styles.note}>Asked one at a time, after the lead has answered.</span>
+            <textarea className={styles.area} value={qualifying} onChange={(event) => setQualifying(event.target.value)} />
+          </label>
+          <label className={styles.switch}>
+            <input type="checkbox" checked={quotes} onChange={(event) => setQuotes(event.target.checked)} />
+            <span>Quotes allowed<span className={styles.note}>The agent may say a price that is written in the notes.</span></span>
+          </label>
+          <label className={styles.switch}>
+            <input type="checkbox" checked={brochure} onChange={(event) => setBrochure(event.target.checked)} />
+            <span>Brochure send allowed<span className={styles.note}>The agent may offer to send the brochure. It will not say it has already been sent.</span></span>
+          </label>
+          <button type="button" className={styles.btn} disabled={creating} onClick={() => void saveBehaviour()}>{sellSaved ? "Saved" : "Save"}</button>
+        </Fold>
+
+        <Fold title="Test link" open={Boolean(openSections.link)} onToggle={() => toggleSection("link")}>
+          <label className={styles.label}>Lead name<input className={styles.field} value={prospectName} onChange={(event) => setProspectName(event.target.value)} /></label>
+          <label className={styles.label}>Email, optional<input className={styles.field} value={prospectEmail} onChange={(event) => setProspectEmail(event.target.value)} /></label>
+          <button type="button" className={styles.btn} disabled={creating} onClick={() => void createInvite()}>Create test link</button>
+          {featured ? <TestLinkBlock link={featured} featured shareQuery={shareQuery} copied={copiedPath === featured.path} onCopy={() => copyLink(featured)} onOpen={openLink} /> : null}
+          {older.length ? (
+            <div className={styles.linkList}>
+              <p className={styles.label}>Earlier links</p>
+              {older.map((link) => (
+                <TestLinkBlock key={link.path} link={link} shareQuery={shareQuery} copied={copiedPath === link.path} onCopy={() => copyLink(link)} onOpen={openLink} />
+              ))}
+            </div>
+          ) : null}
+        </Fold>
+
+        <Fold title="Voices" open={Boolean(openSections.voices)} onToggle={() => toggleSection("voices")}>
+          <p className={styles.note}>Tick the voices this account may use, then choose one for this campaign. Tags are Deepgram’s own.</p>
           {shortNote ? <p className={styles.note}>{shortNote}</p> : null}
           <div className={styles.voiceList}>
             {voices.map((voice) => (
@@ -471,124 +740,18 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
             ))}
           </div>
           <p className={styles.label}>Voice for this campaign</p>
-          <div className={styles.stack}>
-            {offered.map((voice) => (
-              <label key={voice.id} className={styles.switch}>
-                <input type="radio" name="campaign-voice" checked={voiceId === voice.id} onChange={() => setVoiceId(voice.id)} />
-                <span style={{ textTransform: "capitalize" }}>{voice.name}</span>
-                <span className={styles.note}>{voice.accent} · {voice.gender}</span>
-                <button type="button" className={styles.btnGhost} onClick={() => void play(voice.id)}>Play</button>
-              </label>
-            ))}
-          </div>
-          <button type="button" className={styles.btn} style={{ marginTop: 12 }} onClick={() => void saveBasics()}>Save basics</button>
-        </section>
-
-        <section className={styles.card}>
-          <div className={styles.sectionHead}><span className={styles.tile}>2</span> Knowledge</div>
-          <label className={styles.label}>Website
-            <input className={styles.field} value={websiteUrl} placeholder="https://" onChange={(event) => setWebsiteUrl(event.target.value)} />
-          </label>
-          <p className={styles.note}>{websiteUrl ? `Source: ${websiteUrl}` : "No source website yet."} {scrapedAt ? `Last scraped ${new Date(scrapedAt).toLocaleString("en-GB")}.` : ""}</p>
-          <button type="button" className={styles.btnGhost} disabled={importing} onClick={() => void importSite()}>
-            {importing ? `Importing ${importHost}…` : "Import from website"}
-          </button>
-          {fetchedPages.length ? (
-            <ul className={styles.stack}>
-              {fetchedPages.map((page) => (
-                <li key={page.url} className={styles.note}>{page.url} · {page.chars.toLocaleString("en-GB")} characters</li>
-              ))}
-            </ul>
-          ) : null}
-          {KNOWLEDGE_SECTIONS.map((section) => (
-            <label key={section.key} className={styles.label}>{section.title}
-              <textarea className={styles.area} value={sections[section.key as KnowledgeSectionKey]} onChange={(event) => setSections({ ...sections, [section.key]: event.target.value })} />
+          {offered.map((voice) => (
+            <label key={voice.id} className={styles.switch}>
+              <input type="radio" name="campaign-voice" checked={voiceId === voice.id} onChange={() => setVoiceId(voice.id)} />
+              <span style={{ textTransform: "capitalize" }}>{voice.name}</span>
+              <span className={styles.note}>{voice.accent} · {voice.gender}</span>
+              <button type="button" className={styles.btnGhost} onClick={() => void play(voice.id)}>Play</button>
             </label>
           ))}
-          {knowledgeCount >= KNOWLEDGE_CHAR_CAP * 0.8 ? (
-            <p className={knowledgeCount >= KNOWLEDGE_CHAR_CAP ? styles.err : styles.note}>
-              Knowledge is {knowledgeCount.toLocaleString("en-GB")} characters. The call uses the first {KNOWLEDGE_CHAR_CAP.toLocaleString("en-GB")}.
-            </p>
-          ) : null}
-          <button type="button" className={styles.btn} onClick={() => void saveKnowledge(false)}>Save knowledge</button>
-          <p className={styles.label}>Deck</p>
-          <p className={styles.note}>One deck is used on calls. A new PDF replaces that deck. Pages are rendered in this browser. PDFs up to 50 MB.</p>
-          {deckNote ? <p className={deckNote.startsWith("No deck") ? styles.note : styles.err}>{deckNote}</p> : null}
-          {deckJob ? <p className={deckJob.phase === "error" ? styles.err : styles.note}>{deckJob.message}</p> : null}
-          <input type="file" accept="application/pdf,.pdf" disabled={deckBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadDeck(file); }} />
-          {decks.map((deck) => (
-            <div key={deck.id} style={{ marginTop: 12 }}>
-              <div className={styles.headRow}>
-                <strong>{deck.title}</strong>
-                <span className={deck.active ? styles.ok : styles.warn}>{deck.active ? "Active" : "Not used on calls"}</span>
-                {deck.active ? (
-                  <label className={styles.btnGhost}>
-                    Replace images
-                    <input type="file" accept="application/pdf,.pdf" hidden disabled={deckBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadDeck(file, deck.id); }} />
-                  </label>
-                ) : null}
-              </div>
-              {deck.imagesMissing ? <p className={styles.err}>Images missing, click Replace images</p> : null}
-              {deck.active ? (
-                <button type="button" className={styles.btnGhost} disabled={deckBusy} onClick={() => void rebuildDeck(deck.id)}>
-                  {deckJob?.phase === "notes" ? "Reading the deck…" : "Rebuild knowledge from deck"}
-                </button>
-              ) : null}
-              <div className={styles.thumbs}>
-                {deck.slides.map((slide) => {
-                  const headline = customerHeadline(slide.title);
-                  return (
-                    <figure key={`${deck.id}-${slide.number}`}>
-                      {slide.url && !slide.missing ? <img src={slide.url} alt={headline || `Slide ${slide.number}`} /> : <div className={styles.thumb} />}
-                      <figcaption className={styles.thumbCaption}>
-                        <span className={styles.thumbTitle}>{headline || "Needs a headline"}</span>
-                        <span className={styles.thumbMeta}>Slide {slide.number}</span>
-                      </figcaption>
-                    </figure>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </section>
+          <button type="button" className={styles.btn} onClick={() => void saveBasics()}>Save voice</button>
+        </Fold>
 
-        <section className={styles.card}>
-          <div className={styles.sectionHead}><span className={styles.tile}>3</span> Agent behaviour</div>
-          <label className={styles.switch}><input type="checkbox" checked={quotes} onChange={(event) => setQuotes(event.target.checked)} /> Phone quotes allowed</label>
-          <label className={styles.switch}><input type="checkbox" checked={brochure} onChange={(event) => setBrochure(event.target.checked)} /> Brochure send allowed</label>
-          <label className={styles.label}>Opener
-            <input className={styles.field} value={opener} placeholder="Thanks for joining the call. I'm going to walk you through the brochure today, but before we get started, tell me a little bit about your business." onChange={(event) => setOpener(event.target.value)} />
-          </label>
-          <label className={styles.label}>Qualifying questions
-            <textarea className={styles.area} value={qualifying} onChange={(event) => setQualifying(event.target.value)} />
-          </label>
-          <p className={styles.note}>One question at a time, after an answer or a topic. Swoopos starts with location, business type, sites or tills, current provider, and timeline.</p>
-          <button type="button" className={styles.btnGhost} disabled={creating} onClick={() => void postJson("/api/crm/interviewer/documents", { campaignId, title: QUALIFYING_TITLE, body: qualifying })}>Save qualifying questions</button>
-          <button type="button" className={styles.btn} disabled={creating} onClick={() => void saveBehaviour()}>Save behaviour</button>
-        </section>
-
-        <section className={styles.card}>
-          <div className={styles.sectionHead}><span className={styles.tile}>4</span> Test links</div>
-          <label className={styles.label}>Lead name<input className={styles.field} value={prospectName} onChange={(event) => setProspectName(event.target.value)} /></label>
-          <label className={styles.label}>Email, optional<input className={styles.field} value={prospectEmail} onChange={(event) => setProspectEmail(event.target.value)} /></label>
-          <button type="button" className={styles.btn} disabled={creating} onClick={() => void createInvite()}>Create test link</button>
-          {featured ? <TestLinkBlock link={featured} featured copied={copiedPath === featured.path} onCopy={() => copyLink(featured)} onOpen={openLink} /> : null}
-          {older.length ? (
-            <div className={styles.linkList}>
-              <p className={styles.label}>Earlier links</p>
-              {older.map((link) => (
-                <TestLinkBlock key={link.path} link={link} copied={copiedPath === link.path} onCopy={() => copyLink(link)} onOpen={openLink} />
-              ))}
-            </div>
-          ) : null}
-        </section>
-
-        <details className={`${styles.card} ${styles.fold}`}>
-          <summary className={styles.foldSummary}>
-            <span className={styles.sectionHead}><span className={styles.tile}>5</span> Calls</span>
-            <span className={styles.note}>{calls.length === 0 ? "No calls yet" : `${calls.length} call${calls.length === 1 ? "" : "s"}`}{costs?.totals ? ` · ${costs.totals.cost}` : ""}</span>
-          </summary>
-          <div className={styles.foldBody}>
+        <Fold title={`Calls${calls.length ? ` · ${calls.length}` : ""}`} open={Boolean(openSections.calls)} onToggle={() => toggleSection("calls")}>
           <ul className={styles.stack} style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {calls.map((call) => {
               const cost = costFor(call.id);
@@ -602,15 +765,9 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
               );
             })}
           </ul>
-          </div>
-        </details>
+        </Fold>
 
-        <details className={`${styles.card} ${styles.fold}`}>
-          <summary className={styles.foldSummary}>
-            <span className={styles.sectionHead}><span className={styles.tile}>6</span> Billing and true cost</span>
-            <span className={styles.note}>{currency} {rate}/min{costs?.totals ? ` · ${costs.totals.cost} total` : " · internal"}</span>
-          </summary>
-          <div className={styles.foldBody}>
+        <Fold title="Billing" open={Boolean(openSections.billing)} onToggle={() => toggleSection("billing")}>
           <p className={styles.note}>{costs?.label || "Internal: never share with clients"}</p>
           <div className={styles.grid2}>
             <label className={styles.label}>Rate per minute<input className={styles.field} value={rate} onChange={(event) => setRate(event.target.value)} /></label>
@@ -637,8 +794,7 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
               </tbody>
             </table>
           </div>
-          </div>
-        </details>
+        </Fold>
       </div>
       {campaign ? null : null}
     </main>

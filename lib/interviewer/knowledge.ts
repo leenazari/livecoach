@@ -3,6 +3,7 @@ export const KNOWLEDGE_SECTIONS = [
   { key: "products", title: "Products and services" },
   { key: "pricing", title: "Pricing" },
   { key: "faqs", title: "FAQs and objections" },
+  { key: "objections", title: "Objection handling" },
   { key: "next", title: "Next step and booking" },
 ] as const;
 
@@ -27,7 +28,7 @@ export function knowledgeLength(sections: Record<KnowledgeSectionKey, string>): 
 }
 
 export function emptyKnowledge(): Record<KnowledgeSectionKey, string> {
-  return { summary: "", products: "", pricing: "", faqs: "", next: "" };
+  return { summary: "", products: "", pricing: "", faqs: "", objections: "", next: "" };
 }
 
 export function sectionKeyForTitle(title: string): KnowledgeSectionKey | null {
@@ -74,7 +75,8 @@ export function preferKnowledgeNotes<T extends { title: string; body: string; so
       chosen.set(key, row);
       continue;
     }
-    if (current.source === WEBSITE_IMPORT_SOURCE && row.source !== WEBSITE_IMPORT_SOURCE) chosen.set(key, row);
+    const rank = (source?: string | null) => source === WEBSITE_IMPORT_SOURCE ? 0 : source === DECK_IMPORT_SOURCE ? 1 : 2;
+    if (rank(row.source) > rank(current.source)) chosen.set(key, row);
   }
   return [...chosen.values()];
 }
