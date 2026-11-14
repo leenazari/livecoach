@@ -77,6 +77,7 @@ async function postJson<T>(url: string, body: unknown): Promise<{ ok: boolean; d
 
 export function useInterviewerCall(token: string, capMinutes = "") {
   const [phase, setPhase] = useState<"mic" | "waiting" | "live" | "ended">("mic");
+  const [voiceLive, setVoiceLive] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [position, setPosition] = useState(0);
@@ -353,6 +354,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
       };
       const greetingWatch = window.setTimeout(releaseGreeting, 15000);
       const playAgent = (pcm: ArrayBuffer) => {
+        setVoiceLive(true);
         if (clickMarkRef.current != null) {
           setSlideAudioMs(Math.round(performance.now() - clickMarkRef.current));
           clickMarkRef.current = null;
@@ -755,6 +757,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         }
         else if (message.type === "SettingsApplied") {
           applied = true;
+          setVoiceLive(true);
           setConnecting(false);
           setPhase("live");
         }         else if (message.type === "UserStartedSpeaking") {
@@ -1062,6 +1065,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
 
   return {
     phase,
+    voiceLive,
     connecting,
     sessionId,
     position,

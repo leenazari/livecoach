@@ -183,6 +183,9 @@ export default function InterviewerRoom({
   const [talkOpen, setTalkOpen] = useState(false);
   const [featuresOpen, setFeaturesOpen] = useState(false);
   const slideStageRef = useRef<HTMLDivElement | null>(null);
+  const callScreenRef = useRef<HTMLElement | null>(null);
+  const [hintDismissed, setHintDismissed] = useState(false);
+  const [portrait, setPortrait] = useState(true);
 
   const showSlideImage = Boolean(call.slideUrl) && !slideBroken;
   const noteRatio = (image: HTMLImageElement) => {
@@ -194,6 +197,39 @@ export default function InterviewerRoom({
   useEffect(() => {
     setSlideBroken(false);
   }, [call.slideUrl]);
+
+  useEffect(() => {
+    try {
+      if (window.sessionStorage.getItem("interviewer-turn-hint") === "off") setHintDismissed(true);
+    } catch { /* the hint can still be dismissed */ }
+    const query = window.matchMedia("(orientation: portrait)");
+    const update = () => setPortrait(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  const dismissHint = () => {
+    setHintDismissed(true);
+    try { window.sessionStorage.setItem("interviewer-turn-hint", "off"); } catch { /* the hint stays hidden this view */ }
+  };
+
+  const toggleFullscreen = async () => {
+    const node = callScreenRef.current;
+    if (!node) return;
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        try { screen.orientation.unlock(); } catch { /* iOS Safari has no lock */ }
+        return;
+      }
+      await node.requestFullscreen();
+      try {
+        const orientation = screen.orientation as ScreenOrientation & { lock?: (type: string) => Promise<void> };
+        await orientation.lock?.("landscape");
+      } catch { /* iOS Safari cannot lock orientation */ }
+    } catch { /* this browser does not offer fullscreen */ }
+  };
 
   const startCall = async () => {
     if (micStarted.current || call.phase !== "mic") return;
@@ -284,9 +320,10 @@ export default function InterviewerRoom({
   if (call.phase === "live" || call.connecting || call.phase === "waiting") {
     const points = (call.slideIndex.find((item) => item.number === call.slideNumber)?.points || []).slice(0, 5);
     return (
-      <main className={styles.callScreen} style={{ "--slide-w": String(slideRatio.w), "--slide-h": String(slideRatio.h) } as CSSProperties}>
+      <main ref={callScreenRef} className={styles.callScreen} style={{ "--slide-w": String(slideRatio.w), "--slide-h": String(slideRatio.h) } as CSSProperties}>
         <header className={styles.callTop}>
           <p>{campaignName}</p>
+          <button type="button" className={styles.fullScreenBtn} onClick={() => void toggleFullscreen()}>Full screen</button>
         </header>
         <section className={`${styles.callStage} ${featuresOpen ? styles.featuresOpen : ""}`}>
           {call.slideIndex.length ? (
@@ -316,16 +353,7 @@ export default function InterviewerRoom({
             </ol>
           ) : <div className={styles.slideList} />}
           <div className={styles.slideColumn}>
-            <div
-              className={styles.slideStage}
-              ref={slideStageRef}
-              onClick={() => {
-                const node = slideStageRef.current;
-                if (!node) return;
-                if (document.fullscreenElement === node) void document.exitFullscreen();
-                else void node.requestFullscreen?.();
-              }}
-            >
+            <div className={styles.slideStage} ref={slideStageRef}>
               {call.phase === "live" && call.remainingSeconds != null && call.remainingSeconds <= 120 ? (
                 <p className={styles.limitClock} role="timer" aria-live="assertive" aria-label={`${formatCountdown(call.remainingSeconds)} left on this call`} onClick={(event) => event.stopPropagation()}>
                   {formatCountdown(call.remainingSeconds)}
@@ -339,7 +367,10 @@ export default function InterviewerRoom({
                   {call.slideSlogan ? <p className={styles.slideSlogan}>{call.slideSlogan}</p> : null}
                 </div>
               )}
-              {call.phase !== "live" ? <p className={styles.startingCall}>Starting your call…</p> : null}
+              {portrait && slideRatio.w > slideRatio.h && !hintDismissed ? (
+                <button type="button" className={styles.turnHint} onClick={dismissHint}>Turn your phone sideways for the best view</button>
+              ) : null}
+              {call.phase !== "live" && !call.voiceLive ? <p className={styles.startingCall}>Starting your call…</p> : null}
             </div>
           </div>
           <aside className={styles.featurePanel}>
