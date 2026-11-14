@@ -1,56 +1,95 @@
-import { deepgramListenUrl } from "@/lib/deepgram";
+import { interviewerListenUrl } from "@/lib/interviewer/listen-url";
+import { createListenFold, type ListenDecision } from "@/lib/interviewer/listen-transcript";
 
-// Same listen socket as CallStage: short-lived bearer token, nova-3 URL from
-// lib/deepgram.ts, final transcripts only. The token is minted by the
-// interviewer route after a slot is claimed, not by /api/deepgram-token,
-// because this page has no workspace session.
+export type LeadListenHandlers = {
+  onDecision: (decision: ListenDecision) => void;
+  onRefusal: (detail: { closeCode?: number; message?: string }) => void;
+};
+
+// A second call closes the previous socket. React strict mode and a repeated
+// connect would otherwise leave two listeners on the same microphone.
+let activeStop: (() => void) | null = null;
+
 export function startLeadListener(input: {
   stream: MediaStream;
   token: string;
-  onTranscript: (text: string) => void;
-  onRefusal: (detail: { closeCode?: number; message?: string }) => void;
+  handlers: LeadListenHandlers;
 }): () => void {
-  let closed = false;
+  activeStop?.();
+
+  const tracks = input.stream.getAudioTracks().slice(0, 1);
+  const micOnly = new MediaStream(tracks);
+  let stopped = false;
   let recorder: MediaRecorder | null = null;
   let keepAlive: ReturnType<typeof setInterval> | null = null;
-  const socket = new WebSocket(deepgramListenUrl(), ["bearer", input.token]);
+  const fold = createListenFold();
+  const socket = new WebSocket(interviewerListenUrl(), ["bearer", input.token]);
 
   const stop = () => {
-    closed = true;
+    if (stopped) return;
+    stopped = true;
+    if (activeStop === stop) activeStop = null;
     if (keepAlive) clearInterval(keepAlive);
-    if (recorder && recorder.state !== "inactive") recorder.stop();
-    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+    keepAlive = null;
+    if (recorder && recorder.state !== "inactive") {
+      try { recorder.stop(); } catch { /* already stopping */ }
+    }
+    recorder = null;
+    if (socket.readyState === WebSocket.OPEN) {
+      try { socket.send(JSON.stringify({ type: "CloseStream" })); } catch { /* ignore */ }
+    }
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+      socket.close();
+    }
+    const tail = fold.flush();
+    if (tail) input.handlers.onDecision({ interim: "", lock: tail, revise: null });
   };
 
+  activeStop = stop;
+
   socket.onopen = () => {
-    if (closed) return;
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : undefined;
-    recorder = mimeType ? new MediaRecorder(input.stream, { mimeType }) : new MediaRecorder(input.stream);
+    if (stopped) {
+      socket.close();
+      return;
+    }
+    if (recorder) return;
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+    recorder = new MediaRecorder(micOnly, { mimeType });
     recorder.ondataavailable = (event) => {
+      if (stopped) return;
       if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) socket.send(event.data);
     };
-    recorder.start(150);
+    recorder.start(250);
     keepAlive = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "KeepAlive" }));
     }, 3000);
   };
 
   socket.onmessage = (event) => {
+    if (stopped || typeof event.data !== "string") return;
     try {
-      const data = JSON.parse(String(event.data));
-      const text = String(data?.channel?.alternatives?.[0]?.transcript || "").trim();
-      if (text && data.is_final) input.onTranscript(text);
+      const data = JSON.parse(event.data);
+      const transcript = String(data?.channel?.alternatives?.[0]?.transcript || "");
+      if (!transcript.trim()) return;
+      input.handlers.onDecision(fold.push({
+        transcript,
+        isFinal: data.is_final === true,
+        speechFinal: data.speech_final === true,
+        start: Number.isFinite(Number(data.start)) ? Number(data.start) : null,
+      }));
     } catch {
       // Keepalive replies are not transcripts.
     }
   };
 
   socket.onerror = () => {
-    if (!closed) input.onRefusal({ message: "listen socket error" });
+    if (!stopped) input.handlers.onRefusal({ message: "listen socket error" });
   };
 
   socket.onclose = (event) => {
-    if (!closed) input.onRefusal({ closeCode: event.code, message: event.reason });
+    if (!stopped) input.handlers.onRefusal({ closeCode: event.code, message: event.reason });
   };
 
   return stop;

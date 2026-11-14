@@ -5,8 +5,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { floatToPcm16, playOfferChime, resampleLinear } from "@/components/interviewer/audio";
 import { startLeadListener } from "@/components/interviewer/lead-listener";
 import { isDeepgramConcurrencyRefusal } from "@/lib/interviewer/concurrency";
+import {
+  agentTurnExtends,
+  looksLikeSpeakerEcho,
+  utteranceKey,
+  type LockedUtterance,
+} from "@/lib/interviewer/listen-transcript";
 
 export type Caption = { id: string; speaker: "agent" | "lead"; text: string };
+
+export type TranscriptDebug = {
+  interim: string;
+  echoes: string[];
+};
 
 type QueuePayload = {
   state?: string;
@@ -46,6 +57,8 @@ export function useInterviewerCall(token: string) {
   const [overTenMinutes, setOverTenMinutes] = useState(false);
   const [calmMessage, setCalmMessage] = useState("");
   const [captions, setCaptions] = useState<Caption[]>([]);
+  const [interim, setInterim] = useState("");
+  const [echoes, setEchoes] = useState<string[]>([]);
   const [billableSeconds, setBillableSeconds] = useState<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -54,7 +67,8 @@ export function useInterviewerCall(token: string) {
   const connectingRef = useRef(false);
   const holdPollRef = useRef(false);
   const offeredRef = useRef<string | null>(null);
-  const lineRef = useRef(0);
+  const agentTurnRef = useRef<Caption | null>(null);
+  const recentAgentRef = useRef<string[]>([]);
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -70,19 +84,55 @@ export function useInterviewerCall(token: string) {
     setOverTenMinutes(data.overTenMinutes === true);
   }, []);
 
-  const publishLine = useCallback((speaker: "agent" | "lead", text: string) => {
-    const clean = text.trim();
+  const saveCaption = useCallback((caption: Caption) => {
     const session = sessionRef.current;
-    if (!clean || !session) return;
-    lineRef.current += 1;
-    const clientKey = `${speaker}-${lineRef.current}-${clean.slice(0, 18)}`.replace(/\s+/g, "-").slice(0, 80);
-    setCaptions((current) => [...current.slice(-12), { id: clientKey, speaker, text: clean }]);
+    if (!session) return;
+    setCaptions((current) => {
+      const index = current.findIndex((line) => line.id === caption.id);
+      if (index >= 0) {
+        const next = current.slice();
+        next[index] = caption;
+        return next;
+      }
+      return [...current.slice(-40), caption];
+    });
     void postJson("/api/interviewer/utterances", {
       token,
       sessionId: session,
-      utterances: [{ speaker, text: clean, ts: new Date().toISOString(), clientKey }],
+      utterances: [{
+        speaker: caption.speaker,
+        text: caption.text,
+        ts: new Date().toISOString(),
+        utteranceId: caption.id,
+      }],
     });
   }, [token]);
+
+  const acceptLead = useCallback((utterance: LockedUtterance) => {
+    const text = utterance.text.trim();
+    if (!text) return;
+    if (looksLikeSpeakerEcho(text, recentAgentRef.current)) {
+      setEchoes((current) => [...current.slice(-8), text]);
+      return;
+    }
+    saveCaption({ id: utterance.id, speaker: "lead", text });
+  }, [saveCaption]);
+
+  const acceptAgent = useCallback((text: string) => {
+    const clean = text.trim();
+    if (!clean) return;
+    const previous = agentTurnRef.current;
+    const caption = previous && agentTurnExtends(previous.text, clean)
+      ? { id: previous.id, speaker: "agent" as const, text: clean }
+      : {
+          id: utteranceKey("agent", Date.now() / 1000, clean),
+          speaker: "agent" as const,
+          text: clean,
+        };
+    agentTurnRef.current = caption;
+    recentAgentRef.current = [...recentAgentRef.current.slice(-3), clean];
+    saveCaption(caption);
+  }, [saveCaption]);
 
   const connectVoice = useCallback(async () => {
     const session = sessionRef.current;
@@ -304,8 +354,12 @@ export function useInterviewerCall(token: string) {
           applied = true;
           setConnecting(false);
           setPhase("live");
-        } else if (message.type === "UserStartedSpeaking") bargeIn();
-        else if (message.type === "ConversationText" && message.role === "assistant" && message.content) publishLine("agent", message.content);
+        } else if (message.type === "UserStartedSpeaking") {
+          bargeIn();
+          agentTurnRef.current = null;
+        } else if (message.type === "ConversationText" && message.content && (message.role === "assistant" || message.role === "agent")) {
+          acceptAgent(message.content);
+        }
         else if (message.type === "Error") {
           const detail = { message: message.description || "", code: message.code };
           if (isDeepgramConcurrencyRefusal(detail)) void returnToQueue(true, "");
@@ -319,13 +373,20 @@ export function useInterviewerCall(token: string) {
         void returnToQueue(isDeepgramConcurrencyRefusal(detail), "We could not open the voice connection. You are still in the queue.");
       };
 
+      const micOnly = new MediaStream(stream.getAudioTracks().slice(0, 1));
       holdPollRef.current = true;
       stopLead = startLeadListener({
-        stream,
+        stream: micOnly,
         token: ready.data.listenToken,
-        onTranscript: (text) => publishLine("lead", text),
-        onRefusal: (detail) => {
-          if (isDeepgramConcurrencyRefusal(detail)) void returnToQueue(true, "");
+        handlers: {
+          onDecision: (decision) => {
+            setInterim(decision.interim);
+            if (decision.lock) acceptLead(decision.lock);
+            if (decision.revise) acceptLead(decision.revise);
+          },
+          onRefusal: (detail) => {
+            if (isDeepgramConcurrencyRefusal(detail)) void returnToQueue(true, "");
+          },
         },
       });
 
@@ -345,7 +406,7 @@ export function useInterviewerCall(token: string) {
     } finally {
       connectingRef.current = false;
     }
-  }, [publishLine, rememberQueue, token]);
+  }, [acceptAgent, acceptLead, rememberQueue, token]);
 
   const join = useCallback(async (stream: MediaStream) => {
     streamRef.current = stream;
@@ -413,6 +474,8 @@ export function useInterviewerCall(token: string) {
     overTenMinutes,
     calmMessage,
     captions,
+    interim,
+    echoes,
     billableSeconds,
     join,
     hangUp,

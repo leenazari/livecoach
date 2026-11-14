@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { INTERVIEWER_MIC_CONSTRAINTS } from "@/lib/interviewer/listen-url";
 import { useInterviewerCall } from "@/components/interviewer/useInterviewerCall";
 
 type Slot = { start: string; end: string; label: string };
@@ -32,6 +33,8 @@ export default function InterviewerRoom({
   const [slots, setSlots] = useState<Slot[]>([]);
   const [bookingNote, setBookingNote] = useState("");
   const [bookingSaved, setBookingSaved] = useState<boolean | null>(null);
+  const [ownerDebug, setOwnerDebug] = useState(false);
+  const [canDebug, setCanDebug] = useState(false);
 
   const meterRef = useRef<number | ReturnType<typeof setInterval> | null>(null);
 
@@ -56,10 +59,26 @@ export default function InterviewerRoom({
     else audio.pause();
   }, [call.phase, holdSrc]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/crm/interviewer/campaigns", { credentials: "same-origin", cache: "no-store" })
+      .then((response) => {
+        if (!cancelled) setCanDebug(response.ok);
+      })
+      .catch(() => {
+        if (!cancelled) setCanDebug(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const enableMic = async () => {
     setMicError("");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: INTERVIEWER_MIC_CONSTRAINTS,
+      });
       streamRef.current = stream;
       const context = new AudioContext();
       const source = context.createMediaStreamSource(stream);
@@ -203,6 +222,26 @@ export default function InterviewerRoom({
               </li>
             ))}
           </ul>
+          {canDebug ? (
+            <div className="mt-4">
+              <button
+                type="button"
+                className="text-xs text-muted underline"
+                onClick={() => setOwnerDebug((current) => !current)}
+              >
+                {ownerDebug ? "Hide transcript debug" : "Show transcript debug"}
+              </button>
+              {ownerDebug ? (
+                <div className="mt-2 rounded-xl border border-edge bg-ink/40 p-3 text-xs leading-5 text-muted">
+                  <p>Interim, replaced in place: {call.interim || "—"}</p>
+                  <p className="mt-2">Saved lines: {call.captions.length}. Echoes dropped: {call.echoes.length}.</p>
+                  {call.echoes.map((echo, index) => (
+                    <p key={`${index}-${echo.slice(0, 24)}`} className="mt-1">Echo not saved: {echo}</p>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <button type="button" className="mt-6 rounded-full bg-rust px-4 py-2 text-sm text-ink" onClick={call.hangUp}>
             End conversation
           </button>
