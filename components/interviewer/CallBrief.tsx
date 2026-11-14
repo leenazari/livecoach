@@ -229,24 +229,41 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
       <section className={styles.card} style={{ marginTop: 16 }}>
         <h2 className={styles.cardTitle}>Recording {data.durationLabel || ""}</h2>
         {recording ? (
-          <audio
-            ref={audioRef}
-            controls
-            preload="metadata"
-            src={recording}
-            onLoadedMetadata={(event) => {
-              const audio = event.currentTarget;
-              if (Number.isFinite(audio.duration)) return;
-              const known = data.durationSeconds || 0;
-              const reveal = () => {
-                audio.removeEventListener("timeupdate", reveal);
-                audio.currentTime = 0;
-              };
-              audio.addEventListener("timeupdate", reveal);
-              try { audio.currentTime = known || 1e10; } catch { /* the known length still drives the chapters */ }
-            }}
-            onTimeUpdate={(event) => setPlayed(event.currentTarget.currentTime)}
-          />
+          <>
+            <audio
+              ref={audioRef}
+              controls
+              preload="metadata"
+              src={recording}
+              onLoadedMetadata={(event) => {
+                const audio = event.currentTarget;
+                if (Number.isFinite(audio.duration)) return;
+                const known = data.durationSeconds || 0;
+                const reveal = () => {
+                  audio.removeEventListener("timeupdate", reveal);
+                  audio.currentTime = 0;
+                };
+                audio.addEventListener("timeupdate", reveal);
+                try { audio.currentTime = known || 1e10; } catch { /* the known length still drives the chapters */ }
+              }}
+              onTimeUpdate={(event) => setPlayed(event.currentTarget.currentTime)}
+            />
+            {data.durationSeconds ? (
+              <input
+                type="range"
+                min={0}
+                max={data.durationSeconds}
+                value={Math.min(played, data.durationSeconds)}
+                aria-label="Seek in the recording"
+                onChange={(event) => {
+                  const at = Number(event.target.value);
+                  if (audioRef.current) audioRef.current.currentTime = at;
+                  setPlayed(at);
+                }}
+                style={{ width: "100%", marginTop: 8 }}
+              />
+            ) : null}
+          </>
         ) : <p>No recording saved.</p>}
         <div className={styles.linkActions}>
           {(brief.chapters || []).map((chapter) => (

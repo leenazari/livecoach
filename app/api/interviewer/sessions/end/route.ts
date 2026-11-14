@@ -1,4 +1,5 @@
 import { loadOrCreateBrief } from "@/lib/interviewer/brief-store";
+import { PLACEHOLDER_OUTCOME, dispositionFromIntent, leadRecap } from "@/lib/interviewer/call-close";
 import { recordSessionCost } from "@/lib/interviewer/cost-store";
 import { interviewerRpc, isUuid, loadOpenInvite } from "@/lib/interviewer/data";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
@@ -19,27 +20,26 @@ export async function POST(req: Request) {
       { p_token: token, p_session_id: sessionId }
     );
     await recordSessionCost(sessionId).catch(() => undefined);
+    const brief = await loadOrCreateBrief(sessionId).catch(() => null);
     const { data: finished } = await supabaseService
       .from("interviewer_sessions")
-      .select("disposition")
+      .select("disposition, reason_code")
       .eq("id", sessionId)
       .maybeSingle();
-    if (finished && !finished.disposition) {
+    const placeholder = !finished?.disposition || finished.reason_code === PLACEHOLDER_OUTCOME;
+    if (brief && placeholder) {
+      const outcome = dispositionFromIntent(brief.intent.label, brief.intent.reasons);
       await supabaseService
         .from("interviewer_sessions")
-        .update({
-          disposition: "Nurture",
-          reason_code: "Call ended before an outcome was recorded",
-        })
-        .eq("id", sessionId)
-        .is("disposition", null);
+        .update({ disposition: outcome.disposition, reason_code: outcome.reason })
+        .eq("id", sessionId);
     }
-    await loadOrCreateBrief(sessionId).catch(() => undefined);
     return interviewerJson({
       state: "ended",
       billableSeconds: Number(result?.billableSeconds || 0),
       billedAmount: result?.billedAmount ?? null,
       currency: null,
+      recap: brief ? leadRecap(brief) : null,
     });
   } catch (error) {
     return interviewerPublicError(error);

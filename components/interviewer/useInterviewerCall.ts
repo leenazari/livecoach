@@ -99,6 +99,10 @@ export function useInterviewerCall(token: string) {
   const manualSlideUntil = useRef(0);
   const slideTimer = useRef<number | null>(null);
   const slideNumberRef = useRef(0);
+  const slideQueue = useRef<Array<{ number: number; url: string; title: string; slogan: string }>>([]);
+  const lastSlideAt = useRef(0);
+  const advanceTimer = useRef<number | null>(null);
+  const advanceQueueRef = useRef<(speech: string) => boolean>(() => false);
   const endingSoon = useRef(false);
   const silenceRef = useRef({
     lastActivityAt: Date.now(),
@@ -174,6 +178,8 @@ export function useInterviewerCall(token: string) {
     agentTurnRef.current = caption;
     recentAgentRef.current = [...recentAgentRef.current.slice(-3), clean];
     saveCaption(caption);
+    if (advanceQueueRef.current(clean)) return;
+    if (slideQueue.current.length) return;
     if (Date.now() < manualSlideUntil.current) return;
     if (slideTimer.current) window.clearTimeout(slideTimer.current);
     slideTimer.current = window.setTimeout(() => {
@@ -424,6 +430,47 @@ export function useInterviewerCall(token: string) {
         setPhase("ended");
       };
 
+      const showOne = (slide: { number: number; url: string; title: string; slogan: string }) => {
+        slideNumberRef.current = slide.number;
+        setSlideNumber(slide.number);
+        setSlideUrl(slide.url);
+        setSlideLabel(slide.title);
+        setSlideSlogan(slide.slogan);
+        lastSlideAt.current = Date.now();
+        if (advanceTimer.current) window.clearTimeout(advanceTimer.current);
+        if (!slideQueue.current.length) return;
+        advanceTimer.current = window.setTimeout(() => {
+          const next = slideQueue.current.shift();
+          if (next) showOne(next);
+        }, 8000);
+      };
+      const queueSlide = (slide: { number: number; url: string; title: string; slogan: string }) => {
+        const burst = slideQueue.current.length > 0 || (lastSlideAt.current > 0 && Date.now() - lastSlideAt.current < 1500);
+        if (burst && slideNumberRef.current !== slide.number) {
+          slideQueue.current.push(slide);
+          if (!advanceTimer.current) {
+            advanceTimer.current = window.setTimeout(() => {
+              const next = slideQueue.current.shift();
+              if (next) showOne(next);
+            }, 8000);
+          }
+          return;
+        }
+        showOne(slide);
+      };
+      advanceQueueRef.current = (speech: string) => {
+        if (!slideQueue.current.length) return false;
+        const options = slideQueue.current.map((item) => {
+          const known = slideIndexRef.current.find((slide) => slide.number === item.number);
+          return { number: item.number, keywords: known?.keywords?.length ? known.keywords : [item.title.toLowerCase()] };
+        });
+        const hit = options.findIndex((option) => matchSpokenSlide(speech, [option], -1) === option.number);
+        if (hit < 0) return false;
+        const next = slideQueue.current[hit];
+        slideQueue.current = slideQueue.current.slice(hit + 1);
+        showOne(next);
+        return true;
+      };
       const handleFunctions = async (functions: Array<{ id?: string; name?: string; arguments?: unknown }>) => {
         for (const fn of functions) {
           let args: Record<string, unknown> = {};
@@ -456,15 +503,15 @@ export function useInterviewerCall(token: string) {
                   reason: (args as { reason?: string }).reason,
                 },
               );
-              if (shown.data.url || shown.data.title) {
-                const match = slideIndexRef.current.find((item) => item.number === Number(shown.data.slideNumber));
-                setSlideUrl(shown.data.url || match?.url || "");
-                setSlideLabel(shown.data.title || match?.title || `Slide ${shown.data.slideNumber || ""}`);
-                setSlideSlogan(match?.slogan || "");
-                if (shown.data.slideNumber) {
-                  slideNumberRef.current = Number(shown.data.slideNumber);
-                  setSlideNumber(Number(shown.data.slideNumber));
-                }
+              const match = slideIndexRef.current.find((item) => item.number === Number(shown.data.slideNumber || (args as { slide_number?: number }).slide_number));
+              const number = Number(shown.data.slideNumber || (args as { slide_number?: number }).slide_number);
+              if (number) {
+                queueSlide({
+                  number,
+                  url: shown.data.url || match?.url || "",
+                  title: shown.data.title || match?.title || `Slide ${number}`,
+                  slogan: match?.slogan || "",
+                });
               }
               content = "shown";
             } else if (fn.name === "capture_timing" || fn.name === "record_disposition") {
