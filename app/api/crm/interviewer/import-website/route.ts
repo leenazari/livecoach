@@ -79,7 +79,8 @@ async function draftNotes(pages: Array<{ url: string; text: string }>): Promise<
         {
           role: "system",
           content: `Turn website text into voice-agent knowledge. Return JSON {"documents":[{"title":"","body":""}]}.
-Use only these titles, and omit a title when the pages do not state it: Business summary; Products and services; Pricing; FAQs and objections; Next step and booking.
+Use only these titles, and omit a title when the pages do not state it: Business summary; Products and services; Pricing; FAQs and objections; Next step and booking; Objection handling; Qualifying questions.
+Objection handling is 10 to 15 short spoken replies. Each ends with a question. Cover price, already having a solution, trust, setup time, integration, data, needing to think, not right now, what if it does not work, and the decision maker being absent. Use only facts written in the page text. Do not invent a statistic, a client, or a price.
 Use only facts that are written in the page text. Do not add a product, price, name, or number from anywhere else.
 Copy each price exactly as it appears, including the £ sign. On that same line, add the page URL in parentheses. If the page text has no price, do not mention a price.
 Write short plain sentences. Use lines that start with "- " for separate facts.
