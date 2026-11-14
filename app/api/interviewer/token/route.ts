@@ -5,7 +5,7 @@ import { mintDeepgramGrant } from "@/lib/interviewer/deepgram-grant";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
 import { linkedSession, presentQueue, queueStatusForToken, type InterviewerQueueState } from "@/lib/interviewer/queue-view";
 import { supabaseService } from "@/lib/supabase";
-import { customerHeadline, headlineFromNotes } from "@/lib/interviewer/slide-headline";
+import { customerHeadline, formatDeckKnowledge, headlineFromNotes } from "@/lib/interviewer/slide-headline";
 import { interviewerVoiceOrFallback } from "@/lib/interviewer/voices";
 
 export const runtime = "nodejs";
@@ -88,7 +88,7 @@ export async function POST(req: Request) {
           .order("created_at", { ascending: false })
           .limit(1);
     const deckId = deck.data?.[0]?.id ? String(deck.data[0].id) : null;
-    const deckKnowledge = deck.data?.[0]?.outline ? String(deck.data[0].outline) : "";
+    const storedOutline = deck.data?.[0]?.outline ? String(deck.data[0].outline) : "";
     const slideResult = !deckId
       ? { data: [] as Array<{ slide_number: number; title: string; one_line: string; talking_points: string | null; verbatim: string | null; image_path: string | null }> }
       : await supabaseService
@@ -96,6 +96,12 @@ export async function POST(req: Request) {
           .select("slide_number, title, one_line, talking_points, verbatim, image_path")
           .eq("deck_id", deckId)
           .order("slide_number", { ascending: true });
+    const deckKnowledge = storedOutline || formatDeckKnowledge((slideResult.data || []).map((slide) => ({
+      number: Number(slide.slide_number),
+      title: customerHeadline(String(slide.title || "")) || String(slide.one_line || ""),
+      facts: String(slide.talking_points || "").split("\n").filter(Boolean),
+      prices: slide.verbatim ? String(slide.verbatim) : "",
+    })));
     const slides = (slideResult.data || []).map((slide) => ({
       number: Number(slide.slide_number),
       title: customerHeadline(String(slide.title || "")) || headlineFromNotes({
