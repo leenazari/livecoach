@@ -392,8 +392,12 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
           {invitePath ? <p className={styles.note}>{invitePath}</p> : null}
         </section>
 
-        <section className={styles.card}>
-          <div className={styles.sectionHead}><span className={styles.tile}>5</span> Calls</div>
+        <details className={`${styles.card} ${styles.fold}`}>
+          <summary className={styles.foldSummary}>
+            <span className={styles.sectionHead}><span className={styles.tile}>5</span> Calls</span>
+            <span className={styles.note}>{calls.length === 0 ? "No calls yet" : `${calls.length} call${calls.length === 1 ? "" : "s"}`}{costs?.totals ? ` · ${costs.totals.cost}` : ""}</span>
+          </summary>
+          <div className={styles.foldBody}>
           <ul className={styles.stack} style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {calls.map((call) => {
               const cost = costFor(call.id);
@@ -407,10 +411,15 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
               );
             })}
           </ul>
-        </section>
+          </div>
+        </details>
 
-        <details className={styles.card}>
-          <summary className={styles.sectionHead}><span className={styles.tile}>6</span> Billing and true cost (internal)</summary>
+        <details className={`${styles.card} ${styles.fold}`}>
+          <summary className={styles.foldSummary}>
+            <span className={styles.sectionHead}><span className={styles.tile}>6</span> Billing and true cost</span>
+            <span className={styles.note}>{currency} {rate}/min{costs?.totals ? ` · ${costs.totals.cost} total` : " · internal"}</span>
+          </summary>
+          <div className={styles.foldBody}>
           <p className={styles.note}>{costs?.label || "Internal: never share with clients"}</p>
           <div className={styles.grid2}>
             <label className={styles.label}>Rate per minute<input className={styles.field} value={rate} onChange={(event) => setRate(event.target.value)} /></label>
@@ -436,6 +445,7 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
                 ))}
               </tbody>
             </table>
+          </div>
           </div>
         </details>
       </div>
