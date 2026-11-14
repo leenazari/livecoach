@@ -189,9 +189,20 @@ export default function InterviewerRoom({
           ) : null}
         </section>
         <footer className={styles.controlBar}>
-          <p className={styles.countdown} aria-live="polite">
-            {call.remainingSeconds == null ? "" : `${formatCountdown(call.remainingSeconds)} left`}
-          </p>
+          <div className={styles.barLeft}>
+            <p className={styles.countdown} aria-live="polite">
+              {call.remainingSeconds == null ? "" : `${formatCountdown(call.remainingSeconds)} left`}
+            </p>
+            <button
+              type="button"
+              className={call.muted ? styles.muteOff : styles.muteOn}
+              aria-pressed={call.muted}
+              aria-label={call.muted ? "Muted. Unmute microphone" : "Mute microphone"}
+              onClick={() => call.setMuted(!call.muted)}
+            >
+              {call.muted ? "Muted" : "Mute"}
+            </button>
+          </div>
           {call.endAsk ? (
             <div className={styles.endAsk}>
               <p>Are you sure you want to end the call?</p>
@@ -199,18 +210,7 @@ export default function InterviewerRoom({
               <button type="button" className={styles.btnGhost} onClick={call.cancelHangUp}>Keep talking</button>
             </div>
           ) : (
-            <>
-              <button
-                type="button"
-                className={call.muted ? styles.muteOff : styles.muteOn}
-                aria-pressed={call.muted}
-                aria-label={call.muted ? "Muted. Unmute microphone" : "Mute microphone"}
-                onClick={() => call.setMuted(!call.muted)}
-              >
-                {call.muted ? "Muted" : "Mute"}
-              </button>
-              <button type="button" className={styles.endSolid} onClick={call.hangUp}>End conversation</button>
-            </>
+            <button type="button" className={styles.endSolid} onClick={call.hangUp}>End conversation</button>
           )}
         </footer>
       </main>
