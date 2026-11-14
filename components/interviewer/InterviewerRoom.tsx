@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import styles from "@/components/interviewer/interviewa.module.css";
 import { formatCountdown } from "@/lib/interviewer/call-limit";
@@ -174,8 +174,7 @@ export default function InterviewerRoom({
   const [micError, setMicError] = useState("");
   const streamRef = useRef<MediaStream | null>(null);
   const micStarted = useRef(false);
-  const holdRef = useRef<HTMLAudioElement | null>(null);
-  const [holdSrc, setHoldSrc] = useState("/interviewer/hold-loop.wav");
+  const [slideRatio, setSlideRatio] = useState({ w: 16, h: 9 });
   const [slots, setSlots] = useState<Slot[]>([]);
   const [bookedWhen, setBookedWhen] = useState<string | null>(null);
   const [bookingNote, setBookingNote] = useState("");
@@ -186,6 +185,11 @@ export default function InterviewerRoom({
   const slideStageRef = useRef<HTMLDivElement | null>(null);
 
   const showSlideImage = Boolean(call.slideUrl) && !slideBroken;
+  const noteRatio = (image: HTMLImageElement) => {
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+      setSlideRatio({ w: image.naturalWidth, h: image.naturalHeight });
+    }
+  };
 
   useEffect(() => {
     setSlideBroken(false);
@@ -243,13 +247,6 @@ export default function InterviewerRoom({
     return () => { cancel = true; };
   }, [call.phase]);
 
-  useEffect(() => {
-    const audio = holdRef.current;
-    if (!audio) return;
-    if (call.phase === "waiting") void audio.play().catch(() => undefined);
-    else audio.pause();
-  }, [call.phase, holdSrc]);
-
   const suggest = async () => {
     if (!call.sessionId) return;
     setBookingNote("");
@@ -284,12 +281,12 @@ export default function InterviewerRoom({
     }
   };
 
-  if (call.phase === "live") {
+  if (call.phase === "live" || call.connecting || call.phase === "waiting") {
     const points = (call.slideIndex.find((item) => item.number === call.slideNumber)?.points || []).slice(0, 5);
     return (
-      <main className={styles.callScreen}>
+      <main className={styles.callScreen} style={{ "--slide-w": String(slideRatio.w), "--slide-h": String(slideRatio.h) } as CSSProperties}>
         <header className={styles.callTop}>
-          <p>Private conversation · {campaignName}</p>
+          <p>{campaignName}</p>
         </header>
         <section className={`${styles.callStage} ${featuresOpen ? styles.featuresOpen : ""}`}>
           {call.slideIndex.length ? (
@@ -306,7 +303,7 @@ export default function InterviewerRoom({
                       title={title}
                       onClick={() => call.chooseSlide(slide)}
                     >
-                      {slide.url ? <img src={slide.url} alt="" className={styles.slideThumb} /> : <span className={styles.slideThumb} aria-hidden="true" />}
+                      {slide.url ? <img src={slide.url} alt="" className={styles.slideThumb} onLoad={(event) => noteRatio(event.currentTarget)} /> : <span className={styles.slideThumb} aria-hidden="true" />}
                       <span className={styles.slideCopy}>
                         <span className={styles.slideHeadline}>{title}</span>
                         <span className={styles.slideNumber}>Slide {slide.number}</span>
@@ -335,13 +332,14 @@ export default function InterviewerRoom({
                 </p>
               ) : null}
               {showSlideImage ? (
-                <img src={call.slideUrl} alt={call.slideLabel || "Current slide"} onError={() => setSlideBroken(true)} />
+                <img src={call.slideUrl} alt={call.slideLabel || "Current slide"} onLoad={(event) => noteRatio(event.currentTarget)} onError={() => setSlideBroken(true)} />
               ) : (
                 <div className={styles.slideCard}>
                   <p className={styles.slideKicker}>{call.slideLabel || "Slide"}</p>
                   {call.slideSlogan ? <p className={styles.slideSlogan}>{call.slideSlogan}</p> : null}
                 </div>
               )}
+              {call.phase !== "live" ? <p className={styles.startingCall}>Starting your call…</p> : null}
             </div>
           </div>
           <aside className={styles.featurePanel}>
@@ -378,6 +376,16 @@ export default function InterviewerRoom({
                 ))}
               </ul>
             </div>
+          </div>
+        ) : null}
+        {call.phase === "waiting" && call.overTenMinutes ? (
+          <div className={styles.captionStrip}>
+            <p>You can book a time with one of our human team.</p>
+            <button type="button" className={styles.expandBtn} onClick={() => void suggest()}>Book a time</button>
+            {slots.map((slot) => (
+              <button key={slot.start} type="button" className={styles.expandBtn} onClick={() => void book(slot)} disabled={bookingSaved === false}>{slot.label}</button>
+            ))}
+            <button type="button" className={styles.expandBtn} onClick={() => void call.leaveQueue()}>Leave</button>
           </div>
         ) : null}
         <footer className={styles.controlBar}>
@@ -420,7 +428,7 @@ export default function InterviewerRoom({
   return (
     <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-xl flex-col justify-center px-5 py-10">
       <div className="flex items-start justify-between gap-4">
-        <p className="font-mono text-[0.68rem] uppercase tracking-[0.22em] text-amber">Private conversation</p>
+        <p className="font-mono text-[0.68rem] uppercase tracking-[0.22em] text-amber">{campaignName}</p>
       </div>
       <h1 className="mt-3 font-display text-4xl text-bone">{campaignName}</h1>
       <p className="mt-3 text-sm leading-6 text-muted">Ask anything, or tap a slide to jump to it.</p>
@@ -441,53 +449,6 @@ export default function InterviewerRoom({
             </>
           )}
           {call.calmMessage ? <p className="mt-3 text-sm text-bone">{call.calmMessage}</p> : null}
-        </section>
-      ) : null}
-
-      {call.phase === "waiting" || call.connecting ? (
-        <section className="mt-8 rounded-3xl border border-edge bg-panel/90 p-6">
-          <h2 className="font-display text-2xl text-bone">
-            {call.connecting ? "Connecting you now" : "Holding your place"}
-          </h2>
-          <p className="mt-2 text-sm text-muted">We'll connect you shortly.</p>
-          {call.calmMessage ? <p className="mt-3 text-sm text-bone">{call.calmMessage}</p> : null}
-          <audio
-            ref={holdRef}
-            src={holdSrc}
-            controls
-            loop
-            preload="auto"
-            onError={() => {
-              if (holdSrc.endsWith("hold-loop.wav")) setHoldSrc("/interviewer/hold-loop-PLACEHOLDER.wav");
-            }}
-          />
-          <p className="mt-4 text-xs leading-5 text-muted">
-            A one-minute branded hold loop will replace the placeholder audio. This is not a spinner.
-          </p>
-          {call.overTenMinutes ? (
-            <div className="mt-5">
-              <p className="text-sm text-bone">You can book a time with one of our human team.</p>
-              <button type="button" className="mt-3 rounded-full bg-amber px-4 py-2 text-sm text-ink" onClick={() => void suggest()}>
-                Book a time
-              </button>
-            </div>
-          ) : null}
-          {bookingNote ? <p className="mt-3 text-sm text-bone">{bookingNote}</p> : null}
-          {bookingSaved === false ? (
-            <p className="mt-2 text-sm text-rust">Check the calendar before booking again. The meeting may already be there.</p>
-          ) : null}
-          <ul className="mt-3 space-y-2">
-            {slots.map((slot) => (
-              <li key={slot.start}>
-                <button type="button" className="text-sm text-amber underline" onClick={() => void book(slot)} disabled={bookingSaved === false}>
-                  {slot.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-          <button type="button" className="mt-6 text-sm text-muted underline" onClick={() => void call.leaveQueue()}>
-            Leave
-          </button>
         </section>
       ) : null}
 

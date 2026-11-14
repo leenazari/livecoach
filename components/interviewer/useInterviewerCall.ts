@@ -38,6 +38,7 @@ type QueuePayload = {
   waitLabel?: string;
   overTenMinutes?: boolean;
   error?: string;
+  openingSlide?: { number: number; url: string; title: string; slogan: string } | null;
 };
 
 type ReadyPayload = QueuePayload & {
@@ -164,6 +165,14 @@ export function useInterviewerCall(token: string, capMinutes = "") {
     setPosition(Number(data.position || 0));
     setWaitLabel(data.waitLabel || "Waiting for a seat");
     setOverTenMinutes(data.overTenMinutes === true);
+    const opening = data.openingSlide;
+    if (opening && slideNumberRef.current === 0) {
+      slideNumberRef.current = opening.number || 1;
+      setSlideNumber(opening.number || 1);
+      setSlideUrl(opening.url || "");
+      setSlideLabel(opening.title || "");
+      setSlideSlogan(opening.slogan || "");
+    }
   }, []);
 
   const saveCaption = useCallback((caption: Caption) => {
@@ -305,7 +314,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
       }
       if (!ready.ok || ready.data.state !== "ready" || !ready.data.agentToken || !ready.data.listenToken || !ready.data.settings) {
         await postJson("/api/interviewer/slots/release", { token, sessionId: session, reason: "retry" });
-        setCalmMessage("We could not open the voice connection. You are still in the queue.");
+        setCalmMessage("Starting your call…");
         setConnecting(false);
         setPhase("waiting");
         return;
@@ -763,7 +772,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         else if (message.type === "Error") {
           const detail = { message: message.description || "", code: message.code };
           if (isDeepgramConcurrencyRefusal(detail)) void returnToQueue(true, "");
-          else if (!applied) void returnToQueue(false, "We could not open the voice connection. You are still in the queue.");
+          else if (!applied) void returnToQueue(false, "Starting your call…");
         } else if (message.type === "FunctionCallRequest") void handleFunctions(message.functions || []);
         else if (message.type === "AgentAudioDone") {
           releaseGreeting();
@@ -776,7 +785,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
       agentSocket.onclose = (event) => {
         if (stopped || applied) return;
         const detail = { closeCode: event.code, message: event.reason };
-        void returnToQueue(isDeepgramConcurrencyRefusal(detail), "We could not open the voice connection. You are still in the queue.");
+        void returnToQueue(isDeepgramConcurrencyRefusal(detail), "Starting your call…");
       };
 
       const micOnly = new MediaStream(stream.getAudioTracks().slice(0, 1));

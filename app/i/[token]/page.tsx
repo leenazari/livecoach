@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: "Private conversation",
+  title: "Your call",
   robots: { index: false, follow: false, nocache: true },
 };
 

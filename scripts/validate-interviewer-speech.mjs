@@ -84,6 +84,15 @@ if (call?.function?.name !== "show_slide" || !String(call.function.arguments).in
 }
 if (/slide/i.test(payload.choices[0].delta.content || "")) throw new Error("the spoken event still contained the command");
 if (!prompt.includes("Never say")) throw new Error("the prompt still allows slide commands to be spoken");
+const roomSource = readFileSync(new URL("../components/interviewer/InterviewerRoom.tsx", import.meta.url), "utf8");
+const callCss = readFileSync(new URL("../components/interviewer/interviewa.module.css", import.meta.url), "utf8");
+if (roomSource.includes("not a spinner") || roomSource.includes("Private conversation")) {
+  throw new Error("the hold screen or private label is still shown");
+}
+if (!callCss.includes("aspect-ratio: var(--slide-w, 16) / var(--slide-h, 9)")) {
+  throw new Error("the slide box does not follow the deck ratio");
+}
+if (callCss.includes("background: #11151c")) throw new Error("the slide still has a dark frame");
 
 console.log("speech, guardrail, pacing and profile checks passed");
 console.log("Red team (filter, no live model):");

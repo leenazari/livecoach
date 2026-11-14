@@ -19,6 +19,7 @@ export default function CampaignLanding({ card }: { card: PublicCampaignView }) 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [honeypot, setHoneypot] = useState(false);
+  const [slideRatio, setSlideRatio] = useState({ w: 16, h: 9 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -65,11 +66,26 @@ export default function CampaignLanding({ card }: { card: PublicCampaignView }) 
     window.location.assign(keepProtection(data.path));
   };
 
-  const tone = { "--land-accent": card.accent, "--land-on": card.accentOn } as CSSProperties;
+  const tone = {
+    "--land-accent": card.accent,
+    "--land-on": card.accentOn,
+    "--slide-w": String(slideRatio.w),
+    "--slide-h": String(slideRatio.h),
+  } as CSSProperties;
   return (
     <main className={styles.landing} style={tone}>
       {card.heroUrl ? (
-        <img className={styles.landingHero} src={card.heroUrl} alt={card.heroAlt} />
+        <img
+          className={styles.landingHero}
+          src={card.heroUrl}
+          alt={card.heroAlt}
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+              setSlideRatio({ w: image.naturalWidth, h: image.naturalHeight });
+            }
+          }}
+        />
       ) : <div className={styles.landingHeroFallback} />}
       <section className={styles.landingCard}>
         <p className={styles.landingKicker}>A short call</p>
