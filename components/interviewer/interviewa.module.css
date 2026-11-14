@@ -333,8 +333,6 @@
 .slideCopy { min-width: 0; flex: 1; }
 .slideHeadline {
   display: block;
-  max-height: 4.05em;
-  overflow: hidden;
   line-height: 1.35;
   overflow-wrap: anywhere;
   font-size: 14px;
