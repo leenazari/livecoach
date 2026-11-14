@@ -1,3 +1,4 @@
+import { agendaFromLines } from "./interest-agenda";
 import { timeLimitChapters } from "./call-limit";
 
 export type BriefQuestion = {
@@ -20,6 +21,7 @@ export type BriefProfile = {
 };
 export type ServiceImprovement = { fit: string; suggestion: string };
 export type BriefService = { howTheyServe: string; improvements: ServiceImprovement[] };
+export type BriefInterest = { label: string; covered: boolean };
 export type BriefSlide = {
   number: number;
   title: string;
@@ -34,6 +36,7 @@ export type CallBrief = {
   lead: { name: string; email: string | null; phone: string | null; interest: string; cameFrom: string };
   profile?: BriefProfile;
   service?: BriefService;
+  interests?: BriefInterest[];
   intent: { label: "HOT" | "WARM" | "NURTURE" | "NOT INTERESTED"; reasons: string[]; scale: number };
   appointment: { booked: boolean; when: string | null; agenda: string; bookedBy: string };
   openingLine: string;
@@ -198,6 +201,7 @@ export function fallbackBrief(facts: BriefFacts): CallBrief {
     },
     profile: emptyProfile(),
     service: serviceFromTranscript(facts.transcript),
+    interests: agendaFromLines(facts.lines || []).map((item) => ({ label: item.label, covered: item.covered })),
     questions: questionsFromLines(facts.lines || []),
     objections: [],
     providers: providersFromLines(facts.lines || []),
@@ -310,6 +314,14 @@ export function parseBrief(raw: unknown, facts: BriefFacts): CallBrief {
     howTheyServe: clip(serviceRecord.howTheyServe, 400) || base.service?.howTheyServe || EMPTY,
     improvements: modelImprovements.length ? modelImprovements : (base.service?.improvements || []),
   };
+  const modelInterests: BriefInterest[] = Array.isArray(record.interests) ? record.interests.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    const label = clip(row.label, 80);
+    if (!label) return [];
+    return [{ label, covered: row.covered === true }];
+  }) : [];
+  const interests = modelInterests.length ? modelInterests : (base.interests || []);
   return {
     lead: {
       name: facts.name || clip(lead.name, 160) || "Guest",
@@ -320,6 +332,7 @@ export function parseBrief(raw: unknown, facts: BriefFacts): CallBrief {
     },
     profile,
     service,
+    interests,
     intent: { label, reasons: reasons.slice(0, 3), scale: clamp(intent.scale ?? base.intent.scale) },
     appointment: {
       booked: Boolean(facts.scheduledAt),
@@ -352,8 +365,8 @@ export function briefPrompt(facts: BriefFacts): string {
   return `You are writing an internal pre-call brief. Use only the transcript. Do not invent a phone number, email, price, provider, objection, or promise. If it was not said, use "Not established on this call."
 Choose intent.label from the transcript: HOT if they booked or were ready to buy, WARM if they engaged and a next conversation is likely, NOT INTERESTED if they declined, otherwise NURTURE. The first reason is one sentence a rep can read.
 Return JSON:
-{"lead":{"phone":"","interest":"","cameFrom":""},"profile":{"businessType":"","size":"","sites":"","location":"","role":"","setup":"","painPoints":""},"service":{"howTheyServe":"","improvements":[{"fit":"","suggestion":""}]},"intent":{"label":"HOT|WARM|NURTURE|NOT INTERESTED","reasons":["","",""],"scale":0},"appointment":{"agenda":""},"openingLine":"","howItWent":{"summary":"","sentiment":0,"engagement":0,"mood":""},"questions":[{"question":"","askedBy":"lead|agent","answer":"","status":"answered|partly|unanswered","atSeconds":0}],"objections":[{"text":"","tag":"Softened|Resolved|Open","heat":0,"atSeconds":0}],"providers":[{"name":"","kind":"current|competitor","atSeconds":0}],"nextSteps":[""]}
-Include every question. askedBy is lead when the customer asked, and agent when Interviewa asked. For a lead question, answer is one sentence summarising what the agent said. For an agent question, answer is a short quote or paraphrase of what the lead actually replied. If nobody replied, status is unanswered and answer is empty. Copy atSeconds from the transcript tag. objections is an empty array when none were raised. providers lists who they use today and any competitor they named. service.howTheyServe is how customers order, how orders reach the kitchen, how they pay, and where it gets busy, in their words. service.improvements lists only gains that fit what they said, such as kiosks for a queue, a kitchen display for paper tickets, Waiter Mate for slow table service, or online ordering for phone orders. Leave improvements empty if they did not describe how they serve.
+{"lead":{"phone":"","interest":"","cameFrom":""},"profile":{"businessType":"","size":"","sites":"","location":"","role":"","setup":"","painPoints":""},"service":{"howTheyServe":"","improvements":[{"fit":"","suggestion":""}]},"interests":[{"label":"","covered":false}],"intent":{"label":"HOT|WARM|NURTURE|NOT INTERESTED","reasons":["","",""],"scale":0},"appointment":{"agenda":""},"openingLine":"","howItWent":{"summary":"","sentiment":0,"engagement":0,"mood":""},"questions":[{"question":"","askedBy":"lead|agent","answer":"","status":"answered|partly|unanswered","atSeconds":0}],"objections":[{"text":"","tag":"Softened|Resolved|Open","heat":0,"atSeconds":0}],"providers":[{"name":"","kind":"current|competitor","atSeconds":0}],"nextSteps":[""]}
+Include every question. askedBy is lead when the customer asked, and agent when Interviewa asked. For a lead question, answer is one sentence summarising what the agent said. For an agent question, answer is a short quote or paraphrase of what the lead actually replied. If nobody replied, status is unanswered and answer is empty. Copy atSeconds from the transcript tag. objections is an empty array when none were raised. providers lists who they use today and any competitor they named. service.howTheyServe is how customers order, how orders reach the kitchen, how they pay, and where it gets busy, in their words. service.improvements lists only gains that fit what they said, such as kiosks for a queue, a kitchen display for paper tickets, Waiter Mate for slow table service, or online ordering for phone orders. Leave improvements empty if they did not describe how they serve. interests lists each feature or need the lead named, in that order. covered is true only if the agent actually showed or explained it.
 Facts: name ${facts.name}. email ${facts.email || "none"}. stored outcome ${facts.disposition || "none"}. meeting ${facts.scheduledAt || "none"}.
 Transcript, times are seconds from the start:
 ${facts.transcript || "No transcript."}`;

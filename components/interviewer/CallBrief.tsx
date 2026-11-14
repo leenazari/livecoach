@@ -151,6 +151,10 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
           ) : null}
           <p className={styles.label}>How they serve today</p>
           <p>{brief.service?.howTheyServe || "Not established on this call."}</p>
+          <p className={styles.label}>Interests raised</p>
+          {(brief.interests || []).length ? (
+            <ul>{(brief.interests || []).map((item) => <li key={item.label}>{item.label}: {item.covered ? "Covered" : "Not covered"}</li>)}</ul>
+          ) : <p className={styles.note}>None named on this call.</p>}
           <p className={styles.label}>Suggested improvements</p>
           {(brief.service?.improvements || []).length ? (
             <ul>{brief.service?.improvements.map((item) => <li key={`${item.fit}-${item.suggestion}`}>{item.fit}: {item.suggestion}</li>)}</ul>

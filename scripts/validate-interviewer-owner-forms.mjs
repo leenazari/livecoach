@@ -225,5 +225,26 @@ if (customThinkUrl({ origin: "https://preview.vercel.app", expiresAt: soon, open
 }
 const filtered = customThinkUrl({ origin: "https://preview.vercel.app", expiresAt: soon, openAiKey: "sk-preview", bypassSecret: "bypass" });
 if (!filtered || !filtered.includes("/api/interviewer/think")) throw new Error("the bypass secret did not enable the filter");
+const { noteInterests, coverInterests, bridgeLine, agendaFromLines } = loadTs(new URL("../lib/interviewer/interest-agenda.ts", import.meta.url).pathname);
+let agenda = noteInterests("table service with some handhelds and our kitchen", []);
+if (agenda.some((item) => item.id === "kds")) throw new Error("the word kitchen alone was treated as a kitchen display");
+for (const line of [
+  "has been asking for a kitchen display screen. So can you help me with these things?",
+  "Do you do self-service kiosks?",
+]) agenda = noteInterests(line, agenda);
+if (!agenda.some((item) => item.id === "kds")) throw new Error("the latest call would have missed the kitchen display");
+if (agenda.findIndex((item) => item.id === "handheld") > agenda.findIndex((item) => item.id === "kds")) throw new Error("handhelds were listed after the kitchen display");
+agenda = coverInterests("With Swoopos, you can implement self-service kiosks that carry your branding.", agenda);
+if (agenda.find((item) => item.id === "kds").covered) throw new Error("kiosk talk covered the kitchen display");
+agenda = coverInterests("Waiter Mate handhelds let staff take the order at the table.", agenda);
+const bridge = bridgeLine(agenda);
+if (!bridge || !/kitchen display/i.test(bridge)) throw new Error(`bridge did not return to the kitchen display: ${bridge}`);
+const fromCall = agendaFromLines([
+  { speaker: "lead", text: "table service with some handhelds and our kitchen" },
+  { speaker: "lead", text: "has been asking for a kitchen display screen" },
+  { speaker: "agent", text: "Let me introduce you to Swoopos." },
+  { speaker: "lead", text: "Do you do self-service kiosks?" },
+]);
+if (!fromCall.some((item) => item.label === "kitchen display" && !item.covered)) throw new Error("transcript replay missed an open kitchen display");
 
 console.log("interviewer owner and prompt checks passed");

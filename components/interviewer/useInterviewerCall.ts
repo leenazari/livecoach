@@ -16,6 +16,7 @@ import {
   type LockedUtterance,
 } from "@/lib/interviewer/listen-transcript";
 import { stripAgentContext, toSpokenPlain, toolReplyForAgent } from "@/lib/interviewer/spoken-text";
+import { bridgeLine, coverInterests, noteInterests, stillToCover, type AgendaItem } from "@/lib/interviewer/interest-agenda";
 import { matchSpokenSlide } from "@/lib/interviewer/slide-match";
 
 export type Caption = { id: string; speaker: "agent" | "lead"; text: string };
@@ -114,6 +115,9 @@ export function useInterviewerCall(token: string) {
   const lastSlideAt = useRef(0);
   const advanceTimer = useRef<number | null>(null);
   const advanceQueueRef = useRef<(speech: string) => boolean>(() => false);
+  const agendaRef = useRef<AgendaItem[]>([]);
+  const remindTimer = useRef<number | null>(null);
+  const remindRef = useRef<(speech: string) => void>(() => undefined);
   const greetingDoneRef = useRef(false);
   const pendingInjectRef = useRef("");
   const interruptRef = useRef<() => void>(() => undefined);
@@ -189,6 +193,7 @@ export function useInterviewerCall(token: string) {
       return;
     }
     leadLinesRef.current = [...leadLinesRef.current.slice(-30), text];
+    agendaRef.current = noteInterests(text, agendaRef.current);
     saveCaption({ id: utterance.id, speaker: "lead", text });
   }, [saveCaption]);
 
@@ -206,6 +211,7 @@ export function useInterviewerCall(token: string) {
     agentTurnRef.current = caption;
     recentAgentRef.current = [...recentAgentRef.current.slice(-3), clean];
     saveCaption(caption);
+    remindRef.current(clean);
     if (advanceQueueRef.current(clean)) return;
     if (slideQueue.current.length) return;
     if (Date.now() < manualSlideUntil.current) return;
@@ -357,6 +363,15 @@ export function useInterviewerCall(token: string) {
         const message = stripAgentContext(line);
         agentSocket.send(JSON.stringify({ type: "InjectAgentMessage", behavior, message }));
       };
+      remindRef.current = (speech: string) => {
+        agendaRef.current = coverInterests(speech, agendaRef.current);
+        if (remindTimer.current) window.clearTimeout(remindTimer.current);
+        remindTimer.current = window.setTimeout(() => {
+          if (!greetingDoneRef.current || goodbyeOwnsEnd.current) return;
+          const line = bridgeLine(agendaRef.current);
+          if (line) say(line);
+        }, 2500);
+      };
       const suggestNoise = () => {
         const now = Date.now();
         if (now - silenceRef.current.noiseAt < 180000) return;
@@ -391,6 +406,7 @@ export function useInterviewerCall(token: string) {
         stopped = true;
         applied = false;
         window.clearTimeout(greetingWatch);
+        if (remindTimer.current) window.clearTimeout(remindTimer.current);
         processor.onaudioprocess = null;
         try { processor.disconnect(); } catch { /* ignore */ }
         if (agentSocket.readyState === WebSocket.OPEN || agentSocket.readyState === WebSocket.CONNECTING) agentSocket.close();
@@ -524,6 +540,8 @@ export function useInterviewerCall(token: string) {
       };
 
       const showOne = (slide: { number: number; url: string; title: string; slogan: string }) => {
+        const known = slideIndexRef.current.find((item) => item.number === slide.number);
+        agendaRef.current = coverInterests(`${slide.title} ${(known?.keywords || []).join(" ")}`, agendaRef.current);
         rememberSeen(slide.number);
         slideNumberRef.current = slide.number;
         setSlideNumber(slide.number);
@@ -784,7 +802,9 @@ export function useInterviewerCall(token: string) {
         setRemainingSeconds(left);
         if (left <= 120 && left > 0 && !warned) {
           warned = true;
-          say(twoMinuteLine(bookedRef.current));
+          const leftItems = stillToCover(agendaRef.current);
+          const warning = twoMinuteLine(bookedRef.current);
+          say(leftItems ? `${leftItems}. ${warning}` : warning);
         }
         if (left <= 0 && !endingForLimit) {
           endingForLimit = true;
