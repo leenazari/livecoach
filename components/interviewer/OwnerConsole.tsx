@@ -99,6 +99,11 @@ export default function OwnerConsole() {
       vercel: string;
     }>;
   } | null>(null);
+  const [editErrors, setEditErrors] = useState<FieldErrors>({});
+  const [editingId, setEditingId] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editVoice, setEditVoice] = useState("");
+  const [editMax, setEditMax] = useState("");
   const [deckNote, setDeckNote] = useState("");
 
   const explain = (error: unknown) => {
@@ -138,7 +143,7 @@ export default function OwnerConsole() {
   const playVoice = async (id: string) => {
     setPlaying(id);
     try {
-      const sampleName = name.trim() || campaigns.find((item) => item.id === campaignId)?.name || "the team";
+      const sampleName = (editingId ? editName : name).trim() || campaigns.find((item) => item.id === campaignId)?.name || "the team";
       const response = await fetch(`/api/crm/interviewer/voice-preview?voiceId=${encodeURIComponent(id)}&name=${encodeURIComponent(sampleName)}&campaignId=${encodeURIComponent(campaignId)}`);
       if (!response.ok) {
         setCampaignErrors({ voiceId: "That sample could not be played." });
@@ -270,6 +275,25 @@ export default function OwnerConsole() {
     setDeckNote(`Saved ${data.slides} slides.${warning}`);
   };
 
+  const saveCampaignEdits = async () => {
+    const checked = validateCampaignFields({ name: editName, voiceId: editVoice, maxMinutes: editMax });
+    setEditErrors(checked.fields);
+    if (Object.keys(checked.fields).length) return;
+    const result = await postForm("/api/crm/interviewer/campaigns", {
+      id: editingId,
+      name: editName,
+      voiceId: editVoice,
+      maxMinutes: editMax.trim() === "" ? null : Number(editMax),
+    });
+    if (!result.ok) {
+      setEditErrors(result.data.fields || { name: result.data.error || "The campaign was not updated." });
+      return;
+    }
+    setEditingId("");
+    setNotice("Campaign updated. The next call uses this voice.");
+    await load();
+  };
+
   const openSession = async (id: string) => {
     setRecordingUrl("");
     try {
@@ -383,8 +407,42 @@ export default function OwnerConsole() {
         <ul className="mt-3 space-y-2 text-sm">
           {campaigns.map((campaign) => (
             <li key={campaign.id} className="rounded-2xl border border-edge px-3 py-2">
-              <button type="button" className="text-bone" onClick={() => setCampaignId(campaign.id)}>{campaign.name}</button>
-              <span className="ml-2 text-muted">{campaign.voice_id}</span>
+              <div className="flex items-center justify-between gap-3">
+                <button type="button" className="text-bone" onClick={() => setCampaignId(campaign.id)}>{campaign.name}</button>
+                <span className="text-muted">{campaign.voice_id}</span>
+                <button type="button" className="text-sm text-amber underline" onClick={() => {
+                  setEditingId(campaign.id);
+                  setEditName(campaign.name);
+                  setEditVoice(campaign.voice_id);
+                  setEditMax(campaign.max_minutes == null ? "" : String(campaign.max_minutes));
+                  setEditErrors({});
+                }}>Edit</button>
+              </div>
+              {editingId === campaign.id ? (
+                <div className="mt-3 space-y-2">
+                  <label className="block text-sm">Name
+                    <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={editName} onChange={(event) => setEditName(event.target.value)} />
+                  </label>
+                  <FieldNote message={editErrors.name} />
+                  <label className="block text-sm">Max minutes, optional
+                    <input className="mt-1 w-full rounded-xl border border-edge bg-ink px-3 py-2" value={editMax} onChange={(event) => setEditMax(event.target.value)} placeholder="No cap" />
+                  </label>
+                  <FieldNote message={editErrors.maxMinutes} />
+                  <div className="space-y-2">
+                    {INTERVIEWER_VOICES.map((voice) => (
+                      <div key={voice.id} className="flex items-center justify-between gap-2">
+                        <label className="flex items-start gap-2 text-sm">
+                          <input type="radio" name={`edit-voice-${campaign.id}`} checked={editVoice === voice.id} onChange={() => setEditVoice(voice.id)} />
+                          <span>{voice.name} · {voice.generation} · {voice.gender} · {voice.accent}</span>
+                        </label>
+                        <button type="button" className="text-sm text-amber underline" disabled={playing === voice.id} onClick={() => void playVoice(voice.id)}>Play</button>
+                      </div>
+                    ))}
+                  </div>
+                  <FieldNote message={editErrors.voiceId} />
+                  <button type="button" className="rounded-full bg-amber px-4 py-2 text-sm text-ink" onClick={() => void saveCampaignEdits()}>Save changes</button>
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>

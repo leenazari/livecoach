@@ -20,7 +20,7 @@ export async function POST(req: Request) {
   try {
     const body = await readJson(req);
     const linked = await linkedSession(String(body.token || ""), String(body.sessionId || ""));
-    if (!linked || linked.session.ended_at) return interviewerJson({ error: "This link is not available." }, 404);
+    if (!linked) return interviewerJson({ error: "This link is not available." }, 404);
     const patch: Record<string, unknown> = {};
     if (body.disposition !== undefined) {
       if (!isInterviewerDisposition(body.disposition)) {

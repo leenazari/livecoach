@@ -1,6 +1,7 @@
 import { recordSessionCost } from "@/lib/interviewer/cost-store";
 import { interviewerRpc, isUuid, loadOpenInvite } from "@/lib/interviewer/data";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
+import { supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,21 @@ export async function POST(req: Request) {
       { p_token: token, p_session_id: sessionId }
     );
     await recordSessionCost(sessionId).catch(() => undefined);
+    const { data: finished } = await supabaseService
+      .from("interviewer_sessions")
+      .select("disposition")
+      .eq("id", sessionId)
+      .maybeSingle();
+    if (finished && !finished.disposition) {
+      await supabaseService
+        .from("interviewer_sessions")
+        .update({
+          disposition: "Nurture",
+          reason_code: "Call ended before an outcome was recorded",
+        })
+        .eq("id", sessionId)
+        .is("disposition", null);
+    }
     return interviewerJson({
       state: "ended",
       billableSeconds: Number(result?.billableSeconds || 0),
