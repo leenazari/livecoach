@@ -32,8 +32,9 @@ const { websiteImportIds, knowledgeFromDocuments, WEBSITE_IMPORT_SOURCE } = load
 const { INTERVIEWER_VOICES, FALLBACK_INTERVIEWER_VOICE } = loadTs(new URL("../lib/interviewer/voices.ts", import.meta.url).pathname);
 const { knowledgeTitleFromNote, validateCampaignFields } = loadTs(new URL("../lib/interviewer/form-fields.ts", import.meta.url).pathname);
 const { presentTranscript } = loadTs(new URL("../lib/interviewer/transcript-display.ts", import.meta.url).pathname);
-const { toSpokenPlain } = loadTs(new URL("../lib/interviewer/spoken-text.ts", import.meta.url).pathname);
+const { toSpokenPlain, stripAgentContext, toolReplyForAgent } = loadTs(new URL("../lib/interviewer/spoken-text.ts", import.meta.url).pathname);
 const { effectiveCallMinutes, twoMinuteLine, formatCountdown, timeLimitChapters, remainingCallSeconds } = loadTs(new URL("../lib/interviewer/call-limit.ts", import.meta.url).pathname);
+const { keywordsFor, matchSpokenSlide } = loadTs(new URL("../lib/interviewer/slide-match.ts", import.meta.url).pathname);
 const { isHoldRequest, nextSilenceCue } = loadTs(new URL("../lib/interviewer/silence.ts", import.meta.url).pathname);
 const { parseBrief, fallbackBrief } = loadTs(new URL("../lib/interviewer/brief.ts", import.meta.url).pathname);
 const { cleanSlideText, isInternalCostLine } = loadTs(new URL("../lib/interviewer/slide-notes.ts", import.meta.url).pathname);
@@ -112,6 +113,10 @@ const marks = timeLimitChapters(30 * 60, 30 * 60);
 if (!marks.some((item) => item.kind === "warning" && item.atSeconds === 28 * 60)) throw new Error("two minute chapter missing");
 if (!marks.some((item) => item.kind === "limit")) throw new Error("time limit chapter missing");
 if (timeLimitChapters(60, 1800).length) throw new Error("short call was given a time-limit chapter");
+const kds = { number: 11, keywords: keywordsFor({ title: "Kitchen display screen: every order in view" }) };
+const kiosk = { number: 9, keywords: keywordsFor({ title: "Self-service kiosks in your brand" }) };
+if (matchSpokenSlide("the kitchen display shows every order", [kds, kiosk], 1) !== 11) throw new Error("KDS mention did not select the kitchen slide");
+if (matchSpokenSlide("tell me about the kiosk", [kds, kiosk], 11) !== 9) throw new Error("kiosk mention did not switch slides");
 const kioskPrompt = buildInterviewerPrompt({
   campaignName: "Swoopos",
   prospectName: "Lee",
@@ -127,6 +132,10 @@ if (!kioskPrompt.includes("one hundred and ninety nine pounds a month")) throw n
 if (kioskPrompt.includes("**") || kioskPrompt.includes("£")) throw new Error("markup or a pound sign reached the prompt");
 const spoken = toSpokenPlain("**Kitchen display**\n# KDS\n• loyalty\n- tipping\n£60/month\nhttps://swoopos.com/get-kiosk\n😀");
 if (/[*#_`•£]|https|😀/.test(spoken)) throw new Error(`markup survived: ${spoken}`);
+const leaked = stripAgentContext("See **kiosks** at https://abc.supabase.co/storage/v1/object/sign/slide.png?token=secret then call show_slide");
+if (/supabase|https|\*\*/.test(leaked)) throw new Error(`technical text reached the agent: ${leaked}`);
+if (!leaked.includes("show_slide") || !leaked.includes("kiosks")) throw new Error(`plain fact was removed: ${leaked}`);
+if (toolReplyForAgent("show_slide", { url: "https://abc.supabase.co/x" }) !== "shown") throw new Error("show_slide reply was not minimal");
 if (!spoken.includes("sixty pounds a month") || !spoken.includes("Kitchen display") || !spoken.includes("loyalty.")) throw new Error(`spoken text drifted: ${spoken}`);
 const marked = presentTranscript([{ id: "m", speaker: "agent", text: "The **kiosk** is £60/month." }]);
 if (marked.some((line) => line.text.includes("**") || line.text.includes("£"))) throw new Error("transcript still shows markup");

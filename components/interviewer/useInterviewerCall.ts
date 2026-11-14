@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { floatToPcm16, playOfferChime, resampleLinear } from "@/components/interviewer/audio";
 import { startLeadListener } from "@/components/interviewer/lead-listener";
 import { isDeepgramConcurrencyRefusal } from "@/lib/interviewer/concurrency";
+import { leadDeclinedDemo } from "@/lib/interviewer/call-close";
 import { TIME_LIMIT_GOODBYE, formatCountdown, twoMinuteLine } from "@/lib/interviewer/call-limit";
 import { isHoldRequest, nextSilenceCue, type SilencePhase } from "@/lib/interviewer/silence";
 import {
@@ -13,7 +14,8 @@ import {
   utteranceKey,
   type LockedUtterance,
 } from "@/lib/interviewer/listen-transcript";
-import { toSpokenPlain } from "@/lib/interviewer/spoken-text";
+import { stripAgentContext, toSpokenPlain, toolReplyForAgent } from "@/lib/interviewer/spoken-text";
+import { matchSpokenSlide } from "@/lib/interviewer/slide-match";
 
 export type Caption = { id: string; speaker: "agent" | "lead"; text: string };
 
@@ -42,10 +44,11 @@ type ReadyPayload = QueuePayload & {
   callEndsAt?: string | null;
   deckId?: string | null;
   openingSlide?: { number?: number; title?: string; slogan?: string; url?: string | null } | null;
-  slideIndex?: Array<{ number: number; title: string; slogan?: string; url?: string | null }>;
+  slideIndex?: Array<{ number: number; title: string; slogan?: string; url?: string | null; points?: string[]; keywords?: string[] }>;
 };
 
-type SlideChoice = { number: number; title: string; slogan?: string; url?: string | null };
+type SlideChoice = { number: number; title: string; slogan?: string; url?: string | null; points?: string[]; keywords?: string[] };
+export type LeadRecap = { summary: string; topics: string[]; nextStep: string };
 
 async function postJson<T>(url: string, body: unknown): Promise<{ ok: boolean; data: T }> {
   const response = await fetch(url, {
@@ -76,6 +79,8 @@ export function useInterviewerCall(token: string) {
   const [billableSeconds, setBillableSeconds] = useState<number | null>(null);
   const [muted, setMutedState] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
+  const [endAsk, setEndAsk] = useState(false);
+  const [recap, setRecap] = useState<LeadRecap | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<string | null>(null);
   const phaseRef = useRef(phase);
@@ -90,6 +95,11 @@ export function useInterviewerCall(token: string) {
   const slideIndexRef = useRef<SlideChoice[]>([]);
   const agentSocketRef = useRef<WebSocket | null>(null);
   const bookedRef = useRef(false);
+  const leadLinesRef = useRef<string[]>([]);
+  const manualSlideUntil = useRef(0);
+  const slideTimer = useRef<number | null>(null);
+  const slideNumberRef = useRef(0);
+  const endingSoon = useRef(false);
   const silenceRef = useRef({
     lastActivityAt: Date.now(),
     lastSpeaker: "agent" as "agent" | "lead",
@@ -146,6 +156,7 @@ export function useInterviewerCall(token: string) {
       setEchoes((current) => [...current.slice(-8), text]);
       return;
     }
+    leadLinesRef.current = [...leadLinesRef.current.slice(-30), text];
     saveCaption({ id: utterance.id, speaker: "lead", text });
   }, [saveCaption]);
 
@@ -163,7 +174,29 @@ export function useInterviewerCall(token: string) {
     agentTurnRef.current = caption;
     recentAgentRef.current = [...recentAgentRef.current.slice(-3), clean];
     saveCaption(caption);
-  }, [saveCaption]);
+    if (Date.now() < manualSlideUntil.current) return;
+    if (slideTimer.current) window.clearTimeout(slideTimer.current);
+    slideTimer.current = window.setTimeout(() => {
+      const next = matchSpokenSlide(clean, slideIndexRef.current.map((item) => ({ number: item.number, keywords: item.keywords || [] })), slideNumberRef.current);
+      const slide = slideIndexRef.current.find((item) => item.number === next);
+      if (!slide || Date.now() < manualSlideUntil.current) return;
+      slideNumberRef.current = slide.number;
+      setSlideNumber(slide.number);
+      setSlideUrl(slide.url || "");
+      setSlideLabel(slide.title);
+      setSlideSlogan(slide.slogan || "");
+      const session = sessionRef.current;
+      if (session) {
+        void postJson("/api/interviewer/slides", {
+          token,
+          sessionId: session,
+          deckId: deckRef.current,
+          slideNumber: slide.number,
+          reason: `Auto: agent mentioned ${slide.title}`.slice(0, 240),
+        });
+      }
+    }, 2000);
+  }, [saveCaption, token]);
 
   const connectVoice = useCallback(async () => {
     const session = sessionRef.current;
@@ -193,7 +226,9 @@ export function useInterviewerCall(token: string) {
         setSlideUrl(ready.data.openingSlide.url || "");
         setSlideLabel(ready.data.openingSlide.title || "");
         setSlideSlogan(ready.data.openingSlide.slogan || "");
-        setSlideNumber(Number(ready.data.openingSlide.number || 1));
+        const openingNumber = Number(ready.data.openingSlide.number || 1);
+        slideNumberRef.current = openingNumber;
+        setSlideNumber(openingNumber);
       }
       if (!ready.ok || ready.data.state !== "ready" || !ready.data.agentToken || !ready.data.listenToken || !ready.data.settings) {
         await postJson("/api/interviewer/slots/release", { token, sessionId: session, reason: "retry" });
@@ -264,7 +299,8 @@ export function useInterviewerCall(token: string) {
       let loudSince = 0;
       const say = (line: string, behavior: "default" | "queue" = "default") => {
         if (agentSocket.readyState !== WebSocket.OPEN) return;
-        agentSocket.send(JSON.stringify({ type: "InjectAgentMessage", behavior, message: line }));
+        const message = stripAgentContext(line);
+        agentSocket.send(JSON.stringify({ type: "InjectAgentMessage", behavior, message }));
       };
       const suggestNoise = () => {
         const now = Date.now();
@@ -358,7 +394,8 @@ export function useInterviewerCall(token: string) {
           else resolve(new Blob(chunks, { type: "audio/webm" }));
         });
         await context.close().catch(() => undefined);
-        const ended = await postJson<{ billableSeconds?: number }>("/api/interviewer/sessions/end", { token, sessionId: session });
+        const ended = await postJson<{ billableSeconds?: number; recap?: LeadRecap }>("/api/interviewer/sessions/end", { token, sessionId: session });
+        if (ended.data.recap) setRecap(ended.data.recap);
         if (blob.size > 0) {
           const upload = await postJson<{ signedUrl?: string; path?: string }>("/api/interviewer/recording", {
             token,
@@ -424,9 +461,12 @@ export function useInterviewerCall(token: string) {
                 setSlideUrl(shown.data.url || match?.url || "");
                 setSlideLabel(shown.data.title || match?.title || `Slide ${shown.data.slideNumber || ""}`);
                 setSlideSlogan(match?.slogan || "");
-                if (shown.data.slideNumber) setSlideNumber(Number(shown.data.slideNumber));
+                if (shown.data.slideNumber) {
+                  slideNumberRef.current = Number(shown.data.slideNumber);
+                  setSlideNumber(Number(shown.data.slideNumber));
+                }
               }
-              content = shown.data;
+              content = "shown";
             } else if (fn.name === "capture_timing" || fn.name === "record_disposition") {
               content = (await postJson("/api/interviewer/outcome", { token, sessionId: session, ...args })).data;
             } else if (fn.name === "end_call") {
@@ -437,12 +477,24 @@ export function useInterviewerCall(token: string) {
             content = { ok: false, note: "That action could not be completed." };
           }
           if (agentSocket.readyState === WebSocket.OPEN) {
+            const reply = fn.name === "show_slide" ? "shown" : toolReplyForAgent(fn.name || "", content);
+            const safe = stripAgentContext(reply) || "ok";
             agentSocket.send(JSON.stringify({
               type: "FunctionCallResponse",
               id: fn.id,
               name: fn.name,
-              content: JSON.stringify(content),
+              content: safe,
             }));
+            void postJson("/api/interviewer/utterances", {
+              token,
+              sessionId: session,
+              utterances: [{
+                speaker: "agent",
+                text: `Voice log: ${fn.name || "tool"} response: ${safe}`.slice(0, 500),
+                ts: new Date().toISOString(),
+                utteranceId: `voicelog${Date.now()}${fn.id || "x"}`.replace(/[^a-z0-9]/gi, "").slice(0, 80),
+              }],
+            });
           }
         }
       };
@@ -454,7 +506,12 @@ export function useInterviewerCall(token: string) {
         }
         let message: { type?: string; role?: string; content?: string; description?: string; code?: string | number; functions?: Array<{ id?: string; name?: string; arguments?: unknown }> };
         try { message = JSON.parse(event.data); } catch { return; }
-        if (message.type === "Welcome") agentSocket.send(JSON.stringify(ready.data.settings));
+        if (message.type === "Welcome") {
+          const settings = ready.data.settings as { agent?: { think?: { prompt?: string }; greeting?: string } } | null;
+          if (settings?.agent?.think?.prompt) settings.agent.think.prompt = stripAgentContext(settings.agent.think.prompt);
+          if (settings?.agent?.greeting) settings.agent.greeting = stripAgentContext(settings.agent.greeting);
+          agentSocket.send(JSON.stringify(settings));
+        }
         else if (message.type === "SettingsApplied") {
           applied = true;
           setConnecting(false);
@@ -640,7 +697,35 @@ export function useInterviewerCall(token: string) {
   }, [connectVoice, phase, rememberQueue, token]);
 
   const hangUp = useCallback(() => {
-    teardownRef.current?.("end");
+    if (endingSoon.current) {
+      teardownRef.current?.("end");
+      return;
+    }
+    setEndAsk(true);
+  }, []);
+
+  const cancelHangUp = useCallback(() => setEndAsk(false), []);
+
+  const confirmHangUp = useCallback(() => {
+    setEndAsk(false);
+    if (endingSoon.current) {
+      teardownRef.current?.("end");
+      return;
+    }
+    endingSoon.current = true;
+    const socket = agentSocketRef.current;
+    const declined = leadDeclinedDemo(leadLinesRef.current);
+    const offer = !bookedRef.current && !declined;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "InjectUserMessage", content: "The lead pressed End call" }));
+      socket.send(JSON.stringify({
+        type: "InjectAgentMessage",
+        message: offer
+          ? "No problem. Before you go, would a quick demo be useful?"
+          : "Thanks for your time. Take care.",
+      }));
+    }
+    window.setTimeout(() => teardownRef.current?.("end"), offer ? 5000 : 2500);
   }, []);
 
   const setMuted = useCallback((next: boolean) => {
@@ -662,6 +747,8 @@ export function useInterviewerCall(token: string) {
 
   const chooseSlide = useCallback((slide: SlideChoice) => {
     const title = slide.title || `Slide ${slide.number}`;
+    manualSlideUntil.current = Date.now() + 20000;
+    slideNumberRef.current = slide.number;
     setSlideNumber(slide.number);
     setSlideUrl(slide.url || "");
     setSlideLabel(title);
@@ -716,7 +803,11 @@ export function useInterviewerCall(token: string) {
     billableSeconds,
     muted,
     join,
+    endAsk,
+    recap,
     hangUp,
+    confirmHangUp,
+    cancelHangUp,
     setMuted,
     leaveQueue,
   };

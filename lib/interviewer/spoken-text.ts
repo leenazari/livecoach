@@ -56,3 +56,40 @@ export function toSpokenPlain(value: string): string {
   text = text.replace(/[ \t]+\n/g, "\n").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n");
   return text.trim();
 }
+
+// Text that is allowed to reach the voice model. URLs, storage hosts, ids and
+// markup are removed. Function names such as show_slide are kept.
+export function stripAgentContext(value: string): string {
+  let text = String(value || "").replace(/\r/g, "");
+  text = text.replace(/```[\s\S]*?```/g, " ");
+  text = text.replace(/https?:\/\/\S+/gi, "");
+  text = text.replace(/\b[\w.-]*supabase\.co\S*/gi, "");
+  text = text.replace(/\bwww\.\S+/gi, "");
+  text = text.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "");
+  text = text.replace(/\{[^{}]{0,500}\}/g, (block) => /url|http|supabase|signed|token/i.test(block) ? "" : block);
+  text = text.replace(/\*\*([^*]+)\*\*/g, "$1");
+  text = text.replace(/__([^_]+)__/g, "$1");
+  text = text.replace(/`([^`]+)`/g, "$1");
+  text = text.replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, "$1$2");
+  text = text.replace(/^#{1,6}\s+/gm, "");
+  text = text.replace(/^\s*[-*•]\s+/gm, "");
+  text = text.replace(/[*#`•]/g, "");
+  text = text.replace(/\p{Extended_Pictographic}/gu, "");
+  text = text.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n");
+  return text.trim();
+}
+
+export function toolReplyForAgent(name: string, data: unknown): string {
+  if (name === "show_slide") return "shown";
+  if (name === "suggest_meeting_times") {
+    const slots = data && typeof data === "object" && Array.isArray((data as { slots?: unknown }).slots)
+      ? (data as { slots: Array<{ label?: string }> }).slots
+      : [];
+    const labels = slots.map((slot) => stripAgentContext(slot.label || "")).filter(Boolean).slice(0, 3);
+    return labels.length ? `Times: ${labels.join(", ")}` : "No times are free.";
+  }
+  if (name === "book_meeting") {
+    return data && typeof data === "object" && (data as { booked?: boolean }).booked ? "Booked." : "Not booked.";
+  }
+  return "ok";
+}

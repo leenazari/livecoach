@@ -20,11 +20,13 @@ async function factsFor(sessionId: string): Promise<{ facts: BriefFacts; workspa
   if (error || !session) return null;
   const [{ data: invite }, { data: lines }, slides] = await Promise.all([
     supabaseService.from("interviewer_invites").select("prospect_name, prospect_email").eq("id", session.invite_id).maybeSingle(),
-    supabaseService.from("interviewer_utterances").select("speaker, text, ts").eq("session_id", sessionId).order("ts", { ascending: true }).limit(400),
+    supabaseService.from("interviewer_utterances").select("id, speaker, text, ts").eq("session_id", sessionId).order("ts", { ascending: true }).limit(400),
     supabaseService.from("interviewer_slide_shows").select("slide_number, shown_at").eq("session_id", sessionId).order("shown_at", { ascending: true }),
   ]);
-  const utterances = (lines || []) as Array<{ speaker: string; text: string }>;
-  let transcript = utterances.map((line) => `${line.speaker === "lead" ? "Lead" : "Agent"}: ${toSpokenPlain(line.text)}`).join("\n");
+  const utterances = (lines || []) as Array<{ id?: string; speaker: string; text: string; ts?: string }>;
+  let transcript = utterances
+    .filter((line) => !String(line.text || "").startsWith("Voice log:"))
+    .map((line) => `${line.speaker === "lead" ? "Lead" : "Agent"}: ${toSpokenPlain(line.text)}`).join("\n");
   if (transcript.length > 12000) transcript = transcript.slice(0, 12000);
   const campaign = await supabaseService.from("interviewer_campaigns").select("max_minutes").eq("id", session.campaign_id).maybeSingle();
   const limitSeconds = effectiveCallMinutes(campaign.data?.max_minutes) * 60;
@@ -60,6 +62,12 @@ async function factsFor(sessionId: string): Promise<{ facts: BriefFacts; workspa
       durationSeconds,
       limitSeconds,
       slides: timedSlides,
+      lines: utterances.map((line, index) => ({
+        id: String(line.id || index),
+        speaker: line.speaker === "lead" ? "lead" as const : "agent" as const,
+        text: toSpokenPlain(line.text),
+        atSeconds: anchor && line.ts ? Math.max(0, Math.round((Date.parse(line.ts) - anchor) / 1000)) : 0,
+      })),
       transcript,
     },
   };
@@ -90,6 +98,22 @@ async function modelBrief(facts: BriefFacts): Promise<CallBrief | null> {
   } catch {
     return null;
   }
+}
+
+export async function regenerateBrief(sessionId: string): Promise<CallBrief | null> {
+  memory.delete(sessionId);
+  const loaded = await factsFor(sessionId);
+  if (!loaded) return null;
+  const brief = (await modelBrief(loaded.facts).catch(() => null)) || fallbackBrief(loaded.facts);
+  memory.set(sessionId, brief);
+  await supabaseService.from("interviewer_call_briefs").upsert({
+    session_id: sessionId,
+    workspace_id: loaded.workspaceId,
+    campaign_id: loaded.campaignId,
+    brief,
+    source: brief.source,
+  });
+  return brief;
 }
 
 export async function loadOrCreateBrief(sessionId: string): Promise<CallBrief | null> {

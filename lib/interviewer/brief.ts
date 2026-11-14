@@ -2,6 +2,7 @@ import { timeLimitChapters } from "./call-limit";
 
 export type BriefQuestion = {
   question: string;
+  askedBy?: "lead" | "agent";
   status: "answered" | "partly" | "unanswered";
   answer?: string;
   atSeconds?: number;
@@ -87,14 +88,19 @@ function emptyProfile(): BriefProfile {
   return { businessType: EMPTY, size: EMPTY, sites: EMPTY, location: EMPTY, role: EMPTY, setup: EMPTY, painPoints: EMPTY };
 }
 
+const QUESTION_CUE = /\?|(?:^|\b)(?:what|how|where|when|why|who|can you|do you|did they|is there|tell me)\b/i;
+
 export function questionsFromLines(lines: BriefLine[]): BriefQuestion[] {
   const questions: BriefQuestion[] = [];
   lines.forEach((line, index) => {
-    if (line.speaker !== "lead" || !/\?|(?:^|\b)(?:what|how|where|when|why|who|can you|do you|did they|is there)\b/i.test(line.text)) return;
-    const answer = lines.slice(index + 1).find((next) => next.speaker === "agent");
+    if (/are you still there/i.test(line.text) || !QUESTION_CUE.test(line.text)) return;
+    const askedBy = line.speaker === "lead" ? "lead" : "agent";
+    const reply = lines.slice(index + 1).find((next) => next.speaker !== line.speaker);
+    const answer = reply ? clip(reply.text, 220) : "";
     questions.push({
       question: clip(line.text, 220),
-      answer: answer ? clip(answer.text, 220) : "No answer was captured.",
+      askedBy,
+      answer,
       status: answer ? "answered" : "unanswered",
       atSeconds: line.atSeconds,
     });
@@ -235,7 +241,8 @@ export function parseBrief(raw: unknown, facts: BriefFacts): CallBrief {
     const row = item as Record<string, unknown>;
     const status: BriefQuestion["status"] = row.status === "answered" || row.status === "partly" || row.status === "unanswered" ? row.status : "partly";
     const question = clip(row.question, 220);
-    return question ? [{ question, status, answer: clip(row.answer, 220), atSeconds: Number(row.atSeconds) || 0 }] : [];
+    const askedBy = row.askedBy === "agent" ? "agent" : "lead";
+    return question ? [{ question, askedBy, status, answer: clip(row.answer, 220), atSeconds: Number(row.atSeconds) || 0 }] : [];
   }) : [];
   const questions = mergeQuestions(questionsFromLines(facts.lines || []), modelQuestions);
   const objections: BriefObjection[] = Array.isArray(record.objections) ? record.objections.flatMap((item) => {
@@ -307,8 +314,8 @@ export function briefPrompt(facts: BriefFacts): string {
   return `You are writing an internal pre-call brief. Use only the transcript. Do not invent a phone number, email, price, provider, objection, or promise. If it was not said, use "Not established on this call."
 Choose intent.label from the transcript: HOT if they booked or were ready to buy, WARM if they engaged and a next conversation is likely, NOT INTERESTED if they declined, otherwise NURTURE. The first reason is one sentence a rep can read.
 Return JSON:
-{"lead":{"phone":"","interest":"","cameFrom":""},"profile":{"businessType":"","size":"","sites":"","location":"","role":"","setup":"","painPoints":""},"intent":{"label":"HOT|WARM|NURTURE|NOT INTERESTED","reasons":["","",""],"scale":0},"appointment":{"agenda":""},"openingLine":"","howItWent":{"summary":"","sentiment":0,"engagement":0,"mood":""},"questions":[{"question":"","answer":"","status":"answered|partly|unanswered","atSeconds":0}],"objections":[{"text":"","tag":"Softened|Resolved|Open","heat":0,"atSeconds":0}],"providers":[{"name":"","kind":"current|competitor","atSeconds":0}],"nextSteps":[""]}
-Include every lead question, copying atSeconds from the transcript tag. objections is an empty array when none were raised. providers lists who they use today and any competitor they named.
+{"lead":{"phone":"","interest":"","cameFrom":""},"profile":{"businessType":"","size":"","sites":"","location":"","role":"","setup":"","painPoints":""},"intent":{"label":"HOT|WARM|NURTURE|NOT INTERESTED","reasons":["","",""],"scale":0},"appointment":{"agenda":""},"openingLine":"","howItWent":{"summary":"","sentiment":0,"engagement":0,"mood":""},"questions":[{"question":"","askedBy":"lead|agent","answer":"","status":"answered|partly|unanswered","atSeconds":0}],"objections":[{"text":"","tag":"Softened|Resolved|Open","heat":0,"atSeconds":0}],"providers":[{"name":"","kind":"current|competitor","atSeconds":0}],"nextSteps":[""]}
+Include every question. askedBy is lead when the customer asked, and agent when Interviewa asked. For a lead question, answer is one sentence summarising what the agent said. For an agent question, answer is a short quote or paraphrase of what the lead actually replied. If nobody replied, status is unanswered and answer is empty. Copy atSeconds from the transcript tag. objections is an empty array when none were raised. providers lists who they use today and any competitor they named.
 Facts: name ${facts.name}. email ${facts.email || "none"}. stored outcome ${facts.disposition || "none"}. meeting ${facts.scheduledAt || "none"}.
 Transcript, times are seconds from the start:
 ${facts.transcript || "No transcript."}`;

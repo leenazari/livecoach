@@ -1,18 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { CallBrief as Brief } from "@/lib/interviewer/brief";
 import { toSpokenPlain } from "@/lib/interviewer/spoken-text";
 import styles from "@/components/interviewer/interviewa.module.css";
 
+type Line = { id: string; speaker: string; text: string; atSeconds?: number };
 type Payload = {
   brief: Brief | null;
   hasRecording: boolean;
+  durationLabel?: string;
+  durationSeconds?: number;
+  recordingUrl?: string;
+  lines?: Line[];
   scheduledAt: string | null;
   campaignId: string;
   cost: { label: string; amount: string; estimated: boolean; voiceAgent: string; listen: string; llm: string; storage: string; vercel: string };
 };
+
+function QuestionList({ title, empty, items, seek }: { title: string; empty: string; items: Brief["questions"]; seek: (at: number) => void }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <p className={styles.label}>{title}</p>
+      {items.length ? (
+        <ol>
+          {items.map((item) => (
+            <li key={`${item.atSeconds}-${item.question}`}>
+              <button type="button" className={styles.link} onClick={() => seek(item.atSeconds || 0)}>{formatStamp(item.atSeconds || 0)}</button>{" "}
+              {item.question}
+              {item.status === "unanswered" || !item.answer ? <span className={styles.red}> No answer</span> : <p className={styles.note}>{item.answer}</p>}
+            </li>
+          ))}
+        </ol>
+      ) : <p className={styles.note}>{empty}</p>}
+    </div>
+  );
+}
+
+function formatStamp(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
 
 function initials(name: string): string {
   const parts = name.split(/\s+/).filter(Boolean);
@@ -41,9 +70,11 @@ function Meter({ label, value }: { label: string; value: number }) {
 
 export default function CallBriefView({ sessionId }: { sessionId: string }) {
   const [data, setData] = useState<Payload | null>(null);
-  const [transcript, setTranscript] = useState<Array<{ id: string; speaker: string; text: string }>>([]);
-  const [open, setOpen] = useState<"transcript" | "recording" | "cost" | "">("");
+  const [transcript, setTranscript] = useState<Line[]>([]);
+  const [open, setOpen] = useState<"transcript" | "recording" | "cost" | "">("transcript");
   const [recording, setRecording] = useState("");
+  const [played, setPlayed] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [actionNote, setActionNote] = useState("");
@@ -54,11 +85,21 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "The brief could not be loaded.");
         setData(body);
+        if (body.recordingUrl) setRecording(body.recordingUrl);
+        if (body.lines) setTranscript(body.lines);
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "The brief could not be loaded."));
   }, [sessionId]);
 
+  const seek = (atSeconds: number, lead = true) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const duration = Number.isFinite(audio.duration) ? audio.duration : (data?.durationSeconds || 0);
+    audio.currentTime = Math.max(0, Math.min(duration, atSeconds - (lead ? 2 : 0)));
+    void audio.play().catch(() => undefined);
+  };
   const brief = data?.brief;
+  const profile = brief?.profile;
   const copy = async () => {
     if (!brief) return;
     await navigator.clipboard.writeText(brief.openingLine);
@@ -87,6 +128,7 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
       <header className={styles.headRow}>
         <div>
           <h1 className={styles.h1}>Pre-call brief: {brief.lead.name}</h1>
+          <p className={styles.cardTitle}>{data.durationLabel || ""}</p>
           <p className={styles.note}>{brief.appointment.bookedBy} {data.scheduledAt ? `· ${countdown(data.scheduledAt)}` : ""}</p>
         </div>
         <a className={styles.link} href={`/crm/interviewer/campaigns/${data.campaignId}`}>Campaign</a>
@@ -98,6 +140,15 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
           <p>{brief.lead.name}</p>
           <p className={styles.note}>{brief.lead.email || "No email"}</p>
           <p className={styles.note}>{brief.lead.phone || "No phone number"}</p>
+          {profile ? (
+            <>
+              <p className={styles.label}>Business</p>
+              <p>{profile.businessType}</p>
+              <p className={styles.note}>{profile.location} · {profile.sites} · {profile.size}</p>
+              <p className={styles.note}>Setup: {profile.setup}</p>
+              <p className={styles.note}>Pain: {profile.painPoints}</p>
+            </>
+          ) : null}
           <p className={styles.label}>Interest</p>
           <p>{brief.lead.interest}</p>
           <p className={styles.label}>Came from</p>
@@ -153,18 +204,12 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
         </section>
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>Questions asked</h2>
-          <ul>
-            {brief.questions.map((item) => (
-              <li key={item.question}>
-                {item.question}{" "}
-                <span className={item.status === "unanswered" ? styles.red : item.status === "partly" ? styles.warn : styles.ok}>{item.status}</span>
-              </li>
-            ))}
-          </ul>
-          {brief.questions.some((item) => item.status === "unanswered") ? <p className={styles.red}>Unanswered questions are flagged.</p> : null}
+          <QuestionList title="Questions the lead asked" empty="The lead did not ask a question." items={brief.questions.filter((item) => item.askedBy !== "agent")} seek={seek} />
+          <QuestionList title="Questions we asked" empty="We did not ask a question." items={brief.questions.filter((item) => item.askedBy === "agent")} seek={seek} />
         </section>
         <section className={styles.card}>
           <h2 className={styles.cardTitle}>Objections that nearly lost it</h2>
+          {brief.objections.length ? null : <p>No objections raised</p>}
           {brief.objections.map((item) => (
             <div key={item.text} style={{ marginTop: 10 }}>
               <div className={styles.headRow}><span>{item.text}</span><span className={item.tag === "Resolved" ? styles.ok : styles.warn}>{item.tag}</span></div>
@@ -175,18 +220,62 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
       </div>
 
       <div className={styles.grid2} style={{ marginTop: 16 }}>
-        <section className={styles.card}><h2 className={styles.cardTitle}>Rival named</h2><p>{brief.rival || "None named"}</p></section>
+        <section className={styles.card}><h2 className={styles.cardTitle}>Current provider</h2>
+          {(brief.providers || []).length ? (brief.providers || []).map((item) => <p key={item.name}><button type="button" className={styles.link} onClick={() => seek(item.atSeconds)}>{formatStamp(item.atSeconds)}</button> {item.kind === "current" ? "Uses" : "Mentioned"} {item.name}</p>) : <p>{brief.rival || "None named"}</p>}
+        </section>
         <section className={styles.card}><h2 className={styles.cardTitle}>Next steps</h2><ul>{brief.nextSteps.map((step) => <li key={step}>{step}</li>)}</ul></section>
       </div>
 
+      <section className={styles.card} style={{ marginTop: 16 }}>
+        <h2 className={styles.cardTitle}>Recording {data.durationLabel || ""}</h2>
+        {recording ? (
+          <audio
+            ref={audioRef}
+            controls
+            preload="metadata"
+            src={recording}
+            onLoadedMetadata={(event) => {
+              const audio = event.currentTarget;
+              if (Number.isFinite(audio.duration)) return;
+              const known = data.durationSeconds || 0;
+              const reveal = () => {
+                audio.removeEventListener("timeupdate", reveal);
+                audio.currentTime = 0;
+              };
+              audio.addEventListener("timeupdate", reveal);
+              try { audio.currentTime = known || 1e10; } catch { /* the known length still drives the chapters */ }
+            }}
+            onTimeUpdate={(event) => setPlayed(event.currentTarget.currentTime)}
+          />
+        ) : <p>No recording saved.</p>}
+        <div className={styles.linkActions}>
+          {(brief.chapters || []).map((chapter) => (
+            <button key={`${chapter.kind}-${chapter.atSeconds}-${chapter.label}`} type="button" className={styles.btnGhost} onClick={() => seek(chapter.atSeconds, chapter.kind === "question")}>
+              {formatStamp(chapter.atSeconds)} {chapter.label}
+            </button>
+          ))}
+        </div>
+        {(brief.slides || []).map((slide) => (
+          <p key={`${slide.number}-${slide.atSeconds}`} className={styles.note}>
+            <button type="button" className={styles.link} onClick={() => seek(slide.atSeconds, false)}>{formatStamp(slide.atSeconds)}</button>{" "}
+            {slide.title} · {slide.durationSeconds}s · {slide.triggeredBy}
+          </p>
+        ))}
+      </section>
       <footer className={styles.footer} style={{ marginTop: 16 }}>
+        <button type="button" className={styles.btn} onClick={() => void fetch(`/api/crm/interviewer/calls/${sessionId}/brief`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "regenerate" }) }).then(() => window.location.reload())}>Regenerate brief</button>
         <button type="button" className={styles.btnGhost} onClick={() => void showTranscript()}>Full transcript</button>
         <button type="button" className={styles.btnGhost} onClick={() => void showRecording()}>Recording</button>
         <button type="button" className={styles.btnGhost} onClick={() => setOpen("cost")}>Internal cost</button>
       </footer>
       {open === "transcript" ? (
         <section className={styles.card} style={{ marginTop: 12 }}>
-          {transcript.map((line) => <p key={line.id}><strong>{line.speaker === "agent" ? "Interviewa" : "Lead"}.</strong> {toSpokenPlain(line.text)}</p>)}
+          {transcript.map((line) => (
+            <p key={line.id} style={line.atSeconds != null && played >= line.atSeconds && played < line.atSeconds + 8 ? { background: "#EEF3FF" } : undefined}>
+              <button type="button" className={styles.link} onClick={() => seek(line.atSeconds || 0, line.speaker !== "agent")}>{formatStamp(line.atSeconds || 0)}</button>{" "}
+              <strong>{line.speaker === "agent" ? "Interviewa" : "Lead"}.</strong> {toSpokenPlain(line.text)}
+            </p>
+          ))}
         </section>
       ) : null}
       {open === "recording" ? <section className={styles.card} style={{ marginTop: 12 }}>{recording ? <audio controls src={recording} /> : <p>No recording saved.</p>}</section> : null}
