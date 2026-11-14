@@ -59,17 +59,38 @@ export async function GET(req: Request) {
       .order("slide_number", { ascending: true });
     if (slides.error) return NextResponse.json({ decks: [], ready: false }, { headers: noStore });
     const grouped = [];
-    for (const deck of decks.data || []) {
+    const ordered = decks.data || [];
+    for (const [index, deck] of ordered.entries()) {
+      const deckSlides = (slides.data || []).filter((item) => item.deck_id === deck.id);
+      const folder = deckSlides[0]?.image_path?.split("/").slice(0, -1).join("/") || "";
+      const listed = folder
+        ? await supabaseService.storage.from("interviewer-slides").list(folder, { limit: 100 })
+        : { data: [] as Array<{ name?: string }>, error: null };
+      const listFailed = Boolean(listed.error);
+      const names = new Set((listed.data || []).map((file) => file.name || ""));
       const pages = [];
-      for (const slide of (slides.data || []).filter((item) => item.deck_id === deck.id)) {
-        const signed = await supabaseService.storage.from("interviewer-slides").createSignedUrl(slide.image_path, 600);
+      for (const slide of deckSlides) {
+        const fileName = String(slide.image_path || "").split("/").pop() || "";
+        const present = listFailed ? Boolean(slide.image_path) : Boolean(fileName) && names.has(fileName);
+        let url = "";
+        if (present) {
+          const signed = await supabaseService.storage.from("interviewer-slides").createSignedUrl(slide.image_path, 600);
+          url = signed.data?.signedUrl || "";
+        }
         pages.push({
           number: slide.slide_number,
           title: slide.title,
-          url: signed.data?.signedUrl || "",
+          url,
+          missing: !present,
         });
       }
-      grouped.push({ id: deck.id, title: deck.title, slides: pages });
+      grouped.push({
+        id: deck.id,
+        title: deck.title,
+        active: index === 0,
+        imagesMissing: pages.length > 0 && pages.every((page) => page.missing),
+        slides: index === 0 ? pages : [],
+      });
     }
     return NextResponse.json({ decks: grouped, ready: true }, { headers: noStore });
   } catch (error) {
@@ -96,6 +117,17 @@ export async function POST(req: Request) {
       const owned = await supabaseAdmin.from("interviewer_campaigns").select("id").eq("id", campaignId).eq("workspace_id", scope.workspaceId).maybeSingle();
       if (owned.error) throw owned.error;
       if (!owned.data) return interviewerFieldError("interviewer_deck_blocked", "Deck was not saved", { campaignId: "That campaign is not on your account." });
+      const existing = await supabaseService.from("interviewer_decks").select("id").eq("campaign_id", campaignId).eq("workspace_id", scope.workspaceId).limit(1);
+      if (existing.error) throw existing.error;
+      if ((existing.data || []).length && record.replace !== true) {
+        return interviewerFieldError("interviewer_deck_blocked", "Deck was not saved", {
+          file: "This campaign already has a deck. Confirm that you want to replace it.",
+        });
+      }
+      if (record.replace === true) {
+        const removed = await supabaseService.from("interviewer_decks").delete().eq("campaign_id", campaignId).eq("workspace_id", scope.workspaceId);
+        if (removed.error) throw removed.error;
+      }
       const deckId = crypto.randomUUID();
       const rows = Array.from({ length: pageCount }, (_, index) => {
         const number = index + 1;

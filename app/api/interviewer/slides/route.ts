@@ -21,9 +21,8 @@ export async function POST(req: Request) {
         .select("id")
         .eq("campaign_id", linked.session.campaign_id)
         .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      deckId = latest.data?.id ? String(latest.data.id) : "";
+        .limit(1);
+      deckId = latest.data?.[0]?.id ? String(latest.data[0].id) : "";
     }
     if (!deckId) return interviewerJson({ shown: false, note: "This campaign has no deck." });
     const { data: slide, error } = await supabaseService

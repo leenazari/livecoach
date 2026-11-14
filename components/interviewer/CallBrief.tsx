@@ -129,7 +129,7 @@ export default function CallBriefView({ sessionId }: { sessionId: string }) {
       </section>
 
       <section className={styles.card} style={{ marginTop: 16 }}>
-        <div className={styles.timeline}>
+        <div className={`${styles.scrollX} ${styles.timeline}`}>
           {brief.timeline.map((item) => (
             <div key={`${item.label}-${item.at}`} className={styles.tick}>
               <i />

@@ -20,6 +20,10 @@ export const maxDuration = 60;
 
 const USER_AGENT = "LiveCoachInterviewer/1.0";
 
+type ImportResult = { documents: Draft[]; pages: string[] };
+const importInflight = new Map<string, Promise<ImportResult>>();
+const importRecent = new Map<string, { at: number; result: ImportResult }>();
+
 type Draft = { title: string; body: string };
 
 async function assertPublicUrl(target: URL): Promise<string | null> {
@@ -118,6 +122,45 @@ export async function POST(req: Request) {
       return Response.json({ saved: rows.length }, { headers: { "Cache-Control": "private, no-store" } });
     }
 
+    const campaignKey = /^[0-9a-f-]{36}$/i.test(String(body?.campaignId || ""))
+      ? `${scope.workspaceId}:${String(body.campaignId)}`
+      : "";
+    if (campaignKey) {
+      const recent = importRecent.get(campaignKey);
+      if (recent && Date.now() - recent.at < 60_000) {
+        return Response.json({ ...recent.result, reused: true }, { headers: { "Cache-Control": "private, no-store" } });
+      }
+      const running = importInflight.get(campaignKey);
+      if (running) {
+        const result = await running;
+        return Response.json({ ...result, reused: true }, { headers: { "Cache-Control": "private, no-store" } });
+      }
+      const since = new Date(Date.now() - 60_000).toISOString();
+      const prior = await supabaseAdmin
+        .from("interviewer_cost_events")
+        .select("id")
+        .eq("campaign_id", String(body.campaignId))
+        .eq("kind", "website_import")
+        .gte("created_at", since)
+        .limit(1);
+      if (!prior.error && (prior.data || []).length) {
+        const stored = await supabaseAdmin
+          .from("interviewer_documents")
+          .select("title, body")
+          .eq("campaign_id", String(body.campaignId))
+          .order("created_at", { ascending: false })
+          .limit(20);
+        const documents = (stored.data || []).flatMap((document) => {
+          const title = String(document.title || "");
+          const text = String(document.body || "");
+          return title && text ? [{ title, body: text }] : [];
+        });
+        if (documents.length) {
+          return Response.json({ documents, pages: [], reused: true }, { headers: { "Cache-Control": "private, no-store" } });
+        }
+      }
+    }
+
     let pageUrl: URL;
     try { pageUrl = new URL(String(body?.url || "")); }
     catch { return interviewerFieldError("interviewer_import_blocked", "Website was not read", { url: "Enter a full website address, including https://." }); }
@@ -135,8 +178,9 @@ export async function POST(req: Request) {
       return interviewerFieldError("interviewer_import_blocked", "Website was not read", { url: "That page is disallowed by robots.txt." });
     }
 
+    const scrape = async (): Promise<ImportResult> => {
     const home = await readPage(pageUrl, 8000);
-    if (!home) return interviewerFieldError("interviewer_import_blocked", "Website was not read", { url: "The page did not return readable text." });
+    if (!home) throw new Error("empty_page");
     const links = pickInternalLinks(home.html, pageUrl).filter((link) => {
       try { return allowed(new URL(link).pathname); } catch { return false; }
     });
@@ -152,9 +196,7 @@ export async function POST(req: Request) {
     }
     const drafted = await draftNotes(pages);
     const documents = drafted.documents;
-    if (!documents.length) {
-      return interviewerFieldError("interviewer_import_blocked", "Website was not read", { url: "No facts could be taken from those pages without guessing." });
-    }
+    if (!documents.length) throw new Error("no_facts");
     const rates = await loadCostRates();
     const campaignId = String(body?.campaignId || "");
     if (rates) {
@@ -166,7 +208,25 @@ export async function POST(req: Request) {
         detail: { pages: pages.length, inputTokens: drafted.inputTokens, outputTokens: drafted.outputTokens },
       });
     }
-    return Response.json({ documents, pages: pages.map((page) => page.url) }, { headers: { "Cache-Control": "private, no-store" } });
+    return { documents, pages: pages.map((page) => page.url) };
+    };
+    const job = scrape();
+    if (campaignKey) importInflight.set(campaignKey, job);
+    try {
+      const result = await job;
+      if (campaignKey) importRecent.set(campaignKey, { at: Date.now(), result });
+      return Response.json(result, { headers: { "Cache-Control": "private, no-store" } });
+    } catch (error) {
+      if (error instanceof Error && error.message === "empty_page") {
+        return interviewerFieldError("interviewer_import_blocked", "Website was not read", { url: "The page did not return readable text." });
+      }
+      if (error instanceof Error && error.message === "no_facts") {
+        return interviewerFieldError("interviewer_import_blocked", "Website was not read", { url: "No facts could be taken from those pages without guessing." });
+      }
+      throw error;
+    } finally {
+      if (campaignKey) importInflight.delete(campaignKey);
+    }
   } catch (error) {
     if (error instanceof Error && error.message === "not_configured") {
       return interviewerFieldError("interviewer_import_blocked", "Website was not read", { url: "The writing service is not configured." });

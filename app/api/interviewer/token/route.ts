@@ -78,15 +78,14 @@ export async function POST(req: Request) {
       .maybeSingle();
     const extra = extras.error ? null : extras.data;
     const deck = purpose === "listen"
-      ? { data: null }
+      ? { data: [] as Array<{ id: string }> }
       : await supabaseService
           .from("interviewer_decks")
           .select("id")
           .eq("campaign_id", linked.campaign.id)
           .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-    const deckId = deck.data?.id ? String(deck.data.id) : null;
+          .limit(1);
+    const deckId = deck.data?.[0]?.id ? String(deck.data[0].id) : null;
     const slideResult = !deckId
       ? { data: [] as Array<{ slide_number: number; title: string; one_line: string; talking_points: string | null; verbatim: string | null; image_path: string | null }> }
       : await supabaseService

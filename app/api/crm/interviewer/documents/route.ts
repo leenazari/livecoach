@@ -24,7 +24,7 @@ export async function GET(req: Request) {
       .eq("workspace_id", scope.workspaceId)
       .eq("campaign_id", campaignId)
       .order("created_at", { ascending: false })
-      .limit(40);
+      .limit(80);
     if (error) throw error;
     return NextResponse.json({ documents: data || [] }, { headers: noStore });
   } catch (error) {
@@ -62,7 +62,15 @@ export async function POST(req: Request) {
         return text ? [{ workspace_id: scope.workspaceId, campaign_id: campaignId, title, body: text }] : [];
       });
       const titles = KNOWLEDGE_SECTIONS.map((section) => section.title);
-      await supabaseService.from("interviewer_documents").delete().eq("campaign_id", campaignId).in("title", titles);
+      if (record.scraped === true || record.replaceWebsiteNotes === true) {
+        const existing = await supabaseService.from("interviewer_documents").select("id, title").eq("campaign_id", campaignId);
+        const stale = (existing.data || [])
+          .filter((document) => sectionKeyForTitle(String(document.title || "")) || document.title === SOURCE_WEBSITE_TITLE)
+          .map((document) => document.id);
+        if (stale.length) await supabaseService.from("interviewer_documents").delete().in("id", stale);
+      } else {
+        await supabaseService.from("interviewer_documents").delete().eq("campaign_id", campaignId).in("title", titles);
+      }
       if (rows.length) {
         const { error } = await supabaseService.from("interviewer_documents").insert(rows);
         if (error) throw error;

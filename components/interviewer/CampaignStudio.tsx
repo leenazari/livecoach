@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { putSlideImages, renderPdfPages } from "@/components/interviewer/pdf-pages";
 import styles from "@/components/interviewer/interviewa.module.css";
-import { KNOWLEDGE_SECTIONS, SOURCE_WEBSITE_TITLE, emptyKnowledge, knowledgeFromDocuments, type KnowledgeSectionKey } from "@/lib/interviewer/knowledge";
+import { KNOWLEDGE_CHAR_CAP, KNOWLEDGE_SECTIONS, SOURCE_WEBSITE_TITLE, emptyKnowledge, knowledgeFromDocuments, knowledgeLength, type KnowledgeSectionKey } from "@/lib/interviewer/knowledge";
 import { INTERVIEWER_VOICES, voiceLabel, type AuraVoice } from "@/lib/interviewer/voices";
 
 type Campaign = {
@@ -23,8 +23,9 @@ type Campaign = {
   billing_granularity?: string;
 };
 
-type Slide = { number: number; title: string; url: string };
-type Deck = { id: string; title: string; slides: Slide[] };
+type Slide = { number: number; title: string; url: string; missing?: boolean };
+type Deck = { id: string; title: string; active?: boolean; imagesMissing?: boolean; slides: Slide[] };
+type DeckJob = { phase: "rendering" | "uploading" | "notes" | "saved" | "error"; fileName: string; page: number; total: number; message: string };
 type CallRow = { id: string; created_at: string; disposition: string | null; status: string; billable_seconds: number | null };
 type CostCall = { sessionId: string; cost: string; estimated: boolean; seconds: number };
 
@@ -52,6 +53,8 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [scrapedAt, setScrapedAt] = useState("");
   const [decks, setDecks] = useState<Deck[]>([]);
+  const [deckJob, setDeckJob] = useState<DeckJob | null>(null);
+  const [importing, setImporting] = useState(false);
   const [quotes, setQuotes] = useState(false);
   const [brochure, setBrochure] = useState(false);
   const [opener, setOpener] = useState("");
@@ -84,16 +87,25 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
 
   useEffect(() => {
     if (!campaignId) return;
-    fetch("/api/crm/interviewer/campaigns", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((data) => {
-        const found = (data.campaigns || []).find((item: Campaign) => item.id === campaignId);
+    let cancelled = false;
+    (async () => {
+      try {
+        const [campaignResponse, documentResponse] = await Promise.all([
+          fetch("/api/crm/interviewer/campaigns", { cache: "no-store" }),
+          fetch(`/api/crm/interviewer/documents?campaignId=${campaignId}`, { cache: "no-store" }),
+        ]);
+        const campaignData = await campaignResponse.json();
+        const documentData = await documentResponse.json();
+        if (cancelled) return;
+        const found = (campaignData.campaigns || []).find((item: Campaign) => item.id === campaignId);
         if (!found) { setError("That campaign was not found."); return; }
+        const docs = documentData.documents || [];
+        const source = docs.find((doc: { title: string; body: string }) => doc.title === SOURCE_WEBSITE_TITLE);
         setCampaign(found);
         setName(found.name);
         setVoiceId(found.voice_id);
         setMaxMinutes(found.max_minutes == null ? "" : String(found.max_minutes));
-        setWebsiteUrl(found.website_url || "");
+        setWebsiteUrl(found.website_url || (source ? String(source.body).split("\n")[0] : ""));
         setScrapedAt(found.website_scraped_at || "");
         setQuotes(found.quotes_allowed === true);
         setBrochure(found.brochure_send === true);
@@ -102,17 +114,12 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
         setCurrency(found.currency || "GBP");
         setMargin(String(found.margin_percent ?? 0));
         setGranularity(found.billing_granularity || "second");
-      })
-      .catch(() => setError("The campaign could not be loaded."));
-    fetch(`/api/crm/interviewer/documents?campaignId=${campaignId}`, { cache: "no-store" })
-      .then((response) => response.json())
-      .then((data) => {
-        const docs = data.documents || [];
         setSections(knowledgeFromDocuments(docs));
-        const source = docs.find((doc: { title: string; body: string }) => doc.title === SOURCE_WEBSITE_TITLE);
-        if (source && !websiteUrl) setWebsiteUrl(String(source.body).split("\n")[0]);
-      })
-      .catch(() => undefined);
+      } catch {
+        if (!cancelled) setError("The campaign could not be loaded.");
+      }
+    })();
+    return () => { cancelled = true; };
     fetch(`/api/crm/interviewer/deck?campaignId=${campaignId}`, { cache: "no-store" })
       .then((response) => response.json())
       .then((data) => setDecks(data.decks || []))
@@ -173,18 +180,20 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
   };
 
   const importSite = async () => {
-    if (!campaignId) { setError("Save the campaign name and voice first."); return; }
+    if (!campaignId || importing) { if (!campaignId) setError("Save the campaign name and voice first."); return; }
+    setImporting(true);
     setError("");
-    const result = await postJson("/api/crm/interviewer/import-website", { url: websiteUrl, campaignId });
-    if (!result.ok) { setError(result.data.fields?.url || "The website could not be read."); return; }
-    const next = emptyKnowledge();
-    for (const draft of result.data.documents || []) {
-      const section = KNOWLEDGE_SECTIONS.find((item) => item.title.toLowerCase() === String(draft.title).toLowerCase());
-      if (section) next[section.key] = draft.body;
+    try {
+      const result = await postJson("/api/crm/interviewer/import-website", { url: websiteUrl, campaignId });
+      if (!result.ok) { setError(result.data.fields?.url || "The website could not be read."); return; }
+      const next = knowledgeFromDocuments(result.data.documents || []);
+      setSections(next);
+      setScrapedAt(new Date().toISOString());
+      if (!result.data.reused) await saveKnowledge(true);
+      else setNotice("Using the website notes saved a moment ago.");
+    } finally {
+      setImporting(false);
     }
-    setSections(next);
-    setScrapedAt(new Date().toISOString());
-    await saveKnowledge(true);
   };
 
   const reloadDecks = async () => {
@@ -195,24 +204,42 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
 
   const uploadDeck = async (file: File, deckId?: string) => {
     if (!campaignId) { setError("Save the campaign before uploading a deck."); return; }
+    if (deckJob && deckJob.phase !== "saved" && deckJob.phase !== "error") return;
+    const replacingDeck = !deckId && decks.length > 0;
+    if (replacingDeck && !window.confirm("Replace current deck?")) return;
     setError("");
-    setNotice(deckId ? "Replacing slide images…" : "Reading the PDF in the browser…");
+    setDeckJob({ phase: "rendering", fileName: file.name, page: 0, total: 0, message: `Rendering ${file.name}…` });
     try {
-      const pages = await renderPdfPages(file);
+      const pages = await renderPdfPages(file, (page, total) => {
+        setDeckJob({ phase: "rendering", fileName: file.name, page, total, message: page ? `Rendering page ${page} of ${total}` : `Rendering ${file.name}…` });
+      });
+      setDeckJob({ phase: "uploading", fileName: file.name, page: 0, total: pages.length, message: "Uploading…" });
       const prepared = await postJson("/api/crm/interviewer/deck", deckId
         ? { action: "replace", deckId, pageCount: pages.length }
-        : { action: "prepare", campaignId, fileName: file.name, pageCount: pages.length });
+        : { action: "prepare", campaignId, fileName: file.name, pageCount: pages.length, replace: replacingDeck });
       if (!prepared.ok) {
-        setError(prepared.data.fields?.file || prepared.data.fields?.campaignId || "The deck was not saved.");
+        const message = prepared.data.fields?.file || prepared.data.fields?.campaignId || "The deck was not saved.";
+        setDeckJob({ phase: "error", fileName: file.name, page: 0, total: pages.length, message });
+        setError(message);
         return;
       }
-      await putSlideImages(prepared.data.uploads || [], pages);
-      const notes = await postJson("/api/crm/interviewer/deck", { action: "notes", deckId: prepared.data.deckId });
+      await putSlideImages(prepared.data.uploads || [], pages, (page, total) => {
+        setDeckJob({ phase: "uploading", fileName: file.name, page, total, message: `Uploading ${page} of ${total}` });
+      });
+      setDeckJob({ phase: "notes", fileName: file.name, page: pages.length, total: pages.length, message: "Writing slide notes…" });
+      await postJson("/api/crm/interviewer/deck", { action: "notes", deckId: prepared.data.deckId });
       await reloadDecks();
-      const missing = Array.isArray(notes.data.missing) && notes.data.missing.length ? ` ${notes.data.missing.length} images were not readable.` : "";
-      setNotice(notes.ok ? `Saved ${pages.length} page images.${missing}` : "Images uploaded. The slide notes were not rewritten.");
+      setDeckJob({
+        phase: "saved",
+        fileName: file.name,
+        page: pages.length,
+        total: pages.length,
+        message: `Saved ${file.name} · ${pages.length} pages · ${new Date().toLocaleString("en-GB")}`,
+      });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The deck was not saved.");
+      const message = reason instanceof Error ? reason.message : "The deck was not saved.";
+      setDeckJob({ phase: "error", fileName: file.name, page: 0, total: 0, message });
+      setError(message);
     }
   };
 
@@ -241,6 +268,10 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
   };
 
   const costFor = (id: string) => costs?.calls?.find((call) => call.sessionId === id);
+  const knowledgeCount = knowledgeLength(sections);
+  const deckBusy = Boolean(deckJob && deckJob.phase !== "saved" && deckJob.phase !== "error");
+  let importHost = "the website";
+  try { importHost = new URL(websiteUrl).host || importHost; } catch { /* keep the fallback */ }
 
   return (
     <main className={styles.page}>
@@ -300,29 +331,41 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
             <input className={styles.field} value={websiteUrl} placeholder="https://" onChange={(event) => setWebsiteUrl(event.target.value)} />
           </label>
           <p className={styles.note}>{websiteUrl ? `Source: ${websiteUrl}` : "No source website yet."} {scrapedAt ? `Last scraped ${new Date(scrapedAt).toLocaleString("en-GB")}.` : ""}</p>
-          <button type="button" className={styles.btnGhost} onClick={() => void importSite()}>Import from website</button>
+          <button type="button" className={styles.btnGhost} disabled={importing} onClick={() => void importSite()}>
+            {importing ? `Importing ${importHost}…` : "Import from website"}
+          </button>
           {KNOWLEDGE_SECTIONS.map((section) => (
             <label key={section.key} className={styles.label}>{section.title}
               <textarea className={styles.area} value={sections[section.key as KnowledgeSectionKey]} onChange={(event) => setSections({ ...sections, [section.key]: event.target.value })} />
             </label>
           ))}
+          {knowledgeCount >= KNOWLEDGE_CHAR_CAP * 0.8 ? (
+            <p className={knowledgeCount >= KNOWLEDGE_CHAR_CAP ? styles.err : styles.note}>
+              Knowledge is {knowledgeCount.toLocaleString("en-GB")} characters. The call uses the first {KNOWLEDGE_CHAR_CAP.toLocaleString("en-GB")}.
+            </p>
+          ) : null}
           <button type="button" className={styles.btn} onClick={() => void saveKnowledge(false)}>Save knowledge</button>
           <p className={styles.label}>Deck</p>
-          <p className={styles.note}>Pages are turned into images in this browser, then uploaded straight to storage. PDFs up to 50 MB.</p>
-          <input type="file" accept="application/pdf,.pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadDeck(file); }} />
+          <p className={styles.note}>One deck is used on calls. A new PDF replaces that deck. Pages are rendered in this browser. PDFs up to 50 MB.</p>
+          {deckJob ? <p className={deckJob.phase === "error" ? styles.err : styles.note}>{deckJob.message}</p> : null}
+          <input type="file" accept="application/pdf,.pdf" disabled={deckBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadDeck(file); }} />
           {decks.map((deck) => (
             <div key={deck.id} style={{ marginTop: 12 }}>
               <div className={styles.headRow}>
                 <strong>{deck.title}</strong>
-                <label className={styles.btnGhost}>
-                  Replace images
-                  <input type="file" accept="application/pdf,.pdf" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadDeck(file, deck.id); }} />
-                </label>
+                <span className={deck.active ? styles.ok : styles.warn}>{deck.active ? "Active" : "Not used on calls"}</span>
+                {deck.active ? (
+                  <label className={styles.btnGhost}>
+                    Replace images
+                    <input type="file" accept="application/pdf,.pdf" hidden disabled={deckBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadDeck(file, deck.id); }} />
+                  </label>
+                ) : null}
               </div>
+              {deck.imagesMissing ? <p className={styles.err}>Images missing, click Replace images</p> : null}
               <div className={styles.thumbs}>
                 {deck.slides.map((slide) => (
-                  <figure key={`${deck.id}-${slide.number}`} style={{ margin: 0 }}>
-                    {slide.url ? <img src={slide.url} alt={slide.title || `Slide ${slide.number}`} /> : <div className={styles.thumb} />}
+                  <figure key={`${deck.id}-${slide.number}`}>
+                    {slide.url && !slide.missing ? <img src={slide.url} alt={slide.title || `Slide ${slide.number}`} /> : <div className={styles.thumb} />}
                     <figcaption className={styles.note}>{slide.number}. {slide.title}</figcaption>
                   </figure>
                 ))}
@@ -381,7 +424,19 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
           </div>
           <button type="button" className={styles.btnGhost} disabled={creating} onClick={() => void saveBilling()}>Save billing</button>
           {costs?.totals ? <p>Setup {costs.totals.setup} · calls {costs.totals.callsCost} · total {costs.totals.cost}{costs.totals.estimates ? " (includes estimates from duration)" : ""}</p> : null}
-          <ul>{(costs?.setup || []).map((item) => <li key={item.kind}>{item.kind}: {item.amount} · {item.detail}</li>)}</ul>
+          <div className={styles.scrollX}>
+            <table className={styles.table}>
+              <thead><tr><th>Item</th><th>Amount</th><th>Detail</th></tr></thead>
+              <tbody>
+                {(costs?.setup || []).map((item) => (
+                  <tr key={item.kind}><td>{item.kind}</td><td>{item.amount}</td><td>{item.detail}</td></tr>
+                ))}
+                {(costs?.calls || []).map((call) => (
+                  <tr key={call.sessionId}><td>Call</td><td>{call.cost}{call.estimated ? " estimate" : ""}</td><td>{call.seconds}s</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </details>
       </div>
       {campaign ? null : null}

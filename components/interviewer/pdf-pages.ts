@@ -1,7 +1,10 @@
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
 const MAX_PAGES = 40;
 
-export async function renderPdfPages(file: File): Promise<Blob[]> {
+export async function renderPdfPages(
+  file: File,
+  onPage?: (page: number, total: number) => void,
+): Promise<Blob[]> {
   if (file.size > MAX_PDF_BYTES) {
     throw new Error("That PDF is over 50 MB. Export a smaller file and try again.");
   }
@@ -13,14 +16,16 @@ export async function renderPdfPages(file: File): Promise<Blob[]> {
     throw new Error("Upload a PDF.");
   }
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+  pdfjs.GlobalWorkerOptions.workerSrc = "/interviewer/pdf.worker.min.mjs";
   const data = new Uint8Array(await file.arrayBuffer());
   const pdf = await pdfjs.getDocument({ data }).promise;
   if (pdf.numPages > MAX_PAGES) {
     throw new Error(`That PDF has ${pdf.numPages} pages. The limit is ${MAX_PAGES}.`);
   }
   const pages: Blob[] = [];
+  onPage?.(0, pdf.numPages);
   for (let number = 1; number <= pdf.numPages; number += 1) {
+    onPage?.(number, pdf.numPages);
     const page = await pdf.getPage(number);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: Math.min(2, 1400 / base.width) });
@@ -41,8 +46,13 @@ export async function renderPdfPages(file: File): Promise<Blob[]> {
 export async function putSlideImages(
   uploads: Array<{ slideNumber: number; signedUrl: string; contentType?: string }>,
   pages: Blob[],
+  onPage?: (page: number, total: number) => void,
 ): Promise<void> {
-  for (const upload of uploads) {
+  const ordered = uploads.slice().sort((left, right) => left.slideNumber - right.slideNumber);
+  let done = 0;
+  for (const upload of ordered) {
+    done += 1;
+    onPage?.(done, ordered.length);
     const page = pages[upload.slideNumber - 1];
     if (!page) throw new Error(`Page ${upload.slideNumber} was not rendered.`);
     const response = await fetch(upload.signedUrl, {
