@@ -62,6 +62,10 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
+  // Public interviewer join. /i/[token] is intentionally absent from the
+  // private page list. /api/interviewer/* is not the private coaching API:
+  // that one is /api/interview without the trailing "er".
+  const isInterviewerApi = path.startsWith("/api/interviewer");
   const isPrivatePage =
     path.startsWith("/call") ||
     path.startsWith("/crm") ||
@@ -86,7 +90,7 @@ export async function middleware(request: NextRequest) {
     path === "/api/tts" ||
     path === "/api/livekit/invite" ||
     path === "/api/livekit/practice-token" ||
-    path.startsWith("/api/interview");
+    (path.startsWith("/api/interview") && !isInterviewerApi);
   // These two routes support both an active workspace member and a public
   // candidate holding the single-use invitation session. Signed-in requests
   // still receive the fully verified workspace headers below. Anonymous
@@ -215,6 +219,17 @@ export async function middleware(request: NextRequest) {
       const redirected = NextResponse.redirect(url);
       redirected.headers.set("Cache-Control", "private, no-store");
       return finish(redirected);
+    }
+
+    // Hidden interviewer page. Owner role is the gate here. The page and its
+    // CRM routes also require a row in interviewer_access.
+    if (path.startsWith("/crm/interviewer") && membership.role !== "owner") {
+      const url = request.nextUrl.clone();
+      url.pathname = membership.department === "marketing" ? "/crm/marketing" : "/crm/inbox";
+      url.search = "";
+      const hidden = NextResponse.redirect(url);
+      hidden.headers.set("Cache-Control", "private, no-store");
+      return finish(hidden);
     }
 
     // getUser above validates the account with Supabase Auth. getSession is
