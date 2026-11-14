@@ -16,7 +16,7 @@ import {
   type LockedUtterance,
 } from "@/lib/interviewer/listen-transcript";
 import { stripAgentContext, toSpokenPlain, toolReplyForAgent } from "@/lib/interviewer/spoken-text";
-import { coverInterests, noteInterests, privateCoverNote, spokenReminder, type AgendaItem } from "@/lib/interviewer/interest-agenda";
+import { catalogFromSlides, coverInterests, noteInterests, privateCoverNote, spokenReminder, type AgendaItem } from "@/lib/interviewer/interest-agenda";
 import { matchSpokenSlide } from "@/lib/interviewer/slide-match";
 
 export type Caption = { id: string; speaker: "agent" | "lead"; text: string };
@@ -193,7 +193,7 @@ export function useInterviewerCall(token: string) {
       return;
     }
     leadLinesRef.current = [...leadLinesRef.current.slice(-30), text];
-    agendaRef.current = noteInterests(text, agendaRef.current);
+    agendaRef.current = noteInterests(text, agendaRef.current, catalogFromSlides(slideIndexRef.current));
     saveCaption({ id: utterance.id, speaker: "lead", text });
   }, [saveCaption]);
 
@@ -371,7 +371,7 @@ export function useInterviewerCall(token: string) {
         }));
       };
       remindRef.current = (speech: string) => {
-        agendaRef.current = coverInterests(speech, agendaRef.current);
+        agendaRef.current = coverInterests(speech, agendaRef.current, catalogFromSlides(slideIndexRef.current));
         if (remindTimer.current) window.clearTimeout(remindTimer.current);
         remindTimer.current = window.setTimeout(() => {
           if (!greetingDoneRef.current || goodbyeOwnsEnd.current) return;
@@ -551,7 +551,7 @@ export function useInterviewerCall(token: string) {
 
       const showOne = (slide: { number: number; url: string; title: string; slogan: string }) => {
         const known = slideIndexRef.current.find((item) => item.number === slide.number);
-        agendaRef.current = coverInterests(`${slide.title} ${(known?.keywords || []).join(" ")}`, agendaRef.current);
+        agendaRef.current = coverInterests(`${slide.title} ${(known?.keywords || []).join(" ")}`, agendaRef.current, catalogFromSlides(slideIndexRef.current));
         rememberSeen(slide.number);
         slideNumberRef.current = slide.number;
         setSlideNumber(slide.number);

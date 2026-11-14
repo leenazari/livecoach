@@ -175,8 +175,8 @@ const priced = dropInventedPrices("Plans start at £39 a month. Kiosks are £199
 if (priced.includes("£39") || !priced.includes("£199")) throw new Error("an invented price was kept");
 if (!scriptRoutes(bundle).includes("/get-kiosk")) throw new Error("script route missing");
 const greeting = interviewerGreeting({ campaignName: "Solar", prospectName: "Lee Nazari", personaOverride: null, promptOverride: null, maxMinutes: null, documents: notes, opener: "Welcome to the company. Let me tell you everything about our history and then a tip about muting." });
-if (greeting !== "Hi Lee, thanks for joining. What brings you here today?") throw new Error(`greeting was too long: ${greeting}`);
-if (/tip|mute|solar/i.test(greeting)) throw new Error("greeting included a pitch or a tip");
+if (!greeting.startsWith("Thanks for joining, Lee")) throw new Error(`greeting was not the default opener: ${greeting}`);
+if (/tip|mute/i.test(greeting) || !/Solar brochure/i.test(greeting)) throw new Error("greeting included a tip or dropped the product");
 const swooposOpener = "Thanks for joining this interactive demo. i can jump to anything you like in the brochure. first, tell me a bit about what type of business you run.";
 if (stripAgentContext(swooposOpener) !== swooposOpener) throw new Error("sanitizer trimmed the Swoopos opener");
 const fullOpener = interviewerGreeting({ campaignName: "Swoopos EPOS system", prospectName: "Lee", personaOverride: null, promptOverride: null, maxMinutes: 30, documents: notes, opener: swooposOpener });
@@ -204,8 +204,9 @@ const spokenPrompt = buildInterviewerPrompt({
   slides: [{ number: 9, title: "**Kiosks**", oneLine: "queues", talkingPoints: "**Orders** go to the kitchen.", verbatim: null }],
 });
 if (spokenPrompt.includes("**") || spokenPrompt.includes("*")) throw new Error("markdown stayed in the prompt");
-if (!spokenPrompt.includes("Kiosks") || !spokenPrompt.includes("kitchen display") || !spokenPrompt.includes("Waiter Mate")) throw new Error("service map missing");
-if (!spokenPrompt.includes("How do customers order")) throw new Error("service questions missing");
+if (!spokenPrompt.includes("Kiosks")) throw new Error("deck fact was stripped");
+if (/tills|Waiter Mate|kitchen display/i.test(spokenPrompt)) throw new Error("a hospitality default is still in the shared prompt");
+if (!spokenPrompt.includes("What does the business do?")) throw new Error("generic discovery question missing");
 const { createSpeechStreamFilter } = loadTs(new URL("../lib/interviewer/speech-stream.ts", import.meta.url).pathname);
 const filter = createSpeechStreamFilter();
 const heard = `${filter.push("**Kio")}${filter.push("sks**")}${filter.flush()}`;
@@ -214,10 +215,9 @@ const split = createSpeechStreamFilter();
 const splitHeard = `${split.push("*")}${split.push("*Kiosks*")}${split.push("*")}${split.flush()}`;
 if (splitHeard !== "Kiosks") throw new Error(`split stars heard ${JSON.stringify(splitHeard)}`);
 const { serviceFromTranscript } = loadTs(new URL("../lib/interviewer/brief.ts", import.meta.url).pathname);
-const service = serviceFromTranscript("We queue at the counter and send paper tickets to the kitchen. Phone orders are written down.");
-if (!/counter/.test(service.howTheyServe)) throw new Error("service picture missing");
-if (!service.improvements.some((item) => /kitchen display/i.test(item.suggestion))) throw new Error("paper tickets were not mapped");
-if (!service.improvements.some((item) => /kiosk/i.test(item.suggestion))) throw new Error("queues were not mapped");
+const service = serviceFromTranscript("At the moment the main challenge is that nobody answers the website.");
+if (!/challenge/i.test(service.howTheyServe)) throw new Error("service picture missing");
+if (service.improvements.length) throw new Error("the shared brief invented a product");
 const { customThinkUrl } = loadTs(new URL("../lib/interviewer/think-endpoint.ts", import.meta.url).pathname);
 const soon = Date.now() + 60_000;
 if (customThinkUrl({ origin: "https://preview.vercel.app", expiresAt: soon, openAiKey: "sk-preview", bypassSecret: "" }) !== null) {
@@ -226,17 +226,22 @@ if (customThinkUrl({ origin: "https://preview.vercel.app", expiresAt: soon, open
 const filtered = customThinkUrl({ origin: "https://preview.vercel.app", expiresAt: soon, openAiKey: "sk-preview", bypassSecret: "bypass" });
 if (!filtered || !filtered.includes("/api/interviewer/think")) throw new Error("the bypass secret did not enable the filter");
 const { noteInterests, coverInterests, bridgeLine, agendaFromLines, spokenReminder, privateCoverNote } = loadTs(new URL("../lib/interviewer/interest-agenda.ts", import.meta.url).pathname);
-let agenda = noteInterests("table service with some handhelds and our kitchen", []);
+const swooposCatalog = [
+  { id: "handheld", label: "handhelds", keywords: ["handheld", "waiter mate"] },
+  { id: "kds", label: "kitchen display", keywords: ["kitchen display", "kitchen display screen"] },
+  { id: "kiosk", label: "kiosks", keywords: ["kiosk", "self-service"] },
+];
+let agenda = noteInterests("table service with some handhelds and our kitchen", [], swooposCatalog);
 if (agenda.some((item) => item.id === "kds")) throw new Error("the word kitchen alone was treated as a kitchen display");
 for (const line of [
   "has been asking for a kitchen display screen. So can you help me with these things?",
   "Do you do self-service kiosks?",
-]) agenda = noteInterests(line, agenda);
+]) agenda = noteInterests(line, agenda, swooposCatalog);
 if (!agenda.some((item) => item.id === "kds")) throw new Error("the latest call would have missed the kitchen display");
 if (agenda.findIndex((item) => item.id === "handheld") > agenda.findIndex((item) => item.id === "kds")) throw new Error("handhelds were listed after the kitchen display");
-agenda = coverInterests("With Swoopos, you can implement self-service kiosks that carry your branding.", agenda);
+agenda = coverInterests("With Swoopos, you can implement self-service kiosks that carry your branding.", agenda, swooposCatalog);
 if (agenda.find((item) => item.id === "kds").covered) throw new Error("kiosk talk covered the kitchen display");
-agenda = coverInterests("Waiter Mate handhelds let staff take the order at the table.", agenda);
+agenda = coverInterests("Waiter Mate handhelds let staff take the order at the table.", agenda, swooposCatalog);
 const bridge = bridgeLine(agenda);
 if (!bridge || !/kitchen display/i.test(bridge)) throw new Error(`bridge did not return to the kitchen display: ${bridge}`);
 const spokenNext = spokenReminder(agenda, "I only have around two minutes left.");
@@ -248,7 +253,7 @@ const fromCall = agendaFromLines([
   { speaker: "lead", text: "has been asking for a kitchen display screen" },
   { speaker: "agent", text: "Let me introduce you to Swoopos." },
   { speaker: "lead", text: "Do you do self-service kiosks?" },
-]);
+], swooposCatalog);
 if (!fromCall.some((item) => item.label === "kitchen display" && !item.covered)) throw new Error("transcript replay missed an open kitchen display");
 
 console.log("interviewer owner and prompt checks passed");

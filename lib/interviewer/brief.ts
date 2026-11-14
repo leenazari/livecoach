@@ -1,4 +1,4 @@
-import { agendaFromLines } from "./interest-agenda";
+import { agendaFromLines, catalogFromSlides } from "./interest-agenda";
 import { timeLimitChapters } from "./call-limit";
 
 export type BriefQuestion = {
@@ -76,21 +76,13 @@ const EMPTY = "Not established on this call.";
 export function serviceFromTranscript(transcript: string): BriefService {
   const text = transcript.toLowerCase();
   const parts: string[] = [];
-  if (/at the counter|counter service/.test(text)) parts.push("Customers order at the counter.");
-  if (/table service|at the table|waiter/.test(text)) parts.push("Orders are taken at the table.");
-  if (/by phone|phone orders|over the phone/.test(text)) parts.push("They take orders by phone.");
-  if (/online|delivery app|deliveroo|uber eats/.test(text)) parts.push("They take online or delivery-app orders.");
-  if (/paper ticket|paper tickets|handwritten/.test(text)) parts.push("Orders go to the kitchen on paper.");
-  if (/\bpay\b|card machine|cash|square/.test(text)) parts.push("Payment was discussed.");
-  if (/queue|queues|wait time|busiest|stretched/.test(text)) parts.push("Busy periods or queues stretch the team.");
-  const improvements: ServiceImprovement[] = [];
-  if (/queue|queues|at the counter|wait time/.test(text)) improvements.push({ fit: "Queues", suggestion: "Self-service kiosks or mobile table ordering, so people are not waiting at the counter." });
-  if (/paper ticket|paper tickets|handwritten/.test(text)) improvements.push({ fit: "Paper tickets", suggestion: "A kitchen display, so each order is on screen instead of a paper ticket." });
-  if (/table service|slow table|at the table/.test(text)) improvements.push({ fit: "Table service", suggestion: "Waiter Mate, so staff send the order from the table." });
-  if (/by phone|phone orders|over the phone/.test(text)) improvements.push({ fit: "Phone orders", suggestion: "Online ordering, so phone orders are not written down by hand." });
+  if (/website|visitor|online/.test(text)) parts.push("They talked about how people reach them online.");
+  if (/team|staff|people/.test(text)) parts.push("They talked about the team.");
+  if (/today|currently|at the moment|using/.test(text)) parts.push("They described what they use today.");
+  if (/challenge|problem|frustrat|difficult/.test(text)) parts.push("They named a challenge with the current setup.");
   return {
     howTheyServe: parts.length ? parts.join(" ") : "Not established on this call.",
-    improvements,
+    improvements: [],
   };
 }
 
@@ -201,7 +193,7 @@ export function fallbackBrief(facts: BriefFacts): CallBrief {
     },
     profile: emptyProfile(),
     service: serviceFromTranscript(facts.transcript),
-    interests: agendaFromLines(facts.lines || []).map((item) => ({ label: item.label, covered: item.covered })),
+    interests: agendaFromLines(facts.lines || [], catalogFromSlides(facts.slides || [])).map((item) => ({ label: item.label, covered: item.covered })),
     questions: questionsFromLines(facts.lines || []),
     objections: [],
     providers: providersFromLines(facts.lines || []),
@@ -366,7 +358,7 @@ export function briefPrompt(facts: BriefFacts): string {
 Choose intent.label from the transcript: HOT if they booked or were ready to buy, WARM if they engaged and a next conversation is likely, NOT INTERESTED if they declined, otherwise NURTURE. The first reason is one sentence a rep can read.
 Return JSON:
 {"lead":{"phone":"","interest":"","cameFrom":""},"profile":{"businessType":"","size":"","sites":"","location":"","role":"","setup":"","painPoints":""},"service":{"howTheyServe":"","improvements":[{"fit":"","suggestion":""}]},"interests":[{"label":"","covered":false}],"intent":{"label":"HOT|WARM|NURTURE|NOT INTERESTED","reasons":["","",""],"scale":0},"appointment":{"agenda":""},"openingLine":"","howItWent":{"summary":"","sentiment":0,"engagement":0,"mood":""},"questions":[{"question":"","askedBy":"lead|agent","answer":"","status":"answered|partly|unanswered","atSeconds":0}],"objections":[{"text":"","tag":"Softened|Resolved|Open","heat":0,"atSeconds":0}],"providers":[{"name":"","kind":"current|competitor","atSeconds":0}],"nextSteps":[""]}
-Include every question. askedBy is lead when the customer asked, and agent when Interviewa asked. For a lead question, answer is one sentence summarising what the agent said. For an agent question, answer is a short quote or paraphrase of what the lead actually replied. If nobody replied, status is unanswered and answer is empty. Copy atSeconds from the transcript tag. objections is an empty array when none were raised. providers lists who they use today and any competitor they named. service.howTheyServe is how customers order, how orders reach the kitchen, how they pay, and where it gets busy, in their words. service.improvements lists only gains that fit what they said, such as kiosks for a queue, a kitchen display for paper tickets, Waiter Mate for slow table service, or online ordering for phone orders. Leave improvements empty if they did not describe how they serve. interests lists each feature or need the lead named, in that order. covered is true only if the agent actually showed or explained it.
+Include every question. askedBy is lead when the customer asked, and agent when Interviewa asked. For a lead question, answer is one sentence summarising what the agent said. For an agent question, answer is a short quote or paraphrase of what the lead actually replied. If nobody replied, status is unanswered and answer is empty. Copy atSeconds from the transcript tag. objections is an empty array when none were raised. providers lists who they use today and any competitor they named. service.howTheyServe is how they work today, in their words. service.improvements lists only gains that fit what they said and that appear in the deck. Leave improvements empty if they did not describe the current process. Do not name a product that is not in the transcript. interests lists each feature or need the lead named, in that order. covered is true only if the agent actually showed or explained it.
 Facts: name ${facts.name}. email ${facts.email || "none"}. stored outcome ${facts.disposition || "none"}. meeting ${facts.scheduledAt || "none"}.
 Transcript, times are seconds from the start:
 ${facts.transcript || "No transcript."}`;

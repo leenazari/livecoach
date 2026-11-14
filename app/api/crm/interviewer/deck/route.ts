@@ -8,6 +8,9 @@ import { interviewerFieldError } from "@/lib/interviewer/field-error";
 import { clipHeadline, formatDeckKnowledge, headlineFromNotes, isGenericSlideTitle } from "@/lib/interviewer/slide-headline";
 import { isInternalCostLine } from "@/lib/interviewer/slide-notes";
 import { headlinesFromContent, notesFromImages } from "@/lib/interviewer/slide-vision";
+import { DECK_IMPORT_SOURCE } from "@/lib/interviewer/knowledge";
+import { QUALIFYING_TITLE } from "@/lib/interviewer/qualifying";
+import { deckNoteRows, qualifyingFromDeck, type DeckFact } from "@/lib/interviewer/salesTemplate";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -16,6 +19,31 @@ export const maxDuration = 60;
 
 const noStore = { "Cache-Control": "private, no-store" };
 const UUID = /^[0-9a-f-]{36}$/i;
+
+async function syncBrochureNotes(campaignId: string, workspaceId: string, slides: DeckFact[]) {
+  const campaign = await supabaseService.from("interviewer_campaigns").select("website_url").eq("id", campaignId).maybeSingle();
+  if (campaign.error || campaign.data?.website_url) return;
+  await supabaseService.from("interviewer_documents").delete().eq("campaign_id", campaignId).eq("workspace_id", workspaceId).eq("source", DECK_IMPORT_SOURCE);
+  const rows = deckNoteRows(slides).map((note) => ({
+    workspace_id: workspaceId,
+    campaign_id: campaignId,
+    title: note.title,
+    body: note.body,
+    source: DECK_IMPORT_SOURCE,
+  }));
+  const existing = await supabaseService.from("interviewer_documents").select("id, source").eq("campaign_id", campaignId).eq("title", QUALIFYING_TITLE).maybeSingle();
+  if (!existing.data || existing.data.source === DECK_IMPORT_SOURCE) {
+    if (existing.data) await supabaseService.from("interviewer_documents").delete().eq("id", existing.data.id);
+    rows.push({
+      workspace_id: workspaceId,
+      campaign_id: campaignId,
+      title: QUALIFYING_TITLE,
+      body: qualifyingFromDeck(slides).join("\n"),
+      source: DECK_IMPORT_SOURCE,
+    });
+  }
+  if (rows.length) await supabaseService.from("interviewer_documents").insert(rows);
+}
 
 function mimeFor(path: string): string {
   const lower = path.toLowerCase();
@@ -279,6 +307,13 @@ export async function POST(req: Request) {
         prices: slide.stats,
       })));
       await supabaseService.from("interviewer_decks").update({ outline }).eq("id", deckId);
+      await syncBrochureNotes(deck.data.campaign_id, scope.workspaceId, stored.map((slide) => ({
+        number: slide.number,
+        title: slide.title,
+        oneLine: slide.oneLine,
+        talkingPoints: slide.talkingPoints,
+        verbatim: slide.verbatim,
+      }))).catch(() => undefined);
       const warnings = stored.map((slide) => slide.stats).filter((line) => isInternalCostLine(line));
       return NextResponse.json({
         updated: stored.length,

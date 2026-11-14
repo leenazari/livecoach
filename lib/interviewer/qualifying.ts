@@ -1,16 +1,8 @@
+import { GENERIC_QUALIFYING_QUESTIONS } from "./salesTemplate";
+
 export const QUALIFYING_TITLE = "Qualifying questions";
 
-export const DEFAULT_QUALIFYING_QUESTIONS = [
-  "Where are you based?",
-  "What type of business is it?",
-  "How many sites or tills do you have?",
-  "What are you using today?",
-  "How do customers order today? At the counter, at the table, by phone, online, or through a delivery app?",
-  "How are orders taken and sent to the kitchen?",
-  "How do customers pay?",
-  "When are you busiest, and where do queues or wait times stretch the team?",
-  "When are you looking to move on this?",
-];
+export const DEFAULT_QUALIFYING_QUESTIONS = GENERIC_QUALIFYING_QUESTIONS;
 
 export function qualifyingQuestionsFrom(body: string | null | undefined): string[] {
   const lines = String(body || "")

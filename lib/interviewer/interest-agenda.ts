@@ -1,27 +1,41 @@
 export type AgendaItem = { id: string; label: string; covered: boolean };
+export type InterestDef = { id: string; label: string; keywords: string[] };
 
-const INTERESTS: Array<{ id: string; label: string; keywords: string[] }> = [
-  { id: "payments", label: "card payments", keywords: ["card terminal", "card payment", "integrated card"] },
-  { id: "handheld", label: "handhelds", keywords: ["handheld", "waiter mate", "waitermate"] },
-  { id: "kds", label: "kitchen display", keywords: ["kitchen display", "kds", "kitchen screen"] },
-  { id: "kiosk", label: "kiosks", keywords: ["kiosk", "self-service", "self service"] },
-  { id: "online", label: "online ordering", keywords: ["online order", "mobile order", "phone order"] },
-  { id: "loyalty", label: "loyalty", keywords: ["loyalty"] },
-];
+const STOP = new Set(["your", "with", "the", "and", "for", "every", "from", "this", "that", "into", "they", "them", "about", "their", "show", "slide"]);
+
+export function catalogFromSlides(slides: Array<{ number: number; title?: string | null; keywords?: string[] }>): InterestDef[] {
+  return slides.flatMap((slide) => {
+    const title = String(slide.title || "").replace(/\s+/g, " ").trim();
+    if (title.length < 8 || /^slide\s+\d+$/i.test(title)) return [];
+    const phrase = title.split(":")[0].toLowerCase().trim();
+    const words = phrase.split(/[^a-z0-9]+/).filter((word) => word.length > 4 && !STOP.has(word));
+    const keywords = [...new Set([phrase, ...words, ...(slide.keywords || []).map((key) => key.toLowerCase())])].filter((key) => key.length > 3);
+    if (!keywords.length) return [];
+    return [{ id: `slide-${slide.number}`, label: phrase, keywords }];
+  });
+}
+
+function matches(hay: string, keywords: string[]): boolean {
+  const phrases = keywords.filter((key) => key.includes(" ") && key.length > 8);
+  if (phrases.some((phrase) => hay.includes(phrase))) return true;
+  const words = keywords.filter((key) => !key.includes(" ") && key.length > 5 && !STOP.has(key));
+  return words.some((word) => hay.includes(word));
+}
 
 function earliest(hay: string, keywords: string[]): number {
   let at = -1;
   for (const key of keywords) {
+    if (!matches(hay, [key])) continue;
     const index = hay.indexOf(key);
     if (index >= 0 && (at < 0 || index < at)) at = index;
   }
   return at;
 }
 
-export function noteInterests(text: string, agenda: AgendaItem[]): AgendaItem[] {
+export function noteInterests(text: string, agenda: AgendaItem[], catalog: InterestDef[] = []): AgendaItem[] {
   const hay = text.toLowerCase();
   const found: Array<{ id: string; label: string; at: number }> = [];
-  for (const interest of INTERESTS) {
+  for (const interest of catalog) {
     if (agenda.some((item) => item.id === interest.id)) continue;
     const at = earliest(hay, interest.keywords);
     if (at >= 0) found.push({ id: interest.id, label: interest.label, at });
@@ -30,19 +44,19 @@ export function noteInterests(text: string, agenda: AgendaItem[]): AgendaItem[] 
   return [...agenda, ...found.map((item) => ({ id: item.id, label: item.label, covered: false }))];
 }
 
-export function coverInterests(text: string, agenda: AgendaItem[]): AgendaItem[] {
-  if (/^you also mentioned\b|^still to cover\b/i.test(text.trim())) return agenda;
+export function coverInterests(text: string, agenda: AgendaItem[], catalog: InterestDef[] = []): AgendaItem[] {
+  if (/^you also mentioned\b|^still to cover\b|^note for you only\b/i.test(text.trim())) return agenda;
   const hay = text.toLowerCase();
   return agenda.map((item) => {
     if (item.covered) return item;
-    const interest = INTERESTS.find((entry) => entry.id === item.id);
+    const interest = catalog.find((entry) => entry.id === item.id);
     return interest && earliest(hay, interest.keywords) >= 0 ? { ...item, covered: true } : item;
   });
 }
 
-export function agendaFromLines(lines: Array<{ speaker: string; text: string }>): AgendaItem[] {
+export function agendaFromLines(lines: Array<{ speaker: string; text: string }>, catalog: InterestDef[] = []): AgendaItem[] {
   return lines.reduce<AgendaItem[]>((agenda, line) => {
-    return line.speaker === "lead" ? noteInterests(line.text, agenda) : coverInterests(line.text, agenda);
+    return line.speaker === "lead" ? noteInterests(line.text, agenda, catalog) : coverInterests(line.text, agenda, catalog);
   }, []);
 }
 

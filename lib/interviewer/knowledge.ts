@@ -10,6 +10,7 @@ export type KnowledgeSectionKey = (typeof KNOWLEDGE_SECTIONS)[number]["key"];
 
 export const SOURCE_WEBSITE_TITLE = "Source website";
 export const WEBSITE_IMPORT_SOURCE = "website-import";
+export const DECK_IMPORT_SOURCE = "deck-import";
 export const KNOWLEDGE_CHAR_CAP = 12000;
 
 export function isMissingSourceColumn(error: { message?: string; code?: string } | null): boolean {
@@ -48,7 +49,7 @@ export function knowledgeFromDocuments(documents: Array<{ title: string; body: s
   for (const document of documents) {
     const key = sectionKeyForTitle(document.title);
     if (!key) continue;
-    const weight = document.source === WEBSITE_IMPORT_SOURCE ? 0 : 1;
+    const weight = document.source === WEBSITE_IMPORT_SOURCE || document.source === DECK_IMPORT_SOURCE ? 0 : 1;
     const current = rank.get(key);
     if (current === undefined) {
       next[key] = document.body;

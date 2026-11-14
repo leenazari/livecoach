@@ -557,7 +557,7 @@ export default function CampaignStudio({ campaignId }: { campaignId: string }) {
           <label className={styles.switch}><input type="checkbox" checked={quotes} onChange={(event) => setQuotes(event.target.checked)} /> Phone quotes allowed</label>
           <label className={styles.switch}><input type="checkbox" checked={brochure} onChange={(event) => setBrochure(event.target.checked)} /> Brochure send allowed</label>
           <label className={styles.label}>Opener
-            <input className={styles.field} value={opener} placeholder="What got you interested in this business?" onChange={(event) => setOpener(event.target.value)} />
+            <input className={styles.field} value={opener} placeholder="Thanks for joining the call. I'm going to walk you through the brochure today, but before we get started, tell me a little bit about your business." onChange={(event) => setOpener(event.target.value)} />
           </label>
           <label className={styles.label}>Qualifying questions
             <textarea className={styles.area} value={qualifying} onChange={(event) => setQualifying(event.target.value)} />
