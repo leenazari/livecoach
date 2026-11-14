@@ -83,7 +83,22 @@ export default function OwnerConsole() {
   const [noteErrors, setNoteErrors] = useState<FieldErrors>({});
   const [billingErrors, setBillingErrors] = useState<FieldErrors>({});
   const [siteErrors, setSiteErrors] = useState<FieldErrors>({});
-  const [costs, setCosts] = useState<{ ready: boolean; label?: string; totals?: { calls: number; minutes: number; cost: string; revenue: string; margin: string; marginPercent: string }; calls?: Array<{ sessionId: string; seconds: number; cost: string; revenue: string; margin: string; marginPercent: string }> } | null>(null);
+  const [costs, setCosts] = useState<{
+    ready: boolean;
+    totals?: { calls: number; minutes: number; cost: string; revenue: string; margin: string; marginPercent: string };
+    calls?: Array<{
+      sessionId: string;
+      seconds: number;
+      cost: string;
+      revenue: string;
+      margin: string;
+      marginPercent: string;
+      voiceAgent: string;
+      listen: string;
+      storage: string;
+      vercel: string;
+    }>;
+  } | null>(null);
   const [deckNote, setDeckNote] = useState("");
 
   const explain = (error: unknown) => {
