@@ -112,7 +112,6 @@ export function deckNoteRows(slides: DeckFact[]): Array<{ title: string; body: s
 export function deckWalkNote(slides: DeckFact[]): string {
   return walkOrderNote(slides.map((slide) => ({ number: slide.number, title: slide.title })));
 }
-}
 
 export function qualifyingFromDeck(slides: DeckFact[]): string[] {
   const bag = slides.map((slide) => `${slide.title} ${slide.talkingPoints || ""}`).join(" ").toLowerCase();
