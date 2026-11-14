@@ -109,6 +109,50 @@ const booking = INTERVIEWER_FUNCTIONS.find((fn) => fn.name === "book_meeting");
 if (!booking || booking.defer_until_eot !== true) throw new Error("booking must wait for end of turn");
 if (interviewerReadyEmailStatus() !== "disabled") throw new Error("ready email must stay disabled");
 
+const { cappedCallMinutes, shouldSpeakTimeWarning, TIME_WARNING_INJECT, twoMinuteLine } = loadTs(new URL("../lib/interviewer/call-limit.ts", import.meta.url).pathname);
+if (cappedCallMinutes(null, 3, "Adam test: promote Adam") !== 3) throw new Error("a test campaign did not take the short cap");
+if (cappedCallMinutes(null, "3", "Adam test: promote Adam") !== 3) throw new Error("a string cap was ignored");
+if (cappedCallMinutes(null, 3, "Swoopos EPOS") !== 30) throw new Error("a live campaign accepted a short cap");
+if (cappedCallMinutes(30, 90, "Adam test") !== 30) throw new Error("a test cap lengthened the call");
+if (cappedCallMinutes(null, undefined, "Adam test") !== 30) throw new Error("a missing cap changed the default");
+if (!shouldSpeakTimeWarning(120, false) || !shouldSpeakTimeWarning(0, false)) throw new Error("the warning was skipped at the window or at zero");
+if (shouldSpeakTimeWarning(121, false) || shouldSpeakTimeWarning(30, true)) throw new Error("the warning fired too early or twice");
+if (TIME_WARNING_INJECT !== "interrupt") throw new Error("the warning can still be refused while someone is speaking");
+if (!twoMinuteLine(false).includes("two minutes left") || !twoMinuteLine(false).includes("human team")) {
+  throw new Error("the warning line lost the human-team offer");
+}
+
+const { isPublicInterviewerJoin, isPublicInterviewerApi } = loadTs(new URL("../lib/interviewer/public-route.ts", import.meta.url).pathname);
+const { previewProtectionQuery, appendShareQuery } = loadTs(new URL("../lib/interviewer/share-link.ts", import.meta.url).pathname);
+const joinToken = "95e82fde-d618-4c05-87eb-fcaa7d0d9722";
+if (!isPublicInterviewerJoin(`/i/${joinToken}`)) throw new Error("the demo call route was treated as private");
+if (isPublicInterviewerJoin("/crm/interviewer") || isPublicInterviewerJoin("/i") || isPublicInterviewerJoin(`/i/${joinToken}/extra`)) {
+  throw new Error("a private or incomplete path was treated as the demo call");
+}
+if (!isPublicInterviewerApi("/api/interviewer/token") || !isPublicInterviewerApi("/api/interviewer/slots/claim")) {
+  throw new Error("the call APIs were treated as private");
+}
+if (isPublicInterviewerApi("/api/interview") || isPublicInterviewerApi("/api/crm/interviewer/campaigns")) {
+  throw new Error("a CRM or coach route was treated as the public call API");
+}
+if (previewProtectionQuery({ VERCEL_ENV: "production", VERCEL_AUTOMATION_BYPASS_SECRET: "secret" })) {
+  throw new Error("production links included the preview pass");
+}
+if (previewProtectionQuery({ VERCEL_ENV: "preview", VERCEL_AUTOMATION_BYPASS_SECRET: "" })) {
+  throw new Error("an empty preview secret was appended");
+}
+const shareQuery = previewProtectionQuery({ VERCEL_ENV: "preview", VERCEL_AUTOMATION_BYPASS_SECRET: "team pass" });
+if (!shareQuery.includes("x-vercel-protection-bypass=team+pass") || !shareQuery.includes("x-vercel-set-bypass-cookie=true")) {
+  throw new Error(`preview share query was ${shareQuery}`);
+}
+const shared = appendShareQuery(`https://preview.vercel.app/i/${joinToken}?capMinutes=3`, shareQuery);
+if (!shared.startsWith(`https://preview.vercel.app/i/${joinToken}?capMinutes=3&x-vercel-protection-bypass=`)) {
+  throw new Error(`shared link was ${shared}`);
+}
+if (appendShareQuery(`https://livecoach.example/i/${joinToken}`, "") !== `https://livecoach.example/i/${joinToken}`) {
+  throw new Error("an empty share query changed a production link");
+}
+
 const { PGlite } = await import("@electric-sql/pglite");
 const db = new PGlite();
 await db.exec(`

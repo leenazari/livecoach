@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isPublicInterviewerApi, isPublicInterviewerJoin } from "@/lib/interviewer/public-route";
 import {
   LIVECOACH_ACCESS_TOKEN_HEADER,
   LIVECOACH_INTERNAL_AUTH_HEADERS,
@@ -29,6 +30,15 @@ export async function middleware(request: NextRequest) {
   // inherit an account from any supplied cookie or internal header.
   if (["/api/webhooks/calendar/google", "/api/webhooks/calendar/microsoft"].includes(request.nextUrl.pathname)) {
     return NextResponse.next({ request: { headers: forwardedHeaders } });
+  }
+
+  // Anyone with /i/[token] can join that call. No LiveCoach login, and no
+  // workspace headers. The CRM stays behind the private lists below.
+  const publicPath = request.nextUrl.pathname;
+  if (isPublicInterviewerJoin(publicPath) || isPublicInterviewerApi(publicPath)) {
+    const opened = NextResponse.next({ request: { headers: forwardedHeaders } });
+    opened.headers.set("Cache-Control", "private, no-store");
+    return opened;
   }
 
   const pendingCookies: PendingCookie[] = [];
