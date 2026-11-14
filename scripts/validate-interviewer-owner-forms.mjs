@@ -225,7 +225,7 @@ if (customThinkUrl({ origin: "https://preview.vercel.app", expiresAt: soon, open
 }
 const filtered = customThinkUrl({ origin: "https://preview.vercel.app", expiresAt: soon, openAiKey: "sk-preview", bypassSecret: "bypass" });
 if (!filtered || !filtered.includes("/api/interviewer/think")) throw new Error("the bypass secret did not enable the filter");
-const { noteInterests, coverInterests, bridgeLine, agendaFromLines } = loadTs(new URL("../lib/interviewer/interest-agenda.ts", import.meta.url).pathname);
+const { noteInterests, coverInterests, bridgeLine, agendaFromLines, spokenReminder, privateCoverNote } = loadTs(new URL("../lib/interviewer/interest-agenda.ts", import.meta.url).pathname);
 let agenda = noteInterests("table service with some handhelds and our kitchen", []);
 if (agenda.some((item) => item.id === "kds")) throw new Error("the word kitchen alone was treated as a kitchen display");
 for (const line of [
@@ -239,6 +239,10 @@ if (agenda.find((item) => item.id === "kds").covered) throw new Error("kiosk tal
 agenda = coverInterests("Waiter Mate handhelds let staff take the order at the table.", agenda);
 const bridge = bridgeLine(agenda);
 if (!bridge || !/kitchen display/i.test(bridge)) throw new Error(`bridge did not return to the kitchen display: ${bridge}`);
+const spokenNext = spokenReminder(agenda, "I only have around two minutes left.");
+if (/still to cover/i.test(spokenNext)) throw new Error("the spoken reminder included the internal label");
+const note = privateCoverNote(agenda);
+if (!note || !/still to cover/i.test(note) || !/do not read this note aloud/i.test(note)) throw new Error("the private note was not an instruction");
 const fromCall = agendaFromLines([
   { speaker: "lead", text: "table service with some handhelds and our kitchen" },
   { speaker: "lead", text: "has been asking for a kitchen display screen" },

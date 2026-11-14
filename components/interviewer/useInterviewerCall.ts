@@ -16,7 +16,7 @@ import {
   type LockedUtterance,
 } from "@/lib/interviewer/listen-transcript";
 import { stripAgentContext, toSpokenPlain, toolReplyForAgent } from "@/lib/interviewer/spoken-text";
-import { bridgeLine, coverInterests, noteInterests, stillToCover, type AgendaItem } from "@/lib/interviewer/interest-agenda";
+import { coverInterests, noteInterests, privateCoverNote, spokenReminder, type AgendaItem } from "@/lib/interviewer/interest-agenda";
 import { matchSpokenSlide } from "@/lib/interviewer/slide-match";
 
 export type Caption = { id: string; speaker: "agent" | "lead"; text: string };
@@ -363,13 +363,23 @@ export function useInterviewerCall(token: string) {
         const message = stripAgentContext(line);
         agentSocket.send(JSON.stringify({ type: "InjectAgentMessage", behavior, message }));
       };
+      const note = (instruction: string) => {
+        if (agentSocket.readyState !== WebSocket.OPEN) return;
+        agentSocket.send(JSON.stringify({
+          type: "UpdatePrompt",
+          prompt: instruction,
+        }));
+      };
       remindRef.current = (speech: string) => {
         agendaRef.current = coverInterests(speech, agendaRef.current);
         if (remindTimer.current) window.clearTimeout(remindTimer.current);
         remindTimer.current = window.setTimeout(() => {
           if (!greetingDoneRef.current || goodbyeOwnsEnd.current) return;
-          const line = bridgeLine(agendaRef.current);
-          if (line) say(line);
+          const privateNote = privateCoverNote(agendaRef.current);
+          const spoken = spokenReminder(agendaRef.current);
+          if (!privateNote || !spoken) return;
+          note(privateNote);
+          say(spoken);
         }, 2500);
       };
       const suggestNoise = () => {
@@ -802,9 +812,10 @@ export function useInterviewerCall(token: string) {
         setRemainingSeconds(left);
         if (left <= 120 && left > 0 && !warned) {
           warned = true;
-          const leftItems = stillToCover(agendaRef.current);
           const warning = twoMinuteLine(bookedRef.current);
-          say(leftItems ? `${leftItems}. ${warning}` : warning);
+          const privateNote = privateCoverNote(agendaRef.current);
+          if (privateNote) note(privateNote);
+          say(spokenReminder(agendaRef.current, warning) || warning);
         }
         if (left <= 0 && !endingForLimit) {
           endingForLimit = true;

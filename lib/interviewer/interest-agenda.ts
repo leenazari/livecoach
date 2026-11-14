@@ -61,3 +61,16 @@ export function stillToCover(agenda: AgendaItem[]): string | null {
   if (!left.length) return null;
   return `Still to cover: ${left.map((item) => item.label).join(", ")}`;
 }
+
+// Spoken to the lead. Never includes the internal "Still to cover" label.
+export function spokenReminder(agenda: AgendaItem[], followOn = ""): string {
+  return [bridgeLine(agenda), followOn].filter(Boolean).join(" ");
+}
+
+// Sent as a prompt note. The agent must not read this aloud.
+export function privateCoverNote(agenda: AgendaItem[]): string | null {
+  const left = stillToCover(agenda);
+  const next = outstanding(agenda)[0];
+  if (!left || !next) return null;
+  return `Note for you only. Do not read this note aloud, and do not say "still to cover". ${left}. Say one natural line, then show it. For example: You also mentioned ${next.label}, let me show you that.`;
+}
