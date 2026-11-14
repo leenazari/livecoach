@@ -1,3 +1,6 @@
+import { forSpeech } from "@/lib/interviewer/pronunciations";
+import { guardSpokenText } from "@/lib/interviewer/guardrails";
+
 const MARKER_TAIL = /[*_#`]$/;
 
 // Removes markdown and links from text that will be spoken. Markers are deleted,
@@ -9,7 +12,7 @@ export function stripSpeechText(value: string): string {
   text = text.replace(/\bwww\.\S+/gi, "");
   text = text.replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, "");
   text = text.replace(/[*#`_•]/g, "");
-  return text;
+  return guardSpokenText(forSpeech(text));
 }
 
 function holdback(value: string): number {
