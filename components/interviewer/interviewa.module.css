@@ -59,35 +59,6 @@
   color: #101828;
 }
 
-.bookingCard { padding: 24px 20px 20px; }
-.bookingTitle {
-  margin: 6px 0 0;
-  font-family: var(--font-slab), "Roboto Slab", Georgia, serif;
-  font-size: 40px;
-  line-height: 1.1;
-  font-weight: 700;
-  color: #101828;
-  letter-spacing: -0.03em;
-}
-.bookingOpen {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  min-height: 64px;
-  margin-top: 18px;
-  border-radius: 14px;
-  background: #155dfc;
-  color: #fff;
-  font-size: 20px;
-  font-weight: 700;
-  text-align: center;
-  text-decoration: none;
-}
-@media (max-width: 1023px) {
-  .bookingTitle { font-size: 32px; }
-  .bookingOpen { min-height: 72px; font-size: 18px; }
-}
 
 .stack, .grid2, .grid3, .cards { display: grid; gap: 16px; min-width: 0; max-width: 100%; }
 .grid2 { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); }

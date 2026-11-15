@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 
 import styles from "@/components/interviewer/interviewa.module.css";
 import { formatCountdown } from "@/lib/interviewer/call-limit";
@@ -33,35 +33,6 @@ function MuteMark({ muted }: { muted: boolean }) {
   );
 }
 
-function BookingHandoff({
-  bookingUrl,
-  booked,
-  when,
-  picture,
-}: {
-  bookingUrl: string;
-  booked: boolean;
-  when: string | null;
-  picture: string;
-}) {
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      window.location.assign(bookingUrl);
-    }, 600);
-    return () => window.clearTimeout(timer);
-  }, [bookingUrl]);
-  return (
-    <section className={`${styles.lightCard} ${styles.bookingCard} mt-8`}>
-      <p className={styles.label}>The call has ended</p>
-      <h2 className={styles.bookingTitle}>Book your demo</h2>
-      <p className="mt-2 text-sm leading-6">Pick a time that suits you. Your booking calendar opens here, in this same tab.</p>
-      <a className={styles.bookingOpen} href={bookingUrl}>Book your demo</a>
-      {booked ? <p className={`${styles.note} mt-3`}>A time is already held{whenLabel(when) ? `: ${whenLabel(when)}` : ""}.</p> : null}
-      {picture ? <p className={`${styles.note} mt-3`}>{picture}</p> : null}
-    </section>
-  );
-}
-
 function whenLabel(when: string | null): string {
   if (!when) return "";
   const date = new Date(when);
@@ -72,20 +43,13 @@ function whenLabel(when: string | null): string {
 function CallSummary({
   recap,
   bookedWhen,
-  bookingUrl,
 }: {
   recap: Recap;
   bookedWhen: string | null;
-  bookingUrl: string;
 }) {
   const booked = Boolean(recap?.booked || bookedWhen);
   const when = bookedWhen || recap?.when || null;
   const picture = [recap?.businessType, recap?.howTheyServe].filter((item) => item && !/not established/i.test(item)).join(" ");
-  if (bookingUrl) {
-    return (
-      <BookingHandoff bookingUrl={bookingUrl} booked={booked} when={when} picture={picture} />
-    );
-  }
   return (
     <section className={`${styles.lightCard} mt-8`}>
       <h2 className={styles.cardTitle}>Thanks for talking with us</h2>
@@ -141,6 +105,12 @@ export default function InterviewerRoom({
   const callScreenRef = useRef<HTMLElement | null>(null);
   const [hintDismissed, setHintDismissed] = useState(false);
   const [portrait, setPortrait] = useState(true);
+
+  const calendarUrl = bookingUrl || call.bookingUrl;
+  useLayoutEffect(() => {
+    if (call.phase !== "ended" || !calendarUrl) return;
+    window.location.replace(calendarUrl);
+  }, [call.phase, calendarUrl]);
 
   const showSlideImage = Boolean(call.slideUrl) && !slideBroken;
   const noteRatio = (image: HTMLImageElement) => {
@@ -408,8 +378,10 @@ export default function InterviewerRoom({
     );
   }
 
+  if (call.phase === "ended" && calendarUrl) return null;
+
   return (
-    <main className={`relative z-10 mx-auto flex min-h-screen w-full flex-col justify-center px-5 py-10 ${call.phase === "ended" && (bookingUrl || call.bookingUrl) ? "max-w-4xl" : "max-w-xl"}`}>
+    <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-xl flex-col justify-center px-5 py-10">
       <div className="flex items-start justify-between gap-4">
         <p className="font-mono text-[0.68rem] uppercase tracking-[0.22em] text-amber">{campaignName}</p>
       </div>
@@ -435,12 +407,8 @@ export default function InterviewerRoom({
         </section>
       ) : null}
 
-      {call.phase === "ended" ? (
-        <CallSummary
-          recap={call.recap}
-          bookedWhen={bookedWhen}
-          bookingUrl={bookingUrl || call.bookingUrl}
-        />
+      {call.phase === "ended" && !(bookingUrl || call.bookingUrl) ? (
+        <CallSummary recap={call.recap} bookedWhen={bookedWhen} />
       ) : null}
     </main>
   );
