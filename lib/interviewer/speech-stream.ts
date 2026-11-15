@@ -19,6 +19,8 @@ export function stripSpeechText(value: string): string {
 function holdback(value: string): number {
   const url = value.match(/https?:\/\/\S*$/i);
   if (url?.[0]) return url[0].length;
+  const tool = value.match(/show\s*slide\s*\{[^}]*$/i);
+  if (tool?.[0]) return tool[0].length;
   const slide = incompleteSlideCommand(value);
   if (slide) return slide;
   if (MARKER_TAIL.test(value)) return 1;

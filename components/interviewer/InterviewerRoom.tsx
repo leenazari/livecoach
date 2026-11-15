@@ -33,33 +33,33 @@ function MuteMark({ muted }: { muted: boolean }) {
   );
 }
 
-function calendarStamp(value: Date): string {
-  return value.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
-}
-
-function saveCalendar(when: string) {
-  const start = new Date(when);
-  if (Number.isNaN(start.getTime())) return;
-  const end = new Date(start.getTime() + 30 * 60 * 1000);
-  const body = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Interviewa//Call//EN",
-    "BEGIN:VEVENT",
-    `DTSTAMP:${calendarStamp(new Date())}`,
-    `DTSTART:${calendarStamp(start)}`,
-    `DTEND:${calendarStamp(end)}`,
-    "SUMMARY:Call with one of our human team",
-    "DESCRIPTION:A call with one of our human team. They can walk you through the real system and get you set up with a trial.",
-    "END:VEVENT",
-    "END:VCALENDAR",
-  ].join("\r\n");
-  const url = URL.createObjectURL(new Blob([body], { type: "text/calendar" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "human-team-call.ics";
-  link.click();
-  URL.revokeObjectURL(url);
+function BookingHandoff({
+  bookingUrl,
+  booked,
+  when,
+  picture,
+}: {
+  bookingUrl: string;
+  booked: boolean;
+  when: string | null;
+  picture: string;
+}) {
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      window.location.assign(bookingUrl);
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [bookingUrl]);
+  return (
+    <section className={`${styles.lightCard} ${styles.bookingCard} mt-8`}>
+      <p className={styles.label}>The call has ended</p>
+      <h2 className={styles.bookingTitle}>Book your demo</h2>
+      <p className="mt-2 text-sm leading-6">Pick a time that suits you. Your booking calendar opens here, in this same tab.</p>
+      <a className={styles.bookingOpen} href={bookingUrl}>Book your demo</a>
+      {booked ? <p className={`${styles.note} mt-3`}>A time is already held{whenLabel(when) ? `: ${whenLabel(when)}` : ""}.</p> : null}
+      {picture ? <p className={`${styles.note} mt-3`}>{picture}</p> : null}
+    </section>
+  );
 }
 
 function whenLabel(when: string | null): string {
@@ -71,72 +71,26 @@ function whenLabel(when: string | null): string {
 
 function CallSummary({
   recap,
-  slides,
   bookedWhen,
-  slots,
-  note,
-  onBook,
+  bookingUrl,
 }: {
   recap: Recap;
-  slides: Array<{ number: number; title: string; url?: string | null }>;
   bookedWhen: string | null;
-  slots: Slot[];
-  note: string;
-  onBook: (slot: Slot) => void;
+  bookingUrl: string;
 }) {
   const booked = Boolean(recap?.booked || bookedWhen);
   const when = bookedWhen || recap?.when || null;
   const picture = [recap?.businessType, recap?.howTheyServe].filter((item) => item && !/not established/i.test(item)).join(" ");
+  if (bookingUrl) {
+    return (
+      <BookingHandoff bookingUrl={bookingUrl} booked={booked} when={when} picture={picture} />
+    );
+  }
   return (
     <section className={`${styles.lightCard} mt-8`}>
       <h2 className={styles.cardTitle}>Thanks for talking with us</h2>
-      <p className="mt-2 text-sm leading-6">{picture || recap?.summary || "Thanks for the conversation."}</p>
-      {(recap?.fits || []).length ? (
-        <div className="mt-4">
-          <p className={styles.label}>What fits your setup</p>
-          {(recap?.fits || []).map((fit) => {
-            const slide = slides.find((item) => item.number === fit.slideNumber);
-            return (
-              <div key={`${fit.title}-${fit.why}`} className={styles.fitRow}>
-                {slide?.url ? <img src={slide.url} alt="" className={styles.slideThumb} /> : <span className={styles.slideThumb} aria-hidden="true" />}
-                <div>
-                  <p>{fit.slideTitle || fit.title}</p>
-                  <p className={styles.note}>{fit.why}</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-      {(recap?.answers || []).length ? (
-        <div className="mt-4">
-          <p className={styles.label}>Your questions</p>
-          {(recap?.answers || []).map((item) => (
-            <p key={item.question} className="mt-2 text-sm leading-6"><strong>{item.question}</strong> {item.answer}</p>
-          ))}
-        </div>
-      ) : null}
-      {booked ? (
-        <div className={`${styles.ready} mt-4`}>
-          <p className={styles.readyTitle}>You're booked</p>
-          <p className="mt-2">{whenLabel(when) || "The time is on the calendar."}</p>
-          <p className={styles.note}>With one of our human team.</p>
-          {when ? <button type="button" className={`${styles.btn} mt-3`} onClick={() => saveCalendar(when)}>Add to calendar</button> : null}
-        </div>
-      ) : (
-        <div className="mt-4">
-          <p className={styles.label}>Pick a time with one of our human team</p>
-          {slots.length ? (
-            <ul className="mt-2 space-y-2">
-              {slots.map((slot) => (
-                <li key={slot.start}>
-                  <button type="button" className={styles.btnGhost} onClick={() => onBook(slot)}>{slot.label}</button>
-                </li>
-              ))}
-            </ul>
-          ) : <p className={styles.note}>{note || "Checking the calendar for open times."}</p>}
-        </div>
-      )}
+      <p className="mt-2 text-sm leading-6">{picture || recap?.summary || "Thanks for the conversation. We will be in touch."}</p>
+      {booked ? <p className={`${styles.note} mt-3`}>A time is already held{whenLabel(when) ? `: ${whenLabel(when)}` : ""}.</p> : null}
     </section>
   );
 }
@@ -164,10 +118,12 @@ export default function InterviewerRoom({
   token,
   campaignName,
   capMinutes = "",
+  bookingUrl = "",
 }: {
   token: string;
   campaignName: string;
   capMinutes?: string;
+  bookingUrl?: string;
 }) {
   const call = useInterviewerCall(token, capMinutes);
   const [micPlan, setMicPlan] = useState<MicStartPlan | "checking">("checking");
@@ -177,7 +133,6 @@ export default function InterviewerRoom({
   const [slideRatio, setSlideRatio] = useState({ w: 16, h: 9 });
   const [slots, setSlots] = useState<Slot[]>([]);
   const [bookedWhen, setBookedWhen] = useState<string | null>(null);
-  const [bookingNote, setBookingNote] = useState("");
   const [bookingSaved, setBookingSaved] = useState<boolean | null>(null);
   const [slideBroken, setSlideBroken] = useState(false);
   const [talkOpen, setTalkOpen] = useState(false);
@@ -285,20 +240,18 @@ export default function InterviewerRoom({
 
   const suggest = async () => {
     if (!call.sessionId) return;
-    setBookingNote("");
     const data = await postJson<{ slots?: Slot[]; note?: string }>("/api/interviewer/book", {
       token,
       sessionId: call.sessionId,
       action: "suggest",
     });
     setSlots(data.slots || []);
-    setBookingNote(data.note || "");
   };
 
   useEffect(() => {
-    if (call.phase !== "ended" || !call.sessionId || call.recap?.booked || bookedWhen) return;
+    if (call.phase !== "ended" || !call.sessionId || call.recap?.booked || bookedWhen || bookingUrl || call.bookingUrl) return;
     void suggest();
-  }, [bookedWhen, call.phase, call.recap?.booked, call.sessionId]);
+  }, [bookedWhen, bookingUrl, call.bookingUrl, call.phase, call.recap?.booked, call.sessionId]);
 
   const book = async (slot: Slot) => {
     if (!call.sessionId || bookingSaved === false) return;
@@ -309,7 +262,6 @@ export default function InterviewerRoom({
       start: slot.start,
       end: slot.end,
     });
-    setBookingNote(data.note || "");
     setBookingSaved(data.saved !== false && data.booked === true);
     if (data.booked) {
       setBookedWhen(data.scheduledAt || slot.start);
@@ -457,7 +409,7 @@ export default function InterviewerRoom({
   }
 
   return (
-    <main className="relative z-10 mx-auto flex min-h-screen w-full max-w-xl flex-col justify-center px-5 py-10">
+    <main className={`relative z-10 mx-auto flex min-h-screen w-full flex-col justify-center px-5 py-10 ${call.phase === "ended" && (bookingUrl || call.bookingUrl) ? "max-w-4xl" : "max-w-xl"}`}>
       <div className="flex items-start justify-between gap-4">
         <p className="font-mono text-[0.68rem] uppercase tracking-[0.22em] text-amber">{campaignName}</p>
       </div>
@@ -486,11 +438,8 @@ export default function InterviewerRoom({
       {call.phase === "ended" ? (
         <CallSummary
           recap={call.recap}
-          slides={call.slideIndex}
           bookedWhen={bookedWhen}
-          slots={slots}
-          note={bookingNote}
-          onBook={(slot) => void book(slot)}
+          bookingUrl={bookingUrl || call.bookingUrl}
         />
       ) : null}
     </main>

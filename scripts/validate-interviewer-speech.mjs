@@ -69,6 +69,11 @@ if (slideRole("Four setup steps") !== "setup" || slideRole("Live call") !== "fea
 const profile = noteBusiness("We're a dental practice and we sell check-ups.", { businessType: "", sells: "", customers: "", howTheyServe: "", pain: "" });
 if (!profileKnown(profile) || !businessProfileNote(profile).includes("dental practice")) throw new Error("business profile was not captured");
 if (!businessProfileNote(profile).includes("Do not read this note aloud")) throw new Error("profile note could be spoken");
+const jammed = forSpeech("Thatsoundsfantastic!Sustainableproductsarereallygainingtraction,especiallyamongconscientiousconsumers.");
+if (!jammed.includes("That sounds fantastic!") || !jammed.includes("Sustainable products")) throw new Error(`run-together speech was not spaced: ${jammed}`);
+if (forSpeech("SEO and AEO on WhatsApp") !== "S E O and A E O on WhatsApp") throw new Error("letter names were not spaced");
+const spokenTool = takeSpokenSlideCommands('Let me show you how Adam can help with that.showslide{"reason":"Highlighting immediate responses","slidenumber":2}');
+if (spokenTool.slides[0] !== 2 || /showslide|slidenumber|\{/.test(spokenTool.text)) throw new Error(`spoken tool JSON stayed: ${spokenTool.text}`);
 const commanded = takeSpokenSlideCommands("Let me show slide two. Appointments book themselves.");
 if (commanded.slides[0] !== 2 || /slide/i.test(commanded.text)) throw new Error(`spoken slide command stayed: ${commanded.text}`);
 if (takeSpokenSlideCommands("On this slide the bookings are clear.").slides.length) throw new Error("a content sentence was treated as a slide command");
@@ -84,6 +89,11 @@ if (call?.function?.name !== "show_slide" || !String(call.function.arguments).in
 }
 if (/slide/i.test(payload.choices[0].delta.content || "")) throw new Error("the spoken event still contained the command");
 if (!prompt.includes("Never say")) throw new Error("the prompt still allows slide commands to be spoken");
+if (!prompt.includes("20 to 30 seconds") || !prompt.includes("one to three short")) throw new Error("the prompt still lingers on a slide");
+if (!prompt.includes("energetic")) throw new Error("the prompt is not asking for an upbeat delivery");
+const { publicBookingUrl } = loadTs(new URL("../lib/interviewer/booking-link.ts", import.meta.url).pathname);
+if (publicBookingUrl("https://calendar.app.google/example") !== "https://calendar.app.google/example") throw new Error("a booking link was dropped");
+if (publicBookingUrl("http://calendar.app.google/example") || publicBookingUrl("javascript:alert(1)")) throw new Error("an unsafe booking link was kept");
 const roomSource = readFileSync(new URL("../components/interviewer/InterviewerRoom.tsx", import.meta.url), "utf8");
 const callCss = readFileSync(new URL("../components/interviewer/interviewa.module.css", import.meta.url), "utf8");
 if (roomSource.includes("not a spinner") || roomSource.includes("Private conversation")) {

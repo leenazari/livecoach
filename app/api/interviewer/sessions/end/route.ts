@@ -1,7 +1,8 @@
 import { loadOrCreateBrief } from "@/lib/interviewer/brief-store";
 import { PLACEHOLDER_OUTCOME, dispositionFromIntent, leadRecap } from "@/lib/interviewer/call-close";
 import { recordSessionCost } from "@/lib/interviewer/cost-store";
-import { interviewerRpc, isUuid, loadOpenInvite } from "@/lib/interviewer/data";
+import { campaignOf, interviewerRpc, isUuid, loadOpenInvite } from "@/lib/interviewer/data";
+import { loadOwnerBookingUrl } from "@/lib/interviewer/owner-booking";
 import { interviewerJson, interviewerPublicError, readJson } from "@/lib/interviewer/http";
 import { supabaseService } from "@/lib/supabase";
 
@@ -34,11 +35,16 @@ export async function POST(req: Request) {
         .update({ disposition: outcome.disposition, reason_code: outcome.reason })
         .eq("id", sessionId);
     }
+    const campaign = campaignOf(invite);
+    const bookingUrl = campaign?.owner_id && campaign.workspace_id
+      ? await loadOwnerBookingUrl(campaign.owner_id, campaign.workspace_id)
+      : "";
     return interviewerJson({
       state: "ended",
       billableSeconds: Number(result?.billableSeconds || 0),
       billedAmount: result?.billedAmount ?? null,
       currency: null,
+      bookingUrl: bookingUrl || null,
       recap: brief ? leadRecap(brief) : null,
     });
   } catch (error) {

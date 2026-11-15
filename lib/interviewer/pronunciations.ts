@@ -1,6 +1,9 @@
+import { SPEECH_WORDS } from "./speech-words";
+
 const ACRONYMS = new Set([
   "POS", "EPOS", "KDS", "AI", "SMS", "QR", "UK", "US", "EU", "TV", "ID", "OK",
   "FAQ", "API", "URL", "PDF", "CRM", "VAT", "GBP", "USD", "EUR", "CEO", "ROI", "CTA",
+  "SEO", "AEO",
 ]);
 
 const LIVE_PHRASES: Array<[RegExp, string]> = [
@@ -58,9 +61,66 @@ export function forPrompt(text: string): string {
 }
 
 // Spoken text only. The screen and the transcript keep Interviewa.
+function segmentToken(token: string): string | null {
+  const lower = token.toLowerCase();
+  if (token.length < 4 || SPEECH_WORDS.has(lower)) return null;
+  const cost = new Array<number>(lower.length + 1).fill(Number.POSITIVE_INFINITY);
+  const prev = new Array<number>(lower.length + 1).fill(-1);
+  cost[0] = 0;
+  for (let start = 0; start < lower.length; start += 1) {
+    if (!Number.isFinite(cost[start])) continue;
+    const max = Math.min(22, lower.length - start);
+    for (let length = max; length >= 1; length -= 1) {
+      if (length === 1 && lower[start] !== "a" && lower[start] !== "i") continue;
+      const slice = lower.slice(start, start + length);
+      if (!SPEECH_WORDS.has(slice)) continue;
+      const next = start + length;
+      const nextCost = cost[start] + 1;
+      if (nextCost < cost[next]) {
+        cost[next] = nextCost;
+        prev[next] = start;
+      }
+    }
+  }
+  if (!Number.isFinite(cost[lower.length]) || cost[lower.length] < 2) return null;
+  const parts: string[] = [];
+  for (let cursor = lower.length; cursor > 0; cursor = prev[cursor]) {
+    const start = prev[cursor];
+    if (start < 0) return null;
+    parts.push(lower.slice(start, cursor));
+  }
+  parts.reverse();
+  const phrase = parts.join(" ");
+  return token[0] === token[0].toUpperCase() ? phrase.charAt(0).toUpperCase() + phrase.slice(1) : phrase;
+}
+
+function openToken(token: string): string {
+  if (SPEECH_WORDS.has(token.toLowerCase())) return token;
+  if (/[a-z][A-Z]/.test(token)) {
+    return token.replace(/([a-z])([A-Z])/g, "$1 $2").split(" ").map((part) => segmentToken(part) || part).join(" ");
+  }
+  return segmentToken(token) || token;
+}
+
+export function restoreSpokenGaps(text: string): string {
+  const original = String(text || "");
+  let next = original;
+  next = next.replace(/([.!?])([A-Za-z])/g, "$1 $2");
+  next = next.replace(/([,;:])([A-Za-z])/g, "$1 $2");
+  next = next.replace(/([A-Za-z]+'(?:ll|re|ve|d|m|s|t))([A-Za-z])/gi, "$1 $2");
+  next = next.replace(/[A-Za-z][A-Za-z']*/g, (token) => openToken(token));
+  if (/teamoften/i.test(original)) next = next.replace(/\bteam often\b/gi, "team of ten");
+  return next;
+}
+
 export function forSpeech(text: string): string {
-  let next = normaliseBrandCaps(String(text || ""));
+  let next = restoreSpokenGaps(String(text || ""));
+  next = normaliseBrandCaps(next);
   next = next.replace(/\binterviewa\b/gi, "Interviewer");
+  next = next.replace(/\bwhatsapp\b/gi, "WhatsApp");
+  next = next.replace(/\btwenty-?four\s*seven\b/gi, "twenty four seven");
+  next = next.replace(/\baeo\b/gi, "A E O");
+  next = next.replace(/\bseo\b/gi, "S E O");
   next = rewriteLive(next);
   return rewriteSalesLead(next);
 }
@@ -70,5 +130,5 @@ export function forTranscript(text: string): string {
 }
 
 export function pronunciationRules(): string {
-  return `Speech wording. Always write the product name Adam, never ADAM. The brand is written Interviewa and pronounced interviewer. Always write Interviewa, never Interviewer, when you mean the product. Do not use the adjective live for a demo, a call, a chat, or going live. Say in real time, real, working, or up and running. Where do you live stays as it is. Do not say lead or leads for a sales enquiry. Say enquiry, potential customer, or new customer. Leave lead the way and lead to unchanged.`;
+  return `Speech wording. Always write the product name Adam, never ADAM. The brand is written Interviewa and pronounced interviewer. Always write Interviewa, never Interviewer, when you mean the product. Always leave a normal space between words. Do not use the adjective live for a demo, a call, a chat, or going live. Say in real time, real, working, or up and running. Where do you live stays as it is. Do not say lead or leads for a sales enquiry. Say enquiry, potential customer, or new customer. Leave lead the way and lead to unchanged. Say S E O and A E O as separate letters. Say WhatsApp as WhatsApp.`;
 }

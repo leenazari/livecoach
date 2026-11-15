@@ -16,7 +16,7 @@ import {
   type LockedUtterance,
 } from "@/lib/interviewer/listen-transcript";
 import { stripAgentContext, toSpokenPlain, toolReplyForAgent } from "@/lib/interviewer/spoken-text";
-import { forSpeech, forTranscript } from "@/lib/interviewer/pronunciations";
+import { forSpeech, forTranscript, restoreSpokenGaps } from "@/lib/interviewer/pronunciations";
 import { takeSpokenSlideCommands } from "@/lib/interviewer/slide-command";
 import { businessProfileNote, emptyBusinessProfile, noteBusiness, type BusinessProfile } from "@/lib/interviewer/business-profile";
 import { catalogFromSlides, coverInterests, noteInterests, privateCoverNote, spokenReminder, type AgendaItem } from "@/lib/interviewer/interest-agenda";
@@ -98,6 +98,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
   const [endAsk, setEndAsk] = useState(false);
   const [ending, setEnding] = useState(false);
   const [recap, setRecap] = useState<LeadRecap | null>(null);
+  const [bookingUrl, setBookingUrl] = useState("");
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<string | null>(null);
   const phaseRef = useRef(phase);
@@ -215,7 +216,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
   }, [saveCaption]);
 
   const acceptAgent = useCallback((text: string) => {
-    const directed = takeSpokenSlideCommands(forTranscript(toSpokenPlain(text)));
+    const directed = takeSpokenSlideCommands(forTranscript(restoreSpokenGaps(toSpokenPlain(text))));
     const clean = directed.text;
     if (directed.slides.length) {
       const number = directed.slides[directed.slides.length - 1];
@@ -586,7 +587,8 @@ export function useInterviewerCall(token: string, capMinutes = "") {
           }
         });
         await context.close().catch(() => undefined);
-        const ended = await boundedPost<{ billableSeconds?: number; recap?: LeadRecap }>("/api/interviewer/sessions/end", { token, sessionId: session }, 8000);
+        const ended = await boundedPost<{ billableSeconds?: number; recap?: LeadRecap; bookingUrl?: string | null }>("/api/interviewer/sessions/end", { token, sessionId: session }, 8000);
+        if (ended.data.bookingUrl) setBookingUrl(String(ended.data.bookingUrl));
         if (ended.data.recap) setRecap(ended.data.recap);
         if (Number.isFinite(Number(ended.data.billableSeconds))) setBillableSeconds(Number(ended.data.billableSeconds || 0));
         if (blob.size > 0) {
@@ -872,9 +874,9 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         }
         const agentTalking = nextAt > context.currentTime + 0.05;
         const slideQuiet = Date.now() - Math.max(lastSlideAt.current, callStartedAt);
-        if (greetingDoneRef.current && agentTalking && !silence.speaking && slideQuiet > 40000 && Date.now() - lastPaceAt > 40000 && Date.now() - leadQuestionAt.current > 12000) {
+        if (greetingDoneRef.current && agentTalking && !silence.speaking && slideQuiet > 22000 && Date.now() - lastPaceAt > 22000 && Date.now() - leadQuestionAt.current > 8000) {
           lastPaceAt = Date.now();
-          note("Note for you only. Do not read this aloud. About 40 seconds have passed on this slide. Acknowledge what they just said in one line, then call show_slide for the next relevant feature. One or two punchy sentences. Do not go back to a long intro. Skip setup slides unless they asked.");
+          note("Note for you only. Do not read this aloud. About 20 seconds have passed on this slide. Call show_slide now for the next feature, before you explain it. Then one to three short upbeat sentences. Do not linger. Skip setup slides unless they asked.");
         }
       }, 1000);
       heartbeat = window.setInterval(() => {
@@ -1089,6 +1091,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
     endAsk,
     ending,
     recap,
+    bookingUrl,
     hangUp,
     confirmHangUp,
     cancelHangUp,

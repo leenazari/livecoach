@@ -4,6 +4,7 @@ const WORD_NUMBERS: Record<string, number> = {
 };
 
 const NUMBER = "\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty";
+const TOOL_DUMP = /show\s*slide\s*\{[^}]*\}/gi;
 const COMMAND = new RegExp(`\\b(?:(?:please\\s+)?(?:show|go\\s+to|switch\\s+to|move\\s+to|open|display)\\s+)?slide\\s+(?:number\\s+)?(${NUMBER})\\b`, "gi");
 const INCOMPLETE = new RegExp(`(?:\\b(?:please\\s+)?(?:show|go\\s+to|switch\\s+to|move\\s+to|open|display)\\s+)?\\bslide(?:\\s+(?:number\\s+)?)?(?:\\d{0,2}|[a-z]{0,9})?$`, "i");
 
@@ -18,7 +19,13 @@ export function spokenSlideNumber(token: string): number | null {
 
 export function takeSpokenSlideCommands(value: string): { text: string; slides: number[] } {
   const slides: number[] = [];
-  const text = String(value || "").replace(COMMAND, (phrase, token: string) => {
+  const withoutTools = String(value || "").replace(TOOL_DUMP, (block) => {
+    const number = block.match(/slide_?number["']?\s*[:=]\s*"?(\d{1,2})/i);
+    const parsed = number ? spokenSlideNumber(number[1]) : null;
+    if (parsed) slides.push(parsed);
+    return " ";
+  });
+  const text = withoutTools.replace(COMMAND, (phrase, token: string) => {
     const number = spokenSlideNumber(token);
     if (!number) return phrase;
     slides.push(number);

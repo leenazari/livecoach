@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import InterviewerRoom from "@/components/interviewer/InterviewerRoom";
 import { campaignOf, loadOpenInvite } from "@/lib/interviewer/data";
+import { loadOwnerBookingUrl } from "@/lib/interviewer/owner-booking";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -33,7 +34,8 @@ export default async function InterviewerInvitePage({
         </main>
       );
     }
-    return <InterviewerRoom token={params.token} campaignName={campaign.name} capMinutes={searchParams?.capMinutes || ""} />;
+    const bookingUrl = await loadOwnerBookingUrl(campaign.owner_id, campaign.workspace_id);
+    return <InterviewerRoom token={params.token} campaignName={campaign.name} capMinutes={searchParams?.capMinutes || ""} bookingUrl={bookingUrl} />;
   } catch {
     return (
       <main className="relative z-10 mx-auto flex min-h-screen max-w-xl items-center px-5">
