@@ -657,28 +657,28 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
         </div>
         <p className={styles.lede}>{voiceId ? voiceLabel(voiceId) : "Choose a voice after you have heard it."}</p>
       </section>
-      <section className={styles.card}>
+      <section className={`${styles.card} ${styles.studioBar}`}>
         <div className={styles.studioName}>
           <label className={styles.label}>Campaign name<input className={styles.field} value={name} onChange={(event) => setName(event.target.value)} /></label>
           <label className={styles.label}>Call limit, minutes<input className={styles.field} value={maxMinutes} placeholder="30" onChange={(event) => setMaxMinutes(event.target.value)} /></label>
           <button type="button" className={styles.btn} onClick={() => void saveBasics()}>Save name</button>
         </div>
+        <ol className={styles.stepRail}>
+          {steps.map((step) => (
+            <li key={step.n}>
+              <a href={`#setup-step-${step.n}`} className={step.done ? styles.ok : styles.warn}>
+                {step.n} {step.title}
+              </a>
+            </li>
+          ))}
+        </ol>
       </section>
       {notice ? <p className={styles.note}>{notice}</p> : null}
       {error ? <p className={styles.err}>{error}</p> : null}
 
-      <ol className={styles.stepRail}>
-        {steps.map((step) => (
-          <li key={step.n}>
-            <a href={`#setup-step-${step.n}`} className={step.done ? styles.ok : styles.warn}>
-              {step.n} {step.title}
-            </a>
-          </li>
-        ))}
-      </ol>
-
       <div className={styles.studioTop}>
-        <section className={styles.card}>
+        <section className={`${styles.card} ${styles.shareCard}`}>
+          <div>
           <h2 className={styles.cardTitle}>Share link</h2>
           <p className={styles.note}>Name and email, then the call starts. No login.</p>
           {publicUrl ? (
@@ -718,12 +718,15 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
               </label>
             </>
           ) : <p className={styles.note}>Save the campaign name first. Then the share link appears here.</p>}
+          </div>
         </section>
-        <section className={styles.card}>
+        <section className={`${styles.card} ${styles.previewCard}`}>
           <h2 className={styles.cardTitle}>First slide</h2>
-          {firstSlide?.url && !firstSlide.missing ? (
-            <img className={styles.previewFrame} src={firstSlide.url} alt={firstHeadline || "First slide"} />
-          ) : <div className={styles.previewFrame} />}
+          <div className={styles.previewFit}>
+            {firstSlide?.url && !firstSlide.missing ? (
+              <img className={styles.previewFrame} src={firstSlide.url} alt={firstHeadline || "First slide"} />
+            ) : <div className={styles.previewFrame} role="img" aria-label={firstHeadline || "First slide"} />}
+          </div>
           <p className={styles.thumbTitle}>{firstHeadline || "Needs a headline"}</p>
         </section>
       </div>
@@ -756,7 +759,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
           <p className={styles.label}>Brochure</p>
           <input className={styles.filePick} type="file" accept="application/pdf,.pdf" aria-label="Brochure PDF" disabled={deckBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadDeck(file); }} />
           {activeDeck ? (
-            <div className={styles.headRow}>
+            <div className={styles.actions}>
               <strong>{activeDeck.title}</strong>
               <button type="button" className={styles.btn} disabled={deckBusy} onClick={() => void rebuildDeck(activeDeck.id)}>
                 {deckJob?.phase === "notes" ? "Updating knowledge notes…" : "Rebuild knowledge from deck"}
@@ -766,13 +769,15 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
           ) : <p className={styles.note}>No brochure yet.</p>}
           {deckNote ? <p className={deckNote.startsWith("No deck") ? styles.note : styles.err}>{deckNote}</p> : null}
           {deckJob ? <p className={deckJob.phase === "error" ? styles.err : styles.note}>{deckJob.message}</p> : null}
-          <label className={styles.label}>Website
-            <input className={styles.field} value={websiteUrl} placeholder="https://" onChange={(event) => setWebsiteUrl(event.target.value)} />
-          </label>
+          <div className={styles.inlineField}>
+            <label className={styles.label}>Website
+              <input className={styles.field} value={websiteUrl} placeholder="https://" onChange={(event) => setWebsiteUrl(event.target.value)} />
+            </label>
+            <button type="button" className={styles.btnGhost} disabled={importing} onClick={() => void importSite()}>
+              {importing ? `Scanning ${importHost}…` : "Scan website"}
+            </button>
+          </div>
           <p className={styles.note}>{websiteUrl ? "Nothing is scanned until you choose Scan website." : "No website yet. A brochure can fill this in."} {scrapedAt ? `Last scanned ${new Date(scrapedAt).toLocaleString("en-GB")}.` : ""}</p>
-          <button type="button" className={styles.btnGhost} disabled={importing} onClick={() => void importSite()}>
-            {importing ? `Scanning ${importHost}…` : "Scan website"}
-          </button>
           {fetchedPages.length ? (
             <ul className={styles.stack}>
               {fetchedPages.map((page) => (
@@ -780,13 +785,15 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
               ))}
             </ul>
           ) : null}
-          <label className={styles.label}>Business summary
-            <textarea className={styles.area} value={sections.summary} onChange={(event) => setSections({ ...sections, summary: event.target.value })} />
-          </label>
-          <label className={styles.label}>Opener
-            <span className={styles.note}>The first thing the agent says when the call connects.</span>
-            <input className={styles.field} value={opener || defaultOpener(name)} onChange={(event) => setOpener(event.target.value)} />
-          </label>
+          <div className={styles.pair}>
+            <label className={styles.label}>Business summary
+              <textarea className={styles.area} value={sections.summary} onChange={(event) => setSections({ ...sections, summary: event.target.value })} />
+            </label>
+            <label className={styles.label}>Opener
+              <span className={styles.note}>The first thing the agent says when the call connects.</span>
+              <input className={styles.field} value={opener || defaultOpener(name)} onChange={(event) => setOpener(event.target.value)} />
+            </label>
+          </div>
           {activeDeck?.slides.length ? (
             <div className={styles.thumbs}>
               {activeDeck.slides.map((slide) => {
@@ -806,37 +813,43 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
         </Step>
 
         <Step n={2} title="Product and qualifying questions" hint="What you sell, and the questions asked one at a time." done={productDone}>
-          <label className={styles.label}>Products and services
-            <textarea className={styles.area} value={sections.products} onChange={(event) => setSections({ ...sections, products: event.target.value })} />
-          </label>
-          <label className={styles.label}>Qualifying questions
-            <span className={styles.note}>Asked one at a time, after the lead has answered.</span>
-            <textarea className={styles.area} value={qualifying} onChange={(event) => setQualifying(event.target.value)} />
-          </label>
+          <div className={styles.pair}>
+            <label className={styles.label}>Products and services
+              <textarea className={styles.area} value={sections.products} onChange={(event) => setSections({ ...sections, products: event.target.value })} />
+            </label>
+            <label className={styles.label}>Qualifying questions
+              <span className={styles.note}>Asked one at a time, after the lead has answered.</span>
+              <textarea className={styles.area} value={qualifying} onChange={(event) => setQualifying(event.target.value)} />
+            </label>
+          </div>
         </Step>
 
         <Step n={3} title="Pricing and quotes" hint="A price is spoken only when it is written here and quotes are on." done={pricingDone}>
           <label className={styles.label}>Pricing
             <textarea className={styles.area} value={sections.pricing} onChange={(event) => setSections({ ...sections, pricing: event.target.value })} />
           </label>
-          <label className={styles.switch}>
-            <input type="checkbox" checked={quotes} onChange={(event) => setQuotes(event.target.checked)} />
-            <span>Quotes allowed<span className={styles.note}>The agent may say a price that is written in the notes.</span></span>
-          </label>
-          <label className={styles.switch}>
-            <input type="checkbox" checked={brochure} onChange={(event) => setBrochure(event.target.checked)} />
-            <span>Brochure send allowed<span className={styles.note}>The agent may offer to send the brochure. It will not say it has already been sent.</span></span>
-          </label>
+          <div className={styles.switchRow}>
+            <label className={styles.switch}>
+              <input type="checkbox" checked={quotes} onChange={(event) => setQuotes(event.target.checked)} />
+              <span>Quotes allowed<span className={styles.note}>The agent may say a price that is written in the notes.</span></span>
+            </label>
+            <label className={styles.switch}>
+              <input type="checkbox" checked={brochure} onChange={(event) => setBrochure(event.target.checked)} />
+              <span>Brochure send allowed<span className={styles.note}>The agent may offer to send the brochure. It will not say it has already been sent.</span></span>
+            </label>
+          </div>
           <button type="button" className={styles.btn} disabled={creating} onClick={() => void saveBehaviour()}>{sellSaved ? "Saved" : "Save"}</button>
         </Step>
 
         <Step n={4} title="Objections" hint="The reply the agent uses when someone pushes back." done={objectionsDone}>
-          <label className={styles.label}>FAQs and objections
-            <textarea className={styles.area} value={sections.faqs} onChange={(event) => setSections({ ...sections, faqs: event.target.value })} />
-          </label>
-          <label className={styles.label}>Objection handling
-            <textarea className={styles.area} value={sections.objections} onChange={(event) => setSections({ ...sections, objections: event.target.value })} />
-          </label>
+          <div className={styles.pair}>
+            <label className={styles.label}>FAQs and objections
+              <textarea className={styles.area} value={sections.faqs} onChange={(event) => setSections({ ...sections, faqs: event.target.value })} />
+            </label>
+            <label className={styles.label}>Objection handling
+              <textarea className={styles.area} value={sections.objections} onChange={(event) => setSections({ ...sections, objections: event.target.value })} />
+            </label>
+          </div>
           {knowledgeCount >= KNOWLEDGE_CHAR_CAP * 0.8 ? (
             <p className={knowledgeCount >= KNOWLEDGE_CHAR_CAP ? styles.err : styles.note}>
               Knowledge is {knowledgeCount.toLocaleString("en-GB")} characters. The call uses the first {KNOWLEDGE_CHAR_CAP.toLocaleString("en-GB")}.
@@ -849,9 +862,11 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
           <label className={styles.label}>Next step and booking
             <textarea className={styles.area} value={sections.next} onChange={(event) => setSections({ ...sections, next: event.target.value })} />
           </label>
-          <label className={styles.label}>Lead name<input className={styles.field} value={prospectName} onChange={(event) => setProspectName(event.target.value)} /></label>
-          <label className={styles.label}>Email, optional<input className={styles.field} value={prospectEmail} onChange={(event) => setProspectEmail(event.target.value)} /></label>
-          <button type="button" className={styles.btn} disabled={creating} onClick={() => void createInvite()}>Create test link</button>
+          <div className={`${styles.inlineField} ${styles.inlineWide}`}>
+            <label className={styles.label}>Lead name<input className={styles.field} value={prospectName} onChange={(event) => setProspectName(event.target.value)} /></label>
+            <label className={styles.label}>Email, optional<input className={styles.field} value={prospectEmail} onChange={(event) => setProspectEmail(event.target.value)} /></label>
+            <button type="button" className={styles.btn} disabled={creating} onClick={() => void createInvite()}>Create test link</button>
+          </div>
           {featured ? <TestLinkBlock link={featured} featured shareQuery={shareQuery} copied={copiedPath === featured.path} onCopy={() => copyLink(featured)} onOpen={openLink} /> : null}
           {older.length ? (
             <div className={styles.linkList}>
