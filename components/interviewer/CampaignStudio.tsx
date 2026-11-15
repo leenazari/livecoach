@@ -145,6 +145,34 @@ function TestLinkBlock({
   );
 }
 
+function Step({
+  n,
+  title,
+  hint,
+  done,
+  children,
+}: {
+  n: number;
+  title: string;
+  hint: string;
+  done: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <section className={styles.step} id={`setup-step-${n}`}>
+      <header className={styles.stepHead}>
+        <span className={styles.stepNum}>{n}</span>
+        <div>
+          <h2>{title}</h2>
+          <p>{hint}</p>
+        </div>
+        <span className={done ? styles.ok : styles.warn}>{done ? "Done" : "Needs attention"}</span>
+      </header>
+      <div className={styles.stepBody}>{children}</div>
+    </section>
+  );
+}
+
 function Fold({
   title,
   open,
@@ -204,6 +232,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ sources: true });
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [sellSaved, setSellSaved] = useState(false);
   const [acceptingCalls, setAcceptingCalls] = useState(true);
   const [shareCopied, setShareCopied] = useState(false);
@@ -336,9 +365,10 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
       voiceId,
       maxMinutes: maxMinutes.trim() === "" ? null : Number(maxMinutes),
     });
-    if (!result.ok) { setError(result.data.fields?.voiceId || result.data.fields?.name || result.data.error || "The campaign was not saved."); return; }
+    if (!result.ok) { setError(result.data.fields?.voiceId || result.data.fields?.name || result.data.error || "The campaign was not saved."); return false; }
     setNotice("Campaign saved.");
     if (creating && result.data.campaign?.id) window.location.href = `/crm/interviewer/campaigns/${result.data.campaign.id}`;
+    return true;
   };
 
   const saveKnowledge = async (scraped = false, next = sections) => {
@@ -503,6 +533,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
     setSellSaved(true);
     setNotice(result.ok ? "Saved" : "The selling settings were not saved.");
     window.setTimeout(() => setSellSaved(false), 2000);
+    return result.ok;
   };
 
   const createInvite = async () => {
@@ -538,6 +569,21 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
       billingOnly: true, id: campaignId, ratePerMinute: rate, currency, marginPercent: margin, billingGranularity: granularity,
     });
     setNotice(result.ok ? "Internal billing saved." : "Billing was not saved.");
+    return result.ok;
+  };
+
+  const saveAll = async () => {
+    if (clashes.length) {
+      setError("Resolve the differences first. Nothing else was saved.");
+      return;
+    }
+    setError("");
+    const basicsOk = await saveBasics();
+    if (!basicsOk || !campaignId) return;
+    const notesSaved = await saveKnowledge(false);
+    const sellingSaved = await saveBehaviour();
+    const billingSaved = await saveBilling();
+    if (notesSaved && sellingSaved && billingSaved) setNotice("Campaign saved.");
   };
 
   const regenerateHeadlines = async (deckId: string) => {
@@ -585,9 +631,25 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
   const deckBusy = Boolean(deckJob && deckJob.phase !== "saved" && deckJob.phase !== "error");
   let importHost = "the website";
   try { importHost = new URL(websiteUrl).host || importHost; } catch { /* keep the fallback */ }
+  const firstSlide = activeDeck?.slides[0] || null;
+  const firstHeadline = firstSlide ? customerHeadline(firstSlide.title) : "";
+  const publicUrl = campaignId ? absoluteLink(publicCampaignPath(campaignId), shareQuery) : "";
+  const contentDone = Boolean(activeDeck?.slides.length) && Boolean(sections.summary.trim()) && Boolean((opener || name).trim());
+  const productDone = Boolean(sections.products.trim()) && Boolean(qualifying.trim());
+  const pricingDone = Boolean(sections.pricing.trim());
+  const objectionsDone = Boolean(sections.objections.trim());
+  const shareDone = Boolean(campaignId) && Boolean(sections.next.trim());
+  const steps = [
+    { n: 1, title: "Content", done: contentDone },
+    { n: 2, title: "Product", done: productDone },
+    { n: 3, title: "Pricing", done: pricingDone },
+    { n: 4, title: "Objections", done: objectionsDone },
+    { n: 5, title: "Share", done: shareDone },
+  ];
 
   return (
-    <main className={styles.page}>
+    <main className={`${styles.page} ${styles.studioPage}`}>
+      <p className={styles.studioBack}><a className={styles.link} href="/crm/interviewer">All campaigns</a></p>
       <section className={styles.hero}>
         <div className={styles.headRow}>
           <h1 className={styles.h1}>{name || "New campaign"}</h1>
@@ -595,65 +657,106 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
         </div>
         <p className={styles.lede}>{voiceId ? voiceLabel(voiceId) : "Choose a voice after you have heard it."}</p>
       </section>
-      <p style={{ margin: "12px 0" }}><a className={styles.link} href="/crm/interviewer">All campaigns</a></p>
+      <section className={styles.card}>
+        <div className={styles.studioName}>
+          <label className={styles.label}>Campaign name<input className={styles.field} value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label className={styles.label}>Call limit, minutes<input className={styles.field} value={maxMinutes} placeholder="30" onChange={(event) => setMaxMinutes(event.target.value)} /></label>
+          <button type="button" className={styles.btn} onClick={() => void saveBasics()}>Save name</button>
+        </div>
+      </section>
       {notice ? <p className={styles.note}>{notice}</p> : null}
       {error ? <p className={styles.err}>{error}</p> : null}
 
-      {campaignId ? (
-        <section className={styles.ready}>
-          <h2 className={styles.readyTitle}>Shareable campaign link</h2>
-          <p className={styles.note}>Anyone with this link can enter their name and email and start a call. No login. Personal test links below still work.</p>
-          <button type="button" className={styles.linkField} onClick={() => openLink(absoluteLink(publicCampaignPath(campaignId), shareQuery))}>
-            {absoluteLink(publicCampaignPath(campaignId), shareQuery)}
-          </button>
-          <div className={styles.linkActions}>
-            <button
-              type="button"
-              className={styles.btn}
-              onClick={() => {
-                void copyText(absoluteLink(publicCampaignPath(campaignId), shareQuery)).then(() => {
-                  setShareCopied(true);
-                  window.setTimeout(() => setShareCopied(false), 1500);
-                });
-              }}
-            >
-              {shareCopied ? "Copied" : "Copy link"}
-            </button>
-          </div>
-          {shareQuery ? <p className={styles.note}>This preview link includes Vercel’s access pass, so someone outside the team can open it.</p> : null}
-          <label className={styles.switch}>
-            <input
-              type="checkbox"
-              checked={acceptingCalls}
-              onChange={(event) => {
-                const next = event.target.checked;
-                setAcceptingCalls(next);
-                void postJson("/api/crm/interviewer/campaigns", { id: campaignId, publicCallsOnly: true, acceptingCalls: next }).then((result) => {
-                  if (!result.ok) {
-                    setAcceptingCalls(!next);
-                    setError(result.data.reason || "Public calls were not changed. The previous setting is still in place.");
-                  }
-                });
-              }}
-            />
-            <span>Public calls on<span className={styles.note}>Turn this off to keep the page up and stop new calls. Calls already started are not ended.</span></span>
-          </label>
+      <ol className={styles.stepRail}>
+        {steps.map((step) => (
+          <li key={step.n}>
+            <a href={`#setup-step-${step.n}`} className={step.done ? styles.ok : styles.warn}>
+              {step.n} {step.title}
+            </a>
+          </li>
+        ))}
+      </ol>
+
+      <div className={styles.studioTop}>
+        <section className={styles.card}>
+          <h2 className={styles.cardTitle}>Share link</h2>
+          <p className={styles.note}>Name and email, then the call starts. No login.</p>
+          {publicUrl ? (
+            <>
+              <button type="button" className={styles.linkField} onClick={() => openLink(publicUrl)}>{publicUrl}</button>
+              <div className={styles.linkActions}>
+                <button
+                  type="button"
+                  className={styles.btn}
+                  onClick={() => {
+                    void copyText(publicUrl).then(() => {
+                      setShareCopied(true);
+                      window.setTimeout(() => setShareCopied(false), 1500);
+                    });
+                  }}
+                >
+                  {shareCopied ? "Copied" : "Copy link"}
+                </button>
+              </div>
+              {shareQuery ? <p className={styles.note}>This preview link includes Vercel’s access pass, so someone outside the team can open it.</p> : null}
+              <label className={styles.switch}>
+                <input
+                  type="checkbox"
+                  checked={acceptingCalls}
+                  onChange={(event) => {
+                    const next = event.target.checked;
+                    setAcceptingCalls(next);
+                    void postJson("/api/crm/interviewer/campaigns", { id: campaignId, publicCallsOnly: true, acceptingCalls: next }).then((result) => {
+                      if (!result.ok) {
+                        setAcceptingCalls(!next);
+                        setError(result.data.reason || "Public calls were not changed. The previous setting is still in place.");
+                      }
+                    });
+                  }}
+                />
+                <span>Public calls on<span className={styles.note}>Off keeps the page up. Calls already started stay open.</span></span>
+              </label>
+            </>
+          ) : <p className={styles.note}>Save the campaign name first. Then the share link appears here.</p>}
+        </section>
+        <section className={styles.card}>
+          <h2 className={styles.cardTitle}>First slide</h2>
+          {firstSlide?.url && !firstSlide.missing ? (
+            <img className={styles.previewFrame} src={firstSlide.url} alt={firstHeadline || "First slide"} />
+          ) : <div className={styles.previewFrame} />}
+          <p className={styles.thumbTitle}>{firstHeadline || "Needs a headline"}</p>
+        </section>
+      </div>
+
+      {clashes.length ? (
+        <section className={styles.card}>
+          <p className={styles.label}>These facts disagree</p>
+          <p className={styles.note}>Pick brochure, website, your own line, or keep both. Unconfirmed lines are not quoted.</p>
+          <ol className={styles.stack}>
+            {clashes.map((clash, index) => (
+              <li key={`${clash.section}-${clash.brochure}`}>
+                <strong>{index + 1}. {clash.kind}</strong>
+                <p className={styles.note}>Brochure says {clash.brochure}</p>
+                <p className={styles.note}>Website says {clash.website}</p>
+                <div className={styles.headRow}>
+                  <button type="button" className={clash.choice === "brochure" ? styles.btn : styles.btnGhost} onClick={() => chooseClash(clash.id, "brochure")}>Use brochure</button>
+                  <button type="button" className={clash.choice === "website" ? styles.btn : styles.btnGhost} onClick={() => chooseClash(clash.id, "website")}>Use website</button>
+                  <button type="button" className={clash.choice === "unconfirmed" ? styles.btn : styles.btnGhost} onClick={() => chooseClash(clash.id, "unconfirmed")}>Keep both unconfirmed</button>
+                </div>
+                <input className={styles.field} value={clash.custom} placeholder="Or type the line to keep" onChange={(event) => chooseClash(clash.id, "custom", event.target.value)} />
+              </li>
+            ))}
+          </ol>
+          <button type="button" className={styles.btn} disabled={clashes.some((clash) => !clash.choice)} onClick={() => void saveResolved()}>Save resolved notes</button>
         </section>
       ) : null}
 
       <div className={styles.stack}>
-        <section className={styles.card}>
-          <label className={styles.label}>Campaign name<input className={styles.field} value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <label className={styles.label}>Call limit, minutes<input className={styles.field} value={maxMinutes} placeholder="30" onChange={(event) => setMaxMinutes(event.target.value)} /></label>
-          <button type="button" className={styles.btn} style={{ marginTop: 12 }} onClick={() => void saveBasics()}>Save name</button>
-        </section>
-
-        <Fold title="Knowledge sources" open={openSections.sources !== false} onToggle={() => toggleSection("sources")}>
-          <p className={styles.note}>Upload a brochure, scan a website, or use both. Facts that disagree are reviewed before they are saved.</p>
+        <Step n={1} title="Content" hint="Brochure, website, and the first thing the agent says." done={contentDone}>
           <p className={styles.label}>Brochure</p>
-          <input type="file" accept="application/pdf,.pdf" disabled={deckBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadDeck(file); }} />
+          <input className={styles.filePick} type="file" accept="application/pdf,.pdf" aria-label="Brochure PDF" disabled={deckBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadDeck(file); }} />
           {activeDeck ? (
-            <div className={styles.headRow} style={{ marginTop: 12 }}>
+            <div className={styles.headRow}>
               <strong>{activeDeck.title}</strong>
               <button type="button" className={styles.btn} disabled={deckBusy} onClick={() => void rebuildDeck(activeDeck.id)}>
                 {deckJob?.phase === "notes" ? "Updating knowledge notes…" : "Rebuild knowledge from deck"}
@@ -666,7 +769,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
           <label className={styles.label}>Website
             <input className={styles.field} value={websiteUrl} placeholder="https://" onChange={(event) => setWebsiteUrl(event.target.value)} />
           </label>
-          <p className={styles.note}>{websiteUrl ? `Filled from the brochure or typed here. Nothing is scanned until you choose Scan website.` : "No website yet. If the brochure names one, it is filled in here. Nothing is scanned until you choose Scan website."} {scrapedAt ? `Last scanned ${new Date(scrapedAt).toLocaleString("en-GB")}.` : ""}</p>
+          <p className={styles.note}>{websiteUrl ? "Nothing is scanned until you choose Scan website." : "No website yet. A brochure can fill this in."} {scrapedAt ? `Last scanned ${new Date(scrapedAt).toLocaleString("en-GB")}.` : ""}</p>
           <button type="button" className={styles.btnGhost} disabled={importing} onClick={() => void importSite()}>
             {importing ? `Scanning ${importHost}…` : "Scan website"}
           </button>
@@ -677,43 +780,15 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
               ))}
             </ul>
           ) : null}
-        </Fold>
-        <Fold title="Knowledge notes" open={Boolean(openSections.notes)} onToggle={() => toggleSection("notes")}>
-          {clashes.length ? (
-            <div className={styles.card} style={{ marginBottom: 12 }}>
-              <p className={styles.label}>These facts disagree</p>
-              <p className={styles.note}>Choose one side, type your own line, or keep both as unconfirmed. The agent will not quote an unconfirmed line. Nothing is saved until every item is resolved.</p>
-              <ol className={styles.stack}>
-                {clashes.map((clash, index) => (
-                  <li key={`${clash.section}-${clash.brochure}`}>
-                    <strong>{index + 1}. {clash.kind}</strong>
-                    <p className={styles.note}>Brochure says {clash.brochure}</p>
-                    <p className={styles.note}>Website says {clash.website}</p>
-                    <div className={styles.headRow}>
-                      <button type="button" className={clash.choice === "brochure" ? styles.btn : styles.btnGhost} onClick={() => chooseClash(clash.id, "brochure")}>Use brochure</button>
-                      <button type="button" className={clash.choice === "website" ? styles.btn : styles.btnGhost} onClick={() => chooseClash(clash.id, "website")}>Use website</button>
-                      <button type="button" className={clash.choice === "unconfirmed" ? styles.btn : styles.btnGhost} onClick={() => chooseClash(clash.id, "unconfirmed")}>Keep both unconfirmed</button>
-                    </div>
-                    <input className={styles.field} value={clash.custom} placeholder="Or type the line to keep" onChange={(event) => chooseClash(clash.id, "custom", event.target.value)} />
-                  </li>
-                ))}
-              </ol>
-              <button type="button" className={styles.btn} disabled={clashes.some((clash) => !clash.choice)} onClick={() => void saveResolved()}>Save resolved notes</button>
-            </div>
-          ) : null}
-          {KNOWLEDGE_SECTIONS.map((section) => (
-            <label key={section.key} className={styles.label}>{section.title}
-              <textarea className={styles.area} value={sections[section.key as KnowledgeSectionKey]} onChange={(event) => setSections({ ...sections, [section.key]: event.target.value })} />
-            </label>
-          ))}
-          {knowledgeCount >= KNOWLEDGE_CHAR_CAP * 0.8 ? (
-            <p className={knowledgeCount >= KNOWLEDGE_CHAR_CAP ? styles.err : styles.note}>
-              Knowledge is {knowledgeCount.toLocaleString("en-GB")} characters. The call uses the first {KNOWLEDGE_CHAR_CAP.toLocaleString("en-GB")}.
-            </p>
-          ) : null}
-          <button type="button" className={styles.btn} onClick={() => void saveKnowledge(false)}>Save knowledge</button>
+          <label className={styles.label}>Business summary
+            <textarea className={styles.area} value={sections.summary} onChange={(event) => setSections({ ...sections, summary: event.target.value })} />
+          </label>
+          <label className={styles.label}>Opener
+            <span className={styles.note}>The first thing the agent says when the call connects.</span>
+            <input className={styles.field} value={opener || defaultOpener(name)} onChange={(event) => setOpener(event.target.value)} />
+          </label>
           {activeDeck?.slides.length ? (
-            <div className={styles.thumbs} style={{ marginTop: 12 }}>
+            <div className={styles.thumbs}>
               {activeDeck.slides.map((slide) => {
                 const headline = customerHeadline(slide.title);
                 return (
@@ -728,16 +803,21 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
               })}
             </div>
           ) : null}
-        </Fold>
+        </Step>
 
-        <Fold title="How the agent sells" open={Boolean(openSections.sells)} onToggle={() => toggleSection("sells")}>
-          <label className={styles.label}>Opener
-            <span className={styles.note}>The first thing the agent says when the call connects.</span>
-            <input className={styles.field} value={opener || defaultOpener(name)} onChange={(event) => setOpener(event.target.value)} />
+        <Step n={2} title="Product and qualifying questions" hint="What you sell, and the questions asked one at a time." done={productDone}>
+          <label className={styles.label}>Products and services
+            <textarea className={styles.area} value={sections.products} onChange={(event) => setSections({ ...sections, products: event.target.value })} />
           </label>
           <label className={styles.label}>Qualifying questions
             <span className={styles.note}>Asked one at a time, after the lead has answered.</span>
             <textarea className={styles.area} value={qualifying} onChange={(event) => setQualifying(event.target.value)} />
+          </label>
+        </Step>
+
+        <Step n={3} title="Pricing and quotes" hint="A price is spoken only when it is written here and quotes are on." done={pricingDone}>
+          <label className={styles.label}>Pricing
+            <textarea className={styles.area} value={sections.pricing} onChange={(event) => setSections({ ...sections, pricing: event.target.value })} />
           </label>
           <label className={styles.switch}>
             <input type="checkbox" checked={quotes} onChange={(event) => setQuotes(event.target.checked)} />
@@ -748,9 +828,27 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
             <span>Brochure send allowed<span className={styles.note}>The agent may offer to send the brochure. It will not say it has already been sent.</span></span>
           </label>
           <button type="button" className={styles.btn} disabled={creating} onClick={() => void saveBehaviour()}>{sellSaved ? "Saved" : "Save"}</button>
-        </Fold>
+        </Step>
 
-        <Fold title="Test link" open={Boolean(openSections.link)} onToggle={() => toggleSection("link")}>
+        <Step n={4} title="Objections" hint="The reply the agent uses when someone pushes back." done={objectionsDone}>
+          <label className={styles.label}>FAQs and objections
+            <textarea className={styles.area} value={sections.faqs} onChange={(event) => setSections({ ...sections, faqs: event.target.value })} />
+          </label>
+          <label className={styles.label}>Objection handling
+            <textarea className={styles.area} value={sections.objections} onChange={(event) => setSections({ ...sections, objections: event.target.value })} />
+          </label>
+          {knowledgeCount >= KNOWLEDGE_CHAR_CAP * 0.8 ? (
+            <p className={knowledgeCount >= KNOWLEDGE_CHAR_CAP ? styles.err : styles.note}>
+              Knowledge is {knowledgeCount.toLocaleString("en-GB")} characters. The call uses the first {KNOWLEDGE_CHAR_CAP.toLocaleString("en-GB")}.
+            </p>
+          ) : null}
+          <button type="button" className={styles.btn} onClick={() => void saveKnowledge(false)}>Save knowledge</button>
+        </Step>
+
+        <Step n={5} title="Share and booking" hint="The public link is at the top. This is the booking line and private test links." done={shareDone}>
+          <label className={styles.label}>Next step and booking
+            <textarea className={styles.area} value={sections.next} onChange={(event) => setSections({ ...sections, next: event.target.value })} />
+          </label>
           <label className={styles.label}>Lead name<input className={styles.field} value={prospectName} onChange={(event) => setProspectName(event.target.value)} /></label>
           <label className={styles.label}>Email, optional<input className={styles.field} value={prospectEmail} onChange={(event) => setProspectEmail(event.target.value)} /></label>
           <button type="button" className={styles.btn} disabled={creating} onClick={() => void createInvite()}>Create test link</button>
@@ -763,86 +861,95 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
               ))}
             </div>
           ) : null}
-        </Fold>
+        </Step>
 
-        <Fold title="Voices" open={Boolean(openSections.voices)} onToggle={() => toggleSection("voices")}>
-          <p className={styles.note}>Tick the voices this account may use, then choose one for this campaign. Tags are Deepgram’s own.</p>
-          {shortNote ? <p className={styles.note}>{shortNote}</p> : null}
-          <div className={styles.voiceList}>
-            {voices.map((voice) => (
-              <div key={voice.id} className={styles.voice}>
-                <label>
-                  <input type="checkbox" checked={shortlist.includes(voice.id)} onChange={() => {
-                    const next = shortlist.includes(voice.id) ? shortlist.filter((id) => id !== voice.id) : [...shortlist, voice.id];
-                    void saveShortlist(next);
-                  }} />
-                  {" "}<b>{voice.name}</b> · {voice.generation}
-                  <span className={styles.tags}>
-                    <Tag>{voice.gender}</Tag><Tag>{voice.accent}</Tag><Tag>{voice.characteristics}</Tag>
-                  </span>
-                </label>
-                <button type="button" className={styles.btnGhost} disabled={playing === voice.id} onClick={() => void play(voice.id)}>{playing === voice.id ? "Playing" : "Play"}</button>
+        <button type="button" className={styles.btnGhost} aria-expanded={showAdvanced} onClick={() => setShowAdvanced((open) => !open)}>
+          {showAdvanced ? "Hide advanced" : "Advanced"}
+        </button>
+        {showAdvanced ? (
+          <>
+            <Fold title="Voices" open={openSections.voices !== false} onToggle={() => toggleSection("voices")}>
+              <p className={styles.note}>Tick the voices this account may use, then choose one for this campaign. Tags are Deepgram’s own.</p>
+              {shortNote ? <p className={styles.note}>{shortNote}</p> : null}
+              <div className={styles.voiceList}>
+                {voices.map((voice) => (
+                  <div key={voice.id} className={styles.voice}>
+                    <label>
+                      <input type="checkbox" checked={shortlist.includes(voice.id)} onChange={() => {
+                        const next = shortlist.includes(voice.id) ? shortlist.filter((id) => id !== voice.id) : [...shortlist, voice.id];
+                        void saveShortlist(next);
+                      }} />
+                      {" "}<b>{voice.name}</b> · {voice.generation}
+                      <span className={styles.tags}>
+                        <Tag>{voice.gender}</Tag><Tag>{voice.accent}</Tag><Tag>{voice.characteristics}</Tag>
+                      </span>
+                    </label>
+                    <button type="button" className={styles.btnGhost} disabled={playing === voice.id} onClick={() => void play(voice.id)}>{playing === voice.id ? "Playing" : "Play"}</button>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <p className={styles.label}>Voice for this campaign</p>
-          {offered.map((voice) => (
-            <label key={voice.id} className={styles.switch}>
-              <input type="radio" name="campaign-voice" checked={voiceId === voice.id} onChange={() => setVoiceId(voice.id)} />
-              <span style={{ textTransform: "capitalize" }}>{voice.name}</span>
-              <span className={styles.note}>{voice.accent} · {voice.gender}</span>
-              <button type="button" className={styles.btnGhost} onClick={() => void play(voice.id)}>Play</button>
-            </label>
-          ))}
-          <button type="button" className={styles.btn} onClick={() => void saveBasics()}>Save voice</button>
-        </Fold>
-
-        <Fold title={`Calls${calls.length ? ` · ${calls.length}` : ""}`} open={Boolean(openSections.calls)} onToggle={() => toggleSection("calls")}>
-          <ul className={styles.stack} style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {calls.map((call) => {
-              const cost = costFor(call.id);
-              const tone = call.disposition === "Hot" ? styles.org : call.disposition === "Warm" ? styles.warn : styles.pill;
-              return (
-                <li key={call.id} className={styles.headRow}>
-                  <a className={styles.link} href={`/crm/interviewer/calls/${call.id}`}>{new Date(call.created_at).toLocaleString("en-GB")}</a>
-                  <span className={tone}>{call.disposition || "No outcome"}</span>
-                  <span className={styles.note}>{formatCallLength(call.billable_seconds || 0)}{cost ? ` · ${cost.cost}${cost.estimated ? " estimate" : ""}` : ""}</span>
-                </li>
-              );
-            })}
-          </ul>
-        </Fold>
-
-        <Fold title="Billing" open={Boolean(openSections.billing)} onToggle={() => toggleSection("billing")}>
-          <p className={styles.note}>{costs?.label || "Internal: never share with clients"}</p>
-          <div className={styles.grid2}>
-            <label className={styles.label}>Rate per minute<input className={styles.field} value={rate} onChange={(event) => setRate(event.target.value)} /></label>
-            <label className={styles.label}>Currency
-              <select className={styles.select} value={currency} onChange={(event) => setCurrency(event.target.value)}><option>GBP</option><option>USD</option><option>EUR</option></select>
-            </label>
-            <label className={styles.label}>Margin %<input className={styles.field} value={margin} onChange={(event) => setMargin(event.target.value)} /></label>
-            <label className={styles.label}>Granularity
-              <select className={styles.select} value={granularity} onChange={(event) => setGranularity(event.target.value)}><option value="second">Per second</option><option value="minute">Per minute</option></select>
-            </label>
-          </div>
-          <button type="button" className={styles.btnGhost} disabled={creating} onClick={() => void saveBilling()}>Save billing</button>
-          {costs?.totals ? <p>Setup {costs.totals.setup} · calls {costs.totals.callsCost} · total {costs.totals.cost}{costs.totals.estimates ? " (includes estimates from duration)" : ""}</p> : null}
-          <div className={styles.scrollX}>
-            <table className={styles.table}>
-              <thead><tr><th>Item</th><th>Amount</th><th>Detail</th></tr></thead>
-              <tbody>
-                {(costs?.setup || []).map((item) => (
-                  <tr key={item.kind}><td>{item.kind}</td><td>{item.amount}</td><td>{item.detail}</td></tr>
-                ))}
-                {(costs?.calls || []).map((call) => (
-                  <tr key={call.sessionId}><td>Call</td><td>{call.cost}{call.estimated ? " estimate" : ""}</td><td>{call.seconds}s</td></tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Fold>
+              <p className={styles.label}>Voice for this campaign</p>
+              {offered.map((voice) => (
+                <label key={voice.id} className={styles.switch}>
+                  <input type="radio" name="campaign-voice" checked={voiceId === voice.id} onChange={() => setVoiceId(voice.id)} />
+                  <span style={{ textTransform: "capitalize" }}>{voice.name}</span>
+                  <span className={styles.note}>{voice.accent} · {voice.gender}</span>
+                  <button type="button" className={styles.btnGhost} onClick={() => void play(voice.id)}>Play</button>
+                </label>
+              ))}
+              <button type="button" className={styles.btn} onClick={() => void saveBasics()}>Save voice</button>
+            </Fold>
+            <Fold title={`Calls${calls.length ? ` · ${calls.length}` : ""}`} open={Boolean(openSections.calls)} onToggle={() => toggleSection("calls")}>
+              <ul className={styles.stack} style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                {calls.map((call) => {
+                  const cost = costFor(call.id);
+                  const tone = call.disposition === "Hot" ? styles.org : call.disposition === "Warm" ? styles.warn : styles.pill;
+                  return (
+                    <li key={call.id} className={styles.headRow}>
+                      <a className={styles.link} href={`/crm/interviewer/calls/${call.id}`}>{new Date(call.created_at).toLocaleString("en-GB")}</a>
+                      <span className={tone}>{call.disposition || "No outcome"}</span>
+                      <span className={styles.note}>{formatCallLength(call.billable_seconds || 0)}{cost ? ` · ${cost.cost}${cost.estimated ? " estimate" : ""}` : ""}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Fold>
+            <Fold title="Billing" open={Boolean(openSections.billing)} onToggle={() => toggleSection("billing")}>
+              <p className={styles.note}>{costs?.label || "Internal: never share with clients"}</p>
+              <div className={styles.grid2}>
+                <label className={styles.label}>Rate per minute<input className={styles.field} value={rate} onChange={(event) => setRate(event.target.value)} /></label>
+                <label className={styles.label}>Currency
+                  <select className={styles.select} value={currency} onChange={(event) => setCurrency(event.target.value)}><option>GBP</option><option>USD</option><option>EUR</option></select>
+                </label>
+                <label className={styles.label}>Margin %<input className={styles.field} value={margin} onChange={(event) => setMargin(event.target.value)} /></label>
+                <label className={styles.label}>Granularity
+                  <select className={styles.select} value={granularity} onChange={(event) => setGranularity(event.target.value)}><option value="second">Per second</option><option value="minute">Per minute</option></select>
+                </label>
+              </div>
+              <button type="button" className={styles.btnGhost} disabled={creating} onClick={() => void saveBilling()}>Save billing</button>
+              {costs?.totals ? <p>Setup {costs.totals.setup} · calls {costs.totals.callsCost} · total {costs.totals.cost}{costs.totals.estimates ? " (includes estimates from duration)" : ""}</p> : null}
+              <div className={styles.scrollX}>
+                <table className={styles.table}>
+                  <thead><tr><th>Item</th><th>Amount</th><th>Detail</th></tr></thead>
+                  <tbody>
+                    {(costs?.setup || []).map((item) => (
+                      <tr key={item.kind}><td>{item.kind}</td><td>{item.amount}</td><td>{item.detail}</td></tr>
+                    ))}
+                    {(costs?.calls || []).map((call) => (
+                      <tr key={call.sessionId}><td>Call</td><td>{call.cost}{call.estimated ? " estimate" : ""}</td><td>{call.seconds}s</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Fold>
+          </>
+        ) : null}
       </div>
-      {campaign ? null : null}
+      <div className={styles.saveBar}>
+        <p>{error || notice || "Saves the name, notes, selling settings, and billing."}</p>
+        <button type="button" className={styles.btn} onClick={() => void saveAll()}>Save campaign</button>
+      </div>
     </main>
   );
 }
+
