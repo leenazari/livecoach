@@ -108,6 +108,11 @@ if (!/height: 72px/.test(callCss) || /captionLines p \{[^}]*nowrap/.test(callCss
   throw new Error("the caption bar is not a fixed height that can show the latest words");
 }
 if (!roomSource.includes("scrollTop")) throw new Error("the caption does not follow the latest line");
+const columnAt = roomSource.indexOf("slideColumn");
+const captionAt = roomSource.indexOf("captionStrip");
+const featuresAt = roomSource.indexOf("featurePanel");
+if (columnAt < 0 || captionAt < columnAt || featuresAt < captionAt) throw new Error("the caption is not directly under the slide");
+if (!/\.slideColumn \{[^}]*gap: 8px/.test(callCss)) throw new Error("the caption gap under the slide is not 8px");
 if (callCss.includes("background: #11151c")) throw new Error("the slide still has a dark frame");
 
 const fields = loadTs(new URL("../lib/interviewer/setup-fields.ts", import.meta.url).pathname);
