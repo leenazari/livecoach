@@ -32,7 +32,7 @@ function holdback(value: string): number {
 
 function speakReady(value: string, slides: number[]): string {
   const guarded = guardSpokenText(forSpeech(value));
-  const directed = takeSpokenSlideCommands(guarded);
+  const directed = takeSpokenSlideCommands(guarded, { trim: false });
   slides.push(...directed.slides);
   return directed.text;
 }

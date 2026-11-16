@@ -757,17 +757,19 @@
   flex: 1;
   min-width: 0;
   height: 72px;
+  min-height: 72px;
   max-height: 72px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
   font-size: 13px;
   line-height: 1.35;
 }
+.captionLines::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .captionLines p {
   margin: 0;
-  height: 18px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow: visible;
 }
 .featuresToggle {
   display: none;
@@ -1208,7 +1210,9 @@
   }
   .slideNumber { display: none; }
   .slideThumb { width: 72px; min-width: 72px; max-width: 72px; height: auto; }
-  .captionStrip, .captionLines { height: 72px; min-height: 72px; max-height: 72px; overflow: hidden; }
+  .captionStrip, .captionLines { height: 72px; min-height: 72px; max-height: 72px; }
+  .captionStrip { overflow: hidden; }
+  .captionLines { overflow-x: hidden; overflow-y: auto; }
   .captionStrip { padding: 0 10px; }
   .captionLines { flex: 1; }
   .controlBar { gap: 12px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); }

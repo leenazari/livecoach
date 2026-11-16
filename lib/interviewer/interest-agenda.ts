@@ -8,18 +8,23 @@ export function catalogFromSlides(slides: Array<{ number: number; title?: string
     const title = String(slide.title || "").replace(/\s+/g, " ").trim();
     if (title.length < 8 || /^slide\s+\d+$/i.test(title)) return [];
     const phrase = title.split(":")[0].toLowerCase().trim();
-    const words = phrase.split(/[^a-z0-9]+/).filter((word) => word.length > 4 && !STOP.has(word));
+    const words = phrase.split(/[^a-z0-9]+/).filter((word) => word.length > 7 && !STOP.has(word));
     const keywords = [...new Set([phrase, ...words, ...(slide.keywords || []).map((key) => key.toLowerCase())])].filter((key) => key.length > 3);
     if (!keywords.length) return [];
     return [{ id: `slide-${slide.number}`, label: phrase, keywords }];
   });
 }
 
+function wordHit(hay: string, word: string): boolean {
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:s|es)?(?=$|[^a-z0-9])`, "i").test(hay);
+}
+
 function matches(hay: string, keywords: string[]): boolean {
   const phrases = keywords.filter((key) => key.includes(" ") && key.length > 8);
   if (phrases.some((phrase) => hay.includes(phrase))) return true;
-  const words = keywords.filter((key) => !key.includes(" ") && key.length > 5 && !STOP.has(key));
-  return words.some((word) => hay.includes(word));
+  const words = keywords.filter((key) => !key.includes(" ") && key.length > 3 && !STOP.has(key));
+  return words.some((word) => wordHit(hay, word));
 }
 
 function earliest(hay: string, keywords: string[]): number {
@@ -86,5 +91,5 @@ export function privateCoverNote(agenda: AgendaItem[]): string | null {
   const left = stillToCover(agenda);
   const next = outstanding(agenda)[0];
   if (!left || !next) return null;
-  return `Note for you only. Do not read this note aloud, and do not say "still to cover". ${left}. Say one natural line, then show it. For example: You also mentioned ${next.label}, let me show you that.`;
+  return `Note for you only. Do not read this note aloud, and do not say "still to cover". ${left}. Say one new sentence about the next item, then show it. Do not repeat a sentence you already said.`;
 }

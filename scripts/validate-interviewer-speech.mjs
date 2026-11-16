@@ -25,6 +25,8 @@ function loadTs(file) {
 }
 
 const { forSpeech, forPrompt, forTranscript } = loadTs(new URL("../lib/interviewer/pronunciations.ts", import.meta.url).pathname);
+const { repeatsSpokenLine } = loadTs(new URL("../lib/interviewer/listen-transcript.ts", import.meta.url).pathname);
+const { catalogFromSlides, noteInterests } = loadTs(new URL("../lib/interviewer/interest-agenda.ts", import.meta.url).pathname);
 const { guardSpokenText, unsafeSpeech, SAFE_REDIRECT, guardrailRules } = loadTs(new URL("../lib/interviewer/guardrails.ts", import.meta.url).pathname);
 const { buildInterviewerPrompt } = loadTs(new URL("../lib/interviewer/prompt.ts", import.meta.url).pathname);
 const { slideRole } = loadTs(new URL("../lib/interviewer/slide-role.ts", import.meta.url).pathname);
@@ -69,8 +71,8 @@ if (slideRole("Four setup steps") !== "setup" || slideRole("Live call") !== "fea
 const profile = noteBusiness("We're a dental practice and we sell check-ups.", { businessType: "", sells: "", customers: "", howTheyServe: "", pain: "" });
 if (!profileKnown(profile) || !businessProfileNote(profile).includes("dental practice")) throw new Error("business profile was not captured");
 if (!businessProfileNote(profile).includes("Do not read this note aloud")) throw new Error("profile note could be spoken");
-const jammed = forSpeech("Thatsoundsfantastic!Sustainableproductsarereallygainingtraction,especiallyamongconscientiousconsumers.");
-if (!jammed.includes("That sounds fantastic!") || !jammed.includes("Sustainable products")) throw new Error(`run-together speech was not spaced: ${jammed}`);
+const untouched = "Thatsoundsfantastic!Sustainableproductsarereallygainingtraction,especiallyamongconscientiousconsumers.";
+if (forSpeech(untouched) !== untouched) throw new Error(`a run-together line was guessed apart: ${forSpeech(untouched)}`);
 if (forSpeech("SEO and AEO on WhatsApp") !== "S E O and A E O on WhatsApp") throw new Error("letter names were not spaced");
 const spokenTool = takeSpokenSlideCommands('Let me show you how Adam can help with that.showslide{"reason":"Highlighting immediate responses","slidenumber":2}');
 if (spokenTool.slides[0] !== 2 || /showslide|slidenumber|\{/.test(spokenTool.text)) throw new Error(`spoken tool JSON stayed: ${spokenTool.text}`);
@@ -102,6 +104,10 @@ if (roomSource.includes("not a spinner") || roomSource.includes("Private convers
 if (!callCss.includes("aspect-ratio: var(--slide-w, 16) / var(--slide-h, 9)")) {
   throw new Error("the slide box does not follow the deck ratio");
 }
+if (!/height: 72px/.test(callCss) || /captionLines p \{[^}]*nowrap/.test(callCss)) {
+  throw new Error("the caption bar is not a fixed height that can show the latest words");
+}
+if (!roomSource.includes("scrollTop")) throw new Error("the caption does not follow the latest line");
 if (callCss.includes("background: #11151c")) throw new Error("the slide still has a dark frame");
 
 const fields = loadTs(new URL("../lib/interviewer/setup-fields.ts", import.meta.url).pathname);
@@ -200,16 +206,43 @@ const noted = knowledge.compileCampaignKnowledge({ quotesAllowed: false, documen
 if (!noted.includes("Mention the dental example") || /margin/i.test(noted)) throw new Error("owner notes were dropped or a margin was kept");
 console.log(`knowledge compile ${compileMs.toFixed(2)}ms, no extra fetch`);
 const sessionLine = "That sounds fantastic! A take away is a busy environment, and having the right till system can make a huge difference. How are you currently handling orders and payments?";
-const spokenSession = forSpeech(sessionLine);
-if (/env i r|p a y|he a r|h and l/i.test(spokenSession)) throw new Error(`a real word was split: ${spokenSession}`);
-if (!spokenSession.includes("environment") || !spokenSession.includes("payments") || !/handling orders/i.test(spokenSession)) {
-  throw new Error(`session punctuation was damaged: ${spokenSession}`);
+if (forSpeech(sessionLine) !== sessionLine) throw new Error(`session punctuation was damaged: ${forSpeech(sessionLine)}`);
+const cafeLine = "That sounds fantastic! A cafe bar in the city centre must get quite busy, especially with the office crowd around! How do you currently serve your customers?";
+if (forSpeech(cafeLine) !== cafeLine) throw new Error(`the cafe sentence was changed: ${forSpeech(cafeLine)}`);
+const storedMashed = "That sounds fantastic! Acafebarinthecitycentremustgetquitebusy, especiallywiththeofficecrowdaround! Howdoyoucurrentlyserveyourcustomers?";
+if (forSpeech(storedMashed) !== storedMashed) throw new Error(`stored mashed text was rewritten: ${forSpeech(storedMashed)}`);
+const shattered = "env i r on me nt";
+if (forSpeech(`A busy ${shattered}`) !== `A busy ${shattered}`) throw new Error("a shattered word was rewritten");
+function playChunks(chunks) {
+  const stream = createSpeechStreamFilter();
+  return `${chunks.map((chunk) => stream.push(chunk)).join("")}${stream.flush()}`;
 }
-const jammedModel = forSpeech("andhavingtherighttillsystemcanmakeahugedifference");
-if (/p a y|env i r/.test(jammedModel)) throw new Error(`a safe split broke a word: ${jammedModel}`);
-const stream = createSpeechStreamFilter();
-const streamed = `${stream.push("A busy environ")}${stream.push("ment, and having the right till.")}${stream.flush()}`;
-if (!streamed.includes("environment,") || !streamed.includes("having")) throw new Error(`a stream chunk broke the sentence: ${streamed}`);
+const streamed = playChunks(["A busy environ", "ment, and having the right till."]);
+if (streamed !== "A busy environment, and having the right till.") throw new Error(`a stream chunk broke the sentence: ${JSON.stringify(streamed)}`);
+const cafeStream = playChunks([
+  "That sounds fantastic! A cafe ",
+  "bar in the city ",
+  "centre must get quite busy, ",
+  "especially with the office crowd around! ",
+  "How do you currently serve your customers?",
+]);
+if (cafeStream !== cafeLine) throw new Error(`stream joined or split the cafe sentence: ${JSON.stringify(cafeStream)}`);
+const tillLine = "A take away is a busy environment, and having the right till system can make a huge difference. How are you currently handling orders and payments?";
+const tillStream = playChunks([
+  "A take away is a busy environ",
+  "ment, and having the right till system can make a huge difference. ",
+  "How are you currently h",
+  "andling orders and p",
+  "ayments?",
+]);
+if (tillStream !== tillLine) throw new Error(`stream joined or split the till sentence: ${JSON.stringify(tillStream)}`);
+const repeated = "You also mentioned multi-site price control from head office. Let me show you that.";
+if (!repeatsSpokenLine(repeated, repeated)) throw new Error("the same sentence was allowed twice");
+if (repeatsSpokenLine(repeated, "Customers order at a branded kiosk, which takes pressure off the counter.")) {
+  throw new Error("a new sentence was treated as a repeat");
+}
+const falseTopic = noteInterests("I run a cafe bar near some offices.", [], catalogFromSlides([{ number: 4, title: "Multi-site price control from head office" }]));
+if (falseTopic.length) throw new Error(`offices was heard as multi-site price control: ${JSON.stringify(falseTopic)}`);
 const stripped = takeSpokenSlideCommands("Let me show you that. showslide Swoopos is an all-in-one EPOS system.");
 if (/showslide/i.test(stripped.text) || !stripped.text.includes("Swoopos is an all-in-one")) throw new Error(`slide command was not removed cleanly: ${stripped.text}`);
 const pacePrompt = buildInterviewerPrompt({

@@ -17,7 +17,7 @@ export function spokenSlideNumber(token: string): number | null {
   return WORD_NUMBERS[value] || null;
 }
 
-export function takeSpokenSlideCommands(value: string): { text: string; slides: number[] } {
+export function takeSpokenSlideCommands(value: string, options?: { trim?: boolean }): { text: string; slides: number[] } {
   const slides: number[] = [];
   const withoutTools = String(value || "").replace(TOOL_DUMP, (block) => {
     const number = block.match(/slide_?number["']?\s*[:=]\s*"?(\d{1,2})/i);
@@ -31,8 +31,9 @@ export function takeSpokenSlideCommands(value: string): { text: string; slides: 
     slides.push(number);
     return " ";
   }).replace(/\bshow\s*slide\b/gi, " ");
+  const cleaned = text.replace(/\s+([,.!?])/g, "$1").replace(/[ \t]{2,}/g, " ").replace(/\s+\n/g, "\n");
   return {
-    text: text.replace(/\s+([,.!?])/g, "$1").replace(/[ \t]{2,}/g, " ").replace(/\s+\n/g, "\n").trim(),
+    text: options?.trim === false ? cleaned : cleaned.trim(),
     slides,
   };
 }

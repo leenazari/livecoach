@@ -60,13 +60,34 @@ function CallSummary({
 }
 
 function recentSentences(lines: Array<{ speaker: string; text: string }>) {
-  const sentences: Array<{ speaker: string; text: string }> = [];
+  const newestFirst: Array<{ speaker: string; text: string }> = [];
   for (const line of lines) {
     const parts = line.text.split(/(?<=[.!?])\s+/).map((part) => part.trim()).filter(Boolean);
     const usable = parts.length ? parts : (line.text.trim() ? [line.text.trim()] : []);
-    for (const text of usable) sentences.push({ speaker: line.speaker, text });
+    for (let index = usable.length - 1; index >= 0 && newestFirst.length < 2; index -= 1) {
+      newestFirst.push({ speaker: line.speaker, text: usable[index] });
+    }
+    if (newestFirst.length >= 2) break;
   }
-  return sentences.slice(-2);
+  return newestFirst.reverse();
+}
+
+function LiveCaption({ lines, interim }: { lines: Array<{ speaker: string; text: string }>; interim: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const shown = recentSentences(lines);
+  const captionKey = `${shown.map((line) => `${line.speaker}:${line.text}`).join("\n")}\n${interim}`;
+  useLayoutEffect(() => {
+    const node = box.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [captionKey]);
+  return (
+    <div className={styles.captionLines} ref={box} aria-live="polite">
+      {shown.map((line, index) => (
+        <p key={`${line.speaker}-${index}`}>{line.speaker === "agent" ? "Interviewa" : "You"}: {line.text}</p>
+      ))}
+      {interim ? <p>You: {interim}</p> : null}
+    </div>
+  );
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
@@ -304,12 +325,7 @@ export default function InterviewerRoom({
             ) : <p className={styles.note}>Key points appear with the slide.</p>}
           </aside>
           <div className={styles.captionStrip}>
-            <div className={styles.captionLines}>
-              {recentSentences(presentTranscript(call.captions)).map((line, index) => (
-                <p key={`${line.speaker}-${index}`}>{line.speaker === "agent" ? "Interviewa" : "You"}: {line.text}</p>
-              ))}
-              {call.interim ? <p>You: {call.interim}</p> : null}
-            </div>
+            <LiveCaption lines={presentTranscript(call.captions)} interim={call.interim} />
             <button type="button" className={styles.featuresToggle} aria-pressed={featuresOpen} onClick={() => setFeaturesOpen((open) => !open)}>
               {featuresOpen ? "Hide points" : "Key points"}
             </button>

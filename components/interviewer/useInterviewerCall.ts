@@ -12,6 +12,7 @@ import { isHoldRequest, nextSilenceCue, type SilencePhase } from "@/lib/intervie
 import {
   agentTurnExtends,
   looksLikeSpeakerEcho,
+  repeatsSpokenLine,
   utteranceKey,
   type LockedUtterance,
 } from "@/lib/interviewer/listen-transcript";
@@ -19,7 +20,7 @@ import { stripAgentContext, toSpokenPlain, toolReplyForAgent } from "@/lib/inter
 import { forSpeech, forTranscript, restoreSpokenGaps } from "@/lib/interviewer/pronunciations";
 import { takeSpokenSlideCommands } from "@/lib/interviewer/slide-command";
 import { businessProfileNote, emptyBusinessProfile, noteBusiness, type BusinessProfile } from "@/lib/interviewer/business-profile";
-import { catalogFromSlides, coverInterests, noteInterests, privateCoverNote, spokenReminder, type AgendaItem } from "@/lib/interviewer/interest-agenda";
+import { catalogFromSlides, coverInterests, noteInterests, outstanding, privateCoverNote, type AgendaItem } from "@/lib/interviewer/interest-agenda";
 import { matchSpokenSlide } from "@/lib/interviewer/slide-match";
 
 export type Caption = { id: string; speaker: "agent" | "lead"; text: string };
@@ -122,6 +123,8 @@ export function useInterviewerCall(token: string, capMinutes = "") {
   const advanceTimer = useRef<number | null>(null);
   const advanceQueueRef = useRef<(speech: string) => boolean>(() => false);
   const agendaRef = useRef<AgendaItem[]>([]);
+  const remindedRef = useRef<Set<string>>(new Set());
+  const lastSpokenRef = useRef("");
   const profileRef = useRef<BusinessProfile>(emptyBusinessProfile());
   const leadQuestionAt = useRef(Date.now());
   const remindTimer = useRef<number | null>(null);
@@ -243,7 +246,10 @@ export function useInterviewerCall(token: string, capMinutes = "") {
     }
     if (!clean) return;
     const previous = agentTurnRef.current;
-    const caption = previous && agentTurnExtends(previous.text, clean)
+    const extending = Boolean(previous && agentTurnExtends(previous.text, clean));
+    if (!extending && repeatsSpokenLine(lastSpokenRef.current, clean)) return;
+    lastSpokenRef.current = clean;
+    const caption = extending && previous
       ? { id: previous.id, speaker: "agent" as const, text: clean }
       : {
           id: utteranceKey("agent", Date.now() / 1000, clean),
@@ -343,8 +349,12 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         greetingDoneRef.current = true;
         const pending = pendingInjectRef.current;
         pendingInjectRef.current = "";
-        if (pending && agentSocket.readyState === WebSocket.OPEN) {
-          agentSocket.send(JSON.stringify({ type: "InjectAgentMessage", behavior: "interrupt", message: forSpeech(pending) }));
+        const spoken = forSpeech(pending);
+        if (spoken && !repeatsSpokenLine(lastSpokenRef.current, spoken)) {
+          if (agentSocket.readyState === WebSocket.OPEN) {
+            agentSocket.send(JSON.stringify({ type: "InjectAgentMessage", behavior: "interrupt", message: spoken }));
+          }
+          acceptAgent(spoken);
         }
         if (slideQueue.current.length) {
           const next = slideQueue.current.shift();
@@ -403,7 +413,8 @@ export function useInterviewerCall(token: string, capMinutes = "") {
       const say = (line: string, behavior: "default" | "queue" | "interrupt" = "default") => {
         if (agentSocket.readyState !== WebSocket.OPEN) return false;
         const message = forSpeech(stripAgentContext(line));
-        if (!message) return false;
+        if (!message || repeatsSpokenLine(lastSpokenRef.current, message)) return false;
+        lastSpokenRef.current = message;
         agentSocket.send(JSON.stringify({ type: "InjectAgentMessage", behavior, message }));
         return true;
       };
@@ -444,11 +455,11 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         if (remindTimer.current) window.clearTimeout(remindTimer.current);
         remindTimer.current = window.setTimeout(() => {
           if (!greetingDoneRef.current || goodbyeOwnsEnd.current) return;
+          const next = outstanding(agendaRef.current)[0];
           const privateNote = privateCoverNote(agendaRef.current);
-          const spoken = spokenReminder(agendaRef.current);
-          if (!privateNote || !spoken) return;
+          if (!next || !privateNote || remindedRef.current.has(next.id)) return;
+          remindedRef.current.add(next.id);
           note(privateNote);
-          say(spoken);
         }, 2500);
       };
       const suggestNoise = () => {
@@ -865,7 +876,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         const slideQuiet = Date.now() - Math.max(lastSlideAt.current, callStartedAt);
         if (greetingDoneRef.current && agentTalking && !silence.speaking && Date.now() >= manualSlideUntil.current && slideQuiet > 25000 && Date.now() - lastPaceAt > 25000 && Date.now() - leadQuestionAt.current > 8000) {
           lastPaceAt = Date.now();
-          note("Note for you only. Do not read this aloud. Call show_slide for the feature you are about to say, before the sentence, then one or two short sentences.");
+          note("Note for you only. Do not read this aloud. Do not repeat a sentence you already said. Call show_slide for the feature you are about to say, before the sentence, then one or two short sentences.");
         }
       }, 1000);
       heartbeat = window.setInterval(() => {
@@ -1029,8 +1040,12 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         pendingInjectRef.current = speech;
         return;
       }
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "InjectAgentMessage", behavior: "interrupt", message: forSpeech(speech) }));
+      const spoken = forSpeech(speech);
+      if (spoken && !repeatsSpokenLine(lastSpokenRef.current, spoken)) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "InjectAgentMessage", behavior: "interrupt", message: spoken }));
+        }
+        acceptAgent(spoken);
       }
     }, () => {
       const session = sessionRef.current;
@@ -1044,7 +1059,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         });
       }
     });
-  }, [rememberSeen, token]);
+  }, [acceptAgent, rememberSeen, token]);
 
   const leaveQueue = useCallback(async () => {
     const session = sessionRef.current;

@@ -126,6 +126,13 @@ export function looksLikeSpeakerEcho(leadText: string, recentAgentText: string[]
   });
 }
 
+export function repeatsSpokenLine(previous: string, next: string): boolean {
+  const prior = normalizeTranscript(previous);
+  const incoming = normalizeTranscript(next);
+  if (!prior || !incoming || prior.length < 24 || incoming.length < 24) return false;
+  return prior === incoming;
+}
+
 export function agentTurnExtends(previous: string, next: string): boolean {
   const prior = normalizeTranscript(previous);
   const incoming = normalizeTranscript(next);
