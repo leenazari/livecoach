@@ -5,7 +5,13 @@ export type ProductFields = {
   disqualify: string[];
 };
 
-export type PricePlan = { name: string; price: string; includes: string };
+export type PricePlan = {
+  name: string;
+  price: string;
+  period: string;
+  includes: string;
+  overage: string;
+};
 
 export type PriceFields = {
   note: string;
@@ -74,7 +80,7 @@ export function parsePrice(body: string): PriceFields {
 export function formatPrice(fields: PriceFields): string {
   const plans = fields.plans
     .filter((plan) => plan.name.trim() || plan.price.trim() || plan.includes.trim())
-    .map((plan) => `- ${plan.name.trim()} | ${plan.price.trim()} | ${plan.includes.trim()}`);
+    .map((plan) => `- ${plan.name.trim()} | ${plan.price.trim()} | ${plan.period.trim()} | ${plan.includes.trim()} | ${plan.overage.trim()}`);
   return [
     "Pricing note",
     fields.note.trim(),
@@ -124,9 +130,10 @@ export function formatQuestions(lines: string[]): string {
 
 export function priceSpeech(quotesOn: boolean, fields: PriceFields): string {
   if (!quotesOn) return "The agent will not quote a price. It offers to cover price with a person later.";
-  const written = [fields.note, ...fields.plans.map((plan) => `${plan.name} ${plan.price}`)].join(" ").trim();
-  if (!written) return "Quotes are on, but no price is written yet. The agent must not invent one.";
-  return "The agent may say only a price written here. It must not invent a discount.";
+  const lines = fields.plans.filter((plan) => plan.price.trim()).map((plan) => `${plan.name || "Plan"} is ${plan.price}${plan.period ? `, billed ${plan.period}` : ""}${plan.includes ? `, including ${plan.includes}` : ""}${plan.overage ? `, then ${plan.overage}` : ""}`);
+  if (!lines.length && !fields.note.trim()) return "Quotes are on, but no price is written yet. The agent must not invent one.";
+  if (!lines.length) return "The agent may say only a price written in the note. It must not invent another tier.";
+  return `The agent may quote each plan on its own: ${lines.join(". ")}. It must not merge two tiers into one price.`;
 }
 
 function splitHeads(text: string, heads: string[]): Record<string, string> {
@@ -147,8 +154,11 @@ function asBullets(lines: string[]): string {
 
 function planLine(line: string): PricePlan {
   const clean = line.replace(/^\s*[-*•]\s*/, "").trim();
-  const [name = "", price = "", includes = ""] = clean.split("|").map((part) => part.trim());
-  return { name, price, includes };
+  const parts = clean.split("|").map((part) => part.trim());
+  if (parts.length >= 5) {
+    return { name: parts[0], price: parts[1], period: parts[2], includes: parts[3], overage: parts[4] };
+  }
+  return { name: parts[0] || "", price: parts[1] || "", period: "", includes: parts[2] || "", overage: "" };
 }
 
 function escapeReg(value: string): string {

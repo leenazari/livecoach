@@ -97,7 +97,7 @@ export function buildInterviewerPrompt(input: InterviewerPromptInput): string {
 
   const siteSaved = Boolean(String(input.websiteUrl || "").trim());
   const quotes = input.quotesAllowed
-    ? "You may speak a price only when that figure is written in the website knowledge."
+    ? "You may speak a price only when that figure is written in the website knowledge. Read every line under Plans. Each line is its own price point, including a monthly price and a yearly price for the same plan. Quote the plan name, the price, the billing period, what it includes, and any overage on that line. Never collapse two tiers into one price, and never invent a tier that is not written."
     : "Do not quote a price on this call, even if a figure is in the notes. Offer to cover it with a person later.";
   const brochure = input.brochureSend
     ? "If they want something to read, you may offer a brochure. Do not say it has already been sent."

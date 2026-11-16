@@ -47,6 +47,7 @@ export function toSpokenPlain(value: string): string {
   text = text.replace(/`([^`]+)`/g, "$1");
   text = text.replace(/(^|\s)\*([^*\n]+)\*(?=\s|$)/g, "$1$2");
   text = text.replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, "$1$2");
+  text = text.replace(/ \| /g, ", ");
   text = text.replace(/^\s*(?:[-*•]|\d+[.)])\s+(.+)$/gm, (_, item: string) => {
     const sentence = String(item).trim().replace(/[.!;,]+$/, "");
     return sentence ? `${sentence}.` : "";

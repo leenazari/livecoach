@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { putSlideImages, renderPdfPages } from "@/components/interviewer/pdf-pages";
 import { customerHeadline } from "@/lib/interviewer/slide-headline";
@@ -22,6 +22,7 @@ import {
   type ObjectionPair,
   type PricePlan,
 } from "@/lib/interviewer/setup-fields";
+import { extractSetup, mergeExtracts, planPreview, suggestionsFor, type ExtractSource, type Suggestion } from "@/lib/interviewer/setup-extract";
 import { renderSVG } from "@/lib/interviewer/uqr.mjs";
 import { PUBLIC_CALLS_TITLE, publicCallsOpen, publicCampaignPath } from "@/lib/interviewer/public-campaign";
 import { appendShareQuery } from "@/lib/interviewer/share-link";
@@ -47,6 +48,7 @@ type Campaign = {
 
 type Slide = { number: number; title: string; url: string; missing?: boolean; oneLine?: string; talkingPoints?: string };
 type FetchedPage = { url: string; chars: number };
+type SourceDoc = { title: string; body: string; source: ExtractSource };
 type TestLink = { path: string; name: string; expiresAt: string };
 type Deck = { id: string; title: string; active?: boolean; imagesMissing?: boolean; slides: Slide[] };
 type DeckJob = { phase: "rendering" | "uploading" | "notes" | "saved" | "error"; fileName: string; page: number; total: number; message: string };
@@ -209,6 +211,38 @@ function Fold({
   );
 }
 
+function SuggestBox({
+  step,
+  items,
+  onApply,
+  onAll,
+}: {
+  step: number;
+  items: Suggestion[];
+  onApply: (item: Suggestion) => void;
+  onAll: () => void;
+}) {
+  const mine = items.filter((item) => item.step === step);
+  if (!mine.length) return null;
+  return (
+    <div className={styles.suggest}>
+      <p className={styles.label}>Suggested from website or brochure</p>
+      <p className={styles.note}>Filled fields stay as they are. Apply writes only the empty ones.</p>
+      {mine.map((item) => (
+        <div key={item.id} className={styles.suggestRow}>
+          <div>
+            <strong>{item.label}</strong>
+            <span className={styles.note}> {item.source}</span>
+            <p className={styles.note}>{item.preview}</p>
+          </div>
+          <button type="button" className={styles.btnGhost} onClick={() => onApply(item)}>Apply</button>
+        </div>
+      ))}
+      <button type="button" className={styles.btn} onClick={onAll}>Apply all</button>
+    </div>
+  );
+}
+
 export default function CampaignStudio({ campaignId, shareQuery = "" }: { campaignId: string; shareQuery?: string }) {
   const creating = !campaignId;
   const [campaign, setCampaign] = useState<Campaign | null>(null);
@@ -252,6 +286,8 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
   const [bookingUrl, setBookingUrl] = useState("");
   const [bookingKnown, setBookingKnown] = useState(false);
   const [slidePick, setSlidePick] = useState(1);
+  const [sourceDocs, setSourceDocs] = useState<SourceDoc[]>([]);
+  const [freshExtract, setFreshExtract] = useState<Array<{ source: ExtractSource; text: string }>>([]);
   const [sellSaved, setSellSaved] = useState(false);
   const [acceptingCalls, setAcceptingCalls] = useState(true);
   const [shareCopied, setShareCopied] = useState(false);
@@ -307,6 +343,11 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
         const found = (campaignData.campaigns || []).find((item: Campaign) => item.id === campaignId);
         if (!found) { setError("That campaign was not found."); return; }
         const docs = documentData.documents || [];
+        setSourceDocs((docs as Array<{ title?: string; body?: string; source?: string | null }>).flatMap((doc) => {
+          const source = doc.source === "website-import" ? "website" : doc.source === "deck-import" ? "brochure" : "";
+          const body = String(doc.body || "");
+          return source && body ? [{ title: String(doc.title || ""), body, source }] : [];
+        }));
         const source = docs.find((doc: { title: string; body: string }) => doc.title === SOURCE_WEBSITE_TITLE);
         setCampaign(found);
         setName(found.name);
@@ -412,10 +453,8 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
     const review = await postJson("/api/crm/interviewer/knowledge-conflicts", { brochure: brochureNotes, website: websiteNotes });
     const found = (Array.isArray(review.data.clashes) ? review.data.clashes : findFactClashes(brochureNotes, websiteNotes)) as FactClash[];
     if (!found.length) {
-      const merged = mergeKnowledge(brochureNotes, websiteNotes, []);
-      const saved = await saveKnowledge(Boolean(websiteUrl), merged);
-      if (saved) setSections(merged);
       setClashes([]);
+      setNotice("No facts clashed. Apply the suggestions you want, then Save campaign. Filled fields were left as they are.");
       return;
     }
     setPendingBrochure(brochureNotes);
@@ -451,22 +490,13 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
       const pages = Array.isArray(result.data.pages) ? result.data.pages as FetchedPage[] : [];
       setFetchedPages(pages);
       if (!result.ok) { setError(result.data.fields?.url || "The website could not be read."); return; }
+      const documents = Array.isArray(result.data.documents) ? result.data.documents as Array<{ body?: string }> : [];
+      const sourceText = String(result.data.sourceText || documents.map((document) => document.body || "").join("\n"));
+      setFreshExtract((current) => [...current.filter((item) => item.source !== "website"), { source: "website", text: sourceText }]);
+      setScrapedAt(new Date().toISOString());
       const next = knowledgeFromDocuments(result.data.documents || []);
-      if (result.data.reused) {
-        setSections(next);
-        setNotice("Using the website notes saved a moment ago.");
-        return;
-      }
-      if (knowledgeLength(sections) > 0) {
-        await stageClash(sections, next);
-        setScrapedAt(new Date().toISOString());
-        return;
-      }
-      const saved = await saveKnowledge(true, next);
-      if (saved) {
-        setSections(next);
-        setScrapedAt(new Date().toISOString());
-      }
+      if (knowledgeLength(sections) > 0) await stageClash(sections, next);
+      setNotice("Suggestions are ready. Apply the ones you want. Filled fields were left as they are.");
     } finally {
       setImporting(false);
     }
@@ -644,11 +674,12 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
     setDeckJob({ phase: "notes", fileName: "deck", page: 0, total: 0, message: "Updating knowledge notes…" });
     const result = await postJson("/api/crm/interviewer/deck", { action: "rebuild", deckId, overwrite });
     await reloadDecks();
+    const rawNotes = Array.isArray(result.data.deckNotes) ? result.data.deckNotes as Array<{ body?: string }> : [];
+    setFreshExtract((current) => [...current.filter((item) => item.source !== "brochure"), { source: "brochure", text: rawNotes.map((note) => note.body || "").join("\n") }]);
     const deckNotes = knowledgeFromDocuments(result.data.deckNotes || []);
-    const noteCount = Array.isArray(result.data.deckNotes) ? result.data.deckNotes.length : await reloadNotes();
+    const noteCount = rawNotes.length || await reloadNotes();
     if (result.ok && result.data.deckNotesSaved) await reloadNotes();
     if (result.ok && !result.data.deckNotesSaved && knowledgeLength(deckNotes) > 0 && knowledgeLength(sections) > 0) {
-      setSections(mergeKnowledge(deckNotes, sections, []));
       await stageClash(deckNotes, sections);
     }
     if (!result.ok) {
@@ -688,6 +719,65 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
     { n: 5, title: "Share", done: shareDone, hint: "How people start a call, and where they book." },
   ];
   const current = steps[step - 1];
+  const suggestions = useMemo(() => {
+    const packs = [
+      ...sourceDocs.map((doc) => ({ source: doc.source, extract: extractSetup(doc.body, activeDeck?.slides || []) })),
+      ...freshExtract.map((item) => ({ source: item.source, extract: extractSetup(item.text, activeDeck?.slides || []) })),
+    ];
+    const seen = new Set<string>();
+    return packs.flatMap((pack) => suggestionsFor({
+      extract: pack.extract,
+      source: pack.source,
+      summary: sections.summary,
+      opener,
+      productSummary: product.summary,
+      customer: product.customer,
+      benefits: product.benefits,
+      disqualify: product.disqualify,
+      questions,
+      note: price.note,
+      plans: price.plans,
+      trial: price.trial,
+      discount: price.discount,
+      objections: pairs,
+      slides: activeDeck?.slides || [],
+    })).filter((item) => {
+      const key = `${item.apply}|${(item.plan ? planPreview(item.plan) : item.preview).toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [activeDeck?.slides, freshExtract, opener, pairs, price.discount, price.note, price.plans, price.trial, product.benefits, product.customer, product.disqualify, product.summary, questions, sections.summary, sourceDocs]);
+  const applyList = (items: Suggestion[]) => {
+    setSections((now) => {
+      let summary = now.summary;
+      let products = parseProduct(now.products);
+      let pricing = parsePrice(now.pricing);
+      let objections = parseObjections(now.objections);
+      for (const item of items) {
+        if (item.apply === "summary" && !summary.trim()) summary = item.preview;
+        if (item.apply === "product" && !products.summary.trim()) products = { ...products, summary: item.preview };
+        if (item.apply === "customer" && !products.customer.trim()) products = { ...products, customer: item.preview };
+        if (item.apply === "benefit" && !products.benefits.some((line) => line.toLowerCase() === item.preview.toLowerCase())) products = { ...products, benefits: [...products.benefits, item.preview] };
+        if (item.apply === "disqualify" && !products.disqualify.some((line) => line.toLowerCase() === item.preview.toLowerCase())) products = { ...products, disqualify: [...products.disqualify, item.preview] };
+        if (item.apply === "note" && !pricing.note.trim()) pricing = { ...pricing, note: item.preview };
+        if (item.apply === "plan" && item.plan && !pricing.plans.some((plan) => plan.price === item.plan?.price && plan.period === item.plan.period && plan.name === item.plan.name)) pricing = { ...pricing, plans: [...pricing.plans, item.plan] };
+        if (item.apply === "trial" && !pricing.trial.trim()) pricing = { ...pricing, trial: item.preview };
+        if (item.apply === "discount" && !pricing.discount.trim()) pricing = { ...pricing, discount: item.preview };
+        if (item.apply === "objection" && item.pair && !objections.some((pair) => pair.hear.toLowerCase() === item.pair?.hear.toLowerCase())) objections = [...objections, item.pair];
+      }
+      return { ...now, summary, products: formatProduct(products), pricing: formatPrice(pricing), objections: formatObjections(objections) };
+    });
+    const questionAdds = items.filter((item) => item.apply === "question").map((item) => item.preview);
+    if (questionAdds.length) setQualifying((now) => formatQuestions([...questionLines(now), ...questionAdds.filter((line) => !questionLines(now).some((item) => item.toLowerCase() === line.toLowerCase()))]));
+    const openerItem = items.find((item) => item.apply === "opener");
+    if (openerItem && !opener.trim()) setOpener(openerItem.preview);
+    for (const item of items.filter((entry) => entry.apply === "slide" && entry.slideTitle)) {
+      const number = (activeDeck?.slides || []).find((slide) => slide.title === item.slideTitle)?.number || 0;
+      const slide = (activeDeck?.slides || []).find((entry) => entry.number === number);
+      if (number && slide && !String(slide.talkingPoints || "").trim()) editPoint(number, item.preview);
+    }
+  };
   const setProduct = (patch: Partial<typeof product>) => {
     setSections((now) => ({ ...now, products: formatProduct({ ...parseProduct(now.products), ...patch }) }));
   };
@@ -772,6 +862,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
         <div className={styles.stepBody}>
           {step === 1 ? (
             <>
+              <SuggestBox step={1} items={suggestions} onApply={(item) => applyList([item])} onAll={() => applyList(suggestions.filter((item) => item.step === 1))} />
               {factBox(["summary"])}
               <div className={styles.studioName}>
                 <label className={styles.label}>Campaign name<input className={styles.field} value={name} placeholder="Adam for dental practices" onChange={(event) => setName(event.target.value)} /></label>
@@ -847,6 +938,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
 
           {step === 2 ? (
             <>
+              <SuggestBox step={2} items={suggestions} onApply={(item) => applyList([item])} onAll={() => applyList(suggestions.filter((item) => item.step === 2))} />
               {factBox(["products"])}
               <label className={styles.label}>Product
                 <textarea className={styles.area} value={product.summary} placeholder="What you sell, in one short paragraph." onChange={(event) => setProduct({ summary: event.target.value })} />
@@ -893,6 +985,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
 
           {step === 3 ? (
             <>
+              <SuggestBox step={3} items={suggestions} onApply={(item) => applyList([item])} onAll={() => applyList(suggestions.filter((item) => item.step === 3))} />
               {factBox(["pricing"])}
               <p className={styles.sayPreview}>{priceSpeech(quotes, price)}</p>
               <label className={styles.label}>Pricing note
@@ -902,12 +995,14 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
               {price.plans.map((plan, index) => (
                 <div key={`plan-${index}`} className={styles.planRow}>
                   <input className={styles.field} value={plan.name} placeholder="Name" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} />
-                  <input className={styles.field} value={plan.price} placeholder="£39 a month" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, price: event.target.value } : item) })} />
-                  <input className={styles.field} value={plan.includes} placeholder="What they get" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, includes: event.target.value } : item) })} />
+                  <input className={styles.field} value={plan.price} placeholder="£39" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, price: event.target.value } : item) })} />
+                  <input className={styles.field} value={plan.period} placeholder="monthly" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, period: event.target.value } : item) })} />
+                  <input className={styles.field} value={plan.includes} placeholder="111 minutes" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, includes: event.target.value } : item) })} />
+                  <input className={styles.field} value={plan.overage} placeholder="Overage" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, overage: event.target.value } : item) })} />
                   <button type="button" className={styles.btnGhost} onClick={() => setPrice({ plans: price.plans.filter((_, itemIndex) => itemIndex !== index) })}>Remove</button>
                 </div>
               ))}
-              <button type="button" className={styles.btnGhost} onClick={() => setPrice({ plans: [...price.plans, { name: "", price: "", includes: "" } satisfies PricePlan] })}>Add plan</button>
+              <button type="button" className={styles.btnGhost} onClick={() => setPrice({ plans: [...price.plans, { name: "", price: "", period: "", includes: "", overage: "" } satisfies PricePlan] })}>Add plan</button>
               <div className={styles.pair}>
                 <label className={styles.label}>Trial
                   <input className={styles.field} value={price.trial} placeholder="A trial can be set up on a later call." onChange={(event) => setPrice({ trial: event.target.value })} />
@@ -935,6 +1030,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
 
           {step === 4 ? (
             <>
+              <SuggestBox step={4} items={suggestions} onApply={(item) => applyList([item])} onAll={() => applyList(suggestions.filter((item) => item.step === 4))} />
               {factBox(["faqs", "objections"])}
               <p className={styles.note}>One objection, one answer. The agent uses these words, not a speech it invents.</p>
               {pairs.map((pair, index) => (

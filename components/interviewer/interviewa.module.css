@@ -191,6 +191,9 @@
 .thumbOn img { border-color: #155dfc; border-width: 2px; }
 .shareRow { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 12px; align-items: start; }
 .qr svg { width: 148px; height: 148px; display: block; }
+.suggest { border: 1px solid #dce6ff; background: #f5f8ff; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+.suggestRow { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-top: 8px; }
+.suggestRow .btnGhost { flex: none; }
 .step {
   background: #fff;
   border: 1px solid var(--line);

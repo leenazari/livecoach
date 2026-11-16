@@ -110,6 +110,47 @@ if (product.summary !== "A website agent" || product.benefits[0] !== "Instant re
 if (fields.parseProduct("Free text stays").summary !== "Free text stays") throw new Error("a plain product note was dropped");
 const objection = fields.parseObjections(fields.formatObjections([{ hear: "Too much", say: "Use the written price" }]));
 if (objection[0].hear !== "Too much" || !objection[0].say.includes("written price")) throw new Error("an objection pair was lost");
+const extracted = loadTs(new URL("../lib/interviewer/setup-extract.ts", import.meta.url).pathname);
+const tiers = extracted.extractSetup("Starter £39 per month for 111 minutes. Starter £390 per year for 111 minutes. Growth £99 per month for 500 minutes. Overage £0.40 per minute.");
+const tierKeys = new Set(tiers.plans.map((plan) => `${plan.name}|${plan.price}|${plan.period}|${plan.includes}`));
+if (tierKeys.size < 3) throw new Error(`price tiers were collapsed: ${JSON.stringify(tiers.plans)}`);
+const growth = tiers.plans.find((plan) => plan.name === "Growth");
+if (!growth || growth.period !== "monthly" || !/500 minutes/.test(growth.includes) || !/£0\.40/.test(growth.overage)) {
+  throw new Error(`the Growth tier lost its own minutes or overage: ${JSON.stringify(tiers.plans)}`);
+}
+const leadIn = extracted.extractSetup("From £39 a month. Starter: £39 per month for 111 minutes.");
+if (leadIn.plans.length !== 1 || leadIn.plans[0].name !== "Starter") throw new Error(`a lead-in price became a second tier: ${JSON.stringify(leadIn.plans)}`);
+const cal = extracted.extractSetup("Individuals Free Everything you need. Teams Yearly $12 per user/month Save 25%. Organizations Yearly $28 per user/month. Teams $12 per month/user. Organizations $28 per month/user. Enterprise Custom. 14 day free trial.");
+const calKeys = cal.plans.map((plan) => `${plan.name}|${plan.price}|${plan.period}`);
+for (const key of ["Individuals|Free|", "Teams|$12|yearly", "Organizations|$28|yearly", "Teams|$12|monthly", "Organizations|$28|monthly", "Enterprise|Custom|"]) {
+  if (!calKeys.includes(key)) throw new Error(`a pricing page tier was missing (${key}): ${JSON.stringify(cal.plans)}`);
+}
+if (!/25%/.test(cal.discount) || !/14 day free trial/i.test(cal.trial)) throw new Error("trial or annual discount was dropped");
+const brochure = extracted.extractSetup("Meet Adam. No price is printed in the brochure. Adam suits any business that gets visitors to its website. Turns visitors into booked demos.");
+if (brochure.plans.length) throw new Error("a no-price brochure invented a plan");
+if (!/any business/i.test(brochure.customer) || !brochure.benefits.some((line) => /booked demos/i.test(line))) throw new Error("brochure customer or benefit was dropped");
+const suggestions = extracted.suggestionsFor({
+  extract: brochure,
+  source: "brochure",
+  summary: "Meet Adam, your 24/7 AI sales agent.",
+  opener: "Thanks for joining the call.",
+  productSummary: "Meet Adam, your 24/7 AI sales agent.",
+  customer: "",
+  benefits: [],
+  disqualify: [],
+  questions: ["What does the business do?"],
+  note: "Starter: £39 per month for 111 minutes.",
+  plans: [],
+  trial: "",
+  discount: "",
+  objections: [{ hear: "", say: "Owner objection note" }],
+  slides: [{ number: 1, title: "Meet Adam", talkingPoints: "Already written" }],
+});
+if (suggestions.some((item) => item.apply === "opener" || item.apply === "summary" || item.apply === "plan" || item.apply === "slide")) {
+  throw new Error(`a filled field was suggested for replacement: ${JSON.stringify(suggestions)}`);
+}
+const promptSource = readFileSync(new URL("../lib/interviewer/prompt.ts", import.meta.url), "utf8");
+if (!promptSource.includes("every line under Plans") || !promptSource.includes("any overage")) throw new Error("the prompt does not read the full plans list");
 
 console.log("speech, guardrail, pacing and profile checks passed");
 console.log("Red team (filter, no live model):");

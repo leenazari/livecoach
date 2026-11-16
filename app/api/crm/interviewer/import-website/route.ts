@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type FetchedPage = { url: string; chars: number };
-type ImportResult = { documents: Draft[]; pages: FetchedPage[] };
+type ImportResult = { documents: Draft[]; pages: FetchedPage[]; sourceText?: string };
 const importInflight = new Map<string, Promise<ImportResult>>();
 const importRecent = new Map<string, { at: number; result: ImportResult }>();
 
@@ -82,7 +82,7 @@ async function draftNotes(pages: Array<{ url: string; text: string }>): Promise<
 Use only these titles, and omit a title when the pages do not state it: Business summary; Products and services; Pricing; FAQs and objections; Next step and booking; Objection handling; Qualifying questions.
 Objection handling is 10 to 15 short spoken replies. Each ends with a question. Cover price, already having a solution, trust, setup time, integration, data, needing to think, not right now, what if it does not work, and the decision maker being absent. Use only facts written in the page text. Do not invent a statistic, a client, or a price.
 Use only facts that are written in the page text. Do not add a product, price, name, or number from anywhere else.
-Copy each price exactly as it appears, including the £ sign. On that same line, add the page URL in parentheses. If the page text has no price, do not mention a price.
+Copy each price exactly as it appears, including the £ sign. Every price point is its own line. A monthly price and a yearly price are two lines, never one. Name the plan, the billing period, what is included, and any overage. If the page text has no price, do not mention a price.
 Write short plain sentences. Use lines that start with "- " for separate facts.
 No markdown headings and no tables. Each body must be under 1500 characters.`,
         },
@@ -254,7 +254,7 @@ export async function POST(req: Request) {
         detail: { pages: pages.length, inputTokens: drafted.inputTokens, outputTokens: drafted.outputTokens },
       });
     }
-    return { documents, pages: fetched };
+    return { documents, pages: fetched, sourceText: source.slice(0, 24000) };
     };
     const job = scrape();
     if (campaignKey) importInflight.set(campaignKey, job);
