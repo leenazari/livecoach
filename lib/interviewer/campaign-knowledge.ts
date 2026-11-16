@@ -4,7 +4,7 @@ import { parseObjections, parsePrice, parseProduct, questionLines } from "./setu
 import { extractSetup } from "./setup-extract";
 import { isInternalCostLine } from "./slide-notes";
 
-const CAP = 9000;
+const CAP = 1800;
 
 export type CampaignKnowledgeInput = {
   campaignName?: string | null;
@@ -64,7 +64,7 @@ export function campaignKnowledgeParts(input: CampaignKnowledgeInput): Knowledge
     part("Next step", lines([docs.get("next") || ""], seen), 5, "field-next"),
     part("Owner notes", lines([ownerNotes], seen), 5, "field-owner-notes"),
     part("Also on file", lines(extras, seen), 5, "field-owner-notes"),
-    part("Brochure notes", lines([input.deckKnowledge || ""], seen), 1, "field-slides"),
+    part("Brochure notes", input.slides?.length ? "" : lines([input.deckKnowledge || ""], seen), 1, "field-slides"),
   ].filter((item): item is KnowledgePart => Boolean(item));
   return blocks;
 }
@@ -106,8 +106,8 @@ function slideLines(slides: CampaignKnowledgeInput["slides"], seen: Set<string>)
   return (slides || []).map((slide) => {
     const title = clean(slide.title) || "No headline yet";
     const when = clean(slide.oneLine || "");
-    const points = clean(slide.talkingPoints || "");
-    return keep(`${slide.number}. ${title}.${when ? ` Show when ${when}.` : ""}${points ? ` Talking points: ${points}.` : ""}`, seen);
+    const points = clip(clean(slide.talkingPoints || ""), 90);
+    return keep(`${slide.number}. ${title}.${points ? ` Talking points: ${points}` : ""}`, seen);
   }).filter(Boolean).join("\n");
 }
 
@@ -124,6 +124,11 @@ function keep(value: string, seen: Set<string>): string {
   if (!key || seen.has(key)) return "";
   seen.add(key);
   return value;
+}
+
+function clip(value: string, max: number): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  return text.length <= max ? text : `${text.slice(0, max - 1).replace(/\s+\S*$/, "")}.`;
 }
 
 function clean(value: string): string {

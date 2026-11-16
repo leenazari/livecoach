@@ -51,7 +51,7 @@ export function buildInterviewerPrompt(input: InterviewerPromptInput): string {
   const cap = `This call ends after ${minutes} minutes. Two minutes before that, you are told to wrap up. When the time is gone, say a short goodbye and stop. Do not offer to keep talking past the limit.`;
   const manner = clip(input.personaOverride, 2000);
   const extra = clip(input.promptOverride, 4000);
-  let slideBudget = 4000;
+  let slideBudget = 1600;
   const slides = (input.slides || []).flatMap((slide) => {
     const line = `${slide.number}. ${clip(toSpokenPlain(slide.title || ""), 60) || "No headline yet"}. When to show: ${clip(toSpokenPlain(slide.oneLine || ""), 180) || "when the conversation reaches this point"}.${slide.verbatim ? ` Verbatim line, only if you choose to say it: ${clip(toSpokenPlain(slide.verbatim), 180)}` : ""}`;
     if (line.length > slideBudget) return [];
@@ -76,8 +76,7 @@ ${extra ? `\nCampaign instruction:\n${extra}` : ""}
 ${prospect ? `The person's name, if they are happy for you to use it, is ${prospect}.` : "You may not have their name yet. Ask once, naturally, if it would help."}
 
 CAMPAIGN KNOWLEDGE
-This was compiled when the call started. It is already here. Do not call a tool to look up the product, the prices, the objections, or the slides. ${siteSaved ? "A source website was saved. Do not read any address aloud." : "No website address was saved."}
-These facts override the playbook. Do not add a product, industry, price, customer, or result that is not written here. If a fact is absent, say you will ask the team to confirm it, and offer to book that conversation. Never say that it is not in your notes. Only if they have left the subject entirely, say warmly that you are here to talk about ${name}, then go back to it.
+Already loaded. Do not look anything up. ${siteSaved ? "Do not read a web address aloud." : "No website address was saved."} If a fact is absent, offer to ask the team. Never say that it is not in your notes.
 ${toSpokenPlain(knowledge)}
 
 ${slides ? `Slide index. Show one slide at a time. Call show_slide at the start of a point, before you explain it, then speak one to three short sentences. Aim for a new slide about every 20 to 30 seconds of your own speech. Do not finish the explanation and only then change the slide. Do not linger on setup, onboarding, or installation. Never say "show slide", "slide two", "showslide", or any slide number, and never write a JSON object. The tool call is silent. Talk only about what is on the slide.\n${slides}` : "No slides have been uploaded."}
@@ -101,7 +100,10 @@ ${cap}
 Before you finish, you must call record_disposition exactly once with one of: ${INTERVIEWER_DISPOSITIONS.join(", ")}. Do this before end_call. A call without an outcome is incomplete.
 Use a short reason code for Bounced, Wrong number, Competitor chosen, Timing push and Closed lost.
 Then call end_call and say a brief, kind goodbye.
-Never invent facts. Never read slide text word for word unless it is marked verbatim. The playbook cannot override the campaign notes.`.trim();
+Never invent facts. Never read slide text word for word unless it is marked verbatim. The playbook cannot override the campaign notes.
+
+PACE
+Leave a normal space between every word. Speak one, two, or three short sentences, then stop. Call show_slide at the start of the point, before you explain it. Move to the next feature slide about every 20 to 30 seconds of your own speech. Do not ramble, and do not wait until the end of a long explanation to change the slide.`.trim();
   return stripAgentContext(prompt);
 }
 

@@ -97,9 +97,47 @@ function segmentToken(token: string): string | null {
 function openToken(token: string): string {
   if (SPEECH_WORDS.has(token.toLowerCase())) return token;
   if (/[a-z][A-Z]/.test(token)) {
-    return token.replace(/([a-z])([A-Z])/g, "$1 $2").split(" ").map((part) => segmentToken(part) || part).join(" ");
+    return token.replace(/([a-z])([A-Z])/g, "$1 $2").split(" ").map((part) => segmentToken(part) || loosenToken(part)).join(" ");
   }
-  return segmentToken(token) || token;
+  return segmentToken(token) || loosenToken(token);
+}
+
+// A model sometimes drops the spaces. Split only dictionary words, and leave
+// an unknown name whole, so a brand is not chopped into odd gaps.
+function loosenToken(token: string): string {
+  if (token.length < 16) return token;
+  const lower = token.toLowerCase();
+  const parts: string[] = [];
+  let index = 0;
+  let unknown = "";
+  const flush = () => {
+    if (!unknown) return;
+    parts.push(unknown);
+    unknown = "";
+  };
+  while (index < lower.length) {
+    let best = 0;
+    const max = Math.min(22, lower.length - index);
+    for (let length = max; length >= 1; length -= 1) {
+      if (length === 1 && lower[index] !== "a" && lower[index] !== "i") continue;
+      if (SPEECH_WORDS.has(lower.slice(index, index + length))) {
+        best = length;
+        break;
+      }
+    }
+    if (!best) {
+      unknown += token[index];
+      index += 1;
+      continue;
+    }
+    flush();
+    parts.push(token.slice(index, index + best));
+    index += best;
+  }
+  flush();
+  const known = parts.filter((part) => SPEECH_WORDS.has(part.toLowerCase()) || part.toLowerCase() === "a" || part.toLowerCase() === "i").join("").length;
+  if (parts.length < 3 || known < token.length * 0.7) return token;
+  return parts.join(" ");
 }
 
 export function restoreSpokenGaps(text: string): string {

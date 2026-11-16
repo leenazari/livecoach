@@ -8,6 +8,7 @@ import { isDeepgramConcurrencyRefusal } from "@/lib/interviewer/concurrency";
 import { leadDeclinedDemo } from "@/lib/interviewer/call-close";
 import { HUMAN_TEAM_OFFER, TIME_LIMIT_GOODBYE, TIME_WARNING_INJECT, shouldSpeakTimeWarning, twoMinuteLine } from "@/lib/interviewer/call-limit";
 import { sendSlideClickFirst, slideClickDecision, slideClickSpeech } from "@/lib/interviewer/slide-click";
+import { slideRole } from "@/lib/interviewer/slide-role";
 import { isHoldRequest, nextSilenceCue, type SilencePhase } from "@/lib/interviewer/silence";
 import {
   agentTurnExtends,
@@ -346,7 +347,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         const pending = pendingInjectRef.current;
         pendingInjectRef.current = "";
         if (pending && agentSocket.readyState === WebSocket.OPEN) {
-          agentSocket.send(JSON.stringify({ type: "InjectUserMessage", content: pending }));
+          agentSocket.send(JSON.stringify({ type: "InjectAgentMessage", behavior: "interrupt", message: forSpeech(pending) }));
         }
         if (slideQueue.current.length) {
           const next = slideQueue.current.shift();
@@ -636,7 +637,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         advanceTimer.current = window.setTimeout(() => {
           const next = slideQueue.current.shift();
           if (next) showOne(next);
-        }, 8000);
+        }, 2500);
       };
       const queueSlide = (slide: { number: number; url: string; title: string; slogan: string }) => {
         if (!greetingDoneRef.current) {
@@ -650,7 +651,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
             advanceTimer.current = window.setTimeout(() => {
               const next = slideQueue.current.shift();
               if (next) showOne(next);
-            }, 8000);
+            }, 2500);
           }
           return;
         }
@@ -874,9 +875,17 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         }
         const agentTalking = nextAt > context.currentTime + 0.05;
         const slideQuiet = Date.now() - Math.max(lastSlideAt.current, callStartedAt);
-        if (greetingDoneRef.current && agentTalking && !silence.speaking && slideQuiet > 22000 && Date.now() - lastPaceAt > 22000 && Date.now() - leadQuestionAt.current > 8000) {
+        if (greetingDoneRef.current && agentTalking && !silence.speaking && Date.now() >= manualSlideUntil.current && slideQuiet > 25000 && Date.now() - lastPaceAt > 25000 && Date.now() - leadQuestionAt.current > 8000) {
           lastPaceAt = Date.now();
-          note("Note for you only. Do not read this aloud. About 20 seconds have passed on this slide. Call show_slide now for the next feature, before you explain it. Then one to three short upbeat sentences. Do not linger. Skip setup slides unless they asked.");
+          const current = slideNumberRef.current;
+          const index = slideIndexRef.current;
+          const start = Math.max(0, index.findIndex((item) => item.number === current));
+          let next = index.find((item, itemIndex) => itemIndex > start && slideRole(item.title) !== "setup");
+          if (!next) next = index.find((item) => item.number !== current && slideRole(item.title) !== "setup");
+          if (next) {
+            showOne({ number: next.number, url: next.url || "", title: next.title, slogan: next.slogan || "" });
+            note(`Note for you only. Do not read this aloud. The slide is now ${next.number}, ${next.title}. Call show_slide for that slide at the start of the next sentence, then one or two short sentences.`);
+          }
         }
       }, 1000);
       heartbeat = window.setInterval(() => {
@@ -1025,25 +1034,25 @@ export function useInterviewerCall(token: string, capMinutes = "") {
     lastClickRef.current = { number: slide.number, at: now };
     const title = slide.title || `Slide ${slide.number}`;
     const speech = slideClickSpeech(title, slide.points || [], decision === "ask");
-    const socket = agentSocketRef.current;
+    manualSlideUntil.current = now + 20000;
+    rememberSeen(slide.number);
+    slideNumberRef.current = slide.number;
+    setSlideNumber(slide.number);
+    setSlideUrl(slide.url || "");
+    setSlideLabel(title);
+    setSlideSlogan(slide.slogan || "");
     clickMarkRef.current = performance.now();
+    interruptRef.current();
+    const socket = agentSocketRef.current;
     sendSlideClickFirst(() => {
       if (!greetingDoneRef.current) {
         pendingInjectRef.current = speech;
         return;
       }
-      interruptRef.current();
       if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "InjectUserMessage", content: speech }));
+        socket.send(JSON.stringify({ type: "InjectAgentMessage", behavior: "interrupt", message: forSpeech(speech) }));
       }
     }, () => {
-      manualSlideUntil.current = Date.now() + 20000;
-      rememberSeen(slide.number);
-      slideNumberRef.current = slide.number;
-      setSlideNumber(slide.number);
-      setSlideUrl(slide.url || "");
-      setSlideLabel(title);
-      setSlideSlogan(slide.slogan || "");
       const session = sessionRef.current;
       if (session) {
         void postJson("/api/interviewer/slides", {

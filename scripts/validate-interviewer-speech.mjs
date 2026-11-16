@@ -151,7 +151,7 @@ if (suggestions.some((item) => item.apply === "opener" || item.apply === "summar
 }
 const promptSource = readFileSync(new URL("../lib/interviewer/prompt.ts", import.meta.url), "utf8");
 if (!promptSource.includes("every line under Plans") || !promptSource.includes("any overage")) throw new Error("the prompt does not read the full plans list");
-if (!promptSource.includes("Do not call a tool to look up")) throw new Error("the prompt still fetches knowledge during the call");
+if (!promptSource.includes("Do not look anything up")) throw new Error("the prompt still fetches knowledge during the call");
 const sheets = loadTs(new URL("../lib/interviewer/price-sheet.ts", import.meta.url).pathname);
 const csv = sheets.parseCsvPriceSheet("Plan,Monthly,Annual,Minutes,Features,Overage,Region,Margin\nStarter,£39,£390,111 minutes,Live chat,£0.40 per minute,UK,40%\nGrowth,£99,£990,500 minutes,Priority,£0.30 per minute,EU,55%\n");
 const csvKeys = csv.plans.map((plan) => `${plan.name}|${plan.price}|${plan.period}|${plan.includes}|${plan.details}`);
@@ -199,6 +199,27 @@ if (!quoted.includes("Quotes are allowed") || !quoted.includes("$12, billed mont
 const noted = knowledge.compileCampaignKnowledge({ quotesAllowed: false, documents: [{ title: "Owner notes", body: "Mention the dental example." }, { title: "Billing", body: "Our margin is 40 percent." }], slides: [] });
 if (!noted.includes("Mention the dental example") || /margin/i.test(noted)) throw new Error("owner notes were dropped or a margin was kept");
 console.log(`knowledge compile ${compileMs.toFixed(2)}ms, no extra fetch`);
+const spaced = forSpeech("Transitioningfromatakeawaytoarestaurantcanbereallyexciting. So, howdoyoucurrentlyserveyourcustomers?");
+if (!/\bhow do you currently\b/i.test(spaced)) throw new Error(`run-together speech stayed jammed: ${spaced}`);
+const pacePrompt = buildInterviewerPrompt({
+  campaignName: "Swoopos",
+  prospectName: "Lee",
+  personaOverride: null,
+  promptOverride: null,
+  maxMinutes: 30,
+  quotesAllowed: false,
+  documents: [
+    { title: "Business summary", body: "Swoopos is an all in one till, payments and orders system for hospitality." },
+    { title: "Products and services", body: "Product\nSwoopos till software.\n\nIdeal customer\nTakeaways and restaurants\n\nBenefits\n- Quick service\n\nDisqualifiers\n" },
+    { title: "Pricing", body: "Pricing note\n\n\nPlans\n- Starter | £39 | monthly | 111 minutes |  |\n\nTrial\n\n\nDiscount\n\n\nDo not say\n" },
+  ],
+  slides: Array.from({ length: 12 }, (_, index) => ({ number: index + 1, title: `Feature ${index + 1} for the venue`, oneLine: "When they ask", talkingPoints: "One short point about this feature and how it helps service.", verbatim: null })),
+  deckKnowledge: "A long brochure outline. ".repeat(80),
+  qualifyingQuestions: ["What does the business do?"],
+});
+if (pacePrompt.length > 17500) throw new Error(`prompt is still too long: ${pacePrompt.length}`);
+if (!pacePrompt.trim().endsWith("change the slide.")) throw new Error("pacing rules are not the last instruction");
+console.log(`prompt chars ${pacePrompt.length}, about ${Math.round(pacePrompt.length / 4)} tokens, was 19714 chars`);
 const pdfPlans = sheets.plansFromSheetText("Starter GBP 39 per month for 111 minutes. Growth GBP 99 per month for 500 minutes.");
 const pdfKeys = pdfPlans.plans.map((plan) => `${plan.name}|${plan.price}|${plan.period}`);
 if (!pdfKeys.includes("Starter|£39|monthly") || !pdfKeys.includes("Growth|£99|monthly")) throw new Error(`PDF text dropped a tier: ${JSON.stringify(pdfPlans.plans)}`);
