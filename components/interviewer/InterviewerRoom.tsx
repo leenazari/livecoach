@@ -315,6 +315,13 @@ export default function InterviewerRoom({
               ) : null}
               {call.phase !== "live" && !call.voiceLive ? <p className={styles.startingCall}>Starting your call…</p> : null}
             </div>
+            <div className={styles.captionStrip}>
+              <LiveCaption lines={presentTranscript(call.captions)} interim={call.interim} />
+              <button type="button" className={styles.featuresToggle} aria-pressed={featuresOpen} onClick={() => setFeaturesOpen((open) => !open)}>
+                {featuresOpen ? "Hide points" : "Key points"}
+              </button>
+              <button type="button" className={styles.expandBtn} onClick={() => setTalkOpen(true)}>Expand</button>
+            </div>
           </div>
           <aside className={styles.featurePanel}>
             <p className={styles.slideKicker}>Key features</p>
@@ -324,13 +331,6 @@ export default function InterviewerRoom({
               </ul>
             ) : <p className={styles.note}>Key points appear with the slide.</p>}
           </aside>
-          <div className={styles.captionStrip}>
-            <LiveCaption lines={presentTranscript(call.captions)} interim={call.interim} />
-            <button type="button" className={styles.featuresToggle} aria-pressed={featuresOpen} onClick={() => setFeaturesOpen((open) => !open)}>
-              {featuresOpen ? "Hide points" : "Key points"}
-            </button>
-            <button type="button" className={styles.expandBtn} onClick={() => setTalkOpen(true)}>Expand</button>
-          </div>
         </section>
         {talkOpen ? (
           <div className={styles.transcriptDrawer} role="dialog" aria-label="Full transcript">
