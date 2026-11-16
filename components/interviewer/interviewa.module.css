@@ -694,7 +694,7 @@
 .slideStage img {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
   max-width: 100%;
   object-fit: contain;
 }
@@ -745,20 +745,26 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 48px;
+  height: 72px;
+  min-height: 72px;
   max-height: 72px;
+  overflow: hidden;
+  flex: none;
   color: #f4efe6;
   min-width: 0;
 }
 .captionLines {
   flex: 1;
   min-width: 0;
+  height: 72px;
+  max-height: 72px;
   overflow: hidden;
   font-size: 13px;
   line-height: 1.35;
 }
 .captionLines p {
   margin: 0;
+  height: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1111,13 +1117,12 @@
   .slideStage {
     width: 100%;
     max-width: 100%;
-    max-height: none;
     height: auto;
-    aspect-ratio: auto;
+    aspect-ratio: var(--slide-w, 16) / var(--slide-h, 9);
     padding: 0;
     background: transparent;
   }
-  .slideStage img { width: 100%; height: auto; object-fit: contain; }
+  .slideStage img { width: 100%; height: 100%; object-fit: contain; }
   .fullScreenBtn { display: inline-flex; }
   .featurePanel { max-height: 96px; }
   .slideList {
@@ -1170,8 +1175,8 @@
   .slideStage {
     width: 100%;
     max-width: 100%;
-    max-height: none;
     height: auto;
+    aspect-ratio: var(--slide-w, 16) / var(--slide-h, 9);
     padding: 0;
     border-radius: 0;
     background: transparent;
@@ -1203,7 +1208,8 @@
   }
   .slideNumber { display: none; }
   .slideThumb { width: 72px; min-width: 72px; max-width: 72px; height: auto; }
-  .captionStrip { padding: 0 10px; max-height: 56px; min-height: 44px; }
+  .captionStrip, .captionLines { height: 72px; min-height: 72px; max-height: 72px; overflow: hidden; }
+  .captionStrip { padding: 0 10px; }
   .captionLines { flex: 1; }
   .controlBar { gap: 12px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); }
   .barLeft { gap: 8px; }

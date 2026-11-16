@@ -30,7 +30,7 @@ export function takeSpokenSlideCommands(value: string): { text: string; slides: 
     if (!number) return phrase;
     slides.push(number);
     return " ";
-  });
+  }).replace(/\bshow\s*slide\b/gi, " ");
   return {
     text: text.replace(/\s+([,.!?])/g, "$1").replace(/[ \t]{2,}/g, " ").replace(/\s+\n/g, "\n").trim(),
     slides,

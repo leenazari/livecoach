@@ -25,6 +25,8 @@ function holdback(value: string): number {
   if (slide) return slide;
   if (MARKER_TAIL.test(value)) return 1;
   if (/(^|\n)[-*•]$/.test(value)) return 1;
+  const word = value.match(/[A-Za-z']+$/);
+  if (word) return Math.min(word[0].length, 80);
   return 0;
 }
 

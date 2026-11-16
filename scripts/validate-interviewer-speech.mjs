@@ -199,8 +199,19 @@ if (!quoted.includes("Quotes are allowed") || !quoted.includes("$12, billed mont
 const noted = knowledge.compileCampaignKnowledge({ quotesAllowed: false, documents: [{ title: "Owner notes", body: "Mention the dental example." }, { title: "Billing", body: "Our margin is 40 percent." }], slides: [] });
 if (!noted.includes("Mention the dental example") || /margin/i.test(noted)) throw new Error("owner notes were dropped or a margin was kept");
 console.log(`knowledge compile ${compileMs.toFixed(2)}ms, no extra fetch`);
-const spaced = forSpeech("Transitioningfromatakeawaytoarestaurantcanbereallyexciting. So, howdoyoucurrentlyserveyourcustomers?");
-if (!/\bhow do you currently\b/i.test(spaced)) throw new Error(`run-together speech stayed jammed: ${spaced}`);
+const sessionLine = "That sounds fantastic! A take away is a busy environment, and having the right till system can make a huge difference. How are you currently handling orders and payments?";
+const spokenSession = forSpeech(sessionLine);
+if (/env i r|p a y|he a r|h and l/i.test(spokenSession)) throw new Error(`a real word was split: ${spokenSession}`);
+if (!spokenSession.includes("environment") || !spokenSession.includes("payments") || !/handling orders/i.test(spokenSession)) {
+  throw new Error(`session punctuation was damaged: ${spokenSession}`);
+}
+const jammedModel = forSpeech("andhavingtherighttillsystemcanmakeahugedifference");
+if (/p a y|env i r/.test(jammedModel)) throw new Error(`a safe split broke a word: ${jammedModel}`);
+const stream = createSpeechStreamFilter();
+const streamed = `${stream.push("A busy environ")}${stream.push("ment, and having the right till.")}${stream.flush()}`;
+if (!streamed.includes("environment,") || !streamed.includes("having")) throw new Error(`a stream chunk broke the sentence: ${streamed}`);
+const stripped = takeSpokenSlideCommands("Let me show you that. showslide Swoopos is an all-in-one EPOS system.");
+if (/showslide/i.test(stripped.text) || !stripped.text.includes("Swoopos is an all-in-one")) throw new Error(`slide command was not removed cleanly: ${stripped.text}`);
 const pacePrompt = buildInterviewerPrompt({
   campaignName: "Swoopos",
   prospectName: "Lee",

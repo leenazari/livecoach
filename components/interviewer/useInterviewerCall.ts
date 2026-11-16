@@ -8,7 +8,6 @@ import { isDeepgramConcurrencyRefusal } from "@/lib/interviewer/concurrency";
 import { leadDeclinedDemo } from "@/lib/interviewer/call-close";
 import { HUMAN_TEAM_OFFER, TIME_LIMIT_GOODBYE, TIME_WARNING_INJECT, shouldSpeakTimeWarning, twoMinuteLine } from "@/lib/interviewer/call-limit";
 import { sendSlideClickFirst, slideClickDecision, slideClickSpeech } from "@/lib/interviewer/slide-click";
-import { slideRole } from "@/lib/interviewer/slide-role";
 import { isHoldRequest, nextSilenceCue, type SilencePhase } from "@/lib/interviewer/silence";
 import {
   agentTurnExtends,
@@ -258,27 +257,25 @@ export function useInterviewerCall(token: string, capMinutes = "") {
     if (advanceQueueRef.current(clean)) return;
     if (slideQueue.current.length) return;
     if (Date.now() < manualSlideUntil.current) return;
-    if (slideTimer.current) window.clearTimeout(slideTimer.current);
-    slideTimer.current = window.setTimeout(() => {
-      const next = matchSpokenSlide(clean, slideIndexRef.current.map((item) => ({ number: item.number, keywords: item.keywords || [] })), slideNumberRef.current);
-      const slide = slideIndexRef.current.find((item) => item.number === next);
-      if (!slide || Date.now() < manualSlideUntil.current) return;
-      slideNumberRef.current = slide.number;
-      setSlideNumber(slide.number);
-      setSlideUrl(slide.url || "");
-      setSlideLabel(slide.title);
-      setSlideSlogan(slide.slogan || "");
-      const session = sessionRef.current;
-      if (session) {
-        void postJson("/api/interviewer/slides", {
-          token,
-          sessionId: session,
-          deckId: deckRef.current,
-          slideNumber: slide.number,
-          reason: `Auto: agent mentioned ${slide.title}`.slice(0, 240),
-        });
-      }
-    }, 2000);
+    const next = matchSpokenSlide(clean, slideIndexRef.current.map((item) => ({ number: item.number, keywords: item.keywords || [] })), slideNumberRef.current);
+    const slide = next == null ? null : slideIndexRef.current.find((item) => item.number === next);
+    if (!slide) return;
+    slideNumberRef.current = slide.number;
+    setSlideNumber(slide.number);
+    setSlideUrl(slide.url || "");
+    setSlideLabel(slide.title);
+    setSlideSlogan(slide.slogan || "");
+    rememberSeen(slide.number);
+    const session = sessionRef.current;
+    if (session) {
+      void postJson("/api/interviewer/slides", {
+        token,
+        sessionId: session,
+        deckId: deckRef.current,
+        slideNumber: slide.number,
+        reason: `Auto: agent mentioned ${slide.title}`.slice(0, 240),
+      });
+    }
   }, [rememberSeen, saveCaption, token]);
 
   const connectVoice = useCallback(async () => {
@@ -634,10 +631,6 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         lastSlideAt.current = Date.now();
         if (advanceTimer.current) window.clearTimeout(advanceTimer.current);
         if (!slideQueue.current.length) return;
-        advanceTimer.current = window.setTimeout(() => {
-          const next = slideQueue.current.shift();
-          if (next) showOne(next);
-        }, 2500);
       };
       const queueSlide = (slide: { number: number; url: string; title: string; slogan: string }) => {
         if (!greetingDoneRef.current) {
@@ -645,14 +638,9 @@ export function useInterviewerCall(token: string, capMinutes = "") {
           return;
         }
         const burst = slideQueue.current.length > 0 || (lastSlideAt.current > 0 && Date.now() - lastSlideAt.current < 1500);
+        if (Date.now() < manualSlideUntil.current && slide.number !== slideNumberRef.current) return;
         if (burst && slideNumberRef.current !== slide.number) {
           slideQueue.current.push(slide);
-          if (!advanceTimer.current) {
-            advanceTimer.current = window.setTimeout(() => {
-              const next = slideQueue.current.shift();
-              if (next) showOne(next);
-            }, 2500);
-          }
           return;
         }
         showOne(slide);
@@ -877,15 +865,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         const slideQuiet = Date.now() - Math.max(lastSlideAt.current, callStartedAt);
         if (greetingDoneRef.current && agentTalking && !silence.speaking && Date.now() >= manualSlideUntil.current && slideQuiet > 25000 && Date.now() - lastPaceAt > 25000 && Date.now() - leadQuestionAt.current > 8000) {
           lastPaceAt = Date.now();
-          const current = slideNumberRef.current;
-          const index = slideIndexRef.current;
-          const start = Math.max(0, index.findIndex((item) => item.number === current));
-          let next = index.find((item, itemIndex) => itemIndex > start && slideRole(item.title) !== "setup");
-          if (!next) next = index.find((item) => item.number !== current && slideRole(item.title) !== "setup");
-          if (next) {
-            showOne({ number: next.number, url: next.url || "", title: next.title, slogan: next.slogan || "" });
-            note(`Note for you only. Do not read this aloud. The slide is now ${next.number}, ${next.title}. Call show_slide for that slide at the start of the next sentence, then one or two short sentences.`);
-          }
+          note("Note for you only. Do not read this aloud. Call show_slide for the feature you are about to say, before the sentence, then one or two short sentences.");
         }
       }, 1000);
       heartbeat = window.setInterval(() => {

@@ -60,29 +60,41 @@ export function forPrompt(text: string): string {
   return normaliseBrandCaps(String(text || ""));
 }
 
-// Spoken text only. The screen and the transcript keep Interviewa.
-function segmentToken(token: string): string | null {
+const SHORT_WORD = new Set(["a", "an", "and", "are", "as", "at", "be", "do", "for", "how", "in", "is", "it", "of", "on", "or", "the", "to", "we", "you"]);
+
+function openToken(token: string): string {
+  if (SPEECH_WORDS.has(token.toLowerCase())) return token;
+  if (/[a-z][A-Z]/.test(token)) return token.replace(/([a-z])([A-Z])/g, "$1 $2");
+  if (token.length < 18) return token;
+  return safeSplit(token) || token;
+}
+
+// Split a long run of words only when every piece is a real word. A normal
+// word such as "environment" or "hear" is left whole.
+function safeSplit(token: string): string | null {
   const lower = token.toLowerCase();
-  if (token.length < 4 || SPEECH_WORDS.has(lower)) return null;
   const cost = new Array<number>(lower.length + 1).fill(Number.POSITIVE_INFINITY);
   const prev = new Array<number>(lower.length + 1).fill(-1);
+  const long = new Array<number>(lower.length + 1).fill(0);
   cost[0] = 0;
   for (let start = 0; start < lower.length; start += 1) {
     if (!Number.isFinite(cost[start])) continue;
     const max = Math.min(22, lower.length - start);
     for (let length = max; length >= 1; length -= 1) {
-      if (length === 1 && lower[start] !== "a" && lower[start] !== "i") continue;
       const slice = lower.slice(start, start + length);
-      if (!SPEECH_WORDS.has(slice)) continue;
+      const allowed = length >= 4 ? SPEECH_WORDS.has(slice) : SHORT_WORD.has(slice);
+      if (!allowed) continue;
       const next = start + length;
       const nextCost = cost[start] + 1;
-      if (nextCost < cost[next]) {
+      const nextLong = long[start] + (length >= 4 ? 1 : 0);
+      if (nextCost < cost[next] || (nextCost === cost[next] && nextLong > long[next])) {
         cost[next] = nextCost;
         prev[next] = start;
+        long[next] = nextLong;
       }
     }
   }
-  if (!Number.isFinite(cost[lower.length]) || cost[lower.length] < 2) return null;
+  if (!Number.isFinite(cost[lower.length]) || long[lower.length] < 2) return null;
   const parts: string[] = [];
   for (let cursor = lower.length; cursor > 0; cursor = prev[cursor]) {
     const start = prev[cursor];
@@ -92,52 +104,6 @@ function segmentToken(token: string): string | null {
   parts.reverse();
   const phrase = parts.join(" ");
   return token[0] === token[0].toUpperCase() ? phrase.charAt(0).toUpperCase() + phrase.slice(1) : phrase;
-}
-
-function openToken(token: string): string {
-  if (SPEECH_WORDS.has(token.toLowerCase())) return token;
-  if (/[a-z][A-Z]/.test(token)) {
-    return token.replace(/([a-z])([A-Z])/g, "$1 $2").split(" ").map((part) => segmentToken(part) || loosenToken(part)).join(" ");
-  }
-  return segmentToken(token) || loosenToken(token);
-}
-
-// A model sometimes drops the spaces. Split only dictionary words, and leave
-// an unknown name whole, so a brand is not chopped into odd gaps.
-function loosenToken(token: string): string {
-  if (token.length < 16) return token;
-  const lower = token.toLowerCase();
-  const parts: string[] = [];
-  let index = 0;
-  let unknown = "";
-  const flush = () => {
-    if (!unknown) return;
-    parts.push(unknown);
-    unknown = "";
-  };
-  while (index < lower.length) {
-    let best = 0;
-    const max = Math.min(22, lower.length - index);
-    for (let length = max; length >= 1; length -= 1) {
-      if (length === 1 && lower[index] !== "a" && lower[index] !== "i") continue;
-      if (SPEECH_WORDS.has(lower.slice(index, index + length))) {
-        best = length;
-        break;
-      }
-    }
-    if (!best) {
-      unknown += token[index];
-      index += 1;
-      continue;
-    }
-    flush();
-    parts.push(token.slice(index, index + best));
-    index += best;
-  }
-  flush();
-  const known = parts.filter((part) => SPEECH_WORDS.has(part.toLowerCase()) || part.toLowerCase() === "a" || part.toLowerCase() === "i").join("").length;
-  if (parts.length < 3 || known < token.length * 0.7) return token;
-  return parts.join(" ");
 }
 
 export function restoreSpokenGaps(text: string): string {
