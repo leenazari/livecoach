@@ -151,6 +151,81 @@ if (suggestions.some((item) => item.apply === "opener" || item.apply === "summar
 }
 const promptSource = readFileSync(new URL("../lib/interviewer/prompt.ts", import.meta.url), "utf8");
 if (!promptSource.includes("every line under Plans") || !promptSource.includes("any overage")) throw new Error("the prompt does not read the full plans list");
+if (!promptSource.includes("Do not call a tool to look up")) throw new Error("the prompt still fetches knowledge during the call");
+const sheets = loadTs(new URL("../lib/interviewer/price-sheet.ts", import.meta.url).pathname);
+const csv = sheets.parseCsvPriceSheet("Plan,Monthly,Annual,Minutes,Features,Overage,Region,Margin\nStarter,£39,£390,111 minutes,Live chat,£0.40 per minute,UK,40%\nGrowth,£99,£990,500 minutes,Priority,£0.30 per minute,EU,55%\n");
+const csvKeys = csv.plans.map((plan) => `${plan.name}|${plan.price}|${plan.period}|${plan.includes}`);
+for (const key of ["Starter|£39|monthly|111 minutes; Live chat; Region: UK", "Starter|£390|yearly|111 minutes; Live chat; Region: UK", "Growth|£99|monthly|500 minutes; Priority; Region: EU"]) {
+  if (!csvKeys.includes(key)) throw new Error(`a price sheet row was collapsed or lost (${key}): ${JSON.stringify(csv.plans)}`);
+}
+if (JSON.stringify(csv).includes("40%") || JSON.stringify(csv).includes("55%")) throw new Error("a margin column was kept");
+const filled = sheets.priceSheetSuggestions(csv, [{ name: "Starter", price: "£39", period: "monthly", includes: "", overage: "" }], "", "");
+if (filled.some((item) => item.plan?.price === "£39" && item.plan.period === "monthly")) throw new Error("a saved plan was offered again");
+if (!filled.some((item) => item.source === "price sheet" && item.plan?.price === "£390")) throw new Error("a new yearly price was not suggested");
+const knowledge = loadTs(new URL("../lib/interviewer/campaign-knowledge.ts", import.meta.url).pathname);
+const started = performance.now();
+let compiled = "";
+for (let i = 0; i < 50; i += 1) {
+  compiled = knowledge.compileCampaignKnowledge({
+    campaignName: "Adam test",
+    opener: "Thanks for joining the call.",
+    quotesAllowed: false,
+    documents: [
+      { title: "Business summary", body: "Meet Adam, your 24/7 AI sales agent." },
+      { title: "Products and services", body: "Product\nMeet Adam, your 24/7 AI sales agent.\n\nIdeal customer\nTeams who miss web visitors\n\nBenefits\n- Turns visitors into booked demos\n\nDisqualifiers\n- They want a human only" },
+      { title: "Pricing", body: "Pricing note\nFrom £39 a month.\n\nPlans\n- Starter | £39 | monthly | 111 minutes | \n- Starter | £390 | yearly | 111 minutes |\n- Growth | £99 | monthly | 500 minutes | £0.40 per minute\n\nTrial\n14 day trial\n\nDiscount\n\n\nDo not say\nDo not mention a supplier." },
+      { title: "Objection handling", body: "When they say: It costs too much\nSay: Use the written price." },
+      { title: "FAQs and objections", body: "Setup takes one afternoon." },
+      { title: "Next step and booking", body: "Book a 20 minute demo." },
+      { title: "Billing", body: "Our margin is 40 percent. Deepgram supplies the voice." },
+    ],
+    qualifyingQuestions: ["What does the business do?"],
+    slides: [{ number: 1, title: "Meet Adam", oneLine: "After they describe the business", talkingPoints: "Turns visitors into booked demos" }],
+  });
+}
+const compileMs = (performance.now() - started) / 50;
+if (compileMs > 20) throw new Error(`knowledge compile took ${compileMs.toFixed(2)}ms`);
+if (!compiled.includes("Starter is £39") || !compiled.includes("Starter is £390") || !compiled.includes("Growth is £99")) throw new Error(`the brain dropped a price: ${compiled}`);
+if (!compiled.includes("Do not say a price")) throw new Error("quotes off still invites a price");
+if (/margin|deepgram/i.test(compiled)) throw new Error("internal cost reached the brain");
+if (!compiled.includes("booked demos") || !compiled.includes("What does the business do") || !compiled.includes("It costs too much") || !compiled.includes("Meet Adam")) throw new Error("the brain dropped product, questions, or slides");
+const quoted = knowledge.compileCampaignKnowledge({ quotesAllowed: true, documents: [{ title: "Pricing", body: "Pricing note\n\n\nPlans\n- Teams | $12 | monthly | per user | \n- Teams | $12 | yearly | per user |\n\nTrial\n\n\nDiscount\n\n\nDo not say\n" }], slides: [] });
+if (!quoted.includes("Quotes are allowed") || !quoted.includes("$12, billed monthly") || !quoted.includes("$12, billed yearly")) throw new Error("quotes on did not keep both periods");
+console.log(`knowledge compile ${compileMs.toFixed(2)}ms, no extra fetch`);
+const pdfPlans = sheets.plansFromSheetText("Starter GBP 39 per month for 111 minutes. Growth GBP 99 per month for 500 minutes.");
+const pdfKeys = pdfPlans.plans.map((plan) => `${plan.name}|${plan.price}|${plan.period}`);
+if (!pdfKeys.includes("Starter|£39|monthly") || !pdfKeys.includes("Growth|£99|monthly")) throw new Error(`PDF text dropped a tier: ${JSON.stringify(pdfPlans.plans)}`);
+const { crc32 } = await import("node:zlib");
+const sheetXml = `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Plan</t></is></c><c r="B1" t="inlineStr"><is><t>Monthly</t></is></c><c r="C1" t="inlineStr"><is><t>Annual</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Teams</t></is></c><c r="B2" t="inlineStr"><is><t>$12</t></is></c><c r="C2" t="inlineStr"><is><t>$120</t></is></c></row></sheetData></worksheet>`;
+const entryName = "xl/worksheets/sheet1.xml";
+const data = Buffer.from(sheetXml);
+const name = Buffer.from(entryName);
+const local = Buffer.alloc(30);
+local.writeUInt32LE(0x04034b50, 0);
+local.writeUInt16LE(20, 4);
+local.writeUInt16LE(0, 8);
+local.writeUInt32LE(crc32(data), 14);
+local.writeUInt32LE(data.length, 18);
+local.writeUInt32LE(data.length, 22);
+local.writeUInt16LE(name.length, 26);
+const central = Buffer.alloc(46);
+central.writeUInt32LE(0x02014b50, 0);
+central.writeUInt16LE(20, 4);
+central.writeUInt16LE(20, 6);
+central.writeUInt32LE(crc32(data), 16);
+central.writeUInt32LE(data.length, 20);
+central.writeUInt32LE(data.length, 24);
+central.writeUInt16LE(name.length, 28);
+const end = Buffer.alloc(22);
+end.writeUInt32LE(0x06054b50, 0);
+end.writeUInt16LE(1, 8);
+end.writeUInt16LE(1, 10);
+end.writeUInt32LE(central.length + name.length, 12);
+end.writeUInt32LE(local.length + name.length + data.length, 16);
+const xlsxBytes = Buffer.concat([local, name, data, central, name, end]);
+const xlsx = await sheets.parseXlsxPriceSheet(xlsxBytes);
+const xlsxKeys = xlsx.plans.map((plan) => `${plan.name}|${plan.price}|${plan.period}`);
+if (!xlsxKeys.includes("Teams|$12|monthly") || !xlsxKeys.includes("Teams|$120|yearly")) throw new Error(`spreadsheet tiers were collapsed: ${JSON.stringify(xlsx.plans)}`);
 
 console.log("speech, guardrail, pacing and profile checks passed");
 console.log("Red team (filter, no live model):");

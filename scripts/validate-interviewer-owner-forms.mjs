@@ -52,7 +52,7 @@ const prompt = buildInterviewerPrompt({
 if (!prompt.startsWith("PERSONA")) throw new Error("persona is not first");
 if (!prompt.includes("GLOBAL SALES PLAYBOOK")) throw new Error("playbook missing");
 if (!prompt.includes("mm-hm")) throw new Error("backchannels missing");
-if (prompt.indexOf("WEBSITE KNOWLEDGE") > prompt.indexOf("GLOBAL SALES PLAYBOOK")) throw new Error("notes must come before the playbook");
+if (prompt.indexOf("CAMPAIGN KNOWLEDGE") > prompt.indexOf("GLOBAL SALES PLAYBOOK")) throw new Error("notes must come before the playbook");
 if (!prompt.includes("What brought you") && !prompt.toLowerCase().includes("inbound")) throw new Error("inbound opener missing");
 if (!prompt.includes("Adam is a website sales agent")) throw new Error("knowledge note missing from prompt");
 if (!prompt.includes("Never quote prices")) throw new Error("persona missing from prompt");
@@ -193,7 +193,7 @@ if (marked.some((line) => line.text.includes("**") || line.text.includes("£")))
 if (!/Never say that it is not in your notes/i.test(kioskPrompt)) throw new Error("missing-notes deflection was not banned");
 if (!/Great choice/i.test(kioskPrompt)) throw new Error("gushing line was not banned");
 const asked = knowledgeManifest(kioskPrompt);
-if (!asked.mentionsKiosk || !asked.sections.includes("Deck")) throw new Error("pre-call knowledge check missed the deck");
+if (!asked.mentionsKiosk || !asked.sections.includes("Campaign knowledge")) throw new Error("pre-call knowledge check missed the compiled knowledge");
 const home = new URL("https://swoopos.com/");
 const crawled = choosePages([
   "https://swoopos.com/",

@@ -191,6 +191,10 @@
 .thumbOn img { border-color: #155dfc; border-width: 2px; }
 .shareRow { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 12px; align-items: start; }
 .qr svg { width: 148px; height: 148px; display: block; }
+.sheetWrap { overflow-x: auto; margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; }
+.sheetTable { width: 100%; border-collapse: collapse; font-size: 14px; }
+.sheetTable th, .sheetTable td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.knowledgePreview { white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 8px 0 0; padding: 12px; border-radius: 12px; background: #f8fafc; border: 1px solid var(--line); font: 13px/1.45 ui-sans-serif, system-ui, sans-serif; color: #101828; }
 .suggest { border: 1px solid #dce6ff; background: #f5f8ff; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
 .suggestRow { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-top: 8px; }
 .suggestRow .btnGhost { flex: none; }

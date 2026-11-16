@@ -17,6 +17,22 @@ function linesFromItems(items: Array<{ str?: string; transform?: number[] }>): s
   return rows.map((row) => row.parts.sort((left, right) => left.x - right.x).map((part) => part.str).join(" ")).filter(Boolean).join("\n");
 }
 
+export async function textFromPdf(file: File): Promise<string> {
+  if (file.size > MAX_PDF_BYTES) throw new Error("That PDF is over 50 MB. Export a smaller file and try again.");
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = "/interviewer/pdf.worker.min.mjs";
+  const data = new Uint8Array(await file.arrayBuffer());
+  const pdf = await pdfjs.getDocument({ data }).promise;
+  const pages: string[] = [];
+  const limit = Math.min(pdf.numPages, 6);
+  for (let number = 1; number <= limit; number += 1) {
+    const page = await pdf.getPage(number);
+    const content = await page.getTextContent();
+    pages.push(linesFromItems(content.items as Array<{ str?: string; transform?: number[] }>));
+  }
+  return pages.filter(Boolean).join("\n");
+}
+
 export async function renderPdfPages(
   file: File,
   onPage?: (page: number, total: number) => void,

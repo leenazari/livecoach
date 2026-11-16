@@ -137,7 +137,7 @@ export function priceSpeech(quotesOn: boolean, fields: PriceFields): string {
 }
 
 function splitHeads(text: string, heads: string[]): Record<string, string> {
-  const pattern = new RegExp(`^(${heads.map(escapeReg).join("|")})\\n`, "m");
+  const pattern = new RegExp(`^(${heads.map(escapeReg).join("|")})(?:\\n|$)`, "m");
   const chunks = text.split(pattern).slice(1);
   const out: Record<string, string> = {};
   for (let i = 0; i < chunks.length; i += 2) out[chunks[i]] = (chunks[i + 1] || "").trim();

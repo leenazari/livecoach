@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { putSlideImages, renderPdfPages } from "@/components/interviewer/pdf-pages";
+import { putSlideImages, renderPdfPages, textFromPdf } from "@/components/interviewer/pdf-pages";
+import { compileCampaignKnowledge } from "@/lib/interviewer/campaign-knowledge";
+import { parseCsvPriceSheet, parseXlsxPriceSheet, plansFromSheetText, priceSheetSuggestions, type SheetParse } from "@/lib/interviewer/price-sheet";
 import { customerHeadline } from "@/lib/interviewer/slide-headline";
 import styles from "@/components/interviewer/interviewa.module.css";
 import { findFactClashes, mergeKnowledge, type FactClash, type ResolvedClash } from "@/lib/interviewer/fact-clash";
@@ -288,6 +290,9 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
   const [slidePick, setSlidePick] = useState(1);
   const [sourceDocs, setSourceDocs] = useState<SourceDoc[]>([]);
   const [freshExtract, setFreshExtract] = useState<Array<{ source: ExtractSource; text: string }>>([]);
+  const [sheet, setSheet] = useState<SheetParse | null>(null);
+  const [sheetNote, setSheetNote] = useState("");
+  const [sheetBusy, setSheetBusy] = useState(false);
   const [sellSaved, setSellSaved] = useState(false);
   const [acceptingCalls, setAcceptingCalls] = useState(true);
   const [shareCopied, setShareCopied] = useState(false);
@@ -479,6 +484,42 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
     setSections(merged);
     setClashes([]);
     setNotice("Knowledge saved. Unconfirmed lines must not be quoted on a call.");
+  };
+
+  const postPriceSheet = async (file: Blob, name: string) => {
+    const body = new FormData();
+    body.set("file", file, name);
+    const response = await fetch("/api/crm/interviewer/price-sheet", { method: "POST", body });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(String(data.fields?.file || data.reason || "The price sheet was not read."));
+    return data as SheetParse;
+  };
+
+  const readPriceSheet = async (file: File) => {
+    setSheetBusy(true);
+    setError("");
+    setSheetNote("Reading the price sheet…");
+    try {
+      const name = file.name.toLowerCase();
+      let parsed: SheetParse;
+      if (name.endsWith(".csv") || file.type.includes("csv")) parsed = parseCsvPriceSheet(await file.text());
+      else if (name.endsWith(".xlsx")) parsed = await parseXlsxPriceSheet(await file.arrayBuffer());
+      else if (name.endsWith(".pdf") || file.type.includes("pdf")) {
+        parsed = plansFromSheetText(await textFromPdf(file));
+        if (!parsed.plans.length) {
+          const pages = await renderPdfPages(file);
+          if (!pages[0]?.image) throw new Error("That PDF had no pages.");
+          parsed = await postPriceSheet(pages[0].image, "page.png");
+        }
+      } else if (file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/.test(name)) parsed = await postPriceSheet(file, file.name);
+      else throw new Error("Use a CSV, Excel, PDF, PNG, JPG, or WebP file.");
+      setSheet(parsed);
+      setSheetNote(parsed.warnings[0] || `${parsed.plans.length} price${parsed.plans.length === 1 ? "" : "s"} read. Apply the ones you want. Saved plans stay as they are.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The price sheet was not read.");
+    } finally {
+      setSheetBusy(false);
+    }
   };
 
   const importSite = async () => {
@@ -741,13 +782,13 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
       discount: price.discount,
       objections: pairs,
       slides: activeDeck?.slides || [],
-    })).filter((item) => {
+    })).concat(priceSheetSuggestions(sheet, price.plans, price.trial, price.discount)).filter((item) => {
       const key = `${item.apply}|${(item.plan ? planPreview(item.plan) : item.preview).toLowerCase()}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-  }, [activeDeck?.slides, freshExtract, opener, pairs, price.discount, price.note, price.plans, price.trial, product.benefits, product.customer, product.disqualify, product.summary, questions, sections.summary, sourceDocs]);
+  }, [activeDeck?.slides, freshExtract, opener, pairs, price.discount, price.note, price.plans, price.trial, product.benefits, product.customer, product.disqualify, product.summary, questions, sections.summary, sheet, sourceDocs]);
   const applyList = (items: Suggestion[]) => {
     setSections((now) => {
       let summary = now.summary;
@@ -778,6 +819,22 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
       if (number && slide && !String(slide.talkingPoints || "").trim()) editPoint(number, item.preview);
     }
   };
+  const known = useMemo(() => compileCampaignKnowledge({
+    campaignName: name,
+    opener,
+    quotesAllowed: quotes,
+    documents: [
+      { title: "Business summary", body: sections.summary },
+      { title: "Products and services", body: sections.products },
+      { title: "Pricing", body: sections.pricing },
+      { title: "FAQs and objections", body: sections.faqs },
+      { title: "Objection handling", body: sections.objections },
+      { title: "Next step and booking", body: sections.next },
+      { title: QUALIFYING_TITLE, body: qualifying },
+    ],
+    qualifyingQuestions: questions,
+    slides: (activeDeck?.slides || []).map((slide) => ({ number: slide.number, title: slide.title, oneLine: slide.oneLine, talkingPoints: slide.talkingPoints })),
+  }), [activeDeck?.slides, name, opener, qualifying, questions, quotes, sections.faqs, sections.next, sections.objections, sections.pricing, sections.products, sections.summary]);
   const setProduct = (patch: Partial<typeof product>) => {
     setSections((now) => ({ ...now, products: formatProduct({ ...parseProduct(now.products), ...patch }) }));
   };
@@ -988,6 +1045,24 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
               <SuggestBox step={3} items={suggestions} onApply={(item) => applyList([item])} onAll={() => applyList(suggestions.filter((item) => item.step === 3))} />
               {factBox(["pricing"])}
               <p className={styles.sayPreview}>{priceSpeech(quotes, price)}</p>
+              <p className={styles.label}>Upload price sheet</p>
+              <p className={styles.note}>CSV, Excel, PDF, or a photo of a price table. Each row stays its own price. Nothing is saved until you apply it and save the campaign.</p>
+              <input className={styles.filePick} type="file" accept=".csv,.xlsx,application/pdf,image/png,image/jpeg,image/webp,text/csv" aria-label="Price sheet" disabled={sheetBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void readPriceSheet(file); }} />
+              {sheetNote ? <p className={styles.note}>{sheetBusy ? "Reading the price sheet…" : sheetNote}</p> : null}
+              {sheet?.rows.length ? (
+                <div className={styles.sheetWrap}>
+                  <table className={styles.sheetTable}>
+                    <thead><tr>{sheet.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
+                    <tbody>
+                      {sheet.rows.map((row, index) => (
+                        <tr key={`${row.name}-${row.price}-${row.period}-${index}`}>
+                          <td>{row.name}</td><td>{row.price}</td><td>{row.period}</td><td>{row.includes}</td><td>{row.overage}</td><td>{row.details}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
               <label className={styles.label}>Pricing note
                 <textarea className={styles.area} value={price.note} placeholder="£39 a month for 111 minutes. Say it only if quotes are on." onChange={(event) => setPrice({ note: event.target.value })} />
               </label>
@@ -1115,6 +1190,9 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
                   ))}
                 </div>
               ) : null}
+              <h2 className={styles.cardTitle}>What Adam knows</h2>
+              <p className={styles.note}>This is compiled when a call starts, from the fields on this page. The agent does not look it up during the call. {known.length.toLocaleString("en-GB")} characters.</p>
+              <pre className={styles.knowledgePreview}>{known}</pre>
               <ul className={styles.stack}>
                 <li className={campaignId ? styles.note : styles.err}>{campaignId ? "Share link is ready." : "Save the name to create the share link."}</li>
                 <li className={styles.note}>{acceptingCalls ? "Public calls are on." : "Public calls are off."}</li>

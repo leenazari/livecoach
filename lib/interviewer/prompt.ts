@@ -1,3 +1,4 @@
+import { compileCampaignKnowledge } from "./campaign-knowledge";
 import { INTERVIEWER_DISPOSITIONS } from "./dispositions";
 import { INTERVIEWER_PLAYBOOK } from "./playbook";
 import { DEFAULT_QUALIFYING_QUESTIONS } from "./qualifying";
@@ -21,9 +22,6 @@ export type InterviewerPromptInput = {
   qualifyingQuestions?: string[];
 };
 
-const DOCUMENT_CHAR_CAP = 5000;
-const WEBSITE_CAP = 10000;
-const DECK_CAP = 8000;
 export const PROMPT_CHAR_LIMIT = 24000;
 
 function clip(value: string | null | undefined, max: number): string {
@@ -36,43 +34,9 @@ export function campaignOpening(input: Pick<InterviewerPromptInput, "campaignNam
   return clip(sentence || input.campaignName, 180);
 }
 
-const SECTION_RANK = [/product|kiosk|pos/, /pric/, /summary|about/, /faq|objection/, /book|next/];
-
-function rankedDocuments(documents: InterviewerPromptInput["documents"]) {
-  return documents
-    .map((document, index) => ({ document, index }))
-    .sort((left, right) => {
-      const rank = (title: string) => {
-        const found = SECTION_RANK.findIndex((pattern) => pattern.test(title.toLowerCase()));
-        return found === -1 ? SECTION_RANK.length : found;
-      };
-      return rank(left.document.title) - rank(right.document.title) || left.index - right.index;
-    })
-    .map((item) => item.document);
-}
-
-function knowledgeBlock(documents: InterviewerPromptInput["documents"]): string {
-  let remaining = WEBSITE_CAP;
-  const blocks: string[] = [];
-  const seen = new Set<string>();
-  for (const document of rankedDocuments(documents)) {
-    if (remaining <= 0) break;
-    const title = clip(toSpokenPlain(document.title), 160);
-    const key = title.toLowerCase();
-    if (!title || seen.has(key) || key === "qualifying questions" || key === "public calls") continue;
-    seen.add(key);
-    const body = toSpokenPlain(document.body).slice(0, Math.min(DOCUMENT_CHAR_CAP, remaining));
-    if (!body) continue;
-    blocks.push(`${title}.\n${body}`);
-    remaining -= body.length;
-  }
-  if (!blocks.length) return "No website notes have been supplied.";
-  return blocks.join("\n\n");
-}
-
 export function knowledgeManifest(prompt: string): { sections: string[]; characters: number; mentionsKiosk: boolean } {
   const sections = [...prompt.matchAll(/^([A-Z][^.\n]{0,80})\.$/gm)].map((match) => match[1]);
-  if (/^DECK KNOWLEDGE/m.test(prompt)) sections.unshift("Deck");
+  if (/^CAMPAIGN KNOWLEDGE/m.test(prompt)) sections.unshift("Campaign knowledge");
   return {
     sections,
     characters: prompt.length,
@@ -87,17 +51,18 @@ export function buildInterviewerPrompt(input: InterviewerPromptInput): string {
   const cap = `This call ends after ${minutes} minutes. Two minutes before that, you are told to wrap up. When the time is gone, say a short goodbye and stop. Do not offer to keep talking past the limit.`;
   const manner = clip(input.personaOverride, 2000);
   const extra = clip(input.promptOverride, 4000);
-  let slideBudget = 7000;
+  let slideBudget = 4000;
   const slides = (input.slides || []).flatMap((slide) => {
-    const line = `${slide.number}. ${clip(toSpokenPlain(slide.title || ""), 60) || "No headline yet"}. When to show: ${clip(toSpokenPlain(slide.oneLine || ""), 180) || "when the conversation reaches this point"}. Talking points: ${clip(toSpokenPlain(slide.talkingPoints || ""), 360) || "none saved"}.${slide.verbatim ? ` Verbatim line, only if you choose to say it: ${clip(toSpokenPlain(slide.verbatim), 180)}` : ""}`;
+    const line = `${slide.number}. ${clip(toSpokenPlain(slide.title || ""), 60) || "No headline yet"}. When to show: ${clip(toSpokenPlain(slide.oneLine || ""), 180) || "when the conversation reaches this point"}.${slide.verbatim ? ` Verbatim line, only if you choose to say it: ${clip(toSpokenPlain(slide.verbatim), 180)}` : ""}`;
     if (line.length > slideBudget) return [];
     slideBudget -= line.length;
     return [line];
   }).join("\n");
+  const knowledge = compileCampaignKnowledge(input);
 
   const siteSaved = Boolean(String(input.websiteUrl || "").trim());
   const quotes = input.quotesAllowed
-    ? "You may speak a price only when that figure is written in the website knowledge. Read every line under Plans. Each line is its own price point, including a monthly price and a yearly price for the same plan. Quote the plan name, the price, the billing period, what it includes, and any overage on that line. Never collapse two tiers into one price, and never invent a tier that is not written."
+    ? "You may speak a price only when that figure is written under Pricing in the campaign knowledge. Read every line under Plans. Each line is its own price point, including a monthly price and a yearly price for the same plan. Quote the plan name, the price, the billing period, what it includes, and any overage on that line. Never collapse two tiers into one price, and never invent a tier that is not written."
     : "Do not quote a price on this call, even if a figure is in the notes. Offer to cover it with a person later.";
   const brochure = input.brochureSend
     ? "If they want something to read, you may offer a brochure. Do not say it has already been sent."
@@ -110,14 +75,10 @@ ${manner ? `Extra manner from the owner:\n${manner}` : ""}
 ${extra ? `\nCampaign instruction:\n${extra}` : ""}
 ${prospect ? `The person's name, if they are happy for you to use it, is ${prospect}.` : "You may not have their name yet. Ask once, naturally, if it would help."}
 
-DECK KNOWLEDGE
-Search this before you answer any product question. Each block is one slide: its headline, the facts on that page, and any price printed there.
-${clip(toSpokenPlain(input.deckKnowledge || ""), DECK_CAP) || "No deck knowledge has been saved yet."}
-
-WEBSITE KNOWLEDGE
-This is the base of the call. ${siteSaved ? "A source website was saved. Do not read any address aloud." : "No website address was saved."}
-These facts override the playbook. Do not add a product, industry, price, customer, or result that is not written here. Search the deck and these notes before you answer. If a fact is truly absent from both, say you will ask the team to confirm it, and offer to book that conversation. Never say that it is not in your notes or that you do not have the information. Only if they have left the subject entirely, say warmly that you are here to talk about ${name}, then go back to it.
-${knowledgeBlock(input.documents)}
+CAMPAIGN KNOWLEDGE
+This was compiled when the call started. It is already here. Do not call a tool to look up the product, the prices, the objections, or the slides. ${siteSaved ? "A source website was saved. Do not read any address aloud." : "No website address was saved."}
+These facts override the playbook. Do not add a product, industry, price, customer, or result that is not written here. If a fact is absent, say you will ask the team to confirm it, and offer to book that conversation. Never say that it is not in your notes. Only if they have left the subject entirely, say warmly that you are here to talk about ${name}, then go back to it.
+${toSpokenPlain(knowledge)}
 
 ${slides ? `Slide index. Show one slide at a time. Call show_slide at the start of a point, before you explain it, then speak one to three short sentences. Aim for a new slide about every 20 to 30 seconds of your own speech. Do not finish the explanation and only then change the slide. Do not linger on setup, onboarding, or installation. Never say "show slide", "slide two", "showslide", or any slide number, and never write a JSON object. The tool call is silent. Talk only about what is on the slide.\n${slides}` : "No slides have been uploaded."}
 

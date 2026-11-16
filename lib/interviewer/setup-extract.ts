@@ -5,7 +5,7 @@ import {
   type ProductFields,
 } from "./setup-fields";
 
-export type ExtractSource = "website" | "brochure";
+export type ExtractSource = "website" | "brochure" | "price sheet";
 
 export type SetupExtract = {
   summary: string;
