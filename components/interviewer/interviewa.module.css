@@ -156,14 +156,41 @@
   list-style: none;
   justify-content: flex-end;
 }
-.stepRail a {
+.stepRail {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  justify-content: flex-start;
+  width: 100%;
+  margin-top: 12px;
+}
+.stepTab, .stepTabOn {
   display: inline-flex;
-  text-decoration: none;
+  align-items: center;
+  gap: 8px;
+  flex: none;
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: 8px 12px;
+  font: inherit;
   font-size: 13px;
   font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
 }
+.stepTab { background: #fff; color: #101828; border: 1px solid var(--line); }
+.stepTabOn { background: #155dfc; color: #fff; border: 1px solid #155dfc; }
+.stepNav { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; }
+.stepNav .btn, .stepNav .btnGhost { width: auto; }
+.lineRow, .planRow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.lineRow .field, .planRow .field { flex: 1 1 140px; width: auto; }
+.pairCard { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-top: 8px; }
+.sayPreview { margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: #eef3ff; color: #1447e6; font-weight: 600; }
+.slideEdit { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 12px; }
+.slideEdit img, .slideEdit .thumb { width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: contain; border-radius: 12px; border: 1px solid var(--line); background: var(--b25); }
+.thumbBtn, .thumbOn { display: block; width: 140px; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.thumbBtn img, .thumbOn img { width: 140px; height: 88px; object-fit: contain; border-radius: 10px; border: 1px solid var(--line); background: var(--b25); }
+.thumbOn img { border-color: #155dfc; border-width: 2px; }
+.shareRow { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 12px; align-items: start; }
+.qr svg { width: 148px; height: 148px; display: block; }
 .step {
   background: #fff;
   border: 1px solid var(--line);
@@ -222,6 +249,7 @@
   .studioName, .studioTop, .inlineField, .pair { grid-template-columns: 1fr; }
   .studioBar { display: block; }
   .stepRail { justify-content: flex-start; margin-top: 10px; }
+  .slideEdit, .shareRow { grid-template-columns: 1fr; }
   .studioName .btn, .saveBar { width: auto; }
   .saveBar { left: 8px; right: 8px; align-items: stretch; flex-direction: column; }
   .stepHead { flex-wrap: wrap; }

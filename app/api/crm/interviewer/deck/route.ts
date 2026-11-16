@@ -131,6 +131,8 @@ export async function GET(req: Request) {
           title: slide.title,
           url,
           missing: !present,
+          oneLine: String(slide.one_line || ""),
+          talkingPoints: String(slide.talking_points || ""),
         });
       }
       grouped.push({
@@ -371,6 +373,26 @@ export async function POST(req: Request) {
       if (updated.error) throw updated.error;
       if (!updated.data) return interviewerFieldError("interviewer_deck_blocked", "Headline was not saved", { file: "That slide is not on your account." });
       return NextResponse.json({ title: updated.data.title, slideNumber: updated.data.slide_number }, { headers: noStore });
+    }
+
+    if (action === "point") {
+      const deckId = String(record.deckId || "");
+      const slideNumber = Number(record.slideNumber);
+      const talkingPoints = String(record.talkingPoints || "").trim().slice(0, 2000);
+      if (!UUID.test(deckId) || !Number.isInteger(slideNumber)) {
+        return interviewerFieldError("interviewer_deck_blocked", "The talking point was not saved", { file: "Choose a slide." });
+      }
+      const updated = await supabaseService
+        .from("interviewer_slides")
+        .update({ talking_points: talkingPoints })
+        .eq("deck_id", deckId)
+        .eq("workspace_id", scope.workspaceId)
+        .eq("slide_number", slideNumber)
+        .select("slide_number")
+        .maybeSingle();
+      if (updated.error) throw updated.error;
+      if (!updated.data) return interviewerFieldError("interviewer_deck_blocked", "The talking point was not saved", { file: "That slide is not on your account." });
+      return NextResponse.json({ slideNumber: updated.data.slide_number }, { headers: noStore });
     }
 
     if (action === "headlines") {

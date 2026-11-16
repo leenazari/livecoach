@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { interviewerOwnerError, requireInterviewerOwner } from "@/lib/interviewer/access";
 import { interviewerFieldError } from "@/lib/interviewer/field-error";
 import { validateBillingFields, validateCampaignFields } from "@/lib/interviewer/form-fields";
+import { loadOwnerBookingUrl } from "@/lib/interviewer/owner-booking";
 import { PUBLIC_CALLS_OFF, PUBLIC_CALLS_TITLE } from "@/lib/interviewer/public-campaign";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -21,7 +22,8 @@ export async function GET() {
       .select(extra)
       .eq("workspace_id", scope.workspaceId)
       .order("created_at", { ascending: false });
-    if (!rich.error) return NextResponse.json({ campaigns: rich.data || [] }, { headers: noStore });
+    const bookingUrl = await loadOwnerBookingUrl(scope.userId, scope.workspaceId);
+    if (!rich.error) return NextResponse.json({ campaigns: rich.data || [], bookingUrl }, { headers: noStore });
     if (!/column|schema cache/i.test(rich.error.message || "")) throw rich.error;
     const plain = await supabaseAdmin
       .from("interviewer_campaigns")
@@ -29,7 +31,7 @@ export async function GET() {
       .eq("workspace_id", scope.workspaceId)
       .order("created_at", { ascending: false });
     if (plain.error) throw plain.error;
-    return NextResponse.json({ campaigns: plain.data || [] }, { headers: noStore });
+    return NextResponse.json({ campaigns: plain.data || [], bookingUrl }, { headers: noStore });
   } catch (error) {
     return interviewerOwnerError(error);
   }

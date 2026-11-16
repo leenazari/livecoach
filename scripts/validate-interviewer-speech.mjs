@@ -104,6 +104,13 @@ if (!callCss.includes("aspect-ratio: var(--slide-w, 16) / var(--slide-h, 9)")) {
 }
 if (callCss.includes("background: #11151c")) throw new Error("the slide still has a dark frame");
 
+const fields = loadTs(new URL("../lib/interviewer/setup-fields.ts", import.meta.url).pathname);
+const product = fields.parseProduct(fields.formatProduct({ summary: "A website agent", customer: "Teams of 10", benefits: ["Instant replies"], disqualify: ["Wants a human only"] }));
+if (product.summary !== "A website agent" || product.benefits[0] !== "Instant replies") throw new Error("product notes did not round-trip");
+if (fields.parseProduct("Free text stays").summary !== "Free text stays") throw new Error("a plain product note was dropped");
+const objection = fields.parseObjections(fields.formatObjections([{ hear: "Too much", say: "Use the written price" }]));
+if (objection[0].hear !== "Too much" || !objection[0].say.includes("written price")) throw new Error("an objection pair was lost");
+
 console.log("speech, guardrail, pacing and profile checks passed");
 console.log("Red team (filter, no live model):");
 for (const [attack, leaked] of attacks) console.log(`- ${attack} -> ${unsafeSpeech(leaked)} -> safe redirect`);
