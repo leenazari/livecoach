@@ -168,6 +168,23 @@ const kds = { number: 11, keywords: keywordsFor({ title: "Kitchen display screen
 const kiosk = { number: 9, keywords: keywordsFor({ title: "Self-service kiosks in your brand" }) };
 if (matchSpokenSlide("the kitchen display shows every order", [kds, kiosk], 1) !== 11) throw new Error("KDS mention did not select the kitchen slide");
 if (matchSpokenSlide("tell me about the kiosk", [kds, kiosk], 11) !== 9) throw new Error("kiosk mention did not switch slides");
+const overview = { number: 2, title: "Everything you need to run your venue", keywords: keywordsFor({ title: "Everything you need to run your venue", talkingPoints: "Also included: loyalty and a built-in payment gateway." }) };
+const loyalty = { number: 13, title: "Loyalty program: reward your regulars", keywords: keywordsFor({ title: "Loyalty program: reward your regulars", oneLine: "Show when loyalty or repeat customers come up.", talkingPoints: "Reward customers with offers based on their spending habits." }) };
+if (matchSpokenSlide("You can offer loyalty programs and special offers.", [overview, loyalty], 8) !== 13) throw new Error("a loyalty mention stayed on the overview slide");
+if (matchSpokenSlide("You show me your loyalty program?", [overview, loyalty], 2) !== 13) throw new Error("the loyalty question did not select the loyalty slide");
+if (matchSpokenSlide("Reward customers with offers based on their spending habits.", [overview, loyalty], 2) !== 13) throw new Error("the loyalty talking point did not select the loyalty slide");
+if (!keywordsFor({ title: "Kitchen display screen: every order in view" }).includes("kds")) throw new Error("KDS was not linked to the kitchen display title");
+if (matchSpokenSlide("That's what the KDS stands for.", [{ ...kds, title: "Kitchen display screen: every order in view" }, overview], 3) !== 11) throw new Error("KDS did not select the kitchen display slide");
+const named = loadTs(new URL("../lib/interviewer/campaign-knowledge.ts", import.meta.url).pathname);
+const acronyms = named.definedAcronyms([{ number: 11, title: "Kitchen display screen: every order in view", talkingPoints: "Orders appear on a kitchen display." }], []);
+if (!/KDS means kitchen display screen/i.test(acronyms)) throw new Error(`KDS was not expanded: ${acronyms}`);
+const keptSlides = named.compileCampaignKnowledge({
+  documents: [{ title: "Business summary", body: "A long summary. ".repeat(80) }],
+  slides: Array.from({ length: 24 }, (_, index) => ({ number: index + 1, title: index === 12 ? "Loyalty program: reward your regulars" : index === 10 ? "Kitchen display screen: every order in view" : `Feature ${index + 1} for the venue` })),
+});
+if (!keptSlides.includes("13. Loyalty program") || !keptSlides.includes("11. Kitchen display screen") || !/KDS means kitchen display screen/i.test(keptSlides)) {
+  throw new Error(`the knowledge block dropped a later slide or the KDS name: ${keptSlides.slice(0, 400)}`);
+}
 const kioskPrompt = buildInterviewerPrompt({
   campaignName: "Swoopos",
   prospectName: "Lee",

@@ -28,6 +28,29 @@ function clip(value: string | null | undefined, max: number): string {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+// Every slide keeps a line. A long "when to show" note is shortened so a later
+// slide, such as loyalty, is not dropped to make room for an early one.
+export function slideIndex(slides: NonNullable<InterviewerPromptInput["slides"]>, budget: number): string {
+  const rows = slides.map((slide) => ({
+    number: slide.number,
+    title: clip(toSpokenPlain(slide.title || ""), 70) || "No headline yet",
+    when: clip(toSpokenPlain(slide.oneLine || ""), 90),
+    say: clip(toSpokenPlain(slide.talkingPoints || ""), 80),
+    verbatim: clip(toSpokenPlain(slide.verbatim || ""), 80),
+  }));
+  const pack = (when: boolean, say: boolean) => rows.map((row) => {
+    const whenText = when && row.when ? ` When to show: ${row.when}.` : "";
+    const sayText = say && row.say ? ` Talking points: ${row.say}` : "";
+    const verbatim = row.verbatim ? ` Verbatim line, only if you choose to say it: ${row.verbatim}` : "";
+    return `${row.number}. ${row.title}.${whenText}${sayText}${verbatim}`;
+  }).join("\n");
+  for (const choice of [[true, true], [true, false], [false, false]] as Array<[boolean, boolean]>) {
+    const text = pack(choice[0], choice[1]);
+    if (text.length <= budget) return text;
+  }
+  return pack(false, false).slice(0, budget);
+}
+
 export function campaignOpening(input: Pick<InterviewerPromptInput, "campaignName" | "documents">): string {
   const body = input.documents.map((document) => document.body.replace(/\s+/g, " ").trim()).find(Boolean) || "";
   const sentence = body.split(/(?<=\.)\s/)[0]?.trim() || "";
@@ -51,13 +74,7 @@ export function buildInterviewerPrompt(input: InterviewerPromptInput): string {
   const cap = `This call ends after ${minutes} minutes. Two minutes before that, you are told to wrap up. When the time is gone, say a short goodbye and stop. Do not offer to keep talking past the limit.`;
   const manner = clip(input.personaOverride, 2000);
   const extra = clip(input.promptOverride, 4000);
-  let slideBudget = 1600;
-  const slides = (input.slides || []).flatMap((slide) => {
-    const line = `${slide.number}. ${clip(toSpokenPlain(slide.title || ""), 60) || "No headline yet"}. When to show: ${clip(toSpokenPlain(slide.oneLine || ""), 180) || "when the conversation reaches this point"}.${slide.verbatim ? ` Verbatim line, only if you choose to say it: ${clip(toSpokenPlain(slide.verbatim), 180)}` : ""}`;
-    if (line.length > slideBudget) return [];
-    slideBudget -= line.length;
-    return [line];
-  }).join("\n");
+  const slides = slideIndex(input.slides || [], 1600);
   const knowledge = compileCampaignKnowledge(input);
 
   const siteSaved = Boolean(String(input.websiteUrl || "").trim());
@@ -76,7 +93,7 @@ ${extra ? `\nCampaign instruction:\n${extra}` : ""}
 ${prospect ? `The person's name, if they are happy for you to use it, is ${prospect}.` : "You may not have their name yet. Ask once, naturally, if it would help."}
 
 CAMPAIGN KNOWLEDGE
-Already loaded. Do not look anything up. ${siteSaved ? "Do not read a web address aloud." : "No website address was saved."} If a fact is absent, offer to ask the team. Never say that it is not in your notes.
+Already loaded. Do not look anything up. ${siteSaved ? "Do not read a web address aloud." : "No website address was saved."} If a fact is absent, offer to ask the team. Never say that it is not in your notes. When Names gives a short form, say the full words the first time, then show that slide before you explain it.
 ${toSpokenPlain(knowledge)}
 
 ${slides ? `Slide index. Show one slide at a time. Call show_slide at the start of a point, before you explain it, then speak one to three short sentences. Aim for a new slide about every 20 to 30 seconds of your own speech. Do not finish the explanation and only then change the slide. Do not linger on setup, onboarding, or installation. Never say "show slide", "slide two", "showslide", or any slide number, and never write a JSON object. The tool call is silent. Talk only about what is on the slide.\n${slides}` : "No slides have been uploaded."}

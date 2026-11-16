@@ -5,6 +5,7 @@ import { extractSetup } from "./setup-extract";
 import { isInternalCostLine } from "./slide-notes";
 
 const CAP = 1800;
+const NAME_STOP = new Set(["the", "and", "for", "your", "with", "from", "into", "over", "under", "made", "make", "show", "when", "coming", "built", "plus", "than"]);
 
 export type CampaignKnowledgeInput = {
   campaignName?: string | null;
@@ -46,6 +47,8 @@ export function campaignKnowledgeParts(input: CampaignKnowledgeInput): Knowledge
   const pairs = parseObjections(docs.get("objections") || "").filter((pair) => clean(pair.hear) || clean(pair.say));
   const seen = new Set<string>();
   const blocks = [
+    part("Names", definedAcronyms(input.slides || [], input.documents || []), 1, "field-slides"),
+    part("Slides", slideLines(input.slides || [], seen), 1, "field-slides"),
     part("Key message", lines([clean(docs.get("summary") || "")], seen), 1, "field-summary"),
     part("Opening line, already spoken", lines([clean(input.opener || "")], seen), 1, "field-opener"),
     part("Product", lines([product.summary && product.summary !== (docs.get("summary") || "") ? product.summary : ""], seen), 2, "field-product"),
@@ -60,7 +63,6 @@ export function campaignKnowledgeParts(input: CampaignKnowledgeInput): Knowledge
       return keep(clean(`When they say ${hear}. Say ${say}.`), seen);
     }).filter(Boolean).join("\n"), 4, "field-objections"),
     part("FAQs", lines([docs.get("faqs") || ""], seen), 4, "field-faqs"),
-    part("Slides", slideLines(input.slides || [], seen), 1, "field-slides"),
     part("Next step", lines([docs.get("next") || ""], seen), 5, "field-next"),
     part("Owner notes", lines([ownerNotes], seen), 5, "field-owner-notes"),
     part("Also on file", lines(extras, seen), 5, "field-owner-notes"),
@@ -105,10 +107,40 @@ function part(title: string, body: string, step: number, anchor: string): Knowle
 function slideLines(slides: CampaignKnowledgeInput["slides"], seen: Set<string>): string {
   return (slides || []).map((slide) => {
     const title = clean(slide.title) || "No headline yet";
-    const when = clean(slide.oneLine || "");
-    const points = clip(clean(slide.talkingPoints || ""), 90);
-    return keep(`${slide.number}. ${title}.${points ? ` Talking points: ${points}` : ""}`, seen);
+    return keep(`${slide.number}. ${title}`, seen);
   }).filter(Boolean).join("\n");
+}
+
+// A slide title such as "Kitchen display screen" defines KDS. An explicit
+// "KDS (kitchen display screen)" in the notes is kept as written.
+export function definedAcronyms(
+  slides: NonNullable<CampaignKnowledgeInput["slides"]>,
+  documents: Array<{ title?: string; body?: string }>
+): string {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  const add = (acronym: string, phrase: string) => {
+    const short = acronym.toUpperCase().replace(/[^A-Z]/g, "");
+    const words = phrase.replace(/\s+/g, " ").trim();
+    if (short.length < 3 || short.length > 5 || words.length < 6 || seen.has(short)) return;
+    seen.add(short);
+    lines.push(`${short} means ${words}. Say the full words the first time.`);
+  };
+  for (const source of [...documents.map((document) => `${document.title || ""} ${document.body || ""}`), ...slides.map((slide) => `${slide.title} ${slide.talkingPoints || ""}`)]) {
+    const explicit = /\b([A-Za-z][A-Za-z]+(?:\s+[A-Za-z][A-Za-z]+){1,4})\s*\(([A-Z]{2,5})\)|\b([A-Z]{2,5})\s*\(([^)]{3,60})\)/g;
+    for (const match of source.matchAll(explicit)) {
+      if (match[1] && match[2]) add(match[2], match[1]);
+      else if (match[3] && match[4]) add(match[3], match[4]);
+    }
+  }
+  for (const slide of slides) {
+    const head = String(slide.title || "").split(":")[0];
+    const words = head.split(/[^A-Za-z]+/).filter(Boolean);
+    if (words.length < 3 || words.length > 4) continue;
+    if (words.some((word) => word.length <= 2 || NAME_STOP.has(word.toLowerCase()))) continue;
+    add(words.map((word) => word[0]).join(""), words.join(" ").toLowerCase());
+  }
+  return lines.join("\n");
 }
 
 function lines(values: string[], seen: Set<string>): string {
@@ -124,11 +156,6 @@ function keep(value: string, seen: Set<string>): string {
   if (!key || seen.has(key)) return "";
   seen.add(key);
   return value;
-}
-
-function clip(value: string, max: number): string {
-  const text = value.replace(/\s+/g, " ").trim();
-  return text.length <= max ? text : `${text.slice(0, max - 1).replace(/\s+\S*$/, "")}.`;
 }
 
 function clean(value: string): string {

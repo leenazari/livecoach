@@ -21,7 +21,7 @@ import { forSpeech, forTranscript, restoreSpokenGaps } from "@/lib/interviewer/p
 import { takeSpokenSlideCommands } from "@/lib/interviewer/slide-command";
 import { businessProfileNote, emptyBusinessProfile, noteBusiness, type BusinessProfile } from "@/lib/interviewer/business-profile";
 import { catalogFromSlides, coverInterests, noteInterests, outstanding, privateCoverNote, type AgendaItem } from "@/lib/interviewer/interest-agenda";
-import { matchSpokenSlide } from "@/lib/interviewer/slide-match";
+import { leadRequestsTopic, matchSpokenSlide } from "@/lib/interviewer/slide-match";
 
 export type Caption = { id: string; speaker: "agent" | "lead"; text: string };
 
@@ -204,6 +204,27 @@ export function useInterviewerCall(token: string, capMinutes = "") {
     });
   }, [token]);
 
+  const revealSlide = useCallback((number: number, reason: string, hold: boolean) => {
+    const match = slideIndexRef.current.find((item) => item.number === number);
+    if (!match || slideNumberRef.current === number) return;
+    if (hold) manualSlideUntil.current = Date.now() + 20000;
+    slideNumberRef.current = number;
+    setSlideNumber(number);
+    setSlideUrl(match.url || "");
+    setSlideLabel(match.title);
+    setSlideSlogan(match.slogan || "");
+    rememberSeen(number);
+    const session = sessionRef.current;
+    if (!session) return;
+    void postJson("/api/interviewer/slides", {
+      token,
+      sessionId: session,
+      deckId: deckRef.current,
+      slideNumber: number,
+      reason: reason.slice(0, 240),
+    });
+  }, [rememberSeen, token]);
+
   const acceptLead = useCallback((utterance: LockedUtterance) => {
     const text = utterance.text.trim();
     if (!text) return;
@@ -215,35 +236,21 @@ export function useInterviewerCall(token: string, capMinutes = "") {
     profileRef.current = noteBusiness(text, profileRef.current);
     if (/\?|\b(what|how|why|when|where|who|can you|do you)\b/i.test(text)) leadQuestionAt.current = Date.now();
     agendaRef.current = noteInterests(text, agendaRef.current, catalogFromSlides(slideIndexRef.current));
+    if (leadRequestsTopic(text)) {
+      const asked = matchSpokenSlide(text, slideIndexRef.current.map((item) => ({
+        number: item.number,
+        title: item.title,
+        keywords: item.keywords || [],
+      })), slideNumberRef.current);
+      if (asked) revealSlide(asked, "Lead asked about a slide", true);
+    }
     saveCaption({ id: utterance.id, speaker: "lead", text });
-  }, [saveCaption]);
+  }, [revealSlide, saveCaption]);
 
   const acceptAgent = useCallback((text: string) => {
     const directed = takeSpokenSlideCommands(forTranscript(restoreSpokenGaps(toSpokenPlain(text))));
     const clean = directed.text;
-    if (directed.slides.length) {
-      const number = directed.slides[directed.slides.length - 1];
-      const match = slideIndexRef.current.find((item) => item.number === number);
-      if (match && slideNumberRef.current !== number) {
-        manualSlideUntil.current = Date.now() + 20000;
-        slideNumberRef.current = number;
-        setSlideNumber(number);
-        setSlideUrl(match.url || "");
-        setSlideLabel(match.title);
-        setSlideSlogan(match.slogan || "");
-        rememberSeen(number);
-        const session = sessionRef.current;
-        if (session) {
-          void postJson("/api/interviewer/slides", {
-            token,
-            sessionId: session,
-            deckId: deckRef.current,
-            slideNumber: number,
-            reason: `Spoken slide ${number}`.slice(0, 240),
-          });
-        }
-      }
-    }
+    if (directed.slides.length) revealSlide(directed.slides[directed.slides.length - 1], "Spoken slide", true);
     if (!clean) return;
     const previous = agentTurnRef.current;
     const extending = Boolean(previous && agentTurnExtends(previous.text, clean));
@@ -263,26 +270,16 @@ export function useInterviewerCall(token: string, capMinutes = "") {
     if (advanceQueueRef.current(clean)) return;
     if (slideQueue.current.length) return;
     if (Date.now() < manualSlideUntil.current) return;
-    const next = matchSpokenSlide(clean, slideIndexRef.current.map((item) => ({ number: item.number, keywords: item.keywords || [] })), slideNumberRef.current);
-    const slide = next == null ? null : slideIndexRef.current.find((item) => item.number === next);
-    if (!slide) return;
-    slideNumberRef.current = slide.number;
-    setSlideNumber(slide.number);
-    setSlideUrl(slide.url || "");
-    setSlideLabel(slide.title);
-    setSlideSlogan(slide.slogan || "");
-    rememberSeen(slide.number);
-    const session = sessionRef.current;
-    if (session) {
-      void postJson("/api/interviewer/slides", {
-        token,
-        sessionId: session,
-        deckId: deckRef.current,
-        slideNumber: slide.number,
-        reason: `Auto: agent mentioned ${slide.title}`.slice(0, 240),
-      });
+    const next = matchSpokenSlide(clean, slideIndexRef.current.map((item) => ({
+      number: item.number,
+      title: item.title,
+      keywords: item.keywords || [],
+    })), slideNumberRef.current);
+    if (next) {
+      const slide = slideIndexRef.current.find((item) => item.number === next);
+      revealSlide(next, `Auto: agent mentioned ${slide?.title || next}`, false);
     }
-  }, [rememberSeen, saveCaption, token]);
+  }, [revealSlide, saveCaption]);
 
   const connectVoice = useCallback(async () => {
     const session = sessionRef.current;
@@ -660,7 +657,7 @@ export function useInterviewerCall(token: string, capMinutes = "") {
         if (!slideQueue.current.length) return false;
         const options = slideQueue.current.map((item) => {
           const known = slideIndexRef.current.find((slide) => slide.number === item.number);
-          return { number: item.number, keywords: known?.keywords?.length ? known.keywords : [item.title.toLowerCase()] };
+          return { number: item.number, title: item.title, keywords: known?.keywords?.length ? known.keywords : [item.title.toLowerCase()] };
         });
         const hit = options.findIndex((option) => matchSpokenSlide(speech, [option], -1) === option.number);
         if (hit < 0) return false;
