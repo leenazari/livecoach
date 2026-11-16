@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { putSlideImages, renderPdfPages, textFromPdf } from "@/components/interviewer/pdf-pages";
-import { compileCampaignKnowledge } from "@/lib/interviewer/campaign-knowledge";
-import { parseCsvPriceSheet, parseXlsxPriceSheet, plansFromSheetText, priceSheetSuggestions, type SheetParse } from "@/lib/interviewer/price-sheet";
+import { campaignKnowledgeParts } from "@/lib/interviewer/campaign-knowledge";
+import { OWNER_NOTES_TITLE } from "@/lib/interviewer/knowledge";
+import { parseCsvPriceSheet, parseXlsxPriceSheet, plansFromSheetText, priceSheetSuggestions, sheetWithRows, type SheetParse, type SheetRow } from "@/lib/interviewer/price-sheet";
 import { customerHeadline } from "@/lib/interviewer/slide-headline";
 import styles from "@/components/interviewer/interviewa.module.css";
 import { findFactClashes, mergeKnowledge, type FactClash, type ResolvedClash } from "@/lib/interviewer/fact-clash";
@@ -213,33 +214,91 @@ function Fold({
   );
 }
 
+function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
+  const next = index + direction;
+  if (next < 0 || next >= items.length) return items;
+  const copy = items.slice();
+  [copy[index], copy[next]] = [copy[next], copy[index]];
+  return copy;
+}
+
+function editedSuggestion(item: Suggestion, preview: string): Suggestion {
+  if (!item.plan) return { ...item, preview, value: preview };
+  const parts = preview.split(" · ").map((part) => part.trim());
+  if (parts.length < 2) return { ...item, preview, value: preview };
+  const plan: PricePlan = {
+    name: parts[0] || item.plan.name,
+    price: parts[1] || "",
+    period: parts[2] || "",
+    includes: parts[3] || "",
+    overage: parts[4] || "",
+    details: parts[5] || "",
+  };
+  return { ...item, preview, value: preview, plan };
+}
+
+function RowTools({
+  index,
+  total,
+  onUp,
+  onDown,
+  onCopy,
+  onRemove,
+}: {
+  index: number;
+  total: number;
+  onUp: () => void;
+  onDown: () => void;
+  onCopy: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className={styles.rowTools}>
+      <button type="button" className={styles.btnGhost} disabled={index === 0} onClick={onUp} aria-label="Move up">Up</button>
+      <button type="button" className={styles.btnGhost} disabled={index === total - 1} onClick={onDown} aria-label="Move down">Down</button>
+      <button type="button" className={styles.btnGhost} onClick={onCopy} aria-label="Duplicate">Copy</button>
+      <button type="button" className={styles.btnGhost} onClick={onRemove} aria-label="Remove">Remove</button>
+    </div>
+  );
+}
+
 function SuggestBox({
   step,
   items,
   onApply,
+  onReplace,
   onAll,
 }: {
   step: number;
   items: Suggestion[];
   onApply: (item: Suggestion) => void;
+  onReplace: (item: Suggestion) => void;
   onAll: () => void;
 }) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const mine = items.filter((item) => item.step === step);
   if (!mine.length) return null;
   return (
     <div className={styles.suggest}>
       <p className={styles.label}>Suggested from website or brochure</p>
-      <p className={styles.note}>Filled fields stay as they are. Apply writes only the empty ones.</p>
-      {mine.map((item) => (
-        <div key={item.id} className={styles.suggestRow}>
-          <div>
-            <strong>{item.label}</strong>
-            <span className={styles.note}> {item.source}</span>
-            <p className={styles.note}>{item.preview}</p>
+      <p className={styles.note}>Edit a suggestion before you use it. Apply fills an empty field. Replace overwrites what is saved, after you confirm.</p>
+      {mine.map((item) => {
+        const preview = drafts[item.id] ?? item.preview;
+        const edited = editedSuggestion(item, preview);
+        return (
+          <div key={item.id} className={styles.suggestRow}>
+            <div>
+              <strong>{item.label}</strong>
+              <span className={styles.note}> {item.source}</span>
+              <textarea className={styles.area} aria-label={`Edit ${item.label}`} value={preview} onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))} />
+            </div>
+            <div className={styles.rowTools}>
+              <button type="button" className={styles.btnGhost} onClick={() => onApply(edited)}>Apply</button>
+              <button type="button" className={styles.btnGhost} onClick={() => { if (window.confirm(`Replace the saved ${item.label.toLowerCase()} with this suggestion?`)) onReplace(edited); }}>Replace</button>
+            </div>
           </div>
-          <button type="button" className={styles.btnGhost} onClick={() => onApply(item)}>Apply</button>
-        </div>
-      ))}
+        );
+      })}
       <button type="button" className={styles.btn} onClick={onAll}>Apply all</button>
     </div>
   );
@@ -293,6 +352,13 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
   const [sheet, setSheet] = useState<SheetParse | null>(null);
   const [sheetNote, setSheetNote] = useState("");
   const [sheetBusy, setSheetBusy] = useState(false);
+  const [ownerNotes, setOwnerNotes] = useState("");
+  const [undo, setUndo] = useState<{ id: number; label: string; restore: () => void } | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [decksReady, setDecksReady] = useState(!campaignId);
+  const baseline = useRef("");
+  const saveRef = useRef<() => void>(() => undefined);
+  const fingerprintRef = useRef("");
   const [sellSaved, setSellSaved] = useState(false);
   const [acceptingCalls, setAcceptingCalls] = useState(true);
   const [shareCopied, setShareCopied] = useState(false);
@@ -371,6 +437,8 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
         setMargin(String(found.margin_percent ?? 0));
         setGranularity(found.billing_granularity || "second");
         setSections(knowledgeFromDocuments(docs));
+        const owner = docs.find((doc: { title: string; body: string }) => doc.title === OWNER_NOTES_TITLE);
+        setOwnerNotes(owner?.body || "");
       } catch {
         if (!cancelled) setError("The campaign could not be loaded.");
       }
@@ -387,8 +455,9 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
         }
         setDecks(data.decks || []);
         setDeckNote((data.decks || []).length ? "" : "No deck is stored for this campaign.");
+        setDecksReady(true);
       })
-      .catch(() => { if (!cancelled) setDeckNote("The deck could not be loaded."); });
+      .catch(() => { if (!cancelled) { setDeckNote("The deck could not be loaded."); setDecksReady(true); } });
     fetch(`/api/crm/interviewer/sessions?campaignId=${campaignId}`, { cache: "no-store" })
       .then((response) => response.json())
       .then((data) => { if (!cancelled) setCalls(data.sessions || []); })
@@ -444,7 +513,10 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
       campaignId,
       websiteUrl,
       scraped,
-      sections: KNOWLEDGE_SECTIONS.map((section) => ({ title: section.title, body: next[section.key] })),
+      sections: [
+        ...KNOWLEDGE_SECTIONS.map((section) => ({ title: section.title, body: next[section.key] })),
+        { title: OWNER_NOTES_TITLE, body: ownerNotes },
+      ],
     });
     if (!result.ok) { setError(result.data.fields?.url || result.data.fields?.campaignId || "The knowledge was not saved."); return false; }
     setNotice(result.data.websiteStored === false ? "Notes saved. The website address is stored with the notes until the migration is applied." : "Knowledge saved.");
@@ -677,6 +749,8 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
     const billingSaved = await saveBilling();
     if (notesSaved && sellingSaved && billingSaved) {
       const pointsSaved = await saveTalkingPoints();
+      baseline.current = fingerprintRef.current;
+      setDirty(false);
       setNotice(pointsSaved ? "Campaign saved." : "Campaign saved. A slide talking point was not saved.");
     }
   };
@@ -789,37 +863,58 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
       return true;
     });
   }, [activeDeck?.slides, freshExtract, opener, pairs, price.discount, price.note, price.plans, price.trial, product.benefits, product.customer, product.disqualify, product.summary, questions, sections.summary, sheet, sourceDocs]);
-  const applyList = (items: Suggestion[]) => {
+  const applyList = (items: Suggestion[], mode: "fill" | "replace" = "fill") => {
+    const replace = mode === "replace";
     setSections((now) => {
       let summary = now.summary;
       let products = parseProduct(now.products);
       let pricing = parsePrice(now.pricing);
       let objections = parseObjections(now.objections);
       for (const item of items) {
-        if (item.apply === "summary" && !summary.trim()) summary = item.preview;
-        if (item.apply === "product" && !products.summary.trim()) products = { ...products, summary: item.preview };
-        if (item.apply === "customer" && !products.customer.trim()) products = { ...products, customer: item.preview };
-        if (item.apply === "benefit" && !products.benefits.some((line) => line.toLowerCase() === item.preview.toLowerCase())) products = { ...products, benefits: [...products.benefits, item.preview] };
-        if (item.apply === "disqualify" && !products.disqualify.some((line) => line.toLowerCase() === item.preview.toLowerCase())) products = { ...products, disqualify: [...products.disqualify, item.preview] };
-        if (item.apply === "note" && !pricing.note.trim()) pricing = { ...pricing, note: item.preview };
-        if (item.apply === "plan" && item.plan && !pricing.plans.some((plan) => plan.price === item.plan?.price && plan.period === item.plan.period && plan.name === item.plan.name)) pricing = { ...pricing, plans: [...pricing.plans, item.plan] };
-        if (item.apply === "trial" && !pricing.trial.trim()) pricing = { ...pricing, trial: item.preview };
-        if (item.apply === "discount" && !pricing.discount.trim()) pricing = { ...pricing, discount: item.preview };
-        if (item.apply === "objection" && item.pair && !objections.some((pair) => pair.hear.toLowerCase() === item.pair?.hear.toLowerCase())) objections = [...objections, item.pair];
+        if (item.apply === "summary" && (replace || !summary.trim())) summary = item.preview;
+        if (item.apply === "product" && (replace || !products.summary.trim())) products = { ...products, summary: item.preview };
+        if (item.apply === "customer" && (replace || !products.customer.trim())) products = { ...products, customer: item.preview };
+        if (item.apply === "benefit" && (replace || !products.benefits.some((line) => line.toLowerCase() === item.preview.toLowerCase()))) products = { ...products, benefits: [...products.benefits, item.preview] };
+        if (item.apply === "disqualify" && (replace || !products.disqualify.some((line) => line.toLowerCase() === item.preview.toLowerCase()))) products = { ...products, disqualify: [...products.disqualify, item.preview] };
+        if (item.apply === "note" && (replace || !pricing.note.trim())) pricing = { ...pricing, note: item.preview };
+        if (item.apply === "plan" && item.plan) {
+          const same = pricing.plans.findIndex((plan) => plan.name === item.plan?.name && plan.price === item.plan.price && plan.period === item.plan.period);
+          if (replace) {
+            const named = pricing.plans.findIndex((plan) => plan.name.trim().toLowerCase() === item.plan?.name.trim().toLowerCase());
+            pricing = { ...pricing, plans: named >= 0 ? pricing.plans.map((plan, index) => index === named ? item.plan as PricePlan : plan) : [...pricing.plans, item.plan] };
+          } else if (same < 0) pricing = { ...pricing, plans: [...pricing.plans, item.plan] };
+        }
+        if (item.apply === "trial" && (replace || !pricing.trial.trim())) pricing = { ...pricing, trial: item.preview };
+        if (item.apply === "discount" && (replace || !pricing.discount.trim())) pricing = { ...pricing, discount: item.preview };
+        if (item.apply === "objection" && item.pair) {
+          const named = objections.findIndex((pair) => pair.hear.toLowerCase() === item.pair?.hear.toLowerCase());
+          if (replace) objections = named >= 0 ? objections.map((pair, index) => index === named ? item.pair as ObjectionPair : pair) : [...objections, item.pair];
+          else if (named < 0) objections = [...objections, item.pair];
+        }
       }
       return { ...now, summary, products: formatProduct(products), pricing: formatPrice(pricing), objections: formatObjections(objections) };
     });
     const questionAdds = items.filter((item) => item.apply === "question").map((item) => item.preview);
     if (questionAdds.length) setQualifying((now) => formatQuestions([...questionLines(now), ...questionAdds.filter((line) => !questionLines(now).some((item) => item.toLowerCase() === line.toLowerCase()))]));
     const openerItem = items.find((item) => item.apply === "opener");
-    if (openerItem && !opener.trim()) setOpener(openerItem.preview);
+    if (openerItem && (replace || !opener.trim())) setOpener(openerItem.preview);
     for (const item of items.filter((entry) => entry.apply === "slide" && entry.slideTitle)) {
       const number = (activeDeck?.slides || []).find((slide) => slide.title === item.slideTitle)?.number || 0;
       const slide = (activeDeck?.slides || []).find((entry) => entry.number === number);
-      if (number && slide && !String(slide.talkingPoints || "").trim()) editPoint(number, item.preview);
+      if (number && slide && (replace || !String(slide.talkingPoints || "").trim())) editPoint(number, item.preview);
     }
   };
-  const known = useMemo(() => compileCampaignKnowledge({
+  const drop = (label: string, apply: () => void, restore: () => void) => {
+    apply();
+    const id = Date.now();
+    setUndo({ id, label, restore });
+    window.setTimeout(() => setUndo((current) => current?.id === id ? null : current), 6000);
+  };
+  const jumpTo = (stepNumber: number, anchor: string) => {
+    setStep(stepNumber);
+    window.setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" }), 40);
+  };
+  const known = useMemo(() => campaignKnowledgeParts({
     campaignName: name,
     opener,
     quotesAllowed: quotes,
@@ -831,10 +926,29 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
       { title: "Objection handling", body: sections.objections },
       { title: "Next step and booking", body: sections.next },
       { title: QUALIFYING_TITLE, body: qualifying },
+      { title: OWNER_NOTES_TITLE, body: ownerNotes },
     ],
     qualifyingQuestions: questions,
     slides: (activeDeck?.slides || []).map((slide) => ({ number: slide.number, title: slide.title, oneLine: slide.oneLine, talkingPoints: slide.talkingPoints })),
-  }), [activeDeck?.slides, name, opener, qualifying, questions, quotes, sections.faqs, sections.next, sections.objections, sections.pricing, sections.products, sections.summary]);
+  }), [activeDeck?.slides, name, opener, ownerNotes, qualifying, questions, quotes, sections.faqs, sections.next, sections.objections, sections.pricing, sections.products, sections.summary]);
+  const fingerprint = JSON.stringify({ name, opener, sections, qualifying, quotes, brochure, maxMinutes, voiceId, ownerNotes, points: decks.map((deck) => deck.slides.map((slide) => slide.talkingPoints || "")) });
+  fingerprintRef.current = fingerprint;
+  useEffect(() => {
+    if (!campaign || !decksReady) return;
+    if (!baseline.current) baseline.current = fingerprint;
+    setDirty(baseline.current !== fingerprint);
+  }, [campaign, decksReady, fingerprint]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  saveRef.current = () => { void saveAll(); };
   const setProduct = (patch: Partial<typeof product>) => {
     setSections((now) => ({ ...now, products: formatProduct({ ...parseProduct(now.products), ...patch }) }));
   };
@@ -919,7 +1033,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
         <div className={styles.stepBody}>
           {step === 1 ? (
             <>
-              <SuggestBox step={1} items={suggestions} onApply={(item) => applyList([item])} onAll={() => applyList(suggestions.filter((item) => item.step === 1))} />
+              <SuggestBox step={1} items={suggestions} onApply={(item) => applyList([item])} onReplace={(item) => applyList([item], "replace")} onAll={() => applyList(suggestions.filter((item) => item.step === 1))} />
               {factBox(["summary"])}
               <div className={styles.studioName}>
                 <label className={styles.label}>Campaign name<input className={styles.field} value={name} placeholder="Adam for dental practices" onChange={(event) => setName(event.target.value)} /></label>
@@ -955,11 +1069,11 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
               ) : <p className={styles.note}>No brochure yet.</p>}
               {deckNote ? <p className={deckNote.startsWith("No deck") ? styles.note : styles.err}>{deckNote}</p> : null}
               {deckJob ? <p className={deckJob.phase === "error" ? styles.err : styles.note}>{deckJob.message}</p> : null}
-              <div className={styles.pair}>
+              <div className={styles.pair} id="field-summary">
                 <label className={styles.label}>Key message
                   <textarea className={styles.area} value={sections.summary} placeholder="One or two sentences a caller should remember." onChange={(event) => setSections({ ...sections, summary: event.target.value })} />
                 </label>
-                <div>
+                <div id="field-opener">
                   <label className={styles.label}>Opener
                     <span className={styles.note}>The first thing the agent says when the call connects.</span>
                     <input className={styles.field} value={opener || defaultOpener(name)} onChange={(event) => setOpener(event.target.value)} />
@@ -968,11 +1082,14 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
                 </div>
               </div>
               {picked ? (
-                <div className={styles.slideEdit}>
+                <div className={styles.slideEdit} id="field-slides">
                   {picked.url && !picked.missing ? <img src={picked.url} alt={customerHeadline(picked.title) || `Slide ${picked.number}`} /> : <div className={styles.thumb} />}
-                  <label className={styles.label}>Talking point for slide {picked.number}
-                    <textarea className={styles.area} value={picked.talkingPoints || ""} placeholder="One sentence about this slide, tied to their business." onChange={(event) => editPoint(picked.number, event.target.value)} />
-                  </label>
+                  <div>
+                    <label className={styles.label}>Talking point for slide {picked.number}
+                      <textarea className={styles.area} value={picked.talkingPoints || ""} placeholder="One sentence about this slide, tied to their business." onChange={(event) => editPoint(picked.number, event.target.value)} />
+                    </label>
+                    <p className={styles.sayPreview}>{picked.talkingPoints?.trim() ? `On the call: ${picked.talkingPoints}` : "This slide has no talking point yet."}</p>
+                  </div>
                 </div>
               ) : null}
               {activeDeck?.slides.length ? (
@@ -995,45 +1112,40 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
 
           {step === 2 ? (
             <>
-              <SuggestBox step={2} items={suggestions} onApply={(item) => applyList([item])} onAll={() => applyList(suggestions.filter((item) => item.step === 2))} />
+              <SuggestBox step={2} items={suggestions} onApply={(item) => applyList([item])} onReplace={(item) => applyList([item], "replace")} onAll={() => applyList(suggestions.filter((item) => item.step === 2))} />
               {factBox(["products"])}
-              <label className={styles.label}>Product
+              <label className={styles.label} id="field-product">Product
                 <textarea className={styles.area} value={product.summary} placeholder="What you sell, in one short paragraph." onChange={(event) => setProduct({ summary: event.target.value })} />
               </label>
-              <label className={styles.label}>Ideal customer
+              <label className={styles.label} id="field-customer">Ideal customer
                 <input className={styles.field} value={product.customer} placeholder="A team of about 10 that sells from a website." onChange={(event) => setProduct({ customer: event.target.value })} />
               </label>
-              <p className={styles.label}>Key benefits</p>
+              <p className={styles.label} id="field-benefits">Key benefits</p>
               {product.benefits.map((benefit, index) => (
                 <div key={`benefit-${index}`} className={styles.lineRow}>
-                  <input className={styles.field} value={benefit} placeholder="A concrete win" onChange={(event) => setProduct({ benefits: product.benefits.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} />
-                  <button type="button" className={styles.btnGhost} onClick={() => setProduct({ benefits: product.benefits.filter((_, itemIndex) => itemIndex !== index) })}>Remove</button>
+                  <input className={styles.field} aria-label={`Benefit ${index + 1}`} value={benefit} placeholder="A concrete win" onChange={(event) => setProduct({ benefits: product.benefits.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} />
+                  <RowTools index={index} total={product.benefits.length} onUp={() => setProduct({ benefits: moveItem(product.benefits, index, -1) })} onDown={() => setProduct({ benefits: moveItem(product.benefits, index, 1) })} onCopy={() => setProduct({ benefits: [...product.benefits.slice(0, index + 1), benefit, ...product.benefits.slice(index + 1)] })} onRemove={() => drop("Benefit removed", () => setProduct({ benefits: product.benefits.filter((_, itemIndex) => itemIndex !== index) }), () => setProduct({ benefits: [...product.benefits.slice(0, index), benefit, ...product.benefits.slice(index)] }))} />
                 </div>
               ))}
               <button type="button" className={styles.btnGhost} onClick={() => setProduct({ benefits: [...product.benefits, ""] })}>Add benefit</button>
-              <p className={styles.label}>Qualifying questions</p>
+              <p className={styles.label} id="field-questions">Qualifying questions</p>
               <p className={styles.note}>Asked one at a time, after the lead has answered.</p>
               {questions.map((question, index) => (
                 <div key={`question-${index}`} className={styles.lineRow}>
-                  <input className={styles.field} value={question} onChange={(event) => setQuestions(questions.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} />
-                  <button type="button" className={styles.btnGhost} onClick={() => setQuestions(questions.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
-                  <button type="button" className={styles.btnGhost} disabled={index === 0} onClick={() => {
-                    const next = [...questions];
-                    [next[index - 1], next[index]] = [next[index], next[index - 1]];
-                    setQuestions(next);
-                  }}>Up</button>
+                  <input className={styles.field} aria-label={`Question ${index + 1}`} value={question} onChange={(event) => setQuestions(questions.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} />
+                  <RowTools index={index} total={questions.length} onUp={() => setQuestions(moveItem(questions, index, -1))} onDown={() => setQuestions(moveItem(questions, index, 1))} onCopy={() => setQuestions([...questions.slice(0, index + 1), question, ...questions.slice(index + 1)])} onRemove={() => drop("Question removed", () => setQuestions(questions.filter((_, itemIndex) => itemIndex !== index)), () => setQuestions([...questions.slice(0, index), question, ...questions.slice(index)]))} />
                 </div>
               ))}
               <div className={styles.actions}>
                 <button type="button" className={styles.btnGhost} onClick={() => setQuestions([...questions, ""])}>Add question</button>
                 <button type="button" className={styles.btnGhost} onClick={() => setQuestions([...questions, ...DEFAULT_QUALIFYING_QUESTIONS.filter((item) => !questions.includes(item))])}>Add suggested questions</button>
               </div>
-              <p className={styles.label}>Disqualifiers</p>
+              <p className={styles.label} id="field-disqualify">Disqualifiers</p>
               <p className={styles.note}>The agent should not push a booking when one of these is true.</p>
               {product.disqualify.map((line, index) => (
                 <div key={`stop-${index}`} className={styles.lineRow}>
-                  <input className={styles.field} value={line} placeholder="They only want a human team" onChange={(event) => setProduct({ disqualify: product.disqualify.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} />
-                  <button type="button" className={styles.btnGhost} onClick={() => setProduct({ disqualify: product.disqualify.filter((_, itemIndex) => itemIndex !== index) })}>Remove</button>
+                  <input className={styles.field} aria-label={`Disqualifier ${index + 1}`} value={line} placeholder="They only want a human team" onChange={(event) => setProduct({ disqualify: product.disqualify.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} />
+                  <RowTools index={index} total={product.disqualify.length} onUp={() => setProduct({ disqualify: moveItem(product.disqualify, index, -1) })} onDown={() => setProduct({ disqualify: moveItem(product.disqualify, index, 1) })} onCopy={() => setProduct({ disqualify: [...product.disqualify.slice(0, index + 1), line, ...product.disqualify.slice(index + 1)] })} onRemove={() => drop("Disqualifier removed", () => setProduct({ disqualify: product.disqualify.filter((_, itemIndex) => itemIndex !== index) }), () => setProduct({ disqualify: [...product.disqualify.slice(0, index), line, ...product.disqualify.slice(index)] }))} />
                 </div>
               ))}
               <button type="button" className={styles.btnGhost} onClick={() => setProduct({ disqualify: [...product.disqualify, ""] })}>Add disqualifier</button>
@@ -1042,7 +1154,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
 
           {step === 3 ? (
             <>
-              <SuggestBox step={3} items={suggestions} onApply={(item) => applyList([item])} onAll={() => applyList(suggestions.filter((item) => item.step === 3))} />
+              <SuggestBox step={3} items={suggestions} onApply={(item) => applyList([item])} onReplace={(item) => applyList([item], "replace")} onAll={() => applyList(suggestions.filter((item) => item.step === 3))} />
               {factBox(["pricing"])}
               <p className={styles.sayPreview}>{priceSpeech(quotes, price)}</p>
               <p className={styles.label}>Upload price sheet</p>
@@ -1050,15 +1162,24 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
               <input className={styles.filePick} type="file" accept=".csv,.xlsx,application/pdf,image/png,image/jpeg,image/webp,text/csv" aria-label="Price sheet" disabled={sheetBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void readPriceSheet(file); }} />
               {sheetNote ? <p className={styles.note}>{sheetBusy ? "Reading the price sheet…" : sheetNote}</p> : null}
               {sheet?.rows.length ? (
-                <div className={styles.sheetWrap}>
+                <div className={styles.sheetWrap} id="field-sheet">
                   <table className={styles.sheetTable}>
-                    <thead><tr>{sheet.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
+                    <thead><tr><th>Plan</th><th>Price</th><th>Period</th><th>Includes</th><th>Overage</th><th>Details</th><th></th></tr></thead>
                     <tbody>
-                      {sheet.rows.map((row, index) => (
-                        <tr key={`${row.name}-${row.price}-${row.period}-${index}`}>
-                          <td>{row.name}</td><td>{row.price}</td><td>{row.period}</td><td>{row.includes}</td><td>{row.overage}</td><td>{row.details}</td>
-                        </tr>
-                      ))}
+                      {sheet.rows.map((row, index) => {
+                        const edit = (patch: Partial<SheetRow>) => setSheet(sheetWithRows(sheet, sheet.rows.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item)));
+                        return (
+                          <tr key={`sheet-${index}`}>
+                            <td><input className={styles.field} aria-label={`Sheet plan ${index + 1}`} value={row.name} onChange={(event) => edit({ name: event.target.value })} /></td>
+                            <td><input className={styles.field} aria-label={`Sheet price ${index + 1}`} value={row.price} onChange={(event) => edit({ price: event.target.value })} /></td>
+                            <td><input className={styles.field} aria-label={`Sheet period ${index + 1}`} value={row.period} onChange={(event) => edit({ period: event.target.value })} /></td>
+                            <td><input className={styles.field} aria-label={`Sheet includes ${index + 1}`} value={row.includes} onChange={(event) => edit({ includes: event.target.value })} /></td>
+                            <td><input className={styles.field} aria-label={`Sheet overage ${index + 1}`} value={row.overage} onChange={(event) => edit({ overage: event.target.value })} /></td>
+                            <td><input className={styles.field} aria-label={`Sheet details ${index + 1}`} value={row.details} onChange={(event) => edit({ details: event.target.value })} /></td>
+                            <td><RowTools index={index} total={sheet.rows.length} onUp={() => setSheet(sheetWithRows(sheet, moveItem(sheet.rows, index, -1)))} onDown={() => setSheet(sheetWithRows(sheet, moveItem(sheet.rows, index, 1)))} onCopy={() => setSheet(sheetWithRows(sheet, [...sheet.rows.slice(0, index + 1), { ...row }, ...sheet.rows.slice(index + 1)]))} onRemove={() => drop("Price row removed", () => setSheet(sheetWithRows(sheet, sheet.rows.filter((_, itemIndex) => itemIndex !== index))), () => setSheet(sheetWithRows(sheet, [...sheet.rows.slice(0, index), row, ...sheet.rows.slice(index)])))} /></td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1066,19 +1187,20 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
               <label className={styles.label}>Pricing note
                 <textarea className={styles.area} value={price.note} placeholder="£39 a month for 111 minutes. Say it only if quotes are on." onChange={(event) => setPrice({ note: event.target.value })} />
               </label>
-              <p className={styles.label}>Plans</p>
+              <p className={styles.label} id="field-plans">Plans</p>
               {price.plans.map((plan, index) => (
                 <div key={`plan-${index}`} className={styles.planRow}>
-                  <input className={styles.field} value={plan.name} placeholder="Name" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} />
-                  <input className={styles.field} value={plan.price} placeholder="£39" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, price: event.target.value } : item) })} />
-                  <input className={styles.field} value={plan.period} placeholder="monthly" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, period: event.target.value } : item) })} />
-                  <input className={styles.field} value={plan.includes} placeholder="111 minutes" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, includes: event.target.value } : item) })} />
-                  <input className={styles.field} value={plan.overage} placeholder="Overage" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, overage: event.target.value } : item) })} />
-                  <button type="button" className={styles.btnGhost} onClick={() => setPrice({ plans: price.plans.filter((_, itemIndex) => itemIndex !== index) })}>Remove</button>
+                  <input className={styles.field} aria-label={`Plan name ${index + 1}`} value={plan.name} placeholder="Name" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} />
+                  <input className={styles.field} aria-label={`Plan price ${index + 1}`} value={plan.price} placeholder="£39" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, price: event.target.value } : item) })} />
+                  <input className={styles.field} aria-label={`Plan period ${index + 1}`} value={plan.period} placeholder="monthly" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, period: event.target.value } : item) })} />
+                  <input className={styles.field} aria-label={`Plan includes ${index + 1}`} value={plan.includes} placeholder="111 minutes" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, includes: event.target.value } : item) })} />
+                  <input className={styles.field} aria-label={`Plan overage ${index + 1}`} value={plan.overage} placeholder="Overage" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, overage: event.target.value } : item) })} />
+                  <input className={styles.field} aria-label={`Plan details ${index + 1}`} value={plan.details || ""} placeholder="Details" onChange={(event) => setPrice({ plans: price.plans.map((item, itemIndex) => itemIndex === index ? { ...item, details: event.target.value } : item) })} />
+                  <RowTools index={index} total={price.plans.length} onUp={() => setPrice({ plans: moveItem(price.plans, index, -1) })} onDown={() => setPrice({ plans: moveItem(price.plans, index, 1) })} onCopy={() => setPrice({ plans: [...price.plans.slice(0, index + 1), { ...plan }, ...price.plans.slice(index + 1)] })} onRemove={() => drop("Plan removed", () => setPrice({ plans: price.plans.filter((_, itemIndex) => itemIndex !== index) }), () => setPrice({ plans: [...price.plans.slice(0, index), plan, ...price.plans.slice(index)] }))} />
                 </div>
               ))}
-              <button type="button" className={styles.btnGhost} onClick={() => setPrice({ plans: [...price.plans, { name: "", price: "", period: "", includes: "", overage: "" } satisfies PricePlan] })}>Add plan</button>
-              <div className={styles.pair}>
+              <button type="button" className={styles.btnGhost} onClick={() => setPrice({ plans: [...price.plans, { name: "", price: "", period: "", includes: "", overage: "", details: "" }] })}>Add plan</button>
+              <div className={styles.pair} id="field-trial">
                 <label className={styles.label}>Trial
                   <input className={styles.field} value={price.trial} placeholder="A trial can be set up on a later call." onChange={(event) => setPrice({ trial: event.target.value })} />
                 </label>
@@ -1086,7 +1208,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
                   <input className={styles.field} value={price.discount} placeholder="No discount unless it is written here." onChange={(event) => setPrice({ discount: event.target.value })} />
                 </label>
               </div>
-              <label className={styles.label}>Do not say
+              <label className={styles.label} id="field-avoid">Do not say
                 <input className={styles.field} value={price.avoid} placeholder="Do not mention internal cost or a supplier." onChange={(event) => setPrice({ avoid: event.target.value })} />
               </label>
               <div className={styles.switchRow}>
@@ -1105,9 +1227,10 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
 
           {step === 4 ? (
             <>
-              <SuggestBox step={4} items={suggestions} onApply={(item) => applyList([item])} onAll={() => applyList(suggestions.filter((item) => item.step === 4))} />
+              <SuggestBox step={4} items={suggestions} onApply={(item) => applyList([item])} onReplace={(item) => applyList([item], "replace")} onAll={() => applyList(suggestions.filter((item) => item.step === 4))} />
               {factBox(["faqs", "objections"])}
               <p className={styles.note}>One objection, one answer. The agent uses these words, not a speech it invents.</p>
+              <div id="field-objections">
               {pairs.map((pair, index) => (
                 <div key={`pair-${index}`} className={styles.pairCard}>
                   <label className={styles.label}>When they say
@@ -1116,14 +1239,15 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
                   <label className={styles.label}>Say
                     <textarea className={styles.area} value={pair.say} placeholder="The price on this page is the one to use." onChange={(event) => setPairs(pairs.map((item, itemIndex) => itemIndex === index ? { ...item, say: event.target.value } : item))} />
                   </label>
-                  <button type="button" className={styles.btnGhost} onClick={() => setPairs(pairs.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
+                  <RowTools index={index} total={pairs.length} onUp={() => setPairs(moveItem(pairs, index, -1))} onDown={() => setPairs(moveItem(pairs, index, 1))} onCopy={() => setPairs([...pairs.slice(0, index + 1), { ...pair }, ...pairs.slice(index + 1)])} onRemove={() => drop("Objection removed", () => setPairs(pairs.filter((_, itemIndex) => itemIndex !== index)), () => setPairs([...pairs.slice(0, index), pair, ...pairs.slice(index)]))} />
                 </div>
               ))}
+              </div>
               <div className={styles.actions}>
                 <button type="button" className={styles.btnGhost} onClick={() => setPairs([...pairs, { hear: "", say: "" }])}>Add objection</button>
                 <button type="button" className={styles.btnGhost} onClick={() => setPairs([...pairs, ...STARTER_OBJECTIONS.filter((item) => !pairs.some((pair) => pair.hear === item.hear))])}>Add starter objections</button>
               </div>
-              <label className={styles.label}>FAQs and objections
+              <label className={styles.label} id="field-faqs">FAQs and objections
                 <textarea className={styles.area} value={sections.faqs} placeholder="Short extra answers that are not a full objection." onChange={(event) => setSections({ ...sections, faqs: event.target.value })} />
               </label>
               {knowledgeCount >= KNOWLEDGE_CHAR_CAP * 0.8 ? (
@@ -1172,7 +1296,7 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
                   </label>
                 </>
               ) : <p className={styles.note}>Save the campaign name first. Then the share link appears here.</p>}
-              <label className={styles.label}>Next step and booking
+              <label className={styles.label} id="field-next">Next step and booking
                 <textarea className={styles.area} value={sections.next} placeholder="The best next step is a 20-minute demo." onChange={(event) => setSections({ ...sections, next: event.target.value })} />
               </label>
               <p className={bookingUrl ? styles.note : styles.err}>{!bookingKnown ? "Checking the booking calendar." : bookingUrl ? "When a call ends, this tab opens the owner’s booking calendar." : "No booking link is saved on the owner’s sales profile. Calls will end on a thank-you page."}</p>
@@ -1191,8 +1315,19 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
                 </div>
               ) : null}
               <h2 className={styles.cardTitle}>What Adam knows</h2>
-              <p className={styles.note}>This is compiled when a call starts, from the fields on this page. The agent does not look it up during the call. {known.length.toLocaleString("en-GB")} characters.</p>
-              <pre className={styles.knowledgePreview}>{known}</pre>
+              <p className={styles.note}>This is compiled when a call starts. Tap a section to edit the field it comes from. {known.reduce((sum, item) => sum + item.body.length, 0).toLocaleString("en-GB")} characters.</p>
+              <div className={styles.knowledgePreview}>
+                {known.length ? known.map((item) => (
+                  <button key={`${item.anchor}-${item.title}`} type="button" className={styles.knowledgeJump} onClick={() => jumpTo(item.step, item.anchor)}>
+                    <strong>{item.title}</strong>
+                    <span>{item.body}</span>
+                  </button>
+                )) : <p className={styles.note}>Nothing is saved yet. Add a key message, a product, or a price.</p>}
+              </div>
+              <label className={styles.label} id="field-owner-notes">Owner notes
+                <span className={styles.note}>Extra knowledge for this campaign. It is included when the call starts.</span>
+                <textarea className={styles.area} value={ownerNotes} placeholder="Anything else the agent should know." onChange={(event) => setOwnerNotes(event.target.value)} />
+              </label>
               <ul className={styles.stack}>
                 <li className={campaignId ? styles.note : styles.err}>{campaignId ? "Share link is ready." : "Save the name to create the share link."}</li>
                 <li className={styles.note}>{acceptingCalls ? "Public calls are on." : "Public calls are off."}</li>
@@ -1288,9 +1423,15 @@ export default function CampaignStudio({ campaignId, shareQuery = "" }: { campai
           </Fold>
         </div>
       ) : null}
+      {undo ? (
+        <div className={styles.undoToast} role="status">
+          <span>{undo.label}</span>
+          <button type="button" className={styles.btn} onClick={() => { undo.restore(); setUndo(null); }}>Undo</button>
+        </div>
+      ) : null}
       <div className={styles.saveBar}>
-        <p>{error || notice || "Saves the name, notes, selling settings, talking points, and billing."}</p>
-        <button type="button" className={styles.btn} onClick={() => void saveAll()}>Save campaign</button>
+        <p>{error || notice || (dirty ? "Unsaved changes. Save campaign, or press Ctrl+S." : "Saves the name, notes, selling settings, talking points, and billing.")}</p>
+        <button type="button" className={styles.btn} onClick={() => void saveAll()}>{dirty ? "Save changes" : "Save campaign"}</button>
       </div>
     </main>
   );

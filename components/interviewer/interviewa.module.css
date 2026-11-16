@@ -191,6 +191,14 @@
 .thumbOn img { border-color: #155dfc; border-width: 2px; }
 .shareRow { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 12px; align-items: start; }
 .qr svg { width: 148px; height: 148px; display: block; }
+.rowTools { display: flex; flex-wrap: wrap; gap: 6px; }
+.rowTools .btnGhost { min-height: 44px; min-width: 44px; }
+.knowledgeJump { display: block; width: 100%; margin: 0 0 8px; padding: 8px; border: 0; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; }
+.knowledgeJump:hover, .knowledgeJump:focus { background: #eef3ff; }
+.knowledgeJump strong { display: block; }
+.knowledgeJump span { display: block; white-space: pre-wrap; color: #475467; font-size: 13px; }
+.undoToast { position: fixed; left: 16px; right: 16px; bottom: 84px; z-index: 21; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; background: #101828; color: #fff; border-radius: 14px; }
+.undoToast .btn { min-height: 44px; }
 .sheetWrap { overflow-x: auto; margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; }
 .sheetTable { width: 100%; border-collapse: collapse; font-size: 14px; }
 .sheetTable th, .sheetTable td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }

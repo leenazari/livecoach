@@ -154,10 +154,15 @@ if (!promptSource.includes("every line under Plans") || !promptSource.includes("
 if (!promptSource.includes("Do not call a tool to look up")) throw new Error("the prompt still fetches knowledge during the call");
 const sheets = loadTs(new URL("../lib/interviewer/price-sheet.ts", import.meta.url).pathname);
 const csv = sheets.parseCsvPriceSheet("Plan,Monthly,Annual,Minutes,Features,Overage,Region,Margin\nStarter,£39,£390,111 minutes,Live chat,£0.40 per minute,UK,40%\nGrowth,£99,£990,500 minutes,Priority,£0.30 per minute,EU,55%\n");
-const csvKeys = csv.plans.map((plan) => `${plan.name}|${plan.price}|${plan.period}|${plan.includes}`);
-for (const key of ["Starter|£39|monthly|111 minutes; Live chat; Region: UK", "Starter|£390|yearly|111 minutes; Live chat; Region: UK", "Growth|£99|monthly|500 minutes; Priority; Region: EU"]) {
+const csvKeys = csv.plans.map((plan) => `${plan.name}|${plan.price}|${plan.period}|${plan.includes}|${plan.details}`);
+for (const key of ["Starter|£39|monthly|111 minutes; Live chat|Region: UK", "Starter|£390|yearly|111 minutes; Live chat|Region: UK", "Growth|£99|monthly|500 minutes; Priority|Region: EU"]) {
   if (!csvKeys.includes(key)) throw new Error(`a price sheet row was collapsed or lost (${key}): ${JSON.stringify(csv.plans)}`);
 }
+const edited = sheets.sheetWithRows(csv, csv.rows.map((row, index) => index === 0 ? { ...row, price: "£49", details: "Region: Scotland" } : row));
+if (edited.plans[0].price !== "£49" || edited.plans[0].details !== "Region: Scotland") throw new Error("an edited price-sheet row did not stay editable");
+const priced = fields.formatPrice({ note: "From £39", plans: [{ name: "Starter", price: "£39", period: "monthly", includes: "111 minutes", overage: "", details: "Region: UK" }], trial: "", discount: "", avoid: "" });
+const pricedBack = fields.parsePrice(priced);
+if (pricedBack.plans[0].details !== "Region: UK" || pricedBack.plans[0].price !== "£39") throw new Error("plan details did not round-trip");
 if (JSON.stringify(csv).includes("40%") || JSON.stringify(csv).includes("55%")) throw new Error("a margin column was kept");
 const filled = sheets.priceSheetSuggestions(csv, [{ name: "Starter", price: "£39", period: "monthly", includes: "", overage: "" }], "", "");
 if (filled.some((item) => item.plan?.price === "£39" && item.plan.period === "monthly")) throw new Error("a saved plan was offered again");
@@ -191,6 +196,8 @@ if (/margin|deepgram/i.test(compiled)) throw new Error("internal cost reached th
 if (!compiled.includes("booked demos") || !compiled.includes("What does the business do") || !compiled.includes("It costs too much") || !compiled.includes("Meet Adam")) throw new Error("the brain dropped product, questions, or slides");
 const quoted = knowledge.compileCampaignKnowledge({ quotesAllowed: true, documents: [{ title: "Pricing", body: "Pricing note\n\n\nPlans\n- Teams | $12 | monthly | per user | \n- Teams | $12 | yearly | per user |\n\nTrial\n\n\nDiscount\n\n\nDo not say\n" }], slides: [] });
 if (!quoted.includes("Quotes are allowed") || !quoted.includes("$12, billed monthly") || !quoted.includes("$12, billed yearly")) throw new Error("quotes on did not keep both periods");
+const noted = knowledge.compileCampaignKnowledge({ quotesAllowed: false, documents: [{ title: "Owner notes", body: "Mention the dental example." }, { title: "Billing", body: "Our margin is 40 percent." }], slides: [] });
+if (!noted.includes("Mention the dental example") || /margin/i.test(noted)) throw new Error("owner notes were dropped or a margin was kept");
 console.log(`knowledge compile ${compileMs.toFixed(2)}ms, no extra fetch`);
 const pdfPlans = sheets.plansFromSheetText("Starter GBP 39 per month for 111 minutes. Growth GBP 99 per month for 500 minutes.");
 const pdfKeys = pdfPlans.plans.map((plan) => `${plan.name}|${plan.price}|${plan.period}`);

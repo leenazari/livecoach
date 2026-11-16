@@ -11,6 +11,7 @@ export type PricePlan = {
   period: string;
   includes: string;
   overage: string;
+  details?: string;
 };
 
 export type PriceFields = {
@@ -80,7 +81,7 @@ export function parsePrice(body: string): PriceFields {
 export function formatPrice(fields: PriceFields): string {
   const plans = fields.plans
     .filter((plan) => plan.name.trim() || plan.price.trim() || plan.includes.trim())
-    .map((plan) => `- ${plan.name.trim()} | ${plan.price.trim()} | ${plan.period.trim()} | ${plan.includes.trim()} | ${plan.overage.trim()}`);
+    .map((plan) => `- ${plan.name.trim()} | ${plan.price.trim()} | ${plan.period.trim()} | ${plan.includes.trim()} | ${plan.overage.trim()} | ${(plan.details || "").trim()}`);
   return [
     "Pricing note",
     fields.note.trim(),
@@ -130,7 +131,7 @@ export function formatQuestions(lines: string[]): string {
 
 export function priceSpeech(quotesOn: boolean, fields: PriceFields): string {
   if (!quotesOn) return "The agent will not quote a price. It offers to cover price with a person later.";
-  const lines = fields.plans.filter((plan) => plan.price.trim()).map((plan) => `${plan.name || "Plan"} is ${plan.price}${plan.period ? `, billed ${plan.period}` : ""}${plan.includes ? `, including ${plan.includes}` : ""}${plan.overage ? `, then ${plan.overage}` : ""}`);
+  const lines = fields.plans.filter((plan) => plan.price.trim()).map((plan) => `${plan.name || "Plan"} is ${plan.price}${plan.period ? `, billed ${plan.period}` : ""}${plan.includes ? `, including ${plan.includes}` : ""}${plan.overage ? `, then ${plan.overage}` : ""}${plan.details ? `, ${plan.details}` : ""}`);
   if (!lines.length && !fields.note.trim()) return "Quotes are on, but no price is written yet. The agent must not invent one.";
   if (!lines.length) return "The agent may say only a price written in the note. It must not invent another tier.";
   return `The agent may quote each plan on its own: ${lines.join(". ")}. It must not merge two tiers into one price.`;
@@ -156,9 +157,9 @@ function planLine(line: string): PricePlan {
   const clean = line.replace(/^\s*[-*•]\s*/, "").trim();
   const parts = clean.split("|").map((part) => part.trim());
   if (parts.length >= 5) {
-    return { name: parts[0], price: parts[1], period: parts[2], includes: parts[3], overage: parts[4] };
+    return { name: parts[0], price: parts[1], period: parts[2], includes: parts[3], overage: parts[4], details: parts[5] || "" };
   }
-  return { name: parts[0] || "", price: parts[1] || "", period: "", includes: parts[2] || "", overage: "" };
+  return { name: parts[0] || "", price: parts[1] || "", period: "", includes: parts[2] || "", overage: "", details: "" };
 }
 
 function escapeReg(value: string): string {

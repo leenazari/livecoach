@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { interviewerOwnerError, requireInterviewerOwner } from "@/lib/interviewer/access";
 import { interviewerFieldError } from "@/lib/interviewer/field-error";
 import { validateKnowledgeNote } from "@/lib/interviewer/form-fields";
-import { KNOWLEDGE_SECTIONS, SOURCE_WEBSITE_TITLE, WEBSITE_IMPORT_SOURCE, isMissingSourceColumn, sectionKeyForTitle, websiteImportIds } from "@/lib/interviewer/knowledge";
+import { KNOWLEDGE_SECTIONS, OWNER_NOTES_TITLE, SOURCE_WEBSITE_TITLE, WEBSITE_IMPORT_SOURCE, isMissingSourceColumn, sectionKeyForTitle, websiteImportIds } from "@/lib/interviewer/knowledge";
 import { QUALIFYING_TITLE } from "@/lib/interviewer/qualifying";
 import { supabaseAdmin, supabaseService } from "@/lib/supabase";
 
@@ -65,8 +65,10 @@ export async function POST(req: Request) {
         });
       }
       const rows = (record.sections as Array<{ title?: string; body?: string }>).flatMap((section) => {
-        const title = KNOWLEDGE_SECTIONS.find((item) => item.title === String(section.title || ""))?.title
-          || (sectionKeyForTitle(String(section.title || "")) ? String(section.title) : "");
+        const rawTitle = String(section.title || "");
+        const title = KNOWLEDGE_SECTIONS.find((item) => item.title === rawTitle)?.title
+          || (rawTitle === OWNER_NOTES_TITLE ? OWNER_NOTES_TITLE : "")
+          || (sectionKeyForTitle(rawTitle) ? rawTitle : "");
         const text = String(section.body || "").trim().slice(0, 20000);
         if (!title) return [];
         return text ? [{ workspace_id: scope.workspaceId, campaign_id: campaignId, title, body: text }] : [];
@@ -112,7 +114,7 @@ export async function POST(req: Request) {
           throw error;
         }
       } else {
-        await supabaseService.from("interviewer_documents").delete().eq("campaign_id", campaignId).eq("workspace_id", scope.workspaceId).in("title", titles);
+        await supabaseService.from("interviewer_documents").delete().eq("campaign_id", campaignId).eq("workspace_id", scope.workspaceId).in("title", [...titles, OWNER_NOTES_TITLE]);
         if (rows.length) {
           const { error } = await supabaseService.from("interviewer_documents").insert(rows);
           if (error) throw error;

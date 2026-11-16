@@ -318,5 +318,5 @@ function reset(value: string): string {
 }
 
 export function planPreview(plan: PricePlan): string {
-  return [plan.name, plan.price, plan.period, plan.includes, plan.overage].filter(Boolean).join(" · ");
+  return [plan.name, plan.price, plan.period, plan.includes, plan.overage, plan.details].filter(Boolean).join(" · ");
 }

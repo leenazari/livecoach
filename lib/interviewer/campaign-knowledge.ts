@@ -1,4 +1,4 @@
-import { KNOWLEDGE_SECTIONS, sectionKeyForTitle, type KnowledgeSectionKey } from "./knowledge";
+import { KNOWLEDGE_SECTIONS, OWNER_NOTES_TITLE, sectionKeyForTitle, type KnowledgeSectionKey } from "./knowledge";
 import { QUALIFYING_TITLE } from "./qualifying";
 import { parseObjections, parsePrice, parseProduct, questionLines } from "./setup-fields";
 import { extractSetup } from "./setup-extract";
@@ -16,13 +16,20 @@ export type CampaignKnowledgeInput = {
   qualifyingQuestions?: string[];
 };
 
-export function compileCampaignKnowledge(input: CampaignKnowledgeInput): string {
+export type KnowledgePart = { title: string; body: string; step: number; anchor: string };
+
+export function campaignKnowledgeParts(input: CampaignKnowledgeInput): KnowledgePart[] {
   const docs = new Map<KnowledgeSectionKey, string>();
   const extras: string[] = [];
+  let ownerNotes = "";
   for (const document of input.documents || []) {
     const title = String(document.title || "").trim();
     const key = title.toLowerCase();
     if (!title || key === "public calls" || key === "source website" || key === "call knowledge") continue;
+    if (key === OWNER_NOTES_TITLE.toLowerCase()) {
+      ownerNotes = String(document.body || "");
+      continue;
+    }
     const section = sectionKeyForTitle(title);
     if (section && !docs.has(section)) {
       docs.set(section, String(document.body || ""));
@@ -39,25 +46,31 @@ export function compileCampaignKnowledge(input: CampaignKnowledgeInput): string 
   const pairs = parseObjections(docs.get("objections") || "").filter((pair) => clean(pair.hear) || clean(pair.say));
   const seen = new Set<string>();
   const blocks = [
-    section("Key message", lines([clean(docs.get("summary") || "")], seen)),
-    section("Opening line, already spoken", lines([clean(input.opener || "")], seen)),
-    section("Product", lines([product.summary && product.summary !== (docs.get("summary") || "") ? product.summary : ""], seen)),
-    section("Ideal customer", lines([product.customer], seen)),
-    section("Benefits", bullets(product.benefits, seen)),
-    section("Disqualifiers", bullets(product.disqualify, seen)),
-    section("Qualifying questions", bullets(questions, seen)),
-    pricingBlock(input.quotesAllowed === true, price.note, prosePlans, price.trial, price.discount, price.avoid, seen),
-    section("Objections", pairs.map((pair) => {
+    part("Key message", lines([clean(docs.get("summary") || "")], seen), 1, "field-summary"),
+    part("Opening line, already spoken", lines([clean(input.opener || "")], seen), 1, "field-opener"),
+    part("Product", lines([product.summary && product.summary !== (docs.get("summary") || "") ? product.summary : ""], seen), 2, "field-product"),
+    part("Ideal customer", lines([product.customer], seen), 2, "field-customer"),
+    part("Benefits", bullets(product.benefits, seen), 2, "field-benefits"),
+    part("Disqualifiers", bullets(product.disqualify, seen), 2, "field-disqualify"),
+    part("Qualifying questions", bullets(questions, seen), 2, "field-questions"),
+    part("Pricing", pricingBlock(input.quotesAllowed === true, price.note, prosePlans, price.trial, price.discount, price.avoid, seen), 3, "field-plans"),
+    part("Objections", pairs.map((pair) => {
       const hear = clean(pair.hear).replace(/[.]+$/, "");
       const say = clean(pair.say).replace(/[.]+$/, "");
       return keep(clean(`When they say ${hear}. Say ${say}.`), seen);
-    }).filter(Boolean).join("\n")),
-    section("FAQs", lines([docs.get("faqs") || ""], seen)),
-    section("Slides", slideLines(input.slides || [], seen)),
-    section("Next step", lines([docs.get("next") || ""], seen)),
-    section("Also on file", lines(extras, seen)),
-    section("Brochure notes", lines([input.deckKnowledge || ""], seen)),
-  ].filter(Boolean);
+    }).filter(Boolean).join("\n"), 4, "field-objections"),
+    part("FAQs", lines([docs.get("faqs") || ""], seen), 4, "field-faqs"),
+    part("Slides", slideLines(input.slides || [], seen), 1, "field-slides"),
+    part("Next step", lines([docs.get("next") || ""], seen), 5, "field-next"),
+    part("Owner notes", lines([ownerNotes], seen), 5, "field-owner-notes"),
+    part("Also on file", lines(extras, seen), 5, "field-owner-notes"),
+    part("Brochure notes", lines([input.deckKnowledge || ""], seen), 1, "field-slides"),
+  ].filter((item): item is KnowledgePart => Boolean(item));
+  return blocks;
+}
+
+export function compileCampaignKnowledge(input: CampaignKnowledgeInput): string {
+  const blocks = campaignKnowledgeParts(input).map((item) => `${item.title}\n${item.body}`);
   let text = "What this campaign knows\n";
   for (const block of blocks) {
     if (text.length >= CAP) break;
@@ -67,9 +80,9 @@ export function compileCampaignKnowledge(input: CampaignKnowledgeInput): string 
   return compiled.length > 40 ? compiled : "What this campaign knows\nNo campaign knowledge has been saved yet.";
 }
 
-function pricingBlock(quotesOn: boolean, note: string, plans: Array<{ name: string; price: string; period: string; includes: string; overage: string }>, trial: string, discount: string, avoid: string, seen: Set<string>): string {
-  const planLines = plans.filter((plan) => plan.price.trim() && !isInternalCostLine(`${plan.name} ${plan.price} ${plan.includes} ${plan.overage}`)).map((plan) => {
-    const line = `${plan.name || "Plan"} is ${plan.price}${plan.period ? `, billed ${plan.period}` : ""}${plan.includes ? `, including ${plan.includes}` : ""}${plan.overage ? `, then ${plan.overage}` : ""}.`;
+function pricingBlock(quotesOn: boolean, note: string, plans: Array<{ name: string; price: string; period: string; includes: string; overage: string; details?: string }>, trial: string, discount: string, avoid: string, seen: Set<string>): string {
+  const planLines = plans.filter((plan) => plan.price.trim() && !isInternalCostLine(`${plan.name} ${plan.price} ${plan.includes} ${plan.overage} ${plan.details || ""}`)).map((plan) => {
+    const line = `${plan.name || "Plan"} is ${plan.price}${plan.period ? `, billed ${plan.period}` : ""}${plan.includes ? `, including ${plan.includes}` : ""}${plan.overage ? `, then ${plan.overage}` : ""}${plan.details ? `, ${plan.details}` : ""}.`;
     return keep(line, seen);
   }).filter(Boolean);
   const intro = quotesOn
@@ -81,7 +94,12 @@ function pricingBlock(quotesOn: boolean, note: string, plans: Array<{ name: stri
     planLines.join("\n"),
     lines([trial ? `Trial: ${trial}` : "", discount ? `Discount: ${discount}` : "", avoid ? `Do not say: ${avoid}` : ""], seen),
   ].filter(Boolean);
-  return section("Pricing", parts.join("\n"));
+  return parts.join("\n");
+}
+
+function part(title: string, body: string, step: number, anchor: string): KnowledgePart | null {
+  const text = body.trim();
+  return text ? { title, body: text, step, anchor } : null;
 }
 
 function slideLines(slides: CampaignKnowledgeInput["slides"], seen: Set<string>): string {
@@ -91,11 +109,6 @@ function slideLines(slides: CampaignKnowledgeInput["slides"], seen: Set<string>)
     const points = clean(slide.talkingPoints || "");
     return keep(`${slide.number}. ${title}.${when ? ` Show when ${when}.` : ""}${points ? ` Talking points: ${points}.` : ""}`, seen);
   }).filter(Boolean).join("\n");
-}
-
-function section(title: string, body: string): string {
-  const text = body.trim();
-  return text ? `${title}\n${text}` : "";
 }
 
 function lines(values: string[], seen: Set<string>): string {

@@ -10,6 +10,7 @@ export const KNOWLEDGE_SECTIONS = [
 export type KnowledgeSectionKey = (typeof KNOWLEDGE_SECTIONS)[number]["key"];
 
 export const SOURCE_WEBSITE_TITLE = "Source website";
+export const OWNER_NOTES_TITLE = "Owner notes";
 export const WEBSITE_IMPORT_SOURCE = "website-import";
 export const DECK_IMPORT_SOURCE = "deck-import";
 export const KNOWLEDGE_CHAR_CAP = 12000;

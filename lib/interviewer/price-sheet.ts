@@ -243,8 +243,11 @@ function cleanRow(row: SheetRow): SheetRow | null {
 }
 
 function toPlan(row: SheetRow): PricePlan {
-  const includes = [row.includes, row.details].filter(Boolean).join("; ");
-  return { name: row.name, price: row.price, period: row.period, includes, overage: row.overage };
+  return { name: row.name, price: row.price, period: row.period, includes: row.includes, overage: row.overage, details: row.details };
+}
+
+export function sheetWithRows(parsed: SheetParse, rows: SheetRow[]): SheetParse {
+  return { ...parsed, rows, plans: rows.map(toPlan).filter(hasPrice) };
 }
 
 function hasPrice(plan: PricePlan): boolean {
